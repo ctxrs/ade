@@ -25,7 +25,7 @@ use gpui_tokio::Tokio;
 use ctx_client::ProviderOptions;
 use tokio::sync::watch;
 
-use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId};
+use ctx_core::ids::{ArtifactId, SessionId, TaskId, TurnId, WorkspaceId};
 use ctx_core::models::{
     Artifact, MessageAttachment, SessionEvent, SessionSnapshotSummary, SessionTurn,
     WorkspaceActiveSnapshotClientMessage,
@@ -40,7 +40,7 @@ pub(crate) use ats_cache::AtsCache;
 use ats_cache::SessionHeadMeta;
 use session::SessionThreadCache;
 
-pub(crate) use artifacts::ArtifactPreviewState;
+pub(crate) use artifacts::{ArtifactContentCache, ArtifactPreviewState};
 pub(crate) use composer::{
     ComposerAutocompleteState, ComposerDraft, ComposerMenuId, ComposerState, ComposerVerbosity,
     ContextWindowInfo, DraftTrack, PopoverPlacement, ProviderInstallState, WorkbenchModeId,
@@ -197,6 +197,9 @@ pub(crate) struct ShellView {
     pub(crate) artifacts_session_id: Option<SessionId>,
     pub(crate) selected_artifact: Option<usize>,
     pub(crate) artifact_preview: ArtifactPreviewState,
+    pub(crate) artifact_prefetch_cache: ArtifactContentCache,
+    pub(crate) artifact_prefetch_session_id: Option<SessionId>,
+    pub(crate) artifact_prefetch_inflight: HashSet<ArtifactId>,
     pub(crate) session_events: Vec<SessionEvent>,
     pub(crate) session_thread_cache: HashMap<SessionId, SessionThreadCache>,
     pub(crate) session_head_meta: HashMap<SessionId, SessionHeadMeta>,

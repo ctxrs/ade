@@ -39,9 +39,9 @@ mod views;
 use self::icons::{AppAssets, Icon, IconName};
 use self::models::{MessageItem, SessionInfo};
 use self::state::{
-    ArtifactPreviewState, AtsCache, ComposerAutocompleteState, ComposerDraft, ComposerVerbosity,
-    DataLoadState, DiffReviewState, SessionViewVerbosity, SettingsState, StreamStatus,
-    TaskFetchState, TerminalPanelState, WorkbenchModeId,
+    ArtifactContentCache, ArtifactPreviewState, AtsCache, ComposerAutocompleteState, ComposerDraft,
+    ComposerVerbosity, DataLoadState, DiffReviewState, SessionViewVerbosity, SettingsState,
+    StreamStatus, TaskFetchState, TerminalPanelState, WorkbenchModeId,
 };
 use self::views::RouterView;
 pub(crate) use self::state::{ShellRoute, ShellView};
@@ -231,6 +231,9 @@ fn create_shell_view(
             artifacts_session_id: None,
             selected_artifact: None,
             artifact_preview: ArtifactPreviewState::None,
+            artifact_prefetch_cache: ArtifactContentCache::default(),
+            artifact_prefetch_session_id: None,
+            artifact_prefetch_inflight: HashSet::new(),
             session_events: Vec::new(),
             session_thread_cache: HashMap::new(),
             session_head_meta: HashMap::new(),

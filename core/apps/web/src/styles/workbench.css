@@ -3399,6 +3399,7 @@
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  overflow: auto;
 }
 
 .wb-right-splitter {
@@ -3558,6 +3559,7 @@
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.02);
+  flex: 0 0 auto;
 }
 
 .wb-diff-status-header {
@@ -3638,11 +3640,13 @@
 
 .wb-diff .diff-pane {
   padding: 12px;
-  overflow: auto;
+  overflow: visible;
+  flex: 0 0 auto;
 }
 
 .wb-diff-empty {
   padding: 16px;
+  flex: 0 0 auto;
 }
 
 .wb-artifacts {

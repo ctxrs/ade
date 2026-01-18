@@ -1178,6 +1178,13 @@ export type SessionDiffSummary = {
   deletions?: number;
 };
 
+export type GitStatusEntry = {
+  path: string;
+  orig_path?: string | null;
+  index_status: string;
+  worktree_status: string;
+};
+
 export type GitStatusSummary = {
   raw?: string;
   summary_line?: string;
@@ -1185,6 +1192,15 @@ export type GitStatusSummary = {
   summary?: string;
   status?: string;
   lines?: string[];
+  branch?: string | null;
+  upstream?: string | null;
+  ahead?: number;
+  behind?: number;
+  detached?: boolean;
+  staged?: number;
+  unstaged?: number;
+  untracked?: number;
+  entries?: GitStatusEntry[];
 };
 
 export const getSessionGitStatusSummary = (sessionId: string) =>

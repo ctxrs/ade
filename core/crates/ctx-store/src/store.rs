@@ -1656,6 +1656,47 @@ impl Store {
         Ok(out)
     }
 
+    pub async fn list_sessions_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Result<Vec<Session>> {
+        let rows = sqlx::query(
+            r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
+               provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
+               FROM sessions WHERE worktree_id = ? ORDER BY created_at ASC"#,
+        )
+        .bind(worktree_id.0.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let id: String = r.try_get("id")?;
+            let task_id: String = r.try_get("task_id")?;
+            let ws_id: String = r.try_get("workspace_id")?;
+            let wt_id: String = r.try_get("worktree_id")?;
+            let created_at: String = r.try_get("created_at")?;
+            let updated_at: String = r.try_get("updated_at")?;
+            out.push(Session {
+                id: SessionId(uuid::Uuid::parse_str(&id)?),
+                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
+                relationship: r.try_get("relationship")?,
+                provider_id: r.try_get("provider_id")?,
+                model_id: r.try_get("model_id")?,
+                title: r.try_get("title")?,
+                agent_role: r.try_get("agent_role")?,
+                status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
+                provider_session_ref: r.try_get("provider_session_ref")?,
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+            });
+        }
+        Ok(out)
+    }
+
     pub async fn list_subagent_sessions(
         &self,
         parent_session_id: SessionId,

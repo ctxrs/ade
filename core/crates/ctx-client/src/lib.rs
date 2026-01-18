@@ -243,6 +243,19 @@ pub struct SessionGitStatusResponse {
     pub staged: i64,
     pub unstaged: i64,
     pub untracked: i64,
+    #[serde(default)]
+    pub entries: Vec<GitStatusEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GitStatusEntry {
+    pub path: String,
+    #[serde(default)]
+    pub orig_path: Option<String>,
+    #[serde(default)]
+    pub index_status: String,
+    #[serde(default)]
+    pub worktree_status: String,
 }
 
 #[derive(Debug, Clone, Default)]

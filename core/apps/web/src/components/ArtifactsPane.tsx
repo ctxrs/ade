@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Download, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import { artifactUrl, idToString, type Artifact } from "../api/client";
-
-const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "webm", "m4v"]);
+import { isImageArtifact, isVideoArtifact } from "../utils/artifacts";
 const DEFAULT_MIN_SCALE = 0.2;
 const MAX_SCALE = 5;
 
@@ -60,19 +59,6 @@ async function copyArtifactImage(artifact: Artifact, url: string) {
   const blob = await resp.blob();
   const type = blob.type || artifact.mime_type || "image/png";
   await navigator.clipboard.write([new window.ClipboardItem({ [type]: blob })]);
-}
-
-function isVideoArtifact(artifact: Artifact): boolean {
-  const mime = (artifact.mime_type ?? "").toLowerCase();
-  if (mime.startsWith("video/")) return true;
-  const parts = artifact.absolute_path.split(".");
-  const ext = parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
-  return VIDEO_EXTENSIONS.has(ext);
-}
-
-function isImageArtifact(artifact: Artifact): boolean {
-  const mime = (artifact.mime_type ?? "").toLowerCase();
-  return mime.startsWith("image/");
 }
 
 function ArtifactCard({

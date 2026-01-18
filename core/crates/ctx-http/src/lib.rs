@@ -5,6 +5,7 @@ pub mod completions;
 pub mod daemon;
 pub mod dictation_livekit;
 pub mod edit_plans;
+pub mod git_status;
 pub mod installer;
 pub mod installs;
 pub mod llm;

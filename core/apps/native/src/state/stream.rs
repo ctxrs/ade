@@ -12,8 +12,9 @@ use tokio_tungstenite::{
 
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
-    SessionEvent, SessionHeadDelta, SessionSnapshotSummary, WorkspaceActiveSnapshotEvent,
-    WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotSessionSubscription,
+    SessionEvent, SessionEventType, SessionHeadDelta, SessionSnapshotSummary,
+    WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotClientMessage,
+    WorkspaceActiveSnapshotSessionSubscription,
 };
 
 use super::ShellView;
@@ -281,6 +282,9 @@ impl ShellView {
         }
 
         if let Some(event) = event {
+            if matches!(event.event_type, SessionEventType::ArtifactsSet) {
+                self.apply_artifacts_set_event(session_id, &event, cx);
+            }
             self.push_session_event(event);
         }
 

@@ -53,8 +53,7 @@ use chrono::{DateTime, Utc};
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::git::{
-    assert_git_repo, git_merge_base, git_status_porcelain, git_status_short, list_tracked_files,
-    list_untracked_files, rev_parse_head,
+    assert_git_repo, git_merge_base, list_tracked_files, list_untracked_files, rev_parse_head,
 };
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_store::store::MobileDeviceUpsert;
@@ -65,8 +64,11 @@ use crate::buffers::{
     BufferUpdateResp,
 };
 use crate::completions;
-use crate::daemon::{AppState, GitStatusSnapshotCacheEntry};
+use crate::daemon::AppState;
 use crate::dictation_livekit;
+use crate::git_status::{
+    emit_git_status_snapshot_for_sessions, load_git_status_snapshot, GitStatusSnapshot,
+};
 use crate::installer;
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
 use crate::logs;
@@ -9129,6 +9131,10 @@ async fn create_session_for_task(
             .await;
     }
 
+    if let Ok(Some(worktree)) = state.store.get_worktree(worktree_id).await {
+        state.ensure_git_status_watcher(worktree).await;
+    }
+
     if let Some(prompt) = req.initial_prompt {
         let run_id = RunId::new();
         let turn_id = TurnId::new();
@@ -9273,19 +9279,7 @@ struct SessionDiffSummaryResponse {
     line_deletions: i64,
 }
 
-#[derive(Debug, Serialize)]
-struct SessionGitStatusResponse {
-    raw: String,
-    summary_line: String,
-    branch: Option<String>,
-    upstream: Option<String>,
-    ahead: i64,
-    behind: i64,
-    detached: bool,
-    staged: i64,
-    unstaged: i64,
-    untracked: i64,
-}
+type SessionGitStatusResponse = GitStatusSnapshot;
 
 async fn get_session_snapshot(
     State(state): State<Arc<AppState>>,
@@ -9544,16 +9538,8 @@ async fn get_session_git_status(
                 }),
             )
         })?;
-    let status_text = git_status_short(&worktree.root_path).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    let branch_info = parse_git_status_short(&status_text);
-    let entries = git_status_porcelain(&worktree.root_path)
+    state.ensure_git_status_watcher(worktree.clone()).await;
+    let resp = load_git_status_snapshot(StdPath::new(&worktree.root_path))
         .await
         .map_err(|e| {
             (
@@ -9563,113 +9549,9 @@ async fn get_session_git_status(
                 }),
             )
         })?;
-    let (staged, unstaged, untracked) = count_git_status_entries(&entries);
-    let resp = SessionGitStatusResponse {
-        raw: status_text,
-        summary_line: branch_info.summary_line,
-        branch: branch_info.branch,
-        upstream: branch_info.upstream,
-        ahead: branch_info.ahead,
-        behind: branch_info.behind,
-        detached: branch_info.detached,
-        staged,
-        unstaged,
-        untracked,
-    };
-    maybe_emit_git_status_snapshot(&state, session_id, worktree.id, &resp).await;
+    emit_git_status_snapshot_for_sessions(&state, &[session_id], worktree.id, &resp).await;
     Ok(Json(resp))
 }
-
-struct GitStatusBranchInfo {
-    summary_line: String,
-    branch: Option<String>,
-    upstream: Option<String>,
-    ahead: i64,
-    behind: i64,
-    detached: bool,
-}
-
-fn parse_git_status_short(output: &str) -> GitStatusBranchInfo {
-    let mut info = GitStatusBranchInfo {
-        summary_line: String::new(),
-        branch: None,
-        upstream: None,
-        ahead: 0,
-        behind: 0,
-        detached: false,
-    };
-    let mut lines = output.lines();
-    let Some(line) = lines.next() else {
-        return info;
-    };
-    info.summary_line = line.trim().to_string();
-    let Some(mut line) = line.trim().strip_prefix("## ") else {
-        return info;
-    };
-    let mut counts_part = None;
-    if let Some(idx) = line.find(" [") {
-        counts_part = Some(line[idx + 2..].trim());
-        line = line[..idx].trim();
-    }
-    if line.starts_with("HEAD") {
-        info.detached = true;
-    }
-    if let Some((local, upstream)) = line.split_once("...") {
-        if !local.trim().is_empty() {
-            info.branch = Some(local.trim().to_string());
-        }
-        if !upstream.trim().is_empty() {
-            info.upstream = Some(upstream.trim().to_string());
-        }
-    } else if !line.trim().is_empty() && !info.detached {
-        info.branch = Some(line.trim().to_string());
-    }
-    if let Some(mut counts) = counts_part {
-        if counts.ends_with(']') {
-            counts = &counts[..counts.len() - 1];
-        }
-        for part in counts.split(',') {
-            let mut iter = part.split_whitespace();
-            let Some(kind) = iter.next() else {
-                continue;
-            };
-            let Some(value) = iter.next() else {
-                continue;
-            };
-            let count = value.parse::<i64>().unwrap_or(0);
-            match kind {
-                "ahead" => info.ahead = count,
-                "behind" => info.behind = count,
-                _ => {}
-            }
-        }
-    }
-    info
-}
-
-fn count_git_status_entries(entries: &[String]) -> (i64, i64, i64) {
-    let mut staged = 0;
-    let mut unstaged = 0;
-    let mut untracked = 0;
-    for entry in entries {
-        let trimmed = entry.trim_end();
-        if trimmed.starts_with("?? ") {
-            untracked += 1;
-            continue;
-        }
-        let mut chars = trimmed.chars();
-        let index_status = chars.next().unwrap_or(' ');
-        let worktree_status = chars.next().unwrap_or(' ');
-        if index_status != ' ' {
-            staged += 1;
-        }
-        if worktree_status != ' ' {
-            unstaged += 1;
-        }
-    }
-    (staged, unstaged, untracked)
-}
-
 async fn resolve_session_diff_base(
     workspace: &Workspace,
     worktree: &Worktree,
@@ -9721,60 +9603,6 @@ async fn resolve_session_diff_base(
         }
     }
     Ok(worktree.base_commit_sha.clone())
-}
-
-async fn maybe_emit_git_status_snapshot(
-    state: &Arc<AppState>,
-    session_id: SessionId,
-    worktree_id: WorktreeId,
-    snapshot: &SessionGitStatusResponse,
-) {
-    const GIT_STATUS_DEBOUNCE_MS: u64 = 1500;
-    let summary = serde_json::json!({
-        "summary_line": snapshot.summary_line,
-        "branch": snapshot.branch,
-        "upstream": snapshot.upstream,
-        "ahead": snapshot.ahead,
-        "behind": snapshot.behind,
-        "detached": snapshot.detached,
-        "staged": snapshot.staged,
-        "unstaged": snapshot.unstaged,
-        "untracked": snapshot.untracked,
-    });
-    let payload = serde_json::json!({
-        "kind": "git_status_snapshot",
-        "worktree_id": worktree_id.0.to_string(),
-        "summary": summary,
-    });
-    let payload_raw = match serde_json::to_string(&payload) {
-        Ok(value) => value,
-        Err(_) => return,
-    };
-    let now = Instant::now();
-    {
-        let mut cache = state.git_status_snapshots.lock().await;
-        let entry = cache
-            .entry(worktree_id)
-            .or_insert_with(|| GitStatusSnapshotCacheEntry {
-                payload: String::new(),
-                emitted_at: now - Duration::from_millis(GIT_STATUS_DEBOUNCE_MS + 1),
-            });
-        if entry.payload == payload_raw {
-            return;
-        }
-        if now.duration_since(entry.emitted_at) < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS) {
-            return;
-        }
-        entry.payload = payload_raw;
-        entry.emitted_at = now;
-    }
-    let notice = state
-        .store
-        .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
-        .await;
-    if let Ok(event) = notice {
-        state.publish_event(event).await;
-    }
 }
 
 async fn apply_session_diff_patch(

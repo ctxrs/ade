@@ -23,6 +23,7 @@ import {
 import {
   DictationSettings,
   InstallInfo,
+  type GitStatusSummary,
   MessageAttachment,
   ProviderOptions,
   ProviderStatus,
@@ -63,6 +64,7 @@ import {
   useSessionSupervisor,
   type SessionCacheEntry,
 } from "../state/sessionSupervisor";
+import { artifactPrefetcher } from "../state/artifactPrefetch";
 import { ArtifactsPane } from "../components/ArtifactsPane";
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { SessionsPane } from "../components/SessionsPane";
@@ -115,6 +117,22 @@ function deriveTaskTitle(_prompt: string): string {
 }
 
 const ARCHIVE_CONFIRM_STORAGE_KEY = "wb.archiveConfirmDismissed";
+
+const normalizeGitStatusSummary = (
+  value: GitStatusSummary | string | null | undefined,
+): GitStatusSummary | null => {
+  if (!value) return null;
+  if (typeof value === "string") return { raw: value };
+  return value;
+};
+
+const formatGitStatusEntry = (entry: NonNullable<GitStatusSummary["entries"]>[number]): string => {
+  const indexStatus = entry.index_status?.[0] ?? " ";
+  const worktreeStatus = entry.worktree_status?.[0] ?? " ";
+  const prefix = `${indexStatus}${worktreeStatus}`;
+  const path = entry.orig_path ? `${entry.orig_path} -> ${entry.path}` : entry.path;
+  return `${prefix} ${path}`.trimEnd();
+};
 
 const joinDaemonPath = (root: string, ...parts: string[]) => {
   const sep = root.includes("\\") ? "\\" : "/";
@@ -784,8 +802,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [diffOpenHydrated, setDiffOpenHydrated] = useState(false);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffSummary, setDiffSummary] = useState<null | Record<string, unknown>>(null);
-  const [diffSummaryLoading, setDiffSummaryLoading] = useState(false);
-  const [gitStatusSummary, setGitStatusSummary] = useState<string | Record<string, unknown> | null>(null);
   const [gitStatusLoading, setGitStatusLoading] = useState(false);
   const [gitStatusError, setGitStatusError] = useState<string | null>(null);
   const [artifactsOpen, setArtifactsOpen] = useState(false);
@@ -1925,6 +1941,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const activeEntry = useSessionEntry(activeSessionId ?? "");
   const activeSessionDiff = activeEntry?.diff ?? "";
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
+  const gitStatusSummary = activeEntry?.gitStatusSummary ?? null;
   const activeTaskArchived = Boolean(activeTaskSummary?.task?.archived_at);
   const [webSessions, setWebSessions] = useState<WebSessionInfo[]>([]);
   const [webSessionsLoading, setWebSessionsLoading] = useState(false);
@@ -2077,28 +2094,51 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return count;
   }, [diffSummary]);
 
-  const fallbackDiffFileCount = useMemo(() => {
-    if (!activeSessionDiff.trim()) return 0;
-    const m = activeSessionDiff.match(/^diff --git /gm);
-    return m ? m.length : 1;
-  }, [activeSessionDiff]);
-
-  const diffFileCount = diffSummaryCount ?? fallbackDiffFileCount;
   const hasDiff = diffSummaryCount !== null ? diffSummaryCount > 0 : activeSessionDiff.trim().length > 0;
   const gitStatusText = useMemo(() => {
     if (!gitStatusSummary) return "";
-    if (typeof gitStatusSummary === "string") return gitStatusSummary.trim();
     const raw =
-      (gitStatusSummary as any).raw ??
-      (gitStatusSummary as any).summary_line ??
-      (gitStatusSummary as any).summaryLine ??
-      (gitStatusSummary as any).summary ??
-      (gitStatusSummary as any).status ??
+      gitStatusSummary.raw ??
+      gitStatusSummary.summary ??
+      gitStatusSummary.status ??
       "";
+    const summaryLine =
+      gitStatusSummary.summary_line ??
+      gitStatusSummary.summaryLine ??
+      (raw ? String(raw).split("\n")[0].trim() : "");
+    const entries = gitStatusSummary.entries;
+    if (Array.isArray(entries) && entries.length > 0) {
+      const header = summaryLine || "git status -sb";
+      return [header, ...entries.map(formatGitStatusEntry)].join("\n");
+    }
     if (raw) return String(raw).trim();
-    const lines = (gitStatusSummary as any).lines;
+    const lines = gitStatusSummary.lines;
     if (Array.isArray(lines) && lines.length > 0) return lines.map((line) => String(line)).join("\n");
-    return "";
+    return summaryLine || "";
+  }, [gitStatusSummary]);
+  const gitStatusBadgeCount = useMemo(() => {
+    if (!gitStatusSummary) return 0;
+    const entries = gitStatusSummary.entries;
+    if (Array.isArray(entries) && entries.length > 0) return entries.length;
+    const staged = Number(gitStatusSummary.staged ?? 0);
+    const unstaged = Number(gitStatusSummary.unstaged ?? 0);
+    const untracked = Number(gitStatusSummary.untracked ?? 0);
+    if (![staged, unstaged, untracked].every(Number.isFinite)) return 0;
+    return Math.max(0, staged + unstaged + untracked);
+  }, [gitStatusSummary]);
+  const gitStatusSignature = useMemo(() => {
+    if (!gitStatusSummary) return "";
+    const entries = gitStatusSummary.entries;
+    if (Array.isArray(entries) && entries.length > 0) {
+      return entries
+        .map((entry) => `${entry.index_status ?? " "}${entry.worktree_status ?? " "}:${entry.orig_path ?? ""}:${entry.path}`)
+        .join("|");
+    }
+    const staged = Number(gitStatusSummary.staged ?? 0);
+    const unstaged = Number(gitStatusSummary.unstaged ?? 0);
+    const untracked = Number(gitStatusSummary.untracked ?? 0);
+    const summaryLine = gitStatusSummary.summary_line ?? gitStatusSummary.summaryLine ?? "";
+    return `${summaryLine}:${staged}:${unstaged}:${untracked}`;
   }, [gitStatusSummary]);
   const showReviewPane = diffOpen;
   const showArtifactsPane = artifactsOpen;
@@ -2112,7 +2152,118 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     ? sessionCache.sessions[activeSessionId]?.artifactsLoading ?? false
     : false;
   const artifactsCount = artifacts.length;
+
+  useEffect(() => {
+    artifactPrefetcher.prefetch(activeSessionId ?? null, artifacts, !activeTaskArchived);
+  }, [activeSessionId, activeTaskArchived, artifacts]);
   const sessionsCount = webSessionsEnabled ? webSessions.length : 0;
+  const gitStatusInFlightRef = useRef<Map<string, Promise<GitStatusSummary | null>>>(new Map());
+  const gitStatusPrefetchedRef = useRef<Set<string>>(new Set());
+  const activeSessionIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId ?? null;
+    setGitStatusLoading(false);
+    setGitStatusError(null);
+  }, [activeSessionId]);
+
+  const fetchGitStatusSummary = useCallback(
+    async (sessionId: string, opts?: { silent?: boolean; force?: boolean }) => {
+      if (!sessionId) return null;
+      if (!opts?.force && gitStatusPrefetchedRef.current.has(sessionId)) {
+        return null;
+      }
+      const existing = gitStatusInFlightRef.current.get(sessionId);
+      if (existing) return existing;
+      const setLoading = (value: boolean) => {
+        if (opts?.silent) return;
+        if (activeSessionIdRef.current !== sessionId) return;
+        setGitStatusLoading(value);
+      };
+      const setError = (value: string | null) => {
+        if (opts?.silent) return;
+        if (activeSessionIdRef.current !== sessionId) return;
+        setGitStatusError(value);
+      };
+      setLoading(true);
+      setError(null);
+      const request = getSessionGitStatusSummary(sessionId)
+        .then((resp) => {
+          const summary = normalizeGitStatusSummary(resp);
+          if (summary) supervisor.setGitStatusSummary(sessionId, summary);
+          gitStatusPrefetchedRef.current.add(sessionId);
+          return summary;
+        })
+        .catch((e: any) => {
+          setError(e?.message ?? "Failed to load git status.");
+          return null;
+        })
+        .finally(() => {
+          gitStatusInFlightRef.current.delete(sessionId);
+          setLoading(false);
+        });
+      gitStatusInFlightRef.current.set(sessionId, request);
+      return request;
+    },
+    [supervisor],
+  );
+
+  const diffRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const diffRefreshTimerRef = useRef<number | null>(null);
+  const diffRefreshSignatureRef = useRef<string>("");
+
+  const refreshDiff = useCallback(
+    async (sessionId: string, opts?: { silent?: boolean; resetSummary?: boolean }) => {
+      if (!sessionId) return;
+      if (diffRefreshInFlightRef.current) return diffRefreshInFlightRef.current;
+      const setLoading = (value: boolean) => {
+        if (opts?.silent) return;
+        if (activeSessionIdRef.current !== sessionId) return;
+        setDiffLoading(value);
+      };
+      if (opts?.resetSummary && activeSessionIdRef.current === sessionId) {
+        setDiffSummary(null);
+      }
+      setLoading(true);
+      const request = Promise.all([
+        getSessionDiffSummary(sessionId)
+          .then((summary) => {
+            if (activeSessionIdRef.current !== sessionId) return;
+            setDiffSummary((summary as any) ?? null);
+          })
+          .catch(() => {
+            if (activeSessionIdRef.current === sessionId) setDiffSummary(null);
+          }),
+        getSessionDiff(sessionId)
+          .then((resp) => {
+            supervisor.setDiff(sessionId, resp.diff ?? "");
+          })
+          .catch(() => {
+            supervisor.setDiff(sessionId, "");
+          }),
+      ])
+        .finally(() => {
+          diffRefreshInFlightRef.current = null;
+          setLoading(false);
+        });
+      diffRefreshInFlightRef.current = request;
+      return request;
+    },
+    [supervisor],
+  );
+
+
+  useEffect(() => {
+    if (!workspaceSnapshot.initialized) return;
+    if (workspaceSnapshot.fetchState.active === "loading") return;
+    if (!activeSessionId) return;
+    void fetchGitStatusSummary(activeSessionId, { silent: true });
+  }, [
+    activeSessionId,
+    fetchGitStatusSummary,
+    workspaceSnapshot.fetchState.active,
+    workspaceSnapshot.initialized,
+  ]);
 
   const toggleDiffPane = useCallback(() => {
     setDiffOpen((open) => {
@@ -2586,62 +2737,31 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   useEffect(() => {
     if (!diffOpen || !activeSessionId) {
       setDiffLoading(false);
-      setDiffSummaryLoading(false);
       setGitStatusLoading(false);
       return;
     }
-    let cancelled = false;
-    setDiffLoading(true);
-    setDiffSummaryLoading(true);
-    setGitStatusLoading(true);
-    setDiffSummary(null);
-    setGitStatusSummary(null);
-    setGitStatusError(null);
+    void fetchGitStatusSummary(activeSessionId, { force: true });
+    void refreshDiff(activeSessionId, { resetSummary: true });
+  }, [activeSessionId, diffOpen, fetchGitStatusSummary, refreshDiff]);
 
-    const loadStatus = async () => {
-      try {
-        const status = await getSessionGitStatusSummary(activeSessionId);
-        if (!cancelled) setGitStatusSummary(status ?? null);
-      } catch (e: any) {
-        if (!cancelled) {
-          setGitStatusSummary(null);
-          setGitStatusError(e?.message ?? "Failed to load git status.");
-        }
-      } finally {
-        if (!cancelled) setGitStatusLoading(false);
-      }
-    };
-
-    const loadSummary = async () => {
-      try {
-        const summary = await getSessionDiffSummary(activeSessionId);
-        if (!cancelled) setDiffSummary((summary as any) ?? null);
-      } catch {
-        if (!cancelled) setDiffSummary(null);
-      } finally {
-        if (!cancelled) setDiffSummaryLoading(false);
-      }
-    };
-
-    const loadDiff = async () => {
-      try {
-        const resp = await getSessionDiff(activeSessionId);
-        if (!cancelled) supervisor.setDiff(activeSessionId, resp.diff ?? "");
-      } catch {
-        if (!cancelled) supervisor.setDiff(activeSessionId, "");
-      } finally {
-        if (!cancelled) setDiffLoading(false);
-      }
-    };
-
-    void loadStatus();
-    void loadSummary();
-    void loadDiff();
-
+  useEffect(() => {
+    if (!diffOpen || !activeSessionId) return;
+    if (!gitStatusSignature) return;
+    if (gitStatusSignature === diffRefreshSignatureRef.current) return;
+    diffRefreshSignatureRef.current = gitStatusSignature;
+    if (diffRefreshTimerRef.current) {
+      window.clearTimeout(diffRefreshTimerRef.current);
+    }
+    diffRefreshTimerRef.current = window.setTimeout(() => {
+      void refreshDiff(activeSessionId, { silent: true });
+    }, 400);
     return () => {
-      cancelled = true;
+      if (diffRefreshTimerRef.current) {
+        window.clearTimeout(diffRefreshTimerRef.current);
+        diffRefreshTimerRef.current = null;
+      }
     };
-  }, [activeSessionId, diffOpen, supervisor]);
+  }, [activeSessionId, diffOpen, gitStatusSignature, refreshDiff]);
 
   const onSplitterMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -3417,6 +3537,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                         onClick={toggleDiffPane}
                       >
                         <GitBranch size={14} />
+                        {gitStatusBadgeCount > 0 && <span className="wb-icon-badge">{gitStatusBadgeCount}</span>}
                       </button>
                       {/*
                         <button
@@ -3499,48 +3620,31 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                         className="wb-right-pane wb-diff"
                         style={{ height: `calc(100% - ${artifactsHeight}px - 6px)` }}
                       >
-                        <div className="wb-diff-top">
-                          <div className="wb-diff-tabs">
-                            <button
-                              type="button"
-                              className={`wb-diff-tab wb-diff-tab-button ${reviewTab === "git" ? "wb-diff-tab-active" : ""}`}
-                            >
-                              All Changes
-                            </button>
-                          {reviewTab === "git" && (
-                            <div className="wb-diff-pill">
-                              {diffSummaryLoading && diffSummaryCount === null ? "..." : diffFileCount} Pending Change
-                              {diffFileCount === 1 ? "" : "s"}
+                        {reviewTab === "git" && (
+                          <div className="wb-diff-status">
+                            <div className="wb-diff-status-header">
+                              <span className="wb-diff-status-title">git status -sb</span>
+                              {gitStatusLoading && <span className="wb-diff-status-meta">Updating...</span>}
                             </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {reviewTab === "git" && (
-                        <div className="wb-diff-status">
-                          <div className="wb-diff-status-header">
-                            <span className="wb-diff-status-title">git status -sb</span>
-                            {gitStatusLoading && <span className="wb-diff-status-meta">Updating...</span>}
+                            {gitStatusError ? (
+                              <div className="wb-diff-status-error">{gitStatusError}</div>
+                            ) : (
+                              <pre className="wb-diff-status-body">
+                                {gitStatusText || (gitStatusLoading ? "Loading git status..." : "No status data.")}
+                              </pre>
+                            )}
                           </div>
-                          {gitStatusError ? (
-                            <div className="wb-diff-status-error">{gitStatusError}</div>
-                          ) : (
-                            <pre className="wb-diff-status-body">
-                              {gitStatusText || (gitStatusLoading ? "Loading git status..." : "No status data.")}
-                            </pre>
-                          )}
-                        </div>
-                      )}
+                        )}
 
-                      {reviewTab === "git" && hasDiff ? (
-                        <DiffReviewPane diff={activeSessionDiff} />
-                      ) : (
-                        <div className="wb-diff-empty">
-                          <div className="wb-muted">
-                            {diffLoading ? "Loading changes..." : "No changes on this worktree."}
+                        {reviewTab === "git" && hasDiff ? (
+                          <DiffReviewPane diff={activeSessionDiff} />
+                        ) : (
+                          <div className="wb-diff-empty">
+                            <div className="wb-muted">
+                              {diffLoading ? "Loading changes..." : "No changes on this worktree."}
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        )}
                       </div>
                       <div className="wb-right-splitter" onMouseDown={onArtifactsSplitterMouseDown} />
                       <div className="wb-right-pane" style={{ height: artifactsHeight }}>
@@ -3549,23 +3653,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                     </div>
                   ) : showReviewPane ? (
                     <div className="wb-right-pane wb-diff">
-                      <div className="wb-diff-top">
-                        <div className="wb-diff-tabs">
-                          <button
-                            type="button"
-                            className={`wb-diff-tab wb-diff-tab-button ${reviewTab === "git" ? "wb-diff-tab-active" : ""}`}
-                          >
-                            All Changes
-                          </button>
-                          {reviewTab === "git" && (
-                            <div className="wb-diff-pill">
-                              {diffSummaryLoading && diffSummaryCount === null ? "..." : diffFileCount} Pending Change
-                              {diffFileCount === 1 ? "" : "s"}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
                       {reviewTab === "git" && (
                         <div className="wb-diff-status">
                           <div className="wb-diff-status-header">

@@ -1332,6 +1332,11 @@ private struct CompactGhostButtonStyle: ButtonStyle {
     }
 }
 
+private func artifactAssetPath(_ artifactId: String) -> String {
+    let escaped = artifactId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? artifactId
+    return "/api/artifacts/\(escaped)"
+}
+
 struct DaemonAssetContext {
     let baseURL: URL?
     let token: String?
@@ -1343,8 +1348,7 @@ struct DaemonAssetContext {
     }
 
     func artifactPath(_ artifactId: String) -> String {
-        let escaped = artifactId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? artifactId
-        return "/api/artifacts/\(escaped)"
+        artifactAssetPath(artifactId)
     }
 
     func blobURL(_ blobId: String) -> URL? {
@@ -1990,6 +1994,12 @@ private struct RemoteAssetImage<Content: View, Placeholder: View, Loading: View>
         await MainActor.run {
             phase = .empty
         }
+        if let assetPath, let cached = await ArtifactContentCache.shared.cachedData(for: assetPath) {
+            if let image = UIImage(data: cached) {
+                await MainActor.run { phase = .success(image) }
+                return
+            }
+        }
         if let client, let assetPath {
             do {
                 let data = try await client.fetchAssetData(path: assetPath)
@@ -1997,6 +2007,7 @@ private struct RemoteAssetImage<Content: View, Placeholder: View, Loading: View>
                     await MainActor.run { phase = .failure }
                     return
                 }
+                await ArtifactContentCache.shared.store(data, for: assetPath, fileExtension: url.pathExtension)
                 await MainActor.run { phase = .success(image) }
                 return
             } catch {
@@ -2015,6 +2026,9 @@ private struct RemoteAssetImage<Content: View, Placeholder: View, Loading: View>
                   let image = UIImage(data: data) else {
                 await MainActor.run { phase = .failure }
                 return
+            }
+            if let assetPath {
+                await ArtifactContentCache.shared.store(data, for: assetPath, fileExtension: url.pathExtension)
             }
             await MainActor.run { phase = .success(image) }
         } catch {
@@ -2151,24 +2165,32 @@ struct ArtifactDetailMedia: View {
     let artifact: Artifact
     let assetContext: DaemonAssetContext
     @State private var player: AVPlayer?
+    @State private var cachedVideoURL: URL?
 
     var body: some View {
         ZStack {
             if artifact.missing == true {
                 missingView
-            } else if isVideoArtifact(artifact),
-                      let url = assetContext.artifactURL(artifact.id.stringValue) {
-                VideoPlayer(player: player)
-                    .onAppear {
-                        if player == nil {
-                            player = AVPlayer(url: url)
+            } else if isVideoArtifact(artifact) {
+                let assetPath = assetContext.artifactPath(artifact.id.stringValue)
+                let resolvedURL = cachedVideoURL ?? assetContext.artifactURL(artifact.id.stringValue)
+                if let url = resolvedURL {
+                    VideoPlayer(player: player)
+                        .onAppear { updatePlayer(url) }
+                        .onChange(of: resolvedURL) { _, next in
+                            if let next { updatePlayer(next) }
                         }
-                    }
-                    .onDisappear {
-                        player?.pause()
-                        player = nil
-                    }
-                    .aspectRatio(16 / 9, contentMode: .fit)
+                        .onDisappear {
+                            player?.pause()
+                            player = nil
+                        }
+                        .aspectRatio(16 / 9, contentMode: .fit)
+                        .task(id: assetPath) {
+                            cachedVideoURL = await ArtifactContentCache.shared.cachedURL(for: assetPath)
+                        }
+                } else {
+                    placeholder
+                }
             } else if isImageArtifact(artifact),
                       let url = assetContext.artifactURL(artifact.id.stringValue) {
                 RemoteAssetImage(
@@ -2191,6 +2213,15 @@ struct ArtifactDetailMedia: View {
         }
         .background(Color.ctxSurfaceRaised)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func updatePlayer(_ url: URL) {
+        if let existing = player,
+           let asset = existing.currentItem?.asset as? AVURLAsset,
+           asset.url == url {
+            return
+        }
+        player = AVPlayer(url: url)
     }
 
     private var loading: some View {
@@ -3012,8 +3043,16 @@ final class ChatViewModel: ObservableObject {
         if isArchivedSession == value { return }
         isArchivedSession = value
         if value {
+            _Concurrency.Task {
+                await ArtifactContentCache.shared.setActiveScope(nil)
+            }
             stopPolling()
             stopStream()
+        } else {
+            let scope = sessionId
+            _Concurrency.Task {
+                await ArtifactContentCache.shared.setActiveScope(scope)
+            }
         }
     }
 
@@ -3056,6 +3095,9 @@ final class ChatViewModel: ObservableObject {
         sessionGeneration += 1
         self.sessionId = sessionId
         self.workspaceId = workspaceId
+        _Concurrency.Task {
+            await ArtifactContentCache.shared.setActiveScope(sessionId)
+        }
         lastEventSeq = nil
         setPendingAssistantResponse(false)
         streamingAssistantState = nil
@@ -3351,6 +3393,7 @@ final class ChatViewModel: ObservableObject {
         do {
             artifacts = try await client.listSessionArtifacts(sessionId: resolved)
             artifactsError = nil
+            prefetchArtifactsIfNeeded()
             if artifactsRefreshPending, generation == sessionGeneration {
                 artifactsRefreshPending = false
                 _Concurrency.Task { await refreshArtifacts() }
@@ -3363,6 +3406,47 @@ final class ChatViewModel: ObservableObject {
                 artifactsRefreshPending = false
                 _Concurrency.Task { await refreshArtifacts() }
             }
+        }
+    }
+
+    private func decodeArtifacts(from payload: JSONValue) -> [Artifact]? {
+        guard case let .object(object) = payload,
+              let artifactsValue = object["artifacts"] else { return nil }
+        let encoder = JSONEncoder()
+        guard let data = try? encoder.encode(artifactsValue) else { return nil }
+        return try? streamDecoder.decode([Artifact].self, from: data)
+    }
+
+    private func applyArtifactsFromStream(_ artifacts: [Artifact]) {
+        self.artifacts = artifacts
+        artifactsError = nil
+        isArtifactsLoading = false
+        prefetchArtifactsIfNeeded()
+    }
+
+    private func prefetchArtifactsIfNeeded() {
+        guard !isArchivedSession,
+              let sessionId,
+              let client else { return }
+        let targets = artifacts.compactMap { artifact -> ArtifactPrefetchTarget? in
+            if artifact.missing == true { return nil }
+            if !(isImageArtifact(artifact) || isVideoArtifact(artifact)) { return nil }
+            if artifact.bytes <= 0 { return nil }
+            let path = artifactAssetPath(artifact.id.stringValue)
+            let primaryExt = artifactFileExtension(artifact.absolutePath)
+            let fallbackExt = artifactFileExtension(artifact.name ?? "")
+            let ext = primaryExt.isEmpty ? fallbackExt : primaryExt
+            return ArtifactPrefetchTarget(
+                key: path,
+                path: path,
+                size: artifact.bytes,
+                fileExtension: ext.isEmpty ? nil : ext
+            )
+        }
+        guard !targets.isEmpty else { return }
+        _Concurrency.Task {
+            await ArtifactContentCache.shared.setActiveScope(sessionId)
+            await ArtifactContentCache.shared.prefetch(targets: targets, client: client)
         }
     }
 
@@ -4109,8 +4193,12 @@ final class ChatViewModel: ObservableObject {
                 if let turn = delta.turn {
                     applyTurnDelta(turn)
                 }
-                if delta.event?.eventType == "artifacts_set" {
-                    _Concurrency.Task { await refreshArtifacts() }
+                if let event = delta.event, event.eventType == "artifacts_set" {
+                    if let updated = decodeArtifacts(from: event.payloadJson) {
+                        applyArtifactsFromStream(updated)
+                    } else {
+                        _Concurrency.Task { await refreshArtifacts() }
+                    }
                 }
                 if let message = delta.message {
                     if message.role == .assistant {

@@ -605,6 +605,7 @@ impl ShellView {
         self.artifacts.clear();
         self.artifacts_session_id = None;
         self.artifact_preview = ArtifactPreviewState::None;
+        self.clear_artifact_prefetch_cache();
         self.session_events.clear();
         self.selected_artifact = None;
         self.resyncing_session = None;
@@ -801,6 +802,7 @@ impl ShellView {
                         Some(0)
                     };
                     view.load_artifact_preview(cx);
+                    view.prefetch_artifacts(session_id, cx);
                     cx.notify();
                 })
                 .ok();

@@ -333,6 +333,7 @@ impl ShellView {
         self.artifacts.clear();
         self.artifacts_session_id = None;
         self.artifact_preview = ArtifactPreviewState::None;
+        self.clear_artifact_prefetch_cache();
         self.session_events.clear();
         self.selected_artifact = None;
         self.session_history_cursor = None;
@@ -802,6 +803,7 @@ impl ShellView {
         self.artifacts.clear();
         self.artifacts_session_id = None;
         self.artifact_preview = ArtifactPreviewState::None;
+        self.clear_artifact_prefetch_cache();
         self.session_events.clear();
         self.selected_artifact = None;
     }

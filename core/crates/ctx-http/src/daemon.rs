@@ -19,7 +19,7 @@ use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
 use ctx_core::ids::{MessageId, SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    Session, SessionEvent, SessionEventType, SessionHeadDelta, SessionTurnStatus,
+    Session, SessionEvent, SessionEventType, SessionHeadDelta, SessionTurnStatus, Worktree,
 };
 use ctx_lsp::Language as LspLanguage;
 use ctx_lsp::{LspManager, LspManagerConfig};
@@ -144,6 +144,7 @@ pub struct AppState {
     pub file_completions_cache: Mutex<HashMap<WorktreeId, CachedFileCompletions>>,
     pub workspace_file_completions_cache: Mutex<HashMap<WorkspaceId, CachedFileCompletions>>,
     pub git_status_snapshots: Mutex<HashMap<WorktreeId, GitStatusSnapshotCacheEntry>>,
+    pub git_status_watchers: Mutex<HashSet<WorktreeId>>,
     pub daemon_url: String,
     pub auth_token: Option<String>,
     pub lsp_cfg: LspManagerConfig,
@@ -285,6 +286,7 @@ impl AppState {
             file_completions_cache: Mutex::new(HashMap::new()),
             workspace_file_completions_cache: Mutex::new(HashMap::new()),
             git_status_snapshots: Mutex::new(HashMap::new()),
+            git_status_watchers: Mutex::new(HashSet::new()),
             daemon_url,
             auth_token,
             lsp_cfg,
@@ -613,6 +615,28 @@ impl AppState {
                 }
             }
         });
+    }
+
+    pub async fn ensure_git_status_watcher(self: &Arc<Self>, worktree: Worktree) {
+        let mut watchers = self.git_status_watchers.lock().await;
+        if !watchers.insert(worktree.id) {
+            return;
+        }
+        let worktree_id = worktree.id;
+        let state = Arc::clone(self);
+        tokio::spawn(async move {
+            if let Err(err) =
+                crate::git_status::run_git_status_watcher(state.clone(), worktree).await
+            {
+                tracing::warn!(worktree_id = %worktree_id.0, "git status watcher failed: {err:#}");
+            }
+            state.release_git_status_watcher(worktree_id).await;
+        });
+    }
+
+    pub async fn release_git_status_watcher(&self, worktree_id: WorktreeId) {
+        let mut watchers = self.git_status_watchers.lock().await;
+        watchers.remove(&worktree_id);
     }
 
     pub async fn ensure_scheduler(

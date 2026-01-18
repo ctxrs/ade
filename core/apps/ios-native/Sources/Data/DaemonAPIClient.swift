@@ -21,50 +21,98 @@ actor DaemonAPIClient {
 
     struct SessionGitStatusResponse: Codable, Sendable {
         let summary: String
+        let staged: Int?
+        let unstaged: Int?
+        let untracked: Int?
+        let entries: [GitStatusEntry]
 
         init(summary: String) {
             self.summary = summary
+            self.staged = nil
+            self.unstaged = nil
+            self.untracked = nil
+            self.entries = []
         }
 
         init(from decoder: Decoder) throws {
             if let single = try? decoder.singleValueContainer().decode(String.self) {
                 self.summary = single
+                self.staged = nil
+                self.unstaged = nil
+                self.untracked = nil
+                self.entries = []
                 return
             }
             let container = try decoder.container(keyedBy: CodingKeys.self)
             if let summary = try container.decodeIfPresent(String.self, forKey: .raw) {
                 self.summary = summary
+                self.staged = try container.decodeIfPresent(Int.self, forKey: .staged)
+                self.unstaged = try container.decodeIfPresent(Int.self, forKey: .unstaged)
+                self.untracked = try container.decodeIfPresent(Int.self, forKey: .untracked)
+                self.entries = try container.decodeIfPresent([GitStatusEntry].self, forKey: .entries) ?? []
                 return
             }
             if let summary = try container.decodeIfPresent(String.self, forKey: .output) {
                 self.summary = summary
+                self.staged = try container.decodeIfPresent(Int.self, forKey: .staged)
+                self.unstaged = try container.decodeIfPresent(Int.self, forKey: .unstaged)
+                self.untracked = try container.decodeIfPresent(Int.self, forKey: .untracked)
+                self.entries = try container.decodeIfPresent([GitStatusEntry].self, forKey: .entries) ?? []
                 return
             }
             if let lines = try container.decodeIfPresent([String].self, forKey: .lines) {
                 self.summary = lines.joined(separator: "\n")
+                self.staged = try container.decodeIfPresent(Int.self, forKey: .staged)
+                self.unstaged = try container.decodeIfPresent(Int.self, forKey: .unstaged)
+                self.untracked = try container.decodeIfPresent(Int.self, forKey: .untracked)
+                self.entries = try container.decodeIfPresent([GitStatusEntry].self, forKey: .entries) ?? []
                 return
             }
             if let summary = try container.decodeIfPresent(String.self, forKey: .summary) {
                 self.summary = summary
+                self.staged = try container.decodeIfPresent(Int.self, forKey: .staged)
+                self.unstaged = try container.decodeIfPresent(Int.self, forKey: .unstaged)
+                self.untracked = try container.decodeIfPresent(Int.self, forKey: .untracked)
+                self.entries = try container.decodeIfPresent([GitStatusEntry].self, forKey: .entries) ?? []
                 return
             }
             if let summary = try container.decodeIfPresent(String.self, forKey: .summaryLine) {
                 self.summary = summary
+                self.staged = try container.decodeIfPresent(Int.self, forKey: .staged)
+                self.unstaged = try container.decodeIfPresent(Int.self, forKey: .unstaged)
+                self.untracked = try container.decodeIfPresent(Int.self, forKey: .untracked)
+                self.entries = try container.decodeIfPresent([GitStatusEntry].self, forKey: .entries) ?? []
                 return
             }
             if let summary = try container.decodeIfPresent(String.self, forKey: .summaryLineSnake) {
                 self.summary = summary
+                self.staged = try container.decodeIfPresent(Int.self, forKey: .staged)
+                self.unstaged = try container.decodeIfPresent(Int.self, forKey: .unstaged)
+                self.untracked = try container.decodeIfPresent(Int.self, forKey: .untracked)
+                self.entries = try container.decodeIfPresent([GitStatusEntry].self, forKey: .entries) ?? []
                 return
             }
             if let summary = try container.decodeIfPresent(String.self, forKey: .statusSummary) {
                 self.summary = summary
+                self.staged = try container.decodeIfPresent(Int.self, forKey: .staged)
+                self.unstaged = try container.decodeIfPresent(Int.self, forKey: .unstaged)
+                self.untracked = try container.decodeIfPresent(Int.self, forKey: .untracked)
+                self.entries = try container.decodeIfPresent([GitStatusEntry].self, forKey: .entries) ?? []
                 return
             }
             if let summary = try container.decodeIfPresent(String.self, forKey: .status) {
                 self.summary = summary
+                self.staged = try container.decodeIfPresent(Int.self, forKey: .staged)
+                self.unstaged = try container.decodeIfPresent(Int.self, forKey: .unstaged)
+                self.untracked = try container.decodeIfPresent(Int.self, forKey: .untracked)
+                self.entries = try container.decodeIfPresent([GitStatusEntry].self, forKey: .entries) ?? []
                 return
             }
             self.summary = ""
+            self.staged = try container.decodeIfPresent(Int.self, forKey: .staged)
+            self.unstaged = try container.decodeIfPresent(Int.self, forKey: .unstaged)
+            self.untracked = try container.decodeIfPresent(Int.self, forKey: .untracked)
+            self.entries = try container.decodeIfPresent([GitStatusEntry].self, forKey: .entries) ?? []
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -76,6 +124,24 @@ actor DaemonAPIClient {
             case raw
             case output
             case lines
+            case staged
+            case unstaged
+            case untracked
+            case entries
+        }
+    }
+
+    struct GitStatusEntry: Codable, Sendable {
+        let path: String
+        let origPath: String?
+        let indexStatus: String?
+        let worktreeStatus: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case path
+            case origPath = "orig_path"
+            case indexStatus = "index_status"
+            case worktreeStatus = "worktree_status"
         }
     }
 
