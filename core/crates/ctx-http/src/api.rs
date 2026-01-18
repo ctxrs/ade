@@ -14536,8 +14536,8 @@ async fn launch_gcp_gateway_inner(
     const DEFAULT_GCP_ZONE: &str = "us-central1-a";
     const DEFAULT_GCP_MACHINE_TYPE: &str = "e2-standard-2";
     const DEFAULT_GCP_IMAGE: &str = "projects/debian-cloud/global/images/family/debian-12";
-    const DEFAULT_GCP_DISK_SIZE_GB: i64 = 100;
-    const DEFAULT_GCP_DISK_TYPE: &str = "pd-ssd";
+    const DEFAULT_GCP_DISK_SIZE_GB: i64 = 50;
+    const DEFAULT_GCP_DISK_TYPE: &str = "pd-standard";
 
     let mut settings = user_settings::load_settings(&state.data_root).await;
     let cloud = settings.cloud_workers.get_or_insert_default();
@@ -14838,9 +14838,15 @@ async fn launch_azure_gateway_inner(
         &storage_account,
     )
     .await?;
+    ensure_azure_blob_container(
+        &arm,
+        &azure.resource_group,
+        &storage_account,
+        &storage_container,
+    )
+    .await?;
     let storage_key =
         azure_storage_account_key(&arm, &azure.resource_group, &storage_account).await?;
-    ensure_azure_blob_container(&http, &storage_account, &storage_container, &storage_key).await?;
 
     let gateway_bin = resolve_binary_path("CTX_WORKER_GATEWAY_BIN", "ctx-worker-gateway")
         .context("ctx-worker-gateway binary not found")?;
@@ -14891,6 +14897,14 @@ async fn launch_azure_gateway_inner(
 
     let gateway_token = generate_gateway_token();
     let (gateway_cert_pem, gateway_key_pem) = generate_gateway_tls_material()?;
+    let azure_tenant_id = std::env::var("AZURE_TENANT_ID").ok();
+    let azure_client_id = std::env::var("AZURE_CLIENT_ID").ok();
+    let azure_client_secret = std::env::var("AZURE_CLIENT_SECRET").ok();
+    if azure_tenant_id.is_none() || azure_client_id.is_none() || azure_client_secret.is_none() {
+        anyhow::bail!(
+            "missing Azure client credentials; set AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET"
+        );
+    }
 
     let user_data = render_azure_gateway_user_data(&AzureGatewayUserDataSpec {
         gateway_download_url: &gateway_download_url,
@@ -14898,6 +14912,9 @@ async fn launch_azure_gateway_inner(
         gateway_auth_token: &gateway_token,
         gateway_cert_pem: &gateway_cert_pem,
         gateway_key_pem: &gateway_key_pem,
+        azure_tenant_id: azure_tenant_id.as_deref(),
+        azure_client_id: azure_client_id.as_deref(),
+        azure_client_secret: azure_client_secret.as_deref(),
         subscription_id: &azure.subscription_id,
         resource_group: &azure.resource_group,
         location: &azure.location,
@@ -14919,11 +14936,13 @@ async fn launch_azure_gateway_inner(
     let nic_name = azure_sanitize_name("ctx-gateway-nic", &gateway_id);
     let public_ip_name = azure_sanitize_name("ctx-gateway-ip", &gateway_id);
     let nsg_name = azure_sanitize_name("ctx-gateway-nsg", &gateway_id);
-    let api_base = arm.api_base();
-    let subnet_id = azure_subnet_id(&api_base, &azure.resource_group, &azure.vnet, &azure.subnet);
-    let public_ip_id = azure_public_ip_id(&api_base, &azure.resource_group, &public_ip_name);
-    let nic_id = azure_nic_id(&api_base, &azure.resource_group, &nic_name);
-    let nsg_id = azure_nsg_id(&api_base, &azure.resource_group, &nsg_name);
+    let resource_base = arm.resource_base();
+    let subnet_id =
+        azure_subnet_id(&resource_base, &azure.resource_group, &azure.vnet, &azure.subnet);
+    let public_ip_id =
+        azure_public_ip_id(&resource_base, &azure.resource_group, &public_ip_name);
+    let nic_id = azure_nic_id(&resource_base, &azure.resource_group, &nic_name);
+    let nsg_id = azure_nsg_id(&resource_base, &azure.resource_group, &nsg_name);
 
     ensure_azure_network_security_group(
         &arm,
@@ -14963,9 +14982,6 @@ async fn launch_azure_gateway_inner(
         &azure.image,
     )
     .await?;
-
-    let principal_id = wait_azure_vm_principal_id(&arm, &azure.resource_group, &vm_name).await?;
-    ensure_azure_role_assignment(&arm, &azure.resource_group, &principal_id).await?;
 
     let public_ip = wait_azure_public_ip(&arm, &azure.resource_group, &public_ip_name).await?;
     let public_ip = public_ip.context("gateway instance missing public IP")?;
@@ -15493,6 +15509,9 @@ struct AzureGatewayUserDataSpec<'a> {
     gateway_auth_token: &'a str,
     gateway_cert_pem: &'a str,
     gateway_key_pem: &'a str,
+    azure_tenant_id: Option<&'a str>,
+    azure_client_id: Option<&'a str>,
+    azure_client_secret: Option<&'a str>,
     subscription_id: &'a str,
     resource_group: &'a str,
     location: &'a str,
@@ -15870,9 +15889,14 @@ impl GcpApiClient {
         body: Option<serde_json::Value>,
     ) -> anyhow::Result<serde_json::Value> {
         let token = self.token().await?;
+        let needs_body = method != Method::GET;
         let mut req = self.http.request(method, url).bearer_auth(token);
         if let Some(body) = body {
             req = req.json(&body);
+        } else if needs_body {
+            req = req
+                .header(reqwest::header::CONTENT_LENGTH, "0")
+                .body(Vec::new());
         }
         let resp = req.send().await.context("gcp request")?;
         let status = resp.status();
@@ -16654,13 +16678,20 @@ fn render_gcp_gateway_startup_script(spec: &GcpGatewayStartupSpec<'_>) -> String
     script.push_str("  if command -v curl >/dev/null 2>&1; then\n");
     script.push_str("    return 0\n");
     script.push_str("  fi\n");
-    script.push_str("  if command -v apt-get >/dev/null 2>&1; then\n");
-    script.push_str("    apt-get update -y >/dev/null 2>&1 || true\n");
-    script.push_str("    apt-get install -y curl ca-certificates >/dev/null 2>&1 || true\n");
-    script.push_str("  elif command -v dnf >/dev/null 2>&1; then\n");
-    script.push_str("    dnf install -y curl ca-certificates >/dev/null 2>&1 || true\n");
-    script.push_str("  elif command -v yum >/dev/null 2>&1; then\n");
-    script.push_str("    yum install -y curl ca-certificates >/dev/null 2>&1 || true\n");
+    script.push_str("  for _ in 1 2 3 4 5; do\n");
+    script.push_str("    if command -v apt-get >/dev/null 2>&1; then\n");
+    script.push_str("      export DEBIAN_FRONTEND=noninteractive\n");
+    script.push_str("      apt-get update -y && apt-get install -y curl ca-certificates && break\n");
+    script.push_str("    elif command -v dnf >/dev/null 2>&1; then\n");
+    script.push_str("      dnf install -y curl ca-certificates && break\n");
+    script.push_str("    elif command -v yum >/dev/null 2>&1; then\n");
+    script.push_str("      yum install -y curl ca-certificates && break\n");
+    script.push_str("    fi\n");
+    script.push_str("    sleep 2\n");
+    script.push_str("  done\n");
+    script.push_str("  if ! command -v curl >/dev/null 2>&1; then\n");
+    script.push_str("    echo \"failed to install curl\" >&2\n");
+    script.push_str("    exit 1\n");
     script.push_str("  fi\n");
     script.push_str("}\n\n");
 
@@ -16712,6 +16743,7 @@ fn render_gcp_gateway_startup_script(spec: &GcpGatewayStartupSpec<'_>) -> String
     }
     script.push_str("EOF\n");
     script.push_str("chmod 600 /etc/ctx-gateway/config.toml\n");
+
     script.push_str("cat > /etc/systemd/system/ctx-worker-gateway.service <<'EOF'\n");
     script.push_str("[Unit]\n");
     script.push_str("Description=ctx worker gateway\n");
@@ -16862,12 +16894,31 @@ fn render_azure_gateway_user_data(spec: &AzureGatewayUserDataSpec<'_>) -> String
     }
     script.push_str("EOF\n");
     script.push_str("chmod 600 /etc/ctx-gateway/config.toml\n");
+
+    if let (Some(tenant_id), Some(client_id), Some(client_secret)) = (
+        spec.azure_tenant_id,
+        spec.azure_client_id,
+        spec.azure_client_secret,
+    ) {
+        script.push_str("cat > /etc/ctx-gateway/azure.env <<'EOF'\n");
+        script.push_str(&format!("AZURE_TENANT_ID={tenant_id}\n"));
+        script.push_str(&format!("AZURE_CLIENT_ID={client_id}\n"));
+        script.push_str(&format!("AZURE_CLIENT_SECRET={client_secret}\n"));
+        script.push_str("EOF\n");
+        script.push_str("chmod 600 /etc/ctx-gateway/azure.env\n");
+    }
     script.push_str("cat > /etc/systemd/system/ctx-worker-gateway.service <<'EOF'\n");
     script.push_str("[Unit]\n");
     script.push_str("Description=ctx worker gateway\n");
     script.push_str("After=network-online.target\n");
     script.push_str("Wants=network-online.target\n\n");
     script.push_str("[Service]\n");
+    if spec.azure_tenant_id.is_some()
+        && spec.azure_client_id.is_some()
+        && spec.azure_client_secret.is_some()
+    {
+        script.push_str("EnvironmentFile=/etc/ctx-gateway/azure.env\n");
+    }
     script.push_str(
         "ExecStart=/usr/local/bin/ctx-worker-gateway --config /etc/ctx-gateway/config.toml\n",
     );
@@ -16986,6 +17037,10 @@ impl AzureArmClient {
         )
     }
 
+    fn resource_base(&self) -> String {
+        format!("/subscriptions/{}", self.subscription_id)
+    }
+
     async fn token(&self, scope: &str) -> anyhow::Result<String> {
         let token = self
             .credential
@@ -17002,16 +17057,22 @@ impl AzureArmClient {
         body: Option<serde_json::Value>,
     ) -> anyhow::Result<serde_json::Value> {
         const AZURE_MANAGEMENT_SCOPE: &str = "https://management.azure.com/.default";
+        let method_name = method.as_str().to_string();
         let token = self.token(AZURE_MANAGEMENT_SCOPE).await?;
+        let needs_body = method != Method::GET;
         let mut req = self.http.request(method, url).bearer_auth(token);
         if let Some(body) = body {
             req = req.json(&body);
+        } else if needs_body {
+            req = req
+                .header(reqwest::header::CONTENT_LENGTH, "0")
+                .body(Vec::new());
         }
         let resp = req.send().await.context("azure request")?;
         let status = resp.status();
         let text = resp.text().await.context("azure response text")?;
         if !status.is_success() {
-            anyhow::bail!("azure request failed: {status} {text}");
+            anyhow::bail!("azure request failed ({method_name} {url}): {status} {text}");
         }
         if text.trim().is_empty() {
             return Ok(serde_json::Value::Null);
@@ -17026,10 +17087,14 @@ impl AzureArmClient {
         body: Option<serde_json::Value>,
     ) -> anyhow::Result<()> {
         const AZURE_MANAGEMENT_SCOPE: &str = "https://management.azure.com/.default";
+        let method_name = method.as_str().to_string();
         let token = self.token(AZURE_MANAGEMENT_SCOPE).await?;
+        let needs_body = method != Method::GET;
         let mut req = self.http.request(method, url).bearer_auth(token);
         if let Some(body) = body {
             req = req.json(&body);
+        } else if needs_body {
+            req = req.body(Vec::new());
         }
         let resp = req.send().await.context("azure request")?;
         let status = resp.status();
@@ -17038,7 +17103,7 @@ impl AzureArmClient {
         }
         let text = resp.text().await.context("azure response text")?;
         if !status.is_success() {
-            anyhow::bail!("azure request failed: {status} {text}");
+            anyhow::bail!("azure request failed ({method_name} {url}): {status} {text}");
         }
         Ok(())
     }
@@ -17220,6 +17285,7 @@ fn azure_blob_sas(
     resource: &str,
     expiry: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<String> {
+    let key_b64 = key_b64.trim();
     let start = chrono::Utc::now() - chrono::Duration::minutes(5);
     let signed_start = azure_sas_timestamp(start);
     let signed_expiry = azure_sas_timestamp(expiry);
@@ -17227,7 +17293,7 @@ fn azure_blob_sas(
     let signed_identifier = "";
     let signed_ip = "";
     let signed_protocol = "https";
-    let signed_version = "2020-02-10";
+    let signed_version = "2026-02-06";
     let signed_snapshot = "";
     let signed_encryption_scope = "";
     let rscc = "";
@@ -17251,29 +17317,23 @@ fn azure_blob_sas(
 }
 
 async fn ensure_azure_blob_container(
-    http: &reqwest::Client,
+    arm: &AzureArmClient,
+    resource_group: &str,
     account: &str,
     container: &str,
-    key_b64: &str,
 ) -> anyhow::Result<()> {
-    let expiry = chrono::Utc::now() + chrono::Duration::hours(1);
-    let sas = azure_blob_sas(account, key_b64, container, None, "c", "c", expiry)?;
     let url = format!(
-        "https://{}.blob.core.windows.net/{}?restype=container&{}",
-        account, container, sas
+        "{}/resourceGroups/{}/providers/Microsoft.Storage/storageAccounts/{}/blobServices/default/containers/{}?api-version=2023-01-01",
+        arm.api_base(),
+        resource_group,
+        account,
+        container
     );
-    let resp = http
-        .put(url)
-        .header("x-ms-version", "2020-02-10")
-        .send()
+    let body = serde_json::json!({ "properties": {} });
+    arm.request_allow_conflict(Method::PUT, &url, Some(body))
         .await
         .context("create azure container")?;
-    if resp.status().is_success() || resp.status() == reqwest::StatusCode::CONFLICT {
-        return Ok(());
-    }
-    let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
-    anyhow::bail!("azure container create failed: {status} {text}")
+    Ok(())
 }
 
 async fn upload_file_to_azure_blob(
@@ -17293,7 +17353,7 @@ async fn upload_file_to_azure_blob(
     let resp = http
         .put(url)
         .header("x-ms-blob-type", "BlockBlob")
-        .header("x-ms-version", "2020-02-10")
+        .header("x-ms-version", "2026-02-06")
         .body(bytes)
         .send()
         .await
@@ -17450,41 +17510,72 @@ async fn ensure_azure_vm(
         resource_group,
         name
     );
-    let body = serde_json::json!({
-        "location": location,
-        "identity": { "type": "SystemAssigned" },
-        "properties": {
-            "hardwareProfile": { "vmSize": vm_size },
-            "storageProfile": {
-                "imageReference": azure_image_reference(image),
-                "osDisk": {
-                    "createOption": "FromImage"
-                }
-            },
-            "osProfile": {
-                "computerName": name,
-                "adminUsername": admin_username,
-                "customData": custom_data_b64,
-                "linuxConfiguration": {
-                    "disablePasswordAuthentication": true,
-                    "ssh": {
-                        "publicKeys": [{
-                            "path": format!("/home/{}/.ssh/authorized_keys", admin_username),
-                            "keyData": ssh_public_key
-                        }]
+    let mut candidates = vec![vm_size.to_string()];
+    let fallbacks = [
+        "Standard_B1s",
+        "Standard_B1ls",
+        "Standard_D2s_v3",
+        "Standard_B2s",
+    ];
+    for fallback in fallbacks {
+        if fallback != vm_size {
+            candidates.push(fallback.to_string());
+        }
+    }
+
+    let mut last_err = None;
+    for size in candidates {
+        let body = serde_json::json!({
+            "location": location,
+            "identity": { "type": "SystemAssigned" },
+            "properties": {
+                "hardwareProfile": { "vmSize": size },
+                "storageProfile": {
+                    "imageReference": azure_image_reference(image),
+                    "osDisk": {
+                        "createOption": "FromImage"
                     }
+                },
+                "osProfile": {
+                    "computerName": name,
+                    "adminUsername": admin_username,
+                    "customData": custom_data_b64,
+                    "linuxConfiguration": {
+                        "disablePasswordAuthentication": true,
+                        "ssh": {
+                            "publicKeys": [{
+                                "path": format!("/home/{}/.ssh/authorized_keys", admin_username),
+                                "keyData": ssh_public_key
+                            }]
+                        }
+                    }
+                },
+                "networkProfile": {
+                    "networkInterfaces": [{
+                        "id": nic_id,
+                        "properties": { "primary": true }
+                    }]
                 }
-            },
-            "networkProfile": {
-                "networkInterfaces": [{
-                    "id": nic_id,
-                    "properties": { "primary": true }
-                }]
+            }
+        });
+        match arm.request(Method::PUT, &url, Some(body)).await {
+            Ok(_) => return arm.wait_resource(&url).await,
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("SkuNotAvailable")
+                    || message.contains("Hypervisor Generation")
+                    || message.contains("cannot boot Hypervisor Generation")
+                {
+                    tracing::warn!(vm_size = %size, "azure vm size rejected; trying fallback");
+                    last_err = Some(err);
+                    continue;
+                }
+                return Err(err);
             }
         }
-    });
-    arm.request(Method::PUT, &url, Some(body)).await?;
-    arm.wait_resource(&url).await
+    }
+
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("azure vm create failed")))
 }
 
 async fn wait_azure_public_ip(
@@ -17513,6 +17604,7 @@ async fn wait_azure_public_ip(
     Ok(None)
 }
 
+#[allow(dead_code)]
 async fn wait_azure_vm_principal_id(
     arm: &AzureArmClient,
     resource_group: &str,
@@ -17538,6 +17630,7 @@ async fn wait_azure_vm_principal_id(
     anyhow::bail!("azure managed identity not ready")
 }
 
+#[allow(dead_code)]
 async fn ensure_azure_role_assignment(
     arm: &AzureArmClient,
     resource_group: &str,

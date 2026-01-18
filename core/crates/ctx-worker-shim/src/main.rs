@@ -52,6 +52,10 @@ async fn main() -> Result<()> {
         warn!("failed to install rustls crypto provider: {err:?}");
     }
 
+    if std::env::args().nth(1).as_deref() == Some("acp-fake") {
+        return run_acp_fake().await;
+    }
+
     let args = Args::parse();
     let args = ResolvedArgs::from_args(args)?;
     let client = gateway_http_client(args.gateway_ca_pem.as_deref())?;
@@ -64,6 +68,125 @@ async fn main() -> Result<()> {
     let terminal_task = tokio::spawn(run_terminal_control(args.clone()));
 
     let _ = tokio::try_join!(diff_task, acp_task, terminal_task)?;
+    Ok(())
+}
+
+async fn run_acp_fake() -> Result<()> {
+    let stdin = tokio::io::stdin();
+    let mut stdout = BufWriter::new(tokio::io::stdout());
+    let mut lines = BufReader::new(stdin).lines();
+
+    let mut next_session = 1u64;
+    while let Some(line) = lines.next_line().await.context("read acp line")? {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let method = value.get("method").and_then(|v| v.as_str());
+        let req_id = value.get("id").cloned();
+
+        match method {
+            Some("initialize") => {
+                let resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "protocolVersion": 1,
+                        "agentCapabilities": {
+                            "promptCapabilities": {
+                                "image": false,
+                                "embeddedContext": true,
+                            },
+                            "loadSession": true,
+                        },
+                    },
+                });
+                write_json_line(&mut stdout, &resp).await?;
+            }
+            Some("session/new") | Some("session/load") => {
+                let session_id = value
+                    .pointer("/params/sessionId")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        let id = next_session;
+                        next_session += 1;
+                        format!("sess_{id}")
+                    });
+                let resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "sessionId": session_id,
+                    },
+                });
+                write_json_line(&mut stdout, &resp).await?;
+            }
+            Some("session/prompt") => {
+                let session_id = value
+                    .pointer("/params/sessionId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("sess_1");
+                let response_text = extract_expected_reply(&value)
+                    .unwrap_or_else(|| "ok".to_string());
+
+                let update = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": session_id,
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": {
+                                "type": "text",
+                                "text": response_text,
+                            },
+                        },
+                    },
+                });
+                write_json_line(&mut stdout, &update).await?;
+
+                let resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "stopReason": "end_turn",
+                    },
+                });
+                write_json_line(&mut stdout, &resp).await?;
+            }
+            Some("session/cancel") => {}
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn extract_expected_reply(value: &serde_json::Value) -> Option<String> {
+    const PREFIX: &str = "Reply with the exact text:";
+    fn walk(value: &serde_json::Value) -> Option<String> {
+        match value {
+            serde_json::Value::String(s) => {
+                let idx = s.find(PREFIX)?;
+                let suffix = s[idx + PREFIX.len()..].trim();
+                (!suffix.is_empty()).then_some(suffix.to_string())
+            }
+            serde_json::Value::Array(arr) => arr.iter().find_map(walk),
+            serde_json::Value::Object(map) => map.values().find_map(walk),
+            _ => None,
+        }
+    }
+    walk(value)
+}
+
+async fn write_json_line(
+    stdout: &mut BufWriter<tokio::io::Stdout>,
+    value: &serde_json::Value,
+) -> Result<()> {
+    let line = serde_json::to_string(value).context("serialize acp json")?;
+    stdout.write_all(line.as_bytes()).await?;
+    stdout.write_all(b"\n").await?;
+    stdout.flush().await?;
     Ok(())
 }
 
@@ -986,6 +1109,7 @@ async fn spawn_acp_session(
 
 fn provider_command(provider_id: &str) -> (&'static str, Vec<&'static str>) {
     match provider_id {
+        "fake" => ("/usr/local/bin/ctx-worker-shim", vec!["acp-fake"]),
         "codex" => ("codex-acp", Vec::new()),
         "claude" => ("claude-code-acp", Vec::new()),
         "gemini" => ("gemini", vec!["--experimental-acp"]),

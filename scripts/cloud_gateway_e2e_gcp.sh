@@ -47,13 +47,17 @@ fi
 export GCP_ZONE="${GCP_ZONE:-us-central1-a}"
 export GCP_MACHINE_TYPE="${GCP_MACHINE_TYPE:-e2-standard-2}"
 export GCP_IMAGE="${GCP_IMAGE:-projects/debian-cloud/global/images/family/debian-12}"
-export GCP_DISK_SIZE_GB="${GCP_DISK_SIZE_GB:-100}"
-export GCP_DISK_TYPE="${GCP_DISK_TYPE:-pd-ssd}"
+export GCP_DISK_SIZE_GB="${GCP_DISK_SIZE_GB:-50}"
+export GCP_DISK_TYPE="${GCP_DISK_TYPE:-pd-standard}"
 
 export CTX_E2E_TIER=3
-export CTX_E2E_PROVIDER_ID="${CTX_E2E_PROVIDER_ID:-codex}"
-export CTX_E2E_MODEL_ID="${CTX_E2E_MODEL_ID:-gpt-5.2-codex}"
+export CTX_E2E_PROVIDER_ID="${CTX_E2E_PROVIDER_ID:-fake}"
+export CTX_E2E_MODEL_ID="${CTX_E2E_MODEL_ID:-fake-model}"
 export CTX_E2E_KEEP_RESOURCES="${CTX_E2E_KEEP_RESOURCES:-0}"
+
+if [ "${CTX_E2E_PROVIDER_ID}" = "fake" ]; then
+  export CTX_SHOW_FAKE_PROVIDER=1
+fi
 
 repo_dir="${CTX_E2E_WORKSPACE_ROOT:-/tmp/ctx-e2e-public-repo}"
 if [ ! -d "$repo_dir/.git" ]; then
@@ -64,9 +68,18 @@ export CTX_E2E_WORKSPACE_ROOT="$repo_dir"
 
 cd "$core_dir"
 
-CARGO_TARGET_DIR=target cargo build -p ctx-worker-gateway -p ctx-worker-shim
+if ! command -v cargo-zigbuild >/dev/null 2>&1; then
+  echo "[e2e] missing cargo-zigbuild (install with: cargo install cargo-zigbuild)" >&2
+  exit 1
+fi
+if ! command -v zig >/dev/null 2>&1; then
+  echo "[e2e] missing zig (install with: brew install zig)" >&2
+  exit 1
+fi
 
-export CTX_WORKER_GATEWAY_BIN="$core_dir/target/debug/ctx-worker-gateway"
-export CTX_WORKER_SHIM_BIN="$core_dir/target/debug/ctx-worker-shim"
+CARGO_TARGET_DIR=target/zigbuild cargo zigbuild -p ctx-worker-gateway -p ctx-worker-shim --target x86_64-unknown-linux-musl
+
+export CTX_WORKER_GATEWAY_BIN="$core_dir/target/zigbuild/x86_64-unknown-linux-musl/debug/ctx-worker-gateway"
+export CTX_WORKER_SHIM_BIN="$core_dir/target/zigbuild/x86_64-unknown-linux-musl/debug/ctx-worker-shim"
 
 CARGO_TARGET_DIR=target cargo test -p ctx-http --test cloud_gateway_gcp_e2e -- --ignored --nocapture --test-threads=1

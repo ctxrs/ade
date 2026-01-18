@@ -161,16 +161,22 @@ impl AzureDriver {
     }
 
     async fn request(&self, method: Method, url: &str, body: Option<Value>) -> Result<Value> {
+        let method_name = method.as_str().to_string();
         let token = self.token().await?;
+        let needs_body = method != Method::GET;
         let mut req = self.http.request(method, url).bearer_auth(token);
         if let Some(body) = body {
             req = req.json(&body);
+        } else if needs_body {
+            req = req
+                .header(reqwest::header::CONTENT_LENGTH, "0")
+                .body(Vec::new());
         }
         let resp = req.send().await.context("azure request")?;
         let status = resp.status();
         let text = resp.text().await.context("azure response text")?;
         if !status.is_success() {
-            anyhow::bail!("azure request failed: {status} {text}");
+            anyhow::bail!("azure request failed ({method_name} {url}): {status} {text}");
         }
         if text.trim().is_empty() {
             return Ok(Value::Null);

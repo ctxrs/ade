@@ -21,6 +21,7 @@ use ctx_http::settings::{
     AzureCloudWorkersSettings, CloudGatewaySettings, CloudWorkersSettings,
     Settings as DaemonSettings,
 };
+use ctx_worker_protocol::{WorkerInfo as GatewayWorkerInfo, WorkerState as GatewayWorkerState};
 
 const REQUIRED_TIER: &str = "3";
 const ASSISTANT_PROMPT: &str = "Reply with the exact text: cloud_gateway_azure_e2e_ok";
@@ -184,6 +185,43 @@ async fn wait_for_gateway_health(gateway: &CloudGatewaySettings) -> Result<()> {
         sleep(Duration::from_secs(2)).await;
     }
     anyhow::bail!("gateway did not become healthy")
+}
+
+async fn wait_for_worker_ready(
+    gateway: &CloudGatewaySettings,
+    worker_id: &str,
+) -> Result<GatewayWorkerInfo> {
+    let base_url = gateway.gateway_url.trim_end_matches('/');
+    let url = format!("{base_url}/workers/{worker_id}");
+
+    let mut builder = reqwest::Client::builder();
+    if let Some(pem) = gateway.gateway_ca_pem.as_deref() {
+        let cert = Certificate::from_pem(pem.as_bytes()).context("gateway CA PEM invalid")?;
+        builder = builder
+            .add_root_certificate(cert)
+            .danger_accept_invalid_hostnames(true);
+    }
+    let client = builder.build().context("building gateway worker client")?;
+
+    let deadline = Instant::now() + Duration::from_secs(300);
+    loop {
+        if let Ok(resp) = client.get(&url).send().await {
+            if resp.status().is_success() {
+                let info: GatewayWorkerInfo = resp.json().await.context("parsing worker info")?;
+                if matches!(info.state, GatewayWorkerState::Running)
+                    && (info.acp_log_dir.as_ref().is_some_and(|v| !v.trim().is_empty())
+                        || info.last_diff_at.is_some())
+                {
+                    return Ok(info);
+                }
+            }
+        }
+
+        if Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for worker readiness");
+        }
+        sleep(Duration::from_secs(2)).await;
+    }
 }
 
 struct AzureArmClient {
@@ -422,7 +460,8 @@ async fn cloud_gateway_azure_e2e() -> Result<()> {
 
     let test_result: Result<()> = async {
         let ctx_bin = env!("CARGO_BIN_EXE_ctx");
-        let child = Command::new(ctx_bin)
+        let mut daemon_cmd = Command::new(ctx_bin);
+        daemon_cmd
             .arg("serve")
             .arg("--bind")
             .arg(format!("127.0.0.1:{port}"))
@@ -430,9 +469,11 @@ async fn cloud_gateway_azure_e2e() -> Result<()> {
             .arg(data_dir.path())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .context("spawning ctx daemon")?;
+            .kill_on_drop(true);
+        if provider_id == "fake" {
+            daemon_cmd.env("CTX_SHOW_FAKE_PROVIDER", "1");
+        }
+        let child = daemon_cmd.spawn().context("spawning ctx daemon")?;
         daemon = Some(child);
 
         wait_for_daemon(&base_url).await?;
@@ -504,7 +545,9 @@ async fn cloud_gateway_azure_e2e() -> Result<()> {
             "worker started track_id={} worker_id={}",
             track_worker.track_id.0, track_worker.worker_id
         );
+        let worker_id = track_worker.worker_id.clone();
         worker = Some(track_worker);
+        let _ = wait_for_worker_ready(&gateway_resp.gateway, &worker_id).await?;
 
         let session: ctx_core::models::Session = send_json(
             client

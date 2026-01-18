@@ -35,7 +35,7 @@ if [ -z "${AZURE_SSH_PUBLIC_KEY:-}" ] && [ -z "${AZURE_SSH_PUBLIC_KEY_PATH:-}" ]
 fi
 
 export AZURE_LOCATION="${AZURE_LOCATION:-eastus}"
-export AZURE_VM_SIZE="${AZURE_VM_SIZE:-Standard_D2s_v3}"
+export AZURE_VM_SIZE="${AZURE_VM_SIZE:-Standard_B2s}"
 export AZURE_IMAGE="${AZURE_IMAGE:-Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest}"
 export AZURE_DISK_SIZE_GB="${AZURE_DISK_SIZE_GB:-100}"
 export AZURE_DISK_SKU="${AZURE_DISK_SKU:-Premium_LRS}"
@@ -43,9 +43,13 @@ export AZURE_USE_PUBLIC_IP="${AZURE_USE_PUBLIC_IP:-true}"
 export AZURE_DELETE_DISK_ON_PAUSE="${AZURE_DELETE_DISK_ON_PAUSE:-false}"
 
 export CTX_E2E_TIER=3
-export CTX_E2E_PROVIDER_ID="${CTX_E2E_PROVIDER_ID:-codex}"
-export CTX_E2E_MODEL_ID="${CTX_E2E_MODEL_ID:-gpt-5.2-codex}"
+export CTX_E2E_PROVIDER_ID="${CTX_E2E_PROVIDER_ID:-fake}"
+export CTX_E2E_MODEL_ID="${CTX_E2E_MODEL_ID:-fake-model}"
 export CTX_E2E_KEEP_RESOURCES="${CTX_E2E_KEEP_RESOURCES:-0}"
+
+if [ "${CTX_E2E_PROVIDER_ID}" = "fake" ]; then
+  export CTX_SHOW_FAKE_PROVIDER=1
+fi
 
 repo_dir="${CTX_E2E_WORKSPACE_ROOT:-/tmp/ctx-e2e-public-repo}"
 if [ ! -d "$repo_dir/.git" ]; then
@@ -56,9 +60,18 @@ export CTX_E2E_WORKSPACE_ROOT="$repo_dir"
 
 cd "$core_dir"
 
-CARGO_TARGET_DIR=target cargo build -p ctx-worker-gateway -p ctx-worker-shim
+if ! command -v cargo-zigbuild >/dev/null 2>&1; then
+  echo "[e2e] missing cargo-zigbuild (install with: cargo install cargo-zigbuild)" >&2
+  exit 1
+fi
+if ! command -v zig >/dev/null 2>&1; then
+  echo "[e2e] missing zig (install with: brew install zig)" >&2
+  exit 1
+fi
 
-export CTX_WORKER_GATEWAY_BIN="$core_dir/target/debug/ctx-worker-gateway"
-export CTX_WORKER_SHIM_BIN="$core_dir/target/debug/ctx-worker-shim"
+CARGO_TARGET_DIR=target/zigbuild cargo zigbuild -p ctx-worker-gateway -p ctx-worker-shim --target x86_64-unknown-linux-musl
+
+export CTX_WORKER_GATEWAY_BIN="$core_dir/target/zigbuild/x86_64-unknown-linux-musl/debug/ctx-worker-gateway"
+export CTX_WORKER_SHIM_BIN="$core_dir/target/zigbuild/x86_64-unknown-linux-musl/debug/ctx-worker-shim"
 
 CARGO_TARGET_DIR=target cargo test -p ctx-http --test cloud_gateway_azure_e2e -- --ignored --nocapture --test-threads=1

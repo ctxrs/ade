@@ -34,7 +34,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 directories = "5"
 futures = "0.3"
-reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls", "gzip", "brotli", "deflate", "multipart"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip", "brotli", "deflate", "multipart"] }
 rcgen = "0.13.2"
 rustls = "0.23"
 serde = { version = "1", features = ["derive"] }
