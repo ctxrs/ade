@@ -3750,7 +3750,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         >
           <div className="wb-archive-confirm-title">Archive conversation?</div>
           <div className="wb-archive-confirm-body">
-            Archiving removes the worktree on disk. You can unarchive to recreate it. Uncommitted changes will be lost.
+            Archiving deletes the worktrees and ctx-managed branches on disk, including subagents. You can unarchive to recreate them, but uncommitted or unmerged changes will be lost.
           </div>
           <label className="wb-archive-confirm-toggle">
             <input
@@ -3758,7 +3758,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               checked={archiveConfirmDontRemind}
               onChange={(e) => setArchiveConfirmDontRemind(e.target.checked)}
             />
-            Don&apos;t remind me again
+            Don&apos;t ask me again
           </label>
           <div className="wb-archive-confirm-actions">
             <button

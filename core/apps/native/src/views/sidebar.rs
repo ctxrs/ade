@@ -1345,7 +1345,7 @@ fn render_archive_confirm(
 
     let checkbox = Checkbox::new("archive-confirm")
         .checked(view.archive_confirm_dont_remind)
-        .label("Don't remind me again")
+        .label("Don't ask me again")
         .text_sm()
         .text_color(ARCHIVE_TOGGLE_TEXT)
         .on_click(move |checked, _window, cx| {
@@ -1426,7 +1426,7 @@ fn render_archive_confirm(
                 .line_height(px(16.0))
                 .text_color(ARCHIVE_CONFIRM_BODY)
                 .child(
-                    "Archiving removes the worktree on disk. You can unarchive to recreate it. Uncommitted changes will be lost.",
+                    "Archiving deletes the worktrees and ctx-managed branches on disk, including subagents. You can unarchive to recreate them, but uncommitted or unmerged changes will be lost.",
                 ),
         )
         .child(checkbox)

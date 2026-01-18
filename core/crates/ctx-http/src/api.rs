@@ -37,8 +37,8 @@ use chrono::{DateTime, Utc};
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::git::{
-    assert_git_repo, git_merge_base, git_status_porcelain, git_status_short, list_tracked_files,
-    list_untracked_files, rev_parse_head,
+    assert_git_repo, delete_branch, git_merge_base, git_status_porcelain, git_status_short,
+    list_tracked_files, list_untracked_files, rev_parse_head,
 };
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_store::store::MobileDeviceUpsert;
@@ -8317,55 +8317,66 @@ async fn archive_task(
         let Some(root) = managed_worktree_root(&state, &workspace, worktree) else {
             continue;
         };
-        if tokio::fs::metadata(&root).await.is_err() {
-            continue;
-        }
-        let is_git = is_git_worktree(&root).await.unwrap_or(false);
-        if is_git {
-            needs_prune = true;
-            if let Err(err) = remove_worktree(&workspace.root_path, &root).await {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree.id.0,
-                    "failed to remove worktree: {err:#}"
-                );
-                errors.push(format!(
-                    "failed to remove worktree at {}: {err:#}",
-                    root.display()
-                ));
-                continue;
-            }
-            // Defensive: ensure the directory is actually gone even if `git worktree remove`
-            // succeeds but leaves the directory behind.
-            if tokio::fs::metadata(&root).await.is_ok() {
-                if let Err(err) = tokio::fs::remove_dir_all(&root)
-                    .await
-                    .with_context(|| format!("removing worktree dir at {}", root.display()))
-                {
+        let branch = worktree.git_branch.as_deref();
+        let root_exists = tokio::fs::metadata(&root).await.is_ok();
+        if root_exists {
+            let is_git = is_git_worktree(&root).await.unwrap_or(false);
+            if is_git {
+                needs_prune = true;
+                if let Err(err) = remove_worktree(&workspace.root_path, &root).await {
                     tracing::warn!(
                         task_id = %task_id.0,
                         worktree_id = %worktree.id.0,
-                        "failed to remove worktree dir: {err:#}"
+                        "failed to remove worktree: {err:#}"
                     );
                     errors.push(format!(
-                        "failed to remove worktree dir at {}: {err:#}",
+                        "failed to remove worktree at {}: {err:#}",
                         root.display()
                     ));
+                } else if tokio::fs::metadata(&root).await.is_ok() {
+                    // Defensive: ensure the directory is actually gone even if `git worktree remove`
+                    // succeeds but leaves the directory behind.
+                    if let Err(err) = tokio::fs::remove_dir_all(&root)
+                        .await
+                        .with_context(|| format!("removing worktree dir at {}", root.display()))
+                    {
+                        tracing::warn!(
+                            task_id = %task_id.0,
+                            worktree_id = %worktree.id.0,
+                            "failed to remove worktree dir: {err:#}"
+                        );
+                        errors.push(format!(
+                            "failed to remove worktree dir at {}: {err:#}",
+                            root.display()
+                        ));
+                    }
                 }
+            } else if let Err(err) = tokio::fs::remove_dir_all(&root)
+                .await
+                .with_context(|| format!("removing non-git worktree dir at {}", root.display()))
+            {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    "failed to remove worktree dir: {err:#}"
+                );
+                errors.push(format!(
+                    "failed to remove worktree dir at {}: {err:#}",
+                    root.display()
+                ));
             }
-        } else if let Err(err) = tokio::fs::remove_dir_all(&root)
-            .await
-            .with_context(|| format!("removing non-git worktree dir at {}", root.display()))
-        {
-            tracing::warn!(
-                task_id = %task_id.0,
-                worktree_id = %worktree.id.0,
-                "failed to remove worktree dir: {err:#}"
-            );
-            errors.push(format!(
-                "failed to remove worktree dir at {}: {err:#}",
-                root.display()
-            ));
+        } else if branch.is_some() {
+            needs_prune = true;
+        }
+        if let Some(branch) = branch {
+            if let Err(err) = delete_branch(&workspace.root_path, branch).await {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    branch = branch,
+                    "failed to delete worktree branch: {err:#}"
+                );
+            }
         }
     }
     if needs_prune {

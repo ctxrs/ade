@@ -193,9 +193,6 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
     }
 
     for branch in &managed_branches {
-        if branch_exists(repo.path(), branch).await {
-            run_git(repo.path(), &["branch", "-D", branch]).await;
-        }
         assert!(!branch_exists(repo.path(), branch).await);
     }
 
