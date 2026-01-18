@@ -15,7 +15,7 @@ use ctx_core::models::{Artifact, SessionEvent, SessionEventType};
 use ctx_client;
 use serde::{Deserialize, Serialize};
 
-use super::ShellView;
+use super::{RightPaneMode, ShellView};
 use super::super::models::{
     is_absolute_path, is_diff_artifact, is_image_artifact, is_text_artifact, is_video_artifact,
 };
@@ -462,7 +462,7 @@ impl ShellView {
         } else if !self.artifacts.is_empty() {
             self.selected_artifact = Some(0);
         }
-        if self.show_artifacts_pane {
+        if matches!(self.right_pane, Some(RightPaneMode::Artifacts)) {
             self.load_artifact_preview(cx);
         } else {
             self.artifact_preview = ArtifactPreviewState::None;
