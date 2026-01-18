@@ -159,7 +159,7 @@
 }
 
 .wb-sidebar-section {
-  padding: 10px 12px;
+  padding: 10px 6px;
 }
 
 .wb-sidebar-grow {
@@ -199,6 +199,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding: 0 6px;
 }
 
 .wb-section-header-archived {
