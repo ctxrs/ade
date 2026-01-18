@@ -412,7 +412,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
   const newSession = variant === "newSession" ? (props as NewSessionProps) : null;
   const verbosity = props.verbosity ?? "default";
-  const canAdjustVerbosity = typeof props.onSetVerbosity === "function";
+  const canAdjustVerbosity = variant === "newSession" && typeof props.onSetVerbosity === "function";
   const contextWindow =
     variant === "activeSession" ? (props as ActiveSessionProps).contextWindow ?? null : null;
   const contextWindowDisplay = useMemo(() => {
@@ -1483,37 +1483,53 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         <div className="wb-switcher-row">
           {/* Harness */}
           <div className="wb-switcher-wrap">
-            <button
-              type="button"
-              className="wb-switcher wb-menu-trigger wb-switcher-harness"
-              ref={harnessTriggerRef}
-              onClick={() => {
-                if (variant !== "newSession") return;
-                setOpenMenu((v) => (v === "harness" ? null : "harness"));
-                setHarnessSearch("");
-                setExpandedHarnessId(null);
-              }}
-              aria-haspopup={variant === "newSession" ? "menu" : undefined}
-              aria-expanded={openMenu === "harness"}
-              aria-disabled={variant !== "newSession" ? true : undefined}
-              aria-label={harnessControl.label || "Harness"}
-              title="Harness"
-            >
-              {harnessControl.logoSrc ? (
-                <img
-                  className={`wb-switcher-logo ${harnessControl.invert ? "wb-invert" : ""}`}
-                  src={harnessControl.logoSrc}
-                  alt=""
-                />
-              ) : (
-                <span className="wb-switcher-logo-fallback" />
-              )}
-              {variant === "newSession" && harnessControl.label && (
-                <span className="wb-switcher-label">{harnessControl.label}</span>
-              )}
-              {variant === "newSession" && <ChevronDown size={14} />}
-            </button>
-            {openMenu === "harness" && harnessMenu}
+            {variant === "newSession" ? (
+              <button
+                type="button"
+                className="wb-switcher wb-menu-trigger wb-switcher-harness"
+                ref={harnessTriggerRef}
+                onClick={() => {
+                  if (variant !== "newSession") return;
+                  setOpenMenu((v) => (v === "harness" ? null : "harness"));
+                  setHarnessSearch("");
+                  setExpandedHarnessId(null);
+                }}
+                aria-haspopup={variant === "newSession" ? "menu" : undefined}
+                aria-expanded={openMenu === "harness"}
+                aria-label={harnessControl.label || "Harness"}
+                title="Harness"
+              >
+                {harnessControl.logoSrc ? (
+                  <img
+                    className={`wb-switcher-logo ${harnessControl.invert ? "wb-invert" : ""}`}
+                    src={harnessControl.logoSrc}
+                    alt=""
+                  />
+                ) : (
+                  <span className="wb-switcher-logo-fallback" />
+                )}
+                {harnessControl.label && <span className="wb-switcher-label">{harnessControl.label}</span>}
+                <ChevronDown size={14} />
+              </button>
+            ) : (
+              <div
+                className="wb-switcher wb-switcher-harness"
+                role="img"
+                aria-label={harnessControl.label || "Harness"}
+                title="Harness"
+              >
+                {harnessControl.logoSrc ? (
+                  <img
+                    className={`wb-switcher-logo ${harnessControl.invert ? "wb-invert" : ""}`}
+                    src={harnessControl.logoSrc}
+                    alt=""
+                  />
+                ) : (
+                  <span className="wb-switcher-logo-fallback" />
+                )}
+              </div>
+            )}
+            {variant === "newSession" && openMenu === "harness" && harnessMenu}
           </div>
 
           {/* Model */}
