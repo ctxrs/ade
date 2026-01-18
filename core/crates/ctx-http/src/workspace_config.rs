@@ -134,8 +134,6 @@ struct WorkspaceMergeQueueConfig {
     #[serde(default)]
     verify_commands: Option<Vec<String>>,
     #[serde(default)]
-    halt_on_fail: Option<bool>,
-    #[serde(default)]
     push_on_success: Option<bool>,
     #[serde(default)]
     push_remote: Option<String>,
@@ -149,7 +147,6 @@ pub struct MergeQueueConfig {
     pub enabled: bool,
     pub target_branch: String,
     pub verify_commands: Vec<String>,
-    pub halt_on_fail: bool,
     pub push_on_success: bool,
     pub push_remote: String,
     pub push_branch: String,
@@ -162,7 +159,6 @@ impl MergeQueueConfig {
             enabled: false,
             target_branch: "main".to_string(),
             verify_commands: Vec::new(),
-            halt_on_fail: true,
             push_on_success: false,
             push_remote: "origin".to_string(),
             push_branch: "main".to_string(),
@@ -246,9 +242,6 @@ pub async fn load_merge_queue_config(root: &Path) -> Result<MergeQueueConfig> {
         if !trimmed.is_empty() {
             cfg.verify_commands = trimmed;
         }
-    }
-    if let Some(halt_on_fail) = configured.halt_on_fail {
-        cfg.halt_on_fail = halt_on_fail;
     }
     if let Some(push_on_success) = configured.push_on_success {
         cfg.push_on_success = push_on_success;

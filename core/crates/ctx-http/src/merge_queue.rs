@@ -41,17 +41,6 @@ pub async fn submit_merge_queue_entry(
     if !config.enabled {
         bail!("merge queue is disabled for this workspace");
     }
-    if config.halt_on_fail
-        && state
-            .store
-            .has_merge_queue_blocking_failure(workspace.id)
-            .await?
-    {
-        bail!(
-            "merge queue is blocked by a previous failure; resolve or retry it before submitting"
-        );
-    }
-
     let target_branch = params
         .target_branch
         .as_deref()
@@ -193,14 +182,6 @@ async fn run_next_entry(state: &Arc<AppState>) -> Result<bool> {
         };
         let cfg = load_merge_queue_config(Path::new(&workspace.root_path)).await?;
         if !cfg.enabled {
-            continue;
-        }
-        if cfg.halt_on_fail
-            && state
-                .store
-                .has_merge_queue_blocking_failure(entry.workspace_id)
-                .await?
-        {
             continue;
         }
         let now = Utc::now();
