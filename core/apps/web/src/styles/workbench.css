@@ -368,11 +368,20 @@
   border-radius: 6px;
 }
 
+.wb-task-status-slot {
+  width: 16px;
+  height: 16px;
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+}
+
 .wb-task-status-dot {
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  margin-left: 8px;
 }
 
 .wb-task-status-dot-unread {
@@ -488,7 +497,6 @@
   border-top-color: rgba(78, 163, 255, 0.90);
   animation: wb-spin 800ms linear infinite;
   transition: opacity 120ms ease;
-  margin-left: 8px;
 }
 
 .wb-task-spinner-archive {

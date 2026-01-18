@@ -4,6 +4,10 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use uuid::Uuid;
+
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Parser, Debug)]
 #[command(name = "ctx-mcp")]
@@ -19,6 +23,359 @@ fn ctx_env(name: &str) -> std::result::Result<String, std::env::VarError> {
 
 fn ctx_env_opt(name: &str) -> Option<String> {
     ctx_env(name).ok()
+}
+
+#[derive(Default)]
+struct SubagentRefMap {
+    by_subagent: HashMap<String, String>,
+    by_session: HashMap<String, String>,
+}
+
+impl SubagentRefMap {
+    fn subagent_id_for_session(&mut self, session_id: &str) -> String {
+        if let Some(existing) = self.by_session.get(session_id) {
+            return existing.clone();
+        }
+        let subagent_id = format!("subagent-{}", Uuid::new_v4());
+        self.by_session
+            .insert(session_id.to_string(), subagent_id.clone());
+        self.by_subagent
+            .insert(subagent_id.clone(), session_id.to_string());
+        subagent_id
+    }
+
+    fn session_id_for_subagent(&self, subagent_id: &str) -> Option<String> {
+        self.by_subagent.get(subagent_id).cloned()
+    }
+}
+
+static SUBAGENT_REFS: OnceLock<Mutex<SubagentRefMap>> = OnceLock::new();
+
+fn subagent_refs() -> &'static Mutex<SubagentRefMap> {
+    SUBAGENT_REFS.get_or_init(|| Mutex::new(SubagentRefMap::default()))
+}
+
+fn subagent_id_for_session(session_id: &str) -> String {
+    let mut map = subagent_refs().lock().expect("subagent ref map poisoned");
+    map.subagent_id_for_session(session_id)
+}
+
+fn session_id_for_subagent(subagent_id: &str) -> Option<String> {
+    let map = subagent_refs().lock().expect("subagent ref map poisoned");
+    map.session_id_for_subagent(subagent_id)
+}
+
+#[derive(Default)]
+struct SubagentGroupRefMap {
+    by_group: HashMap<String, String>,
+    by_invocation: HashMap<String, String>,
+}
+
+impl SubagentGroupRefMap {
+    fn subagent_group_id_for_invocation(&mut self, invocation_id: &str) -> String {
+        if let Some(existing) = self.by_invocation.get(invocation_id) {
+            return existing.clone();
+        }
+        let group_id = format!("subagent-group-{}", Uuid::new_v4());
+        self.by_invocation
+            .insert(invocation_id.to_string(), group_id.clone());
+        self.by_group
+            .insert(group_id.clone(), invocation_id.to_string());
+        group_id
+    }
+
+    fn invocation_id_for_subagent_group(&self, subagent_group_id: &str) -> Option<String> {
+        self.by_group.get(subagent_group_id).cloned()
+    }
+}
+
+static SUBAGENT_GROUP_REFS: OnceLock<Mutex<SubagentGroupRefMap>> = OnceLock::new();
+
+fn subagent_group_refs() -> &'static Mutex<SubagentGroupRefMap> {
+    SUBAGENT_GROUP_REFS.get_or_init(|| Mutex::new(SubagentGroupRefMap::default()))
+}
+
+fn subagent_group_id_for_invocation(invocation_id: &str) -> String {
+    let mut map = subagent_group_refs()
+        .lock()
+        .expect("subagent group ref map poisoned");
+    map.subagent_group_id_for_invocation(invocation_id)
+}
+
+fn invocation_id_for_subagent_group(subagent_group_id: &str) -> Option<String> {
+    let map = subagent_group_refs()
+        .lock()
+        .expect("subagent group ref map poisoned");
+    map.invocation_id_for_subagent_group(subagent_group_id)
+}
+
+#[derive(Default)]
+struct EditPlanRefMap {
+    by_edit_plan: HashMap<String, String>,
+    by_plan: HashMap<String, String>,
+}
+
+impl EditPlanRefMap {
+    fn edit_plan_id_for_internal(&mut self, plan_id: &str) -> String {
+        if let Some(existing) = self.by_plan.get(plan_id) {
+            return existing.clone();
+        }
+        let edit_plan_id = format!("edit-plan-{}", Uuid::new_v4());
+        self.by_plan
+            .insert(plan_id.to_string(), edit_plan_id.clone());
+        self.by_edit_plan
+            .insert(edit_plan_id.clone(), plan_id.to_string());
+        edit_plan_id
+    }
+
+    fn internal_plan_id_for_edit_plan(&self, edit_plan_id: &str) -> Option<String> {
+        self.by_edit_plan.get(edit_plan_id).cloned()
+    }
+}
+
+static EDIT_PLAN_REFS: OnceLock<Mutex<EditPlanRefMap>> = OnceLock::new();
+
+fn edit_plan_refs() -> &'static Mutex<EditPlanRefMap> {
+    EDIT_PLAN_REFS.get_or_init(|| Mutex::new(EditPlanRefMap::default()))
+}
+
+fn edit_plan_id_for_internal(plan_id: &str) -> String {
+    let mut map = edit_plan_refs().lock().expect("edit plan ref map poisoned");
+    map.edit_plan_id_for_internal(plan_id)
+}
+
+fn internal_plan_id_for_edit_plan(edit_plan_id: &str) -> Option<String> {
+    let map = edit_plan_refs().lock().expect("edit plan ref map poisoned");
+    map.internal_plan_id_for_edit_plan(edit_plan_id)
+}
+
+#[derive(Default)]
+struct InteractiveSessionRefMap {
+    by_session: HashMap<String, String>,
+    by_ref: HashMap<String, String>,
+}
+
+impl InteractiveSessionRefMap {
+    fn session_ref_for_session_id(&mut self, session_id: &str) -> String {
+        if let Some(existing) = self.by_session.get(session_id) {
+            return existing.clone();
+        }
+        let session_ref = format!("session-ref-{}", Uuid::new_v4());
+        self.by_session
+            .insert(session_id.to_string(), session_ref.clone());
+        self.by_ref
+            .insert(session_ref.clone(), session_id.to_string());
+        session_ref
+    }
+
+    fn session_id_for_ref(&self, session_ref: &str) -> Option<String> {
+        self.by_ref.get(session_ref).cloned()
+    }
+}
+
+static INTERACTIVE_SESSION_REFS: OnceLock<Mutex<InteractiveSessionRefMap>> = OnceLock::new();
+
+fn interactive_session_refs() -> &'static Mutex<InteractiveSessionRefMap> {
+    INTERACTIVE_SESSION_REFS.get_or_init(|| Mutex::new(InteractiveSessionRefMap::default()))
+}
+
+fn session_ref_for_session_id(session_id: &str) -> String {
+    let mut map = interactive_session_refs()
+        .lock()
+        .expect("interactive session ref map poisoned");
+    map.session_ref_for_session_id(session_id)
+}
+
+fn session_id_for_ref(session_ref: &str) -> Option<String> {
+    let map = interactive_session_refs()
+        .lock()
+        .expect("interactive session ref map poisoned");
+    map.session_id_for_ref(session_ref)
+}
+
+const INTERNAL_KEYS: [&str; 16] = [
+    "child_session_id",
+    "ctx_session_id",
+    "host_id",
+    "invocation_id",
+    "message_id",
+    "parent_session_id",
+    "parent_turn_id",
+    "plan_id",
+    "provider_session_ref",
+    "run_id",
+    "session_id",
+    "task_id",
+    "tool_call_id",
+    "turn_id",
+    "workspace_id",
+    "worktree_id",
+];
+
+fn scrub_internal_fields(value: &mut Value) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                scrub_internal_fields(item);
+            }
+        }
+        Value::Object(obj) => {
+            for key in INTERNAL_KEYS {
+                obj.remove(key);
+            }
+            for item in obj.values_mut() {
+                scrub_internal_fields(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn map_subagent_result(value: &mut Value) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    let session_id = obj
+        .remove("session_id")
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+    if let Some(session_id) = session_id {
+        let subagent_id = subagent_id_for_session(&session_id);
+        obj.insert("subagent_id".to_string(), Value::String(subagent_id));
+    }
+    if let Some(provider_id) = obj.remove("provider_id") {
+        obj.insert("provider".to_string(), provider_id);
+    }
+    if let Some(model_id) = obj.remove("model_id") {
+        obj.insert("model".to_string(), model_id);
+    }
+}
+
+fn map_subagent_results(value: &mut Value) {
+    let Some(items) = value.as_array_mut() else {
+        return;
+    };
+    for item in items {
+        map_subagent_result(item);
+    }
+}
+
+fn map_subagent_invocation_summary(invocation: &Value) -> Option<Value> {
+    let obj = invocation.as_object()?;
+    let id = obj.get("id")?.as_str()?;
+    let group_id = subagent_group_id_for_invocation(id);
+    let status = obj.get("status").cloned().unwrap_or(Value::Null);
+    let created_at = obj.get("created_at").cloned().unwrap_or(Value::Null);
+    let updated_at = obj.get("updated_at").cloned().unwrap_or(Value::Null);
+    let count = obj
+        .get("children")
+        .and_then(|v| v.as_array())
+        .map(|items| items.len())
+        .unwrap_or(0);
+    Some(json!({
+        "subagent_group_id": group_id,
+        "status": status,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "subagent_count": count,
+    }))
+}
+
+fn map_subagent_invocation_detail(invocation: &Value) -> Option<Value> {
+    let obj = invocation.as_object()?;
+    let id = obj.get("id")?.as_str()?;
+    let group_id = subagent_group_id_for_invocation(id);
+    let status = obj.get("status").cloned().unwrap_or(Value::Null);
+    let created_at = obj.get("created_at").cloned().unwrap_or(Value::Null);
+    let updated_at = obj.get("updated_at").cloned().unwrap_or(Value::Null);
+    let mut subagents = Vec::new();
+    if let Some(children) = obj.get("children").and_then(|v| v.as_array()) {
+        for child in children {
+            let Some(child_obj) = child.as_object() else {
+                continue;
+            };
+            let session_id = child_obj.get("child_session_id").and_then(|v| v.as_str());
+            let mut mapped = serde_json::Map::new();
+            if let Some(session_id) = session_id {
+                let subagent_id = subagent_id_for_session(session_id);
+                mapped.insert("subagent_id".to_string(), Value::String(subagent_id));
+            }
+            if let Some(status) = child_obj.get("status") {
+                mapped.insert("status".to_string(), status.clone());
+            }
+            if let Some(label) = child_obj.get("label") {
+                mapped.insert("label".to_string(), label.clone());
+            }
+            if let Some(harness) = child_obj.get("harness") {
+                mapped.insert("provider".to_string(), harness.clone());
+            }
+            if let Some(model) = child_obj.get("model") {
+                mapped.insert("model".to_string(), model.clone());
+            }
+            if !mapped.is_empty() {
+                subagents.push(Value::Object(mapped));
+            }
+        }
+    }
+    Some(json!({
+        "subagent_group_id": group_id,
+        "status": status,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "subagents": subagents,
+    }))
+}
+
+fn map_edit_plan_summary(value: &mut Value) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    let plan_id = obj.remove("id").or_else(|| obj.remove("plan_id"));
+    let Some(plan_id) = plan_id else {
+        return;
+    };
+    if let Some(id) = plan_id.as_str() {
+        let edit_plan_id = edit_plan_id_for_internal(id);
+        obj.insert("edit_plan_id".to_string(), Value::String(edit_plan_id));
+    } else {
+        obj.insert("edit_plan_id".to_string(), plan_id);
+    }
+}
+
+fn map_edit_plan_summaries(value: &mut Value) {
+    if let Some(items) = value.as_array_mut() {
+        for item in items {
+            map_edit_plan_summary(item);
+        }
+        return;
+    }
+    map_edit_plan_summary(value);
+}
+
+fn map_interactive_session(value: &mut Value) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    if let Some(session_id) = obj.remove("id") {
+        if let Some(session_id) = session_id.as_str() {
+            let session_ref = session_ref_for_session_id(session_id);
+            obj.insert("session_ref".to_string(), Value::String(session_ref));
+        } else {
+            obj.insert("session_ref".to_string(), session_id);
+        }
+    }
+    obj.remove("ctx_session_id");
+    obj.remove("workspace_id");
+    obj.remove("worktree_id");
+}
+
+fn map_interactive_sessions(value: &mut Value) {
+    if let Some(items) = value.as_array_mut() {
+        for item in items {
+            map_interactive_session(item);
+        }
+        return;
+    }
+    map_interactive_session(value);
 }
 
 #[tokio::main]
@@ -105,8 +462,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
-                                    "worktree_id": { "type": "string", "description": "Optional ctx worktree id (overrides session worktree when set)." },
                                     "target_branch": { "type": "string" },
                                     "message": { "type": "string" }
                                 },
@@ -120,7 +475,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "response_mode": { "type": "string", "enum": ["enqueue", "await"], "description": "Optional response mode (default enqueue)." },
                                     "agents": {
                                         "type": "array",
@@ -145,27 +499,23 @@ async fn main() -> Result<()> {
                         {
                             "name": "agent_reply",
                             "title": "Reply to Subagent",
-                            "description": "Sends a prompt to an existing subagent session and waits for its response.",
+                            "description": "Sends a prompt to an existing subagent and waits for its response.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Subagent session id." },
+                                    "subagent_id": { "type": "string", "description": "Subagent id returned by agent_init." },
                                     "prompt": { "type": "string" }
                                 },
-                                "required": ["session_id", "prompt"],
+                                "required": ["subagent_id", "prompt"],
                                 "additionalProperties": false
                             }
                         },
                         {
                             "name": "subagent_invocations_list",
                             "title": "List Subagent Invocations",
-                            "description": "Lists subagent invocations for a session.",
+                            "description": "Lists subagent invocations for the current session.",
                             "inputSchema": {
                                 "type": "object",
-                                "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
-                                    "turn_id": { "type": "string", "description": "Optional turn id to filter by." }
-                                },
                                 "additionalProperties": false
                             }
                         },
@@ -176,9 +526,9 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "invocation_id": { "type": "string" }
+                                    "subagent_group_id": { "type": "string", "description": "Subagent group id returned by agent_init." }
                                 },
-                                "required": ["invocation_id"],
+                                "required": ["subagent_group_id"],
                                 "additionalProperties": false
                             }
                         },
@@ -189,10 +539,9 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
-                                    "invocation_id": { "type": "string" }
+                                    "subagent_group_id": { "type": "string", "description": "Subagent group id returned by agent_init." }
                                 },
-                                "required": ["invocation_id"],
+                                "required": ["subagent_group_id"],
                                 "additionalProperties": false
                             }
                         },
@@ -266,9 +615,8 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string", "description": "File path (relative to session worktree, or absolute)." },
-                                    "root_path": { "type": "string", "description": "Optional explicit root path when no session_id is available." }
+                                    "root_path": { "type": "string", "description": "Optional explicit root path when targeting a specific folder." }
                                 },
                                 "required": ["path"],
                                 "additionalProperties": false
@@ -281,7 +629,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -298,7 +645,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -315,7 +661,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -332,7 +677,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -350,7 +694,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -367,7 +710,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -384,7 +726,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "line": { "type": "integer", "minimum": 0 },
@@ -401,7 +742,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -417,7 +757,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -433,7 +772,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "start_line": { "type": "integer", "minimum": 0 },
@@ -452,7 +790,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "line": { "type": "integer", "minimum": 0 },
@@ -469,7 +806,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "positions": {
@@ -496,7 +832,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "line": { "type": "integer", "minimum": 0 },
@@ -513,7 +848,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -529,7 +863,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -545,7 +878,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" }
                                     },
@@ -560,7 +892,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -576,7 +907,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "line": { "type": "integer", "minimum": 0 },
@@ -593,7 +923,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" }
                                     },
@@ -608,7 +937,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -624,7 +952,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" }
                                 },
@@ -639,7 +966,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "previous_result_id": { "type": "string" }
@@ -655,7 +981,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" }
                                 },
@@ -670,7 +995,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
@@ -687,7 +1011,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "line": { "type": "integer", "minimum": 0 },
@@ -704,7 +1027,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -720,7 +1042,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "item": { "type": "object" }
@@ -736,7 +1057,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "diagnostic": { "type": "object" }
                                     },
@@ -751,7 +1071,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "root_path": { "type": "string" },
                                         "command": { "type": "string" },
@@ -768,7 +1087,6 @@ async fn main() -> Result<()> {
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
-                                        "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                         "path": { "type": "string" },
                                         "command": { "type": "string" },
                                         "arguments": { "type": "array" }
@@ -784,7 +1102,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" }
                                 },
@@ -799,7 +1116,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "root_path": { "type": "string" },
                                     "query": { "type": "string" }
                                 },
@@ -814,7 +1130,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "root_path": { "type": "string" },
                                     "item": { "type": "object" }
                                 },
@@ -829,7 +1144,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "root_path": { "type": "string" },
                                     "start_line": { "type": "integer", "minimum": 0 },
@@ -848,7 +1162,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" },
                                     "line": { "type": "integer", "minimum": 0 },
                                     "character": { "type": "integer", "minimum": 0 },
@@ -865,7 +1178,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" }
                                 },
                                 "required": ["path"],
@@ -879,7 +1191,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "path": { "type": "string" }
                                 },
                                 "required": ["path"],
@@ -893,7 +1204,6 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
                                     "action": { "type": "object" }
                                 },
                                 "required": ["action"],
@@ -906,10 +1216,6 @@ async fn main() -> Result<()> {
                             "description": "Lists pending edit plans for a worktree (or for the current session's worktree).",
                             "inputSchema": {
                                 "type": "object",
-                                "properties": {
-                                    "worktree_id": { "type": "string" },
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." }
-                                },
                                 "additionalProperties": false
                             }
                         },
@@ -920,9 +1226,9 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "plan_id": { "type": "string" }
+                                    "edit_plan_id": { "type": "string" }
                                 },
-                                "required": ["plan_id"],
+                                "required": ["edit_plan_id"],
                                 "additionalProperties": false
                             }
                         },
@@ -933,11 +1239,11 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "plan_id": { "type": "string" },
+                                    "edit_plan_id": { "type": "string" },
                                     "action": { "type": "string", "enum": ["accept", "reject"] },
                                     "patch": { "type": "string" }
                                 },
-                                "required": ["plan_id", "action"],
+                                "required": ["edit_plan_id", "action"],
                                 "additionalProperties": false
                             }
                         },
@@ -948,9 +1254,9 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "plan_id": { "type": "string" }
+                                    "edit_plan_id": { "type": "string" }
                                 },
-                                "required": ["plan_id"],
+                                "required": ["edit_plan_id"],
                                 "additionalProperties": false
                             }
                         },
@@ -981,8 +1287,6 @@ async fn main() -> Result<()> {
                                         "additionalProperties": false
                                     },
                                     "fps": { "type": "integer", "minimum": 1 },
-                                    "session_id": { "type": "string", "description": "Optional ctx session id (defaults to $CTX_SESSION_ID)." },
-                                    "worktree_id": { "type": "string" }
                                 },
                                 "required": ["kind", "target"],
                                 "additionalProperties": false
@@ -1007,9 +1311,9 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string" }
+                                    "session_ref": { "type": "string" }
                                 },
-                                "required": ["session_id"],
+                                "required": ["session_ref"],
                                 "additionalProperties": false
                             }
                         },
@@ -1020,12 +1324,12 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string" },
+                                    "session_ref": { "type": "string" },
                                     "code": { "type": "string" },
                                     "script_path": { "type": "string" },
                                     "timeout_ms": { "type": "integer", "minimum": 1 }
                                 },
-                                "required": ["session_id"],
+                                "required": ["session_ref"],
                                 "additionalProperties": false
                             }
                         },
@@ -1036,12 +1340,12 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string" },
+                                    "session_ref": { "type": "string" },
                                     "code": { "type": "string" },
                                     "script_path": { "type": "string" },
                                     "timeout_ms": { "type": "integer", "minimum": 1 }
                                 },
-                                "required": ["session_id"],
+                                "required": ["session_ref"],
                                 "additionalProperties": false
                             }
                         },
@@ -1052,9 +1356,9 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "session_id": { "type": "string" }
+                                    "session_ref": { "type": "string" }
                                 },
-                                "required": ["session_id"],
+                                "required": ["session_ref"],
                                 "additionalProperties": false
                             }
                         }
@@ -1152,7 +1456,7 @@ async fn main() -> Result<()> {
                                         id.clone().unwrap(),
                                         -32602,
                                         "Invalid params",
-                                        Some(json!({"missing":"CTX_SESSION_ID"})),
+                                        Some(json!({"missing":"session_context"})),
                                     )
                                 })?;
                                 let items = arguments
@@ -1298,29 +1602,12 @@ async fn main() -> Result<()> {
                                 .get("root_path")
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string());
-                            let session_id = arguments
-                                .get("session_id")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                                .or_else(|| ctx_env_opt("SESSION_ID"));
-
+                            let session_id = ctx_env_opt("SESSION_ID");
                             match lsp_diagnostics(&client, &daemon_url, session_id, root_path, path)
                                 .await
                             {
-                                Ok(val) => ok(
-                                    id.unwrap(),
-                                    json!({
-                                        "content": [{"type":"text","text": serde_json::to_string_pretty(&val).unwrap_or_else(|_| "[]".into())}],
-                                        "isError": false
-                                    }),
-                                ),
-                                Err(e) => ok(
-                                    id.unwrap(),
-                                    json!({
-                                        "content": [{"type":"text","text": format!("error: {e}")}],
-                                        "isError": true
-                                    }),
-                                ),
+                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                                Err(e) => ok(id.unwrap(), tool_err(e)),
                             }
                         }
                     }
@@ -1669,13 +1956,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     "lsp_execute_command_plan" => {
-                        match lsp_execute_command_call(
-                            &client,
-                            &daemon_url,
-                            "/api/lsp/execute_command/plan",
-                            &arguments,
-                        )
-                        .await
+                        match lsp_execute_command_plan_call(&client, &daemon_url, &arguments).await
                         {
                             Ok(val) => ok(id.unwrap(), tool_ok(val)),
                             Err(e) => ok(id.unwrap(), tool_err(e)),
@@ -1827,7 +2108,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn tool_ok(val: Value) -> Value {
+fn tool_ok(mut val: Value) -> Value {
+    scrub_internal_fields(&mut val);
     json!({
         "content": [{"type":"text","text": serde_json::to_string_pretty(&val).unwrap_or_else(|_| "{}".into())}],
         "isError": false
@@ -1900,7 +2182,23 @@ fn tool_call_id_from_params(params: &Value) -> Option<String> {
 }
 
 async fn list_workspaces(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
-    daemon_get_json(client, daemon_url, "/api/workspaces").await
+    let response = daemon_get_json(client, daemon_url, "/api/workspaces").await?;
+    let Some(items) = response.as_array() else {
+        return Ok(response);
+    };
+    let mapped: Vec<Value> = items
+        .iter()
+        .filter_map(|item| {
+            let obj = item.as_object()?;
+            let name = obj.get("name").cloned().unwrap_or(Value::Null);
+            let root_path = obj.get("root_path").cloned().unwrap_or(Value::Null);
+            Some(json!({
+                "name": name,
+                "root_path": root_path,
+            }))
+        })
+        .collect();
+    Ok(Value::Array(mapped))
 }
 
 async fn merge_queue_submit_call(
@@ -1908,15 +2206,8 @@ async fn merge_queue_submit_call(
     daemon_url: &str,
     args: &Value,
 ) -> Result<Value> {
-    let session_id = args
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"));
-    let worktree_id = args
-        .get("worktree_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let session_id =
+        ctx_env_opt("SESSION_ID").context("missing session context for merge queue submit")?;
     let target_branch = args
         .get("target_branch")
         .and_then(|v| v.as_str())
@@ -1927,15 +2218,8 @@ async fn merge_queue_submit_call(
         .map(|v| v.to_string());
 
     let mut body = json!({});
-    if let Some(session_id) = session_id {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("session_id".to_string(), Value::String(session_id));
-        }
-    }
-    if let Some(worktree_id) = worktree_id {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("worktree_id".to_string(), Value::String(worktree_id));
-        }
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("session_id".to_string(), Value::String(session_id));
     }
     if let Some(target_branch) = target_branch {
         if let Some(obj) = body.as_object_mut() {
@@ -1948,7 +2232,12 @@ async fn merge_queue_submit_call(
         }
     }
 
-    daemon_post_json(client, daemon_url, "/api/merge-queue/entries", &body).await
+    let mut response =
+        daemon_post_json(client, daemon_url, "/api/merge-queue/entries", &body).await?;
+    if let Some(obj) = response.as_object_mut() {
+        obj.remove("id");
+    }
+    Ok(response)
 }
 
 async fn agent_init_call(
@@ -1956,12 +2245,7 @@ async fn agent_init_call(
     daemon_url: &str,
     args: &Value,
 ) -> Result<Value> {
-    let session_id = args
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"))
-        .context("missing session_id (set CTX_SESSION_ID)")?;
+    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
     let agents = args
         .get("agents")
         .and_then(|v| v.as_array())
@@ -1990,7 +2274,20 @@ async fn agent_init_call(
             obj.insert("tool_call_id".to_string(), Value::String(tool_call_id));
         }
     }
-    daemon_post_json(client, daemon_url, &path, &body).await
+    let mut response = daemon_post_json(client, daemon_url, &path, &body).await?;
+    if let Some(obj) = response.as_object_mut() {
+        if let Some(invocation_id) = obj
+            .remove("invocation_id")
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+        {
+            let group_id = subagent_group_id_for_invocation(&invocation_id);
+            obj.insert("subagent_group_id".to_string(), Value::String(group_id));
+        }
+        if let Some(results) = obj.get_mut("results") {
+            map_subagent_results(results);
+        }
+    }
+    Ok(response)
 }
 
 async fn agent_reply_call(
@@ -1998,24 +2295,34 @@ async fn agent_reply_call(
     daemon_url: &str,
     args: &Value,
 ) -> Result<Value> {
-    let parent_session_id =
-        ctx_env_opt("SESSION_ID").context("missing CTX_SESSION_ID (parent session id)")?;
-    let session_id = args
-        .get("session_id")
+    let parent_session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
+    let subagent_id = args
+        .get("subagent_id")
         .and_then(|v| v.as_str())
-        .context("missing session_id")?;
+        .context("missing subagent_id")?;
+    let session_id = session_id_for_subagent(subagent_id).context("unknown subagent_id")?;
     let prompt = args
         .get("prompt")
         .and_then(|v| v.as_str())
         .context("missing prompt")?;
     let path = format!("/api/mcp/sessions/{}/agent_reply", parent_session_id);
-    daemon_post_json(
+    let mut response = daemon_post_json(
         client,
         daemon_url,
         &path,
         &json!({ "session_id": session_id, "prompt": prompt }),
     )
-    .await
+    .await?;
+    if let Some(obj) = response.as_object_mut() {
+        if let Some(session_id) = obj
+            .remove("session_id")
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+        {
+            let mapped = subagent_id_for_session(&session_id);
+            obj.insert("subagent_id".to_string(), Value::String(mapped));
+        }
+    }
+    Ok(response)
 }
 
 async fn subagent_invocations_list_call(
@@ -2023,23 +2330,19 @@ async fn subagent_invocations_list_call(
     daemon_url: &str,
     args: &Value,
 ) -> Result<Value> {
-    let session_id = args
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"))
-        .context("missing session_id (set CTX_SESSION_ID)")?;
-    let turn_id = args
-        .get("turn_id")
-        .and_then(|v| v.as_str())
-        .map(|v| v.trim())
-        .filter(|v| !v.is_empty());
-    let mut path = format!("/api/sessions/{}/subagent_invocations", session_id);
-    if let Some(turn_id) = turn_id {
-        let turn_id = urlencoding::encode(turn_id);
-        path.push_str(&format!("?turn_id={turn_id}"));
+    let _ = args;
+    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
+    let path = format!("/api/sessions/{}/subagent_invocations", session_id);
+    let response = daemon_get_json(client, daemon_url, &path).await?;
+    let mut mapped = Vec::new();
+    if let Some(items) = response.as_array() {
+        for item in items {
+            if let Some(value) = map_subagent_invocation_summary(item) {
+                mapped.push(value);
+            }
+        }
     }
-    daemon_get_json(client, daemon_url, &path).await
+    Ok(Value::Array(mapped))
 }
 
 async fn subagent_invocation_get_call(
@@ -2047,13 +2350,16 @@ async fn subagent_invocation_get_call(
     daemon_url: &str,
     args: &Value,
 ) -> Result<Value> {
-    let invocation_id = args
-        .get("invocation_id")
+    let group_id = args
+        .get("subagent_group_id")
         .and_then(|v| v.as_str())
-        .context("missing invocation_id")?;
-    let invocation_id = urlencoding::encode(invocation_id);
+        .context("missing subagent_group_id")?;
+    let invocation_id =
+        invocation_id_for_subagent_group(group_id).context("unknown subagent_group_id")?;
+    let invocation_id = urlencoding::encode(&invocation_id);
     let path = format!("/api/subagent_invocations/{invocation_id}");
-    daemon_get_json(client, daemon_url, &path).await
+    let response = daemon_get_json(client, daemon_url, &path).await?;
+    map_subagent_invocation_detail(&response).context("invalid subagent invocation response")
 }
 
 async fn subagent_wait_call(
@@ -2061,24 +2367,34 @@ async fn subagent_wait_call(
     daemon_url: &str,
     args: &Value,
 ) -> Result<Value> {
-    let session_id = args
-        .get("session_id")
+    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
+    let group_id = args
+        .get("subagent_group_id")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"))
-        .context("missing session_id (set CTX_SESSION_ID)")?;
-    let invocation_id = args
-        .get("invocation_id")
-        .and_then(|v| v.as_str())
-        .context("missing invocation_id")?;
+        .context("missing subagent_group_id")?;
+    let invocation_id =
+        invocation_id_for_subagent_group(group_id).context("unknown subagent_group_id")?;
     let path = format!("/api/mcp/sessions/{}/subagent_wait", session_id);
-    daemon_post_json(
+    let mut response = daemon_post_json(
         client,
         daemon_url,
         &path,
         &json!({ "invocation_id": invocation_id }),
     )
-    .await
+    .await?;
+    if let Some(obj) = response.as_object_mut() {
+        if let Some(invocation_id) = obj
+            .remove("invocation_id")
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+        {
+            let mapped = subagent_group_id_for_invocation(&invocation_id);
+            obj.insert("subagent_group_id".to_string(), Value::String(mapped));
+        }
+        if let Some(results) = obj.get_mut("results") {
+            map_subagent_results(results);
+        }
+    }
+    Ok(response)
 }
 
 async fn set_artifacts(
@@ -2132,6 +2448,9 @@ async fn lsp_diagnostics(
     root_path: Option<String>,
     path: String,
 ) -> Result<Value> {
+    if session_id.is_none() && root_path.is_none() {
+        anyhow::bail!("missing session context");
+    }
     let body = json!({
         "session_id": session_id,
         "root_path": root_path,
@@ -2166,25 +2485,7 @@ async fn lsp_file_call(
     path: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let session_id = arguments
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"));
-    let root_path = arguments
-        .get("root_path")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let file_path = arguments
-        .get("path")
-        .and_then(|v| v.as_str())
-        .context("missing path")?
-        .to_string();
-    let body = json!({
-        "session_id": session_id,
-        "root_path": root_path,
-        "path": file_path,
-    });
+    let body = lsp_file_call_body(arguments)?;
     daemon_post_json(client, daemon_url, path, &body).await
 }
 
@@ -2299,16 +2600,31 @@ async fn lsp_execute_command_call(
     daemon_post_json(client, daemon_url, endpoint, &body).await
 }
 
+async fn lsp_execute_command_plan_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    arguments: &Value,
+) -> Result<Value> {
+    let mut response = lsp_execute_command_call(
+        client,
+        daemon_url,
+        "/api/lsp/execute_command/plan",
+        arguments,
+    )
+    .await?;
+    map_edit_plan_summary(&mut response);
+    Ok(response)
+}
+
 fn lsp_file_call_body(arguments: &Value) -> Result<Value> {
-    let session_id = arguments
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"));
+    let session_id = ctx_env_opt("SESSION_ID");
     let root_path = arguments
         .get("root_path")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    if session_id.is_none() && root_path.is_none() {
+        anyhow::bail!("missing session context");
+    }
     let file_path = arguments
         .get("path")
         .and_then(|v| v.as_str())
@@ -2322,15 +2638,14 @@ fn lsp_file_call_body(arguments: &Value) -> Result<Value> {
 }
 
 fn lsp_workspace_symbols_body(arguments: &Value) -> Result<Value> {
-    let session_id = arguments
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"));
+    let session_id = ctx_env_opt("SESSION_ID");
     let root_path = arguments
         .get("root_path")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    if session_id.is_none() && root_path.is_none() {
+        anyhow::bail!("missing session context");
+    }
     let query = arguments
         .get("query")
         .and_then(|v| v.as_str())
@@ -2344,15 +2659,14 @@ fn lsp_workspace_symbols_body(arguments: &Value) -> Result<Value> {
 }
 
 fn lsp_workspace_symbol_resolve_body(arguments: &Value) -> Result<Value> {
-    let session_id = arguments
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"));
+    let session_id = ctx_env_opt("SESSION_ID");
     let root_path = arguments
         .get("root_path")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    if session_id.is_none() && root_path.is_none() {
+        anyhow::bail!("missing session context");
+    }
     let item = arguments.get("item").cloned().context("missing item")?;
     Ok(json!({
         "session_id": session_id,
@@ -2438,12 +2752,7 @@ async fn lsp_rename_plan_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let session_id = arguments
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"))
-        .context("missing session_id (set CTX_SESSION_ID, or pass session_id)")?;
+    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
     let path = arguments
         .get("path")
         .and_then(|v| v.as_str())
@@ -2469,7 +2778,9 @@ async fn lsp_rename_plan_call(
         "character": character,
         "new_name": new_name
     });
-    daemon_post_json(client, daemon_url, "/api/lsp/rename/plan", &body).await
+    let mut response = daemon_post_json(client, daemon_url, "/api/lsp/rename/plan", &body).await?;
+    map_edit_plan_summary(&mut response);
+    Ok(response)
 }
 
 async fn lsp_format_plan_call(
@@ -2477,12 +2788,7 @@ async fn lsp_format_plan_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let session_id = arguments
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"))
-        .context("missing session_id (set CTX_SESSION_ID, or pass session_id)")?;
+    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
     let path = arguments
         .get("path")
         .and_then(|v| v.as_str())
@@ -2492,7 +2798,9 @@ async fn lsp_format_plan_call(
         "session_id": session_id,
         "path": path
     });
-    daemon_post_json(client, daemon_url, "/api/lsp/format/plan", &body).await
+    let mut response = daemon_post_json(client, daemon_url, "/api/lsp/format/plan", &body).await?;
+    map_edit_plan_summary(&mut response);
+    Ok(response)
 }
 
 async fn lsp_organize_imports_plan_call(
@@ -2500,12 +2808,7 @@ async fn lsp_organize_imports_plan_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let session_id = arguments
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"))
-        .context("missing session_id (set CTX_SESSION_ID, or pass session_id)")?;
+    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
     let path = arguments
         .get("path")
         .and_then(|v| v.as_str())
@@ -2515,7 +2818,10 @@ async fn lsp_organize_imports_plan_call(
         "session_id": session_id,
         "path": path
     });
-    daemon_post_json(client, daemon_url, "/api/lsp/organize_imports/plan", &body).await
+    let mut response =
+        daemon_post_json(client, daemon_url, "/api/lsp/organize_imports/plan", &body).await?;
+    map_edit_plan_summary(&mut response);
+    Ok(response)
 }
 
 async fn lsp_code_action_plan_call(
@@ -2523,18 +2829,16 @@ async fn lsp_code_action_plan_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let session_id = arguments
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"))
-        .context("missing session_id (set CTX_SESSION_ID, or pass session_id)")?;
+    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
     let action = arguments.get("action").cloned().context("missing action")?;
     let body = json!({
         "session_id": session_id,
         "action": action
     });
-    daemon_post_json(client, daemon_url, "/api/lsp/code_actions/plan", &body).await
+    let mut response =
+        daemon_post_json(client, daemon_url, "/api/lsp/code_actions/plan", &body).await?;
+    map_edit_plan_summary(&mut response);
+    Ok(response)
 }
 
 async fn lsp_code_actions_by_diagnostic_plan_call(
@@ -2542,12 +2846,7 @@ async fn lsp_code_actions_by_diagnostic_plan_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let session_id = arguments
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"))
-        .context("missing session_id")?;
+    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
     let path = arguments
         .get("path")
         .and_then(|v| v.as_str())
@@ -2562,13 +2861,15 @@ async fn lsp_code_actions_by_diagnostic_plan_call(
         "path": path,
         "diagnostic": diagnostic
     });
-    daemon_post_json(
+    let mut response = daemon_post_json(
         client,
         daemon_url,
         "/api/lsp/code_actions/by_diagnostic/plan",
         &body,
     )
-    .await
+    .await?;
+    map_edit_plan_summaries(&mut response);
+    Ok(response)
 }
 
 async fn list_edit_plans_call(
@@ -2576,48 +2877,37 @@ async fn list_edit_plans_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let worktree_id = arguments
-        .get("worktree_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let worktree_id = if let Some(wid) = worktree_id {
-        wid
-    } else {
-        let session_id = arguments
-            .get("session_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| ctx_env_opt("SESSION_ID"))
-            .context("missing worktree_id and session_id")?;
-        let snapshot = daemon_get_json(
-            client,
-            daemon_url,
-            &format!(
-                "/api/sessions/{}/snapshot?limit=1&include_events=0",
-                session_id
-            ),
-        )
-        .await?;
-        let wid = snapshot
-            .get("summary")
-            .and_then(|v| v.get("session"))
-            .and_then(|v| v.get("worktree_id"))
-            .or_else(|| {
-                snapshot
-                    .get("head")
-                    .and_then(|v| v.get("session"))
-                    .and_then(|v| v.get("worktree_id"))
-            })
-            .and_then(|v| v.as_str().or_else(|| v.get("0").and_then(|x| x.as_str())))
-            .context("session missing worktree_id")?;
-        wid.to_string()
-    };
-    daemon_get_json(
+    let _ = arguments;
+    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
+    let snapshot = daemon_get_json(
+        client,
+        daemon_url,
+        &format!(
+            "/api/sessions/{}/snapshot?limit=1&include_events=0",
+            session_id
+        ),
+    )
+    .await?;
+    let worktree_id = snapshot
+        .get("summary")
+        .and_then(|v| v.get("session"))
+        .and_then(|v| v.get("worktree_id"))
+        .or_else(|| {
+            snapshot
+                .get("head")
+                .and_then(|v| v.get("session"))
+                .and_then(|v| v.get("worktree_id"))
+        })
+        .and_then(|v| v.as_str().or_else(|| v.get("0").and_then(|x| x.as_str())))
+        .context("missing worktree context")?;
+    let mut response = daemon_get_json(
         client,
         daemon_url,
         &format!("/api/worktrees/{}/edit_plans", worktree_id),
     )
-    .await
+    .await?;
+    map_edit_plan_summaries(&mut response);
+    Ok(response)
 }
 
 async fn get_edit_plan_call(
@@ -2625,11 +2915,15 @@ async fn get_edit_plan_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let plan_id = arguments
-        .get("plan_id")
+    let edit_plan_id = arguments
+        .get("edit_plan_id")
         .and_then(|v| v.as_str())
-        .context("missing plan_id")?;
-    daemon_get_json(client, daemon_url, &format!("/api/edit_plans/{}", plan_id)).await
+        .context("missing edit_plan_id")?;
+    let plan_id = internal_plan_id_for_edit_plan(edit_plan_id).context("unknown edit_plan_id")?;
+    let mut response =
+        daemon_get_json(client, daemon_url, &format!("/api/edit_plans/{}", plan_id)).await?;
+    map_edit_plan_summary(&mut response);
+    Ok(response)
 }
 
 async fn apply_edit_plan_call(
@@ -2637,10 +2931,11 @@ async fn apply_edit_plan_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let plan_id = arguments
-        .get("plan_id")
+    let edit_plan_id = arguments
+        .get("edit_plan_id")
         .and_then(|v| v.as_str())
-        .context("missing plan_id")?;
+        .context("missing edit_plan_id")?;
+    let plan_id = internal_plan_id_for_edit_plan(edit_plan_id).context("unknown edit_plan_id")?;
     let action = arguments
         .get("action")
         .and_then(|v| v.as_str())
@@ -2659,13 +2954,15 @@ async fn apply_edit_plan_call(
         "action": action,
         "patch": patch
     });
-    daemon_post_json(
+    let mut response = daemon_post_json(
         client,
         daemon_url,
         &format!("/api/edit_plans/{}/apply", plan_id),
         &body,
     )
-    .await
+    .await?;
+    map_edit_plan_summary(&mut response);
+    Ok(response)
 }
 
 async fn discard_edit_plan_call(
@@ -2673,10 +2970,11 @@ async fn discard_edit_plan_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let plan_id = arguments
-        .get("plan_id")
+    let edit_plan_id = arguments
+        .get("edit_plan_id")
         .and_then(|v| v.as_str())
-        .context("missing plan_id")?;
+        .context("missing edit_plan_id")?;
+    let plan_id = internal_plan_id_for_edit_plan(edit_plan_id).context("unknown edit_plan_id")?;
     let url = format!(
         "{}/api/edit_plans/{}/discard",
         daemon_url.trim_end_matches('/'),
@@ -2690,7 +2988,9 @@ async fn discard_edit_plan_call(
     if res.status().as_u16() == 204 {
         return Ok(json!({"discarded": true}));
     }
-    Ok(res.json::<Value>().await?)
+    let mut response = res.json::<Value>().await?;
+    map_edit_plan_summary(&mut response);
+    Ok(response)
 }
 
 #[allow(dead_code)]
@@ -2708,26 +3008,13 @@ async fn session_create_call(
         .get("url")
         .and_then(|v| v.as_str())
         .context("missing target.url")?;
-    let session_id = arguments
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| ctx_env_opt("SESSION_ID"));
-    let worktree_id = arguments
-        .get("worktree_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
     let viewport = arguments.get("viewport");
     let fps = arguments.get("fps");
 
     let mut body = serde_json::Map::new();
     body.insert("url".to_string(), json!(url));
-    if let Some(session_id) = session_id {
-        body.insert("session_id".to_string(), json!(session_id));
-    }
-    if let Some(worktree_id) = worktree_id {
-        body.insert("worktree_id".to_string(), json!(worktree_id));
-    }
+    body.insert("session_id".to_string(), json!(session_id));
     if let Some(viewport) = viewport {
         body.insert("viewport".to_string(), viewport.clone());
     }
@@ -2735,13 +3022,15 @@ async fn session_create_call(
         body.insert("fps".to_string(), fps.clone());
     }
 
-    daemon_post_json(
+    let mut response = daemon_post_json(
         client,
         daemon_url,
         "/api/sessions/web",
         &Value::Object(body),
     )
-    .await
+    .await?;
+    map_interactive_session(&mut response);
+    Ok(response)
 }
 
 #[allow(dead_code)]
@@ -2755,7 +3044,9 @@ async fn session_list_call(
             return Ok(json!([]));
         }
     }
-    daemon_get_json(client, daemon_url, "/api/sessions/web").await
+    let mut response = daemon_get_json(client, daemon_url, "/api/sessions/web").await?;
+    map_interactive_sessions(&mut response);
+    Ok(response)
 }
 
 #[allow(dead_code)]
@@ -2764,16 +3055,21 @@ async fn session_info_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let session_id = arguments
-        .get("session_id")
+    let session_ref = arguments
+        .get("session_ref")
         .and_then(|v| v.as_str())
-        .context("missing session_id")?;
+        .context("missing session_ref")?;
+    let session_id = session_id_for_ref(session_ref).context("unknown session_ref")?;
     daemon_get_json(
         client,
         daemon_url,
         &format!("/api/sessions/web/{}", session_id),
     )
     .await
+    .map(|mut response| {
+        map_interactive_session(&mut response);
+        response
+    })
 }
 
 #[allow(dead_code)]
@@ -2783,10 +3079,11 @@ async fn session_run_call(
     arguments: &Value,
     is_eval: bool,
 ) -> Result<Value> {
-    let session_id = arguments
-        .get("session_id")
+    let session_ref = arguments
+        .get("session_ref")
         .and_then(|v| v.as_str())
-        .context("missing session_id")?;
+        .context("missing session_ref")?;
+    let session_id = session_id_for_ref(session_ref).context("unknown session_ref")?;
     let mut body = serde_json::Map::new();
     if let Some(code) = arguments.get("code") {
         body.insert("code".to_string(), code.clone());
@@ -2813,10 +3110,11 @@ async fn session_close_call(
     daemon_url: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    let session_id = arguments
-        .get("session_id")
+    let session_ref = arguments
+        .get("session_ref")
         .and_then(|v| v.as_str())
-        .context("missing session_id")?;
+        .context("missing session_ref")?;
+    let session_id = session_id_for_ref(session_ref).context("unknown session_ref")?;
     let url = format!(
         "{}/api/sessions/web/{}/close",
         daemon_url.trim_end_matches('/'),

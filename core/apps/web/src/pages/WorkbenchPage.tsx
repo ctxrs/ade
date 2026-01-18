@@ -238,13 +238,12 @@ type TaskRowProps = {
   taskId: string;
   title: string;
   archived: boolean;
-  archiving: boolean;
   archivePending: boolean;
+  archivePendingAction: "archive" | "unarchive" | null;
+  statusKind: "archive" | "error" | "working" | "unread" | "idle";
   selected: boolean;
   hovered: boolean;
   isRenaming: boolean;
-  working: boolean;
-  dotKind: "error" | "unread" | null;
   ageIso: string | null | undefined;
   providerCount: number;
   harnesses: Array<(typeof HARNESS_CATALOG)[number]>;
@@ -321,13 +320,12 @@ export const TaskRow = React.memo(function TaskRow({
   taskId,
   title,
   archived,
-  archiving,
   archivePending,
+  archivePendingAction,
+  statusKind,
   selected,
   hovered,
   isRenaming,
-  working,
-  dotKind,
   ageIso,
   providerCount,
   harnesses,
@@ -382,7 +380,7 @@ export const TaskRow = React.memo(function TaskRow({
   }, [isRenaming]);
 
   const archiveLabel = archivePending
-    ? archiving
+    ? archivePendingAction === "archive"
       ? "Archiving..."
       : "Unarchiving..."
     : archived
@@ -475,18 +473,19 @@ export const TaskRow = React.memo(function TaskRow({
           <div className="wb-task-age">
             <RelativeAgeLabel iso={ageIso} />
           </div>
-          <span
-            className="wb-task-spinner"
-            data-active={working ? "true" : "false"}
-            style={{ animationDelay: `${spinnerDelayRef.current}ms` }}
-          />
-          <span
-            className="wb-task-spinner wb-task-spinner-archive"
-            data-active={archiving ? "true" : "false"}
-            style={{ animationDelay: `${spinnerDelayRef.current}ms` }}
-          />
-          {dotKind === "unread" && <span className="wb-task-status-dot wb-task-status-dot-unread" />}
-          {dotKind === "error" && <span className="wb-task-status-dot wb-task-status-dot-error" />}
+          <span className="wb-task-status-slot">
+            {statusKind === "archive" && (
+              <span
+                className="wb-task-spinner wb-task-spinner-archive"
+                style={{ animationDelay: `${spinnerDelayRef.current}ms` }}
+              />
+            )}
+            {statusKind === "working" && (
+              <span className="wb-task-spinner" style={{ animationDelay: `${spinnerDelayRef.current}ms` }} />
+            )}
+            {statusKind === "unread" && <span className="wb-task-status-dot wb-task-status-dot-unread" />}
+            {statusKind === "error" && <span className="wb-task-status-dot wb-task-status-dot-error" />}
+          </span>
         </div>
         <div className="wb-task-actions" aria-label="Task actions">
           <button
@@ -1636,7 +1635,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const archived = !!opts?.archived;
       const pendingAction = archivePendingById[tid];
       const archivePending = typeof pendingAction !== "undefined";
-      const archiving = pendingAction === "archive";
       const title = t.title ?? "New Task";
       const working = taskLiveInfo.workingByTask.has(tid);
       const hasError = taskLiveInfo.errorByTask.has(tid);
@@ -1649,7 +1647,15 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const seenMs = parseMs(t.assistant_seen_at ?? null);
       const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
       const ageIso = t.last_activity_at ?? t.updated_at ?? t.created_at;
-      const dotKind = hasError ? "error" : unread ? "unread" : null;
+      const statusKind = archivePending
+        ? "archive"
+        : hasError
+          ? "error"
+          : working
+            ? "working"
+            : unread
+              ? "unread"
+              : "idle";
       const summaryProviders =
         summary.providerIds && summary.providerIds.length
           ? summary.providerIds
@@ -1668,13 +1674,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           taskId={tid}
           title={title}
           archived={archived}
-          archiving={archiving}
           archivePending={archivePending}
+          archivePendingAction={pendingAction ?? null}
+          statusKind={statusKind}
           selected={selected}
           hovered={hovered}
           isRenaming={renamingTaskId === tid}
-          working={working}
-          dotKind={dotKind}
           ageIso={ageIso}
           providerCount={providerCount}
           harnesses={harnesses}

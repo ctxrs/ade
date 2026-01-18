@@ -176,6 +176,34 @@ async fn mcp_web_session_tools_call_daemon_http() {
                 }
             }
         }),
+    ] {
+        stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+    }
+    stdin.flush().await.unwrap();
+
+    let mut session_ref: Option<String> = None;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline {
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        if v.get("id").and_then(|id| id.as_i64()) == Some(3) {
+            let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
+            let payload: serde_json::Value = serde_json::from_str(text).unwrap();
+            session_ref = payload
+                .get("session_ref")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            assert!(session_ref.as_deref().unwrap_or("").len() > 4);
+            break;
+        }
+    }
+
+    let session_ref = session_ref.expect("missing session_ref");
+
+    for msg in [
         json!({
                 "jsonrpc":"2.0",
                 "id":4,
@@ -184,7 +212,7 @@ async fn mcp_web_session_tools_call_daemon_http() {
                 "name":"session_eval",
                 "arguments":{
                     "kind":"web",
-                    "session_id":"sess-1",
+                    "session_ref": session_ref.clone(),
                     "code":"return await page.title()"
                 }
             }
@@ -197,7 +225,7 @@ async fn mcp_web_session_tools_call_daemon_http() {
                 "name":"session_close",
                 "arguments":{
                     "kind":"web",
-                    "session_id":"sess-1"
+                    "session_ref": session_ref.clone()
                 }
             }
         }),
@@ -207,7 +235,6 @@ async fn mcp_web_session_tools_call_daemon_http() {
     }
     stdin.flush().await.unwrap();
 
-    let mut got_create = false;
     let mut got_eval = false;
     let mut got_close = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -217,12 +244,6 @@ async fn mcp_web_session_tools_call_daemon_http() {
         };
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         match v.get("id").and_then(|id| id.as_i64()) {
-            Some(3) => {
-                let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
-                let payload: serde_json::Value = serde_json::from_str(text).unwrap();
-                assert_eq!(payload["id"], "sess-1");
-                got_create = true;
-            }
             Some(4) => {
                 let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
                 let payload: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -238,12 +259,11 @@ async fn mcp_web_session_tools_call_daemon_http() {
             }
             _ => {}
         }
-        if got_create && got_eval && got_close {
+        if got_eval && got_close {
             break;
         }
     }
 
-    assert!(got_create, "did not receive session_create response");
     assert!(got_eval, "did not receive session_eval response");
     assert!(got_close, "did not receive session_close response");
 
@@ -735,6 +755,27 @@ async fn mcp_lsp_rename_plan_and_apply_call_daemon_http() {
         .await
         .unwrap();
     stdin.write_all(b"\n").await.unwrap();
+    stdin.flush().await.unwrap();
+
+    let mut edit_plan_id: Option<String> = None;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline {
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
+            let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
+            let payload: serde_json::Value = serde_json::from_str(text).unwrap();
+            edit_plan_id = payload
+                .get("edit_plan_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            break;
+        }
+    }
+
+    let edit_plan_id = edit_plan_id.expect("missing edit_plan_id");
 
     // Apply entire edit plan (no patch arg triggers GET + apply).
     stdin
@@ -745,7 +786,7 @@ async fn mcp_lsp_rename_plan_and_apply_call_daemon_http() {
                 "method":"tools/call",
                 "params":{
                     "name":"ctx.apply_edit_plan",
-                    "arguments":{"plan_id":"pid-123","action":"accept"}
+                    "arguments":{"edit_plan_id": edit_plan_id, "action":"accept"}
                 }
             })
             .to_string()

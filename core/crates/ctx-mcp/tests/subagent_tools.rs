@@ -162,6 +162,43 @@ async fn mcp_subagent_tools_call_daemon_http() {
                 }
             }
         }),
+    ] {
+        stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+    }
+    stdin.flush().await.unwrap();
+
+    let mut subagent_group_id: Option<String> = None;
+    let mut subagent_id: Option<String> = None;
+    let init_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < init_deadline {
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        if v.get("id").and_then(|id| id.as_i64()) == Some(3) {
+            let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
+            let payload: serde_json::Value = serde_json::from_str(text).unwrap();
+            subagent_group_id = payload
+                .get("subagent_group_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            subagent_id = payload
+                .get("results")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|item| item.get("subagent_id"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            assert!(text.contains("found 3 usages"));
+            break;
+        }
+    }
+
+    let subagent_group_id = subagent_group_id.expect("missing subagent_group_id");
+    let subagent_id = subagent_id.expect("missing subagent_id");
+
+    for msg in [
         json!({
             "jsonrpc":"2.0",
             "id":4,
@@ -169,7 +206,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
             "params":{
                 "name":"ctx.agent_reply",
                 "arguments":{
-                    "session_id": child_id,
+                    "subagent_id": subagent_id,
                     "prompt":"summarize output"
                 }
             }
@@ -180,9 +217,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
             "method":"tools/call",
             "params":{
                 "name":"ctx.subagent_invocations_list",
-                "arguments":{
-                    "session_id": parent_id
-                }
+                "arguments":{}
             }
         }),
         json!({
@@ -192,7 +227,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
             "params":{
                 "name":"ctx.subagent_invocation_get",
                 "arguments":{
-                    "invocation_id": invocation_id
+                    "subagent_group_id": subagent_group_id
                 }
             }
         }),
@@ -203,7 +238,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
             "params":{
                 "name":"ctx.subagent_wait",
                 "arguments":{
-                    "invocation_id": invocation_id
+                    "subagent_group_id": subagent_group_id
                 }
             }
         }),
@@ -213,7 +248,6 @@ async fn mcp_subagent_tools_call_daemon_http() {
     }
     stdin.flush().await.unwrap();
 
-    let mut got_init = false;
     let mut got_reply = false;
     let mut got_list = false;
     let mut got_get = false;
@@ -225,11 +259,6 @@ async fn mcp_subagent_tools_call_daemon_http() {
         };
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         match v.get("id").and_then(|id| id.as_i64()) {
-            Some(3) => {
-                let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
-                assert!(text.contains("found 3 usages"));
-                got_init = true;
-            }
             Some(4) => {
                 let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
                 assert!(text.contains("summary"));
@@ -237,7 +266,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
             }
             Some(5) => {
                 let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
-                assert!(text.contains(invocation_id));
+                assert!(text.contains(&subagent_group_id));
                 got_list = true;
             }
             Some(6) => {
@@ -252,12 +281,11 @@ async fn mcp_subagent_tools_call_daemon_http() {
             }
             _ => {}
         }
-        if got_init && got_reply && got_list && got_get && got_wait {
+        if got_reply && got_list && got_get && got_wait {
             break;
         }
     }
 
-    assert!(got_init, "did not receive agent_init response");
     assert!(got_reply, "did not receive agent_reply response");
     assert!(
         got_list,

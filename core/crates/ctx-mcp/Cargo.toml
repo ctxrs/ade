@@ -8,6 +8,7 @@ name = "ctx-mcp"
 path = "src/main.rs"
 
 [dependencies]
+uuid.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 reqwest.workspace = true
