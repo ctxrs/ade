@@ -32,7 +32,7 @@ mod relative_time;
 #[path = "ui_state.rs"]
 mod ui_state;
 #[path = "state/mod.rs"]
-pub(crate) mod state;
+mod state;
 #[path = "views/mod.rs"]
 mod views;
 
@@ -44,7 +44,7 @@ use self::state::{
     StreamStatus, TaskFetchState, TerminalPanelState, WorkbenchModeId,
 };
 use self::views::RouterView;
-pub(crate) use self::state::{ShellRoute, ShellView};
+pub(crate) use self::state::{RightPaneMode, ShellRoute, ShellView};
 #[cfg(feature = "automation")]
 pub(crate) use self::state::ComposerMenuId;
 

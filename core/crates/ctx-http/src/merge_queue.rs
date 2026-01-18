@@ -15,8 +15,7 @@ use ctx_core::models::{
     MergeQueueRunStatus, SessionEventType, Workspace, Worktree,
 };
 use ctx_fs::git::{
-    assert_git_repo, delete_branch, git_is_ancestor, git_merge_base, git_status_porcelain,
-    rev_parse_ref,
+    assert_git_repo, git_is_ancestor, git_merge_base, git_status_porcelain, rev_parse_ref,
 };
 use ctx_fs::patch::build_worktree_patch;
 use ctx_fs::worktrees::{create_worktree, remove_worktree};
@@ -823,6 +822,23 @@ async fn push_target_branch(
     if !output.status.success() {
         bail!(
             "git push failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+async fn delete_branch(workspace_root: &str, branch: &str) -> Result<()> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(workspace_root)
+        .args(["branch", "-D", branch])
+        .output()
+        .await
+        .context("running git branch -D")?;
+    if !output.status.success() {
+        bail!(
+            "git branch -D failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }

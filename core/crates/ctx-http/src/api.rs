@@ -37,8 +37,8 @@ use chrono::{DateTime, Utc};
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::git::{
-    assert_git_repo, delete_branch, git_merge_base, git_status_porcelain, git_status_short,
-    list_tracked_files, list_untracked_files, rev_parse_head,
+    assert_git_repo, git_merge_base, git_status_porcelain, git_status_short, list_tracked_files,
+    list_untracked_files, rev_parse_head,
 };
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_store::store::MobileDeviceUpsert;
@@ -8223,63 +8223,25 @@ async fn is_git_worktree(worktree_path: impl AsRef<StdPath>) -> anyhow::Result<b
 async fn archive_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<Task>, (StatusCode, Json<ApiErrorResp>)> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid task id".to_string(),
-            }),
-        )
-    })?);
+) -> Result<Json<Task>, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let task = state
         .store
         .get_task(task_id)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load task".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "task not found".to_string(),
-            }),
-        ))?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
     let workspace = state
         .store
         .get_workspace(task.workspace_id)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load workspace".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ))?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
     let sessions = state
         .store
         .list_sessions_for_task(task_id)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load task sessions".to_string(),
-                }),
-            )
-        })?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
     if let Some(primary_worktree_id) = task.primary_worktree_id {
         worktree_ids.insert(primary_worktree_id);
@@ -8294,89 +8256,57 @@ async fn archive_task(
             .store
             .get_worktree(worktree_id)
             .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to load worktree".to_string(),
-                    }),
-                )
-            })?
-            .ok_or((
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "worktree not found".to_string(),
-                }),
-            ))?;
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
         worktrees.push(worktree);
     }
 
-    let mut errors: Vec<String> = Vec::new();
+    let mut errors: Vec<anyhow::Error> = Vec::new();
     let mut needs_prune = false;
     for worktree in &worktrees {
         let Some(root) = managed_worktree_root(&state, &workspace, worktree) else {
             continue;
         };
-        let branch = worktree.git_branch.as_deref();
-        let root_exists = tokio::fs::metadata(&root).await.is_ok();
-        if root_exists {
-            let is_git = is_git_worktree(&root).await.unwrap_or(false);
-            if is_git {
-                needs_prune = true;
-                if let Err(err) = remove_worktree(&workspace.root_path, &root).await {
+        if tokio::fs::metadata(&root).await.is_err() {
+            continue;
+        }
+        let is_git = is_git_worktree(&root).await.unwrap_or(false);
+        if is_git {
+            needs_prune = true;
+            if let Err(err) = remove_worktree(&workspace.root_path, &root).await {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    "failed to remove worktree: {err:#}"
+                );
+                errors.push(err);
+                continue;
+            }
+            // Defensive: ensure the directory is actually gone even if `git worktree remove`
+            // succeeds but leaves the directory behind.
+            if tokio::fs::metadata(&root).await.is_ok() {
+                if let Err(err) = tokio::fs::remove_dir_all(&root)
+                    .await
+                    .with_context(|| format!("removing worktree dir at {}", root.display()))
+                {
                     tracing::warn!(
                         task_id = %task_id.0,
                         worktree_id = %worktree.id.0,
-                        "failed to remove worktree: {err:#}"
+                        "failed to remove worktree dir: {err:#}"
                     );
-                    errors.push(format!(
-                        "failed to remove worktree at {}: {err:#}",
-                        root.display()
-                    ));
-                } else if tokio::fs::metadata(&root).await.is_ok() {
-                    // Defensive: ensure the directory is actually gone even if `git worktree remove`
-                    // succeeds but leaves the directory behind.
-                    if let Err(err) = tokio::fs::remove_dir_all(&root)
-                        .await
-                        .with_context(|| format!("removing worktree dir at {}", root.display()))
-                    {
-                        tracing::warn!(
-                            task_id = %task_id.0,
-                            worktree_id = %worktree.id.0,
-                            "failed to remove worktree dir: {err:#}"
-                        );
-                        errors.push(format!(
-                            "failed to remove worktree dir at {}: {err:#}",
-                            root.display()
-                        ));
-                    }
+                    errors.push(err);
                 }
-            } else if let Err(err) = tokio::fs::remove_dir_all(&root)
-                .await
-                .with_context(|| format!("removing non-git worktree dir at {}", root.display()))
-            {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree.id.0,
-                    "failed to remove worktree dir: {err:#}"
-                );
-                errors.push(format!(
-                    "failed to remove worktree dir at {}: {err:#}",
-                    root.display()
-                ));
             }
-        } else if branch.is_some() {
-            needs_prune = true;
-        }
-        if let Some(branch) = branch {
-            if let Err(err) = delete_branch(&workspace.root_path, branch).await {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree.id.0,
-                    branch = branch,
-                    "failed to delete worktree branch: {err:#}"
-                );
-            }
+        } else if let Err(err) = tokio::fs::remove_dir_all(&root)
+            .await
+            .with_context(|| format!("removing non-git worktree dir at {}", root.display()))
+        {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree.id.0,
+                "failed to remove worktree dir: {err:#}"
+            );
+            errors.push(err);
         }
     }
     if needs_prune {
@@ -8385,60 +8315,29 @@ async fn archive_task(
                 task_id = %task_id.0,
                 "failed to prune worktrees: {err:#}"
             );
-            errors.push(format!("failed to prune worktrees: {err:#}"));
+            errors.push(err);
         }
     }
     if !errors.is_empty() {
-        let summary = if errors.len() == 1 {
-            errors[0].clone()
-        } else {
-            format!("{} (and {} more)", errors[0], errors.len() - 1)
-        };
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: format!("failed to archive task: {summary}"),
-            }),
-        ));
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    let updated = state.store.archive_task(task_id).await.map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: "failed to archive task".to_string(),
-            }),
-        )
-    })?;
+    let updated = state
+        .store
+        .archive_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !updated {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "task not found".to_string(),
-            }),
-        ));
+        return Err(StatusCode::NOT_FOUND);
     }
     let task = match state
         .store
         .get_task_with_activity(task_id)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load task activity".to_string(),
-                }),
-            )
-        })? {
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         Some(task) => task,
-        None => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "task not found".to_string(),
-                }),
-            ))
-        }
+        None => return Err(StatusCode::NOT_FOUND),
     };
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
         tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
@@ -8449,51 +8348,20 @@ async fn archive_task(
 async fn unarchive_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<Task>, (StatusCode, Json<ApiErrorResp>)> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid task id".to_string(),
-            }),
-        )
-    })?);
+) -> Result<Json<Task>, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let task = state
         .store
         .get_task(task_id)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load task".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "task not found".to_string(),
-            }),
-        ))?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
     let workspace = state
         .store
         .get_workspace(task.workspace_id)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load workspace".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ))?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
     let mut seen = HashSet::new();
     let mut managed_worktrees: Vec<(Worktree, PathBuf)> = Vec::new();
     let mut worktrees: Vec<Worktree> = Vec::new();
@@ -8501,14 +8369,7 @@ async fn unarchive_task(
         .store
         .list_sessions_for_task(task_id)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load task sessions".to_string(),
-                }),
-            )
-        })?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
     if let Some(primary) = task.primary_worktree_id {
         worktree_ids.insert(primary);
@@ -8518,20 +8379,8 @@ async fn unarchive_task(
             .store
             .get_worktree(worktree_id)
             .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to load worktree".to_string(),
-                    }),
-                )
-            })?
-            .ok_or((
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "worktree not found".to_string(),
-                }),
-            ))?;
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
         if let Some(root) = managed_worktree_root(&state, &workspace, &worktree) {
             if seen.insert(worktree.id) {
                 managed_worktrees.push((worktree.clone(), root));
@@ -8555,12 +8404,7 @@ async fn unarchive_task(
                 worktree_id = %worktree.id.0,
                 "failed to recreate worktree: {err:#}"
             );
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: format!("failed to restore worktree at {}: {err:#}", root.display()),
-                }),
-            ));
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -8582,43 +8426,22 @@ async fn unarchive_task(
         }
     }
 
-    let updated = state.store.unarchive_task(task_id).await.map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: "failed to unarchive task".to_string(),
-            }),
-        )
-    })?;
+    let updated = state
+        .store
+        .unarchive_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !updated {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "task not found".to_string(),
-            }),
-        ));
+        return Err(StatusCode::NOT_FOUND);
     }
     let task = match state
         .store
         .get_task_with_activity(task_id)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load task activity".to_string(),
-                }),
-            )
-        })? {
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         Some(task) => task,
-        None => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "task not found".to_string(),
-                }),
-            ))
-        }
+        None => return Err(StatusCode::NOT_FOUND),
     };
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
         tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");

@@ -2864,7 +2864,7 @@
 }
 
 .wb-turn-status-time {
-  font-variant-numeric: tabular-nums;
+  font-family: var(--mono);
 }
 
 .wb-thought {
@@ -2903,13 +2903,6 @@
   font-style: italic;
   font-family: inherit;
   color: var(--muted);
-  line-height: 1;
-}
-
-.wb-turn-status-label,
-.wb-turn-status-time,
-.wb-turn-status-dot {
-  line-height: 1;
 }
 
 .wb-turn-status-dot {

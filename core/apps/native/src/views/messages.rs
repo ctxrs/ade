@@ -896,7 +896,7 @@ fn format_elapsed(ms: i64) -> String {
     let mins = total_secs / 60;
     let secs = total_secs % 60;
     if mins > 0 {
-        format!("{mins}m {secs}s")
+        format!("{mins}m {secs:02}s")
     } else {
         format!("{secs}s")
     }

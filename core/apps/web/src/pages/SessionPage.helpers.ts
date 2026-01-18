@@ -57,10 +57,10 @@ export function formatElapsedMs(ms: number): string {
   const hours = Math.floor(totalSeconds / 3600);
 
   if (hours > 0) {
-    return `${hours}h ${minutes}m`;
+    return `${hours}h ${String(minutes).padStart(2, "0")}m`;
   }
   if (minutes > 0) {
-    return `${minutes}m ${seconds}s`;
+    return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
   }
   return `${seconds}s`;
 }

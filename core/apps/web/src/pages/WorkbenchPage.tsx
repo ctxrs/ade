@@ -725,7 +725,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [archiveConfirmDontRemind, setArchiveConfirmDontRemind] = useState(false);
   const [archiveConfirmDismissed, setArchiveConfirmDismissed] = useState(false);
   const [archivePendingById, setArchivePendingById] = useState<Record<string, "archive" | "unarchive">>({});
-  const [archiveError, setArchiveError] = useState<string | null>(null);
   const archiveConfirmRef = useRef<HTMLDivElement | null>(null);
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1506,7 +1505,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const applyArchiveToggle = useCallback(
     async (taskId: string, nextArchived: boolean) => {
-      setArchiveError(null);
       setArchivePendingById((prev) => ({
         ...prev,
         [taskId]: nextArchived ? "archive" : "unarchive",
@@ -1517,14 +1515,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         if (nextArchived && activeTaskId === taskId) {
           focusNewTask();
         }
-      } catch (err) {
-        const message =
-          err instanceof Error && err.message
-            ? err.message
-            : nextArchived
-              ? "Failed to archive task."
-              : "Failed to unarchive task.";
-        setArchiveError(message);
       } finally {
         setArchivePendingById((prev) => {
           if (!(taskId in prev)) return prev;
@@ -3312,12 +3302,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         </div>
       )}
 
-      {archiveError && (
-        <div className="wb-banner" style={{ margin: "8px 12px 0" }} role="alert">
-          {archiveError}
-        </div>
-      )}
-
       {sidebarCollapsed ? (
         <button
           type="button"
@@ -3750,7 +3734,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         >
           <div className="wb-archive-confirm-title">Archive conversation?</div>
           <div className="wb-archive-confirm-body">
-            Archiving deletes the worktrees and ctx-managed branches on disk, including subagents. You can unarchive to recreate them, but uncommitted or unmerged changes will be lost.
+            Archiving removes the worktree on disk. You can unarchive to recreate it. Uncommitted changes will be lost.
           </div>
           <label className="wb-archive-confirm-toggle">
             <input
@@ -3758,7 +3742,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               checked={archiveConfirmDontRemind}
               onChange={(e) => setArchiveConfirmDontRemind(e.target.checked)}
             />
-            Don&apos;t ask me again
+            Don&apos;t remind me again
           </label>
           <div className="wb-archive-confirm-actions">
             <button
