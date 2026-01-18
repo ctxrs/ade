@@ -1513,7 +1513,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               </button>
             ) : (
               <div
-                className="wb-switcher wb-switcher-harness"
+                className="wb-harness-display"
                 role="img"
                 aria-label={harnessControl.label || "Harness"}
                 title="Harness"
