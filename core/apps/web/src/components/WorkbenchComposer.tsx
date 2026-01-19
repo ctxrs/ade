@@ -673,6 +673,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const activeModelData = useMemo(() => {
     if (variant === "activeSession") {
       const models = (props as ActiveSessionProps).availableModels;
+      const catalog = buildModelCatalog(models);
       const parsed = parseModelId((props as ActiveSessionProps).currentModelId, catalog);
       return { models, catalog, parsed, loading: false, fromProviderOptions: false };
     }
@@ -682,6 +683,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     if (!primary) return { models: [], catalog: buildModelCatalog([]), parsed: parseModelId(""), loading: false, fromProviderOptions: true };
     const opts = ns?.providerOptions[primary.providerId];
     const models = buildModelsForProvider(primary.providerId, opts);
+    const catalog = buildModelCatalog(models);
     const parsed = parseModelId(primary.modelId, catalog);
     const loading = !opts;
     return { models, catalog, parsed, loading, fromProviderOptions: true };

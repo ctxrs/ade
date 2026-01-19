@@ -3884,7 +3884,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           <div className="wb-body">
             <div className="wb-convo">
               {showSingleSessionHeader ? (
-                <div className="wb-single-track-header" aria-busy={sessions.length === 0 ? "true" : undefined}>
+                <div className="wb-single-track-header" aria-busy={sessionSummaries.length === 0 ? "true" : undefined}>
                   <div className="wb-single-track-row">
                     <div className="wb-single-track-title-row">
                       <div className="wb-single-track-title">{singleSessionHeaderForRender?.title ?? "Conversation"}</div>
