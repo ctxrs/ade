@@ -19,14 +19,19 @@ import {
   SquarePen,
   Settings,
   Terminal,
+  X,
 } from "lucide-react";
 import {
   DictationSettings,
   InstallInfo,
   type GitStatusSummary,
+  type Message,
   MessageAttachment,
   ProviderOptions,
   ProviderStatus,
+  type Session,
+  type SessionSnapshotSummary,
+  type Task,
   WebSessionInfo,
   Worktree,
   Workspace,
@@ -72,6 +77,7 @@ import { TerminalPanel, type TerminalPanelHandle } from "../components/TerminalP
 import { WorktreeBootstrapSnackbar } from "../components/WorktreeBootstrapSnackbar";
 import { SessionView, buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
+import { randomUuid } from "../utils/randomUuid";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { startMicPcmStream } from "../utils/micPcmStream";
@@ -310,6 +316,10 @@ type TaskRowProps = {
   setRenameDraft: (taskId: string, nextValue: string) => void;
   onFocusTask: (taskId: string) => void;
   onOpenMenu: (taskId: string, opts: { triggerEl: HTMLElement } | { x: number; y: number }) => void;
+  menuEnabled?: boolean;
+  archiveEnabled?: boolean;
+  onDismiss?: (taskId: string) => void;
+  dismissLabel?: string;
   onToggleArchive: (taskId: string, nextArchived: boolean, anchor?: AnchorRect | null) => Promise<void>;
   onHoverEnter: (taskId: string) => void;
   onHoverLeave: (taskId: string) => void;
@@ -332,6 +342,21 @@ type TaskListItem =
   | { kind: "archived-error" }
   | { kind: "archived-empty" }
   | { kind: "archived-task"; summary: WorkspaceActiveSnapshotItem };
+
+type OptimisticTaskSummary = WorkspaceActiveSnapshotItem & {
+  localStatus: "starting" | "synced" | "failed";
+  localPrompt: string;
+  localError?: string | null;
+  localMessageId: string;
+};
+
+
+type OptimisticFocus = {
+  taskId: string;
+  sessionId: string;
+  navToken: number;
+};
+
 
 type TaskListScrollerProps = React.HTMLAttributes<HTMLDivElement> & {
   context?: TaskListContext;
@@ -392,6 +417,10 @@ export const TaskRow = React.memo(function TaskRow({
   setRenameDraft,
   onFocusTask,
   onOpenMenu,
+  menuEnabled,
+  archiveEnabled,
+  onDismiss,
+  dismissLabel,
   onToggleArchive,
   onHoverEnter,
   onHoverLeave,
@@ -446,6 +475,11 @@ export const TaskRow = React.memo(function TaskRow({
       ? "Unarchive"
       : "Archive";
 
+  const showMenu = menuEnabled !== false;
+  const showArchive = archiveEnabled !== false && !onDismiss;
+  const showDismiss = typeof onDismiss === "function";
+  const resolvedDismissLabel = dismissLabel || "Dismiss";
+
   return (
     <div
       className={`wb-task-row ${archived ? "wb-task-row-archived" : ""} ${selected ? "wb-task-row-active" : ""} ${
@@ -456,6 +490,7 @@ export const TaskRow = React.memo(function TaskRow({
       onPointerEnter={() => onHoverEnter(taskId)}
       onPointerLeave={() => onHoverLeave(taskId)}
       onContextMenu={(e) => {
+        if (!showMenu) return;
         e.preventDefault();
         e.stopPropagation();
         onOpenMenu(taskId, { x: e.clientX, y: e.clientY });
@@ -547,37 +582,58 @@ export const TaskRow = React.memo(function TaskRow({
           </span>
         </div>
         <div className="wb-task-actions" aria-label="Task actions">
-          <button
-            type="button"
-            className="wb-icon wb-task-action wb-task-menu-trigger"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenMenu(taskId, { triggerEl: e.currentTarget });
-            }}
-            aria-label="More actions"
-            title="More actions"
-          >
-            <Ellipsis size={14} />
-          </button>
-          <button
-            type="button"
-            className="wb-icon wb-task-action wb-archive-confirm-trigger"
-            disabled={archivePending}
-            onClick={(e) => {
-              e.stopPropagation();
-              const anchor = e.currentTarget.getBoundingClientRect();
-              onToggleArchive(taskId, !archived, anchor).catch(() => {});
-            }}
-            aria-label={archiveLabel}
-            title={archiveLabel}
-          >
-            <Archive size={14} />
-          </button>
+          {showMenu ? (
+            <button
+              type="button"
+              className="wb-icon wb-task-action wb-task-menu-trigger"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenMenu(taskId, { triggerEl: e.currentTarget });
+              }}
+              aria-label="More actions"
+              title="More actions"
+            >
+              <Ellipsis size={14} />
+            </button>
+          ) : null}
+          {showDismiss ? (
+            <button
+              type="button"
+              className="wb-icon wb-task-action"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDismiss?.(taskId);
+              }}
+              aria-label={resolvedDismissLabel}
+              title={resolvedDismissLabel}
+            >
+              <X size={14} />
+            </button>
+          ) : showArchive ? (
+            <button
+              type="button"
+              className="wb-icon wb-task-action wb-archive-confirm-trigger"
+              disabled={archivePending}
+              onClick={(e) => {
+                e.stopPropagation();
+                const anchor = e.currentTarget.getBoundingClientRect();
+                onToggleArchive(taskId, !archived, anchor).catch(() => {});
+              }}
+              aria-label={archiveLabel}
+              title={archiveLabel}
+            >
+              <Archive size={14} />
+            </button>
+          ) : null}
         </div>
       </div>
     </div>
   );
 });
+
+const isOptimisticTask = (summary: WorkspaceActiveSnapshotItem): summary is OptimisticTaskSummary => {
+  return typeof (summary as OptimisticTaskSummary).localStatus === "string";
+};
 
 function RelativeAgeLabel({
   iso,
@@ -595,9 +651,16 @@ type WorkbenchSessionSlotProps = {
   active: boolean;
   scrollState: WorkbenchScrollState | null;
   preserveScrollOnFocus?: boolean;
+  optimisticFailure?: { prompt: string; error: string | null } | null;
 };
 
-function WorkbenchSessionSlot({ sessionId, active, scrollState, preserveScrollOnFocus }: WorkbenchSessionSlotProps) {
+function WorkbenchSessionSlot({
+  sessionId,
+  active,
+  scrollState,
+  preserveScrollOnFocus,
+  optimisticFailure,
+}: WorkbenchSessionSlotProps) {
   const workbenchStore = useWorkbenchStore();
   const draft = useWorkbenchDraft(sessionDraftKey(sessionId), { text: "", modeId: "default" });
   const handleScrollStateChange = useCallback(
@@ -615,6 +678,25 @@ function WorkbenchSessionSlot({ sessionId, active, scrollState, preserveScrollOn
       style={{ opacity: active ? 1 : 0, pointerEvents: active ? "auto" : "none" }}
       aria-hidden={!active}
     >
+      {optimisticFailure ? (
+        <div className="banner" role="alert">
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <strong>Failed to start</strong>
+            <button
+              type="button"
+              className="wb-link"
+              onClick={() => void copyTextToClipboard(optimisticFailure.prompt)}
+            >
+              Copy prompt
+            </button>
+          </div>
+          {optimisticFailure.error ? (
+            <div className="error" style={{ whiteSpace: "pre-wrap" }}>
+              {optimisticFailure.error}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       <SessionView
         key={sessionId}
         sessionId={sessionId}
@@ -701,7 +783,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const workspaceSnapshot = useWorkspaceActiveSnapshotSnapshot();
   const tasksById = workspaceSnapshot.tasksById;
   const workbenchSnap = useWorkbenchShellSnapshot();
-  const { taskId: activeTaskId, sessionId: activeSessionIdFromTab } = useActiveWorkbenchIds();
+  const [optimisticFocus, setOptimisticFocus] = useState<OptimisticFocus | null>(null);
+  const { taskId: activeTaskIdFromTab, sessionId: activeSessionIdFromTab } = useActiveWorkbenchIds();
+  const navToken = workbenchStore.getNavToken();
+  const optimisticFocusActive = Boolean(optimisticFocus && navToken === optimisticFocus.navToken);
+  const activeTaskId = activeTaskIdFromTab ?? (optimisticFocusActive ? optimisticFocus.taskId : null);
+  const activeSessionIdFromTabResolved =
+    activeSessionIdFromTab ?? (optimisticFocusActive ? optimisticFocus.sessionId : null);
   const { value: newTaskDraft, setValue: setNewTaskDraft } = useNewTaskDraft();
   const draftPrompt = newTaskDraft.text;
   const draftMode = newTaskDraft.modeId;
@@ -710,6 +798,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     supervisor.bindWorkspaceActiveSnapshotStore(workspaceSnapshotStore);
     return () => supervisor.bindWorkspaceActiveSnapshotStore(null);
   }, [supervisor, workspaceSnapshotStore]);
+  useEffect(() => {
+    if (!optimisticFocus) return;
+    if (activeTaskIdFromTab) {
+      setOptimisticFocus(null);
+      return;
+    }
+    if (!optimisticFocusActive) {
+      setOptimisticFocus(null);
+    }
+  }, [activeTaskIdFromTab, optimisticFocus, optimisticFocusActive]);
   const setDraftPrompt = useCallback(
     (text: string) => setNewTaskDraft({ text, modeId: newTaskDraft.modeId }),
     [newTaskDraft.modeId, setNewTaskDraft],
@@ -761,6 +859,29 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [providers]);
 
   const [taskQuery, setTaskQuery] = useState("");
+  const [optimisticTasks, setOptimisticTasks] = useState<OptimisticTaskSummary[]>([]);
+  const optimisticTasksById = useMemo(() => {
+    return Object.fromEntries(optimisticTasks.map((item) => [item.id, item]));
+  }, [optimisticTasks]);
+  const optimisticSessionIdSet = useMemo(() => {
+    const ids = new Set<string>();
+    for (const item of optimisticTasks) {
+      if (item.localStatus === "synced") continue;
+      const sid = String(item.primarySessionId ?? "");
+      if (sid) ids.add(sid);
+    }
+    return ids;
+  }, [optimisticTasks]);
+  const optimisticFailureBySessionId = useMemo(() => {
+    const out: Record<string, { prompt: string; error: string | null }> = {};
+    for (const item of optimisticTasks) {
+      if (item.localStatus !== "failed") continue;
+      const sid = String(item.primarySessionId ?? "");
+      if (!sid) continue;
+      out[sid] = { prompt: item.localPrompt, error: item.localError ?? null };
+    }
+    return out;
+  }, [optimisticTasks]);
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [archiveConfirm, setArchiveConfirm] = useState<ArchiveConfirmState | null>(null);
   const [archiveConfirmDontRemind, setArchiveConfirmDontRemind] = useState(false);
@@ -1327,7 +1448,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     });
   }, [providers.length, providersById, defaultProviderId]);
 
-  const activeTaskSummary = activeTaskId ? tasksById[activeTaskId] : null;
+  const activeTaskSummary = useMemo(() => {
+    if (!activeTaskId) return null;
+    const optimistic = optimisticTasksById[activeTaskId];
+    if (optimistic && optimistic.localStatus !== "synced") return optimistic;
+    return tasksById[activeTaskId] ?? optimistic ?? null;
+  }, [activeTaskId, optimisticTasksById, tasksById]);
   const sessionSummaries = useMemo(() => activeTaskSummary?.sessions ?? [], [activeTaskSummary]);
   const sessions = useMemo(() => sessionSummaries.map((s) => s.session), [sessionSummaries]);
   const sessionIds = useMemo(
@@ -1384,6 +1510,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [supervisor, warmSessionIds]);
 
   const normalizedTaskQuery = taskQuery.trim().toLowerCase();
+  const optimisticActiveSummaries = useMemo(() => {
+    const activeIdSet = new Set(workspaceSnapshot.activeIds);
+    return optimisticTasks.filter((item) => {
+      const serverHasItem = !!tasksById[item.id];
+      const activeHasItem = activeIdSet.has(item.id);
+      if (item.localStatus === "synced" && serverHasItem && activeHasItem) return false;
+      if (!normalizedTaskQuery) return true;
+      return (item.task.title ?? "").toLowerCase().includes(normalizedTaskQuery);
+    });
+  }, [optimisticTasks, normalizedTaskQuery, tasksById, workspaceSnapshot.activeIds]);
   const filteredActiveIds = useMemo(() => {
     return workspaceSnapshot.activeIds.filter((id) => {
       const summary = tasksById[id];
@@ -1402,14 +1538,28 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     });
   }, [workspaceSnapshot.archivedIds, tasksById, normalizedTaskQuery]);
 
-  const activeTaskSummaries = useMemo(
-    () => filteredActiveIds.map((id) => tasksById[id]).filter((v): v is WorkspaceActiveSnapshotItem => Boolean(v)),
-    [filteredActiveIds, tasksById],
-  );
+  const activeTaskSummaries = useMemo(() => {
+    const optimisticIds = new Set(optimisticActiveSummaries.map((item) => item.id));
+    const serverSummaries = filteredActiveIds
+      .filter((id) => !optimisticIds.has(id))
+      .map((id) => tasksById[id])
+      .filter((v): v is WorkspaceActiveSnapshotItem => Boolean(v));
+    if (optimisticActiveSummaries.length === 0) return serverSummaries;
+    return [...optimisticActiveSummaries, ...serverSummaries];
+  }, [filteredActiveIds, optimisticActiveSummaries, tasksById]);
   const archivedTaskSummaries = useMemo(
     () => filteredArchivedIds.map((id) => tasksById[id]).filter((v): v is WorkspaceActiveSnapshotItem => Boolean(v)),
     [filteredArchivedIds, tasksById],
   );
+  const tasksForLiveInfo = useMemo(() => {
+    const merged: Record<string, WorkspaceActiveSnapshotItem> = { ...tasksById };
+    for (const item of optimisticTasks) {
+      if (item.localStatus === "failed" || !merged[item.id]) {
+        merged[item.id] = item;
+      }
+    }
+    return merged;
+  }, [optimisticTasks, tasksById]);
 
   const isEntryWorking = useCallback((entry: SessionCacheEntry): boolean => {
     const sess = entry.session;
@@ -1428,7 +1578,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       if (sessionId) entryBySessionId.set(sessionId, entry);
     }
 
-    for (const summary of Object.values(tasksById)) {
+    for (const summary of Object.values(tasksForLiveInfo)) {
       if (!summary) continue;
       const taskId = summary.id;
       for (const sessionSummary of summary.sessions) {
@@ -1452,7 +1602,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
     for (const entry of Object.values(sessionSnap.sessions)) {
       const taskId = entry.session ? idToString(entry.session.task_id) : "";
-      if (!taskId || tasksById[taskId]) continue;
+      if (!taskId || tasksForLiveInfo[taskId]) continue;
       if (isEntryWorking(entry)) workingByTask.add(taskId);
       const status = entry.session?.status;
       if (status === "failed" || status === "cancelled") errorByTask.add(taskId);
@@ -1460,7 +1610,32 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
     }
     return { workingByTask, errorByTask, lastAssistantMsByTask };
-  }, [isEntryWorking, sessionSnap.sessions, tasksById]);
+  }, [isEntryWorking, sessionSnap.sessions, tasksForLiveInfo]);
+
+  useEffect(() => {
+    if (optimisticTasks.length === 0) return;
+    const shouldTrim = optimisticTasks.some((item) => {
+      if (item.localStatus !== "synced") return false;
+      const serverItem = tasksById[item.id];
+      if (!serverItem) return false;
+      const hasSession =
+        (serverItem.sessions?.length ?? 0) > 0 || Boolean(serverItem.task.primary_session_id);
+      return hasSession;
+    });
+    if (!shouldTrim) return;
+    setOptimisticTasks((prev) => {
+      const next = prev.filter((item) => {
+        if (item.localStatus === "failed") return true;
+        const serverItem = tasksById[item.id];
+        if (!serverItem) return true;
+        const hasSession =
+          (serverItem.sessions?.length ?? 0) > 0 || Boolean(serverItem.task.primary_session_id);
+        if (!hasSession) return true;
+        return item.localStatus !== "synced";
+      });
+      return next.length === prev.length ? prev : next;
+    });
+  }, [optimisticTasks, tasksById]);
 
   const providerIdsByTaskFromSessions = useMemo(() => {
     const byTask: Record<string, Array<{ providerId: string; updatedAt: number }>> = {};
@@ -1521,6 +1696,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const taskSummary = tasksById[tid];
     const t = taskSummary?.task;
     if (!t) return;
+    if (optimisticTasksById[tid]) return;
     const working = taskLiveInfo.workingByTask.has(tid);
     const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
     const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
@@ -1532,7 +1708,14 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
     if (!unread) return;
     void markTaskRead(tid);
-  }, [activeTaskId, markTaskRead, taskLiveInfo.lastAssistantMsByTask, taskLiveInfo.workingByTask, tasksById]);
+  }, [
+    activeTaskId,
+    markTaskRead,
+    taskLiveInfo.lastAssistantMsByTask,
+    taskLiveInfo.workingByTask,
+    tasksById,
+    optimisticTasksById,
+  ]);
 
   useEnsureArchivedLoaded({
     archivedCollapsed,
@@ -1632,6 +1815,22 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setTaskMenu((prev) => (prev?.taskId === taskId ? null : { taskId, style: { left, top } }));
   }, []);
 
+  const dismissOptimisticTask = useCallback(
+    (taskId: string) => {
+      const summary = optimisticTasksById[taskId];
+      if (!summary) return;
+      if (activeTaskId === taskId) {
+        focusNewTask();
+      }
+      const sessionId = summary.primarySessionId ? String(summary.primarySessionId) : "";
+      if (sessionId) {
+        supervisor.dropSessionEntry(sessionId);
+      }
+      setOptimisticTasks((prev) => prev.filter((item) => item.id !== taskId));
+    },
+    [activeTaskId, focusNewTask, optimisticTasksById, supervisor],
+  );
+
   const beginRenameTask = useCallback(
     (taskId: string) => {
       if (renamingTaskId && renamingTaskId !== taskId) {
@@ -1678,6 +1877,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     (summary: WorkspaceActiveSnapshotItem, opts?: { archived?: boolean }) => {
       const tid = summary.id;
       const t = summary.task;
+      const optimistic = isOptimisticTask(summary) ? summary : null;
+      const localStatus = optimistic?.localStatus ?? null;
       const selected = tid === activeTaskId;
       const hovered = tid === hoveredTaskId;
       const archived = !!opts?.archived;
@@ -1695,7 +1896,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const seenMs = parseMs(t.assistant_seen_at ?? null);
       const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
       const ageIso = t.last_activity_at ?? t.updated_at ?? t.created_at;
-      const statusKind = archivePending
+      let statusKind = archivePending
         ? "archive"
         : hasError
           ? "error"
@@ -1704,6 +1905,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             : unread
               ? "unread"
               : "idle";
+      if (localStatus === "failed") {
+        statusKind = "error";
+      } else if (localStatus === "starting") {
+        statusKind = "working";
+      }
       const summaryProviders =
         summary.providerIds && summary.providerIds.length
           ? summary.providerIds
@@ -1715,6 +1921,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         .map((pid) => HARNESS_CATALOG.find((h) => h.id === pid))
         .filter(Boolean)
         .slice(0, 3) as Array<(typeof HARNESS_CATALOG)[number]>;
+      const allowActions = !optimistic;
+      const dismissHandler = localStatus === "failed" ? () => dismissOptimisticTask(tid) : undefined;
+      const dismissText = localStatus === "failed" ? "Dismiss failed start" : undefined;
 
       return (
         <TaskRow
@@ -1735,6 +1944,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           setRenameDraft={setRenameDraft}
           onFocusTask={focusTask}
           onOpenMenu={openTaskMenu}
+          menuEnabled={allowActions}
+          archiveEnabled={allowActions}
+          onDismiss={dismissHandler}
+          dismissLabel={dismissText}
           onToggleArchive={onToggleArchive}
           onHoverEnter={(id) => setHoveredTaskId(id)}
           onHoverLeave={(id) => setHoveredTaskId((current) => (current === id ? null : current))}
@@ -1748,6 +1961,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       archivePendingById,
       cancelRenameTask,
       commitRenameTask,
+      dismissOptimisticTask,
       focusTask,
       getRenameDraft,
       hoveredTaskId,
@@ -1936,15 +2150,16 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const activeSessionId = useMemo(() => {
     if (primarySessionId) return primarySessionId;
-    if (activeSessionIdFromTab) return activeSessionIdFromTab;
+    if (activeSessionIdFromTabResolved) return activeSessionIdFromTabResolved;
     return pickPreferredSessionId(sessions, null);
-  }, [activeSessionIdFromTab, primarySessionId, sessions]);
+  }, [activeSessionIdFromTabResolved, primarySessionId, sessions]);
 
   const sessionIdsToRender = useMemo(() => {
     return activeSessionId ? [activeSessionId] : [];
   }, [activeSessionId]);
   const preserveScrollOnFocus = true;
-  useOpenSession(activeSessionId ?? "", { watchDiff: diffOpen });
+  const openSessionId = activeSessionId && !optimisticSessionIdSet.has(activeSessionId) ? activeSessionId : "";
+  useOpenSession(openSessionId, { watchDiff: diffOpen });
 
   const showDebugIds = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2711,44 +2926,213 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setStartBusy(true);
     setStartError(null);
 
+    const nowIso = new Date().toISOString();
+    const title = deriveTaskTitle(prompt);
+    const attachmentsToSend = draftAttachments.slice();
+    const toStart =
+      draftTracks.length > 0 ? draftTracks : [{ key: "t1", label: "", providerId: "codex", modelId: "" }];
+    const primaryTrack = toStart[0];
+    const optimisticTaskId = `optimistic-task-${randomUuid()}`;
+    const optimisticSessionId = `optimistic-session-${randomUuid()}`;
+    const optimisticMessageId = `optimistic-message-${randomUuid()}`;
+    const optimisticModelId =
+      primaryTrack.modelId ||
+      modelIdsFromOptions(providerOptions[primaryTrack.providerId])[0] ||
+      (primaryTrack.providerId === "fake" ? "fake-model" : "default");
+
+    const optimisticTask: Task = {
+      id: optimisticTaskId,
+      workspace_id: workspaceId,
+      title,
+      status: "running",
+      primary_session_id: optimisticSessionId,
+      created_at: nowIso,
+      updated_at: nowIso,
+      last_activity_at: nowIso,
+      has_active_session: true,
+    };
+
+    const optimisticSession: Session = {
+      id: optimisticSessionId,
+      task_id: optimisticTaskId,
+      workspace_id: workspaceId,
+      worktree_id: "",
+      provider_id: primaryTrack.providerId,
+      model_id: optimisticModelId,
+      title: "Session 1",
+      agent_role: "assistant",
+      status: "starting",
+      env_target: "worktree",
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+
+    const optimisticSummary: SessionSnapshotSummary = {
+      session: optimisticSession,
+      last_message_at: nowIso,
+      last_message_preview: prompt.slice(0, 160),
+      activity: { is_working: true, last_turn_status: "queued" },
+      unread: false,
+    };
+
+    const optimisticItem: OptimisticTaskSummary = {
+      id: optimisticTaskId,
+      task: optimisticTask,
+      sessions: [optimisticSummary],
+      primarySessionHead: null,
+      primarySessionId: optimisticSessionId,
+      sort_at: nowIso,
+      sortAtMs: Date.parse(nowIso) || Date.now(),
+      providerIds: [primaryTrack.providerId],
+      localStatus: "starting",
+      localPrompt: prompt,
+      localMessageId: optimisticMessageId,
+    };
+
+    setOptimisticTasks((prev) => [optimisticItem, ...prev]);
+    focusTask(optimisticTaskId, optimisticSessionId);
+    setOptimisticFocus({
+      taskId: optimisticTaskId,
+      sessionId: optimisticSessionId,
+      navToken: workbenchStore.getNavToken(),
+    });
+    const optimisticMessage: Message = {
+      id: optimisticMessageId,
+      session_id: optimisticSessionId,
+      task_id: optimisticTaskId,
+      turn_id: null,
+      turn_sequence: null,
+      role: "user",
+      content: prompt,
+      attachments: attachmentsToSend,
+      delivery: "queued",
+      created_at: nowIso,
+    };
+
+    supervisor.setSession(optimisticSession);
+    supervisor.setMessages(optimisticSessionId, [optimisticMessage], { replace: true });
+
+    setNewTaskDraft({ text: "", modeId: "default" });
+    await workbenchStore.flushDraft(NEW_TASK_DRAFT_KEY);
+    setDraftAttachments([]);
+
+    let currentTaskId = optimisticTaskId;
+    let currentSessionId = optimisticSessionId;
+    let primaryMessagePosted = false;
+
     try {
-      const title = deriveTaskTitle(prompt);
       const task = await createTask(workspaceId, title, undefined, { create_default_session: false });
       const taskId = idToString(task.id);
-      let firstSessionId: string | null = null;
+      if (!taskId) throw new Error("Task creation failed.");
 
-      const toStart =
-        draftTracks.length > 0 ? draftTracks : [{ key: "t1", label: "", providerId: "codex", modelId: "" }];
+      if (taskId !== currentTaskId) {
+        const prevTaskId = currentTaskId;
+        currentTaskId = taskId;
+        workbenchStore.replaceTaskId(prevTaskId, taskId);
+        supervisor.replaceSessionTaskId(currentSessionId, taskId);
+        setOptimisticTasks((prev) =>
+          prev.map((item) => {
+            if (item.id !== prevTaskId) return item;
+            const nextTask: Task = { ...task, primary_session_id: item.primarySessionId ?? null };
+            const nextSessions = item.sessions.map((summary) => ({
+              ...summary,
+              session: { ...summary.session, task_id: taskId, workspace_id: task.workspace_id ?? summary.session.workspace_id },
+            }));
+            return {
+              ...item,
+              id: taskId,
+              task: nextTask,
+              sessions: nextSessions,
+              sort_at: task.created_at ?? item.sort_at,
+              sortAtMs: Date.parse(task.created_at ?? item.sort_at ?? "") || item.sortAtMs,
+            };
+          }),
+        );
+      }
 
       for (let i = 0; i < toStart.length; i++) {
         const dt = toStart[i];
-        const installed = providersById[dt.providerId]?.installed === true && providersById[dt.providerId]?.health === "ok";
-        if (!installed) {
-          const diag = providersById[dt.providerId]?.diagnostics?.[0];
-          throw new Error(
-            diag ? `Harness “${dt.providerId}” unavailable: ${diag}` : `Harness “${dt.providerId}” unavailable.`,
-          );
+        try {
+          const installed =
+            providersById[dt.providerId]?.installed === true && providersById[dt.providerId]?.health === "ok";
+          if (!installed) {
+            const diag = providersById[dt.providerId]?.diagnostics?.[0];
+            throw new Error(
+              diag ? `Harness “${dt.providerId}” unavailable: ${diag}` : `Harness “${dt.providerId}” unavailable.`,
+            );
+          }
+          const env_target = "worktree";
+          const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
+          const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
+          const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
+          const session = await createSession(currentTaskId, dt.providerId, modelId, { env_target });
+          const sessionId = idToString(session.id);
+          if (!sessionId) throw new Error("Session creation failed.");
+
+          if (!primaryMessagePosted) {
+            const prevSessionId = currentSessionId;
+            currentSessionId = sessionId;
+            workbenchStore.replaceSessionId(prevSessionId, sessionId);
+            supervisor.replaceSessionId(prevSessionId, sessionId);
+            supervisor.setSession(session);
+            setOptimisticTasks((prev) =>
+              prev.map((item) => {
+                if (item.id !== currentTaskId) return item;
+                const nextSessions = item.sessions.map((summary) => {
+                  if (idToString(summary.session.id) !== prevSessionId) return summary;
+                  const nextSummary: SessionSnapshotSummary = {
+                    ...summary,
+                    session,
+                    last_message_at: nowIso,
+                    last_message_preview: summary.last_message_preview ?? prompt.slice(0, 160),
+                    activity: { is_working: true, last_turn_status: "queued" },
+                  };
+                  return nextSummary;
+                });
+                return {
+                  ...item,
+                  sessions: nextSessions,
+                  primarySessionId: sessionId,
+                  task: { ...item.task, primary_session_id: sessionId },
+                };
+              }),
+            );
+          } else {
+            supervisor.setSession(session);
+          }
+
+          supervisor.refreshSession(sessionId, { watchDiff: true });
+          const posted = await postMessage(sessionId, prompt, "immediate", attachmentsToSend);
+          if (sessionId === currentSessionId) {
+            supervisor.replaceMessage(sessionId, optimisticMessageId, posted);
+            primaryMessagePosted = true;
+            setOptimisticTasks((prev) =>
+              prev.map((item) =>
+                item.id === currentTaskId && item.localStatus === "starting"
+                  ? { ...item, localStatus: "synced" }
+                  : item,
+              ),
+            );
+          }
+          supervisor.refreshSession(sessionId, { watchDiff: true });
+        } catch (e: any) {
+          const message = e?.message ?? String(e);
+          if (!primaryMessagePosted) throw e;
+          setStartError(message);
         }
-        const env_target = "worktree";
-        const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
-        const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
-        const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
-        const session = await createSession(taskId, dt.providerId, modelId, { env_target });
-        const sessionId = idToString(session.id);
-        if (!firstSessionId) {
-          firstSessionId = sessionId;
-          focusTask(taskId, sessionId);
-        }
-        supervisor.refreshSession(sessionId, { watchDiff: true });
-        await postMessage(sessionId, prompt, "immediate", draftAttachments);
-        supervisor.refreshSession(sessionId, { watchDiff: true });
       }
 
-      setNewTaskDraft({ text: "", modeId: "default" });
-      await workbenchStore.flushDraft(NEW_TASK_DRAFT_KEY);
-      setDraftAttachments([]);
+      if (!primaryMessagePosted) {
+        throw new Error("Failed to start the first session.");
+      }
     } catch (e: any) {
-      setStartError(e?.message ?? String(e));
+      const message = e?.message ?? String(e);
+      setOptimisticTasks((prev) =>
+        prev.map((item) =>
+          item.id === currentTaskId ? { ...item, localStatus: "failed", localError: message } : item,
+        ),
+      );
+      setStartError(message);
     } finally {
       setStartBusy(false);
     }
@@ -3585,6 +3969,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                       active={sessionId === activeSessionId}
                       scrollState={scrollState}
                       preserveScrollOnFocus={preserveScrollOnFocus}
+                      optimisticFailure={optimisticFailureBySessionId[sessionId] ?? null}
                     />
                   );
                 })}

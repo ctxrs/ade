@@ -304,6 +304,98 @@ export class SessionSupervisor {
     this.publish();
   };
 
+
+  setMessages = (sessionId: string, messages: Message[], opts?: { replace?: boolean }) => {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
+    if (opts?.replace) {
+      entry.messages = [];
+      entry.queue = [];
+    }
+    this.mergeMessages(entry, messages);
+    entry.updatedAtMs = Date.now();
+    this.publish();
+  };
+
+  replaceMessage = (sessionId: string, localId: string, message: Message) => {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
+    const local = idToString(localId);
+    const next = entry.messages.filter((m) => idToString(m.id) !== local);
+    next.push(message);
+    entry.messages = [];
+    entry.queue = [];
+    this.mergeMessages(entry, next);
+    entry.updatedAtMs = Date.now();
+    this.publish();
+  };
+
+  setError = (sessionId: string, error: string | null) => {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
+    entry.error = error ?? undefined;
+    entry.updatedAtMs = Date.now();
+    this.publish();
+  };
+
+  replaceSessionId = (oldSessionId: string, newSessionId: string) => {
+    const from = String(oldSessionId || "").trim();
+    const to = String(newSessionId || "").trim();
+    if (!from || !to || from === to) return;
+    const entry = this.entries.get(from);
+    if (!entry) return;
+    this.entries.delete(from);
+    entry.sessionId = to;
+    if (entry.session) {
+      entry.session = { ...entry.session, id: to };
+    }
+    entry.turns = entry.turns.map((turn) =>
+      idToString(turn.session_id) === from ? { ...turn, session_id: to } : turn,
+    );
+    entry.messages = entry.messages.map((msg) =>
+      idToString(msg.session_id) === from ? { ...msg, session_id: to } : msg,
+    );
+    entry.queue = entry.queue.map((msg) =>
+      idToString(msg.session_id) === from ? { ...msg, session_id: to } : msg,
+    );
+    this.activeTaskSessionIds = this.activeTaskSessionIds.map((id) => (id === from ? to : id));
+    this.warmSessionIds = this.warmSessionIds.map((id) => (id === from ? to : id));
+    this.subscribedSessionIds = this.subscribedSessionIds.map((id) => (id === from ? to : id));
+    this.entries.set(to, entry);
+    this.refreshSubscriptions();
+    this.publish();
+  };
+
+  replaceSessionTaskId = (sessionId: string, taskId: string) => {
+    const id = String(sessionId || "").trim();
+    const nextTaskId = String(taskId || "").trim();
+    if (!id || !nextTaskId) return;
+    const entry = this.entries.get(id);
+    if (!entry) return;
+    if (entry.session) {
+      entry.session = { ...entry.session, task_id: nextTaskId };
+    }
+    entry.messages = entry.messages.map((msg) => ({ ...msg, task_id: nextTaskId }));
+    entry.queue = entry.queue.map((msg) => ({ ...msg, task_id: nextTaskId }));
+    entry.updatedAtMs = Date.now();
+    this.publish();
+  };
+
+  dropSessionEntry = (sessionId: string) => {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    if (!this.entries.has(id)) return;
+    this.entries.delete(id);
+    this.activeTaskSessionIds = this.activeTaskSessionIds.filter((entryId) => entryId !== id);
+    this.warmSessionIds = this.warmSessionIds.filter((entryId) => entryId !== id);
+    this.subscribedSessionIds = this.subscribedSessionIds.filter((entryId) => entryId !== id);
+    this.refreshSubscriptions();
+    this.publish();
+  };
+
   setDiff = (sessionId: string, diff: string) => {
     const entry = this.ensureEntry(sessionId);
     entry.diff = diff;

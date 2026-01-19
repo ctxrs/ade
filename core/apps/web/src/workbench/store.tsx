@@ -424,6 +424,81 @@ export class WorkbenchStore {
     return true;
   };
 
+
+  replaceTaskId = (oldTaskId: string, newTaskId: string): boolean => {
+    const from = String(oldTaskId || "").trim();
+    const to = String(newTaskId || "").trim();
+    if (!from || !to || from === to) return false;
+    const win = this.snapshot.window;
+    let changed = false;
+    const nextLayout = mapLayout(win.layout, (node) => {
+      if (node.kind !== "leaf") return node;
+      let tabChanged = false;
+      const nextTabs = node.tabs.map((tab) => {
+        if (tab.kind !== "task") return tab;
+        if (tab.ref.taskId !== from) return tab;
+        tabChanged = true;
+        return { ...tab, ref: { ...tab.ref, taskId: to } };
+      });
+      if (!tabChanged) return node;
+      changed = true;
+      return { ...node, tabs: nextTabs };
+    });
+    if (!changed) return false;
+    this.markLayoutDirty();
+    this.setWindow({ ...win, layout: nextLayout }, { persistDelayMs: 0 });
+    return true;
+  };
+
+  replaceSessionId = (oldSessionId: string, newSessionId: string): boolean => {
+    const from = String(oldSessionId || "").trim();
+    const to = String(newSessionId || "").trim();
+    if (!from || !to || from === to) return false;
+    const win = this.snapshot.window;
+    let changed = false;
+    const nextLayout = mapLayout(win.layout, (node) => {
+      if (node.kind !== "leaf") return node;
+      let tabChanged = false;
+      const nextTabs = node.tabs.map((tab) => {
+        if (tab.kind !== "task") return tab;
+        if (tab.ref.sessionId !== from) return tab;
+        tabChanged = true;
+        return { ...tab, ref: { ...tab.ref, sessionId: to } };
+      });
+      if (!tabChanged) return node;
+      changed = true;
+      return { ...node, tabs: nextTabs };
+    });
+
+    const scroll = win.scrollByKey;
+    const nextScroll: Record<string, WorkbenchScrollState | undefined> = { ...scroll };
+    const fromScrollKey = scrollKey(from);
+    if (nextScroll[fromScrollKey]) {
+      nextScroll[scrollKey(to)] = nextScroll[fromScrollKey];
+      delete nextScroll[fromScrollKey];
+      changed = true;
+    }
+
+    const fromDraftKey = sessionDraftKey(from);
+    const toDraftKey = sessionDraftKey(to);
+    const existingDraft = this.snapshot.drafts.byKey[fromDraftKey];
+    if (existingDraft) {
+      const nextByKey = { ...this.snapshot.drafts.byKey, [toDraftKey]: existingDraft };
+      delete nextByKey[fromDraftKey];
+      const nextLoaded = { ...this.snapshot.drafts.loadedKeys, [toDraftKey]: true };
+      delete nextLoaded[fromDraftKey];
+      this.snapshot = { ...this.snapshot, drafts: { byKey: nextByKey, loadedKeys: nextLoaded } };
+      this.publish();
+      this.schedulePersistDraft(toDraftKey, existingDraft);
+      changed = true;
+    }
+
+    if (!changed) return false;
+    this.markLayoutDirty();
+    this.setWindow({ ...win, layout: nextLayout, scrollByKey: nextScroll }, { persistDelayMs: 0 });
+    return true;
+  };
+
   setScrollState = (
     key: string,
     next: Omit<WorkbenchScrollState, "updatedAtMs"> & { updatedAtMs?: number },
