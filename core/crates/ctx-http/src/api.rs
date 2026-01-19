@@ -37,7 +37,8 @@ use chrono::{DateTime, Utc};
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::git::{
-    assert_git_repo, git_merge_base, list_tracked_files, list_untracked_files, rev_parse_head,
+    assert_git_repo, delete_branch, git_merge_base, list_tracked_files, list_untracked_files,
+    rev_parse_head,
 };
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_store::store::MobileDeviceUpsert;
@@ -8267,7 +8268,24 @@ async fn archive_task(
         let Some(root) = managed_worktree_root(&state, &workspace, worktree) else {
             continue;
         };
+        let branch = worktree
+            .git_branch
+            .as_deref()
+            .filter(|name| name.starts_with("ctx/"));
         if tokio::fs::metadata(&root).await.is_err() {
+            if branch.is_some() {
+                needs_prune = true;
+            }
+            if let Some(branch) = branch {
+                if let Err(err) = delete_branch(&workspace.root_path, branch).await {
+                    tracing::warn!(
+                        task_id = %task_id.0,
+                        worktree_id = %worktree.id.0,
+                        branch,
+                        "failed to delete worktree branch: {err:#}"
+                    );
+                }
+            }
             continue;
         }
         let is_git = is_git_worktree(&root).await.unwrap_or(false);
@@ -8307,6 +8325,16 @@ async fn archive_task(
                 "failed to remove worktree dir: {err:#}"
             );
             errors.push(err);
+        }
+        if let Some(branch) = branch {
+            if let Err(err) = delete_branch(&workspace.root_path, branch).await {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    branch,
+                    "failed to delete worktree branch: {err:#}"
+                );
+            }
         }
     }
     if needs_prune {
