@@ -24,6 +24,10 @@
   transition: grid-template-columns 180ms cubic-bezier(0.2, 0, 0, 1);
 }
 
+.wb-root.wb-root-no-topbar {
+  grid-template-rows: 0px 1fr auto;
+}
+
 .wb-root.wb-root-collapsed {
   grid-template-columns: 0px 1fr;
 }
@@ -63,6 +67,10 @@
   width: 6px;
   cursor: col-resize;
   z-index: 5;
+}
+
+.wb-root.wb-root-no-topbar .wb-sidebar-resizer {
+  top: 0px;
 }
 
 .wb-sidebar-resizer::after {
@@ -144,6 +152,10 @@
   padding: 0;
   color: var(--text);
   z-index: 6;
+}
+
+.wb-root.wb-root-no-topbar .wb-sidebar-tab {
+  top: 12px;
 }
 
 .wb-sidebar-tab-open {

@@ -81,7 +81,7 @@ import { randomUuid } from "../utils/randomUuid";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { startMicPcmStream } from "../utils/micPcmStream";
-import { desktopSaveTextFile, isDesktopApp } from "../utils/desktop";
+import { desktopSaveTextFile, isDesktopApp, isDesktopUi } from "../utils/desktop";
 import { parseWsJson } from "../utils/wsJson";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { copyTextToClipboard } from "../utils/clipboard";
@@ -778,6 +778,7 @@ export default function WorkbenchPage() {
 }
 
 function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
+  const desktopUi = isDesktopUi();
   const navigate = useNavigate();
   const supervisor = useSessionSupervisor();
   const sessionSnap = useSessionCacheSnapshot();
@@ -1824,8 +1825,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       "triggerEl" in opts
         ? opts.triggerEl.getBoundingClientRect().bottom + 6
         : Math.max(8, Math.min(opts.y, window.innerHeight - 8));
+    const desktopUi = isDesktopUi();
+    // WebKit popover anchoring tends to land slightly higher than Chromium for
+    // the same DOM rect; apply a small offset in desktop UI mode to match.
+    const topOffset = desktopUi ? 6 : 0;
     const left = Math.min(baseLeft, window.innerWidth - 240);
-    const top = Math.min(baseTop, window.innerHeight - 260);
+    const top = Math.min(baseTop + topOffset, window.innerHeight - 260);
     setTaskMenu((prev) => (prev?.taskId === taskId ? null : { taskId, style: { left, top } }));
   }, []);
 
@@ -3706,16 +3711,24 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     } as React.CSSProperties;
   }, [sidebarWidth, terminalHeight, terminalOpen]);
 
+  useEffect(() => {
+    if (!desktopUi) return;
+    const title = `${workspace?.name ?? "Workspace"}${activeTask?.title ? ` — ${activeTask.title}` : ""}`;
+    document.title = title;
+  }, [activeTask?.title, desktopUi, workspace?.name]);
+
   if (!workbenchSnap.hydrated) {
     return (
       <div
-        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
+        className={`wb-root ${desktopUi ? "wb-root-no-topbar" : ""} ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
         style={rootStyle}
       >
         <WorktreeBootstrapSnackbar />
-        <div className="wb-topbar">
-          <div className="wb-topbar-title">{workspace?.name ?? "Workspace"}</div>
-        </div>
+        {!desktopUi && (
+          <div className="wb-topbar">
+            <div className="wb-topbar-title">{workspace?.name ?? "Workspace"}</div>
+          </div>
+        )}
         <div className="wb-main">
           <div className="wb-center">
             <div className="wb-muted" style={{ padding: 16 }}>
@@ -3729,46 +3742,48 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div
-      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
+      className={`wb-root ${desktopUi ? "wb-root-no-topbar" : ""} ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
       style={rootStyle}
     >
       <WorktreeBootstrapSnackbar />
-      <div className="wb-topbar">
-        <div className="wb-topbar-title">{workspace?.name ?? "Workspace"}</div>
-        {activeTask && <div className="wb-topbar-sub">{activeTask.title}</div>}
-        <div className="wb-topbar-right">
-          {showDebugIds && (
-            <button
-              type="button"
-              className="wb-topbar-ids"
-              title="Click to copy workspace/task/session IDs"
-              onClick={() =>
-                void copyTextToClipboard(
-                  JSON.stringify(
-                    {
-                      workspaceId,
-                      taskId: activeTaskId,
-                      sessionId: activeSessionId,
-                    },
-                    null,
-                    2,
-                  ),
-                )
-              }
+      {!desktopUi && (
+        <div className="wb-topbar">
+          <div className="wb-topbar-title">{workspace?.name ?? "Workspace"}</div>
+          {activeTask && <div className="wb-topbar-sub">{activeTask.title}</div>}
+          <div className="wb-topbar-right">
+            {showDebugIds && (
+              <button
+                type="button"
+                className="wb-topbar-ids"
+                title="Click to copy workspace/task/session IDs"
+                onClick={() =>
+                  void copyTextToClipboard(
+                    JSON.stringify(
+                      {
+                        workspaceId,
+                        taskId: activeTaskId,
+                        sessionId: activeSessionId,
+                      },
+                      null,
+                      2,
+                    ),
+                  )
+                }
+              >
+                {debugIdLabel}
+              </button>
+            )}
+            <Link
+              className="wb-topbar-icon"
+              to={`/settings?ws=${encodeURIComponent(String(workspaceId))}`}
+              title="Settings"
+              aria-label="Settings"
             >
-              {debugIdLabel}
-            </button>
-          )}
-          <Link
-            className="wb-topbar-icon"
-            to={`/settings?ws=${encodeURIComponent(String(workspaceId))}`}
-            title="Settings"
-            aria-label="Settings"
-          >
-            <Settings size={14} />
-          </Link>
+              <Settings size={14} />
+            </Link>
+          </div>
         </div>
-      </div>
+      )}
 
       {workbenchSnap.warnings.length > 0 && (
         <div className="banner" style={{ margin: "8px 12px 0" }}>
@@ -3819,9 +3834,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           </div>
         </div>
 
-        <div className="wb-sidebar-section wb-sidebar-grow" style={{ minHeight: 0, display: "flex" }}>
+        <div className="wb-sidebar-section wb-sidebar-grow" style={{ minHeight: 0 }}>
           <Virtuoso
-            style={{ height: "100%" }}
+            style={{ flex: 1, minHeight: 0 }}
             data={taskListItems}
             overscan={8}
             computeItemKey={computeTaskListItemKey}

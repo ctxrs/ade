@@ -63,6 +63,21 @@ export const isDesktopApp = (): boolean => {
   }
 };
 
+// UI-only desktop affordances (e.g. hide the in-app topbar when a native window
+// chrome/titlebar exists). This is intentionally broader than `isDesktopApp()`
+// so Playwright/WebKit parity runs can opt into desktop UI without requiring
+// Tauri APIs.
+export const isDesktopUi = (): boolean => {
+  try {
+    if (isDesktopApp()) return true;
+    if (Boolean((window as any).__CTX_DESKTOP_UI__)) return true;
+    const params = new URLSearchParams(window.location.search);
+    return params.get("desktop_ui") === "1";
+  } catch {
+    return false;
+  }
+};
+
 const invoke = async <T>(cmd: string, args?: any): Promise<T> => {
   const mod = await import("@tauri-apps/api/core");
   return mod.invoke<T>(cmd, args);
