@@ -108,6 +108,47 @@ pub async fn git_is_ancestor(
     )
 }
 
+pub async fn delete_branch(root_path: impl AsRef<Path>, branch: &str) -> Result<()> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Ok(());
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .args(["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git show-ref")?;
+    if output.status.success() {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root_path.as_ref())
+            .args(["branch", "-D", branch])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("running git branch -D")?;
+        if !output.status.success() {
+            bail!(
+                "git branch -D failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        return Ok(());
+    }
+    if output.status.code() == Some(1) {
+        return Ok(());
+    }
+    bail!(
+        "git show-ref failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
 pub async fn git_diff(root_path: impl AsRef<Path>, base_commit_sha: &str) -> Result<String> {
     let output = Command::new("git")
         .arg("-C")
