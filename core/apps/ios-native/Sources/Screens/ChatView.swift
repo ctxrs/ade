@@ -4009,27 +4009,14 @@ final class ChatViewModel: ObservableObject {
     private func resolvePrimarySessionId(for task: WorkspaceTaskSummary) -> String? {
         let sessions = task.sessions
         guard !sessions.isEmpty else { return nil }
-        let nonSubagents = sessions.filter { $0.session.relationship != "sub_agent" }
-        let pool = nonSubagents.isEmpty ? sessions : nonSubagents
 
         if let primaryId = task.task.primarySessionId,
-           let match = pool.first(where: { $0.session.id == primaryId }) {
+           let match = sessions.first(where: { $0.session.id == primaryId }) {
             return match.session.id.stringValue
         }
 
-        if let running = pool.first(where: { $0.session.status == "active" || $0.session.status == "running" }) {
-            return running.session.id.stringValue
-        }
-
-        if let recent = pool.max(by: { left, right in
-            let leftDate = parseIso(left.lastMessageAt ?? left.session.updatedAt ?? left.session.createdAt) ?? .distantPast
-            let rightDate = parseIso(right.lastMessageAt ?? right.session.updatedAt ?? right.session.createdAt) ?? .distantPast
-            return leftDate < rightDate
-        }) {
-            return recent.session.id.stringValue
-        }
-
-        return pool.first?.session.id.stringValue
+        let selected = sessions.first(where: { $0.session.relationship != "sub_agent" }) ?? sessions.first
+        return selected?.session.id.stringValue
     }
 
     private func resolveWorkspaceId() async -> String? {

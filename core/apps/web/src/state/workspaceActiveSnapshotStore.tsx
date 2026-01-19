@@ -923,9 +923,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     if (primaryId && (sessions.length === 0 || sessions.some((s) => idToString(s.id) === primaryId))) {
       return primaryId;
     }
-    const nonSubagents = sessions.filter((session) => session.relationship !== "sub_agent");
-    const pool = nonSubagents.length ? nonSubagents : sessions;
-    const selected = pool[0];
+    const selected = sessions.find((session) => session.relationship !== "sub_agent") ?? sessions[0];
     return selected ? idToString(selected.id) : null;
   }
 

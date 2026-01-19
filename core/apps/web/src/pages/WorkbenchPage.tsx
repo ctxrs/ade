@@ -85,7 +85,6 @@ import { desktopSaveTextFile, isDesktopApp } from "../utils/desktop";
 import { parseWsJson } from "../utils/wsJson";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { copyTextToClipboard } from "../utils/clipboard";
-import { pickPreferredSessionId } from "../utils/workbenchSelection";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { parseModelId } from "../utils/modelEffort";
 import { formatRelativeAgeShort } from "../utils/relativeTime";
@@ -929,7 +928,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [startBusy, setStartBusy] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [installAllBusy, setInstallAllBusy] = useState(false);
-  const [useMultipleAgents, setUseMultipleAgents] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
   const [dropActive, setDropActive] = useState(false);
   const dropHideTimerRef = useRef<number | null>(null);
@@ -1152,28 +1150,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [focusNewTask]);
 
   useEffect(() => {
-    if (useMultipleAgents) return;
     if (draftTracks.length <= 1) return;
     setDraftTracks((prev) => (prev.length > 0 ? [prev[0]] : prev));
-  }, [useMultipleAgents, draftTracks.length]);
-
-
-  const ensureActiveSessionSelection = useCallback(
-    (taskId: string, sessions: Array<{ session: any }>, preferredSessionId?: string | null) => {
-      const activeTab = workbenchStore.getActiveTab();
-      const prevSessionId =
-        activeTab?.kind === "task" && activeTab.ref.taskId === taskId ? (activeTab.ref.sessionId ?? null) : null;
-      const sessionList = sessions.map((s) => s.session).filter(Boolean);
-      const nextSessionId = preferredSessionId
-        ? preferredSessionId
-        : pickPreferredSessionId(sessionList, prevSessionId ?? null);
-      if (activeTab?.kind === "task" && activeTab.ref.taskId === taskId && nextSessionId !== prevSessionId) {
-        workbenchStore.setActiveSessionForActiveTask(nextSessionId, { source: "system" });
-      }
-    },
-    [workbenchStore],
-  );
-
+  }, [draftTracks.length]);
   useEffect(() => {
     if (!workspaceId) return;
     let cancelled = false;
@@ -1455,19 +1434,25 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return tasksById[activeTaskId] ?? optimistic ?? null;
   }, [activeTaskId, optimisticTasksById, tasksById]);
   const sessionSummaries = useMemo(() => activeTaskSummary?.sessions ?? [], [activeTaskSummary]);
-  const sessions = useMemo(() => sessionSummaries.map((s) => s.session), [sessionSummaries]);
-  const sessionIds = useMemo(
-    () => sessions.map((session) => idToString(session.id)).filter(Boolean),
-    [sessions],
-  );
   const primarySessionId = useMemo(
     () => idToString(activeTaskSummary?.task.primary_session_id ?? ""),
     [activeTaskSummary?.task.primary_session_id],
   );
+  const subagentSessionIds = useMemo(() => {
+    return sessionSummaries
+      .map((s) => s.session)
+      .filter((session) => session?.relationship === "sub_agent")
+      .map((session) => idToString(session.id))
+      .filter(Boolean);
+  }, [sessionSummaries]);
   const activeTaskSessionIds = useMemo(() => {
-    if (primarySessionId) return [primarySessionId];
-    return sessionIds;
-  }, [primarySessionId, sessionIds]);
+    const ids: string[] = [];
+    if (primarySessionId) ids.push(primarySessionId);
+    for (const id of subagentSessionIds) {
+      if (!ids.includes(id)) ids.push(id);
+    }
+    return ids;
+  }, [primarySessionId, subagentSessionIds]);
 
   const warmSessionIds = useMemo(() => {
     const ids: { id: string; updatedAt: number; running: boolean }[] = [];
@@ -1491,31 +1476,37 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeTaskSessionIds, tasksById, workspaceSnapshot.activeIds]);
 
   useEffect(() => {
-    if (!activeTaskId) {
-      return;
-    }
+    if (!activeTaskId) return;
     const snapshotReady = workspaceSnapshot.initialized && workspaceSnapshot.fetchState.active === "idle";
     if (!activeTaskSummary) {
       if (!snapshotReady) return;
       workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
       return;
     }
-    if (sessionIds.length === 0 && !primarySessionId) {
+    if (activeTaskSessionIds.length === 0) {
       if (!snapshotReady) return;
       workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
       return;
     }
-    ensureActiveSessionSelection(activeTaskId, sessionSummaries, primarySessionId || null);
+    const next =
+      (activeSessionIdFromTabResolved &&
+        activeTaskSessionIds.includes(activeSessionIdFromTabResolved) &&
+        activeSessionIdFromTabResolved) ||
+      primarySessionId ||
+      activeTaskSessionIds[0] ||
+      null;
+    if (next !== activeSessionIdFromTabResolved) {
+      workbenchStore.setActiveSessionForActiveTask(next, { source: "system" });
+    }
   }, [
+    activeSessionIdFromTabResolved,
     activeTaskId,
+    activeTaskSessionIds,
     activeTaskSummary,
-    ensureActiveSessionSelection,
     primarySessionId,
-    sessionIds.length,
-    sessionSummaries,
     workbenchStore,
-    workspaceSnapshot.initialized,
     workspaceSnapshot.fetchState.active,
+    workspaceSnapshot.initialized,
   ]);
 
   useEffect(() => {
@@ -1598,10 +1589,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     for (const summary of Object.values(tasksForLiveInfo)) {
       if (!summary) continue;
       const taskId = summary.id;
+      const topSessionId = summary.primarySessionId ?? idToString(summary.task.primary_session_id ?? "");
       for (const sessionSummary of summary.sessions) {
         const sessionId = idToString(sessionSummary.session.id);
         const entry = sessionId ? entryBySessionId.get(sessionId) : undefined;
-        const isWorking = entry ? isEntryWorking(entry) : sessionSummary.activity?.is_working === true;
+        const isTopSession = Boolean(topSessionId) && sessionId === topSessionId;
+        const isWorking = isTopSession && (entry ? isEntryWorking(entry) : sessionSummary.activity?.is_working === true);
         if (isWorking) workingByTask.add(taskId);
 
         const status = entry?.session?.status ?? sessionSummary.session.status;
@@ -2166,10 +2159,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, []);
 
   const activeSessionId = useMemo(() => {
+    if (activeSessionIdFromTabResolved && activeTaskSessionIds.includes(activeSessionIdFromTabResolved)) {
+      return activeSessionIdFromTabResolved;
+    }
     if (primarySessionId) return primarySessionId;
-    if (activeSessionIdFromTabResolved) return activeSessionIdFromTabResolved;
-    return pickPreferredSessionId(sessions, null);
-  }, [activeSessionIdFromTabResolved, primarySessionId, sessions]);
+    return activeTaskSessionIds[0] ?? null;
+  }, [activeSessionIdFromTabResolved, activeTaskSessionIds, primarySessionId]);
 
   const sessionIdsToRender = useMemo(() => {
     return activeSessionId ? [activeSessionId] : [];
@@ -2207,6 +2202,25 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
   const gitStatusSummary = activeEntry?.gitStatusSummary ?? null;
   const activeTaskArchived = Boolean(activeTaskSummary?.task?.archived_at);
+  const runningSubagentSessionIds = useMemo(() => {
+    if (!activeSessionId || sessionSummaries.length === 0) return [];
+    const out: string[] = [];
+    for (const summary of sessionSummaries) {
+      const session = summary.session;
+      if (session?.relationship !== "sub_agent") continue;
+      const sessionId = idToString(session.id);
+      if (!sessionId) continue;
+      const entry = sessionCache.sessions[sessionId];
+      const isWorking = entry ? isEntryWorking(entry) : summary.activity?.is_working === true;
+      if (isWorking) out.push(sessionId);
+    }
+    return out;
+  }, [activeSessionId, isEntryWorking, sessionCache.sessions, sessionSummaries]);
+
+  const interruptAllSubagents = useCallback(async () => {
+    if (runningSubagentSessionIds.length === 0) return;
+    await Promise.allSettled(runningSubagentSessionIds.map((sessionId) => interruptSession(sessionId)));
+  }, [runningSubagentSessionIds]);
   const [webSessions, setWebSessions] = useState<WebSessionInfo[]>([]);
   const [webSessionsLoading, setWebSessionsLoading] = useState(false);
   const [activeWebSessionId, setActiveWebSessionId] = useState<string | null>(null);
@@ -2946,9 +2960,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const nowIso = new Date().toISOString();
     const title = deriveTaskTitle(prompt);
     const attachmentsToSend = draftAttachments.slice();
-    const toStart =
-      draftTracks.length > 0 ? draftTracks : [{ key: "t1", label: "", providerId: "codex", modelId: "" }];
-    const primaryTrack = toStart[0];
+    const primaryTrack =
+      draftTracks[0] ?? { key: "t1", label: "", providerId: defaultProviderId || "codex", modelId: "" };
+    const toStart = [primaryTrack];
     const optimisticTaskId = `optimistic-task-${randomUuid()}`;
     const optimisticSessionId = `optimistic-session-${randomUuid()}`;
     const optimisticMessageId = `optimistic-message-${randomUuid()}`;
@@ -3138,7 +3152,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           setStartError(message);
         }
       }
-
       if (!primaryMessagePosted) {
         throw new Error("Failed to start the first session.");
       }
@@ -3858,8 +3871,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 draftTracks={draftTracks}
                 setDraftTracks={setDraftTracks}
                 defaultProviderId={defaultProviderId}
-                useMultipleAgents={useMultipleAgents}
-                setUseMultipleAgents={setUseMultipleAgents}
               />
 
               {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
@@ -4290,6 +4301,18 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             role="menuitem"
           >
             Copy Session Log
+          </button>
+          <button
+            type="button"
+            className="wb-menu-item"
+            disabled={runningSubagentSessionIds.length === 0}
+            onClick={() => {
+              setConvoMenu(null);
+              void interruptAllSubagents();
+            }}
+            role="menuitem"
+          >
+            Interrupt All Subagents
           </button>
           <button
             type="button"

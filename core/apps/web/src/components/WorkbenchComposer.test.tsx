@@ -48,7 +48,6 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
         { key: "t1", label: "Track 1", providerId: "codex", modelId: "o3" },
       ]);
-      const [useMultipleAgents, setUseMultipleAgents] = useState(false);
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
         codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
@@ -83,8 +82,6 @@ describe("WorkbenchComposer textarea sizing", () => {
           draftTracks={draftTracks}
           setDraftTracks={setDraftTracks}
           defaultProviderId="codex"
-          useMultipleAgents={useMultipleAgents}
-          setUseMultipleAgents={setUseMultipleAgents}
         />
       );
     };

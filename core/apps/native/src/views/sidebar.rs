@@ -650,12 +650,23 @@ fn render_task_row(
     let mut has_error = false;
     let mut unread_session = false;
 
+    let top_session_id = task
+        .primary_session
+        .as_ref()
+        .map(|summary| summary.session.id)
+        .or_else(|| {
+            task.sessions
+                .iter()
+                .find(|summary| summary.session.relationship.as_deref() != Some("sub_agent"))
+                .map(|summary| summary.session.id)
+        })
+        .or_else(|| task.sessions.first().map(|summary| summary.session.id));
     let summaries = task
         .primary_session
         .iter()
         .chain(task.sessions.iter());
     for session in summaries {
-        if session.activity.is_working {
+        if Some(session.session.id) == top_session_id && session.activity.is_working {
             working = true;
         }
         if matches!(

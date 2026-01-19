@@ -266,11 +266,18 @@ struct WorkbenchShellView: View {
         let hasSession = session != nil
         let canCopyWorktree = session?.worktreeId?.isEmpty == false && selectedWorkspace?.id != nil
         let isArchived = selectedTask.task.archivedAt != nil
+        let runningSubagentIds = selectedTask.sessions.compactMap { summary in
+            guard summary.session.relationship == "sub_agent" else { return nil }
+            guard summary.activity?.isWorking == true else { return nil }
+            return summary.session.id.stringValue
+        }
         return WorkbenchConversationMenuContext(
             hasSession: hasSession,
             canCopyWorktree: canCopyWorktree,
             isArchived: isArchived,
             isArchivePending: archiveInFlight.contains(taskId),
+            hasRunningSubagents: !runningSubagentIds.isEmpty,
+            onInterruptSubagents: { _Concurrency.Task { await interruptSubagentSessions(runningSubagentIds) } },
             onExportTranscript: { exportTranscript(sessionId: session?.id) },
             onCopyTranscript: { copyTranscript(sessionId: session?.id) },
             onExportSessionLog: { exportSessionLog(sessionId: session?.id) },
@@ -278,6 +285,18 @@ struct WorkbenchShellView: View {
             onCopyWorktreeLocation: { copyWorktreeLocation(session: session) },
             onArchiveConversation: { _Concurrency.Task { await archiveConversation(taskId: taskId) } }
         )
+    }
+
+    @MainActor
+    private func interruptSubagentSessions(_ sessionIds: [String]) async {
+        guard let client = connection.apiClient else { return }
+        for sessionId in sessionIds {
+            do {
+                try await client.interruptSession(sessionId: sessionId)
+            } catch {
+                continue
+            }
+        }
     }
 
     private func dismissKeyboard() {
@@ -1246,6 +1265,8 @@ private struct WorkbenchConversationMenuContext {
     let canCopyWorktree: Bool
     let isArchived: Bool
     let isArchivePending: Bool
+    let hasRunningSubagents: Bool
+    let onInterruptSubagents: () -> Void
     let onExportTranscript: () -> Void
     let onCopyTranscript: () -> Void
     let onExportSessionLog: () -> Void
@@ -1332,6 +1353,8 @@ private struct WorkbenchTopBar: View {
                                 .disabled(!context.hasSession)
                             Button("Copy Session Log", action: context.onCopySessionLog)
                                 .disabled(!context.hasSession)
+                            Button("Interrupt All Subagents", action: context.onInterruptSubagents)
+                                .disabled(!context.hasRunningSubagents)
                             Button("Copy Worktree Location", action: context.onCopyWorktreeLocation)
                                 .disabled(!context.canCopyWorktree)
                             Button("Archive Conversation", action: context.onArchiveConversation)
@@ -2607,42 +2630,25 @@ private func resolvePrimarySession(
         return ResolvedPrimarySession(sessionId: nil, session: nil)
     }
 
-    let nonSubagents = sessions.filter { $0.session.relationship != "sub_agent" }
-    let candidates = nonSubagents.isEmpty ? sessions : nonSubagents
-
     if let preferredSessionId,
-       let match = candidates.first(where: { $0.session.id.stringValue == preferredSessionId }) {
+       let match = sessions.first(where: { $0.session.id.stringValue == preferredSessionId }) {
         let summary = SessionSummary(session: match.session)
         return ResolvedPrimarySession(sessionId: preferredSessionId, session: summary)
     }
 
     if let primaryId = task.task.primarySessionId?.stringValue,
-       let match = candidates.first(where: { $0.session.id.stringValue == primaryId }) {
+       let match = sessions.first(where: { $0.session.id.stringValue == primaryId }) {
         let summary = SessionSummary(session: match.session)
         return ResolvedPrimarySession(sessionId: primaryId, session: summary)
     }
 
-    if let running = candidates.first(where: { $0.session.status == "active" || $0.session.status == "running" }) {
-        let summary = SessionSummary(session: running.session)
-        let sessionId = running.session.id.stringValue
-        return ResolvedPrimarySession(sessionId: sessionId, session: summary)
+    let fallback = sessions.first(where: { $0.session.relationship != "sub_agent" }) ?? sessions.first
+    guard let fallback else {
+        return ResolvedPrimarySession(sessionId: nil, session: nil)
     }
-
-    if let recent = mostRecentSession(in: candidates) {
-        let summary = SessionSummary(session: recent.session)
-        let sessionId = recent.session.id.stringValue
-        return ResolvedPrimarySession(sessionId: sessionId, session: summary)
-    }
-
-    return ResolvedPrimarySession(sessionId: nil, session: nil)
-}
-
-private func mostRecentSession(in sessions: [SessionSnapshotSummary]) -> SessionSnapshotSummary? {
-    sessions.max { left, right in
-        let leftKey = left.lastMessageAt ?? left.session.updatedAt ?? left.session.createdAt ?? ""
-        let rightKey = right.lastMessageAt ?? right.session.updatedAt ?? right.session.createdAt ?? ""
-        return leftKey < rightKey
-    }
+    let sessionId = fallback.session.id.stringValue
+    let summary = SessionSummary(session: fallback.session)
+    return ResolvedPrimarySession(sessionId: sessionId, session: summary)
 }
 
 private func extractModelIds(from models: JSONValue?) -> [String] {
@@ -2757,9 +2763,8 @@ private func pickArchivedSessionId(task: Task, sessions: [Session]) -> String? {
        (sessions.isEmpty || sessions.contains(where: { $0.id.stringValue == primaryId })) {
         return primaryId
     }
-    let nonSubagents = sessions.filter { $0.relationship != "sub_agent" }
-    let pool = nonSubagents.isEmpty ? sessions : nonSubagents
-    return pool.first?.id.stringValue
+    let selected = sessions.first(where: { $0.relationship != "sub_agent" }) ?? sessions.first
+    return selected?.id.stringValue
 }
 
 // MARK: - Task list helpers (web parity)
@@ -3073,16 +3078,23 @@ private func resolveTaskPreview(_ task: WorkspaceTaskSummary) -> String? {
 
 
 private func taskHasWorkingSession(_ task: WorkspaceTaskSummary) -> Bool {
-    for summary in task.sessions {
+    if let primaryId = task.task.primarySessionId?.stringValue,
+       let summary = task.sessions.first(where: { $0.session.id.stringValue == primaryId }) {
         let status = summary.session.status.lowercased()
         if status == "failed" || status == "cancelled" || status == "completed" {
-            continue
+            return false
         }
-        if summary.activity?.isWorking == true {
-            return true
-        }
+        return summary.activity?.isWorking == true
     }
-    return false
+
+    guard let fallback = task.sessions.first(where: { $0.session.relationship != "sub_agent" }) ?? task.sessions.first else {
+        return false
+    }
+    let status = fallback.session.status.lowercased()
+    if status == "failed" || status == "cancelled" || status == "completed" {
+        return false
+    }
+    return fallback.activity?.isWorking == true
 }
 
 private func taskHasErrorSession(_ task: WorkspaceTaskSummary) -> Bool {
