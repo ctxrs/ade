@@ -58,6 +58,7 @@ perf = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "=0.10.0"
+core-text = "=21.0.0"
 core-video = { version = "0.4.3", features = ["metal"] }
 objc = "0.2"
 
