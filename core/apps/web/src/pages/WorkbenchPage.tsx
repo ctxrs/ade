@@ -122,6 +122,8 @@ function deriveTaskTitle(_prompt: string): string {
 }
 
 const ARCHIVE_CONFIRM_STORAGE_KEY = "wb.archiveConfirmDismissed";
+// Keep a small pool mounted to avoid remounting session views during task switches.
+const SESSION_VIEW_POOL_LIMIT = 3;
 
 const normalizeGitStatusSummary = (
   value: GitStatusSummary | string | null | undefined,
@@ -651,6 +653,7 @@ type WorkbenchSessionSlotProps = {
   scrollState: WorkbenchScrollState | null;
   preserveScrollOnFocus?: boolean;
   optimisticFailure?: { prompt: string; error: string | null } | null;
+  snapshotRev: number;
 };
 
 function WorkbenchSessionSlot({
@@ -659,6 +662,7 @@ function WorkbenchSessionSlot({
   scrollState,
   preserveScrollOnFocus,
   optimisticFailure,
+  snapshotRev,
 }: WorkbenchSessionSlotProps) {
   const workbenchStore = useWorkbenchStore();
   const draft = useWorkbenchDraft(sessionDraftKey(sessionId), { text: "", modeId: "default" });
@@ -697,8 +701,8 @@ function WorkbenchSessionSlot({
         </div>
       ) : null}
       <SessionView
-        key={sessionId}
         sessionId={sessionId}
+        snapshotRev={snapshotRev}
         isActive={active}
         autoOpenSession={false}
         preserveScrollOnFocus={preserveScrollOnFocus}
@@ -2166,9 +2170,21 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return activeTaskSessionIds[0] ?? null;
   }, [activeSessionIdFromTabResolved, activeTaskSessionIds, primarySessionId]);
 
-  const sessionIdsToRender = useMemo(() => {
-    return activeSessionId ? [activeSessionId] : [];
+  const [sessionViewPool, setSessionViewPool] = useState<string[]>([]);
+  useEffect(() => {
+    if (!activeSessionId) return;
+    setSessionViewPool((prev) => {
+      const next = [activeSessionId, ...prev.filter((id) => id !== activeSessionId)];
+      return next.slice(0, SESSION_VIEW_POOL_LIMIT);
+    });
   }, [activeSessionId]);
+  const sessionIdsToRender = useMemo(() => {
+    if (!activeSessionId) return sessionViewPool;
+    const next = sessionViewPool.includes(activeSessionId)
+      ? sessionViewPool
+      : [activeSessionId, ...sessionViewPool];
+    return next.slice(0, SESSION_VIEW_POOL_LIMIT);
+  }, [activeSessionId, sessionViewPool]);
   const preserveScrollOnFocus = true;
   const openSessionId = activeSessionId && !optimisticSessionIdSet.has(activeSessionId) ? activeSessionId : "";
   useOpenSession(openSessionId, { watchDiff: diffOpen });
@@ -3998,6 +4014,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                       scrollState={scrollState}
                       preserveScrollOnFocus={preserveScrollOnFocus}
                       optimisticFailure={optimisticFailureBySessionId[sessionId] ?? null}
+                      snapshotRev={workspaceSnapshot.snapshotRev}
                     />
                   );
                 })}

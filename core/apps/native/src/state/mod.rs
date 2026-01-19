@@ -38,7 +38,7 @@ use super::models::{MessageItem, SessionInfo, ThreadListItem, TurnToolSnapshot, 
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem};
 pub(crate) use ats_cache::AtsCache;
 use ats_cache::SessionHeadMeta;
-use session::SessionThreadCache;
+use session::{SessionThreadCache, SessionThreadViewCache};
 
 pub(crate) use artifacts::{ArtifactContentCache, ArtifactPreviewState};
 pub(crate) use composer::{
@@ -211,7 +211,9 @@ pub(crate) struct ShellView {
     pub(crate) artifact_prefetch_session_id: Option<SessionId>,
     pub(crate) artifact_prefetch_inflight: HashSet<ArtifactId>,
     pub(crate) session_events: Vec<SessionEvent>,
+    pub(crate) active_snapshot_rev: Option<i64>,
     pub(crate) session_thread_cache: HashMap<SessionId, SessionThreadCache>,
+    pub(crate) session_thread_view_cache: HashMap<SessionId, SessionThreadViewCache>,
     pub(crate) session_head_meta: HashMap<SessionId, SessionHeadMeta>,
     pub(crate) session_state_cache: HashMap<SessionId, SessionState>,
     pub(crate) session_state_loading: HashSet<SessionId>,

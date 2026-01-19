@@ -41,6 +41,7 @@ export type WorkspaceActiveSnapshotItem = {
 
 export type WorkspaceActiveSnapshotState = {
   workspaceId: string;
+  snapshotRev: number;
   initialized: boolean;
   connection: "idle" | "connecting" | "connected" | "disconnected";
   tasksById: Record<string, WorkspaceActiveSnapshotItem>;
@@ -147,6 +148,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   constructor(private workspaceId: string) {
     this.snapshot = {
       workspaceId,
+      snapshotRev: 0,
       initialized: false,
       connection: "idle",
       tasksById: {},
@@ -1013,6 +1015,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       hasMoreActive: this.hasMoreActive,
       hasMoreArchived: this.hasMoreArchived,
       archivedLoaded: this.archivedLoaded,
+      snapshotRev: this.snapshotRev,
     };
     for (const l of this.listeners) l();
   }

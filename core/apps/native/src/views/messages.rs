@@ -209,35 +209,6 @@ impl<'a> ThreadListView<'a> {
         let attachment_images = self.shell.composer_attachment_images.clone();
         let attachment_loading = self.shell.composer_attachment_loading.clone();
         let attachment_failed = self.shell.attachment_fetch_failed.clone();
-        let list_attachment_images = attachment_images.clone();
-        let list_attachment_loading = attachment_loading.clone();
-        let list_attachment_failed = attachment_failed.clone();
-        let list = list(self.list_state.clone(), move |index, _window, cx| {
-            let Some(item) = items.get(index) else {
-                return div().into_any_element();
-            };
-            render_thread_item(
-                item.clone(),
-                colors,
-                &expanded_turn_headers,
-                &expanded_messages,
-                &expanded_turn_details,
-                &expanded_tools,
-                is_dark,
-                copied_flags.clone(),
-                list_attachment_images.clone(),
-                list_attachment_loading.clone(),
-                list_attachment_failed.clone(),
-                list_weak.clone(),
-                cx,
-            )
-        })
-        .w_full()
-        .h_full()
-        .pb(px(metrics.spacing.md))
-        .overflow_hidden()
-        .bg(colors.bg);
-
         let sticky = if let Some(header) = &self.shell.sticky_turn_header {
             if self.shell.sticky_turn_header_at_top {
                 div().into_any_element()
@@ -288,6 +259,35 @@ impl<'a> ThreadListView<'a> {
         } else {
             div().into_any_element()
         };
+
+        let list_attachment_images = attachment_images;
+        let list_attachment_loading = attachment_loading;
+        let list_attachment_failed = attachment_failed;
+        let list = list(self.list_state.clone(), move |index, _window, cx| {
+            let Some(item) = items.get(index) else {
+                return div().into_any_element();
+            };
+            render_thread_item(
+                item,
+                colors,
+                &expanded_turn_headers,
+                &expanded_messages,
+                &expanded_turn_details,
+                &expanded_tools,
+                is_dark,
+                &copied_flags,
+                &list_attachment_images,
+                &list_attachment_loading,
+                &list_attachment_failed,
+                list_weak.clone(),
+                cx,
+            )
+        })
+        .w_full()
+        .h_full()
+        .pb(px(metrics.spacing.md))
+        .overflow_hidden()
+        .bg(colors.bg);
 
         let overlay = if self.new_item_count > 0 {
             let label = if self.new_item_count == 1 {
@@ -349,17 +349,17 @@ impl<'a> ThreadListView<'a> {
 }
 
 fn render_thread_item(
-    item: ThreadListItem,
+    item: &ThreadListItem,
     colors: ThemeColors,
     expanded_turn_headers: &std::collections::HashMap<String, bool>,
     expanded_messages: &std::collections::HashMap<String, bool>,
     expanded_turn_details: &std::collections::HashMap<String, bool>,
     expanded_tools: &std::collections::HashMap<String, bool>,
     is_dark: bool,
-    copied_flags: std::collections::HashMap<String, Instant>,
-    attachment_images: HashMap<String, Arc<Image>>,
-    attachment_loading: HashSet<String>,
-    attachment_failed: HashSet<String>,
+    copied_flags: &std::collections::HashMap<String, Instant>,
+    attachment_images: &HashMap<String, Arc<Image>>,
+    attachment_loading: &HashSet<String>,
+    attachment_failed: &HashSet<String>,
     weak_view: WeakEntity<ShellView>,
     cx: &mut App,
 ) -> AnyElement {
@@ -368,7 +368,7 @@ fn render_thread_item(
         ThreadListItem::TurnHeader { id, header } => {
             let is_long =
                 header.plain_text.split('\n').count() > 4 || header.plain_text.len() > 280;
-            let expanded = expanded_turn_headers.get(&id).copied().unwrap_or(!is_long);
+            let expanded = expanded_turn_headers.get(id).copied().unwrap_or(!is_long);
             let has_copy_button = !header.content.trim().is_empty();
             let copy_inset = if has_copy_button {
                 metrics.spacing.xxl
@@ -411,9 +411,9 @@ fn render_thread_item(
             let attachments = render_attachments(
                 &header.attachments,
                 colors,
-                &attachment_images,
-                &attachment_loading,
-                &attachment_failed,
+                attachment_images,
+                attachment_loading,
+                attachment_failed,
                 AttachmentVariant::Header,
             );
             let delivery_indicator = render_delivery_indicator(
@@ -491,7 +491,7 @@ fn render_thread_item(
                 ),
             );
             div()
-                .id(id)
+                .id(id.clone())
                 .px(px(metrics.spacing.sm))
                 .pt(px(metrics.spacing.sm))
                 .pb(px(metrics.spacing.md))
@@ -507,7 +507,7 @@ fn render_thread_item(
             ..
         }) => {
             let is_long = content.split('\n').count() > 20 || content.len() > 1500;
-            let expanded = expanded_messages.get(&id).copied().unwrap_or(!is_long);
+            let expanded = expanded_messages.get(id).copied().unwrap_or(!is_long);
             let (bubble_bg, bubble_border) = match role {
                 MessageRole::User => (
                     Rgba {
@@ -609,11 +609,11 @@ fn render_thread_item(
                 div().into_any_element()
             };
             let attachments = render_attachments(
-                &attachments,
+                attachments,
                 colors,
-                &attachment_images,
-                &attachment_loading,
-                &attachment_failed,
+                attachment_images,
+                attachment_loading,
+                attachment_failed,
                 AttachmentVariant::Message,
             );
             let role_label = format!("{:?}", role).to_lowercase();
@@ -711,9 +711,12 @@ fn render_thread_item(
             assistant_messages_content,
             ..
         }) => {
-            let label = custom_status.unwrap_or_else(|| format!("{:?}", status));
+            let label = custom_status
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| format!("{:?}", status));
             let is_completed = matches!(status, SessionTurnStatus::Completed);
-            let elapsed_ms = (updated_at - started_at).num_milliseconds();
+            let elapsed_ms = (updated_at.clone() - started_at.clone()).num_milliseconds();
             let elapsed_label = format_elapsed(elapsed_ms);
             let has_content = assistant_messages_content
                 .as_ref()
@@ -722,7 +725,7 @@ fn render_thread_item(
             let copy_key = format!("turn-status:{id}");
             let copied = copied_flags.contains_key(&copy_key);
             let copy_button = if is_completed && has_content {
-                let text = assistant_messages_content.unwrap_or_default();
+                let text = assistant_messages_content.clone().unwrap_or_default();
                 let button = div()
                     .p(px(2.0))
                     .rounded(px(4.0))
@@ -747,7 +750,7 @@ fn render_thread_item(
                 div().into_any_element()
             };
             div()
-                .id(id)
+                .id(id.clone())
                 .px(px(metrics.spacing.md))
                 .py(px(metrics.spacing.xs))
                 .overflow_hidden()
@@ -769,19 +772,22 @@ fn render_thread_item(
                 .into_any_element()
         }
         ThreadListItem::Item(ThreadItem::Tool(tool)) => {
-            let expanded = expanded_tools.get(&tool.id).copied().unwrap_or(false);
+            let expanded = expanded_tools
+                .get(tool.id.as_str())
+                .copied()
+                .unwrap_or(false);
             render_tool_item(
                 tool,
                 colors,
                 is_dark,
                 expanded,
-                &copied_flags,
+                copied_flags,
                 weak_view.clone(),
                 cx,
             )
         }
         ThreadListItem::Item(ThreadItem::ToolGroup { id, tools, .. }) => {
-            let expanded = expanded_turn_details.get(&id).copied().unwrap_or(false);
+            let expanded = expanded_turn_details.get(id).copied().unwrap_or(false);
             let label = if tools.is_empty() {
                 "Activity".to_string()
             } else {
@@ -794,13 +800,16 @@ fn render_thread_item(
                     .flex_col()
                     .gap(px(metrics.spacing.sm))
                     .children(tools.into_iter().map(|tool| {
-                        let expanded_tool = expanded_tools.get(&tool.id).copied().unwrap_or(false);
+                        let expanded_tool = expanded_tools
+                            .get(tool.id.as_str())
+                            .copied()
+                            .unwrap_or(false);
                         render_tool_item(
                             tool,
                             colors,
                             is_dark,
                             expanded_tool,
-                            &copied_flags,
+                            copied_flags,
                             weak_view.clone(),
                             cx,
                         )
@@ -809,6 +818,7 @@ fn render_thread_item(
             } else {
                 div().into_any_element()
             };
+            let toggle_id = id.clone();
             div()
                 .id(id.clone())
                 .px(px(metrics.spacing.md))
@@ -846,7 +856,7 @@ fn render_thread_item(
                         click_handler(
                             weak_view.clone(),
                             move |view, _ev, _window, cx| {
-                                view.on_toggle_turn_details(id.clone(), cx);
+                                view.on_toggle_turn_details(toggle_id.clone(), cx);
                             },
                         ),
                     ),
@@ -870,7 +880,7 @@ fn render_thread_item(
                 .into_any_element()
         }
         ThreadListItem::Item(ThreadItem::Spacer { id, .. }) => {
-            div().id(id).overflow_hidden().into_any_element()
+            div().id(id.clone()).overflow_hidden().into_any_element()
         }
     }
 }
@@ -903,7 +913,7 @@ fn format_elapsed(ms: i64) -> String {
 }
 
 fn render_tool_item(
-    tool: ThreadToolItem,
+    tool: &ThreadToolItem,
     colors: ThemeColors,
     is_dark: bool,
     expanded: bool,

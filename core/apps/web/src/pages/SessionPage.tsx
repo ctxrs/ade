@@ -356,6 +356,7 @@ function formatMemoryMb(value?: number | null): string {
 
 export function SessionView({
   sessionId,
+  snapshotRev,
   isActive = true,
   autoOpenSession = true,
   draft,
@@ -367,6 +368,7 @@ export function SessionView({
   onScrollStateChange,
 }: {
   sessionId: string;
+  snapshotRev?: number;
   isActive?: boolean;
   draft?: { text: string; modeId: WorkbenchModeId } | null;
   onDraftChange?: ((text: string) => void) | null;
@@ -390,6 +392,7 @@ export function SessionView({
   autoOpenSession?: boolean;
 }) {
   const id = sessionId;
+  const snapshotRevValue = Number.isFinite(snapshotRev) ? (snapshotRev as number) : 0;
   const supervisor = useSessionSupervisor();
   const workbenchStore = useWorkbenchStore();
   const showDebug = useMemo(() => {
@@ -846,7 +849,8 @@ export function SessionView({
   const queue: Message[] = entry?.queue ?? [];
   const subagentInvocations: SubagentInvocation[] = entry?.subagentInvocations ?? [];
   const subagentInvocationsLoading = entry?.subagentInvocationsLoading ?? false;
-  const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
+  const lastEventSeq = entry?.lastEventSeq ?? 0;
+  const eventsKey = `${lastEventSeq}:${events.length}`;
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
   useEffect(() => {
@@ -1231,27 +1235,36 @@ export function SessionView({
     perfStartRef.current = 0;
   }, [perfEnabled, entry?.loading, entry?.events.length, entry?.diff]);
 
+  const turnToolsKey = useMemo(
+    () => (toolSummariesReady ? deriveTurnToolsKey(turnToolsByTurnId) : "pending"),
+    [toolSummariesReady, turnToolsByTurnId],
+  );
+  const askUserAnswersKey = useMemo(
+    () => deriveAskUserAnswersKey(askUserQuestionAnswers),
+    [askUserQuestionAnswers],
+  );
+  const threadCacheKey = useMemo(
+    () =>
+      `${id}:${snapshotRevValue}:${lastEventSeq}:${eventsKey}:${displayMessagesKey}:${displayTurnsKey}:${turnToolsKey}:${askUserAnswersKey}`,
+    [id, snapshotRevValue, lastEventSeq, eventsKey, displayMessagesKey, displayTurnsKey, turnToolsKey, askUserAnswersKey],
+  );
+  const hasDisplayTurns = displayTurnsKey !== "0";
   const workbenchThreadView = useMemo(() => {
-    if (displayTurns.length === 0) {
-      return { groups: [], debugEvents: [] };
+    if (!hasDisplayTurns) {
+      return EMPTY_THREAD_VIEW;
     }
-    return buildWorkbenchThreadViewModelFromTurns(
-      displayTurns,
-      displayMessages,
-      toolSummariesReady ? turnToolsByTurnId : {},
-      events,
-      askUserQuestionAnswers,
+    return getCachedWorkbenchThreadView(threadCacheKey, () =>
+      buildWorkbenchThreadViewModelFromTurns(
+        displayTurns,
+        displayMessages,
+        toolSummariesReady ? turnToolsByTurnId : {},
+        events,
+        askUserQuestionAnswers,
+      ),
     );
-    // messages are canonical for turn headers; include in memo key
+    // cache key captures thread inputs; avoid large deps
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    displayTurnsKey,
-    displayMessagesKey,
-    toolSummariesReady ? turnToolsByTurnId : null,
-    eventsKey,
-    displayTurns.length,
-    askUserQuestionAnswers,
-  ]);
+  }, [threadCacheKey, hasDisplayTurns]);
 
   const debugEvents = workbenchThreadView.debugEvents;
   const wbGroups = useMemo(
@@ -2465,6 +2478,57 @@ function hashString(value: string): string {
     hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
   }
   return (hash >>> 0).toString(36);
+}
+
+const THREAD_VIEW_CACHE_LIMIT = 8;
+const threadViewCache = new Map<string, WorkbenchThreadView>();
+const EMPTY_THREAD_VIEW: WorkbenchThreadView = { groups: [], debugEvents: [] };
+
+function getCachedWorkbenchThreadView(key: string, build: () => WorkbenchThreadView): WorkbenchThreadView {
+  const cached = threadViewCache.get(key);
+  if (cached) {
+    threadViewCache.delete(key);
+    threadViewCache.set(key, cached);
+    return cached;
+  }
+  const value = build();
+  threadViewCache.set(key, value);
+  if (threadViewCache.size > THREAD_VIEW_CACHE_LIMIT) {
+    const oldestKey = threadViewCache.keys().next().value;
+    if (oldestKey) {
+      threadViewCache.delete(oldestKey);
+    }
+  }
+  return value;
+}
+
+function deriveTurnToolsKey(turnToolsByTurnId: Record<string, SessionTurnTool[]>): string {
+  const turnIds = Object.keys(turnToolsByTurnId);
+  if (turnIds.length === 0) return "0";
+  let toolCount = 0;
+  let latestUpdated = "";
+  for (const turnId of turnIds) {
+    const tools = turnToolsByTurnId[turnId] ?? [];
+    toolCount += tools.length;
+    const lastUpdated = tools[tools.length - 1]?.updated_at ?? "";
+    if (lastUpdated > latestUpdated) latestUpdated = lastUpdated;
+  }
+  return `${turnIds.length}:${toolCount}:${latestUpdated}`;
+}
+
+function deriveAskUserAnswersKey(answers: Map<string, AskUserQuestionAnswerState>): string {
+  if (answers.size === 0) return "0";
+  const entries = Array.from(answers.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  let buffer = "";
+  for (const [toolCallId, state] of entries) {
+    buffer += `${toolCallId}:${state.outcome ?? ""}:`;
+    const answerKeys = Object.keys(state.answers ?? {}).sort();
+    for (const key of answerKeys) {
+      buffer += `${key}=${state.answers?.[key] ?? ""};`;
+    }
+    buffer += "|";
+  }
+  return `${answers.size}:${hashString(buffer)}`;
 }
 
 function deriveTurnsKey(turns: SessionTurn[]): string {

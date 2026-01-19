@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 use gpui::{
-    AsyncApp, ClickEvent, ClipboardItem, Context, Image, ImageFormat, ListOffset, WeakEntity,
-    Window, px,
+    AsyncApp, ClickEvent, ClipboardItem, Context, Image, ImageFormat, ListAlignment, ListOffset,
+    ListState, WeakEntity, Window, px,
 };
 use gpui_tokio::Tokio;
 
@@ -70,11 +70,39 @@ impl SessionThreadCache {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct ThreadViewCacheKey {
+    snapshot_rev: i64,
+    last_event_seq: i64,
+}
+
+#[derive(Clone)]
+pub(crate) struct SessionThreadViewCache {
+    key: ThreadViewCacheKey,
+    list_state: ListState,
+    thread_items: Vec<ThreadListItem>,
+    thread_item_layout_hashes: HashMap<String, u64>,
+    thread_list_len: usize,
+    thread_auto_follow: bool,
+    new_thread_item_count: usize,
+    sticky_turn_header: Option<WorkbenchTurnHeader>,
+    sticky_turn_header_at_top: bool,
+    expanded_turn_headers: HashMap<String, bool>,
+    expanded_messages: HashMap<String, bool>,
+    expanded_turn_details: HashMap<String, bool>,
+    expanded_tools: HashMap<String, bool>,
+    turn_tools_loading: HashSet<TurnId>,
+}
+
 const COPIED_TIMEOUT: Duration = Duration::from_millis(1_000);
 const SESSION_HISTORY_PAGE_LIMIT: u32 = 60;
 const SESSION_HISTORY_PREFETCH_THRESHOLD: usize = 6;
 const LAYOUT_HASH_SEED: u64 = 0xcbf29ce484222325;
 const LAYOUT_HASH_PRIME: u64 = 0x100000001b3;
+
+fn fresh_thread_list_state() -> ListState {
+    ListState::new(0, ListAlignment::Bottom, px(160.0))
+}
 
 #[derive(Clone, Copy)]
 enum SessionControlAction {
@@ -432,6 +460,7 @@ impl ShellView {
         &mut self,
         session_id: SessionId,
         cx: &mut Context<Self>,
+        preserve_thread_items: bool,
     ) -> bool {
         let Some(cache) = self.session_thread_cache.get(&session_id) else {
             return false;
@@ -442,7 +471,16 @@ impl ShellView {
         self.session_history_cursor = cache.history_cursor;
         self.session_history_has_more = cache.has_more_history;
         self.session_history_loading = false;
-        self.replace_messages(cache.messages.clone(), cx);
+        let thread_auto_follow = self.thread_auto_follow;
+        let new_thread_item_count = self.new_thread_item_count;
+        if preserve_thread_items {
+            self.messages = cache.messages.clone();
+            self.prefetch_attachment_images(cx);
+        } else {
+            self.replace_messages(cache.messages.clone(), cx);
+        }
+        self.thread_auto_follow = thread_auto_follow;
+        self.new_thread_item_count = new_thread_item_count;
         true
     }
 
@@ -450,6 +488,9 @@ impl ShellView {
         self.session_turns.clear();
         self.session_turn_tools.clear();
         self.session_events.clear();
+        self.session_history_cursor = None;
+        self.session_history_has_more = false;
+        self.session_history_loading = false;
         self.replace_messages(Vec::new(), cx);
     }
 
@@ -591,6 +632,81 @@ impl ShellView {
             .map(|summary| summary.session_id)
     }
 
+    fn thread_view_cache_key(&self, session_id: SessionId) -> Option<ThreadViewCacheKey> {
+        let snapshot_rev = self.active_snapshot_rev?;
+        let last_event_seq = self.session_last_event_seq.get(&session_id).copied()?;
+        Some(ThreadViewCacheKey {
+            snapshot_rev,
+            last_event_seq,
+        })
+    }
+
+    fn cache_thread_view_state(&mut self, session_id: SessionId) {
+        let Some(key) = self.thread_view_cache_key(session_id) else {
+            return;
+        };
+        self.session_thread_view_cache
+            .insert(
+                session_id,
+                SessionThreadViewCache {
+                    key,
+                    list_state: self.thread_list_state.clone(),
+                    thread_items: self.thread_items.clone(),
+                    thread_item_layout_hashes: self.thread_item_layout_hashes.clone(),
+                    thread_list_len: self.thread_list_len,
+                    thread_auto_follow: self.thread_auto_follow,
+                    new_thread_item_count: self.new_thread_item_count,
+                    sticky_turn_header: self.sticky_turn_header.clone(),
+                    sticky_turn_header_at_top: self.sticky_turn_header_at_top,
+                    expanded_turn_headers: self.expanded_turn_headers.clone(),
+                    expanded_messages: self.expanded_messages.clone(),
+                    expanded_turn_details: self.expanded_turn_details.clone(),
+                    expanded_tools: self.expanded_tools.clone(),
+                    turn_tools_loading: self.turn_tools_loading.clone(),
+                },
+            );
+    }
+
+    fn apply_thread_view_state(
+        &mut self,
+        session_id: SessionId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(key) = self.thread_view_cache_key(session_id) else {
+            self.reset_thread_view_state();
+            self.ensure_thread_list_handler(cx);
+            return false;
+        };
+        let Some(cache) = self.session_thread_view_cache.get(&session_id) else {
+            self.reset_thread_view_state();
+            self.ensure_thread_list_handler(cx);
+            return false;
+        };
+        if cache.key != key {
+            self.session_thread_view_cache.remove(&session_id);
+            self.reset_thread_view_state();
+            self.ensure_thread_list_handler(cx);
+            return false;
+        }
+
+        self.thread_list_state = cache.list_state.clone();
+        self.thread_items = cache.thread_items.clone();
+        self.thread_item_layout_hashes = cache.thread_item_layout_hashes.clone();
+        self.thread_list_len = cache.thread_list_len;
+        self.thread_auto_follow = cache.thread_auto_follow;
+        self.new_thread_item_count = cache.new_thread_item_count;
+        self.sticky_turn_header = cache.sticky_turn_header.clone();
+        self.sticky_turn_header_at_top = cache.sticky_turn_header_at_top;
+        self.expanded_turn_headers = cache.expanded_turn_headers.clone();
+        self.expanded_messages = cache.expanded_messages.clone();
+        self.expanded_turn_details = cache.expanded_turn_details.clone();
+        self.expanded_tools = cache.expanded_tools.clone();
+        self.turn_tools_loading = cache.turn_tools_loading.clone();
+        self.thread_list_handler_set = false;
+        self.ensure_thread_list_handler(cx);
+        true
+    }
+
     pub(crate) fn select_session(
         &mut self,
         index: usize,
@@ -601,6 +717,13 @@ impl ShellView {
             return;
         };
         let session_id = summary.session_id;
+        let prev_session_id = self.selected_session_id();
+        if prev_session_id == Some(session_id) {
+            return;
+        }
+        if let Some(prev_session_id) = prev_session_id {
+            self.cache_thread_view_state(prev_session_id);
+        }
         self.selected_session = Some(index);
         self.new_task_mode = false;
         self.new_task_mode_locked = false;
@@ -616,7 +739,6 @@ impl ShellView {
             self.composer_provider_id = Some(summary.session.provider_id.clone());
             self.composer_model_id = Some(summary.session.model_id.clone());
         }
-        self.reset_thread_state();
         self.artifacts.clear();
         self.artifacts_session_id = None;
         self.artifact_preview = ArtifactPreviewState::None;
@@ -624,7 +746,8 @@ impl ShellView {
         self.session_events.clear();
         self.selected_artifact = None;
         self.resyncing_session = None;
-        let used_cache = self.apply_cached_thread_state(session_id, cx);
+        let applied_view_cache = self.apply_thread_view_state(session_id, cx);
+        let used_cache = self.apply_cached_thread_state(session_id, cx, applied_view_cache);
         if !used_cache {
             self.apply_empty_thread_state(cx);
         }
@@ -888,15 +1011,10 @@ impl ShellView {
             == Some(session_id)
     }
 
-    fn reset_thread_state(&mut self) {
-        self.session_turns.clear();
-        self.session_history_cursor = None;
-        self.session_history_has_more = false;
-        self.session_history_loading = false;
-        self.session_turn_tools.clear();
+    fn reset_thread_view_state(&mut self) {
         self.thread_items.clear();
         self.thread_item_layout_hashes.clear();
-        self.thread_list_state.reset(0);
+        self.thread_list_state = fresh_thread_list_state();
         self.thread_list_len = 0;
         self.thread_auto_follow = true;
         self.new_thread_item_count = 0;
@@ -907,6 +1025,7 @@ impl ShellView {
         self.expanded_turn_details.clear();
         self.expanded_tools.clear();
         self.turn_tools_loading.clear();
+        self.thread_list_handler_set = false;
     }
 
     pub(crate) fn rebuild_thread_items(&mut self) {

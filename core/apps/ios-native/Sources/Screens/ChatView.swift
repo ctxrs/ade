@@ -2818,8 +2818,8 @@ struct ComposerCircleButton: View {
     }
 }
 
-struct ChatMessage: Identifiable {
-    enum Role {
+struct ChatMessage: Identifiable, Sendable {
+    enum Role: Sendable {
         case assistant
         case user
         case system
@@ -2832,7 +2832,7 @@ struct ChatMessage: Identifiable {
     let createdAt: String
 }
 
-struct ChatToolSummary: Identifiable {
+struct ChatToolSummary: Identifiable, Sendable {
     let id: String
     let toolCallId: String
     let turnId: String
@@ -2845,7 +2845,7 @@ struct ChatToolSummary: Identifiable {
     let updatedAt: String
 }
 
-struct ChatToolGroup: Identifiable {
+struct ChatToolGroup: Identifiable, Sendable {
     let id: String
     let turnId: String
     let createdAt: String
@@ -2858,7 +2858,7 @@ struct ChatToolGroup: Identifiable {
     let tools: [ChatToolSummary]
 }
 
-struct AskUserQuestionCardModel: Identifiable {
+struct AskUserQuestionCardModel: Identifiable, Sendable {
     let id: String
     let turnId: String
     let toolCallId: String
@@ -2869,8 +2869,8 @@ struct AskUserQuestionCardModel: Identifiable {
     let answered: Bool
 }
 
-struct ChatThreadItem: Identifiable {
-    enum Kind {
+struct ChatThreadItem: Identifiable, Sendable {
+    enum Kind: Sendable {
         case message(ChatMessage)
         case toolGroup(ChatToolGroup)
         case askUser(AskUserQuestionCardModel)
@@ -2882,813 +2882,89 @@ struct ChatThreadItem: Identifiable {
     let kind: Kind
 }
 
-private struct AskUserAnswerState {
+private struct AskUserAnswerState: Sendable {
     let outcome: String
     let answers: [String: String]
 }
 
-@MainActor
-final class ChatViewModel: ObservableObject {
-    @Published var messages: [ChatMessage] = []
-    @Published var threadItems: [ChatThreadItem] = []
-    @Published var queueMessages: [MessageSummary] = []
-    @Published var toolLoadingTurnIds: Set<String> = []
-    @Published var toolDetailsByCallId: [String: SessionTurnTool] = [:]
-    @Published var errorMessage: String?
-    @Published var artifacts: [Artifact] = []
-    @Published var isArtifactsLoading = false
-    @Published var artifactsError: String?
-    @Published var turnStatus: TurnStatusSnapshot?
-    @Published private(set) var isAssistantWorking = false
-    @Published private(set) var contextWindowInfo: ContextWindowInfo?
-    @Published private(set) var assetBaseURL: URL?
-    @Published private(set) var assetToken: String?
-    @Published private(set) var threadItemsRevision: Int = 0
-    @Published private(set) var activeAskToolCallId: String?
-    @Published private(set) var isArchivedSession = false
-    @Published private(set) var historyHasMore = false
-    @Published private(set) var isHistoryLoading = false
+private struct ChatThreadBuildKey: Hashable, Sendable {
+    let sessionId: String
+    let snapshotRev: Int
+    let lastEventSeq: Int
+    let messageCount: Int
+    let turnCount: Int
+    let eventCount: Int
+    let toolSummaryCount: Int
+    let optimisticCount: Int
+    let lastMessageId: String?
+    let lastMessageHash: Int
+}
 
-    private struct StreamingAssistantState {
-        let turnId: String
-        let messageId: String
-        var text: String
-        var isActive: Bool
-        let createdAt: String
+private struct ChatThreadBuildInput: Sendable {
+    let key: ChatThreadBuildKey
+    let messages: [ChatMessage]
+    let turns: [SessionTurn]
+    let events: [SessionEvent]
+    let toolSummaries: [SessionTurnToolSummary]
+    let optimisticAnswers: [String: AskUserAnswerState]
+}
+
+private struct ChatThreadBuildOutput: Sendable {
+    let key: ChatThreadBuildKey
+    let items: [ChatThreadItem]
+    let activeAskToolCallId: String?
+}
+
+private enum ChatThreadMergeKind: String, Sendable {
+    case history
+    case head
+    case append
+}
+
+private struct ChatThreadMergeKey: Hashable, Sendable {
+    let sessionId: String
+    let snapshotRev: Int
+    let lastEventSeq: Int
+    let existingCount: Int
+    let incomingCount: Int
+    let existingTailId: String?
+    let incomingTailId: String?
+    let kind: ChatThreadMergeKind
+}
+
+private actor ChatThreadPipeline {
+    private let isoFormatter: ISO8601DateFormatter
+    private let fallbackFormatter: ISO8601DateFormatter
+    private var threadCache: [ChatThreadBuildKey: ChatThreadBuildOutput] = [:]
+    private var threadCacheOrder: [ChatThreadBuildKey] = []
+    private var messageMergeCache: [ChatThreadMergeKey: [ChatMessage]] = [:]
+    private var turnMergeCache: [ChatThreadMergeKey: [SessionTurn]] = [:]
+    private var mergeCacheOrder: [ChatThreadMergeKey] = []
+    private let threadCacheLimit = 6
+    private let mergeCacheLimit = 8
+
+    init() {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        isoFormatter = formatter
+        fallbackFormatter = ISO8601DateFormatter()
     }
 
-    struct TurnStatusSnapshot: Equatable {
-        let status: SessionTurnStatus
-        let startedAt: String
-        let updatedAt: String
-        let assistantMessage: String
-    }
-
-    private enum RefreshResult {
-        case success
-        case skipped
-        case failed
-    }
-
-    private let streamClient = DaemonStreamClient()
-    private let streamEncoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        return encoder
-    }()
-    private let streamDecoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return decoder
-    }()
-
-    private var client: DaemonAPIClient?
-    private var secureContext: SecureConnectionContext?
-    @Published private(set) var sessionId: String?
-    private var workspaceId: String?
-    private var lastEventSeq: Int?
-    private var sessionStateRev: Int?
-    private var pollTask: _Concurrency.Task<Void, Never>?
-    private var streamTask: _Concurrency.Task<Void, Never>?
-    private var streamSocket: URLSessionWebSocketTask?
-    private var isStreamConnected = false
-    private var streamReconnectDelay: TimeInterval = 1
-    private var refreshInFlight = false
-    private var refreshPending = false
-    private var artifactsRefreshInFlight = false
-    private var artifactsRefreshPending = false
-    private var pendingAssistantResponse = false
-    private var streamingAssistantState: StreamingAssistantState?
-    private var consecutivePollFailures = 0
-    private var sessionGeneration = 0
-    private var latestTurns: [SessionTurn] = []
-    private var latestEvents: [SessionEvent] = []
-    private var latestToolSummaries: [SessionTurnToolSummary] = []
-    private var optimisticAskAnswers: [String: AskUserAnswerState] = [:]
-    private var lastSetModelId: String?
-    private var lastSetModeId: String?
-    private var historyCursor: Int?
-    private var historyInitialized = false
-    private var headMessages: [ChatMessage] = []
-    private var historyMessages: [ChatMessage] = []
-    private var headTurns: [SessionTurn] = []
-    private var historyTurns: [SessionTurn] = []
-
-    init(client: DaemonAPIClient? = nil, initialSessionId: String? = nil, initialWorkspaceId: String? = nil) {
-        self.client = client
-        self.sessionId = initialSessionId
-        self.workspaceId = initialWorkspaceId
-        if client == nil {
-            messages = Self.sampleMessages
-            latestTurns = []
-            latestEvents = []
-            latestToolSummaries = []
-            turnStatus = sampleTurnStatus()
-            rebuildThreadItems()
+    func buildThreadItems(input: ChatThreadBuildInput) -> ChatThreadBuildOutput {
+        if let cached = threadCache[input.key] {
+            return cached
         }
-    }
 
-    var assetContext: DaemonAssetContext {
-        DaemonAssetContext(baseURL: assetBaseURL, token: assetToken, client: client)
-    }
-
-    func setClient(_ client: DaemonAPIClient?) {
-        self.client = client
-        if client != nil {
-            messages = []
-            threadItems = []
-            queueMessages = []
-            toolDetailsByCallId = [:]
-            toolLoadingTurnIds = []
-            latestTurns = []
-            latestEvents = []
-            latestToolSummaries = []
-            optimisticAskAnswers = [:]
-            activeAskToolCallId = nil
-            threadItemsRevision = 0
-            lastSetModelId = nil
-            lastSetModeId = nil
-            historyCursor = nil
-            historyInitialized = false
-            historyHasMore = false
-            isHistoryLoading = false
-            headMessages = []
-            historyMessages = []
-            headTurns = []
-            historyTurns = []
-            setPendingAssistantResponse(false)
-            streamingAssistantState = nil
-            errorMessage = nil
-            artifacts = []
-            artifactsError = nil
-            isArtifactsLoading = false
-            turnStatus = sampleTurnStatus()
-            contextWindowInfo = nil
-            lastEventSeq = nil
-            sessionStateRev = nil
-            refreshAssetContext()
-            _Concurrency.Task { @MainActor in
-                secureContext = await client?.secureConnectionContext()
-            }
-            if pollTask != nil && !isArchivedSession {
-                startStream()
-            }
-            _Concurrency.Task {
-                _ = await refreshMessages()
-                await refreshQueue()
-                await refreshArtifacts()
-            }
-            updateWorkingState()
-        } else {
-            stopStream()
-            sessionId = nil
-            workspaceId = nil
-            lastEventSeq = nil
-            sessionStateRev = nil
-            messages = Self.sampleMessages
-            latestTurns = []
-            latestEvents = []
-            latestToolSummaries = []
-            optimisticAskAnswers = [:]
-            threadItems = []
-            queueMessages = []
-            toolDetailsByCallId = [:]
-            toolLoadingTurnIds = []
-            threadItemsRevision = 0
-            activeAskToolCallId = nil
-            lastSetModelId = nil
-            lastSetModeId = nil
-            setPendingAssistantResponse(false)
-            streamingAssistantState = nil
-            artifacts = []
-            artifactsError = nil
-            isArtifactsLoading = false
-            turnStatus = nil
-            contextWindowInfo = nil
-            assetBaseURL = nil
-            assetToken = nil
-            secureContext = nil
-            rebuildThreadItems()
-            updateWorkingState()
-        }
-    }
-
-    func setArchived(_ value: Bool) {
-        if isArchivedSession == value { return }
-        isArchivedSession = value
-        if value {
-            _Concurrency.Task {
-                await ArtifactContentCache.shared.setActiveScope(nil)
-            }
-            stopPolling()
-            stopStream()
-        } else {
-            let scope = sessionId
-            _Concurrency.Task {
-                await ArtifactContentCache.shared.setActiveScope(scope)
-            }
-        }
-    }
-
-    private func refreshAssetContext() {
-        guard let client else {
-            assetBaseURL = nil
-            assetToken = nil
-            return
-        }
-        _Concurrency.Task { @MainActor in
-            assetBaseURL = await client.daemonBaseURL()
-            assetToken = await client.authToken()
-        }
-    }
-
-    private func setPendingAssistantResponse(_ pending: Bool) {
-        pendingAssistantResponse = pending
-        updateWorkingState()
-    }
-
-    private func updateWorkingState() {
-        let statusWorking = turnStatus?.status == .queued || turnStatus?.status == .running
-        let streamingWorking = streamingAssistantState?.isActive == true
-        isAssistantWorking = pendingAssistantResponse || statusWorking || streamingWorking
-    }
-
-    private func sampleTurnStatus() -> TurnStatusSnapshot? {
-        guard ProcessInfo.processInfo.environment["CTX_UI_TEST_MODE"] == "1" else { return nil }
-        let now = Date()
-        let assistantMessage = messages.reversed().first(where: { $0.role == .assistant })?.text ?? ""
-        return TurnStatusSnapshot(
-            status: .completed,
-            startedAt: formatIsoTimestamp(now.addingTimeInterval(-42)),
-            updatedAt: formatIsoTimestamp(now),
-            assistantMessage: assistantMessage
+        let answersByToolCallId = collectAskUserQuestionAnswers(
+            events: input.events,
+            optimistic: input.optimisticAnswers
         )
-    }
-
-    func selectSession(_ sessionId: String?, workspaceId: String? = nil) {
-        sessionGeneration += 1
-        self.sessionId = sessionId
-        self.workspaceId = workspaceId
-        _Concurrency.Task {
-            await ArtifactContentCache.shared.setActiveScope(sessionId)
-        }
-        lastEventSeq = nil
-        sessionStateRev = nil
-        setPendingAssistantResponse(false)
-        streamingAssistantState = nil
-        refreshInFlight = false
-        refreshPending = false
-        messages = []
-        threadItems = []
-        queueMessages = []
-        toolDetailsByCallId = [:]
-        toolLoadingTurnIds = []
-        latestTurns = []
-        latestEvents = []
-        latestToolSummaries = []
-        optimisticAskAnswers = [:]
-        activeAskToolCallId = nil
-        threadItemsRevision = 0
-        lastSetModelId = nil
-        lastSetModeId = nil
-        historyCursor = nil
-        historyInitialized = false
-        historyHasMore = false
-        isHistoryLoading = false
-        headMessages = []
-        historyMessages = []
-        headTurns = []
-        historyTurns = []
-        errorMessage = nil
-        artifacts = []
-        artifactsError = nil
-        artifactsRefreshInFlight = false
-        artifactsRefreshPending = false
-        turnStatus = nil
-        contextWindowInfo = nil
-        updateWorkingState()
-        _Concurrency.Task {
-            await hydrateFromCacheIfNeeded(sessionId: sessionId, generation: sessionGeneration)
-            if !isArchivedSession {
-                await primeStreamCursor()
-            }
-            _ = await refreshMessages()
-            await refreshQueue()
-            await refreshArtifacts()
-            if !isArchivedSession {
-                await sendStreamSubscriptionIfNeeded()
-            }
-        }
-    }
-
-    private func hydrateFromCacheIfNeeded(sessionId: String?, generation: Int) async {
-        guard messages.isEmpty && latestTurns.isEmpty else { return }
-        guard let sessionId else { return }
-        guard let cached = await ATSHeadCache.shared.load(sessionId: sessionId) else { return }
-        guard generation == sessionGeneration, sessionId == self.sessionId else { return }
-        applyCachedHead(cached)
-    }
-
-    private func applyCachedHead(_ cached: CachedSessionHead) {
-        let nextMessages = cached.messages.map { message in
-            ChatMessage(
-                id: message.id.stringValue,
-                role: roleForMessage(message.role),
-                text: message.content,
-                attachments: message.attachments ?? [],
-                createdAt: message.createdAt
-            )
-        }
-        let nextWithStreaming = applyStreamingAssistantState(to: nextMessages)
-        messages = nextWithStreaming
-        latestTurns = cached.turns
-        latestEvents = cached.events ?? []
-        latestToolSummaries = cached.toolSummaries ?? []
-        lastEventSeq = cached.lastEventSeq
-        sessionStateRev = cached.stateRev
-        workspaceId = workspaceId ?? cached.session.workspaceId.stringValue
-        if let turn = mostRecentTurn(in: cached.turns) {
-            updateTurnStatus(from: turn)
-            updateContextWindow(from: turn)
-        }
-        lastSetModelId = cached.session.modelId
-        rebuildThreadItems()
-        updateWorkingState()
-    }
-
-    func startPolling() {
-        guard !isArchivedSession else { return }
-        guard pollTask == nil else { return }
-        startStream()
-        pollTask = _Concurrency.Task {
-            while !_Concurrency.Task.isCancelled {
-                let result = await refreshMessages()
-                let delay = nextPollDelay(for: result)
-                try? await _Concurrency.Task.sleep(nanoseconds: delay)
-            }
-        }
-    }
-
-    func stopPolling() {
-        pollTask?.cancel()
-        pollTask = nil
-        stopStream()
-    }
-
-    func interrupt() {
-        guard let client else { return }
-        _Concurrency.Task {
-            let resolved = await resolveSessionId()
-            guard let resolved else { return }
-            do {
-                try await client.interruptSession(sessionId: resolved)
-            } catch {
-                // Best-effort interrupt; rely on stream updates to reflect status.
-            }
-        }
-    }
-
-    func send(_ text: String, attachments: [MessageAttachment]) {
-        let local = ChatMessage(
-            id: UUID().uuidString,
-            role: .user,
-            text: text,
-            attachments: attachments,
-            createdAt: formatIsoTimestamp(Date())
-        )
-        appendMessage(local)
-        setPendingAssistantResponse(true)
-
-        _Concurrency.Task {
-            guard let client else { return }
-            let resolved = await resolveSessionId()
-            guard let resolved else { return }
-            do {
-                _ = try await client.postMessage(sessionId: resolved, content: text, delivery: .immediate, attachments: attachments)
-                _ = await refreshMessages()
-                await refreshQueue()
-            } catch {
-                setPendingAssistantResponse(false)
-                errorMessage = "Failed to send message."
-            }
-        }
-    }
-
-    private func refreshMessages() async -> RefreshResult {
-        guard let client else { return .skipped }
-        if refreshInFlight {
-            refreshPending = true
-            return .skipped
-        }
-        refreshInFlight = true
-        defer { refreshInFlight = false }
-        let generation = sessionGeneration
-        let resolved = await resolveSessionId()
-        guard let resolved, generation == sessionGeneration else { return .skipped }
-        do {
-            let snapshot = try await client.getSessionSnapshot(sessionId: resolved, limit: 200, includeEvents: true)
-            let head = snapshot.head
-            guard generation == sessionGeneration, resolved == sessionId else { return .skipped }
-            let nextMessages = head.messages.map { message in
-                ChatMessage(
-                    id: message.id.stringValue,
-                    role: roleForMessage(message.role),
-                    text: message.content,
-                    attachments: message.attachments ?? [],
-                    createdAt: message.createdAt
-                )
-            }
-            let nextWithStreaming = isArchivedSession ? nextMessages : applyStreamingAssistantState(to: nextMessages)
-            if isArchivedSession {
-                headMessages = nextMessages
-                headTurns = head.turns
-                if !historyInitialized {
-                    historyCursor = head.turns.first?.startSeq
-                    historyHasMore = head.hasMoreTurns && historyCursor != nil
-                    historyInitialized = true
-                }
-                latestTurns = historyTurns + headTurns
-                messages = mergeMessages(historyMessages, headMessages)
-                lastEventSeq = head.lastEventSeq
-            } else {
-                messages = nextWithStreaming
-                latestTurns = head.turns
-            }
-            latestEvents = head.events ?? []
-            latestToolSummaries = head.toolSummaries ?? []
-            if let state = snapshot.state {
-                applyArtifactsFromStream(state.artifacts)
-            }
-            sessionStateRev = head.stateRev
-            _Concurrency.Task { await ATSHeadCache.shared.store(head: head) }
-            if let turn = mostRecentTurn(in: head.turns) {
-                updateTurnStatus(from: turn)
-                updateContextWindow(from: turn)
-            }
-            lastSetModelId = head.session.modelId
-            rebuildThreadItems()
-            await refreshQueue()
-            if !isArchivedSession, pendingAssistantResponse, nextWithStreaming.contains(where: { $0.role == .assistant }) {
-                setPendingAssistantResponse(false)
-                streamingAssistantState = nil
-                updateWorkingState()
-            }
-            errorMessage = nil
-            if refreshPending, generation == sessionGeneration {
-                refreshPending = false
-                _Concurrency.Task { _ = await refreshMessages() }
-            }
-            return .success
-        } catch {
-            if generation == sessionGeneration {
-                errorMessage = "Failed to load messages."
-            }
-            if refreshPending, generation == sessionGeneration {
-                refreshPending = false
-                _Concurrency.Task { _ = await refreshMessages() }
-            }
-            return .failed
-        }
-    }
-
-    func loadEarlierMessages() {
-        guard isArchivedSession, historyHasMore, !isHistoryLoading else { return }
-        guard historyCursor != nil else { return }
-        let generation = sessionGeneration
-        let beforeSeq = historyCursor
-        let limit = 200
-        isHistoryLoading = true
-        _Concurrency.Task {
-            defer { isHistoryLoading = false }
-            guard let client else { return }
-            let resolved = await resolveSessionId()
-            guard let resolved, generation == sessionGeneration else { return }
-            if let cached = await SessionHistoryPageCache.shared.load(
-                sessionId: resolved,
-                beforeSeq: beforeSeq,
-                limit: limit
-            ) {
-                guard generation == sessionGeneration else { return }
-                applyHistoryPage(cached)
-                return
-            }
-            do {
-                let page = try await client.getSessionHistory(sessionId: resolved, beforeSeq: beforeSeq, limit: limit)
-                guard generation == sessionGeneration else { return }
-                await SessionHistoryPageCache.shared.store(page, sessionId: resolved, beforeSeq: beforeSeq, limit: limit)
-                applyHistoryPage(page)
-            } catch {
-                if generation == sessionGeneration {
-                    errorMessage = "Failed to load older messages."
-                }
-            }
-        }
-    }
-
-    private func applyHistoryPage(_ page: SessionHistoryPage) {
-        let nextMessages = page.messages.map { message in
-            ChatMessage(
-                id: message.id.stringValue,
-                role: roleForMessage(message.role),
-                text: message.content,
-                attachments: message.attachments ?? [],
-                createdAt: message.createdAt
-            )
-        }
-        historyMessages = mergeMessages(historyMessages, nextMessages)
-        historyTurns = mergeTurns(historyTurns, page.turns)
-        historyCursor = page.nextCursor
-        historyHasMore = page.hasMore
-        latestTurns = historyTurns + headTurns
-        messages = mergeMessages(historyMessages, headMessages)
-        rebuildThreadItems()
-    }
-
-    private func refreshQueue() async {
-        guard let client else { return }
-        let resolved = await resolveSessionId()
-        guard let resolved else { return }
-        do {
-            queueMessages = try await client.listQueue(sessionId: resolved)
-        } catch {
-            queueMessages = []
-        }
-    }
-
-    private func refreshArtifacts() async {
-        guard let client else { return }
-        if artifactsRefreshInFlight {
-            artifactsRefreshPending = true
-            return
-        }
-        artifactsRefreshInFlight = true
-        isArtifactsLoading = true
-        defer {
-            artifactsRefreshInFlight = false
-            isArtifactsLoading = false
-        }
-        let generation = sessionGeneration
-        let resolved = await resolveSessionId()
-        guard let resolved, generation == sessionGeneration else { return }
-        do {
-            let state = try await client.getSessionState(sessionId: resolved)
-            artifacts = state.artifacts
-            artifactsError = nil
-            prefetchArtifactsIfNeeded()
-            if artifactsRefreshPending, generation == sessionGeneration {
-                artifactsRefreshPending = false
-                _Concurrency.Task { await refreshArtifacts() }
-            }
-        } catch {
-            do {
-                artifacts = try await client.listSessionArtifacts(sessionId: resolved)
-                artifactsError = nil
-                prefetchArtifactsIfNeeded()
-                if artifactsRefreshPending, generation == sessionGeneration {
-                    artifactsRefreshPending = false
-                    _Concurrency.Task { await refreshArtifacts() }
-                }
-            } catch {
-                if generation == sessionGeneration {
-                    artifactsError = "Failed to load artifacts."
-                }
-                if artifactsRefreshPending, generation == sessionGeneration {
-                    artifactsRefreshPending = false
-                    _Concurrency.Task { await refreshArtifacts() }
-                }
-            }
-        }
-    }
-
-    private func decodeArtifacts(from payload: JSONValue) -> [Artifact]? {
-        guard case let .object(object) = payload,
-              let artifactsValue = object["artifacts"] else { return nil }
-        let encoder = JSONEncoder()
-        guard let data = try? encoder.encode(artifactsValue) else { return nil }
-        return try? streamDecoder.decode([Artifact].self, from: data)
-    }
-
-    private func applyArtifactsFromStream(_ artifacts: [Artifact]) {
-        self.artifacts = artifacts
-        artifactsError = nil
-        isArtifactsLoading = false
-        prefetchArtifactsIfNeeded()
-    }
-
-    private func prefetchArtifactsIfNeeded() {
-        guard !isArchivedSession,
-              let sessionId,
-              let client else { return }
-        let targets = artifacts.compactMap { artifact -> ArtifactPrefetchTarget? in
-            if artifact.missing == true { return nil }
-            if !(isImageArtifact(artifact) || isVideoArtifact(artifact)) { return nil }
-            if artifact.bytes <= 0 { return nil }
-            let path = artifactAssetPath(artifact.id.stringValue)
-            let primaryExt = artifactFileExtension(artifact.absolutePath)
-            let fallbackExt = artifactFileExtension(artifact.name ?? "")
-            let ext = primaryExt.isEmpty ? fallbackExt : primaryExt
-            return ArtifactPrefetchTarget(
-                key: path,
-                path: path,
-                size: artifact.bytes,
-                fileExtension: ext.isEmpty ? nil : ext
-            )
-        }
-        guard !targets.isEmpty else { return }
-        _Concurrency.Task {
-            await ArtifactContentCache.shared.setActiveScope(sessionId)
-            await ArtifactContentCache.shared.prefetch(targets: targets, client: client)
-        }
-    }
-
-    private func appendMessage(_ message: ChatMessage) {
-        if isArchivedSession {
-            headMessages = mergeMessages(headMessages, [message])
-            messages = mergeMessages(historyMessages, headMessages)
-        } else {
-            var next = messages
-            next.append(message)
-            messages = next
-        }
-        rebuildThreadItems()
-    }
-
-    func updateSessionModel(_ modelId: String) {
-        guard let client else { return }
-        let trimmed = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        if lastSetModelId == trimmed { return }
-        lastSetModelId = trimmed
-        _Concurrency.Task {
-            let resolved = await resolveSessionId()
-            guard let resolved else { return }
-            _ = try? await client.setSessionModel(sessionId: resolved, modelId: trimmed)
-        }
-    }
-
-    func updateSessionMode(_ mode: ComposerMode) {
-        guard let client else { return }
-        let next = mode.rawValue
-        if lastSetModeId == next { return }
-        lastSetModeId = next
-        _Concurrency.Task {
-            let resolved = await resolveSessionId()
-            guard let resolved else { return }
-            try? await client.setSessionMode(sessionId: resolved, modeId: next)
-        }
-    }
-
-    func loadTools(for turnId: String) {
-        guard let client else { return }
-        if toolLoadingTurnIds.contains(turnId) { return }
-        toolLoadingTurnIds.insert(turnId)
-        _Concurrency.Task {
-            defer { toolLoadingTurnIds.remove(turnId) }
-            do {
-                let resolved = await resolveSessionId()
-                guard let resolved else { return }
-                let tools = try await client.listTurnTools(sessionId: resolved, turnId: turnId)
-                var next = toolDetailsByCallId
-                for tool in tools {
-                    next[tool.toolCallId] = tool
-                }
-                toolDetailsByCallId = next
-            } catch {
-                // Best-effort; keep existing detail cache.
-            }
-        }
-    }
-
-    func removeQueuedMessage(_ messageId: String) {
-        guard let client else { return }
-        _Concurrency.Task {
-            do {
-                try await client.deleteMessage(messageId: messageId)
-                await refreshQueue()
-            } catch {
-                // Best-effort removal; ignore errors.
-            }
-        }
-    }
-
-    func submitAskUserQuestion(toolCallId: String, answers: [String: String]) async {
-        guard let client else { return }
-        let resolved = await resolveSessionId()
-        guard let resolved else { return }
-        optimisticAskAnswers[toolCallId] = AskUserAnswerState(outcome: "submitted", answers: answers)
-        rebuildThreadItems()
-        do {
-            try await client.submitAskUserQuestion(
-                sessionId: resolved,
-                toolCallId: toolCallId,
-                outcome: "submitted",
-                answers: answers
-            )
-            _ = await refreshMessages()
-        } catch {
-            optimisticAskAnswers.removeValue(forKey: toolCallId)
-            rebuildThreadItems()
-        }
-    }
-
-    func cancelAskUserQuestion(toolCallId: String) async {
-        guard let client else { return }
-        let resolved = await resolveSessionId()
-        guard let resolved else { return }
-        optimisticAskAnswers[toolCallId] = AskUserAnswerState(outcome: "cancelled", answers: [:])
-        rebuildThreadItems()
-        do {
-            try await client.submitAskUserQuestion(
-                sessionId: resolved,
-                toolCallId: toolCallId,
-                outcome: "cancelled",
-                answers: [:]
-            )
-            _ = await refreshMessages()
-        } catch {
-            optimisticAskAnswers.removeValue(forKey: toolCallId)
-            rebuildThreadItems()
-        }
-    }
-
-    private func applyStreamingAssistantState(to base: [ChatMessage]) -> [ChatMessage] {
-        guard let state = streamingAssistantState, !state.text.isEmpty else { return base }
-        var next = base
-
-        if let last = next.last, last.role == .assistant {
-            if last.text == state.text {
-                return next
-            }
-            if state.text.count >= last.text.count || state.isActive {
-                next[next.count - 1] = ChatMessage(
-                    id: last.id,
-                    role: .assistant,
-                    text: state.text,
-                    attachments: last.attachments,
-                    createdAt: last.createdAt
-                )
-            }
-            return next
-        }
-
-        next.append(
-            ChatMessage(
-                id: state.messageId,
-                role: .assistant,
-                text: state.text,
-                attachments: [],
-                createdAt: state.createdAt
-            )
-        )
-        return next
-    }
-
-    private func mergeMessages(_ existing: [ChatMessage], _ incoming: [ChatMessage]) -> [ChatMessage] {
-        var byId: [String: ChatMessage] = [:]
-        for message in existing {
-            byId[message.id] = message
-        }
-        for message in incoming {
-            byId[message.id] = message
-        }
-        return byId.values.sorted { left, right in
-            let leftDate = parseIso(left.createdAt) ?? .distantPast
-            let rightDate = parseIso(right.createdAt) ?? .distantPast
-            if leftDate != rightDate {
-                return leftDate < rightDate
-            }
-            return left.id < right.id
-        }
-    }
-
-    private func mergeTurns(_ existing: [SessionTurn], _ incoming: [SessionTurn]) -> [SessionTurn] {
-        var byId: [String: SessionTurn] = [:]
-        for turn in existing {
-            byId[turn.turnId.stringValue] = turn
-        }
-        for turn in incoming {
-            byId[turn.turnId.stringValue] = turn
-        }
-        return byId.values.sorted { left, right in
-            let leftSeq = left.startSeq ?? 0
-            let rightSeq = right.startSeq ?? 0
-            if leftSeq != rightSeq {
-                return leftSeq < rightSeq
-            }
-            let leftDate = parseIso(left.updatedAt) ?? parseIso(left.startedAt) ?? .distantPast
-            let rightDate = parseIso(right.updatedAt) ?? parseIso(right.startedAt) ?? .distantPast
-            return leftDate < rightDate
-        }
-    }
-
-    private func rebuildThreadItems() {
-        let answersByToolCallId = collectAskUserQuestionAnswers(events: latestEvents, optimistic: optimisticAskAnswers)
-        let toolSummaries = buildToolSummaries(from: latestToolSummaries, events: latestEvents)
+        let toolSummaries = buildToolSummaries(from: input.toolSummaries, events: input.events)
         let toolsByTurn = Dictionary(grouping: toolSummaries, by: { $0.turnId })
 
         var items: [ChatThreadItem] = []
 
-        for message in messages {
+        for message in input.messages {
             let item = ChatThreadItem(
                 id: "msg-\(message.id)",
                 createdAt: message.createdAt,
@@ -3698,7 +2974,7 @@ final class ChatViewModel: ObservableObject {
             items.append(item)
         }
 
-        for turn in latestTurns {
+        for turn in input.turns {
             let turnId = turn.turnId.stringValue
             let tools = toolsByTurn[turnId] ?? []
             let thought = turn.thoughtPartial ?? ""
@@ -3728,7 +3004,7 @@ final class ChatViewModel: ObservableObject {
             items.append(item)
         }
 
-        for event in latestEvents {
+        for event in input.events {
             if let askItem = buildAskUserQuestionItem(event: event, answersByToolCallId: answersByToolCallId) {
                 let item = ChatThreadItem(
                     id: askItem.id,
@@ -3754,14 +3030,125 @@ final class ChatViewModel: ObservableObject {
             return left.id < right.id
         }
 
-        threadItems = items
-        activeAskToolCallId = items.compactMap { item -> String? in
+        let activeAskToolCallId = items.compactMap { item -> String? in
             if case .askUser(let ask) = item.kind, !ask.answered {
                 return ask.toolCallId
             }
             return nil
         }.first
-        threadItemsRevision += 1
+
+        let output = ChatThreadBuildOutput(
+            key: input.key,
+            items: items,
+            activeAskToolCallId: activeAskToolCallId
+        )
+        storeThreadCache(output)
+        return output
+    }
+
+    func mergeMessages(
+        existing: [ChatMessage],
+        incoming: [ChatMessage],
+        key: ChatThreadMergeKey
+    ) -> [ChatMessage] {
+        if let cached = messageMergeCache[key] {
+            return cached
+        }
+        var byId: [String: ChatMessage] = [:]
+        for message in existing {
+            byId[message.id] = message
+        }
+        for message in incoming {
+            byId[message.id] = message
+        }
+        let merged = byId.values.sorted { left, right in
+            let leftDate = parseIso(left.createdAt) ?? .distantPast
+            let rightDate = parseIso(right.createdAt) ?? .distantPast
+            if leftDate != rightDate {
+                return leftDate < rightDate
+            }
+            return left.id < right.id
+        }
+        storeMergeCache(key: key, messages: merged)
+        return merged
+    }
+
+    func mergeTurns(
+        existing: [SessionTurn],
+        incoming: [SessionTurn],
+        key: ChatThreadMergeKey
+    ) -> [SessionTurn] {
+        if let cached = turnMergeCache[key] {
+            return cached
+        }
+        var byId: [String: SessionTurn] = [:]
+        for turn in existing {
+            byId[turn.turnId.stringValue] = turn
+        }
+        for turn in incoming {
+            byId[turn.turnId.stringValue] = turn
+        }
+        let merged = byId.values.sorted { left, right in
+            let leftSeq = left.startSeq ?? 0
+            let rightSeq = right.startSeq ?? 0
+            if leftSeq != rightSeq {
+                return leftSeq < rightSeq
+            }
+            let leftDate = parseIso(left.updatedAt) ?? parseIso(left.startedAt) ?? .distantPast
+            let rightDate = parseIso(right.updatedAt) ?? parseIso(right.startedAt) ?? .distantPast
+            return leftDate < rightDate
+        }
+        storeMergeCache(key: key, turns: merged)
+        return merged
+    }
+
+    private func parseIso(_ iso: String?) -> Date? {
+        guard let iso else { return nil }
+        return isoFormatter.date(from: iso) ?? fallbackFormatter.date(from: iso)
+    }
+
+    private func storeThreadCache(_ output: ChatThreadBuildOutput) {
+        threadCache[output.key] = output
+        noteThreadKey(output.key)
+        if threadCacheOrder.count > threadCacheLimit {
+            let overflow = threadCacheOrder.count - threadCacheLimit
+            for key in threadCacheOrder.prefix(overflow) {
+                threadCache.removeValue(forKey: key)
+            }
+            threadCacheOrder.removeFirst(overflow)
+        }
+    }
+
+    private func noteThreadKey(_ key: ChatThreadBuildKey) {
+        if let index = threadCacheOrder.firstIndex(of: key) {
+            threadCacheOrder.remove(at: index)
+        }
+        threadCacheOrder.append(key)
+    }
+
+    private func storeMergeCache(key: ChatThreadMergeKey, messages: [ChatMessage]? = nil, turns: [SessionTurn]? = nil) {
+        if let messages {
+            messageMergeCache[key] = messages
+        }
+        if let turns {
+            turnMergeCache[key] = turns
+        }
+        noteMergeKey(key)
+        if mergeCacheOrder.count > mergeCacheLimit {
+            let overflow = mergeCacheOrder.count - mergeCacheLimit
+            for key in mergeCacheOrder.prefix(overflow) {
+                messageMergeCache.removeValue(forKey: key)
+                turnMergeCache.removeValue(forKey: key)
+            }
+            mergeCacheOrder.removeFirst(overflow)
+        }
+    }
+
+    private func noteMergeKey(_ key: ChatThreadMergeKey) {
+        if let index = mergeCacheOrder.firstIndex(of: key) {
+            mergeCacheOrder.remove(at: index)
+        }
+        mergeCacheOrder.append(key)
     }
 
     private func buildToolSummaries(
@@ -3901,6 +3288,849 @@ final class ChatViewModel: ObservableObject {
             out[trimmed] = text
         }
         return out
+    }
+}
+
+@MainActor
+final class ChatViewModel: ObservableObject {
+    @Published var messages: [ChatMessage] = []
+    @Published var threadItems: [ChatThreadItem] = []
+    @Published var queueMessages: [MessageSummary] = []
+    @Published var toolLoadingTurnIds: Set<String> = []
+    @Published var toolDetailsByCallId: [String: SessionTurnTool] = [:]
+    @Published var errorMessage: String?
+    @Published var artifacts: [Artifact] = []
+    @Published var isArtifactsLoading = false
+    @Published var artifactsError: String?
+    @Published var turnStatus: TurnStatusSnapshot?
+    @Published private(set) var isAssistantWorking = false
+    @Published private(set) var contextWindowInfo: ContextWindowInfo?
+    @Published private(set) var assetBaseURL: URL?
+    @Published private(set) var assetToken: String?
+    @Published private(set) var threadItemsRevision: Int = 0
+    @Published private(set) var activeAskToolCallId: String?
+    @Published private(set) var isArchivedSession = false
+    @Published private(set) var historyHasMore = false
+    @Published private(set) var isHistoryLoading = false
+
+    private struct StreamingAssistantState {
+        let turnId: String
+        let messageId: String
+        var text: String
+        var isActive: Bool
+        let createdAt: String
+    }
+
+    struct TurnStatusSnapshot: Equatable {
+        let status: SessionTurnStatus
+        let startedAt: String
+        let updatedAt: String
+        let assistantMessage: String
+    }
+
+    private enum RefreshResult {
+        case success
+        case skipped
+        case failed
+    }
+
+    private let streamClient = DaemonStreamClient()
+    private let streamEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        return encoder
+    }()
+    private let streamDecoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }()
+
+    private var client: DaemonAPIClient?
+    private var secureContext: SecureConnectionContext?
+    @Published private(set) var sessionId: String?
+    private var workspaceId: String?
+    private var lastEventSeq: Int?
+    private var pollTask: _Concurrency.Task<Void, Never>?
+    private var streamTask: _Concurrency.Task<Void, Never>?
+    private var streamSocket: URLSessionWebSocketTask?
+    private var isStreamConnected = false
+    private var streamReconnectDelay: TimeInterval = 1
+    private var refreshInFlight = false
+    private var refreshPending = false
+    private var artifactsRefreshInFlight = false
+    private var artifactsRefreshPending = false
+    private var pendingAssistantResponse = false
+    private var streamingAssistantState: StreamingAssistantState?
+    private var consecutivePollFailures = 0
+    private var sessionGeneration = 0
+    private var latestTurns: [SessionTurn] = []
+    private var latestEvents: [SessionEvent] = []
+    private var latestToolSummaries: [SessionTurnToolSummary] = []
+    private var optimisticAskAnswers: [String: AskUserAnswerState] = [:]
+    private var lastSetModelId: String?
+    private var lastSetModeId: String?
+    private var historyCursor: Int?
+    private var historyInitialized = false
+    private var headMessages: [ChatMessage] = []
+    private var historyMessages: [ChatMessage] = []
+    private var headTurns: [SessionTurn] = []
+    private var historyTurns: [SessionTurn] = []
+    private let threadPipeline = ChatThreadPipeline()
+    private var threadBuildToken: Int = 0
+    private var lastThreadBuildKey: ChatThreadBuildKey?
+    private var threadSnapshotRev: Int = 0
+
+    init(client: DaemonAPIClient? = nil, initialSessionId: String? = nil, initialWorkspaceId: String? = nil) {
+        self.client = client
+        self.sessionId = initialSessionId
+        self.workspaceId = initialWorkspaceId
+        if client == nil {
+            messages = Self.sampleMessages
+            latestTurns = []
+            latestEvents = []
+            latestToolSummaries = []
+            turnStatus = sampleTurnStatus()
+            rebuildThreadItems()
+        }
+    }
+
+    var assetContext: DaemonAssetContext {
+        DaemonAssetContext(baseURL: assetBaseURL, token: assetToken, client: client)
+    }
+
+    func setClient(_ client: DaemonAPIClient?) {
+        self.client = client
+        if client != nil {
+            messages = []
+            threadItems = []
+            queueMessages = []
+            toolDetailsByCallId = [:]
+            toolLoadingTurnIds = []
+            latestTurns = []
+            latestEvents = []
+            latestToolSummaries = []
+            optimisticAskAnswers = [:]
+            activeAskToolCallId = nil
+            threadItemsRevision = 0
+            lastThreadBuildKey = nil
+            threadBuildToken += 1
+            threadSnapshotRev = 0
+            lastSetModelId = nil
+            lastSetModeId = nil
+            historyCursor = nil
+            historyInitialized = false
+            historyHasMore = false
+            isHistoryLoading = false
+            headMessages = []
+            historyMessages = []
+            headTurns = []
+            historyTurns = []
+            setPendingAssistantResponse(false)
+            streamingAssistantState = nil
+            errorMessage = nil
+            artifacts = []
+            artifactsError = nil
+            isArtifactsLoading = false
+            turnStatus = sampleTurnStatus()
+            contextWindowInfo = nil
+            lastEventSeq = nil
+            refreshAssetContext()
+            _Concurrency.Task { @MainActor in
+                secureContext = await client?.secureConnectionContext()
+            }
+            if pollTask != nil && !isArchivedSession {
+                startStream()
+            }
+            _Concurrency.Task {
+                _ = await refreshMessages()
+                await refreshQueue()
+                await refreshArtifacts()
+            }
+            updateWorkingState()
+        } else {
+            stopStream()
+            sessionId = nil
+            workspaceId = nil
+            lastEventSeq = nil
+            messages = Self.sampleMessages
+            latestTurns = []
+            latestEvents = []
+            latestToolSummaries = []
+            optimisticAskAnswers = [:]
+            threadItems = []
+            queueMessages = []
+            toolDetailsByCallId = [:]
+            toolLoadingTurnIds = []
+            threadItemsRevision = 0
+            activeAskToolCallId = nil
+            lastThreadBuildKey = nil
+            threadBuildToken += 1
+            threadSnapshotRev = 0
+            lastSetModelId = nil
+            lastSetModeId = nil
+            setPendingAssistantResponse(false)
+            streamingAssistantState = nil
+            artifacts = []
+            artifactsError = nil
+            isArtifactsLoading = false
+            turnStatus = nil
+            contextWindowInfo = nil
+            assetBaseURL = nil
+            assetToken = nil
+            secureContext = nil
+            rebuildThreadItems()
+            updateWorkingState()
+        }
+    }
+
+    func setArchived(_ value: Bool) {
+        if isArchivedSession == value { return }
+        isArchivedSession = value
+        if value {
+            _Concurrency.Task {
+                await ArtifactContentCache.shared.setActiveScope(nil)
+            }
+            stopPolling()
+            stopStream()
+        } else {
+            let scope = sessionId
+            _Concurrency.Task {
+                await ArtifactContentCache.shared.setActiveScope(scope)
+            }
+        }
+    }
+
+    private func refreshAssetContext() {
+        guard let client else {
+            assetBaseURL = nil
+            assetToken = nil
+            return
+        }
+        _Concurrency.Task { @MainActor in
+            assetBaseURL = await client.daemonBaseURL()
+            assetToken = await client.authToken()
+        }
+    }
+
+    private func setPendingAssistantResponse(_ pending: Bool) {
+        pendingAssistantResponse = pending
+        updateWorkingState()
+    }
+
+    private func updateWorkingState() {
+        let statusWorking = turnStatus?.status == .queued || turnStatus?.status == .running
+        let streamingWorking = streamingAssistantState?.isActive == true
+        isAssistantWorking = pendingAssistantResponse || statusWorking || streamingWorking
+    }
+
+    private func sampleTurnStatus() -> TurnStatusSnapshot? {
+        guard ProcessInfo.processInfo.environment["CTX_UI_TEST_MODE"] == "1" else { return nil }
+        let now = Date()
+        let assistantMessage = messages.reversed().first(where: { $0.role == .assistant })?.text ?? ""
+        return TurnStatusSnapshot(
+            status: .completed,
+            startedAt: formatIsoTimestamp(now.addingTimeInterval(-42)),
+            updatedAt: formatIsoTimestamp(now),
+            assistantMessage: assistantMessage
+        )
+    }
+
+    func selectSession(_ sessionId: String?, workspaceId: String? = nil) {
+        sessionGeneration += 1
+        self.sessionId = sessionId
+        self.workspaceId = workspaceId
+        _Concurrency.Task {
+            await ArtifactContentCache.shared.setActiveScope(sessionId)
+        }
+        lastEventSeq = nil
+        setPendingAssistantResponse(false)
+        streamingAssistantState = nil
+        refreshInFlight = false
+        refreshPending = false
+        messages = []
+        threadItems = []
+        queueMessages = []
+        toolDetailsByCallId = [:]
+        toolLoadingTurnIds = []
+        latestTurns = []
+        latestEvents = []
+        latestToolSummaries = []
+        optimisticAskAnswers = [:]
+        activeAskToolCallId = nil
+        threadItemsRevision = 0
+        lastThreadBuildKey = nil
+        threadBuildToken += 1
+        threadSnapshotRev = 0
+        lastSetModelId = nil
+        lastSetModeId = nil
+        historyCursor = nil
+        historyInitialized = false
+        historyHasMore = false
+        isHistoryLoading = false
+        headMessages = []
+        historyMessages = []
+        headTurns = []
+        historyTurns = []
+        errorMessage = nil
+        artifacts = []
+        artifactsError = nil
+        artifactsRefreshInFlight = false
+        artifactsRefreshPending = false
+        turnStatus = nil
+        contextWindowInfo = nil
+        updateWorkingState()
+        _Concurrency.Task {
+            await hydrateFromCacheIfNeeded(sessionId: sessionId, generation: sessionGeneration)
+            if !isArchivedSession {
+                await primeStreamCursor()
+            }
+            _ = await refreshMessages()
+            await refreshQueue()
+            await refreshArtifacts()
+            if !isArchivedSession {
+                await sendStreamSubscriptionIfNeeded()
+            }
+        }
+    }
+
+    private func hydrateFromCacheIfNeeded(sessionId: String?, generation: Int) async {
+        guard !isArchivedSession else { return }
+        guard messages.isEmpty && latestTurns.isEmpty else { return }
+        guard let sessionId else { return }
+        guard let cached = await ATSHeadCache.shared.load(sessionId: sessionId) else { return }
+        guard generation == sessionGeneration, sessionId == self.sessionId else { return }
+        applyCachedHead(cached)
+    }
+
+    private func applyCachedHead(_ cached: CachedSessionHead) {
+        let nextMessages = cached.messages.map { message in
+            ChatMessage(
+                id: message.id.stringValue,
+                role: roleForMessage(message.role),
+                text: message.content,
+                attachments: message.attachments ?? [],
+                createdAt: message.createdAt
+            )
+        }
+        let nextWithStreaming = applyStreamingAssistantState(to: nextMessages)
+        messages = nextWithStreaming
+        latestTurns = cached.turns
+        latestEvents = cached.events ?? []
+        latestToolSummaries = cached.toolSummaries ?? []
+        lastEventSeq = cached.lastEventSeq
+        threadSnapshotRev = max(threadSnapshotRev, cached.lastEventSeq)
+        workspaceId = workspaceId ?? cached.session.workspaceId.stringValue
+        if let turn = mostRecentTurn(in: cached.turns) {
+            updateTurnStatus(from: turn)
+            updateContextWindow(from: turn)
+        }
+        lastSetModelId = cached.session.modelId
+        rebuildThreadItems()
+        updateWorkingState()
+    }
+
+    func startPolling() {
+        guard !isArchivedSession else { return }
+        guard pollTask == nil else { return }
+        startStream()
+        pollTask = _Concurrency.Task {
+            while !_Concurrency.Task.isCancelled {
+                let result = await refreshMessages()
+                let delay = nextPollDelay(for: result)
+                try? await _Concurrency.Task.sleep(nanoseconds: delay)
+            }
+        }
+    }
+
+    func stopPolling() {
+        pollTask?.cancel()
+        pollTask = nil
+        stopStream()
+    }
+
+    func interrupt() {
+        guard let client else { return }
+        _Concurrency.Task {
+            let resolved = await resolveSessionId()
+            guard let resolved else { return }
+            do {
+                try await client.interruptSession(sessionId: resolved)
+            } catch {
+                // Best-effort interrupt; rely on stream updates to reflect status.
+            }
+        }
+    }
+
+    func send(_ text: String, attachments: [MessageAttachment]) {
+        let local = ChatMessage(
+            id: UUID().uuidString,
+            role: .user,
+            text: text,
+            attachments: attachments,
+            createdAt: formatIsoTimestamp(Date())
+        )
+        appendMessage(local)
+        setPendingAssistantResponse(true)
+
+        _Concurrency.Task {
+            guard let client else { return }
+            let resolved = await resolveSessionId()
+            guard let resolved else { return }
+            do {
+                _ = try await client.postMessage(sessionId: resolved, content: text, delivery: .immediate, attachments: attachments)
+                _ = await refreshMessages()
+                await refreshQueue()
+            } catch {
+                setPendingAssistantResponse(false)
+                errorMessage = "Failed to send message."
+            }
+        }
+    }
+
+    private func refreshMessages() async -> RefreshResult {
+        guard let client else { return .skipped }
+        if refreshInFlight {
+            refreshPending = true
+            return .skipped
+        }
+        refreshInFlight = true
+        defer { refreshInFlight = false }
+        let generation = sessionGeneration
+        let resolved = await resolveSessionId()
+        guard let resolved, generation == sessionGeneration else { return .skipped }
+        do {
+            let snapshot = try await client.getSessionSnapshot(sessionId: resolved, limit: 200, includeEvents: true)
+            let head = snapshot.head
+            guard generation == sessionGeneration, resolved == sessionId else { return .skipped }
+            let nextMessages = head.messages.map { message in
+                ChatMessage(
+                    id: message.id.stringValue,
+                    role: roleForMessage(message.role),
+                    text: message.content,
+                    attachments: message.attachments ?? [],
+                    createdAt: message.createdAt
+                )
+            }
+            let nextWithStreaming = isArchivedSession ? nextMessages : applyStreamingAssistantState(to: nextMessages)
+            if isArchivedSession {
+                headMessages = nextMessages
+                headTurns = head.turns
+                if !historyInitialized {
+                    historyCursor = head.turns.first?.startSeq
+                    historyHasMore = head.hasMoreTurns && historyCursor != nil
+                    historyInitialized = true
+                }
+                latestTurns = historyTurns + headTurns
+                let mergedMessages = await mergeMessages(historyMessages, headMessages, kind: .head)
+                guard generation == sessionGeneration, resolved == sessionId else { return .skipped }
+                messages = mergedMessages
+                lastEventSeq = head.lastEventSeq
+            } else {
+                messages = nextWithStreaming
+                latestTurns = head.turns
+            }
+            latestEvents = head.events ?? []
+            latestToolSummaries = head.toolSummaries ?? []
+            threadSnapshotRev = max(threadSnapshotRev, head.lastEventSeq)
+            if let turn = mostRecentTurn(in: head.turns) {
+                updateTurnStatus(from: turn)
+                updateContextWindow(from: turn)
+            }
+            lastSetModelId = head.session.modelId
+            rebuildThreadItems()
+            await refreshQueue()
+            if !isArchivedSession, pendingAssistantResponse, nextWithStreaming.contains(where: { $0.role == .assistant }) {
+                setPendingAssistantResponse(false)
+                streamingAssistantState = nil
+                updateWorkingState()
+            }
+            errorMessage = nil
+            if refreshPending, generation == sessionGeneration {
+                refreshPending = false
+                _Concurrency.Task { _ = await refreshMessages() }
+            }
+            return .success
+        } catch {
+            if generation == sessionGeneration {
+                errorMessage = "Failed to load messages."
+            }
+            if refreshPending, generation == sessionGeneration {
+                refreshPending = false
+                _Concurrency.Task { _ = await refreshMessages() }
+            }
+            return .failed
+        }
+    }
+
+    func loadEarlierMessages() {
+        guard isArchivedSession, historyHasMore, !isHistoryLoading else { return }
+        guard historyCursor != nil else { return }
+        let generation = sessionGeneration
+        let beforeSeq = historyCursor
+        let limit = 200
+        isHistoryLoading = true
+        _Concurrency.Task {
+            defer { isHistoryLoading = false }
+            guard let client else { return }
+            let resolved = await resolveSessionId()
+            guard let resolved, generation == sessionGeneration else { return }
+            if let cached = await SessionHistoryPageCache.shared.load(
+                sessionId: resolved,
+                beforeSeq: beforeSeq,
+                limit: limit
+            ) {
+                guard generation == sessionGeneration else { return }
+                await applyHistoryPage(cached, generation: generation)
+                return
+            }
+            do {
+                let page = try await client.getSessionHistory(sessionId: resolved, beforeSeq: beforeSeq, limit: limit)
+                guard generation == sessionGeneration else { return }
+                await SessionHistoryPageCache.shared.store(page, sessionId: resolved, beforeSeq: beforeSeq, limit: limit)
+                await applyHistoryPage(page, generation: generation)
+            } catch {
+                if generation == sessionGeneration {
+                    errorMessage = "Failed to load older messages."
+                }
+            }
+        }
+    }
+
+    private func applyHistoryPage(_ page: SessionHistoryPage, generation: Int) async {
+        let nextMessages = page.messages.map { message in
+            ChatMessage(
+                id: message.id.stringValue,
+                role: roleForMessage(message.role),
+                text: message.content,
+                attachments: message.attachments ?? [],
+                createdAt: message.createdAt
+            )
+        }
+        let mergedHistoryMessages = await mergeMessages(historyMessages, nextMessages, kind: .history)
+        let mergedHistoryTurns = await mergeTurns(historyTurns, page.turns, kind: .history)
+        guard generation == sessionGeneration else { return }
+        historyMessages = mergedHistoryMessages
+        historyTurns = mergedHistoryTurns
+        historyCursor = page.nextCursor
+        historyHasMore = page.hasMore
+        latestTurns = historyTurns + headTurns
+        let mergedMessages = await mergeMessages(historyMessages, headMessages, kind: .head)
+        guard generation == sessionGeneration else { return }
+        messages = mergedMessages
+        rebuildThreadItems()
+    }
+
+    private func refreshQueue() async {
+        guard let client else { return }
+        let resolved = await resolveSessionId()
+        guard let resolved else { return }
+        do {
+            queueMessages = try await client.listQueue(sessionId: resolved)
+        } catch {
+            queueMessages = []
+        }
+    }
+
+    private func refreshArtifacts() async {
+        guard let client else { return }
+        if artifactsRefreshInFlight {
+            artifactsRefreshPending = true
+            return
+        }
+        artifactsRefreshInFlight = true
+        isArtifactsLoading = true
+        defer {
+            artifactsRefreshInFlight = false
+            isArtifactsLoading = false
+        }
+        let generation = sessionGeneration
+        let resolved = await resolveSessionId()
+        guard let resolved, generation == sessionGeneration else { return }
+        do {
+            artifacts = try await client.listSessionArtifacts(sessionId: resolved)
+            artifactsError = nil
+            prefetchArtifactsIfNeeded()
+            if artifactsRefreshPending, generation == sessionGeneration {
+                artifactsRefreshPending = false
+                _Concurrency.Task { await refreshArtifacts() }
+            }
+        } catch {
+            if generation == sessionGeneration {
+                artifactsError = "Failed to load artifacts."
+            }
+            if artifactsRefreshPending, generation == sessionGeneration {
+                artifactsRefreshPending = false
+                _Concurrency.Task { await refreshArtifacts() }
+            }
+        }
+    }
+
+    private func decodeArtifacts(from payload: JSONValue) -> [Artifact]? {
+        guard case let .object(object) = payload,
+              let artifactsValue = object["artifacts"] else { return nil }
+        let encoder = JSONEncoder()
+        guard let data = try? encoder.encode(artifactsValue) else { return nil }
+        return try? streamDecoder.decode([Artifact].self, from: data)
+    }
+
+    private func applyArtifactsFromStream(_ artifacts: [Artifact]) {
+        self.artifacts = artifacts
+        artifactsError = nil
+        isArtifactsLoading = false
+        prefetchArtifactsIfNeeded()
+    }
+
+    private func prefetchArtifactsIfNeeded() {
+        guard !isArchivedSession,
+              let sessionId,
+              let client else { return }
+        let targets = artifacts.compactMap { artifact -> ArtifactPrefetchTarget? in
+            if artifact.missing == true { return nil }
+            if !(isImageArtifact(artifact) || isVideoArtifact(artifact)) { return nil }
+            if artifact.bytes <= 0 { return nil }
+            let path = artifactAssetPath(artifact.id.stringValue)
+            let primaryExt = artifactFileExtension(artifact.absolutePath)
+            let fallbackExt = artifactFileExtension(artifact.name ?? "")
+            let ext = primaryExt.isEmpty ? fallbackExt : primaryExt
+            return ArtifactPrefetchTarget(
+                key: path,
+                path: path,
+                size: artifact.bytes,
+                fileExtension: ext.isEmpty ? nil : ext
+            )
+        }
+        guard !targets.isEmpty else { return }
+        _Concurrency.Task {
+            await ArtifactContentCache.shared.setActiveScope(sessionId)
+            await ArtifactContentCache.shared.prefetch(targets: targets, client: client)
+        }
+    }
+
+    private func appendMessage(_ message: ChatMessage) {
+        if isArchivedSession {
+            let generation = sessionGeneration
+            let headSnapshot = headMessages
+            _Concurrency.Task {
+                let mergedHead = await mergeMessages(headSnapshot, [message], kind: .append)
+                guard generation == sessionGeneration else { return }
+                headMessages = mergedHead
+                let mergedMessages = await mergeMessages(historyMessages, mergedHead, kind: .head)
+                guard generation == sessionGeneration else { return }
+                messages = mergedMessages
+                rebuildThreadItems()
+            }
+            return
+        }
+        var next = messages
+        next.append(message)
+        messages = next
+        rebuildThreadItems()
+    }
+
+    func updateSessionModel(_ modelId: String) {
+        guard let client else { return }
+        let trimmed = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if lastSetModelId == trimmed { return }
+        lastSetModelId = trimmed
+        _Concurrency.Task {
+            let resolved = await resolveSessionId()
+            guard let resolved else { return }
+            _ = try? await client.setSessionModel(sessionId: resolved, modelId: trimmed)
+        }
+    }
+
+    func updateSessionMode(_ mode: ComposerMode) {
+        guard let client else { return }
+        let next = mode.rawValue
+        if lastSetModeId == next { return }
+        lastSetModeId = next
+        _Concurrency.Task {
+            let resolved = await resolveSessionId()
+            guard let resolved else { return }
+            try? await client.setSessionMode(sessionId: resolved, modeId: next)
+        }
+    }
+
+    func loadTools(for turnId: String) {
+        guard let client else { return }
+        if toolLoadingTurnIds.contains(turnId) { return }
+        toolLoadingTurnIds.insert(turnId)
+        _Concurrency.Task {
+            defer { toolLoadingTurnIds.remove(turnId) }
+            do {
+                let resolved = await resolveSessionId()
+                guard let resolved else { return }
+                let tools = try await client.listTurnTools(sessionId: resolved, turnId: turnId)
+                var next = toolDetailsByCallId
+                for tool in tools {
+                    next[tool.toolCallId] = tool
+                }
+                toolDetailsByCallId = next
+            } catch {
+                // Best-effort; keep existing detail cache.
+            }
+        }
+    }
+
+    func removeQueuedMessage(_ messageId: String) {
+        guard let client else { return }
+        _Concurrency.Task {
+            do {
+                try await client.deleteMessage(messageId: messageId)
+                await refreshQueue()
+            } catch {
+                // Best-effort removal; ignore errors.
+            }
+        }
+    }
+
+    func submitAskUserQuestion(toolCallId: String, answers: [String: String]) async {
+        guard let client else { return }
+        let resolved = await resolveSessionId()
+        guard let resolved else { return }
+        optimisticAskAnswers[toolCallId] = AskUserAnswerState(outcome: "submitted", answers: answers)
+        rebuildThreadItems()
+        do {
+            try await client.submitAskUserQuestion(
+                sessionId: resolved,
+                toolCallId: toolCallId,
+                outcome: "submitted",
+                answers: answers
+            )
+            _ = await refreshMessages()
+        } catch {
+            optimisticAskAnswers.removeValue(forKey: toolCallId)
+            rebuildThreadItems()
+        }
+    }
+
+    func cancelAskUserQuestion(toolCallId: String) async {
+        guard let client else { return }
+        let resolved = await resolveSessionId()
+        guard let resolved else { return }
+        optimisticAskAnswers[toolCallId] = AskUserAnswerState(outcome: "cancelled", answers: [:])
+        rebuildThreadItems()
+        do {
+            try await client.submitAskUserQuestion(
+                sessionId: resolved,
+                toolCallId: toolCallId,
+                outcome: "cancelled",
+                answers: [:]
+            )
+            _ = await refreshMessages()
+        } catch {
+            optimisticAskAnswers.removeValue(forKey: toolCallId)
+            rebuildThreadItems()
+        }
+    }
+
+    private func applyStreamingAssistantState(to base: [ChatMessage]) -> [ChatMessage] {
+        guard let state = streamingAssistantState, !state.text.isEmpty else { return base }
+        var next = base
+
+        if let last = next.last, last.role == .assistant {
+            if last.text == state.text {
+                return next
+            }
+            if state.text.count >= last.text.count || state.isActive {
+                next[next.count - 1] = ChatMessage(
+                    id: last.id,
+                    role: .assistant,
+                    text: state.text,
+                    attachments: last.attachments,
+                    createdAt: last.createdAt
+                )
+            }
+            return next
+        }
+
+        next.append(
+            ChatMessage(
+                id: state.messageId,
+                role: .assistant,
+                text: state.text,
+                attachments: [],
+                createdAt: state.createdAt
+            )
+        )
+        return next
+    }
+
+    private func mergeMessages(
+        _ existing: [ChatMessage],
+        _ incoming: [ChatMessage],
+        kind: ChatThreadMergeKind
+    ) async -> [ChatMessage] {
+        let key = ChatThreadMergeKey(
+            sessionId: sessionId ?? "unknown",
+            snapshotRev: threadSnapshotRev,
+            lastEventSeq: lastEventSeq ?? 0,
+            existingCount: existing.count,
+            incomingCount: incoming.count,
+            existingTailId: existing.last?.id,
+            incomingTailId: incoming.last?.id,
+            kind: kind
+        )
+        return await threadPipeline.mergeMessages(existing: existing, incoming: incoming, key: key)
+    }
+
+    private func mergeTurns(
+        _ existing: [SessionTurn],
+        _ incoming: [SessionTurn],
+        kind: ChatThreadMergeKind
+    ) async -> [SessionTurn] {
+        let key = ChatThreadMergeKey(
+            sessionId: sessionId ?? "unknown",
+            snapshotRev: threadSnapshotRev,
+            lastEventSeq: lastEventSeq ?? 0,
+            existingCount: existing.count,
+            incomingCount: incoming.count,
+            existingTailId: existing.last?.turnId.stringValue,
+            incomingTailId: incoming.last?.turnId.stringValue,
+            kind: kind
+        )
+        return await threadPipeline.mergeTurns(existing: existing, incoming: incoming, key: key)
+    }
+
+    private func rebuildThreadItems() {
+        let lastMessage = messages.last
+        let key = ChatThreadBuildKey(
+            sessionId: sessionId ?? "unknown",
+            snapshotRev: threadSnapshotRev,
+            lastEventSeq: lastEventSeq ?? 0,
+            messageCount: messages.count,
+            turnCount: latestTurns.count,
+            eventCount: latestEvents.count,
+            toolSummaryCount: latestToolSummaries.count,
+            optimisticCount: optimisticAskAnswers.count,
+            lastMessageId: lastMessage?.id,
+            lastMessageHash: lastMessage?.text.hashValue ?? 0
+        )
+        if key == lastThreadBuildKey {
+            return
+        }
+        lastThreadBuildKey = key
+        threadBuildToken += 1
+        let token = threadBuildToken
+        let generation = sessionGeneration
+        let input = ChatThreadBuildInput(
+            key: key,
+            messages: messages,
+            turns: latestTurns,
+            events: latestEvents,
+            toolSummaries: latestToolSummaries,
+            optimisticAnswers: optimisticAskAnswers
+        )
+        _Concurrency.Task {
+            let output = await threadPipeline.buildThreadItems(input: input)
+            guard token == threadBuildToken, generation == sessionGeneration else { return }
+            guard output.key == lastThreadBuildKey else { return }
+            threadItems = output.items
+            activeAskToolCallId = output.activeAskToolCallId
+            threadItemsRevision += 1
+        }
     }
 
     private func applyTurnDelta(_ turn: SessionTurn) {

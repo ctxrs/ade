@@ -40,6 +40,7 @@ let sessionSnap = {
 
 let workspaceSnapshotSnap = {
   workspaceId,
+  snapshotRev: 0,
   initialized: true,
   connection: "connected",
   tasksById: {

@@ -41,6 +41,8 @@ struct WorkbenchShellView: View {
     @State private var streamSecureContext: SecureConnectionContext?
     @State private var lastStreamSnapshotRev: Int = 0
     @State private var lastArchivedRev: Int = 0
+    @State private var taskRowIndicatorCache = TaskRowIndicatorCache()
+    @State private var taskRowIndicators: [String: TaskRowIndicators] = [:]
 
     private let streamClient = DaemonStreamClient()
     private let streamEncoder: JSONEncoder = {
@@ -134,6 +136,7 @@ struct WorkbenchShellView: View {
                     isRefreshingTasks: isRefreshingTasks,
                     taskError: taskError,
                     activeTaskId: workbenchSelection.taskId,
+                    taskRowIndicators: taskRowIndicators,
                     taskQuery: $taskQuery,
                     drawerWidth: drawerWidth,
                     onRefresh: { _Concurrency.Task { await loadWorkspaces() } },
@@ -558,6 +561,7 @@ struct WorkbenchShellView: View {
             taskError = nil
             isLoadingTasks = false
             isRefreshingTasks = false
+            refreshTaskRowIndicators()
             return
         }
         lastArchivedRev = 0
@@ -605,7 +609,7 @@ struct WorkbenchShellView: View {
                 }
             }
             activeTasks = sortTasksBySortAt(activeSummaries + extraActive)
-
+            refreshTaskRowIndicators()
             await loadArchivedHeadWindow(
                 client: client,
                 workspaceId: workspaceId,
@@ -616,6 +620,7 @@ struct WorkbenchShellView: View {
             if showBlocking {
                 activeTasks = []
                 archivedTasks = []
+                refreshTaskRowIndicators()
             }
             taskError = "Failed to load tasks."
         }
@@ -648,6 +653,7 @@ struct WorkbenchShellView: View {
         }
         if didHydrate {
             taskError = nil
+            refreshTaskRowIndicators()
             resolveSelectionForCurrentTask()
         }
     }
@@ -666,6 +672,7 @@ struct WorkbenchShellView: View {
             if let archivedRev = page.archivedRev {
                 lastArchivedRev = max(lastArchivedRev, archivedRev)
             }
+            refreshTaskRowIndicators()
             let heads = page.tasks.compactMap { $0.primarySessionHead }
             if !heads.isEmpty {
                 _Concurrency.Task { await ATSHeadCache.shared.store(heads: heads) }
@@ -679,6 +686,7 @@ struct WorkbenchShellView: View {
                 nextArchived.append(await buildArchivedTaskSummary(client: client, task: task))
             }
             archivedTasks = sortTasksBySortAt(nextArchived)
+            refreshTaskRowIndicators()
         }
     }
 
@@ -691,6 +699,14 @@ struct WorkbenchShellView: View {
     @MainActor
     private func upsertArchivedTaskSummary(_ summary: WorkspaceArchivedTaskSummaryPayload) {
         upsertTaskSummary(summary.toTaskSummary())
+    }
+
+    @MainActor
+    private func refreshTaskRowIndicators() {
+        taskRowIndicators = taskRowIndicatorCache.update(
+            tasks: activeTasks + archivedTasks,
+            snapshotRev: lastStreamSnapshotRev
+        )
     }
 
     private func resolveSelectionForCurrentTask() {
@@ -1122,6 +1138,7 @@ struct WorkbenchShellView: View {
         } else {
             archivedTasks = sortTasksBySortAt(archivedTasks + [summary])
         }
+        refreshTaskRowIndicators()
         resolveSelectionForCurrentTask()
     }
 
@@ -1132,6 +1149,7 @@ struct WorkbenchShellView: View {
         if workbenchSelection.taskId == taskId {
             workbenchSelection.setSelection(taskId: nil, sessionId: nil)
         }
+        refreshTaskRowIndicators()
     }
 
     @MainActor
@@ -1157,6 +1175,7 @@ struct WorkbenchShellView: View {
         if !update(&activeTasks) {
             _ = update(&archivedTasks)
         }
+        refreshTaskRowIndicators()
         resolveSelectionForCurrentTask()
     }
 
@@ -1180,6 +1199,7 @@ struct WorkbenchShellView: View {
             } else {
                 archivedTasks = sortTasksBySortAt(archivedTasks + [updated])
             }
+            refreshTaskRowIndicators()
             return
         }
 
@@ -1189,6 +1209,7 @@ struct WorkbenchShellView: View {
             } else {
                 archivedTasks = sortTasksBySortAt(archivedTasks + [updated])
             }
+            refreshTaskRowIndicators()
         }
     }
 }
@@ -1399,6 +1420,7 @@ private struct WorkbenchDrawerView: View {
     let isRefreshingTasks: Bool
     let taskError: String?
     let activeTaskId: String?
+    let taskRowIndicators: [String: TaskRowIndicators]
     @Binding var taskQuery: String
     let drawerWidth: CGFloat
     let onRefresh: () -> Void
@@ -1467,21 +1489,23 @@ private struct WorkbenchDrawerView: View {
                         } else {
                             LazyVStack(spacing: 2) {
                                 ForEach(filteredActive, id: \.task.id) { task in
+                                    let taskId = task.task.id.stringValue
+                                    let indicators = taskRowIndicators[taskId] ?? TaskRowIndicators(task: task)
                                     Button {
                                         onSelectTask(task)
                                     } label: {
                                         WorkbenchTaskRowView(
                                             task: task,
-                                            isSelected: activeTaskId == task.task.id.stringValue
+                                            indicators: indicators,
+                                            isSelected: activeTaskId == taskId
                                         )
                                     }
                                     .buttonStyle(.plain)
                                     .contextMenu {
-                                        let taskId = task.task.id.stringValue
                                         let archived = task.task.archivedAt != nil
                                         let hasAssistantMessages = task.task.lastAssistantMessageAt != nil
-                                        let isWorking = taskHasWorkingSession(task)
-                                        let isUnread = taskHasUnread(task, isWorking: isWorking)
+                                        let isWorking = indicators.isWorking
+                                        let isUnread = indicators.isUnread
 
                                         Button("Rename Task") { onRenameTask(task) }
                                         Button(archived ? "Unarchive" : "Archive") { onArchiveToggle(task) }
@@ -1504,20 +1528,22 @@ private struct WorkbenchDrawerView: View {
                             } else {
                                 LazyVStack(spacing: 2) {
                                     ForEach(filteredArchived, id: \.task.id) { task in
+                                        let taskId = task.task.id.stringValue
+                                        let indicators = taskRowIndicators[taskId] ?? TaskRowIndicators(task: task)
                                         Button {
                                             onSelectTask(task)
                                         } label: {
-                                            WorkbenchTaskRowView(
-                                                task: task,
-                                                isSelected: activeTaskId == task.task.id.stringValue
-                                            )
+                                        WorkbenchTaskRowView(
+                                            task: task,
+                                            indicators: indicators,
+                                            isSelected: activeTaskId == taskId
+                                        )
                                         }
                                         .buttonStyle(.plain)
                                         .contextMenu {
-                                            let taskId = task.task.id.stringValue
                                             let hasAssistantMessages = task.task.lastAssistantMessageAt != nil
-                                            let isWorking = taskHasWorkingSession(task)
-                                            let isUnread = taskHasUnread(task, isWorking: isWorking)
+                                            let isWorking = indicators.isWorking
+                                            let isUnread = indicators.isUnread
 
                                             Button("Rename Task") { onRenameTask(task) }
                                             Button("Unarchive") { onArchiveToggle(task) }
@@ -1707,7 +1733,6 @@ private struct WorkbenchNavigationFlowView: View {
                     )
                 }
             }
-            .id(workspace.id)
             .toolbar(.hidden, for: .navigationBar)
         } else {
             WorkbenchEmptyStateView(
@@ -2815,15 +2840,12 @@ private struct WorkbenchSectionHeaderView: View {
 
 private struct WorkbenchTaskRowView: View {
     let task: WorkspaceTaskSummary
+    let indicators: TaskRowIndicators
     let isSelected: Bool
 
     private var title: String {
         let trimmed = task.task.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "New task" : trimmed
-    }
-
-    private var indicators: TaskRowIndicators {
-        TaskRowIndicators(task: task)
     }
 
     var body: some View {
@@ -2840,7 +2862,7 @@ private struct WorkbenchTaskRowView: View {
                 Spacer()
 
                 HStack(spacing: 6) {
-                    Text(indicators.ageLabel)
+                    Text(formatRelativeAgeShort(task.task.lastActivityAt ?? task.task.updatedAt ?? task.task.createdAt))
                         .font(.system(size: 12))
                         .foregroundColor(.ctxTextMuted)
                         .frame(minWidth: 28, alignment: .trailing)
@@ -3034,24 +3056,92 @@ private func formatSessionLog(head: SessionHead) -> String {
 private struct TaskRowIndicators {
     let providerIds: [String]
     let isWorking: Bool
+    let isUnread: Bool
     let dotKind: TaskRowDotKind?
-    let ageLabel: String
     let previewText: String?
 
     init(task: WorkspaceTaskSummary) {
         providerIds = resolveProviderIds(for: task)
         isWorking = taskHasWorkingSession(task)
         let hasError = taskHasErrorSession(task)
-        let unread = taskHasUnread(task, isWorking: isWorking)
+        isUnread = taskHasUnread(task, isWorking: isWorking)
         if hasError {
             dotKind = .error
-        } else if unread {
+        } else if isUnread {
             dotKind = .unread
         } else {
             dotKind = nil
         }
-        ageLabel = formatRelativeAgeShort(task.task.lastActivityAt ?? task.task.updatedAt ?? task.task.createdAt)
         previewText = resolveTaskPreview(task)
+    }
+}
+
+private struct TaskRowSessionFingerprint: Hashable {
+    let sessionId: String
+    let lastEventSeq: Int?
+    let status: String
+    let providerId: String
+    let activityWorking: Bool
+    let lastMessagePreview: String?
+}
+
+private struct TaskRowFingerprint: Hashable {
+    let taskId: String
+    let snapshotRev: Int
+    let sortAt: String
+    let updatedAt: String
+    let lastActivityAt: String?
+    let assistantSeenAt: String?
+    let lastAssistantMessageAt: String?
+    let sessions: [TaskRowSessionFingerprint]
+
+    init(task: WorkspaceTaskSummary, snapshotRev: Int) {
+        taskId = task.task.id.stringValue
+        self.snapshotRev = snapshotRev
+        sortAt = task.sortAt
+        updatedAt = task.task.updatedAt
+        lastActivityAt = task.task.lastActivityAt
+        assistantSeenAt = task.task.assistantSeenAt
+        lastAssistantMessageAt = task.task.lastAssistantMessageAt
+        sessions = task.sessions.map { summary in
+            TaskRowSessionFingerprint(
+                sessionId: summary.session.id.stringValue,
+                lastEventSeq: summary.lastEventSeq,
+                status: summary.session.status,
+                providerId: summary.session.providerId,
+                activityWorking: summary.activity?.isWorking == true,
+                lastMessagePreview: summary.lastMessagePreview
+            )
+        }
+    }
+}
+
+private struct TaskRowIndicatorCacheEntry {
+    let fingerprint: TaskRowFingerprint
+    let indicators: TaskRowIndicators
+}
+
+private struct TaskRowIndicatorCache {
+    private var entries: [String: TaskRowIndicatorCacheEntry] = [:]
+
+    mutating func update(tasks: [WorkspaceTaskSummary], snapshotRev: Int) -> [String: TaskRowIndicators] {
+        var nextEntries: [String: TaskRowIndicatorCacheEntry] = [:]
+        var indicatorsById: [String: TaskRowIndicators] = [:]
+        for task in tasks {
+            let taskId = task.task.id.stringValue
+            let fingerprint = TaskRowFingerprint(task: task, snapshotRev: snapshotRev)
+            if let cached = entries[taskId], cached.fingerprint == fingerprint {
+                nextEntries[taskId] = cached
+                indicatorsById[taskId] = cached.indicators
+                continue
+            }
+            let indicators = TaskRowIndicators(task: task)
+            let entry = TaskRowIndicatorCacheEntry(fingerprint: fingerprint, indicators: indicators)
+            nextEntries[taskId] = entry
+            indicatorsById[taskId] = indicators
+        }
+        entries = nextEntries
+        return indicatorsById
     }
 }
 

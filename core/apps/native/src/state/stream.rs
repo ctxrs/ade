@@ -252,6 +252,11 @@ impl ShellView {
         }
         if let Some(snapshot_rev) = snapshot_rev {
             self.handle_snapshot_rev(snapshot_rev, is_ready, cx);
+            self.active_snapshot_rev = Some(
+                self.active_snapshot_rev
+                    .map(|current| current.max(snapshot_rev))
+                    .unwrap_or(snapshot_rev),
+            );
         }
         if let Some(archived_rev) = archived_rev {
             self.handle_archived_rev(archived_rev, is_ready, cx);
