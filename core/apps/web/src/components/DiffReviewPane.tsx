@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
+import type { editor as MonacoEditor } from "monaco-editor";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { FileIcon } from "./FileIcon";
 
@@ -36,6 +37,7 @@ const DiffReviewPane = memo(function DiffReviewPane({
   }>;
 }) {
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
+  const [wrapLines, setWrapLines] = useState(true);
 
   useEffect(() => {
     setExpandedFiles({});
@@ -53,6 +55,17 @@ const DiffReviewPane = memo(function DiffReviewPane({
 
       {hasChanges && (
         <div className="cursor-diff">
+          <div className="cursor-diff-toolbar">
+            <button
+              type="button"
+              className={`cursor-diff-toggle ${wrapLines ? "cursor-diff-toggle-active" : ""}`}
+              aria-pressed={wrapLines}
+              title={wrapLines ? "Disable line wrap" : "Enable line wrap"}
+              onClick={() => setWrapLines((prev) => !prev)}
+            >
+              Wrap lines
+            </button>
+          </div>
           <div className="cursor-diff-list">
             {files.map((f) => {
               const isOpen = expandedFiles[f.key] ?? false;
@@ -110,7 +123,7 @@ const DiffReviewPane = memo(function DiffReviewPane({
                       ) : (
                         <>
                           <div className="cursor-diff-editor-shell">
-                            <DecoratedDiffEditor file={f} />
+                            <DecoratedDiffEditor file={f} wrapLines={wrapLines} />
                           </div>
                         </>
                       )}
@@ -276,14 +289,35 @@ function fileAccentClass(file: DiffFile): string {
   return "cursor-diff-file-modified";
 }
 
-function DecoratedDiffEditor({ file }: { file: DiffFile }) {
+const WRAP_BREAK_AFTER_CHARACTERS =
+  "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_/-=+*.,:;|\\~!@#$%^&()[]{}<>?\"'";
+
+function DecoratedDiffEditor({ file, wrapLines }: { file: DiffFile; wrapLines: boolean }) {
   const decorationIdsRef = useRef<string[]>([]);
+  const [editorHeight, setEditorHeight] = useState(() => estimateDiffHeightPx(file));
+  const [editorInstance, setEditorInstance] = useState<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const modelPath = `inmemory://diff/${encodeURIComponent(file.key)}`;
+
+  useEffect(() => {
+    setEditorHeight(estimateDiffHeightPx(file));
+  }, [file.key, file.renderText]);
+
+  useEffect(() => {
+    if (!editorInstance) return;
+    const updateHeight = () => {
+      const contentHeight = editorInstance.getContentHeight();
+      const minHeight = estimateDiffHeightPx(file);
+      setEditorHeight(Math.ceil(Math.max(minHeight, contentHeight)));
+    };
+    updateHeight();
+    const disposable = editorInstance.onDidContentSizeChange(updateHeight);
+    return () => disposable.dispose();
+  }, [editorInstance, file.key, file.renderText]);
 
   return (
     <Editor
-      key={file.key}
-      height={`${estimateDiffHeightPx(file)}px`}
+      key={`${file.key}:${wrapLines ? "wrap" : "nowrap"}`}
+      height={`${editorHeight}px`}
       language="diff"
       path={modelPath}
       value={file.renderText}
@@ -293,7 +327,7 @@ function DecoratedDiffEditor({ file }: { file: DiffFile }) {
         minimap: { enabled: false },
         scrollbar: {
           vertical: "hidden",
-          horizontal: "hidden",
+          horizontal: wrapLines ? "hidden" : "auto",
           handleMouseWheel: false,
           alwaysConsumeMouseWheel: false,
         },
@@ -309,9 +343,12 @@ function DecoratedDiffEditor({ file }: { file: DiffFile }) {
         renderValidationDecorations: "off",
         fixedOverflowWidgets: true,
         padding: { top: 10, bottom: 10 },
-        wordWrap: "off",
+        wordWrap: wrapLines ? "on" : "off",
+        wrappingStrategy: wrapLines ? "advanced" : "simple",
+        wordWrapBreakAfterCharacters: wrapLines ? WRAP_BREAK_AFTER_CHARACTERS : undefined,
       }}
       onMount={(editor, monaco) => {
+        setEditorInstance(editor);
         const applyDecorations = () => {
           const decs = file.renderLineKinds
             .map((kind, idx) => {

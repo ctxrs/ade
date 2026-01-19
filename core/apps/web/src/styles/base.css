@@ -716,6 +716,35 @@ button.linklike:hover {
   display: grid;
 }
 
+.cursor-diff-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.cursor-diff-toggle {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+}
+
+.cursor-diff-toggle:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.cursor-diff-toggle-active {
+  border-color: rgba(78, 163, 255, 0.5);
+  background: rgba(78, 163, 255, 0.2);
+  color: rgba(255, 255, 255, 0.95);
+}
+
 .cursor-diff-list {
   display: grid;
   gap: 10px;
