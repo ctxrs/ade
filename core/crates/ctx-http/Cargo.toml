@@ -70,6 +70,9 @@ notify.workspace = true
 toml_edit = "0.22"
 
 [dev-dependencies]
+azure_identity = { version = "0.21", default-features = false, features = ["development", "old_azure_cli", "enable_reqwest_rustls"] }
+azure_core = { version = "0.21", default-features = false, features = ["enable_reqwest_rustls"] }
+gcp_auth = "0.12"
 tempfile = "3"
 hyper = { version = "1", features = ["full"] }
 reqwest.workspace = true

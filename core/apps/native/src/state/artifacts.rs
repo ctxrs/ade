@@ -11,7 +11,7 @@ use gpui_tokio::Tokio;
 use uuid::Uuid;
 
 use ctx_core::ids::{ArtifactId, SessionId, TaskId};
-use ctx_core::models::{Artifact, SessionEvent, SessionEventType};
+use ctx_core::models::{Artifact, SessionEvent, SessionEventType, SessionState};
 use ctx_client;
 use serde::{Deserialize, Serialize};
 
@@ -443,7 +443,7 @@ impl ShellView {
         }
     }
 
-    fn apply_artifacts_update(
+    pub(super) fn apply_artifacts_update(
         &mut self,
         session_id: ctx_core::ids::SessionId,
         artifacts: Vec<Artifact>,
@@ -451,6 +451,14 @@ impl ShellView {
     ) {
         self.artifacts = artifacts;
         self.artifacts_session_id = Some(session_id);
+        let cached_artifacts = self.artifacts.clone();
+        self.session_state_cache
+            .entry(session_id)
+            .and_modify(|state| state.artifacts = cached_artifacts.clone())
+            .or_insert(SessionState {
+                artifacts: cached_artifacts,
+                git_status: None,
+            });
         if let Some(selected) = self.selected_artifact {
             if selected >= self.artifacts.len() {
                 self.selected_artifact = if self.artifacts.is_empty() {

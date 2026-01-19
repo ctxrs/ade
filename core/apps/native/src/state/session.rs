@@ -13,11 +13,11 @@ use gpui_tokio::Tokio;
 use ctx_core::ids::{MessageId, SessionId, TurnId};
 use ctx_core::models::{
     MessageRole, SessionEvent, SessionHeadSnapshot, SessionHistoryPage, SessionSnapshot,
-    SessionTurn, SessionTurnStatus,
+    SessionState, SessionTurn, SessionTurnStatus,
 };
 use ctx_client;
 
-use super::{ArtifactPreviewState, RightPaneMode, ShellView};
+use super::{ArtifactPreviewState, ShellView};
 use super::super::models::{
     attachment_cache_key, build_message_items, build_thread_list_items, message_item_from_model,
     session_info_from_head, session_info_from_summary, MessageAttachment, MessageItem,
@@ -631,8 +631,8 @@ impl ShellView {
         cx.notify();
         if !used_cache {
             self.load_session_details(session_id, cx);
-        } else if matches!(self.right_pane, Some(RightPaneMode::Artifacts)) {
-            self.load_session_artifacts(session_id, cx);
+        } else {
+            self.load_session_state(session_id, cx);
         }
     }
 
@@ -710,8 +710,12 @@ impl ShellView {
                                     head.session.id,
                                     head.last_event_seq,
                                 );
-                                if matches!(view.right_pane, Some(RightPaneMode::Artifacts)) {
-                                    view.load_session_artifacts(data.session_id, cx);
+                                view.update_session_head_meta(head.session.id, head);
+                                view.persist_cached_session_head(head.session.id, cx);
+                                if let Some(state) = snapshot.state.as_ref() {
+                                    view.apply_session_state(data.session_id, state, cx);
+                                } else {
+                                    view.load_session_state(data.session_id, cx);
                                 }
                                 if view.resyncing_session == Some(session_id) {
                                     view.resyncing_session = None;
@@ -770,6 +774,57 @@ impl ShellView {
                         }
                     }
                     cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn apply_session_state(
+        &mut self,
+        session_id: SessionId,
+        state: &SessionState,
+        cx: &mut Context<Self>,
+    ) {
+        self.session_state_cache.insert(session_id, state.clone());
+        if !self.is_session_selected(session_id) {
+            return;
+        }
+        self.apply_artifacts_update(session_id, state.artifacts.clone(), cx);
+    }
+
+    pub(super) fn load_session_state(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
+        if let Some(state) = self.session_state_cache.get(&session_id).cloned() {
+            self.apply_session_state(session_id, &state, cx);
+            return;
+        }
+        if !self.session_state_loading.insert(session_id) {
+            return;
+        }
+
+        let task = Tokio::spawn_result(cx, async move {
+            let config = ctx_client::resolve_daemon_config()?;
+            let client = ctx_client::Client::new(config)?;
+            let state = client.get_session_state(session_id).await.ok();
+            Ok((session_id, state))
+        });
+
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    let Ok((session_id, state)) = result else {
+                        view.session_state_loading.remove(&session_id);
+                        return;
+                    };
+                    view.session_state_loading.remove(&session_id);
+                    if let Some(state) = state {
+                        view.apply_session_state(session_id, &state, cx);
+                    } else {
+                        view.load_session_artifacts(session_id, cx);
+                    }
                 })
                 .ok();
             }

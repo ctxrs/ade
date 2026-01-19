@@ -1,5 +1,7 @@
+pub mod manager;
 pub mod store;
 
+pub use manager::StoreManager;
 pub use store::{Store, WorktreeBootstrapResultUpdate};
 
 #[cfg(feature = "fault_injection")]

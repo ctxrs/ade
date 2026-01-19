@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useSyncEx
 import type {
   Session,
   SessionHeadSnapshot,
+  SessionSummary,
   SessionSnapshotSummary,
   Task,
   WorkspaceActiveSnapshotEvent,
@@ -47,6 +48,7 @@ export type WorkspaceActiveSnapshotState = {
   archivedIds: string[];
   totalActive: number;
   totalArchived: number;
+  archivedRev: number;
   fetchState: {
     active: "idle" | "loading" | "error";
     archived: "idle" | "loading" | "error";
@@ -133,6 +135,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   private reconnectTimer: number | null = null;
   private reconnectDelayMs = 1000;
   private snapshotRev = 0;
+  private archivedRev = 0;
   private subscriptions: WorkspaceActiveSnapshotSessionSubscription[] = [];
   private sessionLastEventSeq = new Map<string, number>();
   private subscriptionKey = "";
@@ -151,6 +154,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       archivedIds: [],
       totalActive: 0,
       totalArchived: 0,
+      archivedRev: 0,
       fetchState: { active: "idle", archived: "idle" },
       hasMoreActive: true,
       hasMoreArchived: false,
@@ -276,7 +280,10 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   }
 
   private applyCachedActiveSnapshot(cached: PersistedWorkspaceActiveSnapshotV1) {
+    this.snapshotRev = Math.max(this.snapshotRev, cached.snapshotRev ?? 0);
+    this.archivedRev = Math.max(this.archivedRev, cached.archivedRev ?? 0);
     const activeTasks = Array.isArray(cached.active?.tasks) ? cached.active.tasks : [];
+    const archivedHeads = this.collectArchivedHeads();
     for (const [id, item] of this.tasks.entries()) {
       if (!item.task.archived_at) {
         this.tasks.delete(id);
@@ -284,6 +291,9 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     }
     this.activeOrder = [];
     this.sessionHeadsById.clear();
+    for (const [sessionId, head] of archivedHeads) {
+      this.sessionHeadsById.set(sessionId, head);
+    }
 
     const nextActiveIds = new Set<string>();
     for (const summary of activeTasks) {
@@ -336,6 +346,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     try {
       await saveWorkspaceActiveSnapshotV1(this.workspaceId, {
         snapshotRev: this.snapshotRev,
+        archivedRev: this.archivedRev,
         active: {
           tasks,
           totalCount,
@@ -392,8 +403,16 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     try {
       const snapshot = await getWorkspaceActiveSnapshot(this.workspaceId, params);
       this.snapshotRev = Math.max(this.snapshotRev, snapshot.snapshot_rev ?? 0);
-      this.totalActive = snapshot.active.total_count ?? this.totalActive;
-      if (reset) {
+      if (typeof snapshot.archived_rev === "number" && snapshot.archived_rev > this.archivedRev) {
+        this.archivedRev = snapshot.archived_rev;
+        this.archivedLoaded = false;
+        this.archivedCursor = null;
+      }
+      const nextTotalActive = snapshot.active.total_count ?? this.totalActive;
+      this.totalActive = nextTotalActive;
+      const shouldClearActive = reset;
+      const archivedHeads = shouldClearActive ? this.collectArchivedHeads() : null;
+      if (shouldClearActive) {
         for (const [id, item] of this.tasks.entries()) {
           if (!item.task.archived_at) {
             this.tasks.delete(id);
@@ -401,6 +420,11 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
         }
         this.activeOrder = [];
         this.sessionHeadsById.clear();
+        if (archivedHeads) {
+          for (const [sessionId, head] of archivedHeads) {
+            this.sessionHeadsById.set(sessionId, head);
+          }
+        }
       }
 
       const activeTasks = snapshot.active.tasks ?? [];
@@ -452,6 +476,9 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
         limit: ACTIVE_PAGE_SIZE,
         cursor: this.archivedCursor ?? undefined,
       });
+      if (typeof page.archived_rev === "number" && page.archived_rev > this.archivedRev) {
+        this.archivedRev = page.archived_rev;
+      }
       this.totalArchived = page.total_archived ?? this.totalArchived;
       const summaries = await Promise.all(page.tasks.map((task) => this.buildArchivedItem(task)));
       summaries.forEach((summary) => {
@@ -578,17 +605,23 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     const parsed = await parseWsJson(data);
     if (!parsed || typeof parsed !== "object") return;
     const evt = parsed as WorkspaceActiveSnapshotEvent;
-    if (evt.type === "ready" && typeof evt.snapshot_rev === "number") {
-      if (evt.snapshot_rev !== this.snapshotRev) {
+    if (typeof evt.snapshot_rev === "number") {
+      if (evt.snapshot_rev < this.snapshotRev) {
         this.snapshotRev = evt.snapshot_rev;
         this.ensureActiveSnapshot(true).catch(() => {});
+      } else if (evt.snapshot_rev > this.snapshotRev + 1) {
+        this.ensureActiveSnapshot(true).catch(() => {});
+      } else if (evt.type === "ready" && evt.snapshot_rev !== this.snapshotRev) {
+        this.ensureActiveSnapshot(true).catch(() => {});
       }
+      this.snapshotRev = evt.snapshot_rev;
     }
-    if (evt.snapshot_rev && evt.snapshot_rev > this.snapshotRev + 1) {
-      this.ensureActiveSnapshot(true).catch(() => {});
-    }
-    if (evt.snapshot_rev) {
-      this.snapshotRev = Math.max(this.snapshotRev, evt.snapshot_rev);
+    if (typeof evt.archived_rev === "number") {
+      if (evt.archived_rev !== this.archivedRev) {
+        this.archivedRev = evt.archived_rev;
+        this.archivedLoaded = false;
+        this.archivedCursor = null;
+      }
     }
 
     switch (evt.type) {
@@ -602,6 +635,19 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
         this.publish();
         break;
       case "active_task_delete":
+        this.removeTask(idToString(evt.task_id), { adjustCounts: true });
+        this.publish();
+        break;
+      case "archived_task_upsert": {
+        const head = evt.snapshot?.head ?? null;
+        const item = this.buildArchivedItem(evt.task, head);
+        if (item) {
+          this.upsertArchivedItem(item);
+          this.publish();
+        }
+        break;
+      }
+      case "archived_task_delete":
         this.removeTask(idToString(evt.task_id), { adjustCounts: true });
         this.publish();
         break;
@@ -747,17 +793,58 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     this.schedulePersistCache();
   }
 
+  private readPrimarySessionHead(summary: unknown): SessionHeadSnapshot | null {
+    if (!summary || typeof summary !== "object") return null;
+    const rec = summary as Record<string, unknown>;
+    const head = (rec as any).primary_session_head ?? (rec as any).primarySessionHead ?? null;
+    if (!head || typeof head !== "object") return null;
+    return head as SessionHeadSnapshot;
+  }
+
+  private readPrimarySessionId(summary: unknown): string | null {
+    if (!summary || typeof summary !== "object") return null;
+    const rec = summary as Record<string, any>;
+    const fromPrimary = idToString(rec?.primary_session?.session?.id ?? "");
+    if (fromPrimary) return fromPrimary;
+    const fromHead = idToString(rec?.primary_session_head?.session?.id ?? rec?.primarySessionHead?.session?.id ?? "");
+    if (fromHead) return fromHead;
+    return null;
+  }
+
+  private rememberSessionHead(head: SessionHeadSnapshot | null) {
+    if (!head) return;
+    const sessionId = idToString((head as any)?.session?.id ?? "");
+    if (!sessionId) return;
+    this.sessionHeadsById.set(sessionId, head);
+  }
+
+  private collectArchivedHeads(): Map<string, SessionHeadSnapshot> {
+    const archived = new Map<string, SessionHeadSnapshot>();
+    for (const item of this.tasks.values()) {
+      if (!item.task.archived_at) continue;
+      const primaryId =
+        item.primarySessionId || idToString(item.primarySessionHead?.session?.id ?? "");
+      if (!primaryId) continue;
+      const head = this.sessionHeadsById.get(primaryId) ?? item.primarySessionHead ?? null;
+      if (head) archived.set(primaryId, head);
+    }
+    return archived;
+  }
+
   private normalizeActiveSummary(
     summary: WorkspaceActiveTaskSummary | PersistedWorkspaceActiveTaskSummaryV1,
   ): WorkspaceActiveSnapshotItem {
     const id = idToString(summary.task.id);
     const sortAt = summary.sort_at ?? this.taskSortAt(summary.task) ?? "";
     const sortAtMs = Date.parse(sortAt) || Date.now();
-    const primarySessionId = idToString(summary.primary_session?.session?.id ?? "");
-    const primaryHeadId = idToString(summary.primary_session_head?.session?.id ?? "");
-    if (primaryHeadId && summary.primary_session_head) {
-      this.sessionHeadsById.set(primaryHeadId, summary.primary_session_head);
+    const primarySessionId =
+      this.readPrimarySessionId(summary) ||
+      idToString(summary.primary_session?.session?.id ?? "");
+    let primaryHead = this.readPrimarySessionHead(summary);
+    if (!primaryHead && primarySessionId) {
+      primaryHead = this.sessionHeadsById.get(primarySessionId) ?? null;
     }
+    this.rememberSessionHead(primaryHead);
     const primary = summary.primary_session ? [this.normalizeSessionSummary(summary.primary_session)] : [];
     const sessionsRaw = Array.isArray(summary.sessions) ? summary.sessions : [];
     const sessions = sessionsRaw.map((s) => this.normalizeSessionSummary(s));
@@ -776,7 +863,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       id,
       task: { ...summary.task },
       sessions: sortSessionSummaries(merged),
-      primarySessionHead: summary.primary_session_head ?? null,
+      primarySessionHead: primaryHead ?? null,
       primarySessionId: primarySessionId || null,
       sortAtMs,
       sort_at: sortAt || null,
@@ -787,7 +874,10 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     return task.archived_at ?? task.created_at ?? task.updated_at ?? "";
   }
 
-  private buildArchivedItem(summary: WorkspaceTaskSummary): WorkspaceActiveSnapshotItem | null {
+  private buildArchivedItem(
+    summary: WorkspaceTaskSummary,
+    primaryHead?: SessionHeadSnapshot | null,
+  ): WorkspaceActiveSnapshotItem | null {
     const task = summary.task;
     const id = idToString(task.id);
     if (!id) return null;
@@ -795,7 +885,25 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     const providerIds = (summary.provider_ids ?? []).filter(Boolean);
     const summaries = existing?.sessions ?? [];
     const sessionList = summaries.map((item) => item.session).filter(Boolean);
-    const primarySessionId = this.pickArchivedSessionId(task, sessionList);
+    const summarySessions = Array.isArray(summary.sessions) ? summary.sessions : [];
+    const summaryHead = primaryHead ?? this.readPrimarySessionHead(summary);
+    if (summaryHead) {
+      this.rememberSessionHead(summaryHead);
+    } else if (existing?.primarySessionHead) {
+      this.rememberSessionHead(existing.primarySessionHead);
+    }
+    const summaryPrimaryId = this.readPrimarySessionId(summary);
+    const primarySessionId =
+      summaryPrimaryId ||
+      this.pickArchivedSessionIdFromSummaries(task, summarySessions) ||
+      this.pickArchivedSessionId(task, sessionList);
+    let primarySessionHead = summaryHead ?? null;
+    if (!primarySessionHead && primarySessionId) {
+      primarySessionHead = this.sessionHeadsById.get(primarySessionId) ?? null;
+    }
+    if (!primarySessionHead && existing?.primarySessionHead) {
+      primarySessionHead = existing.primarySessionHead;
+    }
     // TODO: hydrate archived session summaries on selection (avoid list fan-out).
     const sortAt = this.taskSortAt(task);
     return {
@@ -804,7 +912,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       sessions: sortSessionSummaries(summaries),
       providerIds: providerIds.length ? providerIds : existing?.providerIds,
       primarySessionId: primarySessionId || null,
-      primarySessionHead: existing?.primarySessionHead ?? null,
+      primarySessionHead: primarySessionHead ?? null,
       sortAtMs: Date.parse(sortAt) || Date.now(),
       sort_at: sortAt || null,
     };
@@ -821,12 +929,24 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     return selected ? idToString(selected.id) : null;
   }
 
+  private pickArchivedSessionIdFromSummaries(task: Task, sessions: SessionSummary[]): string | null {
+    const primaryId = idToString(task.primary_session_id ?? "");
+    if (primaryId && (sessions.length === 0 || sessions.some((s) => idToString(s.id) === primaryId))) {
+      return primaryId;
+    }
+    const nonSubagents = sessions.filter((session) => session.relationship !== "sub_agent");
+    const pool = nonSubagents.length ? nonSubagents : sessions;
+    const selected = pool[0];
+    return selected ? idToString(selected.id) : null;
+  }
+
   private normalizeSessionSummary(summary: SessionSnapshotSummary): SessionSnapshotSummary {
     return {
       session: { ...summary.session },
       last_message_at: summary.last_message_at ?? null,
       last_message_preview: summary.last_message_preview ?? null,
       last_event_seq: summary.last_event_seq ?? null,
+      state_rev: summary.state_rev ?? undefined,
       activity: summary.activity ?? { is_working: false, last_turn_status: null },
       unread: summary.unread,
     };
@@ -838,6 +958,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       last_message_at: null,
       last_message_preview: null,
       last_event_seq: null,
+      state_rev: undefined,
       activity: { is_working: false, last_turn_status: null },
       unread: undefined,
     });
@@ -890,6 +1011,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       archivedIds: [...this.archivedOrder],
       totalActive: this.totalActive,
       totalArchived: this.totalArchived,
+      archivedRev: this.archivedRev,
       hasMoreActive: this.hasMoreActive,
       hasMoreArchived: this.hasMoreArchived,
       archivedLoaded: this.archivedLoaded,

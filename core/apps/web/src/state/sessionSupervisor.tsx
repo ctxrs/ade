@@ -3,6 +3,7 @@ import {
   getProviderOptions,
   getSessionHistory,
   getSessionSnapshot,
+  getSessionState,
   idToString,
   listSessionArtifacts,
   listSessionSubagentInvocations,
@@ -16,6 +17,7 @@ import {
   type SessionHead,
   type SessionHeadSnapshot,
   type SessionHeadWindow,
+  type SessionState,
   type SessionSummaryCheckpoint,
   type SessionTurn,
   type SessionTurnTool,
@@ -69,6 +71,9 @@ export type SessionCacheEntry = {
   artifactsLoading: boolean;
   subagentInvocations: SubagentInvocation[];
   subagentInvocationsLoading: boolean;
+  stateLoaded: boolean;
+  stateLoading: boolean;
+  stateRev?: number;
   queue: Message[];
   diff?: string;
   gitStatusSummary?: GitStatusSummary | null;
@@ -190,6 +195,11 @@ type InternalEntry = SessionCacheEntry & {
   artifactsFetchedAtMs?: number;
   subagentInvocationsLoaded: boolean;
   subagentInvocationsFetchedAtMs?: number;
+  stateLoaded: boolean;
+  stateLoading: boolean;
+  stateRev?: number;
+  stateAppliedRev?: number;
+  stateFetchToken: number;
   diagnosticsByPath: Record<string, any[]>;
   loadedFromCache: boolean;
   headFromCache: boolean;
@@ -512,9 +522,14 @@ export class SessionSupervisor {
         artifactsLoading: e.artifactsLoading,
         subagentInvocations: e.subagentInvocations,
         subagentInvocationsLoading: e.subagentInvocationsLoading,
+        stateLoaded: e.stateLoaded,
+        stateLoading: e.stateLoading,
+        stateRev: e.stateRev,
         queue: e.queue,
         diff: e.diff,
         gitStatusSummary: e.gitStatusSummary ?? null,
+        summaryCheckpoint: e.summaryCheckpoint ?? null,
+        headWindow: e.headWindow ?? null,
         diagnosticsByPath: e.diagnosticsByPath,
         lastEventSeq: e.lastEventSeq,
         loading: e.loading,
@@ -559,6 +574,11 @@ export class SessionSupervisor {
       artifactsLoading: false,
       subagentInvocations: [],
       subagentInvocationsLoading: false,
+      stateLoaded: false,
+      stateLoading: false,
+      stateRev: undefined,
+      stateAppliedRev: undefined,
+      stateFetchToken: 0,
       queue: [],
       diff: undefined,
       gitStatusSummary: null,
@@ -710,12 +730,14 @@ export class SessionSupervisor {
       entry.error = undefined;
       entry.updatedAtMs = Date.now();
       if (entry.turnsHydrated && !opts?.force && !entry.headFromCache) {
+        void this.ensureState(entry);
         this.publish();
         return;
       }
     }
     if (entry.fetching.head) return;
     if (entry.turnsHydrated && !opts?.force && !entry.headFromCache) {
+      void this.ensureState(entry);
       return;
     }
     entry.fetching.head = true;
@@ -726,9 +748,10 @@ export class SessionSupervisor {
     try {
       const snapshot = await getSessionSnapshot(sessionId, HEAD_LIMIT, true);
       this.applyHead(entry, snapshot.head);
+      this.applyState(entry, snapshot.state ?? null, snapshot.head?.state_rev ?? snapshot.summary?.state_rev);
       await this.persistHead(entry);
-      await this.ensureArtifacts(entry);
-      await this.ensureSubagentInvocations(entry);
+      void this.ensureArtifacts(entry);
+      void this.ensureSubagentInvocations(entry);
     } catch (e: any) {
       if (!opts?.silent) {
         entry.error = e?.message ?? "Failed to load session";
@@ -738,6 +761,37 @@ export class SessionSupervisor {
         entry.loading = false;
       }
       entry.fetching.head = false;
+      entry.updatedAtMs = Date.now();
+      this.publish();
+    }
+  }
+
+  private async ensureState(entry: InternalEntry, opts?: { force?: boolean }) {
+    if (entry.stateLoading) return;
+    if (entry.stateLoaded && !opts?.force) return;
+    entry.stateLoading = true;
+    const requestRev = entry.stateRev;
+    entry.stateFetchToken += 1;
+    const fetchToken = entry.stateFetchToken;
+    entry.updatedAtMs = Date.now();
+    this.publish();
+    try {
+      const state = await getSessionState(entry.sessionId);
+      if (entry.stateFetchToken !== fetchToken) return;
+      if (
+        typeof requestRev === "number" &&
+        typeof entry.stateRev === "number" &&
+        entry.stateRev !== requestRev
+      ) {
+        return;
+      }
+      this.applyState(entry, state, requestRev ?? entry.stateRev);
+    } catch {
+      // ignore state load errors (missing session or daemon offline)
+    } finally {
+      if (entry.stateFetchToken === fetchToken) {
+        entry.stateLoading = false;
+      }
       entry.updatedAtMs = Date.now();
       this.publish();
     }
@@ -857,6 +911,10 @@ export class SessionSupervisor {
     entry.turnsHydrated = true;
     entry.hasMoreTurns = head.has_more_turns;
     entry.lastEventSeq = head.last_event_seq;
+    const headStateRev = (head as any)?.state_rev ?? (head as any)?.stateRev;
+    if (typeof headStateRev === "number") {
+      entry.stateRev = headStateRev;
+    }
     this.mergeTurns(entry, head.turns ?? []);
     this.mergeEvents(entry, head.events ?? []);
     this.mergeMessages(entry, head.messages ?? []);
@@ -904,6 +962,28 @@ export class SessionSupervisor {
     }
     entry.updatedAtMs = Date.now();
     this.publish();
+  }
+
+  private applyState(entry: InternalEntry, state: SessionState | null, stateRev?: number) {
+    if (!state) return;
+    if (
+      typeof stateRev === "number" &&
+      typeof entry.stateRev === "number" &&
+      stateRev < entry.stateRev
+    ) {
+      return;
+    }
+    entry.stateLoaded = true;
+    entry.stateLoading = false;
+    if (typeof stateRev === "number") {
+      entry.stateRev = stateRev;
+      entry.stateAppliedRev = stateRev;
+    }
+    entry.artifacts = Array.isArray(state.artifacts) ? state.artifacts : [];
+    entry.artifactsLoaded = true;
+    entry.artifactsLoading = false;
+    entry.artifactsFetchedAtMs = Date.now();
+    entry.gitStatusSummary = state.git_status ?? null;
   }
 
   private async persistHead(entry: InternalEntry) {
@@ -1260,6 +1340,13 @@ export class SessionSupervisor {
         changed = true;
       }
     }
+    if (typeof delta.state_rev === "number") {
+      const next = delta.state_rev;
+      const prev = typeof entry.stateRev === "number" ? entry.stateRev : 0;
+      if (next > prev) {
+        entry.stateRev = next;
+      }
+    }
 
     if (delta.turn) {
       this.mergeTurns(entry, [delta.turn]);
@@ -1350,6 +1437,10 @@ export class SessionSupervisor {
     entry.artifactsLoaded = false;
     entry.artifactsLoading = false;
     entry.artifactsFetchedAtMs = undefined;
+    entry.stateLoaded = false;
+    entry.stateLoading = false;
+    entry.stateRev = undefined;
+    entry.stateAppliedRev = undefined;
     entry.subagentInvocations = [];
     entry.subagentInvocationsLoaded = false;
     entry.subagentInvocationsLoading = false;

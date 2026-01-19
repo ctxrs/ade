@@ -28,7 +28,8 @@ use serde_json::{Map, json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::timeout;
 
-use crate::app::{ComposerMenuId, RightPaneMode, ShellView};
+use crate::app::{ComposerMenuId, ShellView};
+use crate::app::state::RightPaneMode;
 use crate::automation_tree;
 
 #[derive(Clone, Debug, Default)]

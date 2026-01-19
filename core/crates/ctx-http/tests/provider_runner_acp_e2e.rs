@@ -11,7 +11,7 @@ use tower::ServiceExt;
 
 use ctx_core::models::SessionEventType;
 use ctx_providers::tier1::Tier1AcpAdapter;
-use ctx_store::Store;
+use ctx_store::StoreManager;
 
 use ctx_http::api;
 use ctx_http::daemon::AppState;
@@ -44,7 +44,10 @@ async fn setup_git_repo() -> tempfile::TempDir {
     dir
 }
 
-async fn build_state_with_real_providers(data_root: PathBuf, store: Store) -> Arc<AppState> {
+async fn build_state_with_real_providers(
+    data_root: PathBuf,
+    stores: StoreManager,
+) -> Arc<AppState> {
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
     providers.insert("codex".into(), Arc::new(Tier1AcpAdapter::codex()));
@@ -53,7 +56,7 @@ async fn build_state_with_real_providers(data_root: PathBuf, store: Store) -> Ar
 
     let state = Arc::new(AppState::new(
         data_root,
-        store,
+        stores,
         providers,
         "http://127.0.0.1:4399".to_string(),
         None,
@@ -62,15 +65,11 @@ async fn build_state_with_real_providers(data_root: PathBuf, store: Store) -> Ar
     state
 }
 
-async fn setup_state_with_real_providers() -> (tempfile::TempDir, Store, Arc<AppState>) {
+async fn setup_state_with_real_providers() -> (tempfile::TempDir, Arc<AppState>) {
     let data_dir = tempfile::tempdir().unwrap();
-    let db_dir = data_dir.path().join("db");
-    tokio::fs::create_dir_all(&db_dir).await.unwrap();
-    let db_path = db_dir.join("db.sqlite");
-    let store = Store::open(&db_path).await.unwrap();
-
-    let state = build_state_with_real_providers(data_dir.path().to_path_buf(), store.clone()).await;
-    (data_dir, store, state)
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+    let state = build_state_with_real_providers(data_dir.path().to_path_buf(), stores).await;
+    (data_dir, state)
 }
 
 async fn create_session_with_provider(
@@ -160,7 +159,8 @@ async fn post_message(app: &mut axum::Router, session_id: &str, content: &str) {
     assert_eq!(res.status(), StatusCode::OK);
 }
 
-async fn wait_for_tool_events(store: &Store, session_id: ctx_core::ids::SessionId) {
+async fn wait_for_tool_events(state: &Arc<AppState>, session_id: ctx_core::ids::SessionId) {
+    let store = state.store_for_session(session_id).await.unwrap();
     let mut attempts = 0;
     loop {
         let events = store.list_session_events(session_id).await.unwrap();
@@ -188,10 +188,11 @@ async fn wait_for_tool_events(store: &Store, session_id: ctx_core::ids::SessionI
 }
 
 async fn wait_for_new_tool_events(
-    store: &Store,
+    state: &Arc<AppState>,
     session_id: ctx_core::ids::SessionId,
     prev_len: usize,
 ) -> Vec<ctx_core::models::SessionEvent> {
+    let store = state.store_for_session(session_id).await.unwrap();
     let mut attempts = 0;
     loop {
         let events = store.list_session_events(session_id).await.unwrap();
@@ -238,12 +239,12 @@ Reply with just: done
 async fn runner_codex_real_acp_produces_tool_events() {
     which::which("codex-acp").expect("codex-acp binary not found on PATH");
     let git_repo = setup_git_repo().await;
-    let (_data_dir, store, state) = setup_state_with_real_providers().await;
-    let mut app = api::router(state);
+    let (_data_dir, state) = setup_state_with_real_providers().await;
+    let mut app = api::router(state.clone());
 
     let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
     post_message(&mut app, &session.id.0.to_string(), PROMPT).await;
-    wait_for_tool_events(&store, session.id).await;
+    wait_for_tool_events(&state, session.id).await;
 }
 
 #[tokio::test]
@@ -251,12 +252,12 @@ async fn runner_codex_real_acp_produces_tool_events() {
 async fn runner_claude_real_acp_produces_tool_events() {
     which::which("claude-code-acp").expect("claude-code-acp binary not found on PATH");
     let git_repo = setup_git_repo().await;
-    let (_data_dir, store, state) = setup_state_with_real_providers().await;
-    let mut app = api::router(state);
+    let (_data_dir, state) = setup_state_with_real_providers().await;
+    let mut app = api::router(state.clone());
 
     let session = create_session_with_provider(&mut app, git_repo.path(), "claude").await;
     post_message(&mut app, &session.id.0.to_string(), PROMPT).await;
-    wait_for_tool_events(&store, session.id).await;
+    wait_for_tool_events(&state, session.id).await;
 }
 
 #[tokio::test]
@@ -264,12 +265,12 @@ async fn runner_claude_real_acp_produces_tool_events() {
 async fn runner_gemini_real_acp_produces_tool_events() {
     which::which("gemini").expect("gemini binary not found on PATH");
     let git_repo = setup_git_repo().await;
-    let (_data_dir, store, state) = setup_state_with_real_providers().await;
-    let mut app = api::router(state);
+    let (_data_dir, state) = setup_state_with_real_providers().await;
+    let mut app = api::router(state.clone());
 
     let session = create_session_with_provider(&mut app, git_repo.path(), "gemini").await;
     post_message(&mut app, &session.id.0.to_string(), PROMPT).await;
-    wait_for_tool_events(&store, session.id).await;
+    wait_for_tool_events(&state, session.id).await;
 }
 
 #[tokio::test]
@@ -277,13 +278,14 @@ async fn runner_gemini_real_acp_produces_tool_events() {
 async fn runner_codex_real_acp_resumes_without_rehydrate() {
     which::which("codex-acp").expect("codex-acp binary not found on PATH");
     let git_repo = setup_git_repo().await;
-    let (data_dir, store, state) = setup_state_with_real_providers().await;
-    let mut app = api::router(state);
+    let (data_dir, state) = setup_state_with_real_providers().await;
+    let mut app = api::router(state.clone());
 
     let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
     post_message(&mut app, &session.id.0.to_string(), PROMPT).await;
-    wait_for_tool_events(&store, session.id).await;
+    wait_for_tool_events(&state, session.id).await;
 
+    let store = state.store_for_session(session.id).await.unwrap();
     let session_row = store
         .get_session(session.id)
         .await
@@ -299,11 +301,11 @@ async fn runner_codex_real_acp_resumes_without_rehydrate() {
 
     drop(app);
 
-    let state = build_state_with_real_providers(data_dir.path().to_path_buf(), store.clone()).await;
-    let mut app = api::router(state);
-
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+    let state = build_state_with_real_providers(data_dir.path().to_path_buf(), stores).await;
+    let mut app = api::router(state.clone());
     post_message(&mut app, &session.id.0.to_string(), RESUME_PROMPT).await;
-    let new_events = wait_for_new_tool_events(&store, session.id, prev_len).await;
+    let new_events = wait_for_new_tool_events(&state, session.id, prev_len).await;
 
     if new_events.iter().any(|ev| {
         matches!(ev.event_type, SessionEventType::Notice)

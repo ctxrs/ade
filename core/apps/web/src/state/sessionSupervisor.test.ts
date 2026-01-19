@@ -10,6 +10,7 @@ vi.mock("../api/client", () => {
     idToString,
     getProviderOptions: vi.fn(async () => undefined),
     getSessionSnapshot: vi.fn(),
+    getSessionState: vi.fn(async () => ({ artifacts: [], git_status: null })),
     getSessionHistory: vi.fn(),
     listSessionArtifacts: vi.fn(async () => []),
     listTurnTools: vi.fn(async () => []),
@@ -168,6 +169,7 @@ describe("SessionSupervisor", () => {
       delta: {
         session_id: { 0: sessionId },
         last_event_seq: 2,
+        state_rev: 2,
         event,
         message,
       },

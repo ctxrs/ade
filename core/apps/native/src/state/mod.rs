@@ -27,8 +27,8 @@ use tokio::sync::watch;
 
 use ctx_core::ids::{ArtifactId, SessionId, TaskId, TurnId, WorkspaceId};
 use ctx_core::models::{
-    Artifact, MessageAttachment, SessionEvent, SessionSnapshotSummary, SessionTurn,
-    WorkspaceActiveSnapshotClientMessage,
+    Artifact, MessageAttachment, SessionEvent, SessionSnapshotSummary, SessionState, SessionTurn,
+    WorkspaceActiveSnapshotClientMessage, WorkspaceIndexCursor,
 };
 
 use crate::theme::ThemeColors;
@@ -149,6 +149,8 @@ pub(crate) struct ShellView {
     pub(crate) composer_provider_menu_open: bool,
     pub(crate) composer_model_menu_open: bool,
     pub(crate) task_store_initialized: bool,
+    pub(crate) workspace_snapshot_rev: i64,
+    pub(crate) archived_snapshot_rev: i64,
     pub(crate) task_fetch_active: TaskFetchState,
     pub(crate) task_fetch_archived: TaskFetchState,
     pub(crate) task_has_more_active: bool,
@@ -157,6 +159,7 @@ pub(crate) struct ShellView {
     pub(crate) tasks_by_id: HashMap<TaskId, TaskSummaryItem>,
     pub(crate) task_active_order: Vec<TaskId>,
     pub(crate) task_archived_order: Vec<TaskId>,
+    pub(crate) task_archived_cursor: Option<WorkspaceIndexCursor>,
     pub(crate) task_query: String,
     pub(crate) task_search_input: Entity<InputState>,
     pub(crate) task_list_scroll_handle: VirtualListScrollHandle,
@@ -210,6 +213,8 @@ pub(crate) struct ShellView {
     pub(crate) session_events: Vec<SessionEvent>,
     pub(crate) session_thread_cache: HashMap<SessionId, SessionThreadCache>,
     pub(crate) session_head_meta: HashMap<SessionId, SessionHeadMeta>,
+    pub(crate) session_state_cache: HashMap<SessionId, SessionState>,
+    pub(crate) session_state_loading: HashSet<SessionId>,
     pub(crate) session_summary_map: HashMap<SessionId, SessionSnapshotSummary>,
     pub(crate) session: SessionInfo,
     pub(crate) data_state: DataLoadState,

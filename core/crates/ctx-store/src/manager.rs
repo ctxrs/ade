@@ -1,0 +1,161 @@
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use tokio::sync::Mutex;
+
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+use ctx_core::models::Workspace;
+
+use crate::Store;
+
+#[derive(Clone)]
+pub struct StoreManager {
+    global: Store,
+    data_root: PathBuf,
+    global_db_path: PathBuf,
+    workspace_stores: Arc<Mutex<HashMap<WorkspaceId, Store>>>,
+}
+
+impl StoreManager {
+    pub async fn open(data_root: impl AsRef<Path>) -> Result<Self> {
+        let data_root = data_root.as_ref().to_path_buf();
+        let db_dir = data_root.join("db");
+        tokio::fs::create_dir_all(&db_dir).await?;
+        let global_db_path = db_dir.join("db.sqlite");
+        let legacy_db_path = data_root.join("db.sqlite");
+        if legacy_db_path.exists() && !global_db_path.exists() {
+            tokio::fs::rename(&legacy_db_path, &global_db_path).await?;
+            let legacy_wal = legacy_db_path.with_extension("sqlite-wal");
+            let legacy_shm = legacy_db_path.with_extension("sqlite-shm");
+            let global_wal = global_db_path.with_extension("sqlite-wal");
+            let global_shm = global_db_path.with_extension("sqlite-shm");
+            if legacy_wal.exists() {
+                tokio::fs::rename(&legacy_wal, &global_wal).await?;
+            }
+            if legacy_shm.exists() {
+                tokio::fs::rename(&legacy_shm, &global_shm).await?;
+            }
+        }
+        let global = Store::open(&global_db_path).await?;
+        let manager = Self {
+            global,
+            data_root,
+            global_db_path,
+            workspace_stores: Arc::new(Mutex::new(HashMap::new())),
+        };
+        manager.bootstrap_workspace_dbs().await?;
+        Ok(manager)
+    }
+
+    pub fn global(&self) -> &Store {
+        &self.global
+    }
+
+    pub async fn workspace(&self, workspace_id: WorkspaceId) -> Result<Store> {
+        if let Some(store) = self
+            .workspace_stores
+            .lock()
+            .await
+            .get(&workspace_id)
+            .cloned()
+        {
+            return Ok(store);
+        }
+        let workspace = self
+            .global
+            .get_workspace(workspace_id)
+            .await?
+            .with_context(|| format!("workspace {} not found", workspace_id.0))?;
+        let store = self.open_workspace_store(&workspace, false).await?;
+        let mut stores = self.workspace_stores.lock().await;
+        if let Some(existing) = stores.get(&workspace_id) {
+            let existing = existing.clone();
+            drop(stores);
+            store.close().await;
+            return Ok(existing);
+        }
+        stores.insert(workspace_id, store.clone());
+        Ok(store)
+    }
+
+    pub async fn store_for_task(&self, task_id: TaskId) -> Result<Store> {
+        let workspace_id = self
+            .global
+            .get_workspace_id_for_task(task_id)
+            .await?
+            .with_context(|| format!("workspace missing for task {}", task_id.0))?;
+        self.workspace(workspace_id).await
+    }
+
+    pub async fn store_for_session(&self, session_id: SessionId) -> Result<Store> {
+        let workspace_id = self
+            .global
+            .get_workspace_id_for_session(session_id)
+            .await?
+            .with_context(|| format!("workspace missing for session {}", session_id.0))?;
+        self.workspace(workspace_id).await
+    }
+
+    pub async fn store_for_worktree(&self, worktree_id: WorktreeId) -> Result<Store> {
+        let workspace_id = self
+            .global
+            .get_workspace_id_for_worktree(worktree_id)
+            .await?
+            .with_context(|| format!("workspace missing for worktree {}", worktree_id.0))?;
+        self.workspace(workspace_id).await
+    }
+
+    pub async fn evict_workspace(&self, workspace_id: WorkspaceId) {
+        let store = {
+            let mut stores = self.workspace_stores.lock().await;
+            stores.remove(&workspace_id)
+        };
+        if let Some(store) = store {
+            store.close().await;
+        }
+    }
+
+    async fn bootstrap_workspace_dbs(&self) -> Result<()> {
+        let workspaces = self.global.list_workspaces().await?;
+        for workspace in workspaces {
+            self.global.refresh_workspace_indexes(workspace.id).await?;
+            let _ = self.open_workspace_store(&workspace, true).await?;
+        }
+        Ok(())
+    }
+
+    async fn open_workspace_store(
+        &self,
+        workspace: &Workspace,
+        migrate_if_missing: bool,
+    ) -> Result<Store> {
+        let path = self.workspace_db_path(workspace.id);
+        let needs_migration = !path.exists();
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let store = Store::open(&path).await?;
+        store.upsert_workspace(workspace).await?;
+        if migrate_if_missing && needs_migration {
+            if let Err(err) = store
+                .migrate_workspace_from_path(&self.global_db_path, workspace.id)
+                .await
+            {
+                store.close().await;
+                let _ = tokio::fs::remove_file(&path).await;
+                return Err(err);
+            }
+        }
+        Ok(store)
+    }
+
+    fn workspace_db_path(&self, workspace_id: WorkspaceId) -> PathBuf {
+        self.data_root
+            .join("db")
+            .join("workspaces")
+            .join(workspace_id.0.to_string())
+            .join("db.sqlite")
+    }
+}

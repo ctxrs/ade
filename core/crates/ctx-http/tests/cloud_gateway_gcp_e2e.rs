@@ -16,10 +16,7 @@ use serde_json::json;
 use tokio::process::Command;
 use tokio::time::{sleep, Instant};
 
-use ctx_core::models::{
-    MessageRole, SessionEventType, SessionHead, Task, TrackWorker, Workspace,
-    WorkspaceCatchupSnapshot,
-};
+use ctx_core::models::{MessageRole, SessionEventType, SessionHead, Task, Workspace};
 use ctx_http::settings::Settings as DaemonSettings;
 use ctx_http::settings::{CloudGatewaySettings, CloudWorkersSettings, GcpCloudWorkersSettings};
 use ctx_worker_protocol::{WorkerInfo as GatewayWorkerInfo, WorkerState as GatewayWorkerState};
@@ -32,6 +29,38 @@ const DEFAULT_GCP_MACHINE_TYPE: &str = "e2-standard-2";
 const DEFAULT_GCP_IMAGE: &str = "projects/debian-cloud/global/images/family/debian-12";
 const DEFAULT_GCP_DISK_SIZE_GB: i64 = 50;
 const DEFAULT_GCP_DISK_TYPE: &str = "pd-standard";
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceCatchupSnapshot {
+    active: WorkspaceCatchupActive,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceCatchupActive {
+    tasks: Vec<WorkspaceCatchupTaskSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceCatchupTaskSummary {
+    task: Task,
+    tracks: Vec<WorkspaceCatchupTrackSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceCatchupTrackSummary {
+    track: WorkspaceCatchupTrack,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceCatchupTrack {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TrackWorker {
+    track_id: String,
+    worker_id: String,
+}
 
 #[derive(Debug, Deserialize)]
 struct GcpGatewayLaunchResp {
@@ -528,7 +557,7 @@ async fn cloud_gateway_gcp_e2e() -> Result<()> {
             client
                 .post(format!(
                     "{base_url}/api/tracks/{}/cloud_worker",
-                    track.track.id.0
+                    track.track.id
                 ))
                 .json(&json!({
                     "provider_id": &provider_id,
@@ -538,7 +567,7 @@ async fn cloud_gateway_gcp_e2e() -> Result<()> {
         .await?;
         eprintln!(
             "worker started track_id={} worker_id={}",
-            track_worker.track_id.0, track_worker.worker_id
+            track_worker.track_id, track_worker.worker_id
         );
         let worker_id = track_worker.worker_id.clone();
         worker = Some(track_worker);
@@ -546,10 +575,7 @@ async fn cloud_gateway_gcp_e2e() -> Result<()> {
 
         let session: ctx_core::models::Session = send_json(
             client
-                .post(format!(
-                    "{base_url}/api/tracks/{}/sessions",
-                    track.track.id.0
-                ))
+                .post(format!("{base_url}/api/tracks/{}/sessions", track.track.id))
                 .json(&json!({
                     "provider_id": &provider_id,
                     "model_id": &model_id,
@@ -565,7 +591,7 @@ async fn cloud_gateway_gcp_e2e() -> Result<()> {
         )
         .await?;
 
-        wait_for_assistant_reply(&client, &base_url, &session_id).await?;
+        wait_for_assistant_reply(client, &base_url, &session_id).await?;
 
         Ok(())
     }
@@ -577,7 +603,7 @@ async fn cloud_gateway_gcp_e2e() -> Result<()> {
             let resp = client
                 .delete(format!(
                     "{base_url}/api/tracks/{}/worker",
-                    track_worker.track_id.0
+                    track_worker.track_id
                 ))
                 .send()
                 .await;

@@ -11,7 +11,7 @@ use ctx_http::api;
 use ctx_http::daemon::AppState;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
-use ctx_store::Store;
+use ctx_store::StoreManager;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::process::Command;
@@ -38,10 +38,8 @@ pub async fn init_git_repo(files: &[(&str, &str)]) -> tempfile::TempDir {
     dir
 }
 
-pub async fn setup_store(data_root: &Path) -> Store {
-    let db_dir = data_root.join("db");
-    tokio::fs::create_dir_all(&db_dir).await.unwrap();
-    Store::open(db_dir.join("db.sqlite")).await.unwrap()
+pub async fn setup_store(data_root: &Path) -> StoreManager {
+    StoreManager::open(data_root).await.unwrap()
 }
 
 pub fn fake_providers() -> HashMap<String, Arc<dyn ProviderAdapter>> {
@@ -52,13 +50,13 @@ pub fn fake_providers() -> HashMap<String, Arc<dyn ProviderAdapter>> {
 
 pub fn build_state(
     data_root: impl Into<std::path::PathBuf>,
-    store: Store,
+    stores: StoreManager,
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
     base_url: impl Into<String>,
 ) -> Arc<AppState> {
     let state = Arc::new(AppState::new(
         data_root.into(),
-        store,
+        stores,
         providers,
         base_url.into(),
         None,

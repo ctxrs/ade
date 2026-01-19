@@ -14,9 +14,9 @@ use url::{form_urlencoded, Url};
 use ctx_core::ids::{ArtifactId, SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Artifact, AttachmentMode, AttachmentUpdatePolicy, Message, MessageAttachment, MessageDelivery,
-    Session, SessionEventsPage, SessionHistoryPage, SessionSnapshot, SessionTurnTool, Task,
-    TerminalSession, Workspace, WorkspaceActiveSnapshot, WorkspaceAttachment,
-    WorkspaceAttachmentKind,
+    Session, SessionEventsPage, SessionHistoryPage, SessionSnapshot, SessionState, SessionTurnTool,
+    Task, TerminalSession, Workspace, WorkspaceActiveSnapshot, WorkspaceArchivedPage,
+    WorkspaceAttachment, WorkspaceAttachmentKind, WorkspaceIndexCursor,
 };
 use ctx_providers::adapters::ProviderStatus;
 
@@ -261,6 +261,12 @@ pub struct GitStatusEntry {
 #[derive(Debug, Clone, Default)]
 pub struct WorkspaceActiveSnapshotParams {
     pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceArchivedPageParams {
+    pub limit: Option<u32>,
+    pub cursor: Option<WorkspaceIndexCursor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -939,6 +945,29 @@ impl Client {
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 
+    pub async fn list_workspace_archived_task_summaries(
+        &self,
+        workspace_id: WorkspaceId,
+        params: &WorkspaceArchivedPageParams,
+    ) -> Result<WorkspaceArchivedPage> {
+        let mut path = format!("/api/workspaces/{}/archived_task_summaries", workspace_id.0);
+        let mut search = Vec::new();
+        if let Some(limit) = params.limit {
+            search.push(format!("limit={}", limit));
+        }
+        if let Some(cursor) = &params.cursor {
+            let sort_at = cursor.sort_at.to_rfc3339();
+            let sort_at = form_urlencoded::byte_serialize(sort_at.as_bytes()).collect::<String>();
+            search.push(format!("cursor_sort_at={}", sort_at));
+            search.push(format!("cursor_task_id={}", cursor.task_id.0));
+        }
+        if !search.is_empty() {
+            path.push('?');
+            path.push_str(&search.join("&"));
+        }
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
     pub fn workspace_stream_url(&self, workspace_id: WorkspaceId) -> Result<String> {
         let mut url = Url::parse(&self.base_url)
             .with_context(|| format!("invalid base url: {}", self.base_url))?;
@@ -1055,6 +1084,11 @@ impl Client {
             path.push('?');
             path.push_str(&params.join("&"));
         }
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn get_session_state(&self, session_id: SessionId) -> Result<SessionState> {
+        let path = format!("/api/sessions/{}/state", session_id.0);
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 

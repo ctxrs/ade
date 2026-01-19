@@ -611,7 +611,11 @@ async fn write_bootstrap_log(
 }
 
 async fn update_bootstrap_result(state: &AppState, update: WorktreeBootstrapResultUpdate) {
-    let _ = state.store.update_worktree_bootstrap_result(update).await;
+    let store = match state.store_for_worktree(update.worktree_id).await {
+        Ok(store) => store,
+        Err(_) => return,
+    };
+    let _ = store.update_worktree_bootstrap_result(update).await;
 }
 
 async fn emit_failure_notice(

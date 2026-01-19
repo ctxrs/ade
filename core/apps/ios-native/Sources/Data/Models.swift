@@ -255,6 +255,7 @@ struct SessionHead: Codable, Sendable {
     let events: [SessionEvent]?
     let messages: [Message]
     let lastEventSeq: Int
+    let stateRev: Int?
     let activity: SessionActivityState?
     let hasMoreTurns: Bool
     let summaryCheckpoint: SessionSummaryCheckpoint?
@@ -264,6 +265,7 @@ struct SessionHead: Codable, Sendable {
 struct SessionHeadDelta: Codable, Sendable {
     let sessionId: CtxID
     let lastEventSeq: Int
+    let stateRev: Int?
     let event: SessionEvent?
     let turn: SessionTurn?
     let message: Message?
@@ -282,6 +284,7 @@ struct SessionSnapshotSummary: Codable, Sendable {
     let lastMessageAt: String?
     let lastMessagePreview: String?
     let lastEventSeq: Int?
+    let stateRev: Int?
     let activity: SessionActivityState?
     let unread: Bool?
 }
@@ -289,6 +292,24 @@ struct SessionSnapshotSummary: Codable, Sendable {
 struct SessionSnapshot: Codable, Sendable {
     let summary: SessionSnapshotSummary
     let head: SessionHead
+    let state: SessionState?
+}
+
+struct SessionGitStatusSummary: Codable, Sendable {
+    let summaryLine: String
+    let branch: String?
+    let upstream: String?
+    let ahead: Int
+    let behind: Int
+    let detached: Bool
+    let staged: Int
+    let unstaged: Int
+    let untracked: Int
+}
+
+struct SessionState: Codable, Sendable {
+    let artifacts: [Artifact]
+    let gitStatus: SessionGitStatusSummary?
 }
 
 struct WorkspaceActiveTaskSummary: Codable, Sendable {
@@ -332,17 +353,20 @@ struct WorkspaceActivePage: Codable, Sendable {
 struct WorkspaceActiveSnapshot: Codable, Sendable {
     let workspaceId: CtxID
     let snapshotRev: Int
+    let archivedRev: Int?
     let active: WorkspaceActivePage
 }
 
 enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
-    case ready(workspaceId: CtxID, snapshotRev: Int)
+    case ready(workspaceId: CtxID, snapshotRev: Int, archivedRev: Int)
     case activeTaskUpsert(workspaceId: CtxID, snapshotRev: Int, task: WorkspaceActiveTaskSummary)
     case activeTaskDelete(workspaceId: CtxID, snapshotRev: Int, taskId: CtxID)
     case sessionSummary(workspaceId: CtxID, snapshotRev: Int, summary: SessionSnapshotSummary)
     case sessionHeadDelta(workspaceId: CtxID, snapshotRev: Int, delta: SessionHeadDelta)
     case sessionGap(workspaceId: CtxID, snapshotRev: Int, sessionId: CtxID, afterSeq: Int, reason: String?)
     case worktreeBootstrap(workspaceId: CtxID, snapshotRev: Int, notice: WorktreeBootstrapNotice)
+    case archivedTaskUpsert(workspaceId: CtxID, archivedRev: Int, task: WorkspaceArchivedTaskSummaryPayload, snapshot: SessionSnapshot?)
+    case archivedTaskDelete(workspaceId: CtxID, archivedRev: Int, taskId: CtxID)
 
     private enum EventType: String, Codable {
         case ready
@@ -352,12 +376,15 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
         case sessionHeadDelta = "session_head_delta"
         case sessionGap = "session_gap"
         case worktreeBootstrap = "worktree_bootstrap"
+        case archivedTaskUpsert = "archived_task_upsert"
+        case archivedTaskDelete = "archived_task_delete"
     }
 
     private enum CodingKeys: String, CodingKey {
         case type
         case workspaceId
         case snapshotRev
+        case archivedRev
         case task
         case taskId
         case summary
@@ -366,16 +393,18 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
         case afterSeq
         case reason
         case notice
+        case snapshot
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(EventType.self, forKey: .type)
         let workspaceId = try container.decode(CtxID.self, forKey: .workspaceId)
-        let snapshotRev = try container.decode(Int.self, forKey: .snapshotRev)
+        let snapshotRev = try container.decodeIfPresent(Int.self, forKey: .snapshotRev) ?? 0
+        let archivedRev = try container.decodeIfPresent(Int.self, forKey: .archivedRev) ?? 0
         switch type {
         case .ready:
-            self = .ready(workspaceId: workspaceId, snapshotRev: snapshotRev)
+            self = .ready(workspaceId: workspaceId, snapshotRev: snapshotRev, archivedRev: archivedRev)
         case .activeTaskUpsert:
             let task = try container.decode(WorkspaceActiveTaskSummary.self, forKey: .task)
             self = .activeTaskUpsert(workspaceId: workspaceId, snapshotRev: snapshotRev, task: task)
@@ -396,16 +425,24 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
         case .worktreeBootstrap:
             let notice = try container.decode(WorktreeBootstrapNotice.self, forKey: .notice)
             self = .worktreeBootstrap(workspaceId: workspaceId, snapshotRev: snapshotRev, notice: notice)
+        case .archivedTaskUpsert:
+            let task = try container.decode(WorkspaceArchivedTaskSummaryPayload.self, forKey: .task)
+            let snapshot = try container.decodeIfPresent(SessionSnapshot.self, forKey: .snapshot)
+            self = .archivedTaskUpsert(workspaceId: workspaceId, archivedRev: archivedRev, task: task, snapshot: snapshot)
+        case .archivedTaskDelete:
+            let taskId = try container.decode(CtxID.self, forKey: .taskId)
+            self = .archivedTaskDelete(workspaceId: workspaceId, archivedRev: archivedRev, taskId: taskId)
         }
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .ready(let workspaceId, let snapshotRev):
+        case .ready(let workspaceId, let snapshotRev, let archivedRev):
             try container.encode(EventType.ready, forKey: .type)
             try container.encode(workspaceId, forKey: .workspaceId)
             try container.encode(snapshotRev, forKey: .snapshotRev)
+            try container.encode(archivedRev, forKey: .archivedRev)
         case .activeTaskUpsert(let workspaceId, let snapshotRev, let task):
             try container.encode(EventType.activeTaskUpsert, forKey: .type)
             try container.encode(workspaceId, forKey: .workspaceId)
@@ -438,6 +475,17 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
             try container.encode(workspaceId, forKey: .workspaceId)
             try container.encode(snapshotRev, forKey: .snapshotRev)
             try container.encode(notice, forKey: .notice)
+        case .archivedTaskUpsert(let workspaceId, let archivedRev, let task, let snapshot):
+            try container.encode(EventType.archivedTaskUpsert, forKey: .type)
+            try container.encode(workspaceId, forKey: .workspaceId)
+            try container.encode(archivedRev, forKey: .archivedRev)
+            try container.encode(task, forKey: .task)
+            try container.encodeIfPresent(snapshot, forKey: .snapshot)
+        case .archivedTaskDelete(let workspaceId, let archivedRev, let taskId):
+            try container.encode(EventType.archivedTaskDelete, forKey: .type)
+            try container.encode(workspaceId, forKey: .workspaceId)
+            try container.encode(archivedRev, forKey: .archivedRev)
+            try container.encode(taskId, forKey: .taskId)
         }
     }
 }
@@ -451,6 +499,121 @@ struct WorkspaceActiveSnapshotClientMessage: Codable, Sendable {
     let type: String
     let sessionIds: [CtxID]
     let sessions: [WorkspaceActiveSnapshotSessionSubscription]
+}
+
+struct WorkspaceIndexCursor: Codable, Sendable {
+    let sortAt: String
+    let taskId: CtxID
+}
+
+struct WorkspaceArchivedPage: Codable, Sendable {
+    let workspaceId: CtxID
+    let archivedRev: Int?
+    let tasks: [WorkspaceArchivedTaskSummaryPayload]
+    let nextCursor: WorkspaceIndexCursor?
+    let totalArchived: Int
+}
+
+struct WorkspaceArchivedTaskSummaryPayload: Codable, Sendable {
+    let task: Task
+    let sessions: [ArchivedSessionSummary]
+    let sortAt: String
+    let primarySessionHead: SessionHead?
+
+    private enum CodingKeys: String, CodingKey {
+        case task
+        case sessions
+        case sortAt
+        case primarySessionHead
+    }
+
+    init(task: Task, sessions: [ArchivedSessionSummary], sortAt: String, primarySessionHead: SessionHead?) {
+        self.task = task
+        self.sessions = sessions
+        self.sortAt = sortAt
+        self.primarySessionHead = primarySessionHead
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        task = try container.decode(Task.self, forKey: .task)
+        sessions = try container.decodeIfPresent([ArchivedSessionSummary].self, forKey: .sessions) ?? []
+        sortAt = try container.decode(String.self, forKey: .sortAt)
+        primarySessionHead = try container.decodeIfPresent(SessionHead.self, forKey: .primarySessionHead)
+    }
+}
+
+struct WorkspaceSessionSummaryPayload: Codable, Sendable {
+    let id: CtxID
+    let taskId: CtxID
+    let workspaceId: CtxID
+    let parentSessionId: CtxID?
+    let relationship: String?
+    let providerId: String
+    let modelId: String
+    let title: String
+    let status: String
+    let createdAt: String
+    let updatedAt: String
+    let worktreeId: CtxID?
+    let agentRole: String?
+    let envTarget: String?
+}
+
+enum ArchivedSessionSummary: Codable, Sendable {
+    case snapshot(SessionSnapshotSummary)
+    case summary(WorkspaceSessionSummaryPayload)
+
+    init(from decoder: Decoder) throws {
+        if let snapshot = try? SessionSnapshotSummary(from: decoder) {
+            self = .snapshot(snapshot)
+            return
+        }
+        self = .summary(try WorkspaceSessionSummaryPayload(from: decoder))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        switch self {
+        case .snapshot(let snapshot):
+            try snapshot.encode(to: encoder)
+        case .summary(let summary):
+            try summary.encode(to: encoder)
+        }
+    }
+
+    func toSnapshotSummary(fallbackWorktreeId: CtxID?) -> SessionSnapshotSummary {
+        switch self {
+        case .snapshot(let snapshot):
+            return snapshot
+        case .summary(let summary):
+            let worktreeId = summary.worktreeId ?? fallbackWorktreeId ?? CtxID("00000000-0000-0000-0000-000000000000")
+            let session = Session(
+                id: summary.id,
+                taskId: summary.taskId,
+                workspaceId: summary.workspaceId,
+                worktreeId: worktreeId,
+                parentSessionId: summary.parentSessionId,
+                relationship: summary.relationship,
+                providerId: summary.providerId,
+                modelId: summary.modelId,
+                title: summary.title,
+                agentRole: summary.agentRole ?? "assistant",
+                status: summary.status,
+                envTarget: summary.envTarget,
+                createdAt: summary.createdAt,
+                updatedAt: summary.updatedAt
+            )
+            return SessionSnapshotSummary(
+                session: session,
+                lastMessageAt: nil,
+                lastMessagePreview: nil,
+                lastEventSeq: nil,
+                stateRev: nil,
+                activity: nil,
+                unread: nil
+            )
+        }
+    }
 }
 
 struct WorkspaceTaskSummary: Sendable {
@@ -781,6 +944,7 @@ extension SessionSnapshotSummary {
             lastMessageAt: nil,
             lastMessagePreview: nil,
             lastEventSeq: nil,
+            stateRev: nil,
             activity: nil,
             unread: nil
         )
@@ -798,6 +962,14 @@ extension WorkspaceTaskSummary {
             return true
         }
         self.init(task: activeSummary.task, sessions: sessions, sortAt: activeSummary.sortAt)
+    }
+}
+
+extension WorkspaceArchivedTaskSummaryPayload {
+    func toTaskSummary() -> WorkspaceTaskSummary {
+        let fallbackWorktreeId = task.primaryWorktreeId
+        let summaries = sessions.map { $0.toSnapshotSummary(fallbackWorktreeId: fallbackWorktreeId) }
+        return WorkspaceTaskSummary(task: task, sessions: summaries, sortAt: sortAt)
     }
 }
 

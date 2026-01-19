@@ -40,6 +40,7 @@ struct WorkbenchShellView: View {
     @State private var isStreamConnected = false
     @State private var streamSecureContext: SecureConnectionContext?
     @State private var lastStreamSnapshotRev: Int = 0
+    @State private var lastArchivedRev: Int = 0
 
     private let streamClient = DaemonStreamClient()
     private let streamEncoder: JSONEncoder = {
@@ -540,6 +541,7 @@ struct WorkbenchShellView: View {
             isRefreshingTasks = false
             return
         }
+        lastArchivedRev = 0
         await hydrateTasksFromCache(workspaceId: workspaceId)
         let hasTasks = !(activeTasks.isEmpty && archivedTasks.isEmpty)
         let showBlocking = !hasTasks
@@ -549,6 +551,12 @@ struct WorkbenchShellView: View {
             isRefreshingTasks = true
         }
         taskError = nil
+        var workspaceTasks: [Task] = []
+        var workspaceTasksLoaded = false
+        defer {
+            isLoadingTasks = false
+            isRefreshingTasks = false
+        }
         do {
             let params = DaemonAPIClient.WorkspaceActiveSnapshotParams(limit: 50)
             let activeSnapshot = try await client.getWorkspaceActiveSnapshot(workspaceId: workspaceId, params: params)
@@ -557,22 +565,33 @@ struct WorkbenchShellView: View {
             }
             _Concurrency.Task { await WorkspaceActiveSnapshotCache.shared.store(snapshot: activeSnapshot) }
             lastStreamSnapshotRev = activeSnapshot.snapshotRev
-            let activeSummaries = activeSnapshot.active.tasks.map(WorkspaceTaskSummary.init)
-            let workspaceTasks = try await client.listWorkspaceTasks(workspaceId: workspaceId)
-            let activeIds = Set(activeSummaries.map { $0.task.id.stringValue })
+            if let archivedRev = activeSnapshot.archivedRev {
+                lastArchivedRev = max(lastArchivedRev, archivedRev)
+            }
+
+            var activeSummaries = activeSnapshot.active.tasks.map(WorkspaceTaskSummary.init)
             var extraActive: [WorkspaceTaskSummary] = []
-            var nextArchived: [WorkspaceTaskSummary] = []
-            for task in workspaceTasks {
-                if task.archivedAt != nil {
-                    nextArchived.append(await buildArchivedTaskSummary(client: client, task: task))
-                    continue
+            do {
+                workspaceTasks = try await client.listWorkspaceTasks(workspaceId: workspaceId)
+                workspaceTasksLoaded = true
+            } catch {
+                workspaceTasksLoaded = false
+            }
+            if workspaceTasksLoaded {
+                let activeIds = Set(activeSummaries.map { $0.task.id.stringValue })
+                for task in workspaceTasks where task.archivedAt == nil {
+                    if activeIds.contains(task.id.stringValue) { continue }
+                    let sortAt = task.lastActivityAt ?? task.updatedAt ?? task.createdAt
+                    extraActive.append(WorkspaceTaskSummary(task: task, sessions: [], sortAt: sortAt))
                 }
-                if activeIds.contains(task.id.stringValue) { continue }
-                let sortAt = task.lastActivityAt ?? task.updatedAt ?? task.createdAt
-                extraActive.append(WorkspaceTaskSummary(task: task, sessions: [], sortAt: sortAt))
             }
             activeTasks = sortTasksBySortAt(activeSummaries + extraActive)
-            archivedTasks = sortTasksBySortAt(nextArchived)
+
+            await loadArchivedHeadWindow(
+                client: client,
+                workspaceId: workspaceId,
+                fallbackTasks: workspaceTasksLoaded ? workspaceTasks : nil
+            )
             resolveSelectionForCurrentTask()
         } catch {
             if showBlocking {
@@ -581,21 +600,78 @@ struct WorkbenchShellView: View {
             }
             taskError = "Failed to load tasks."
         }
-        isLoadingTasks = false
-        isRefreshingTasks = false
     }
 
     @MainActor
     private func hydrateTasksFromCache(workspaceId: String) async {
         guard activeTasks.isEmpty && archivedTasks.isEmpty else { return }
-        guard let cached = await WorkspaceActiveSnapshotCache.shared.load(workspaceId: workspaceId) else { return }
-        let summaries = cached.tasks.map { WorkspaceTaskSummary(cachedActiveSummary: $0) }
-        guard !summaries.isEmpty else { return }
-        activeTasks = sortTasksBySortAt(summaries)
-        archivedTasks = []
-        taskError = nil
-        lastStreamSnapshotRev = max(lastStreamSnapshotRev, cached.snapshotRev)
-        resolveSelectionForCurrentTask()
+        var didHydrate = false
+        if let cached = await WorkspaceActiveSnapshotCache.shared.load(workspaceId: workspaceId) {
+            let summaries = cached.tasks.map { WorkspaceTaskSummary(cachedActiveSummary: $0) }
+            if !summaries.isEmpty {
+                activeTasks = sortTasksBySortAt(summaries)
+                lastStreamSnapshotRev = max(lastStreamSnapshotRev, cached.snapshotRev)
+                if let archivedRev = cached.archivedRev {
+                    lastArchivedRev = max(lastArchivedRev, archivedRev)
+                }
+                didHydrate = true
+            }
+        }
+        if let cachedArchived = await WorkspaceArchivedSnapshotCache.shared.load(workspaceId: workspaceId) {
+            let summaries = cachedArchived.tasks.map { WorkspaceTaskSummary(cachedArchivedSummary: $0) }
+            if !summaries.isEmpty {
+                archivedTasks = sortTasksBySortAt(summaries)
+                if let archivedRev = cachedArchived.archivedRev {
+                    lastArchivedRev = max(lastArchivedRev, archivedRev)
+                }
+                didHydrate = true
+            }
+        }
+        if didHydrate {
+            taskError = nil
+            resolveSelectionForCurrentTask()
+        }
+    }
+
+    @MainActor
+    private func loadArchivedHeadWindow(
+        client: DaemonAPIClient,
+        workspaceId: String,
+        fallbackTasks: [Task]?
+    ) async {
+        do {
+            let params = DaemonAPIClient.WorkspaceArchivedPageParams(limit: 50, cursor: nil)
+            let page = try await client.listWorkspaceArchivedTaskSummaries(workspaceId: workspaceId, params: params)
+            let summaries = page.tasks.map { $0.toTaskSummary() }
+            archivedTasks = sortTasksBySortAt(summaries)
+            if let archivedRev = page.archivedRev {
+                lastArchivedRev = max(lastArchivedRev, archivedRev)
+            }
+            let heads = page.tasks.compactMap { $0.primarySessionHead }
+            if !heads.isEmpty {
+                _Concurrency.Task { await ATSHeadCache.shared.store(heads: heads) }
+            }
+            _Concurrency.Task { await WorkspaceArchivedSnapshotCache.shared.store(page: page) }
+            return
+        } catch {
+            guard let fallbackTasks else { return }
+            var nextArchived: [WorkspaceTaskSummary] = []
+            for task in fallbackTasks where task.archivedAt != nil {
+                nextArchived.append(await buildArchivedTaskSummary(client: client, task: task))
+            }
+            archivedTasks = sortTasksBySortAt(nextArchived)
+        }
+    }
+
+    @MainActor
+    private func refreshArchivedHeadWindow() async {
+        guard let client = connection.apiClient, let workspaceId = selectedWorkspace?.id else { return }
+        await loadArchivedHeadWindow(client: client, workspaceId: workspaceId, fallbackTasks: nil)
+    }
+
+    @MainActor
+    private func upsertArchivedTaskSummary(_ summary: WorkspaceArchivedTaskSummaryPayload) {
+        upsertTaskSummary(summary.toTaskSummary())
     }
 
     private func resolveSelectionForCurrentTask() {
@@ -929,31 +1005,67 @@ struct WorkbenchShellView: View {
     @MainActor
     private func handleWorkspaceStreamEvent(_ event: WorkspaceActiveSnapshotEvent) {
         _Concurrency.Task { await WorkspaceActiveSnapshotCache.shared.apply(event: event) }
-        let snapshotRev: Int
+        _Concurrency.Task { await WorkspaceArchivedSnapshotCache.shared.apply(event: event) }
+        let snapshotRev: Int?
+        let archivedRev: Int?
+        let isReady: Bool
         switch event {
-        case .ready(_, let rev):
+        case .ready(_, let rev, let archived):
             snapshotRev = rev
+            archivedRev = archived
+            isReady = true
         case .activeTaskUpsert(_, let rev, _):
             snapshotRev = rev
+            archivedRev = nil
+            isReady = false
         case .activeTaskDelete(_, let rev, _):
             snapshotRev = rev
+            archivedRev = nil
+            isReady = false
         case .sessionSummary(_, let rev, _):
             snapshotRev = rev
+            archivedRev = nil
+            isReady = false
         case .sessionHeadDelta(_, let rev, _):
             snapshotRev = rev
+            archivedRev = nil
+            isReady = false
         case .sessionGap(_, let rev, _, _, _):
             snapshotRev = rev
+            archivedRev = nil
+            isReady = false
         case .worktreeBootstrap(_, let rev, _):
             snapshotRev = rev
+            archivedRev = nil
+            isReady = false
+        case .archivedTaskUpsert(_, let archived, _, _):
+            snapshotRev = nil
+            archivedRev = archived
+            isReady = false
+        case .archivedTaskDelete(_, let archived, _):
+            snapshotRev = nil
+            archivedRev = archived
+            isReady = false
         }
 
-        if snapshotRev > lastStreamSnapshotRev + 1 {
-            _Concurrency.Task { await loadTasks() }
+        if let snapshotRev {
+            if snapshotRev > lastStreamSnapshotRev + 1 {
+                _Concurrency.Task { await loadTasks() }
+            }
+            if isReady, snapshotRev != lastStreamSnapshotRev {
+                _Concurrency.Task { await loadTasks() }
+            }
+            lastStreamSnapshotRev = max(lastStreamSnapshotRev, snapshotRev)
         }
-        if case .ready = event, snapshotRev != lastStreamSnapshotRev {
-            _Concurrency.Task { await loadTasks() }
+        if let archivedRev {
+            if archivedRev > lastArchivedRev + 1 {
+                _Concurrency.Task { await refreshArchivedHeadWindow() }
+            }
+            if isReady, archivedRev != lastArchivedRev {
+                _Concurrency.Task { await refreshArchivedHeadWindow() }
+            }
+            lastArchivedRev = max(lastArchivedRev, archivedRev)
         }
-        lastStreamSnapshotRev = max(lastStreamSnapshotRev, snapshotRev)
 
         switch event {
         case .activeTaskUpsert(_, _, let task):
@@ -967,6 +1079,15 @@ struct WorkbenchShellView: View {
             _Concurrency.Task { await ATSHeadCache.shared.apply(delta: delta) }
         case .sessionGap:
             _Concurrency.Task { await loadTasks() }
+        case .archivedTaskUpsert(_, _, let task, let snapshot):
+            upsertArchivedTaskSummary(task)
+            if let snapshot {
+                _Concurrency.Task { await ATSHeadCache.shared.store(head: snapshot.head) }
+            } else if let head = task.primarySessionHead {
+                _Concurrency.Task { await ATSHeadCache.shared.store(head: head) }
+            }
+        case .archivedTaskDelete(_, _, let taskId):
+            removeTask(taskId: taskId.stringValue)
         default:
             break
         }
@@ -2623,6 +2744,7 @@ private func buildArchivedTaskSummary(
             } else {
                 summaries.append(snapshot.summary)
             }
+            await ATSHeadCache.shared.store(head: snapshot.head)
         }
         _ = try? await client.getSessionHistory(sessionId: preferredSessionId, beforeSeq: nil, limit: 1)
     }

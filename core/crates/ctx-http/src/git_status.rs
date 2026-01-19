@@ -8,13 +8,14 @@ use serde::Serialize;
 use tokio::sync::mpsc;
 
 use ctx_core::ids::{SessionId, WorktreeId};
-use ctx_core::models::{SessionEventType, SessionStatus, Worktree};
+use ctx_core::models::{SessionEventType, SessionGitStatusSummary, SessionStatus, Worktree};
 use ctx_fs::git::{assert_git_repo, git_status_porcelain, git_status_short};
 use ctx_fs::patch::should_ignore_path;
 
 use crate::daemon::AppState;
 
-const GIT_STATUS_DEBOUNCE_MS: u64 = 1500;
+const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
+const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
 const GIT_STATUS_WATCH_DEBOUNCE_MS: u64 = 500;
 
 #[derive(Debug, Clone, Serialize)]
@@ -76,7 +77,8 @@ pub async fn emit_git_status_snapshot_for_worktree(
     state: &Arc<AppState>,
     worktree: &Worktree,
 ) -> Result<()> {
-    let sessions = state.store.list_sessions_for_worktree(worktree.id).await?;
+    let store = state.store_for_worktree(worktree.id).await?;
+    let sessions = store.list_sessions_for_worktree(worktree.id).await?;
     let active_session_ids: Vec<SessionId> = sessions
         .into_iter()
         .filter(|session| matches!(session.status, SessionStatus::Active))
@@ -116,6 +118,17 @@ pub async fn emit_git_status_snapshot_for_sessions(
         "summary": summary,
         "entries": &snapshot.entries,
     });
+    let summary_model = SessionGitStatusSummary {
+        summary_line: snapshot.summary_line.clone(),
+        branch: snapshot.branch.clone(),
+        upstream: snapshot.upstream.clone(),
+        ahead: snapshot.ahead,
+        behind: snapshot.behind,
+        detached: snapshot.detached,
+        staged: snapshot.staged,
+        unstaged: snapshot.unstaged,
+        untracked: snapshot.untracked,
+    };
     let payload_raw = match serde_json::to_string(&payload) {
         Ok(value) => value,
         Err(_) => return,
@@ -126,32 +139,50 @@ pub async fn emit_git_status_snapshot_for_sessions(
         let entry = cache.entry(worktree_id).or_insert_with(|| {
             crate::daemon::GitStatusSnapshotCacheEntry {
                 payload: String::new(),
-                emitted_at: now - Duration::from_millis(GIT_STATUS_DEBOUNCE_MS + 1),
+                emitted_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
+                last_change_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
             }
         });
+        let is_first = entry.payload.is_empty();
         if entry.payload == payload_raw {
             return;
         }
-        if now.duration_since(entry.emitted_at) < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS) {
+        let since_change = now.duration_since(entry.last_change_at);
+        entry.payload = payload_raw;
+        entry.last_change_at = now;
+        let since_emit = now.duration_since(entry.emitted_at);
+        if !is_first
+            && since_emit < Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS)
+            && since_change < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS)
+        {
             return;
         }
-        entry.payload = payload_raw;
         entry.emitted_at = now;
     }
 
     for session_id in session_ids {
-        let notice = state
-            .store
-            .append_session_event(
-                *session_id,
-                None,
-                None,
-                SessionEventType::Notice,
-                payload.clone(),
-            )
-            .await;
-        if let Ok(event) = notice {
-            state.publish_event(event).await;
+        if let Ok(store) = state.store_for_session(*session_id).await {
+            if let Err(err) = store
+                .upsert_session_git_status_summary(*session_id, worktree_id, &summary_model)
+                .await
+            {
+                tracing::warn!(
+                    session_id = %session_id.0,
+                    "git status summary persist failed: {err:?}"
+                );
+            }
+            let notice = store
+                .append_session_event(
+                    *session_id,
+                    None,
+                    None,
+                    SessionEventType::Notice,
+                    payload.clone(),
+                )
+                .await;
+            if let Ok(event) = notice {
+                state.publish_event(event).await;
+            }
         }
     }
 }

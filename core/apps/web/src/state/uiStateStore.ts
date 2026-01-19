@@ -123,6 +123,7 @@ export type PersistedWorkspaceActiveSnapshotV1 = {
   v: 1;
   workspaceId: string;
   snapshotRev?: number;
+  archivedRev?: number;
   active: {
     tasks: PersistedWorkspaceActiveTaskSummaryV1[];
     totalCount?: number;
@@ -151,6 +152,7 @@ export async function loadWorkspaceActiveSnapshotV1(
       v: 1,
       workspaceId,
       snapshotRev: legacy.snapshotRev,
+      archivedRev: legacy.archivedRev,
       active: {
         tasks: legacy.tasks,
         totalCount: legacy.totalCount,

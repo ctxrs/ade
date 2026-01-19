@@ -19,7 +19,8 @@ use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
 use ctx_core::ids::{MessageId, SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    Session, SessionEvent, SessionEventType, SessionHeadDelta, SessionTurnStatus, Worktree,
+    Session, SessionEvent, SessionEventType, SessionHeadDelta, SessionSnapshot, SessionTurnStatus,
+    Task, WorkspaceTaskSummary, Worktree,
 };
 use ctx_lsp::Language as LspLanguage;
 use ctx_lsp::{LspManager, LspManagerConfig};
@@ -28,7 +29,7 @@ use ctx_providers::adapters::ProviderStatus;
 use ctx_providers::ask_user_question::AskUserQuestionBroker;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_providers::tier1::Tier1AcpAdapter;
-use ctx_store::Store;
+use ctx_store::{Store, StoreManager};
 
 use crate::api;
 use crate::installer;
@@ -74,6 +75,7 @@ fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
 }
 
 const DAEMON_AUTH_FILENAME: &str = "daemon_auth.json";
+const ARCHIVED_SNAPSHOT_HEAD_LIMIT: u32 = 50;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct DaemonAuthFile {
@@ -135,7 +137,7 @@ fn load_or_init_daemon_auth(data_root: &Path) -> Result<DaemonAuthFile> {
 
 pub struct AppState {
     pub data_root: PathBuf,
-    pub store: Store,
+    pub stores: StoreManager,
     pub providers: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
     pub provider_statuses: Mutex<HashMap<String, ProviderStatus>>,
     pub provider_matrix_cache: Mutex<crate::provider_matrix::ProviderMatrixCache>,
@@ -202,19 +204,20 @@ pub struct CachedFileCompletions {
 pub struct GitStatusSnapshotCacheEntry {
     pub payload: String,
     pub emitted_at: Instant,
+    pub last_change_at: Instant,
 }
 
 impl AppState {
     pub fn new(
         data_root: PathBuf,
-        store: Store,
+        stores: StoreManager,
         providers: HashMap<String, Arc<dyn ProviderAdapter>>,
         daemon_url: String,
         auth_token: Option<String>,
     ) -> Self {
         Self::new_with_lsp_config(
             data_root,
-            store,
+            stores,
             providers,
             daemon_url,
             auth_token,
@@ -224,7 +227,7 @@ impl AppState {
 
     pub fn new_with_lsp_config(
         data_root: PathBuf,
-        store: Store,
+        stores: StoreManager,
         providers: HashMap<String, Arc<dyn ProviderAdapter>>,
         daemon_url: String,
         auth_token: Option<String>,
@@ -235,7 +238,7 @@ impl AppState {
             .unwrap_or(false);
         Self::new_with_lsp_config_and_flags(
             data_root,
-            store,
+            stores,
             providers,
             daemon_url,
             auth_token,
@@ -246,7 +249,7 @@ impl AppState {
 
     pub fn new_with_lsp_config_and_flags(
         data_root: PathBuf,
-        store: Store,
+        stores: StoreManager,
         providers: HashMap<String, Arc<dyn ProviderAdapter>>,
         daemon_url: String,
         auth_token: Option<String>,
@@ -275,7 +278,7 @@ impl AppState {
         let merge_queue_notify = Arc::new(Notify::new());
         Self {
             data_root,
-            store,
+            stores,
             providers: Mutex::new(providers),
             provider_statuses: Mutex::new(HashMap::new()),
             provider_matrix_cache: Mutex::new(
@@ -336,6 +339,26 @@ impl AppState {
         if let Err(e) = delete_edit_plan_file(&self.data_root, plan_id) {
             tracing::warn!("failed to delete edit plan {} file: {e}", plan_id.0);
         }
+    }
+
+    pub fn global_store(&self) -> &Store {
+        self.stores.global()
+    }
+
+    pub async fn store_for_workspace(&self, workspace_id: WorkspaceId) -> Result<Store> {
+        self.stores.workspace(workspace_id).await
+    }
+
+    pub async fn store_for_task(&self, task_id: TaskId) -> Result<Store> {
+        self.stores.store_for_task(task_id).await
+    }
+
+    pub async fn store_for_session(&self, session_id: SessionId) -> Result<Store> {
+        self.stores.store_for_session(session_id).await
+    }
+
+    pub async fn store_for_worktree(&self, worktree_id: WorktreeId) -> Result<Store> {
+        self.stores.store_for_worktree(worktree_id).await
     }
 
     pub async fn get_broadcaster(&self, session_id: SessionId) -> broadcast::Sender<SessionEvent> {
@@ -436,31 +459,36 @@ impl AppState {
                 return Some(session.clone());
             }
         }
-        let session = self.store.get_session(session_id).await.ok().flatten()?;
+        let store = self.store_for_session(session_id).await.ok()?;
+        let session = store.get_session(session_id).await.ok().flatten()?;
         let mut cache = self.session_meta_cache.lock().await;
         cache.insert(session_id, session.clone());
         Some(session)
     }
 
     pub async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> Result<()> {
-        match self
-            .store
-            .get_workspace_active_task_summary(task_id)
-            .await?
-        {
+        let mut task: Option<Task> = None;
+        let store = self.store_for_task(task_id).await?;
+        match store.get_workspace_active_task_summary(task_id).await? {
             Some(summary) => {
                 let workspace_id = summary.task.workspace_id;
+                task = Some(summary.task.clone());
                 self.workspace_active_snapshot
                     .publish_active_task_upsert(workspace_id, summary)
                     .await;
             }
             None => {
-                if let Some(task) = self.store.get_task(task_id).await? {
+                if let Some(loaded) = store.get_task(task_id).await? {
+                    task = Some(loaded.clone());
                     self.workspace_active_snapshot
-                        .publish_active_task_delete(task.workspace_id, task_id)
+                        .publish_active_task_delete(loaded.workspace_id, task_id)
                         .await;
                 }
             }
+        }
+
+        if let Some(task) = task.as_ref().filter(|task| task.archived_at.is_some()) {
+            let _ = self.emit_workspace_archived_task_upsert(task).await;
         }
         Ok(())
     }
@@ -469,6 +497,42 @@ impl AppState {
         self.workspace_active_snapshot
             .publish_active_task_delete(workspace_id, task_id)
             .await;
+    }
+
+    pub async fn emit_workspace_archived_task_delete(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+    ) {
+        self.workspace_active_snapshot
+            .publish_archived_task_delete(workspace_id, task_id)
+            .await;
+    }
+
+    async fn emit_workspace_archived_task_upsert(&self, task: &Task) -> Result<()> {
+        let store = self.store_for_task(task.id).await?;
+        let Some(summary) = store.get_workspace_task_summary(task.id).await? else {
+            return Ok(());
+        };
+        if summary.task.archived_at.is_none() {
+            return Ok(());
+        }
+
+        let primary_session_id = select_primary_session_id(&summary);
+        let snapshot: Option<SessionSnapshot> = match primary_session_id {
+            Some(session_id) => {
+                let session_store = self.store_for_session(session_id).await?;
+                session_store
+                    .get_session_snapshot(session_id, ARCHIVED_SNAPSHOT_HEAD_LIMIT, false)
+                    .await?
+            }
+            None => None,
+        };
+
+        self.workspace_active_snapshot
+            .publish_archived_task_upsert(task.workspace_id, summary, snapshot)
+            .await;
+        Ok(())
     }
 
     pub fn start_workspace_active_snapshot_listener(self: &Arc<Self>) {
@@ -514,7 +578,10 @@ impl AppState {
                         .and_then(|id| uuid::Uuid::parse_str(id).ok())
                         .map(MessageId);
                     if let Some(message_id) = message_id {
-                        state.store.get_message(message_id).await.ok().flatten()
+                        match state.store_for_session(event.session_id).await {
+                            Ok(store) => store.get_message(message_id).await.ok().flatten(),
+                            Err(_) => None,
+                        }
                     } else {
                         None
                     }
@@ -524,12 +591,14 @@ impl AppState {
 
                 let turn = if matches!(event.event_type, SessionEventType::UserMessage) {
                     match event.turn_id {
-                        Some(turn_id) => state
-                            .store
-                            .get_session_turn(event.session_id, turn_id)
-                            .await
-                            .ok()
-                            .flatten(),
+                        Some(turn_id) => match state.store_for_session(event.session_id).await {
+                            Ok(store) => store
+                                .get_session_turn(event.session_id, turn_id)
+                                .await
+                                .ok()
+                                .flatten(),
+                            Err(_) => None,
+                        },
                         None => None,
                     }
                 } else {
@@ -539,6 +608,7 @@ impl AppState {
                 let delta = SessionHeadDelta {
                     session_id: event.session_id,
                     last_event_seq: event.seq,
+                    state_rev: event.seq,
                     event: Some(event.clone()),
                     turn,
                     message,
@@ -758,11 +828,34 @@ impl AppState {
     }
 }
 
+fn select_primary_session_id(summary: &WorkspaceTaskSummary) -> Option<SessionId> {
+    if let Some(primary_id) = summary.task.primary_session_id {
+        if summary
+            .sessions
+            .iter()
+            .any(|session| session.id == primary_id)
+        {
+            return Some(primary_id);
+        }
+    }
+    summary
+        .sessions
+        .iter()
+        .find(|session| session.parent_session_id.is_none())
+        .map(|session| session.id)
+        .or_else(|| summary.sessions.first().map(|session| session.id))
+}
+
 async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
-    let running_turns = state
-        .store
-        .list_session_turns_by_statuses(&[SessionTurnStatus::Running])
-        .await?;
+    let workspaces = state.global_store().list_workspaces().await?;
+    let mut running_turns = Vec::new();
+    for workspace in workspaces {
+        let store = state.store_for_workspace(workspace.id).await?;
+        let mut turns = store
+            .list_session_turns_by_statuses(&[SessionTurnStatus::Running])
+            .await?;
+        running_turns.append(&mut turns);
+    }
 
     for turn in running_turns {
         if let Err(err) = reconcile_turn_terminal_state(
@@ -859,42 +952,63 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
 
     let _daemon_lock = acquire_daemon_lock(&data_root)?;
 
-    let db_dir = data_root.join("db");
-    tokio::fs::create_dir_all(&db_dir).await?;
-    let db_path = db_dir.join("db.sqlite");
-    let legacy_db_path = data_root.join("db.sqlite");
-    if legacy_db_path.exists() && !db_path.exists() {
-        tokio::fs::rename(&legacy_db_path, &db_path).await?;
-    }
-    let store = Store::open(&db_path).await?;
+    let stores = StoreManager::open(&data_root).await?;
 
     // Hard-coded retention policy (no config surface yet):
     // - Keep tool summaries and final thoughts for 30 days.
     // - Do not retain thought chunk events (handled at ingestion time).
     const SESSION_RETENTION_DAYS: u64 = 30;
     {
-        let store = store.clone();
+        let stores = stores.clone();
         tokio::spawn(async move {
             let mut last_cleanup = None::<String>;
             loop {
                 let today = Utc::now().format("%Y-%m-%d").to_string();
                 if last_cleanup.as_deref() != Some(&today) {
-                    match store
-                        .prune_session_data_older_than_days(SESSION_RETENTION_DAYS)
-                        .await
-                    {
-                        Ok(stats) => {
-                            tracing::info!(
-                                tool_summaries_deleted = stats.tool_summaries_deleted,
-                                turn_thoughts_cleared = stats.turn_thoughts_cleared,
-                                retention_days = SESSION_RETENTION_DAYS,
-                                "pruned old session data",
-                            );
+                    match stores.global().list_workspaces().await {
+                        Ok(workspaces) => {
+                            for workspace in workspaces {
+                                match stores.workspace(workspace.id).await {
+                                    Ok(store) => {
+                                        match store
+                                            .prune_session_data_older_than_days(
+                                                SESSION_RETENTION_DAYS,
+                                            )
+                                            .await
+                                        {
+                                            Ok(stats) => {
+                                                tracing::info!(
+                                                    workspace_id = %workspace.id.0,
+                                                    tool_summaries_deleted = stats
+                                                        .tool_summaries_deleted,
+                                                    turn_thoughts_cleared = stats
+                                                        .turn_thoughts_cleared,
+                                                    retention_days = SESSION_RETENTION_DAYS,
+                                                    "pruned old session data",
+                                                );
+                                            }
+                                            Err(err) => {
+                                                tracing::warn!(
+                                                    workspace_id = %workspace.id.0,
+                                                    retention_days = SESSION_RETENTION_DAYS,
+                                                    "failed to prune old session data: {err:#}",
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            workspace_id = %workspace.id.0,
+                                            "failed to open workspace store for pruning: {err:#}",
+                                        );
+                                    }
+                                }
+                            }
                         }
                         Err(err) => {
                             tracing::warn!(
                                 retention_days = SESSION_RETENTION_DAYS,
-                                "failed to prune old session data: {err:#}",
+                                "failed to list workspaces for pruning: {err:#}",
                             );
                         }
                     }
@@ -1087,7 +1201,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
 
     let state = Arc::new(AppState::new_with_lsp_config(
         data_root,
-        store,
+        stores,
         providers,
         daemon_url.clone(),
         auth_token,
@@ -1135,7 +1249,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
             if state.auth_token.is_none() {
                 return;
             }
-            let cfg = match state.store.get_mobile_access_config().await {
+            let cfg = match state.global_store().get_mobile_access_config().await {
                 Ok(v) => v,
                 Err(e) => {
                     tracing::warn!("failed to read saved mobile access config: {e:#}");

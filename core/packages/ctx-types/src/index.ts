@@ -214,6 +214,7 @@ export type WorkspaceIndexPage = {
 
 export type WorkspaceArchivedPage = {
   workspace_id: { 0: string } | string;
+  archived_rev?: number;
   tasks: WorkspaceTaskSummary[];
   next_cursor?: WorkspaceIndexCursor | null;
   total_archived: number;
@@ -224,6 +225,7 @@ export type WorkspaceIndexEvent =
       type: "ready";
       workspace_id: { 0: string } | string;
       snapshot_rev: number;
+      archived_rev: number;
     }
   | {
       type: "task_upsert";
@@ -243,6 +245,7 @@ export type SessionSnapshotSummary = {
   last_message_at?: string | null;
   last_message_preview?: string | null;
   last_event_seq?: number | null;
+  state_rev?: number;
   activity?: SessionActivityState;
   unread?: boolean;
 };
@@ -254,6 +257,7 @@ export type SessionHeadSnapshot = {
   events?: SessionEvent[];
   messages: Message[];
   last_event_seq: number;
+  state_rev?: number;
   activity?: SessionActivityState;
   has_more_turns: boolean;
   history_cursor?: number | null;
@@ -265,6 +269,24 @@ export type SessionHeadSnapshot = {
 export type SessionSnapshot = {
   summary: SessionSnapshotSummary;
   head: SessionHeadSnapshot;
+  state?: SessionState | null;
+};
+
+export type SessionGitStatusSummary = {
+  summary_line: string;
+  branch?: string | null;
+  upstream?: string | null;
+  ahead: number;
+  behind: number;
+  detached: boolean;
+  staged: number;
+  unstaged: number;
+  untracked: number;
+};
+
+export type SessionState = {
+  artifacts: Artifact[];
+  git_status?: SessionGitStatusSummary | null;
 };
 
 export type WorkspaceActiveTaskSummary = {
@@ -283,6 +305,7 @@ export type WorkspaceActivePage = {
 export type WorkspaceActiveSnapshot = {
   workspace_id: { 0: string } | string;
   snapshot_rev: number;
+  archived_rev?: number;
   active: WorkspaceActivePage;
 };
 
@@ -314,8 +337,6 @@ export type SessionHead = {
   tool_summaries?: SessionTurnToolSummary[];
   events?: SessionEvent[];
   messages: Message[];
-  head_window?: number | null;
-  summary_checkpoint?: number | null;
   last_event_seq: number;
   activity?: SessionActivityState;
   has_more_turns: boolean;
@@ -326,6 +347,7 @@ export type SessionHead = {
 export type SessionHeadDelta = {
   session_id: { 0: string } | string;
   last_event_seq: number;
+  state_rev?: number;
   event?: SessionEvent | null;
   turn?: SessionTurn | null;
   message?: Message | null;
@@ -368,6 +390,7 @@ export type WorkspaceActiveSnapshotEvent =
       type: "ready";
       workspace_id: { 0: string } | string;
       snapshot_rev: number;
+      archived_rev?: number;
     }
   | {
       type: "active_task_upsert";
@@ -406,6 +429,21 @@ export type WorkspaceActiveSnapshotEvent =
       workspace_id: { 0: string } | string;
       snapshot_rev: number;
       notice: WorktreeBootstrapNotice;
+    }
+  | {
+      type: "archived_task_upsert";
+      workspace_id: { 0: string } | string;
+      snapshot_rev?: number;
+      archived_rev: number;
+      task: WorkspaceTaskSummary;
+      snapshot?: SessionSnapshot | null;
+    }
+  | {
+      type: "archived_task_delete";
+      workspace_id: { 0: string } | string;
+      snapshot_rev?: number;
+      archived_rev: number;
+      task_id: { 0: string } | string;
     };
 
 export type WorkspaceActiveSnapshotSessionSubscription = {

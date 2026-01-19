@@ -139,12 +139,14 @@ struct CachedWorkspaceActiveTaskSummary: Codable, Sendable {
 struct CachedWorkspaceActiveSnapshot: Codable, Sendable {
     let workspaceId: String
     var snapshotRev: Int
+    var archivedRev: Int?
     var tasks: [CachedWorkspaceActiveTaskSummary]
     var cachedAt: TimeInterval
 
-    init(workspaceId: String, snapshotRev: Int, tasks: [CachedWorkspaceActiveTaskSummary]) {
+    init(workspaceId: String, snapshotRev: Int, archivedRev: Int?, tasks: [CachedWorkspaceActiveTaskSummary]) {
         self.workspaceId = workspaceId
         self.snapshotRev = snapshotRev
+        self.archivedRev = archivedRev
         self.tasks = tasks
         self.cachedAt = Date().timeIntervalSince1970
     }
@@ -173,6 +175,7 @@ actor WorkspaceActiveSnapshotCache {
         let cached = CachedWorkspaceActiveSnapshot(
             workspaceId: snapshot.workspaceId.stringValue,
             snapshotRev: snapshot.snapshotRev,
+            archivedRev: snapshot.archivedRev,
             tasks: tasks
         )
         await cache.set(cached, for: makeKey(workspaceId: snapshot.workspaceId.stringValue))
@@ -181,28 +184,148 @@ actor WorkspaceActiveSnapshotCache {
     func apply(event: WorkspaceActiveSnapshotEvent) async {
         switch event {
         case .activeTaskUpsert(let workspaceId, let snapshotRev, let task):
-            await update(workspaceId: workspaceId.stringValue, snapshotRev: snapshotRev) { cached in
+            await update(workspaceId: workspaceId.stringValue, snapshotRev: snapshotRev, archivedRev: nil) { cached in
                 cached.upsert(task)
             }
         case .activeTaskDelete(let workspaceId, let snapshotRev, let taskId):
-            await update(workspaceId: workspaceId.stringValue, snapshotRev: snapshotRev) { cached in
+            await update(workspaceId: workspaceId.stringValue, snapshotRev: snapshotRev, archivedRev: nil) { cached in
                 cached.remove(taskId: taskId.stringValue)
             }
-        case .ready(let workspaceId, let snapshotRev):
-            await update(workspaceId: workspaceId.stringValue, snapshotRev: snapshotRev) { _ in }
+        case .ready(let workspaceId, let snapshotRev, let archivedRev):
+            await update(workspaceId: workspaceId.stringValue, snapshotRev: snapshotRev, archivedRev: archivedRev) { _ in }
         default:
             break
         }
     }
 
-    private func update(workspaceId: String, snapshotRev: Int, mutate: (inout CachedWorkspaceActiveSnapshot) -> Void) async {
+    private func update(workspaceId: String, snapshotRev: Int, archivedRev: Int?, mutate: (inout CachedWorkspaceActiveSnapshot) -> Void) async {
         let key = makeKey(workspaceId: workspaceId)
         guard var cached = await cache.get(key) else { return }
         cached.snapshotRev = max(cached.snapshotRev, snapshotRev)
+        if let archivedRev {
+            cached.archivedRev = max(cached.archivedRev ?? 0, archivedRev)
+        }
         cached.cachedAt = Date().timeIntervalSince1970
         mutate(&cached)
         await cache.set(cached, for: key)
     }
+
+    private func makeKey(workspaceId: String) -> String {
+        "v1|\(workspaceId)"
+    }
+}
+
+struct CachedWorkspaceTaskSummary: Codable, Sendable {
+    let task: Task
+    let sessions: [SessionSnapshotSummary]
+    let sortAt: String
+
+    init(summary: WorkspaceTaskSummary) {
+        task = summary.task
+        sessions = summary.sessions
+        sortAt = summary.sortAt
+    }
+}
+
+struct CachedWorkspaceArchivedHeadWindow: Codable, Sendable {
+    let workspaceId: String
+    var tasks: [CachedWorkspaceTaskSummary]
+    var nextCursor: WorkspaceIndexCursor?
+    var totalArchived: Int
+    var archivedRev: Int?
+    var cachedAt: TimeInterval
+
+    init(
+        workspaceId: String,
+        tasks: [CachedWorkspaceTaskSummary],
+        nextCursor: WorkspaceIndexCursor?,
+        totalArchived: Int,
+        archivedRev: Int?
+    ) {
+        self.workspaceId = workspaceId
+        self.tasks = tasks
+        self.nextCursor = nextCursor
+        self.totalArchived = totalArchived
+        self.archivedRev = archivedRev
+        self.cachedAt = Date().timeIntervalSince1970
+    }
+}
+
+actor WorkspaceArchivedSnapshotCache {
+    static let shared = WorkspaceArchivedSnapshotCache()
+    private let cache = DiskCache<CachedWorkspaceArchivedHeadWindow>(cacheName: "ats-archived-head", maxEntries: 12)
+
+    func load(workspaceId: String) async -> CachedWorkspaceArchivedHeadWindow? {
+        await cache.get(makeKey(workspaceId: workspaceId))
+    }
+
+    func store(page: WorkspaceArchivedPage) async {
+        let tasks = page.tasks.map { CachedWorkspaceTaskSummary(summary: $0.toTaskSummary()) }
+        let cached = CachedWorkspaceArchivedHeadWindow(
+            workspaceId: page.workspaceId.stringValue,
+            tasks: tasks,
+            nextCursor: page.nextCursor,
+            totalArchived: page.totalArchived,
+            archivedRev: page.archivedRev
+        )
+        await cache.set(cached, for: makeKey(workspaceId: page.workspaceId.stringValue))
+    }
+    private let maxHeadTasks = 50
+
+    func apply(event: WorkspaceActiveSnapshotEvent) async {
+        switch event {
+        case .archivedTaskUpsert(let workspaceId, let archivedRev, let task, _):
+            await update(workspaceId: workspaceId.stringValue, archivedRev: archivedRev) { cached in
+                let summary = CachedWorkspaceTaskSummary(summary: task.toTaskSummary())
+                let taskId = summary.task.id.stringValue
+                let wasPresent = cached.tasks.contains { $0.task.id.stringValue == taskId }
+                cached.tasks.removeAll { $0.task.id.stringValue == taskId }
+                cached.tasks.append(summary)
+                if !wasPresent {
+                    cached.totalArchived += 1
+                }
+            }
+        case .archivedTaskDelete(let workspaceId, let archivedRev, let taskId):
+            await update(workspaceId: workspaceId.stringValue, archivedRev: archivedRev) { cached in
+                cached.tasks.removeAll { $0.task.id.stringValue == taskId.stringValue }
+                cached.totalArchived = max(0, cached.totalArchived - 1)
+            }
+        case .ready(let workspaceId, _, let archivedRev):
+            await update(workspaceId: workspaceId.stringValue, archivedRev: archivedRev) { _ in }
+        default:
+            break
+        }
+    }
+
+    private func update(
+        workspaceId: String,
+        archivedRev: Int,
+        mutate: (inout CachedWorkspaceArchivedHeadWindow) -> Void
+    ) async {
+        let key = makeKey(workspaceId: workspaceId)
+        guard var cached = await cache.get(key) else { return }
+        let previousRev = cached.archivedRev ?? 0
+        if archivedRev < previousRev {
+            cached.tasks = []
+            cached.nextCursor = nil
+            cached.totalArchived = 0
+        }
+        cached.archivedRev = archivedRev
+        cached.cachedAt = Date().timeIntervalSince1970
+        mutate(&cached)
+        cached.tasks = sortedTrimmed(cached.tasks)
+        cached.totalArchived = max(cached.totalArchived, cached.tasks.count)
+        await cache.set(cached, for: key)
+    }
+
+    private func sortedTrimmed(_ tasks: [CachedWorkspaceTaskSummary]) -> [CachedWorkspaceTaskSummary] {
+        let sorted = tasks.sorted { $0.sortAt > $1.sortAt }
+        if sorted.count > maxHeadTasks {
+            return Array(sorted.prefix(maxHeadTasks))
+        }
+        return sorted
+    }
+
 
     private func makeKey(workspaceId: String) -> String {
         "v1|\(workspaceId)"
@@ -216,6 +339,7 @@ struct CachedSessionHead: Codable, Sendable {
     var events: [SessionEvent]?
     var messages: [Message]
     var lastEventSeq: Int
+    var stateRev: Int?
     var activity: SessionActivityState?
     var hasMoreTurns: Bool
 
@@ -226,6 +350,7 @@ struct CachedSessionHead: Codable, Sendable {
         events = head.events
         messages = head.messages
         lastEventSeq = head.lastEventSeq
+        stateRev = head.stateRev
         activity = head.activity
         hasMoreTurns = head.hasMoreTurns
         trimIfNeeded()
@@ -233,6 +358,13 @@ struct CachedSessionHead: Codable, Sendable {
 
     mutating func apply(delta: SessionHeadDelta) {
         lastEventSeq = max(lastEventSeq, delta.lastEventSeq)
+        if let nextRev = delta.stateRev {
+            if let current = stateRev {
+                stateRev = max(current, nextRev)
+            } else {
+                stateRev = nextRev
+            }
+        }
         if let turn = delta.turn {
             if let index = turns.firstIndex(where: { $0.turnId == turn.turnId }) {
                 turns[index] = turn
@@ -315,5 +447,13 @@ extension WorkspaceTaskSummary {
             return true
         }
         self.init(task: cachedActiveSummary.task, sessions: sessions, sortAt: cachedActiveSummary.sortAt)
+    }
+
+    init(cachedArchivedSummary: CachedWorkspaceTaskSummary) {
+        self.init(
+            task: cachedArchivedSummary.task,
+            sessions: cachedArchivedSummary.sessions,
+            sortAt: cachedArchivedSummary.sortAt
+        )
     }
 }

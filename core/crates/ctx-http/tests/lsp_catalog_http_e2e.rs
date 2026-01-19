@@ -11,7 +11,7 @@ use tower::ServiceExt;
 
 use ctx_http::api;
 use ctx_http::daemon::AppState;
-use ctx_store::Store;
+use ctx_store::StoreManager;
 
 fn make_tar_gz_with_file(dst: &Path, inner_path: &str, contents: &[u8]) {
     let tar_gz = std::fs::File::create(dst).unwrap();
@@ -31,10 +31,7 @@ async fn lsp_catalog_install_from_file_url_updates_config() {
     std::env::set_var("HOME", home.path());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let db_dir = data_dir.path().join("db");
-    tokio::fs::create_dir_all(&db_dir).await.unwrap();
-    let db_path = db_dir.join("db.sqlite");
-    let store = Store::open(&db_path).await.unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
     // Provide a local catalog entry that downloads from file:// and extracts a tar.gz.
     let lsp_dir = data_dir.path().join("lsp");
@@ -76,7 +73,7 @@ async fn lsp_catalog_install_from_file_url_updates_config() {
 
     let state = Arc::new(AppState::new(
         data_dir.path().to_path_buf(),
-        store.clone(),
+        stores,
         HashMap::new(),
         "http://127.0.0.1:4399".to_string(),
         None,

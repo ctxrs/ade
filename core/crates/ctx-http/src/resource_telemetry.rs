@@ -151,7 +151,10 @@ async fn provider_session_counts(state: &Arc<AppState>) -> HashMap<String, u64> 
     let session_ids = state.list_running_sessions().await;
     let mut counts: HashMap<String, u64> = HashMap::new();
     for session_id in session_ids {
-        let session = state.store.get_session(session_id).await.ok().flatten();
+        let session = match state.store_for_session(session_id).await {
+            Ok(store) => store.get_session(session_id).await.ok().flatten(),
+            Err(_) => None,
+        };
         let Some(session) = session else {
             continue;
         };

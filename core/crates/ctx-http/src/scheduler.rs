@@ -73,11 +73,11 @@ pub async fn session_worker(
 ) {
     let mut session = session;
     let mut queue: VecDeque<QueuedMessage> = VecDeque::new();
-    if let Ok(mut queued) = state
-        .store
-        .list_queued_messages_for_session(session.id)
-        .await
-    {
+    let store = match state.store_for_session(session.id).await {
+        Ok(store) => store,
+        Err(_) => return,
+    };
+    if let Ok(mut queued) = store.list_queued_messages_for_session(session.id).await {
         for m in queued.drain(..) {
             queue.push_back(QueuedMessage {
                 message: m,
@@ -89,7 +89,7 @@ pub async fn session_worker(
     let mut running: Option<RunningTurn> = None;
     let mut suspend_queue = false;
 
-    let worktree = match state.store.get_worktree(session.worktree_id).await {
+    let worktree = match store.get_worktree(session.worktree_id).await {
         Ok(Some(wt)) => wt,
         _ => return,
     };
@@ -112,7 +112,7 @@ pub async fn session_worker(
     loop {
         if running.is_none() && !suspend_queue {
             if let Some(msg) = queue.pop_front() {
-                let session_for_turn = match state.store.get_session(session.id).await {
+                let session_for_turn = match store.get_session(session.id).await {
                     Ok(Some(fresh)) => {
                         session = fresh.clone();
                         fresh
@@ -232,6 +232,8 @@ async fn start_turn(
 ) -> Result<RunningTurn> {
     state.wait_for_worktree_bootstrap(session.worktree_id).await;
 
+    let store = state.store_for_session(session.id).await?;
+
     let workdir_root = workdir.to_path_buf();
     let workdir_canonical = tokio::fs::canonicalize(&workdir_root).await.ok();
     let workdir_str = workdir_root.to_string_lossy().to_string();
@@ -280,12 +282,11 @@ async fn start_turn(
     state.ops_events.emit(run_event);
 
     if message.delivered_at.is_none() {
-        state.store.mark_message_delivered(message.id).await?;
+        store.mark_message_delivered(message.id).await?;
         message.delivery = MessageDelivery::Immediate;
         message.delivered_at = Some(Utc::now());
     }
-    let _ = state
-        .store
+    let _ = store
         .update_session_turn_status(
             session.id,
             turn_id,
@@ -465,7 +466,7 @@ async fn start_turn(
     };
 
     let state_for_events = Arc::clone(state);
-    let store = state.store.clone();
+    let store = store.clone();
     let session_id = session.id;
     let task_id = session.task_id;
     let worktree_id = session.worktree_id;
@@ -752,12 +753,12 @@ async fn start_turn(
                         }
                     }
                     SessionEventType::AssistantComplete => {
-                        let content = event
+                        let content: Option<String> = event
                             .payload_json
                             .get("full_content")
                             .or_else(|| event.payload_json.get("content"))
                             .and_then(Value::as_str)
-                            .map(|s| s.to_string())
+                            .map(|s: &str| s.to_string())
                             .or_else(|| {
                                 if assistant_partial.is_empty() {
                                     None
@@ -1069,7 +1070,8 @@ pub async fn reconcile_turn_terminal_state(
     turn_id: TurnId,
     fallback_reason: &str,
 ) -> Result<()> {
-    let turn = state.store.get_session_turn(session_id, turn_id).await?;
+    let store = state.store_for_session(session_id).await?;
+    let turn = store.get_session_turn(session_id, turn_id).await?;
     let Some(turn) = turn else {
         return Ok(());
     };
@@ -1080,8 +1082,7 @@ pub async fn reconcile_turn_terminal_state(
         return Ok(());
     }
 
-    let events = state
-        .store
+    let events = store
         .list_session_events_for_turn(session_id, turn_id, false)
         .await?;
     if let Some(event) = events.iter().rev().find(|ev| {
@@ -1093,8 +1094,7 @@ pub async fn reconcile_turn_terminal_state(
         match event.event_type {
             SessionEventType::Done => {
                 let metrics = event.payload_json.get("context_window");
-                let _ = state
-                    .store
+                let _ = store
                     .update_session_turn_status(
                         session_id,
                         turn_id,
@@ -1106,8 +1106,7 @@ pub async fn reconcile_turn_terminal_state(
                     .await;
             }
             SessionEventType::TurnInterrupted => {
-                let _ = state
-                    .store
+                let _ = store
                     .update_session_turn_status(
                         session_id,
                         turn_id,
@@ -1119,8 +1118,7 @@ pub async fn reconcile_turn_terminal_state(
                     .await;
             }
             SessionEventType::Error => {
-                let _ = state
-                    .store
+                let _ = store
                     .update_session_turn_status(
                         session_id,
                         turn_id,
@@ -1145,8 +1143,7 @@ pub async fn reconcile_turn_terminal_state(
         json!({"reason": fallback_reason, "provider_cancelled": false}),
     )
     .await?;
-    let _ = state
-        .store
+    let _ = store
         .update_session_turn_status(
             session_id,
             turn_id,
@@ -1219,8 +1216,8 @@ async fn emit_event(
     event_type: SessionEventType,
     payload_json: serde_json::Value,
 ) -> Result<SessionEvent> {
-    let event = state
-        .store
+    let store = state.store_for_session(session_id).await?;
+    let event = store
         .append_session_event(session_id, run_id, turn_id, event_type, payload_json)
         .await?;
     state.publish_event(event.clone()).await;

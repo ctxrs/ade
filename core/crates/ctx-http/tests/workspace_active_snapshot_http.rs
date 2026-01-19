@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
@@ -5,35 +6,35 @@ use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use ctx_core::models::SessionEventType;
-use ctx_store::Store;
+use ctx_http::daemon::AppState;
 
 mod common;
 
 async fn setup() -> (
     tempfile::TempDir,
     tempfile::TempDir,
-    Store,
+    Arc<AppState>,
     common::TestServer,
 ) {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
-    let store = common::setup_store(data_dir.path()).await;
+    let stores = common::setup_store(data_dir.path()).await;
 
     let state = common::build_state(
         data_dir.path().to_path_buf(),
-        store.clone(),
+        stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router(state.clone());
     let server = common::spawn_http_server(app).await;
 
-    (repo, data_dir, store, server)
+    (repo, data_dir, state, server)
 }
 
 #[tokio::test]
 async fn workspace_active_snapshot_includes_sessions() {
-    let (repo, _data_dir, _store, server) = setup().await;
+    let (repo, _data_dir, _state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -87,7 +88,7 @@ async fn workspace_active_snapshot_includes_sessions() {
 
 #[tokio::test]
 async fn session_snapshot_returns_summary_and_head() {
-    let (repo, _data_dir, _store, server) = setup().await;
+    let (repo, _data_dir, _state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -139,7 +140,7 @@ async fn session_snapshot_returns_summary_and_head() {
 
 #[tokio::test]
 async fn workspace_stream_replays_from_after_seq() {
-    let (repo, _data_dir, store, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -173,6 +174,7 @@ async fn workspace_stream_replays_from_after_seq() {
         .await
         .unwrap();
 
+    let store = state.store_for_session(session.id).await.unwrap();
     let ev1 = store
         .append_session_event(
             session.id,
@@ -266,7 +268,7 @@ async fn workspace_stream_replays_from_after_seq() {
 
 #[tokio::test]
 async fn workspace_stream_replays_tool_events() {
-    let (repo, _data_dir, store, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -300,6 +302,7 @@ async fn workspace_stream_replays_tool_events() {
         .await
         .unwrap();
 
+    let store = state.store_for_session(session.id).await.unwrap();
     let ev1 = store
         .append_session_event(
             session.id,
@@ -393,7 +396,7 @@ async fn workspace_stream_replays_tool_events() {
 
 #[tokio::test]
 async fn workspace_stream_emits_gap_on_large_replay() {
-    let (repo, _data_dir, store, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -426,6 +429,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         .json()
         .await
         .unwrap();
+    let store = state.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert!(
         sessions.iter().any(|stored| stored.id == session.id),
@@ -494,7 +498,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
 
 #[tokio::test]
 async fn workspace_active_snapshot_stream_pushes_updates() {
-    let (repo, _data_dir, _store, server) = setup().await;
+    let (repo, _data_dir, _state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -574,7 +578,7 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
 
 #[tokio::test]
 async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
-    let (repo, _data_dir, store, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -616,6 +620,7 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
         .json()
         .await
         .unwrap();
+    let store = state.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert!(
         sessions.iter().any(|stored| stored.id == session_a.id),

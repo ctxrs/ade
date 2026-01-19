@@ -62,7 +62,7 @@ mod tests {
 
     use ctx_providers::adapters::ProviderStatus;
     use ctx_providers::fake::FakeProviderAdapter;
-    use ctx_store::Store;
+    use ctx_store::StoreManager;
 
     use crate::api;
     use crate::daemon::AppState;
@@ -102,10 +102,7 @@ mod tests {
         std::env::set_var("HOME", home.path());
 
         let data_dir = tempfile::tempdir().unwrap();
-        let db_dir = data_dir.path().join("db");
-        tokio::fs::create_dir_all(&db_dir).await.unwrap();
-        let db_path = db_dir.join("db.sqlite");
-        let store = Store::open(&db_path).await.unwrap();
+        let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
         let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
             HashMap::new();
@@ -113,7 +110,7 @@ mod tests {
 
         let state = Arc::new(AppState::new(
             data_dir.path().to_path_buf(),
-            store.clone(),
+            stores,
             providers,
             "http://127.0.0.1:4399".to_string(),
             None,
@@ -180,7 +177,11 @@ mod tests {
         // wait for assistant message to be inserted
         let mut attempts = 0;
         loop {
-            let msgs = store.list_messages_for_session(session.id).await.unwrap();
+            let session_store = state.store_for_session(session.id).await.unwrap();
+            let msgs = session_store
+                .list_messages_for_session(session.id)
+                .await
+                .unwrap();
             if msgs
                 .iter()
                 .any(|m| matches!(m.role, ctx_core::models::MessageRole::Assistant))
@@ -202,10 +203,7 @@ mod tests {
         std::env::set_var("HOME", home.path());
 
         let data_dir = tempfile::tempdir().unwrap();
-        let db_dir = data_dir.path().join("db");
-        tokio::fs::create_dir_all(&db_dir).await.unwrap();
-        let db_path = db_dir.join("db.sqlite");
-        let store = Store::open(&db_path).await.unwrap();
+        let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
         let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
             HashMap::new();
@@ -213,7 +211,7 @@ mod tests {
 
         let state = Arc::new(AppState::new(
             data_dir.path().to_path_buf(),
-            store.clone(),
+            stores,
             providers,
             "http://127.0.0.1:4399".to_string(),
             None,
@@ -351,6 +349,7 @@ mod tests {
         }
         assert!(seen_done);
 
+        let store = state.store_for_session(session.id).await.unwrap();
         let events = store.list_session_events(session.id).await.unwrap();
         assert!(events.iter().any(|e| matches!(
             e.event_type,
@@ -387,17 +386,14 @@ mod tests {
         std::env::set_var("HOME", home.path());
 
         let data_dir = tempfile::tempdir().unwrap();
-        let db_dir = data_dir.path().join("db");
-        tokio::fs::create_dir_all(&db_dir).await.unwrap();
-        let db_path = db_dir.join("db.sqlite");
-        let store = Store::open(&db_path).await.unwrap();
+        let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
         let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
             HashMap::new();
 
         let state = Arc::new(AppState::new(
             data_dir.path().to_path_buf(),
-            store,
+            stores,
             providers,
             "http://127.0.0.1:4399".to_string(),
             None,

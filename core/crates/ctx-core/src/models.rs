@@ -520,6 +520,8 @@ pub struct WorkspaceIndexPage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceArchivedPage {
     pub workspace_id: WorkspaceId,
+    #[serde(default)]
+    pub archived_rev: i64,
     pub tasks: Vec<WorkspaceTaskSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<WorkspaceIndexCursor>,
@@ -565,6 +567,8 @@ pub struct WorkspaceActivePage {
 pub struct WorkspaceActiveSnapshot {
     pub workspace_id: WorkspaceId,
     pub snapshot_rev: i64,
+    #[serde(default)]
+    pub archived_rev: i64,
     pub active: WorkspaceActivePage,
 }
 
@@ -574,6 +578,8 @@ pub struct SessionSnapshotSummary {
     pub last_message_at: Option<DateTime<Utc>>,
     pub last_message_preview: Option<String>,
     pub last_event_seq: Option<i64>,
+    #[serde(default)]
+    pub state_rev: i64,
     #[serde(default)]
     pub activity: SessionActivityState,
     pub unread: Option<bool>,
@@ -619,6 +625,8 @@ pub struct SessionHeadSnapshot {
     pub messages: Vec<Message>,
     pub last_event_seq: i64,
     #[serde(default)]
+    pub state_rev: i64,
+    #[serde(default)]
     pub activity: SessionActivityState,
     pub has_more_turns: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -652,16 +660,43 @@ pub struct SessionHead {
     pub head_window: SessionHeadWindow,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SessionGitStatusSummary {
+    pub summary_line: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<String>,
+    pub ahead: i64,
+    pub behind: i64,
+    pub detached: bool,
+    pub staged: i64,
+    pub unstaged: i64,
+    pub untracked: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SessionState {
+    #[serde(default)]
+    pub artifacts: Vec<Artifact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_status: Option<SessionGitStatusSummary>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSnapshot {
     pub summary: SessionSnapshotSummary,
     pub head: SessionHeadSnapshot,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<SessionState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionHeadDelta {
     pub session_id: SessionId,
     pub last_event_seq: i64,
+    #[serde(default)]
+    pub state_rev: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event: Option<SessionEvent>,
     pub turn: Option<SessionTurn>,
@@ -723,6 +758,8 @@ pub enum WorkspaceActiveSnapshotEvent {
     Ready {
         workspace_id: WorkspaceId,
         snapshot_rev: i64,
+        #[serde(default)]
+        archived_rev: i64,
     },
     ActiveTaskUpsert {
         workspace_id: WorkspaceId,
@@ -756,6 +793,18 @@ pub enum WorkspaceActiveSnapshotEvent {
         workspace_id: WorkspaceId,
         snapshot_rev: i64,
         notice: WorktreeBootstrapNotice,
+    },
+    ArchivedTaskUpsert {
+        workspace_id: WorkspaceId,
+        archived_rev: i64,
+        task: Box<WorkspaceTaskSummary>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        snapshot: Option<Box<SessionSnapshot>>,
+    },
+    ArchivedTaskDelete {
+        workspace_id: WorkspaceId,
+        archived_rev: i64,
+        task_id: TaskId,
     },
 }
 

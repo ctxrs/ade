@@ -8,7 +8,7 @@ use ctx_core::models::Worktree;
 use ctx_fs::git::rev_parse_head;
 use ctx_http::attachments;
 use ctx_http::daemon::AppState;
-use ctx_store::Store;
+use ctx_store::StoreManager;
 
 async fn run_git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -67,14 +67,14 @@ async fn attachments_demo_react_smoketest() {
     run_git(&ws_root, &["commit", "-m", "init"]).await;
 
     let data_dir = TempDir::new().unwrap();
-    let db_dir = data_dir.path().join("db");
-    tokio::fs::create_dir_all(&db_dir).await.unwrap();
-    let store = Store::open(db_dir.join("db.sqlite")).await.unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
-    let ws = store
+    let ws = stores
+        .global()
         .create_workspace("demo".to_string(), ws_root.to_string_lossy().to_string())
         .await
         .unwrap();
+    let store = stores.workspace(ws.id).await.unwrap();
     let base_commit_sha = rev_parse_head(&ws_root).await.unwrap();
     let worktree = Worktree {
         id: WorktreeId::new(),
@@ -108,7 +108,7 @@ async fn attachments_demo_react_smoketest() {
     > = std::collections::HashMap::new();
     let state = AppState::new(
         data_dir.path().to_path_buf(),
-        store.clone(),
+        stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,

@@ -239,6 +239,11 @@ actor DaemonAPIClient {
         let limit: Int?
     }
 
+    struct WorkspaceArchivedPageParams: Sendable {
+        let limit: Int?
+        let cursor: WorkspaceIndexCursor?
+    }
+
     private struct EmptyResponse: Decodable {}
     private struct EmptyPayload: Encodable {}
 
@@ -568,6 +573,10 @@ actor DaemonAPIClient {
         return try await request("/api/sessions/\(sessionId)/snapshot", queryItems: queryItems)
     }
 
+    func getSessionState(sessionId: String) async throws -> SessionState {
+        try await request("/api/sessions/\(sessionId)/state")
+    }
+
     func getSessionHistory(sessionId: String, beforeSeq: Int?, limit: Int?) async throws -> SessionHistoryPage {
         var queryItems: [URLQueryItem] = []
         if let beforeSeq = beforeSeq {
@@ -609,6 +618,22 @@ actor DaemonAPIClient {
             queryItems.append(URLQueryItem(name: "limit", value: String(limit)))
         }
         return try await request("/api/workspaces/\(workspaceId)/active_snapshot", queryItems: queryItems)
+    }
+
+    func listWorkspaceArchivedTaskSummaries(workspaceId: String, params: WorkspaceArchivedPageParams?) async throws -> WorkspaceArchivedPage {
+        var queryItems: [URLQueryItem] = []
+        if let limit = params?.limit {
+            queryItems.append(URLQueryItem(name: "limit", value: String(limit)))
+        }
+        if let cursor = params?.cursor {
+            let sortAt = cursor.sortAt.trimmingCharacters(in: .whitespacesAndNewlines)
+            let taskId = cursor.taskId.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sortAt.isEmpty && !taskId.isEmpty {
+                queryItems.append(URLQueryItem(name: "cursor_sort_at", value: sortAt))
+                queryItems.append(URLQueryItem(name: "cursor_task_id", value: taskId))
+            }
+        }
+        return try await request("/api/workspaces/\(workspaceId)/archived_task_summaries", queryItems: queryItems)
     }
 
     private func requireToken() throws -> String {

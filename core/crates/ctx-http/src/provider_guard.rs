@@ -398,7 +398,11 @@ async fn notify_sessions(
 ) {
     let session_ids = state.list_running_sessions().await;
     for session_id in session_ids {
-        let session = state.store.get_session(session_id).await.ok().flatten();
+        let store = match state.store_for_session(session_id).await {
+            Ok(store) => store,
+            Err(_) => continue,
+        };
+        let session = store.get_session(session_id).await.ok().flatten();
         let Some(session) = session else {
             continue;
         };
@@ -423,8 +427,7 @@ async fn notify_sessions(
                 _ => "Provider guard notice.",
             },
         });
-        match state
-            .store
+        match store
             .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
             .await
         {

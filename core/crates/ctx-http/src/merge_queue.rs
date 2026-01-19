@@ -32,6 +32,32 @@ pub struct MergeQueueSubmitParams {
     pub message: Option<String>,
 }
 
+pub async fn get_merge_queue_entry(
+    state: &AppState,
+    entry_id: MergeQueueEntryId,
+) -> Result<MergeQueueEntry> {
+    let workspaces = state.global_store().list_workspaces().await?;
+    for workspace in workspaces {
+        let store = state.store_for_workspace(workspace.id).await?;
+        if let Some(entry) = store.get_merge_queue_entry(entry_id).await? {
+            return Ok(entry);
+        }
+    }
+    bail!("merge queue entry not found");
+}
+
+async fn list_queued_entries(state: &AppState) -> Result<Vec<MergeQueueEntry>> {
+    let mut out = Vec::new();
+    let workspaces = state.global_store().list_workspaces().await?;
+    for workspace in workspaces {
+        let store = state.store_for_workspace(workspace.id).await?;
+        let mut entries = store.list_queued_merge_queue_entries().await?;
+        out.append(&mut entries);
+    }
+    out.sort_by_key(|entry| entry.created_at);
+    Ok(out)
+}
+
 pub async fn submit_merge_queue_entry(
     state: &Arc<AppState>,
     params: MergeQueueSubmitParams,
@@ -104,7 +130,8 @@ pub async fn submit_merge_queue_entry(
         created_at: now,
         updated_at: now,
     };
-    state.store.create_merge_queue_entry(&entry).await?;
+    let store = state.store_for_workspace(workspace.id).await?;
+    store.create_merge_queue_entry(&entry).await?;
     state.merge_queue_notify.notify_one();
     let entry = wait_for_merge_queue_completion(state, entry.id).await?;
     ensure_merge_queue_success(&entry)?;
@@ -115,16 +142,13 @@ pub async fn cancel_merge_queue_entry(
     state: &Arc<AppState>,
     entry_id: MergeQueueEntryId,
 ) -> Result<MergeQueueEntry> {
-    let mut entry = state
-        .store
-        .get_merge_queue_entry(entry_id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("merge queue entry not found"))?;
+    let mut entry = get_merge_queue_entry(state, entry_id).await?;
+    let store = state.store_for_workspace(entry.workspace_id).await?;
     match entry.status {
         MergeQueueEntryStatus::Queued => {
             entry.status = MergeQueueEntryStatus::Cancelled;
             entry.updated_at = Utc::now();
-            state.store.update_merge_queue_entry(&entry).await?;
+            store.update_merge_queue_entry(&entry).await?;
             state.merge_queue_notify.notify_waiters();
             Ok(entry)
         }
@@ -139,18 +163,15 @@ pub async fn retry_merge_queue_entry(
     state: &Arc<AppState>,
     entry_id: MergeQueueEntryId,
 ) -> Result<MergeQueueEntry> {
-    let mut entry = state
-        .store
-        .get_merge_queue_entry(entry_id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("merge queue entry not found"))?;
+    let mut entry = get_merge_queue_entry(state, entry_id).await?;
+    let store = state.store_for_workspace(entry.workspace_id).await?;
     match entry.status {
         MergeQueueEntryStatus::Failed | MergeQueueEntryStatus::Conflict => {
             entry.status = MergeQueueEntryStatus::Queued;
             entry.error_message = None;
             entry.result_commit_sha = None;
             entry.updated_at = Utc::now();
-            state.store.update_merge_queue_entry(&entry).await?;
+            store.update_merge_queue_entry(&entry).await?;
             state.merge_queue_notify.notify_one();
             state.merge_queue_notify.notify_waiters();
             Ok(entry)
@@ -176,18 +197,23 @@ pub fn spawn_merge_queue_runner(state: Arc<AppState>) {
 }
 
 async fn run_next_entry(state: &Arc<AppState>) -> Result<bool> {
-    let entries = state.store.list_queued_merge_queue_entries().await?;
+    let entries = list_queued_entries(state).await?;
     for mut entry in entries {
-        let workspace = match state.store.get_workspace(entry.workspace_id).await? {
+        let workspace = match state
+            .global_store()
+            .get_workspace(entry.workspace_id)
+            .await?
+        {
             Some(ws) => ws,
             None => continue,
         };
+        let store = state.store_for_workspace(workspace.id).await?;
         let cfg = load_merge_queue_config(Path::new(&workspace.root_path)).await?;
         if !cfg.enabled {
             continue;
         }
         let now = Utc::now();
-        let claimed = state.store.claim_merge_queue_entry(entry.id, now).await?;
+        let claimed = store.claim_merge_queue_entry(entry.id, now).await?;
         if !claimed {
             continue;
         }
@@ -205,6 +231,7 @@ async fn run_entry(
     mut entry: MergeQueueEntry,
     cfg: &MergeQueueConfig,
 ) -> Result<()> {
+    let store = state.store_for_workspace(workspace.id).await?;
     let run_id = MergeQueueRunId::new();
     let log_path = merge_queue_log_path(&state.data_root, run_id);
     let mut run = MergeQueueRun {
@@ -218,7 +245,7 @@ async fn run_entry(
         error_message: None,
         result_commit_sha: None,
     };
-    state.store.create_merge_queue_run(&run).await?;
+    store.create_merge_queue_run(&run).await?;
 
     let mut log_file = open_log_file(&log_path).await?;
     write_log_line(&mut log_file, "# ctx merge queue\n").await?;
@@ -239,8 +266,8 @@ async fn run_entry(
             run.status = MergeQueueRunStatus::Passed;
             run.result_commit_sha = Some(commit_sha.clone());
             run.finished_at = Some(now);
-            state.store.update_merge_queue_entry(&entry).await?;
-            state.store.update_merge_queue_run(&run).await?;
+            store.update_merge_queue_entry(&entry).await?;
+            store.update_merge_queue_run(&run).await?;
             state.merge_queue_notify.notify_waiters();
             if let Err(err) =
                 maybe_sync_originating_worktree(state, workspace, &entry, &commit_sha).await
@@ -255,8 +282,8 @@ async fn run_entry(
             run.status = MergeQueueRunStatus::Conflict;
             run.error_message = Some(message);
             run.finished_at = Some(now);
-            state.store.update_merge_queue_entry(&entry).await?;
-            state.store.update_merge_queue_run(&run).await?;
+            store.update_merge_queue_entry(&entry).await?;
+            store.update_merge_queue_run(&run).await?;
             state.merge_queue_notify.notify_waiters();
         }
         Err(QueueError::Failed {
@@ -273,8 +300,8 @@ async fn run_entry(
             run.error_message = Some(message);
             run.result_commit_sha = result_commit_sha;
             run.finished_at = Some(now);
-            state.store.update_merge_queue_entry(&entry).await?;
-            state.store.update_merge_queue_run(&run).await?;
+            store.update_merge_queue_entry(&entry).await?;
+            store.update_merge_queue_run(&run).await?;
             state.merge_queue_notify.notify_waiters();
         }
     }
@@ -286,10 +313,11 @@ async fn wait_for_merge_queue_completion(
     state: &Arc<AppState>,
     entry_id: MergeQueueEntryId,
 ) -> Result<MergeQueueEntry> {
+    let entry = get_merge_queue_entry(state, entry_id).await?;
+    let store = state.store_for_workspace(entry.workspace_id).await?;
     let notify = state.merge_queue_notify.clone();
     loop {
-        let entry = state
-            .store
+        let entry = store
             .get_merge_queue_entry(entry_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("merge queue entry not found"))?;
@@ -446,13 +474,13 @@ async fn resolve_workspace_context(
     worktree_id: Option<WorktreeId>,
 ) -> Result<(Workspace, Option<Worktree>)> {
     if let Some(worktree_id) = worktree_id {
-        let worktree = state
-            .store
+        let store = state.store_for_worktree(worktree_id).await?;
+        let worktree = store
             .get_worktree(worktree_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("worktree not found"))?;
         let workspace = state
-            .store
+            .global_store()
             .get_workspace(worktree.workspace_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
@@ -460,17 +488,17 @@ async fn resolve_workspace_context(
     }
 
     let session_id = session_id.ok_or_else(|| anyhow::anyhow!("session_id is required"))?;
-    let session = state
-        .store
+    let store = state.store_for_session(session_id).await?;
+    let session = store
         .get_session(session_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("session not found"))?;
     let workspace = state
-        .store
+        .global_store()
         .get_workspace(session.workspace_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
-    let worktree = state.store.get_worktree(session.worktree_id).await?;
+    let worktree = store.get_worktree(session.worktree_id).await?;
     Ok((workspace, worktree))
 }
 
@@ -676,7 +704,8 @@ async fn maybe_sync_originating_worktree(
     let Some(worktree_id) = entry.worktree_id else {
         return Ok(());
     };
-    let Some(worktree) = state.store.get_worktree(worktree_id).await? else {
+    let store = state.store_for_worktree(worktree_id).await?;
+    let Some(worktree) = store.get_worktree(worktree_id).await? else {
         return Ok(());
     };
     if worktree.workspace_id != workspace.id {
@@ -691,8 +720,7 @@ async fn maybe_sync_originating_worktree(
         .await
         .unwrap_or_else(|_| "unknown".to_string());
     reset_worktree_to_commit(&worktree.root_path, commit_sha).await?;
-    let updated = state
-        .store
+    let updated = store
         .update_worktree_base_commit(worktree_id, commit_sha)
         .await?;
     if !updated {
@@ -725,8 +753,8 @@ async fn emit_merge_queue_sync_notice(
     let message = format!(
         "merge queue applied; reset worktree from {previous_short} to {target_branch} ({short_sha})"
     );
-    let notice = state
-        .store
+    let store = state.store_for_session(session_id).await?;
+    let notice = store
         .append_session_event(
             session_id,
             None,

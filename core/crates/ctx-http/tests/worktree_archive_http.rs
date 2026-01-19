@@ -10,7 +10,7 @@ use ctx_fs::worktrees::managed_worktree_path;
 use ctx_http::api;
 use ctx_http::daemon::AppState;
 use ctx_providers::fake::FakeProviderAdapter;
-use ctx_store::Store;
+use ctx_store::StoreManager;
 
 async fn setup_git_repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -67,10 +67,7 @@ async fn branch_exists(root: &Path, branch: &str) -> bool {
 async fn archive_and_unarchive_recreates_managed_worktrees() {
     let repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
-    let db_dir = data_dir.path().join("db");
-    tokio::fs::create_dir_all(&db_dir).await.unwrap();
-    let db_path = db_dir.join("db.sqlite");
-    let store = Store::open(&db_path).await.unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
@@ -78,7 +75,7 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
 
     let state = Arc::new(AppState::new(
         data_dir.path().to_path_buf(),
-        store.clone(),
+        stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
@@ -134,6 +131,7 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         .await
         .unwrap();
 
+    let store = state.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     let mut managed = Vec::new();
     let mut local_roots = Vec::new();
@@ -168,7 +166,8 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
 
     let list_before = git_worktree_list(repo.path()).await;
     for root in &managed_roots {
-        assert!(list_before.contains(root.to_string_lossy().as_ref()));
+        let root_str = root.to_string_lossy();
+        assert!(list_before.contains(root_str.as_ref()));
     }
     for branch in &managed_branches {
         assert!(branch_exists(repo.path(), branch).await);
@@ -186,7 +185,8 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
     }
     let list_archived = git_worktree_list(repo.path()).await;
     for root in &managed_roots {
-        assert!(!list_archived.contains(root.to_string_lossy().as_ref()));
+        let root_str = root.to_string_lossy();
+        assert!(!list_archived.contains(root_str.as_ref()));
     }
     for local_root in local_roots {
         assert!(tokio::fs::metadata(local_root).await.is_ok());
@@ -206,7 +206,8 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
     let list_after = git_worktree_list(repo.path()).await;
     for root in &managed_roots {
         assert!(tokio::fs::metadata(root).await.is_ok());
-        assert!(list_after.contains(root.to_string_lossy().as_ref()));
+        let root_str = root.to_string_lossy();
+        assert!(list_after.contains(root_str.as_ref()));
     }
     for branch in &managed_branches {
         assert!(branch_exists(repo.path(), branch).await);

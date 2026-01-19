@@ -1,8 +1,9 @@
-use ctx_core::ids::{SessionId, TaskId};
+use ctx_core::ids::{SessionId, TaskId, WorktreeId};
 use ctx_core::models::{
-    Session, SessionMetadata, SessionSnapshotSummary, SessionStatus, Task,
-    WorkspaceActiveTaskSummary,
+    SessionActivityState, SessionMetadata, SessionSnapshotSummary, SessionStatus, SessionSummary,
+    Task, WorkspaceActiveTaskSummary,
 };
+use uuid::Uuid;
 
 #[cfg(test)]
 use ctx_core::models::WorkspaceActiveSnapshot;
@@ -133,32 +134,33 @@ fn session_status_label(status: &SessionStatus) -> &'static str {
     }
 }
 
-fn session_metadata_from_session(session: &Session) -> SessionMetadata {
-    SessionMetadata {
-        id: session.id,
-        task_id: session.task_id,
-        workspace_id: session.workspace_id,
-        worktree_id: session.worktree_id,
-        parent_session_id: session.parent_session_id,
-        relationship: session.relationship.clone(),
-        provider_id: session.provider_id.clone(),
-        model_id: session.model_id.clone(),
-        title: session.title.clone(),
-        agent_role: session.agent_role.clone(),
-        status: session.status.clone(),
-        provider_session_ref: session.provider_session_ref.clone(),
-        created_at: session.created_at,
-        updated_at: session.updated_at,
-    }
-}
-
-pub fn session_summary_from_session(session: &Session) -> SessionSnapshotSummary {
+pub fn session_snapshot_from_summary(
+    summary: &SessionSummary,
+    fallback_worktree_id: Option<WorktreeId>,
+) -> SessionSnapshotSummary {
+    let worktree_id = fallback_worktree_id.unwrap_or(WorktreeId(Uuid::nil()));
     SessionSnapshotSummary {
-        session: session_metadata_from_session(session),
+        session: SessionMetadata {
+            id: summary.id,
+            task_id: summary.task_id,
+            workspace_id: summary.workspace_id,
+            worktree_id,
+            parent_session_id: summary.parent_session_id,
+            relationship: summary.relationship.clone(),
+            provider_id: summary.provider_id.clone(),
+            model_id: summary.model_id.clone(),
+            title: summary.title.clone(),
+            agent_role: "assistant".to_string(),
+            status: summary.status.clone(),
+            provider_session_ref: None,
+            created_at: summary.created_at,
+            updated_at: summary.updated_at,
+        },
         last_message_at: None,
         last_message_preview: None,
         last_event_seq: None,
-        activity: Default::default(),
+        state_rev: 0,
+        activity: SessionActivityState::default(),
         unread: None,
     }
 }

@@ -1494,12 +1494,29 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (!activeTaskId) {
       return;
     }
+    const snapshotReady = workspaceSnapshot.initialized && workspaceSnapshot.fetchState.active === "idle";
+    if (!activeTaskSummary) {
+      if (!snapshotReady) return;
+      workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
+      return;
+    }
     if (sessionIds.length === 0 && !primarySessionId) {
+      if (!snapshotReady) return;
       workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
       return;
     }
     ensureActiveSessionSelection(activeTaskId, sessionSummaries, primarySessionId || null);
-  }, [activeTaskId, ensureActiveSessionSelection, primarySessionId, sessionIds.length, sessionSummaries, workbenchStore]);
+  }, [
+    activeTaskId,
+    activeTaskSummary,
+    ensureActiveSessionSelection,
+    primarySessionId,
+    sessionIds.length,
+    sessionSummaries,
+    workbenchStore,
+    workspaceSnapshot.initialized,
+    workspaceSnapshot.fetchState.active,
+  ]);
 
   useEffect(() => {
     supervisor.setActiveTaskSessionIds(activeTaskSessionIds);

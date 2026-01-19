@@ -32,7 +32,7 @@ mod relative_time;
 #[path = "ui_state.rs"]
 mod ui_state;
 #[path = "state/mod.rs"]
-mod state;
+pub(crate) mod state;
 #[path = "views/mod.rs"]
 mod views;
 
@@ -47,8 +47,6 @@ use self::views::RouterView;
 pub(crate) use self::state::{ShellRoute, ShellView};
 #[cfg(feature = "automation")]
 pub(crate) use self::state::ComposerMenuId;
-#[cfg(feature = "automation")]
-pub(crate) use self::state::RightPaneMode;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -176,6 +174,8 @@ fn create_shell_view(
             composer_provider_menu_open: false,
             composer_model_menu_open: false,
             task_store_initialized: false,
+            workspace_snapshot_rev: 0,
+            archived_snapshot_rev: 0,
             task_fetch_active: TaskFetchState::Idle,
             task_fetch_archived: TaskFetchState::Idle,
             task_has_more_active: true,
@@ -184,6 +184,7 @@ fn create_shell_view(
             tasks_by_id: HashMap::new(),
             task_active_order: Vec::new(),
             task_archived_order: Vec::new(),
+            task_archived_cursor: None,
             task_query: String::new(),
             task_search_input: task_search_input.clone(),
             task_list_scroll_handle: VirtualListScrollHandle::new(),
@@ -239,6 +240,8 @@ fn create_shell_view(
             session_events: Vec::new(),
             session_thread_cache: HashMap::new(),
             session_head_meta: HashMap::new(),
+            session_state_cache: HashMap::new(),
+            session_state_loading: HashSet::new(),
             session_summary_map: HashMap::new(),
             session_last_event_seq: HashMap::new(),
             session: SessionInfo::placeholder(),

@@ -2947,6 +2947,7 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var sessionId: String?
     private var workspaceId: String?
     private var lastEventSeq: Int?
+    private var sessionStateRev: Int?
     private var pollTask: _Concurrency.Task<Void, Never>?
     private var streamTask: _Concurrency.Task<Void, Never>?
     private var streamSocket: URLSessionWebSocketTask?
@@ -3024,6 +3025,7 @@ final class ChatViewModel: ObservableObject {
             turnStatus = sampleTurnStatus()
             contextWindowInfo = nil
             lastEventSeq = nil
+            sessionStateRev = nil
             refreshAssetContext()
             _Concurrency.Task { @MainActor in
                 secureContext = await client?.secureConnectionContext()
@@ -3042,6 +3044,7 @@ final class ChatViewModel: ObservableObject {
             sessionId = nil
             workspaceId = nil
             lastEventSeq = nil
+            sessionStateRev = nil
             messages = Self.sampleMessages
             latestTurns = []
             latestEvents = []
@@ -3130,6 +3133,7 @@ final class ChatViewModel: ObservableObject {
             await ArtifactContentCache.shared.setActiveScope(sessionId)
         }
         lastEventSeq = nil
+        sessionStateRev = nil
         setPendingAssistantResponse(false)
         streamingAssistantState = nil
         refreshInFlight = false
@@ -3178,7 +3182,6 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func hydrateFromCacheIfNeeded(sessionId: String?, generation: Int) async {
-        guard !isArchivedSession else { return }
         guard messages.isEmpty && latestTurns.isEmpty else { return }
         guard let sessionId else { return }
         guard let cached = await ATSHeadCache.shared.load(sessionId: sessionId) else { return }
@@ -3202,6 +3205,7 @@ final class ChatViewModel: ObservableObject {
         latestEvents = cached.events ?? []
         latestToolSummaries = cached.toolSummaries ?? []
         lastEventSeq = cached.lastEventSeq
+        sessionStateRev = cached.stateRev
         workspaceId = workspaceId ?? cached.session.workspaceId.stringValue
         if let turn = mostRecentTurn(in: cached.turns) {
             updateTurnStatus(from: turn)
@@ -3312,6 +3316,11 @@ final class ChatViewModel: ObservableObject {
             }
             latestEvents = head.events ?? []
             latestToolSummaries = head.toolSummaries ?? []
+            if let state = snapshot.state {
+                applyArtifactsFromStream(state.artifacts)
+            }
+            sessionStateRev = head.stateRev
+            _Concurrency.Task { await ATSHeadCache.shared.store(head: head) }
             if let turn = mostRecentTurn(in: head.turns) {
                 updateTurnStatus(from: turn)
                 updateContextWindow(from: turn)
@@ -3422,7 +3431,8 @@ final class ChatViewModel: ObservableObject {
         let resolved = await resolveSessionId()
         guard let resolved, generation == sessionGeneration else { return }
         do {
-            artifacts = try await client.listSessionArtifacts(sessionId: resolved)
+            let state = try await client.getSessionState(sessionId: resolved)
+            artifacts = state.artifacts
             artifactsError = nil
             prefetchArtifactsIfNeeded()
             if artifactsRefreshPending, generation == sessionGeneration {
@@ -3430,12 +3440,22 @@ final class ChatViewModel: ObservableObject {
                 _Concurrency.Task { await refreshArtifacts() }
             }
         } catch {
-            if generation == sessionGeneration {
-                artifactsError = "Failed to load artifacts."
-            }
-            if artifactsRefreshPending, generation == sessionGeneration {
-                artifactsRefreshPending = false
-                _Concurrency.Task { await refreshArtifacts() }
+            do {
+                artifacts = try await client.listSessionArtifacts(sessionId: resolved)
+                artifactsError = nil
+                prefetchArtifactsIfNeeded()
+                if artifactsRefreshPending, generation == sessionGeneration {
+                    artifactsRefreshPending = false
+                    _Concurrency.Task { await refreshArtifacts() }
+                }
+            } catch {
+                if generation == sessionGeneration {
+                    artifactsError = "Failed to load artifacts."
+                }
+                if artifactsRefreshPending, generation == sessionGeneration {
+                    artifactsRefreshPending = false
+                    _Concurrency.Task { await refreshArtifacts() }
+                }
             }
         }
     }
@@ -4021,6 +4041,7 @@ final class ChatViewModel: ObservableObject {
                 let resolved = head.session.workspaceId.stringValue
                 workspaceId = resolved
                 lastEventSeq = head.lastEventSeq
+                sessionStateRev = head.stateRev
                 return resolved
             }
         }
@@ -4039,6 +4060,7 @@ final class ChatViewModel: ObservableObject {
         if let snapshot = try? await client.getSessionSnapshot(sessionId: sessionId, limit: 1, includeEvents: false) {
             let head = snapshot.head
             lastEventSeq = head.lastEventSeq
+            sessionStateRev = head.stateRev
             workspaceId = workspaceId ?? head.session.workspaceId.stringValue
             if let turn = mostRecentTurn(in: head.turns) {
                 updateTurnStatus(from: turn)
@@ -4221,6 +4243,15 @@ final class ChatViewModel: ObservableObject {
             if eventSessionId == currentSessionId {
                 _Concurrency.Task { await ATSHeadCache.shared.apply(delta: delta) }
                 lastEventSeq = delta.lastEventSeq
+                if let nextRev = delta.stateRev {
+                    if let current = sessionStateRev, nextRev > current + 1 {
+                        _Concurrency.Task {
+                            _ = await refreshMessages()
+                            await refreshArtifacts()
+                        }
+                    }
+                    sessionStateRev = max(sessionStateRev ?? 0, nextRev)
+                }
                 if let turn = delta.turn {
                     applyTurnDelta(turn)
                 }
@@ -4253,6 +4284,18 @@ final class ChatViewModel: ObservableObject {
                 if let lastEventSeq = summary.lastEventSeq {
                     self.lastEventSeq = lastEventSeq
                 }
+                if let stateRev = summary.stateRev {
+                    if let current = sessionStateRev, stateRev != current {
+                        sessionStateRev = stateRev
+                        _Concurrency.Task {
+                            _ = await refreshMessages()
+                            await refreshQueue()
+                            await refreshArtifacts()
+                        }
+                        return
+                    }
+                    sessionStateRev = stateRev
+                }
                 _Concurrency.Task {
                     _ = await refreshMessages()
                     await refreshQueue()
@@ -4262,6 +4305,7 @@ final class ChatViewModel: ObservableObject {
         case .sessionGap(_, _, let sessionId, let afterSeq, _):
             if sessionId.stringValue == currentSessionId {
                 lastEventSeq = afterSeq
+                sessionStateRev = nil
                 streamingAssistantState = nil
                 updateWorkingState()
                 _Concurrency.Task {

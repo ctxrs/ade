@@ -54,14 +54,12 @@ pub async fn sync_workspace_attachments(
     refresh: bool,
 ) -> Result<Vec<WorkspaceAttachment>> {
     let cfg = load_attachments_config(Path::new(&workspace.root_path)).await?;
-    let existing = state.store.list_workspace_attachments(workspace.id).await?;
+    let store = state.store_for_workspace(workspace.id).await?;
+    let existing = store.list_workspace_attachments(workspace.id).await?;
     if cfg.is_none() {
         for attachment in existing {
             cleanup_removed_attachment(state, &attachment).await?;
-            state
-                .store
-                .delete_workspace_attachment(attachment.id)
-                .await?;
+            store.delete_workspace_attachment(attachment.id).await?;
         }
         return Ok(vec![]);
     }
@@ -82,7 +80,7 @@ pub async fn sync_workspace_attachments(
         let attachment =
             normalize_attachment_config(workspace.id, entry, |key| existing_map.remove(key));
         keep_ids.insert(attachment.id);
-        state.store.upsert_workspace_attachment(&attachment).await?;
+        store.upsert_workspace_attachment(&attachment).await?;
         maybe_materialize_attachment(state, workspace, &attachment, refresh).await?;
         out.push(attachment);
     }
@@ -96,10 +94,7 @@ pub async fn sync_workspace_attachments(
 
     for attachment in removed {
         cleanup_removed_attachment(state, &attachment).await?;
-        state
-            .store
-            .delete_workspace_attachment(attachment.id)
-            .await?;
+        store.delete_workspace_attachment(attachment.id).await?;
     }
 
     Ok(out)
@@ -111,7 +106,8 @@ pub async fn ensure_worktree_attachment_mounts(
     worktree: &Worktree,
     refresh: bool,
 ) -> Result<Vec<WorktreeAttachmentMount>> {
-    let attachments = state.store.list_workspace_attachments(workspace.id).await?;
+    let store = state.store_for_workspace(workspace.id).await?;
+    let attachments = store.list_workspace_attachments(workspace.id).await?;
     ensure_worktree_attachment_mounts_for_attachments(
         state,
         workspace,
@@ -134,6 +130,8 @@ pub async fn ensure_worktree_attachment_mounts_for_attachments(
     if attachments.is_empty() {
         return Ok(vec![]);
     }
+
+    let store = state.store_for_workspace(workspace.id).await?;
 
     let worktree_root = PathBuf::from(&worktree.root_path);
     ensure_git_exclude(&worktree_root).await?;
@@ -168,7 +166,7 @@ pub async fn ensure_worktree_attachment_mounts_for_attachments(
                     created_at: now,
                     updated_at: now,
                 };
-                state.store.upsert_worktree_attachment_mount(&mount).await?;
+                store.upsert_worktree_attachment_mount(&mount).await?;
                 mounts.push(mount);
             }
         }
@@ -182,7 +180,8 @@ pub async fn ensure_workspace_attachments_for_worktrees(
     workspace: &Workspace,
     refresh: bool,
 ) -> Result<()> {
-    let attachments = state.store.list_workspace_attachments(workspace.id).await?;
+    let store = state.store_for_workspace(workspace.id).await?;
+    let attachments = store.list_workspace_attachments(workspace.id).await?;
     ensure_workspace_attachments_for_worktrees_with_attachments(
         state,
         workspace,
@@ -200,7 +199,8 @@ pub async fn ensure_workspace_attachments_for_worktrees_with_attachments(
     refresh: bool,
     materialize: bool,
 ) -> Result<()> {
-    let worktrees = state.store.list_worktrees(workspace.id).await?;
+    let store = state.store_for_workspace(workspace.id).await?;
+    let worktrees = store.list_worktrees(workspace.id).await?;
     for worktree in worktrees {
         let _ = ensure_worktree_attachment_mounts_for_attachments(
             state,
@@ -391,7 +391,11 @@ async fn ensure_attachment_mount(
         created_at: now,
         updated_at: now,
     };
-    state.store.upsert_worktree_attachment_mount(&mount).await?;
+    let store = state
+        .store_for_workspace(workspace.id)
+        .await
+        .context("load workspace store for attachment mount update")?;
+    store.upsert_worktree_attachment_mount(&mount).await?;
     Ok(mount)
 }
 
@@ -399,16 +403,15 @@ async fn cleanup_removed_attachment(
     state: &AppState,
     attachment: &WorkspaceAttachment,
 ) -> Result<()> {
-    let mounts = state
-        .store
+    let store = state.store_for_workspace(attachment.workspace_id).await?;
+    let mounts = store
         .list_worktree_attachment_mounts_for_attachment(attachment.id)
         .await?;
     for mount in mounts {
         let path = PathBuf::from(&mount.mount_abs_path);
         remove_mount_path(&path).await?;
     }
-    state
-        .store
+    store
         .delete_worktree_attachment_mounts_for_attachment(attachment.id)
         .await?;
     let root = materialized_root_for_attachment(state, attachment);

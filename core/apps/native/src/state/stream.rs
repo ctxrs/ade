@@ -200,6 +200,63 @@ impl ShellView {
     }
 
     fn apply_workspace_event(&mut self, event: WorkspaceActiveSnapshotEvent, cx: &mut Context<Self>) {
+        let mut snapshot_rev = None;
+        let mut archived_rev = None;
+        let mut is_ready = false;
+        match &event {
+            WorkspaceActiveSnapshotEvent::Ready {
+                snapshot_rev: active,
+                archived_rev: archived,
+                ..
+            } => {
+                snapshot_rev = Some(*active);
+                archived_rev = Some(*archived);
+                is_ready = true;
+            }
+            WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+                snapshot_rev: next_rev,
+                ..
+            }
+            | WorkspaceActiveSnapshotEvent::ActiveTaskDelete {
+                snapshot_rev: next_rev,
+                ..
+            }
+            | WorkspaceActiveSnapshotEvent::SessionSummary {
+                snapshot_rev: next_rev,
+                ..
+            }
+            | WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                snapshot_rev: next_rev,
+                ..
+            }
+            | WorkspaceActiveSnapshotEvent::SessionGap {
+                snapshot_rev: next_rev,
+                ..
+            }
+            | WorkspaceActiveSnapshotEvent::WorktreeBootstrap {
+                snapshot_rev: next_rev,
+                ..
+            } => {
+                snapshot_rev = Some(*next_rev);
+            }
+            WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert {
+                archived_rev: next_rev,
+                ..
+            }
+            | WorkspaceActiveSnapshotEvent::ArchivedTaskDelete {
+                archived_rev: next_rev,
+                ..
+            } => {
+                archived_rev = Some(*next_rev);
+            }
+        }
+        if let Some(snapshot_rev) = snapshot_rev {
+            self.handle_snapshot_rev(snapshot_rev, is_ready, cx);
+        }
+        if let Some(archived_rev) = archived_rev {
+            self.handle_archived_rev(archived_rev, is_ready, cx);
+        }
+
         match event {
             WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
                 self.upsert_active_task_summary(*task, cx);
@@ -225,8 +282,51 @@ impl ShellView {
             } => {
                 self.handle_session_gap(session_id, after_seq, cx);
             }
+            WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert { task, snapshot, .. } => {
+                self.upsert_archived_task_summary(*task, snapshot.map(|snapshot| *snapshot), cx);
+                cx.notify();
+            }
+            WorkspaceActiveSnapshotEvent::ArchivedTaskDelete { task_id, .. } => {
+                self.remove_task(task_id);
+                cx.notify();
+            }
+            WorkspaceActiveSnapshotEvent::Ready { .. } => {}
             _ => {}
         }
+    }
+
+    fn handle_snapshot_rev(&mut self, snapshot_rev: i64, is_ready: bool, cx: &mut Context<Self>) {
+        if self.workspace_snapshot_rev > 0 {
+            if snapshot_rev < self.workspace_snapshot_rev {
+                self.workspace_snapshot_rev = snapshot_rev;
+                self.refresh_active_snapshot(cx);
+                self.prefetch_archived_head_window(cx);
+                return;
+            }
+            if snapshot_rev > self.workspace_snapshot_rev + 1
+                || (is_ready && snapshot_rev != self.workspace_snapshot_rev)
+            {
+                self.refresh_active_snapshot(cx);
+                self.prefetch_archived_head_window(cx);
+            }
+        }
+        self.workspace_snapshot_rev = snapshot_rev;
+    }
+
+    fn handle_archived_rev(&mut self, archived_rev: i64, is_ready: bool, cx: &mut Context<Self>) {
+        if self.archived_snapshot_rev > 0 {
+            if archived_rev < self.archived_snapshot_rev {
+                self.archived_snapshot_rev = archived_rev;
+                self.prefetch_archived_head_window(cx);
+                return;
+            }
+            if archived_rev > self.archived_snapshot_rev + 1
+                || (is_ready && archived_rev != self.archived_snapshot_rev)
+            {
+                self.prefetch_archived_head_window(cx);
+            }
+        }
+        self.archived_snapshot_rev = archived_rev;
     }
 
     fn handle_session_summary(&mut self, summary: SessionSnapshotSummary, cx: &mut Context<Self>) {
@@ -360,9 +460,7 @@ async fn run_workspace_stream(
         };
         if let Some(Ok(msg)) = ready {
             if let Some(event) = parse_workspace_stream_event(msg) {
-                if !matches!(event, WorkspaceActiveSnapshotEvent::Ready { .. }) {
-                    let _ = update_tx.send(StreamUpdate::Event(event));
-                }
+                let _ = update_tx.send(StreamUpdate::Event(event));
             }
         } else {
             let _ = update_tx.send(StreamUpdate::Status(StreamStatus::Reconnecting {
@@ -406,10 +504,8 @@ async fn run_workspace_stream(
                     match msg {
                         Some(Ok(frame)) => {
                             if let Some(event) = parse_workspace_stream_event(frame) {
-                                if !matches!(event, WorkspaceActiveSnapshotEvent::Ready { .. }) {
-                                    if update_tx.send(StreamUpdate::Event(event)).is_err() {
-                                        return Ok(());
-                                    }
+                                if update_tx.send(StreamUpdate::Event(event)).is_err() {
+                                    return Ok(());
                                 }
                             }
                         }

@@ -26,6 +26,7 @@ import type {
   SessionHistoryPage,
   SessionEventsPage,
   SessionSnapshot,
+  SessionState,
   SessionSnapshotSummary,
   SessionSummaryCheckpoint,
   TerminalSession,
@@ -73,6 +74,7 @@ export type {
   SessionHistoryPage,
   SessionEventsPage,
   SessionSnapshot,
+  SessionState,
   SessionSnapshotSummary,
   SessionSummaryCheckpoint,
   TerminalSession,
@@ -1102,6 +1104,9 @@ export const getSessionSnapshot = (sessionId: string, limit?: number, includeEve
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return apiAny<SessionSnapshot>(`/api/sessions/${sessionId}/snapshot${suffix}`);
 };
+
+export const getSessionState = (sessionId: string) =>
+  apiAny<SessionState>(`/api/sessions/${sessionId}/state`);
 
 export type ArtifactInput = {
   absolute_file_path: string;

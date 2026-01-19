@@ -25,6 +25,71 @@ const SESSION_HEAD_MESSAGE_LIMIT: usize = 200;
 const SESSION_HEAD_EVENT_LIMIT: usize = 200;
 const SESSION_HEAD_BYTE_LIMIT: usize = 1_500_000;
 const ACTIVE_SNAPSHOT_HEAD_LIMIT: u32 = 60;
+const SESSION_HEAD_ARCHIVED_TURN_LIMIT: u32 = 50;
+
+#[derive(Clone, Copy, Debug)]
+enum SessionHeadKind {
+    Active,
+    Archived,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SessionHeadLimits {
+    turn_limit: usize,
+    message_limit: usize,
+    event_limit: usize,
+    byte_limit: usize,
+}
+
+#[derive(Debug, Clone)]
+struct SessionHeadMaterialization {
+    last_event_seq: i64,
+    turns: Vec<SessionTurn>,
+    tool_summaries: Vec<SessionTurnToolSummary>,
+    events: Vec<SessionEvent>,
+    messages: Vec<Message>,
+    has_more_turns: bool,
+    head_window: SessionHeadWindow,
+}
+
+impl SessionHeadMaterialization {
+    fn from_head(head: &SessionHead) -> Self {
+        Self {
+            last_event_seq: head.last_event_seq,
+            turns: head.turns.clone(),
+            tool_summaries: head.tool_summaries.clone(),
+            events: head.events.clone(),
+            messages: head.messages.clone(),
+            has_more_turns: head.has_more_turns,
+            head_window: head.head_window.clone(),
+        }
+    }
+
+    fn into_session_head(
+        self,
+        session: Session,
+        summary_checkpoint: Option<SessionSummaryCheckpoint>,
+    ) -> SessionHead {
+        let last_status = self.turns.last().map(|t| t.status.clone());
+        let has_running_turn = self
+            .turns
+            .iter()
+            .any(|turn| matches!(turn.status, SessionTurnStatus::Running));
+        let activity = derive_activity_from_status(last_status, has_running_turn);
+        SessionHead {
+            session,
+            turns: self.turns,
+            tool_summaries: self.tool_summaries,
+            events: self.events,
+            messages: self.messages,
+            last_event_seq: self.last_event_seq,
+            activity,
+            has_more_turns: self.has_more_turns,
+            summary_checkpoint,
+            head_window: self.head_window,
+        }
+    }
+}
 
 #[derive(Serialize)]
 struct SessionHeadWindowPayload<'a> {
@@ -152,6 +217,52 @@ fn trim_session_head_window(
     }
 }
 
+fn session_head_kind_to_str(kind: SessionHeadKind) -> &'static str {
+    match kind {
+        SessionHeadKind::Active => "active",
+        SessionHeadKind::Archived => "archived",
+    }
+}
+
+fn session_head_limits(kind: SessionHeadKind, turn_limit: u32) -> SessionHeadLimits {
+    let max_turns = match kind {
+        SessionHeadKind::Active => SESSION_HEAD_MAX_TURNS,
+        SessionHeadKind::Archived => SESSION_HEAD_ARCHIVED_TURN_LIMIT,
+    };
+    let turn_limit = turn_limit.clamp(1, max_turns) as usize;
+    SessionHeadLimits {
+        turn_limit,
+        message_limit: SESSION_HEAD_MESSAGE_LIMIT,
+        event_limit: SESSION_HEAD_EVENT_LIMIT,
+        byte_limit: SESSION_HEAD_BYTE_LIMIT,
+    }
+}
+
+fn apply_session_head_limits(
+    mut head: SessionHead,
+    limits: SessionHeadLimits,
+    include_events: bool,
+) -> SessionHead {
+    if !include_events {
+        head.events.clear();
+    }
+    let mut has_more_turns = head.has_more_turns;
+    let head_window = trim_session_head_window(
+        &mut head.turns,
+        &mut head.messages,
+        &mut head.tool_summaries,
+        &mut head.events,
+        &mut has_more_turns,
+        limits.turn_limit,
+        limits.message_limit,
+        limits.event_limit,
+        limits.byte_limit,
+    );
+    head.has_more_turns = has_more_turns;
+    head.head_window = head_window;
+    head
+}
+
 fn serialize_bootstrap_status(status: &WorktreeBootstrapStatus) -> &'static str {
     match status {
         WorktreeBootstrapStatus::Success => "success",
@@ -240,6 +351,242 @@ impl Store {
 
     pub fn pool(&self) -> &Pool<Sqlite> {
         &self.pool
+    }
+
+    pub async fn close(&self) {
+        self.pool.close().await;
+    }
+
+    pub async fn migrate_workspace_from_path(
+        &self,
+        legacy_path: &Path,
+        workspace_id: WorkspaceId,
+    ) -> Result<()> {
+        let workspace_id = workspace_id.0.to_string();
+        let legacy_path = legacy_path.to_string_lossy().to_string();
+        let mut conn = self.pool.acquire().await?;
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("ATTACH DATABASE ? AS legacy")
+            .bind(&legacy_path)
+            .execute(&mut *conn)
+            .await?;
+
+        let migrate = async {
+            sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+
+            sqlx::query(
+                r#"INSERT OR REPLACE INTO workspaces
+                   SELECT * FROM legacy.workspaces WHERE id = ?"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO tasks
+                   SELECT * FROM legacy.tasks WHERE workspace_id = ?"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO worktrees
+                   SELECT * FROM legacy.worktrees WHERE workspace_id = ?"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO sessions
+                   SELECT * FROM legacy.sessions WHERE workspace_id = ?"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO messages
+                   SELECT * FROM legacy.messages
+                   WHERE session_id IN (
+                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
+                   )"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO session_events
+                   SELECT * FROM legacy.session_events
+                   WHERE session_id IN (
+                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
+                   )"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO session_turns
+                   SELECT * FROM legacy.session_turns
+                   WHERE session_id IN (
+                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
+                   )"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO session_turn_tools
+                   SELECT * FROM legacy.session_turn_tools
+                   WHERE session_id IN (
+                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
+                   )"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO artifacts
+                   SELECT * FROM legacy.artifacts WHERE workspace_id = ?"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO workspace_attachments
+                   SELECT * FROM legacy.workspace_attachments WHERE workspace_id = ?"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO worktree_attachment_mounts
+                   SELECT * FROM legacy.worktree_attachment_mounts
+                   WHERE worktree_id IN (
+                     SELECT id FROM legacy.worktrees WHERE workspace_id = ?
+                   )"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO subagent_invocations
+                   SELECT * FROM legacy.subagent_invocations
+                   WHERE parent_session_id IN (
+                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
+                   )"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO subagent_invocation_children
+                   SELECT * FROM legacy.subagent_invocation_children
+                   WHERE child_session_id IN (
+                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
+                   )"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO merge_queue_entries
+                   SELECT * FROM legacy.merge_queue_entries WHERE workspace_id = ?"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO merge_queue_runs
+                   SELECT * FROM legacy.merge_queue_runs
+                   WHERE entry_id IN (
+                     SELECT id FROM legacy.merge_queue_entries WHERE workspace_id = ?
+                   )"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO session_summary_checkpoints
+                   SELECT * FROM legacy.session_summary_checkpoints
+                   WHERE session_id IN (
+                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
+                   )"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO session_head_materializations
+                   SELECT * FROM legacy.session_head_materializations
+                   WHERE session_id IN (
+                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
+                   )"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO session_snapshot_summaries
+                   SELECT * FROM legacy.session_snapshot_summaries
+                   WHERE session_id IN (
+                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
+                   )"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query(
+                r#"INSERT INTO session_git_status_snapshots
+                   SELECT * FROM legacy.session_git_status_snapshots
+                   WHERE session_id IN (
+                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
+                   )"#,
+            )
+            .bind(&workspace_id)
+            .execute(&mut *conn)
+            .await?;
+
+            sqlx::query("COMMIT").execute(&mut *conn).await?;
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        if let Err(err) = migrate {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            let _ = sqlx::query("DETACH DATABASE legacy")
+                .execute(&mut *conn)
+                .await;
+            let _ = sqlx::query("PRAGMA foreign_keys = ON")
+                .execute(&mut *conn)
+                .await;
+            return Err(err);
+        }
+
+        sqlx::query("DETACH DATABASE legacy")
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut *conn)
+            .await?;
+        Ok(())
     }
 
     pub async fn prune_session_data_older_than_days(
@@ -351,6 +698,185 @@ impl Store {
         Ok(())
     }
 
+    pub async fn upsert_workspace(&self, workspace: &Workspace) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO workspaces (id, name, root_path, created_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                 name = excluded.name,
+                 root_path = excluded.root_path"#,
+        )
+        .bind(workspace.id.0.to_string())
+        .bind(&workspace.name)
+        .bind(&workspace.root_path)
+        .bind(workspace.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn upsert_workspace_task_index(
+        &self,
+        task_id: TaskId,
+        workspace_id: WorkspaceId,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO workspace_task_index (task_id, workspace_id)
+               VALUES (?, ?)
+               ON CONFLICT(task_id) DO UPDATE SET workspace_id = excluded.workspace_id"#,
+        )
+        .bind(task_id.0.to_string())
+        .bind(workspace_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn upsert_workspace_session_index(
+        &self,
+        session_id: SessionId,
+        workspace_id: WorkspaceId,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO workspace_session_index (session_id, workspace_id)
+               VALUES (?, ?)
+               ON CONFLICT(session_id) DO UPDATE SET workspace_id = excluded.workspace_id"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(workspace_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn upsert_workspace_worktree_index(
+        &self,
+        worktree_id: WorktreeId,
+        workspace_id: WorkspaceId,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO workspace_worktree_index (worktree_id, workspace_id)
+               VALUES (?, ?)
+               ON CONFLICT(worktree_id) DO UPDATE SET workspace_id = excluded.workspace_id"#,
+        )
+        .bind(worktree_id.0.to_string())
+        .bind(workspace_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_workspace_task_index(&self, task_id: TaskId) -> Result<()> {
+        sqlx::query(r#"DELETE FROM workspace_task_index WHERE task_id = ?"#)
+            .bind(task_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_workspace_session_index(&self, session_id: SessionId) -> Result<()> {
+        sqlx::query(r#"DELETE FROM workspace_session_index WHERE session_id = ?"#)
+            .bind(session_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_workspace_worktree_index(&self, worktree_id: WorktreeId) -> Result<()> {
+        sqlx::query(r#"DELETE FROM workspace_worktree_index WHERE worktree_id = ?"#)
+            .bind(worktree_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_workspace_id_for_task(&self, task_id: TaskId) -> Result<Option<WorkspaceId>> {
+        let row = sqlx::query(r#"SELECT workspace_id FROM workspace_task_index WHERE task_id = ?"#)
+            .bind(task_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|r| {
+            let value: String = r.try_get("workspace_id").ok()?;
+            uuid::Uuid::parse_str(&value).ok().map(WorkspaceId)
+        }))
+    }
+
+    pub async fn get_workspace_id_for_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<WorkspaceId>> {
+        let row =
+            sqlx::query(r#"SELECT workspace_id FROM workspace_session_index WHERE session_id = ?"#)
+                .bind(session_id.0.to_string())
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.and_then(|r| {
+            let value: String = r.try_get("workspace_id").ok()?;
+            uuid::Uuid::parse_str(&value).ok().map(WorkspaceId)
+        }))
+    }
+
+    pub async fn get_workspace_id_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Result<Option<WorkspaceId>> {
+        let row = sqlx::query(
+            r#"SELECT workspace_id FROM workspace_worktree_index WHERE worktree_id = ?"#,
+        )
+        .bind(worktree_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|r| {
+            let value: String = r.try_get("workspace_id").ok()?;
+            uuid::Uuid::parse_str(&value).ok().map(WorkspaceId)
+        }))
+    }
+
+    pub async fn refresh_workspace_indexes(&self, workspace_id: WorkspaceId) -> Result<()> {
+        let workspace_id = workspace_id.0.to_string();
+        sqlx::query(
+            r#"INSERT OR REPLACE INTO workspace_task_index (task_id, workspace_id)
+               SELECT id, workspace_id FROM tasks WHERE workspace_id = ?"#,
+        )
+        .bind(&workspace_id)
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"INSERT OR REPLACE INTO workspace_session_index (session_id, workspace_id)
+               SELECT id, workspace_id FROM sessions WHERE workspace_id = ?"#,
+        )
+        .bind(&workspace_id)
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"INSERT OR REPLACE INTO workspace_worktree_index (worktree_id, workspace_id)
+               SELECT id, workspace_id FROM worktrees WHERE workspace_id = ?"#,
+        )
+        .bind(&workspace_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_workspace_indexes(&self, workspace_id: WorkspaceId) -> Result<()> {
+        let workspace_id = workspace_id.0.to_string();
+        sqlx::query(r#"DELETE FROM workspace_task_index WHERE workspace_id = ?"#)
+            .bind(&workspace_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query(r#"DELETE FROM workspace_session_index WHERE workspace_id = ?"#)
+            .bind(&workspace_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query(r#"DELETE FROM workspace_worktree_index WHERE workspace_id = ?"#)
+            .bind(&workspace_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     // Task APIs
     pub async fn list_tasks(&self, workspace_id: WorkspaceId) -> Result<Vec<Task>> {
         let rows = sqlx::query(
@@ -359,16 +885,8 @@ impl Store {
               t.id, t.workspace_id, t.title, t.description, t.status, t.exec_plan_id,
               t.primary_session_id, t.primary_worktree_id,
               t.created_at, t.updated_at, t.archived_at, t.assistant_seen_at,
-              (
-                SELECT MAX(m.created_at)
-                FROM messages m
-                WHERE m.task_id = t.id
-              ) AS last_activity_at,
-              (
-                SELECT MAX(m.created_at)
-                FROM messages m
-                WHERE m.task_id = t.id AND m.role = 'assistant'
-              ) AS last_assistant_message_at,
+              t.last_activity_at,
+              t.last_assistant_message_at,
               EXISTS(
                 SELECT 1
                 FROM sessions s
@@ -472,7 +990,10 @@ impl Store {
 
     pub async fn get_task(&self, id: TaskId) -> Result<Option<Task>> {
         let row = sqlx::query(
-            r#"SELECT id, workspace_id, title, description, status, exec_plan_id, primary_session_id, primary_worktree_id, created_at, updated_at, archived_at, assistant_seen_at
+            r#"SELECT id, workspace_id, title, description, status, exec_plan_id,
+                      primary_session_id, primary_worktree_id,
+                      created_at, updated_at, archived_at, assistant_seen_at,
+                      last_activity_at, last_assistant_message_at
                FROM tasks WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -486,6 +1007,9 @@ impl Store {
             let updated_at: String = r.try_get("updated_at").ok()?;
             let archived_at: Option<String> = r.try_get("archived_at").ok()?;
             let assistant_seen_at: Option<String> = r.try_get("assistant_seen_at").ok()?;
+            let last_activity_at: Option<String> = r.try_get("last_activity_at").ok()?;
+            let last_assistant_message_at: Option<String> =
+                r.try_get("last_assistant_message_at").ok()?;
             let primary_session_id: Option<String> = r.try_get("primary_session_id").ok()?;
             let primary_worktree_id: Option<String> = r.try_get("primary_worktree_id").ok()?;
             Some(Task {
@@ -511,8 +1035,12 @@ impl Store {
                     .map(parse_dt)
                     .transpose()
                     .ok()?,
-                last_activity_at: None,
-                last_assistant_message_at: None,
+                last_activity_at: last_activity_at.as_deref().map(parse_dt).transpose().ok()?,
+                last_assistant_message_at: last_assistant_message_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()
+                    .ok()?,
                 has_active_session: false,
             })
         }))
@@ -530,6 +1058,11 @@ impl Store {
         .bind(id.0.to_string())
         .execute(&self.pool)
         .await?;
+        if res.rows_affected() > 0 {
+            self.materialize_archived_heads_for_task(id).await?;
+            self.delete_session_head_materializations_for_task(id, SessionHeadKind::Active)
+                .await?;
+        }
         Ok(res.rows_affected() > 0)
     }
 
@@ -544,6 +1077,10 @@ impl Store {
         .bind(id.0.to_string())
         .execute(&self.pool)
         .await?;
+        if res.rows_affected() > 0 {
+            self.delete_session_head_materializations_for_task(id, SessionHeadKind::Archived)
+                .await?;
+        }
         Ok(res.rows_affected() > 0)
     }
 
@@ -643,16 +1180,8 @@ impl Store {
               t.id, t.workspace_id, t.title, t.description, t.status, t.exec_plan_id,
               t.primary_session_id, t.primary_worktree_id,
               t.created_at, t.updated_at, t.archived_at, t.assistant_seen_at,
-              (
-                SELECT MAX(m.created_at)
-                FROM messages m
-                WHERE m.task_id = t.id
-              ) AS last_activity_at,
-              (
-                SELECT MAX(m.created_at)
-                FROM messages m
-                WHERE m.task_id = t.id AND m.role = 'assistant'
-              ) AS last_assistant_message_at,
+              t.last_activity_at,
+              t.last_assistant_message_at,
               EXISTS(
                 SELECT 1
                 FROM sessions s
@@ -1530,6 +2059,7 @@ impl Store {
         .bind(session.updated_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
+        self.ensure_session_snapshot_summary(session.id).await?;
         Ok(session)
     }
 
@@ -2022,7 +2552,151 @@ impl Store {
         .bind(message.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
+        self.update_task_activity_from_message(&message).await?;
+        if matches!(message.role, MessageRole::Assistant) {
+            self.update_session_snapshot_last_message(&message).await?;
+        }
         Ok(message)
+    }
+
+    async fn ensure_session_snapshot_summary(&self, session_id: SessionId) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"INSERT INTO session_snapshot_summaries (
+                    session_id, running_turn_count, created_at, updated_at
+               )
+               VALUES (?, 0, ?, ?)
+               ON CONFLICT(session_id) DO NOTHING"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn update_task_activity_from_message(&self, message: &Message) -> Result<()> {
+        let created_at = message.created_at.to_rfc3339();
+        let is_assistant = matches!(message.role, MessageRole::Assistant);
+        sqlx::query(
+            r#"UPDATE tasks
+               SET last_activity_at = CASE
+                     WHEN last_activity_at IS NULL OR last_activity_at < ? THEN ?
+                     ELSE last_activity_at
+                   END,
+                   last_assistant_message_at = CASE
+                     WHEN ? = 1 AND (last_assistant_message_at IS NULL OR last_assistant_message_at < ?)
+                       THEN ?
+                     ELSE last_assistant_message_at
+                   END
+               WHERE id = ?"#,
+        )
+        .bind(&created_at)
+        .bind(&created_at)
+        .bind(if is_assistant { 1 } else { 0 })
+        .bind(&created_at)
+        .bind(&created_at)
+        .bind(message.task_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn update_session_snapshot_last_message(&self, message: &Message) -> Result<()> {
+        self.ensure_session_snapshot_summary(message.session_id)
+            .await?;
+        let created_at = message.created_at.to_rfc3339();
+        let content = message.content.clone();
+        sqlx::query(
+            r#"UPDATE session_snapshot_summaries
+               SET last_message_at = CASE
+                     WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
+                     ELSE last_message_at
+                   END,
+                   last_message_preview = CASE
+                     WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
+                     ELSE last_message_preview
+                   END,
+                   updated_at = ?
+               WHERE session_id = ?"#,
+        )
+        .bind(&created_at)
+        .bind(&created_at)
+        .bind(&created_at)
+        .bind(&content)
+        .bind(&created_at)
+        .bind(message.session_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn update_session_snapshot_last_event_seq(
+        &self,
+        session_id: SessionId,
+        seq: i64,
+    ) -> Result<()> {
+        self.ensure_session_snapshot_summary(session_id).await?;
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"UPDATE session_snapshot_summaries
+               SET last_event_seq = ?,
+                   updated_at = ?
+               WHERE session_id = ?"#,
+        )
+        .bind(seq)
+        .bind(&now)
+        .bind(session_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn refresh_session_turn_summary(&self, session_id: SessionId) -> Result<()> {
+        self.ensure_session_snapshot_summary(session_id).await?;
+        let last_row = sqlx::query(
+            r#"SELECT status, start_seq
+               FROM session_turns
+               WHERE session_id = ?
+               ORDER BY COALESCE(start_seq, -1) DESC, started_at DESC, turn_id DESC
+               LIMIT 1"#,
+        )
+        .bind(session_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        let (last_status, last_seq) = if let Some(row) = last_row {
+            let status: String = row.try_get("status")?;
+            let start_seq: Option<i64> = row.try_get("start_seq")?;
+            (Some(status), start_seq)
+        } else {
+            (None, None)
+        };
+        let running_count = sqlx::query_scalar::<_, i64>(
+            r#"SELECT COUNT(*)
+               FROM session_turns
+               WHERE session_id = ? AND status = 'running'"#,
+        )
+        .bind(session_id.0.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"UPDATE session_snapshot_summaries
+               SET last_turn_status = ?,
+                   last_turn_seq = ?,
+                   running_turn_count = ?,
+                   updated_at = ?
+               WHERE session_id = ?"#,
+        )
+        .bind(last_status)
+        .bind(last_seq)
+        .bind(running_count)
+        .bind(&now)
+        .bind(session_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     pub async fn workspace_task_counts(&self, workspace_id: WorkspaceId) -> Result<(i64, i64)> {
@@ -2075,17 +2749,7 @@ impl Store {
         const MAX_LIMIT: i64 = 200;
         let limit = limit.clamp(1, MAX_LIMIT);
 
-        const ACTIVITY_EXPR: &str = "
-            COALESCE(
-                (
-                    SELECT MAX(m.created_at)
-                    FROM messages m
-                    WHERE m.task_id = t.id
-                ),
-                t.updated_at,
-                t.created_at
-            )
-        ";
+        const ACTIVITY_EXPR: &str = "COALESCE(t.last_activity_at, t.updated_at, t.created_at)";
         const SORT_EXPR: &str = "COALESCE(t.archived_at, t.created_at)";
 
         let mut sql = format!(
@@ -2103,11 +2767,7 @@ impl Store {
               t.updated_at,
               t.archived_at,
               t.assistant_seen_at,
-              (
-                SELECT MAX(m.created_at)
-                FROM messages m
-                WHERE m.task_id = t.id AND m.role = 'assistant'
-              ) AS last_assistant_message_at,
+              t.last_assistant_message_at AS last_assistant_message_at,
               EXISTS(
                 SELECT 1
                 FROM sessions s
@@ -2227,17 +2887,7 @@ impl Store {
         const MAX_LIMIT: i64 = 200;
         let limit = limit.clamp(1, MAX_LIMIT);
 
-        const ACTIVITY_EXPR: &str = "
-            COALESCE(
-                (
-                    SELECT MAX(m.created_at)
-                    FROM messages m
-                    WHERE m.task_id = t.id
-                ),
-                t.updated_at,
-                t.created_at
-            )
-        ";
+        const ACTIVITY_EXPR: &str = "COALESCE(t.last_activity_at, t.updated_at, t.created_at)";
 
         let total_count = sqlx::query_scalar::<_, i64>(
             r#"SELECT COUNT(*)
@@ -2265,11 +2915,7 @@ impl Store {
               t.updated_at,
               t.archived_at,
               t.assistant_seen_at,
-              (
-                SELECT MAX(m.created_at)
-                FROM messages m
-                WHERE m.task_id = t.id AND m.role = 'assistant'
-              ) AS last_assistant_message_at,
+              t.last_assistant_message_at AS last_assistant_message_at,
               EXISTS(
                 SELECT 1
                 FROM sessions s
@@ -2352,17 +2998,7 @@ impl Store {
         &self,
         task_id: TaskId,
     ) -> Result<Option<WorkspaceTaskSummary>> {
-        const ACTIVITY_EXPR: &str = "
-            COALESCE(
-                (
-                    SELECT MAX(m.created_at)
-                    FROM messages m
-                    WHERE m.task_id = t.id
-                ),
-                t.updated_at,
-                t.created_at
-            )
-        ";
+        const ACTIVITY_EXPR: &str = "COALESCE(t.last_activity_at, t.updated_at, t.created_at)";
         const SORT_EXPR: &str = "COALESCE(t.archived_at, t.created_at)";
         let sql = format!(
             r#"
@@ -2379,11 +3015,7 @@ impl Store {
               t.updated_at,
               t.archived_at,
               t.assistant_seen_at,
-              (
-                SELECT MAX(m.created_at)
-                FROM messages m
-                WHERE m.task_id = t.id AND m.role = 'assistant'
-              ) AS last_assistant_message_at,
+              t.last_assistant_message_at AS last_assistant_message_at,
               EXISTS(
                 SELECT 1
                 FROM sessions s
@@ -2464,25 +3096,13 @@ impl Store {
             r#"SELECT id, workspace_id, title, description, status, exec_plan_id,
                       primary_session_id, primary_worktree_id,
                       created_at, updated_at, archived_at, assistant_seen_at,
-                      (
-                        SELECT MAX(m.created_at)
-                        FROM messages m
-                        WHERE m.task_id = t.id AND m.role = 'assistant'
-                      ) AS last_assistant_message_at,
+                      t.last_assistant_message_at AS last_assistant_message_at,
                       EXISTS(
                         SELECT 1
                         FROM sessions s
                         WHERE s.task_id = t.id AND s.status = 'active'
                       ) AS has_active_session,
-                      COALESCE(
-                        (
-                          SELECT MAX(m.created_at)
-                          FROM messages m
-                          WHERE m.task_id = t.id
-                        ),
-                        t.updated_at,
-                        t.created_at
-                      ) AS activity_at
+                      COALESCE(t.last_activity_at, t.updated_at, t.created_at) AS activity_at
                FROM tasks t
                WHERE id = ?
                  AND archived_at IS NULL
@@ -2565,6 +3185,7 @@ impl Store {
                 last_message_at: row.last_message_at,
                 last_message_preview: row.last_message_preview,
                 last_event_seq: row.last_event_seq,
+                state_rev: row.last_event_seq.unwrap_or(0),
                 activity: row.activity,
                 unread: None,
             };
@@ -2941,34 +3562,6 @@ impl Store {
 
         let mut session_query = QueryBuilder::new(
             r#"
-            WITH last_assistant_messages AS (
-                SELECT session_id, content, created_at,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY session_id
-                           ORDER BY created_at DESC, id DESC
-                       ) AS rn
-                FROM messages
-                WHERE role = 'assistant'
-            ),
-            last_events AS (
-                SELECT session_id, MAX(seq) AS last_event_seq
-                FROM session_events
-                GROUP BY session_id
-            ),
-            last_turns AS (
-                SELECT session_id, turn_id, status, started_at, updated_at,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY session_id
-                           ORDER BY COALESCE(start_seq, -1) DESC, started_at DESC, turn_id DESC
-                       ) AS rn
-                FROM session_turns
-            ),
-            running_turns AS (
-                SELECT session_id, COUNT(*) AS running_count
-                FROM session_turns
-                WHERE status = 'running'
-                GROUP BY session_id
-            )
             SELECT
                 s.id,
                 s.task_id,
@@ -2986,20 +3579,14 @@ impl Store {
                 s.relationship,
                 s.created_at,
                 s.updated_at,
-                lm.content AS last_message_content,
-                lm.created_at AS last_message_at,
-                le.last_event_seq AS last_event_seq,
-                lt.status AS last_turn_status,
-                COALESCE(rt.running_count, 0) AS running_turn_count
+                ss.last_message_preview AS last_message_content,
+                ss.last_message_at AS last_message_at,
+                ss.last_event_seq AS last_event_seq,
+                ss.last_turn_status AS last_turn_status,
+                COALESCE(ss.running_turn_count, 0) AS running_turn_count
             FROM sessions s
-            LEFT JOIN last_assistant_messages lm
-              ON lm.session_id = s.id AND lm.rn = 1
-            LEFT JOIN last_events le
-              ON le.session_id = s.id
-            LEFT JOIN last_turns lt
-              ON lt.session_id = s.id AND lt.rn = 1
-            LEFT JOIN running_turns rt
-              ON rt.session_id = s.id
+            LEFT JOIN session_snapshot_summaries ss
+              ON ss.session_id = s.id
             WHERE s.task_id IN ("#,
         );
 
@@ -3079,34 +3666,6 @@ impl Store {
     ) -> Result<Option<SessionSnapshotSummary>> {
         let row = sqlx::query(
             r#"
-            WITH last_assistant_messages AS (
-                SELECT session_id, content, created_at,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY session_id
-                           ORDER BY created_at DESC, id DESC
-                       ) AS rn
-                FROM messages
-                WHERE role = 'assistant'
-            ),
-            last_events AS (
-                SELECT session_id, MAX(seq) AS last_event_seq
-                FROM session_events
-                GROUP BY session_id
-            ),
-            last_turns AS (
-                SELECT session_id, turn_id, status, started_at, updated_at,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY session_id
-                           ORDER BY COALESCE(start_seq, -1) DESC, started_at DESC, turn_id DESC
-                       ) AS rn
-                FROM session_turns
-            ),
-            running_turns AS (
-                SELECT session_id, COUNT(*) AS running_count
-                FROM session_turns
-                WHERE status = 'running'
-                GROUP BY session_id
-            )
             SELECT
                 s.id,
                 s.task_id,
@@ -3124,20 +3683,14 @@ impl Store {
                 s.relationship,
                 s.created_at,
                 s.updated_at,
-                lm.content AS last_message_content,
-                lm.created_at AS last_message_at,
-                le.last_event_seq AS last_event_seq,
-                lt.status AS last_turn_status,
-                COALESCE(rt.running_count, 0) AS running_turn_count
+                ss.last_message_preview AS last_message_content,
+                ss.last_message_at AS last_message_at,
+                ss.last_event_seq AS last_event_seq,
+                ss.last_turn_status AS last_turn_status,
+                COALESCE(ss.running_turn_count, 0) AS running_turn_count
             FROM sessions s
-            LEFT JOIN last_assistant_messages lm
-              ON lm.session_id = s.id AND lm.rn = 1
-            LEFT JOIN last_events le
-              ON le.session_id = s.id
-            LEFT JOIN last_turns lt
-              ON lt.session_id = s.id AND lt.rn = 1
-            LEFT JOIN running_turns rt
-              ON rt.session_id = s.id
+            LEFT JOIN session_snapshot_summaries ss
+              ON ss.session_id = s.id
             WHERE s.id = ?"#,
         )
         .bind(session_id.0.to_string())
@@ -3196,6 +3749,7 @@ impl Store {
             last_message_at: last_message_at.as_deref().map(parse_dt).transpose()?,
             last_message_preview,
             last_event_seq,
+            state_rev: last_event_seq.unwrap_or(0),
             activity,
             unread: None,
         }))
@@ -3370,6 +3924,7 @@ impl Store {
         .bind(turn.tool_failed)
         .execute(&self.pool)
         .await?;
+        self.refresh_session_turn_summary(turn.session_id).await?;
         Ok(turn)
     }
 
@@ -3399,6 +3954,7 @@ impl Store {
             .bind(turn_id.0.to_string())
             .execute(&self.pool)
             .await?;
+        self.refresh_session_turn_summary(session_id).await?;
         Ok(())
     }
 
@@ -3427,6 +3983,7 @@ impl Store {
         .bind(turn_id.0.to_string())
         .execute(&self.pool)
         .await?;
+        self.refresh_session_turn_summary(session_id).await?;
         Ok(())
     }
 
@@ -3459,6 +4016,7 @@ impl Store {
         .bind(turn_id.0.to_string())
         .execute(&self.pool)
         .await?;
+        self.refresh_session_turn_summary(session_id).await?;
         Ok(())
     }
 
@@ -3570,17 +4128,192 @@ impl Store {
         Ok(out)
     }
 
-    pub async fn get_session_head(
+    async fn load_session_head_materialization(
         &self,
         session_id: SessionId,
-        limit: u32,
-        include_events: bool,
-    ) -> Result<Option<SessionHead>> {
-        let session = match self.get_session(session_id).await? {
-            Some(session) => session,
-            None => return Ok(None),
+        kind: SessionHeadKind,
+    ) -> Result<Option<SessionHeadMaterialization>> {
+        let row = sqlx::query(
+            r#"SELECT last_event_seq, turns_json, tool_summaries_json, events_json,
+                      messages_json, has_more_turns, head_window_json
+               FROM session_head_materializations
+               WHERE session_id = ? AND head_kind = ?"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(session_head_kind_to_str(kind))
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
         };
-        let limit = limit.clamp(1, SESSION_HEAD_MAX_TURNS) as i64;
+
+        let turns_json: String = row.try_get("turns_json")?;
+        let tool_summaries_json: String = row.try_get("tool_summaries_json")?;
+        let events_json: String = row.try_get("events_json")?;
+        let messages_json: String = row.try_get("messages_json")?;
+        let head_window_json: String = row.try_get("head_window_json")?;
+
+        let turns: Vec<SessionTurn> = match serde_json::from_str(&turns_json) {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+        let tool_summaries: Vec<SessionTurnToolSummary> =
+            match serde_json::from_str(&tool_summaries_json) {
+                Ok(value) => value,
+                Err(_) => return Ok(None),
+            };
+        let events: Vec<SessionEvent> = match serde_json::from_str(&events_json) {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+        let messages: Vec<Message> = match serde_json::from_str(&messages_json) {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+        let head_window: SessionHeadWindow = match serde_json::from_str(&head_window_json) {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+
+        let has_more_turns: i64 = row.try_get("has_more_turns")?;
+
+        Ok(Some(SessionHeadMaterialization {
+            last_event_seq: row.try_get("last_event_seq")?,
+            turns,
+            tool_summaries,
+            events,
+            messages,
+            has_more_turns: has_more_turns != 0,
+            head_window,
+        }))
+    }
+
+    async fn upsert_session_head_materialization(
+        &self,
+        session_id: SessionId,
+        kind: SessionHeadKind,
+        head: &SessionHeadMaterialization,
+    ) -> Result<i64> {
+        let turns_json =
+            serde_json::to_string(&head.turns).context("serializing session head turns")?;
+        let tool_summaries_json = serde_json::to_string(&head.tool_summaries)
+            .context("serializing session head tool summaries")?;
+        let events_json =
+            serde_json::to_string(&head.events).context("serializing session head events")?;
+        let messages_json =
+            serde_json::to_string(&head.messages).context("serializing session head messages")?;
+        let head_window_json =
+            serde_json::to_string(&head.head_window).context("serializing session head window")?;
+        let now = Utc::now().to_rfc3339();
+
+        let head_rev: i64 = sqlx::query_scalar(
+            r#"INSERT INTO session_head_materializations (
+                    session_id, head_kind, head_rev, last_event_seq,
+                    turns_json, tool_summaries_json, events_json, messages_json,
+                    has_more_turns, head_window_json, created_at, updated_at
+               )
+               VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(session_id, head_kind) DO UPDATE SET
+                   head_rev = session_head_materializations.head_rev + 1,
+                   last_event_seq = excluded.last_event_seq,
+                   turns_json = excluded.turns_json,
+                   tool_summaries_json = excluded.tool_summaries_json,
+                   events_json = excluded.events_json,
+                   messages_json = excluded.messages_json,
+                   has_more_turns = excluded.has_more_turns,
+                   head_window_json = excluded.head_window_json,
+                   updated_at = excluded.updated_at
+               RETURNING head_rev"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(session_head_kind_to_str(kind))
+        .bind(head.last_event_seq)
+        .bind(turns_json)
+        .bind(tool_summaries_json)
+        .bind(events_json)
+        .bind(messages_json)
+        .bind(if head.has_more_turns { 1 } else { 0 })
+        .bind(head_window_json)
+        .bind(&now)
+        .bind(&now)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(head_rev)
+    }
+
+    async fn session_head_kind_for_task(&self, task_id: TaskId) -> Result<SessionHeadKind> {
+        let archived_at: Option<Option<String>> =
+            sqlx::query_scalar(r#"SELECT archived_at FROM tasks WHERE id = ?"#)
+                .bind(task_id.0.to_string())
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(if archived_at.flatten().is_some() {
+            SessionHeadKind::Archived
+        } else {
+            SessionHeadKind::Active
+        })
+    }
+
+    async fn materialize_session_head(
+        &self,
+        session: &Session,
+        kind: SessionHeadKind,
+        last_event_seq: i64,
+    ) -> Result<SessionHead> {
+        let turn_limit = match kind {
+            SessionHeadKind::Active => SESSION_HEAD_MAX_TURNS,
+            SessionHeadKind::Archived => SESSION_HEAD_ARCHIVED_TURN_LIMIT,
+        };
+        let limits = session_head_limits(kind, turn_limit);
+        let head = self
+            .build_session_head(session, limits, true, last_event_seq)
+            .await?;
+        let materialized = SessionHeadMaterialization::from_head(&head);
+        self.upsert_session_head_materialization(session.id, kind, &materialized)
+            .await?;
+        Ok(head)
+    }
+
+    async fn delete_session_head_materializations_for_task(
+        &self,
+        task_id: TaskId,
+        kind: SessionHeadKind,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"DELETE FROM session_head_materializations
+               WHERE head_kind = ?
+                 AND session_id IN (SELECT id FROM sessions WHERE task_id = ?)"#,
+        )
+        .bind(session_head_kind_to_str(kind))
+        .bind(task_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn materialize_archived_heads_for_task(&self, task_id: TaskId) -> Result<()> {
+        let sessions = self.list_sessions_for_task(task_id).await?;
+        if sessions.is_empty() {
+            return Ok(());
+        }
+        for session in sessions {
+            let last_event_seq = self.session_last_event_seq(session.id).await?;
+            self.materialize_session_head(&session, SessionHeadKind::Archived, last_event_seq)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn build_session_head(
+        &self,
+        session: &Session,
+        limits: SessionHeadLimits,
+        include_events: bool,
+        last_event_seq: i64,
+    ) -> Result<SessionHead> {
+        let limit = limits.turn_limit as i64;
         let rows = sqlx::query(
             r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                       start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
@@ -3590,7 +4323,7 @@ impl Store {
                ORDER BY start_seq DESC
                LIMIT ?"#,
         )
-        .bind(session_id.0.to_string())
+        .bind(session.id.0.to_string())
         .bind(limit + 1)
         .fetch_all(&self.pool)
         .await?;
@@ -3609,9 +4342,9 @@ impl Store {
         out.reverse();
 
         let turn_ids: Vec<TurnId> = out.iter().map(|t| t.turn_id).collect();
-        let mut messages = self.list_messages_for_turns(session_id, &turn_ids).await?;
+        let mut messages = self.list_messages_for_turns(session.id, &turn_ids).await?;
         let mut tool_summaries = self
-            .list_turn_tool_summaries_for_turns(session_id, &turn_ids)
+            .list_turn_tool_summaries_for_turns(session.id, &turn_ids)
             .await?;
         if !turn_ids.is_empty() {
             let mut tool_ids: HashMap<String, bool> = HashMap::new();
@@ -3628,7 +4361,7 @@ impl Store {
                 if has_any {
                     continue;
                 }
-                let tools = self.list_turn_tools(session_id, turn.turn_id).await?;
+                let tools = self.list_turn_tools(session.id, turn.turn_id).await?;
                 for tool in tools {
                     if tool_ids.contains_key(&tool.tool_call_id) {
                         continue;
@@ -3639,7 +4372,6 @@ impl Store {
             }
             tool_summaries.sort_by(|a, b| a.created_at.cmp(&b.created_at));
         }
-        let last_event_seq = self.session_last_event_seq(session_id).await?;
         let last_status = out.last().map(|t| t.status.clone());
         let has_running_turn = out
             .iter()
@@ -3647,7 +4379,7 @@ impl Store {
         let activity = derive_activity_from_status(last_status, has_running_turn);
         let mut events = if include_events {
             let mut events = self
-                .list_session_events_tail_by_seq(session_id, SESSION_HEAD_EVENT_LIMIT as u32, false)
+                .list_session_events_tail_by_seq(session.id, limits.event_limit as u32, false)
                 .await?;
             events.sort_by(|a, b| a.seq.cmp(&b.seq));
             events
@@ -3655,21 +4387,21 @@ impl Store {
             Vec::new()
         };
 
-        let summary_checkpoint = self.get_session_summary_checkpoint(session_id).await?;
+        let summary_checkpoint = self.get_session_summary_checkpoint(session.id).await?;
         let head_window = trim_session_head_window(
             &mut out,
             &mut messages,
             &mut tool_summaries,
             &mut events,
             &mut has_more_turns,
-            limit as usize,
-            SESSION_HEAD_MESSAGE_LIMIT,
-            SESSION_HEAD_EVENT_LIMIT,
-            SESSION_HEAD_BYTE_LIMIT,
+            limits.turn_limit,
+            limits.message_limit,
+            limits.event_limit,
+            limits.byte_limit,
         );
 
-        Ok(Some(SessionHead {
-            session,
+        Ok(SessionHead {
+            session: session.clone(),
             turns: out,
             tool_summaries,
             events,
@@ -3679,7 +4411,61 @@ impl Store {
             has_more_turns,
             summary_checkpoint,
             head_window,
-        }))
+        })
+    }
+
+    pub async fn get_session_head(
+        &self,
+        session_id: SessionId,
+        limit: u32,
+        include_events: bool,
+    ) -> Result<Option<SessionHead>> {
+        self.get_session_head_with_kind(session_id, limit, include_events, None)
+            .await
+    }
+
+    async fn get_session_head_with_kind(
+        &self,
+        session_id: SessionId,
+        limit: u32,
+        include_events: bool,
+        head_kind_override: Option<SessionHeadKind>,
+    ) -> Result<Option<SessionHead>> {
+        let session = match self.get_session(session_id).await? {
+            Some(session) => session,
+            None => return Ok(None),
+        };
+        let head_kind = match head_kind_override {
+            Some(kind) => kind,
+            None => self.session_head_kind_for_task(session.task_id).await?,
+        };
+        let last_event_seq = self.session_last_event_seq(session_id).await?;
+
+        if let Some(materialized) = self
+            .load_session_head_materialization(session_id, head_kind)
+            .await?
+        {
+            if materialized.last_event_seq == last_event_seq {
+                let summary_checkpoint = self.get_session_summary_checkpoint(session_id).await?;
+                let head = materialized.into_session_head(session, summary_checkpoint);
+                let limits = session_head_limits(head_kind, limit);
+                return Ok(Some(apply_session_head_limits(
+                    head,
+                    limits,
+                    include_events,
+                )));
+            }
+        }
+
+        let head = self
+            .materialize_session_head(&session, head_kind, last_event_seq)
+            .await?;
+        let limits = session_head_limits(head_kind, limit);
+        Ok(Some(apply_session_head_limits(
+            head,
+            limits,
+            include_events,
+        )))
     }
 
     pub async fn get_session_snapshot(
@@ -3693,15 +4479,17 @@ impl Store {
             None => return Ok(None),
         };
         let head = match self
-            .get_session_head(session_id, limit, include_events)
+            .get_session_head_with_kind(session_id, limit, include_events, None)
             .await?
         {
             Some(head) => head,
             None => return Ok(None),
         };
+        let state = self.get_session_state(session_id).await?;
         Ok(Some(SessionSnapshot {
             summary,
             head: session_head_to_snapshot(head),
+            state: Some(state),
         }))
     }
 
@@ -3969,6 +4757,63 @@ impl Store {
         Ok(out)
     }
 
+    pub async fn upsert_session_git_status_summary(
+        &self,
+        session_id: SessionId,
+        worktree_id: WorktreeId,
+        summary: &SessionGitStatusSummary,
+    ) -> Result<()> {
+        let summary_json =
+            serde_json::to_string(summary).context("serializing git status summary")?;
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            r#"INSERT INTO session_git_status_snapshots (
+                    session_id, worktree_id, summary_json, created_at, updated_at
+               )
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(session_id) DO UPDATE SET
+                   worktree_id = excluded.worktree_id,
+                   summary_json = excluded.summary_json,
+                   updated_at = excluded.updated_at"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(worktree_id.0.to_string())
+        .bind(summary_json)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_session_git_status_summary(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<SessionGitStatusSummary>> {
+        let row = sqlx::query(
+            r#"SELECT summary_json
+               FROM session_git_status_snapshots
+               WHERE session_id = ?"#,
+        )
+        .bind(session_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let summary_json: String = row.try_get("summary_json")?;
+        Ok(serde_json::from_str(&summary_json).ok())
+    }
+
+    pub async fn get_session_state(&self, session_id: SessionId) -> Result<SessionState> {
+        let artifacts = self.list_session_artifacts(session_id).await?;
+        let git_status = self.get_session_git_status_summary(session_id).await?;
+        Ok(SessionState {
+            artifacts,
+            git_status,
+        })
+    }
+
     pub async fn get_artifact(&self, id: ArtifactId) -> Result<Option<Artifact>> {
         let row = sqlx::query(
             r#"SELECT id, session_id, task_id, workspace_id, worktree_id,
@@ -4059,6 +4904,8 @@ impl Store {
         .fetch_one(&self.pool)
         .await?;
         event.seq = seq;
+        self.update_session_snapshot_last_event_seq(event.session_id, event.seq)
+            .await?;
         if let Some(turn_id) = event.turn_id {
             if let Some(tool) = build_turn_tool_from_event(&event, turn_id) {
                 let _ = self.upsert_session_turn_tool(tool).await;
@@ -4830,6 +5677,7 @@ fn session_head_to_snapshot(head: SessionHead) -> SessionHeadSnapshot {
         events: head.events,
         messages: head.messages,
         last_event_seq: head.last_event_seq,
+        state_rev: head.last_event_seq,
         activity: head.activity,
         has_more_turns: head.has_more_turns,
         history_cursor: None,

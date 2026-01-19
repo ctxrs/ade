@@ -12,7 +12,7 @@ use tower::ServiceExt;
 use ctx_http::api;
 use ctx_http::daemon::AppState;
 use ctx_lsp::LspManagerConfig;
-use ctx_store::Store;
+use ctx_store::StoreManager;
 
 async fn run_git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -55,15 +55,12 @@ edition = "2021"
 #[tokio::test]
 async fn lsp_diagnostics_endpoint_returns_diagnostics() {
     let data_dir = tempfile::tempdir().unwrap();
-    let db_dir = data_dir.path().join("db");
-    tokio::fs::create_dir_all(&db_dir).await.unwrap();
-    let db_path = db_dir.join("db.sqlite");
-    let store = Store::open(&db_path).await.unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
     let lsp_server = env!("CARGO_BIN_EXE_ctx-http-lsp-test-server").to_string();
     let state = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
-        store.clone(),
+        stores,
         HashMap::new(),
         "http://127.0.0.1:4399".to_string(),
         None,
@@ -152,8 +149,8 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
         })
         .expect("session missing from active snapshot");
 
-    let wt = state
-        .store
+    let store = state.store_for_session(session.id).await.unwrap();
+    let wt = store
         .get_worktree(session.worktree_id)
         .await
         .unwrap()
@@ -198,15 +195,12 @@ async fn lsp_diagnostics_endpoint_returns_diagnostics() {
 #[tokio::test]
 async fn lsp_status_endpoint_returns_expected_shape() {
     let data_dir = tempfile::tempdir().unwrap();
-    let db_dir = data_dir.path().join("db");
-    tokio::fs::create_dir_all(&db_dir).await.unwrap();
-    let db_path = db_dir.join("db.sqlite");
-    let store = Store::open(&db_path).await.unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
     let lsp_server = env!("CARGO_BIN_EXE_ctx-http-lsp-test-server").to_string();
     let state = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
-        store.clone(),
+        stores,
         HashMap::new(),
         "http://127.0.0.1:4399".to_string(),
         None,
@@ -277,15 +271,12 @@ async fn lsp_status_endpoint_returns_expected_shape() {
 #[tokio::test]
 async fn lsp_semantic_endpoints_return_payloads() {
     let data_dir = tempfile::tempdir().unwrap();
-    let db_dir = data_dir.path().join("db");
-    tokio::fs::create_dir_all(&db_dir).await.unwrap();
-    let db_path = db_dir.join("db.sqlite");
-    let store = Store::open(&db_path).await.unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
     let lsp_server = env!("CARGO_BIN_EXE_ctx-http-lsp-test-server").to_string();
     let state = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
-        store.clone(),
+        stores,
         HashMap::new(),
         "http://127.0.0.1:4399".to_string(),
         None,
@@ -374,8 +365,8 @@ async fn lsp_semantic_endpoints_return_payloads() {
         })
         .expect("session missing from active snapshot");
 
-    let wt = state
-        .store
+    let store = state.store_for_session(session.id).await.unwrap();
+    let wt = store
         .get_worktree(session.worktree_id)
         .await
         .unwrap()
@@ -424,15 +415,12 @@ async fn lsp_semantic_endpoints_return_payloads() {
 #[tokio::test]
 async fn lsp_text_only_agent_endpoints_return_payloads() {
     let data_dir = tempfile::tempdir().unwrap();
-    let db_dir = data_dir.path().join("db");
-    tokio::fs::create_dir_all(&db_dir).await.unwrap();
-    let db_path = db_dir.join("db.sqlite");
-    let store = Store::open(&db_path).await.unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
     let lsp_server = env!("CARGO_BIN_EXE_ctx-http-lsp-test-server").to_string();
     let state = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
-        store.clone(),
+        stores,
         HashMap::new(),
         "http://127.0.0.1:4399".to_string(),
         None,
@@ -523,8 +511,8 @@ async fn lsp_text_only_agent_endpoints_return_payloads() {
         })
         .expect("session missing from active snapshot");
 
-    let wt = state
-        .store
+    let store = state.store_for_session(session.id).await.unwrap();
+    let wt = store
         .get_worktree(session.worktree_id)
         .await
         .unwrap()

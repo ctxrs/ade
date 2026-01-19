@@ -12,7 +12,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 use ctx_core::models::{SessionEventType, WorkspaceActiveSnapshotEvent};
 use ctx_http::{api, daemon::AppState};
 use ctx_providers::fake::FakeProviderAdapter;
-use ctx_store::Store;
+use ctx_store::StoreManager;
 
 async fn setup_git_repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -60,7 +60,6 @@ async fn setup_git_repo() -> tempfile::TempDir {
 
 async fn setup_server() -> (
     Arc<AppState>,
-    Store,
     tokio::task::JoinHandle<()>,
     std::net::SocketAddr,
     ctx_core::models::Workspace,
@@ -69,10 +68,7 @@ async fn setup_server() -> (
 ) {
     let repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
-    let db_dir = data_dir.path().join("db");
-    tokio::fs::create_dir_all(&db_dir).await.unwrap();
-    let db_path = db_dir.join("db.sqlite");
-    let store = Store::open(&db_path).await.unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
@@ -80,7 +76,7 @@ async fn setup_server() -> (
 
     let state = Arc::new(AppState::new(
         data_dir.path().to_path_buf(),
-        store.clone(),
+        stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
@@ -124,6 +120,7 @@ async fn setup_server() -> (
         .json()
         .await
         .unwrap();
+    let store = state.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert!(
         sessions.iter().any(|stored| stored.id == session.id),
@@ -142,12 +139,12 @@ async fn setup_server() -> (
         .unwrap()
         .seq;
 
-    (state, store, server, addr, ws, session, last)
+    (state, server, addr, ws, session, last)
 }
 
 #[tokio::test]
 async fn fault_matrix_replay_errors_become_gaps() {
-    let (_state, store, server, addr, ws, session, last_seq) = setup_server().await;
+    let (_state, server, addr, ws, session, last_seq) = setup_server().await;
 
     let ws_url = format!("ws://{}/api/workspaces/{}/stream", addr, ws.id.0);
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
@@ -228,5 +225,4 @@ async fn fault_matrix_replay_errors_become_gaps() {
     }
 
     server.abort();
-    drop(store);
 }

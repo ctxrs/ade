@@ -5,8 +5,8 @@ use gpui_tokio::Tokio;
 
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
-    MessageRole, SessionHeadSnapshot, SessionSnapshotSummary, Task, WorkspaceActiveSnapshot,
-    WorkspaceActiveTaskSummary,
+    MessageRole, SessionHeadSnapshot, SessionSnapshot, SessionSnapshotSummary, Task,
+    WorkspaceActiveSnapshot, WorkspaceActiveTaskSummary, WorkspaceTaskSummary,
 };
 use ctx_providers::adapters::ProviderStatus;
 
@@ -20,7 +20,7 @@ use super::super::models::{
     SessionInfo,
 };
 use super::super::workspace_summary::{
-    session_summary_from_session, task_session_summaries, TaskSummaryItem,
+    session_snapshot_from_summary, task_session_summaries, TaskSummaryItem,
 };
 
 #[derive(Clone)]
@@ -178,11 +178,15 @@ impl ShellView {
                 }
                 match result {
                     Ok(data) => {
-                        view.apply_active_snapshot(&data.active_snapshot, cx);
+                        let preserve_session = view.task_store_initialized;
+                        view.apply_active_snapshot(&data.active_snapshot, preserve_session, cx);
                         view.persist_active_snapshot(&data.active_snapshot, cx);
-                        view.hydrate_loaded_snapshot_state(cx);
+                        if !preserve_session {
+                            view.hydrate_loaded_snapshot_state(cx);
+                        }
                         view.data_state = DataLoadState::Loaded;
                         view.start_workspace_stream(workspace_id, cx);
+                        view.prefetch_archived_head_window(cx);
                     }
                     Err(err) => {
                         if view.task_store_initialized {
@@ -222,8 +226,9 @@ impl ShellView {
                     let Ok(Some(snapshot)) = result else {
                         return;
                     };
-                    view.apply_active_snapshot(&snapshot, cx);
+                    view.apply_active_snapshot(&snapshot, false, cx);
                     view.hydrate_loaded_snapshot_state(cx);
+                    view.hydrate_cached_archived_head(workspace_id, cx);
                     cx.notify();
                 })
                 .ok();
@@ -312,8 +317,67 @@ impl ShellView {
         .detach();
     }
 
+    fn persist_archived_head_window(
+        &self,
+        page: &ctx_core::models::WorkspaceArchivedPage,
+        cx: &mut Context<Self>,
+    ) {
+        let page = page.clone();
+        let ats_cache = self.ats_cache.clone();
+        Tokio::spawn(cx, async move {
+            let _ = ats_cache
+                .save_archived_head_window(page.workspace_id, &page)
+                .await;
+        })
+        .detach();
+    }
+
+    fn hydrate_cached_archived_head(&mut self, workspace_id: WorkspaceId, cx: &mut Context<Self>) {
+        if self.task_archived_loaded {
+            return;
+        }
+        let cache = self.ats_cache.clone();
+        let task = Tokio::spawn_result(cx, async move {
+            cache.load_archived_head_window(workspace_id).await
+        });
+
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    if view.selected_workspace != Some(workspace_id) {
+                        return;
+                    }
+                    if view.task_archived_loaded {
+                        return;
+                    }
+                    let Ok(Some(page)) = result else {
+                        return;
+                    };
+                    view.apply_archived_head_window(&page);
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    pub(crate) fn prefetch_archived_head_window(&mut self, cx: &mut Context<Self>) {
+        if self.task_archived_loaded {
+            return;
+        }
+        if self.task_fetch_archived == super::TaskFetchState::Loading {
+            return;
+        }
+        self.load_more_archived_tasks(true, cx);
+    }
+
     fn reset_workspace_view(&mut self, message: &str, cx: &mut Context<Self>) {
         self.task_store_initialized = false;
+        self.workspace_snapshot_rev = 0;
+        self.archived_snapshot_rev = 0;
         self.task_fetch_active = super::TaskFetchState::Idle;
         self.task_fetch_archived = super::TaskFetchState::Idle;
         self.task_has_more_active = true;
@@ -322,6 +386,7 @@ impl ShellView {
         self.tasks_by_id.clear();
         self.task_active_order.clear();
         self.task_archived_order.clear();
+        self.task_archived_cursor = None;
         self.task_query.clear();
         self.right_pane = None;
         self.selected_task = None;
@@ -371,26 +436,52 @@ impl ShellView {
     fn apply_active_snapshot(
         &mut self,
         snapshot: &WorkspaceActiveSnapshot,
+        preserve_session: bool,
         cx: &mut Context<Self>,
     ) {
+        let archived_items = if preserve_session {
+            self.task_archived_order
+                .iter()
+                .filter_map(|id| self.tasks_by_id.get(id).cloned())
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+
         self.task_store_initialized = true;
+        self.workspace_snapshot_rev = self.workspace_snapshot_rev.max(snapshot.snapshot_rev);
+        self.archived_snapshot_rev = self.archived_snapshot_rev.max(snapshot.archived_rev);
         self.task_fetch_active = super::TaskFetchState::Idle;
-        self.task_fetch_archived = super::TaskFetchState::Idle;
         self.task_has_more_active = false;
-        self.task_has_more_archived = false;
-        self.task_archived_loaded = false;
+
+        if !preserve_session {
+            self.task_fetch_archived = super::TaskFetchState::Idle;
+            self.task_has_more_archived = false;
+            self.task_archived_loaded = false;
+            self.task_archived_order.clear();
+            self.task_archived_cursor = None;
+        }
+
         self.tasks_by_id.clear();
         self.task_active_order.clear();
-        self.task_archived_order.clear();
-        self.session_thread_cache.clear();
-        self.session_head_meta.clear();
-        self.session_last_event_seq.clear();
+        if !preserve_session {
+            self.session_thread_cache.clear();
+            self.session_head_meta.clear();
+            self.session_last_event_seq.clear();
+        }
 
         for summary in &snapshot.active.tasks {
             let item = TaskSummaryItem::from_active(&summary);
             self.tasks_by_id.insert(item.id, item);
             self.cache_session_snapshot(&summary.primary_session, &summary.primary_session_head, cx);
         }
+
+        if preserve_session {
+            for item in archived_items {
+                self.tasks_by_id.entry(item.id).or_insert(item);
+            }
+        }
+
         self.rebuild_task_orders();
         self.rebuild_session_state();
     }
@@ -426,10 +517,57 @@ impl ShellView {
                 let result = task.await;
                 this.update(&mut cx, |view, cx| match result {
                     Ok(snapshot) => {
-                        view.apply_active_snapshot(&snapshot, cx);
+                        view.apply_active_snapshot(&snapshot, true, cx);
                         view.persist_active_snapshot(&snapshot, cx);
                         view.send_stream_subscribe();
                         view.task_fetch_active = super::TaskFetchState::Idle;
+                    }
+                    Err(_) => {
+                        view.task_fetch_active = super::TaskFetchState::Error;
+                    }
+                })
+                .ok();
+                let _ = this.update(&mut cx, |_, cx| {
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    pub(crate) fn refresh_active_snapshot(&mut self, cx: &mut Context<Self>) {
+        if self.task_fetch_active == super::TaskFetchState::Loading {
+            return;
+        }
+        let Some(workspace_id) = self.selected_workspace else {
+            return;
+        };
+        self.task_fetch_active = super::TaskFetchState::Loading;
+        cx.notify();
+
+        let task = Tokio::spawn_result(cx, async move {
+            let config = ctx_client::resolve_daemon_config()?;
+            let client = ctx_client::Client::new(config)?;
+            let params = ctx_client::WorkspaceActiveSnapshotParams {
+                limit: Some(50),
+            };
+            let snapshot = client
+                .get_workspace_active_snapshot(workspace_id, &params)
+                .await?;
+            Ok(snapshot)
+        });
+
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| match result {
+                    Ok(snapshot) => {
+                        view.apply_active_snapshot(&snapshot, true, cx);
+                        view.persist_active_snapshot(&snapshot, cx);
+                        view.send_stream_subscribe();
+                        view.task_fetch_active = super::TaskFetchState::Idle;
+                        view.prefetch_archived_head_window(cx);
                     }
                     Err(_) => {
                         view.task_fetch_active = super::TaskFetchState::Error;
@@ -464,50 +602,58 @@ impl ShellView {
         let Some(workspace_id) = self.selected_workspace else {
             return;
         };
+        let cursor = if reset {
+            None
+        } else {
+            self.task_archived_cursor.clone()
+        };
+        let persist_head = reset;
         self.task_fetch_archived = super::TaskFetchState::Loading;
         cx.notify();
 
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
-            let tasks = client.list_workspace_tasks(workspace_id).await?;
-            let archived = tasks
-                .into_iter()
-                .filter(|task| task.archived_at.is_some())
-                .collect::<Vec<_>>();
-            let mut summaries = Vec::new();
-            for task in archived {
-                let sessions = client.list_task_sessions(task.id).await.unwrap_or_default();
-                let mut session_summaries = Vec::new();
-                for session in sessions {
-                    let summary = client
-                        .get_session_snapshot(session.id, Some(1), Some(false))
-                        .await
-                        .map(|snapshot| snapshot.summary)
-                        .unwrap_or_else(|_| session_summary_from_session(&session));
-                    session_summaries.push(summary);
-                }
-                summaries.push((task, session_summaries));
-            }
-            Ok(summaries)
+            let params = ctx_client::WorkspaceArchivedPageParams {
+                limit: Some(50),
+                cursor,
+            };
+            client
+                .list_workspace_archived_task_summaries(workspace_id, &params)
+                .await
         });
 
         cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
                 let result = task.await;
-                this.update(&mut cx, |view, _cx| {
+                this.update(&mut cx, |view, cx| {
                     match result {
-                        Ok(entries) => {
+                        Ok(page) => {
                             if reset {
                                 view.clear_archived_tasks();
+                                view.task_archived_cursor = None;
                             }
-                            for (task, sessions) in entries {
-                                let item = TaskSummaryItem::from_archived(task, sessions);
+                            view.archived_snapshot_rev =
+                                view.archived_snapshot_rev.max(page.archived_rev);
+                            for summary in page.tasks.iter() {
+                                let fallback_worktree_id = summary.task.primary_worktree_id;
+                                let sessions = summary
+                                    .sessions
+                                    .iter()
+                                    .map(|session| {
+                                        session_snapshot_from_summary(session, fallback_worktree_id)
+                                    })
+                                    .collect::<Vec<_>>();
+                                let item = TaskSummaryItem::from_archived(summary.task.clone(), sessions);
                                 view.tasks_by_id.insert(item.id, item);
                             }
                             view.task_archived_loaded = true;
-                            view.task_has_more_archived = false;
+                            view.task_has_more_archived = page.next_cursor.is_some();
+                            view.task_archived_cursor = page.next_cursor.clone();
+                            if persist_head {
+                                view.persist_archived_head_window(&page, cx);
+                            }
                             view.rebuild_task_orders();
                             view.rebuild_session_state();
                             view.task_fetch_archived = super::TaskFetchState::Idle;
@@ -532,6 +678,28 @@ impl ShellView {
         }
     }
 
+    fn apply_archived_head_window(&mut self, page: &ctx_core::models::WorkspaceArchivedPage) {
+        self.clear_archived_tasks();
+        self.task_archived_cursor = page.next_cursor.clone();
+        self.task_archived_loaded = true;
+        self.task_has_more_archived = page.next_cursor.is_some();
+        self.archived_snapshot_rev = self.archived_snapshot_rev.max(page.archived_rev);
+
+        for summary in &page.tasks {
+            let fallback_worktree_id = summary.task.primary_worktree_id;
+            let sessions = summary
+                .sessions
+                .iter()
+                .map(|session| session_snapshot_from_summary(session, fallback_worktree_id))
+                .collect::<Vec<_>>();
+            let item = TaskSummaryItem::from_archived(summary.task.clone(), sessions);
+            self.tasks_by_id.insert(item.id, item);
+        }
+
+        self.rebuild_task_orders();
+        self.rebuild_session_state();
+    }
+
     pub(crate) fn upsert_active_task_summary(
         &mut self,
         summary: WorkspaceActiveTaskSummary,
@@ -540,6 +708,27 @@ impl ShellView {
         let item = TaskSummaryItem::from_active(&summary);
         self.tasks_by_id.insert(item.id, item);
         self.cache_session_snapshot(&summary.primary_session, &summary.primary_session_head, cx);
+        self.rebuild_task_orders();
+        self.rebuild_session_state();
+    }
+
+    pub(crate) fn upsert_archived_task_summary(
+        &mut self,
+        summary: WorkspaceTaskSummary,
+        snapshot: Option<SessionSnapshot>,
+        cx: &mut Context<Self>,
+    ) {
+        let fallback_worktree_id = summary.task.primary_worktree_id;
+        let sessions = summary
+            .sessions
+            .iter()
+            .map(|session| session_snapshot_from_summary(session, fallback_worktree_id))
+            .collect::<Vec<_>>();
+        let item = TaskSummaryItem::from_archived(summary.task, sessions);
+        self.tasks_by_id.insert(item.id, item);
+        if let Some(snapshot) = snapshot.as_ref() {
+            self.cache_session_snapshot(&snapshot.summary, &snapshot.head, cx);
+        }
         self.rebuild_task_orders();
         self.rebuild_session_state();
     }

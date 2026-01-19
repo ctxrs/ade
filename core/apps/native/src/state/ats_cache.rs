@@ -13,7 +13,7 @@ use tokio::sync::OnceCell;
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
     SessionHeadSnapshot, SessionHeadWindow, SessionHistoryPage, SessionSummaryCheckpoint,
-    WorkspaceActiveSnapshot,
+    WorkspaceActiveSnapshot, WorkspaceArchivedPage,
 };
 
 use super::session::SessionThreadCache;
@@ -182,6 +182,68 @@ impl AtsCache {
         let snapshot_json: String = row.try_get("snapshot_json")?;
         let snapshot = serde_json::from_str(&snapshot_json)?;
         Ok(Some(snapshot))
+    }
+
+    pub(crate) async fn save_archived_head_window(
+        &self,
+        workspace_id: WorkspaceId,
+        page: &WorkspaceArchivedPage,
+    ) -> Result<()> {
+        let Some(pool) = self.pool().await else {
+            return Ok(());
+        };
+
+        let page_json = serde_json::to_string(page)?;
+        let updated_at = Utc::now().timestamp_millis();
+
+        sqlx::query(
+            r#"
+            INSERT INTO ats_archived_head_windows (
+                workspace_id,
+                page_json,
+                updated_at
+            )
+            VALUES (?, ?, ?)
+            ON CONFLICT(workspace_id) DO UPDATE SET
+                page_json = excluded.page_json,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(workspace_id.0.to_string())
+        .bind(page_json)
+        .bind(updated_at)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub(crate) async fn load_archived_head_window(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Option<WorkspaceArchivedPage>> {
+        let Some(pool) = self.pool().await else {
+            return Ok(None);
+        };
+
+        let row = sqlx::query(
+            r#"
+            SELECT page_json
+            FROM ats_archived_head_windows
+            WHERE workspace_id = ?
+            "#,
+        )
+        .bind(workspace_id.0.to_string())
+        .fetch_optional(pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let page_json: String = row.try_get("page_json")?;
+        let page = serde_json::from_str(&page_json)?;
+        Ok(Some(page))
     }
 
     pub(crate) async fn load_session_history_page(
@@ -379,6 +441,18 @@ async fn init_db(path: &PathBuf) -> Result<Pool<Sqlite>> {
         CREATE TABLE IF NOT EXISTS ats_active_snapshots (
             workspace_id TEXT PRIMARY KEY,
             snapshot_json TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS ats_archived_head_windows (
+            workspace_id TEXT PRIMARY KEY,
+            page_json TEXT NOT NULL,
             updated_at INTEGER NOT NULL
         )
         "#,
