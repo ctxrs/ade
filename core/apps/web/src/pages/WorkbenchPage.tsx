@@ -331,6 +331,18 @@ type TaskListContext = {
   archivedFetchState: "idle" | "loading" | "error";
   hasMoreArchived: boolean;
   onLoadMoreArchived: () => void;
+  onScroll?: (event: React.UIEvent<HTMLDivElement>) => void;
+  onScrollerChange?: (node: HTMLDivElement | null) => void;
+};
+
+type TaskScrollbarDragState = {
+  pointerId: number;
+  startY: number;
+  startScrollTop: number;
+  trackHeight: number;
+  thumbHeight: number;
+  scrollHeight: number;
+  clientHeight: number;
 };
 
 type TaskListItem =
@@ -365,9 +377,21 @@ const ARCHIVED_SCROLL_LOAD_THRESHOLD_PX = 120;
 
 const TaskListScroller = React.forwardRef<HTMLDivElement, TaskListScrollerProps>((props, ref) => {
   const { context, onScroll, ...rest } = props;
+  const handleRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (typeof ref === "function") {
+        ref(node);
+      } else if (ref) {
+        ref.current = node;
+      }
+      context?.onScrollerChange?.(node);
+    },
+    [context, ref],
+  );
   const handleScroll = useCallback(
     (event: React.UIEvent<HTMLDivElement>) => {
       onScroll?.(event);
+      context?.onScroll?.(event);
       if (!context) return;
       if (context.archivedCollapsed) return;
       if (!context.hasMoreArchived) return;
@@ -380,7 +404,7 @@ const TaskListScroller = React.forwardRef<HTMLDivElement, TaskListScrollerProps>
     [context, onScroll],
   );
 
-  return <div {...rest} ref={ref} className="wb-task-scroll" onScroll={handleScroll} />;
+  return <div {...rest} ref={handleRef} className="wb-task-scroll" onScroll={handleScroll} />;
 });
 
 const TaskListContainer = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
@@ -2142,6 +2166,190 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     [activeSectionLastIndex, workspaceSnapshot.fetchState.active, workspaceSnapshot.hasMoreActive, workspaceSnapshotStore],
   );
 
+  const taskScrollerRef = useRef<HTMLDivElement | null>(null);
+  const [taskScrollerNode, setTaskScrollerNode] = useState<HTMLDivElement | null>(null);
+  const [taskScrollbarNeeded, setTaskScrollbarNeeded] = useState(false);
+  const [taskScrollbarActive, setTaskScrollbarActive] = useState(false);
+  const [taskScrollbarDragging, setTaskScrollbarDragging] = useState(false);
+  const taskScrollbarActiveRef = useRef(false);
+  const taskScrollbarNeededRef = useRef(false);
+  const taskScrollbarDraggingRef = useRef(false);
+  const taskScrollbarHideTimerRef = useRef<number | null>(null);
+  const taskScrollbarRafRef = useRef<number | null>(null);
+  const taskScrollbarTrackRef = useRef<HTMLDivElement | null>(null);
+  const taskScrollbarThumbRef = useRef<HTMLDivElement | null>(null);
+  const taskScrollbarThumbHeightRef = useRef(0);
+  const taskScrollbarDragRef = useRef<TaskScrollbarDragState | null>(null);
+
+  const setTaskScrollbarActiveState = useCallback((next: boolean) => {
+    if (taskScrollbarActiveRef.current === next) return;
+    taskScrollbarActiveRef.current = next;
+    setTaskScrollbarActive(next);
+  }, []);
+
+  const setTaskScrollbarNeededState = useCallback((next: boolean) => {
+    if (taskScrollbarNeededRef.current === next) return;
+    taskScrollbarNeededRef.current = next;
+    setTaskScrollbarNeeded(next);
+  }, []);
+
+  const updateTaskScrollbar = useCallback(() => {
+    const scroller = taskScrollerRef.current;
+    if (!scroller) return;
+    const { scrollHeight, clientHeight, scrollTop } = scroller;
+    const needsScrollbar = scrollHeight > clientHeight + 1;
+    setTaskScrollbarNeededState(needsScrollbar);
+    if (!needsScrollbar) return;
+    const track = taskScrollbarTrackRef.current;
+    const thumb = taskScrollbarThumbRef.current;
+    if (!track || !thumb) return;
+    const trackHeight = track.clientHeight;
+    if (trackHeight <= 0 || clientHeight <= 0) return;
+    const thumbHeight = Math.max((clientHeight / scrollHeight) * trackHeight, 24);
+    taskScrollbarThumbHeightRef.current = thumbHeight;
+    const maxThumbTop = Math.max(trackHeight - thumbHeight, 0);
+    const maxScrollTop = Math.max(scrollHeight - clientHeight, 1);
+    const thumbTop = Math.min(maxThumbTop, Math.max(0, (scrollTop / maxScrollTop) * maxThumbTop));
+    thumb.style.height = `${thumbHeight}px`;
+    thumb.style.transform = `translateY(${thumbTop}px)`;
+  }, [setTaskScrollbarNeededState]);
+
+  const scheduleTaskScrollbarUpdate = useCallback(() => {
+    if (taskScrollbarRafRef.current != null) return;
+    taskScrollbarRafRef.current = window.requestAnimationFrame(() => {
+      taskScrollbarRafRef.current = null;
+      updateTaskScrollbar();
+    });
+  }, [updateTaskScrollbar]);
+
+  const showTaskScrollbarTemporarily = useCallback(() => {
+    const scroller = taskScrollerRef.current;
+    if (scroller) {
+      setTaskScrollbarNeededState(scroller.scrollHeight > scroller.clientHeight + 1);
+    }
+    setTaskScrollbarActiveState(true);
+    if (taskScrollbarHideTimerRef.current) window.clearTimeout(taskScrollbarHideTimerRef.current);
+    taskScrollbarHideTimerRef.current = window.setTimeout(() => {
+      setTaskScrollbarActiveState(false);
+    }, 900);
+    updateTaskScrollbar();
+  }, [setTaskScrollbarActiveState, setTaskScrollbarNeededState, updateTaskScrollbar]);
+
+  const handleTaskScrollbarTrackPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      if (event.target === taskScrollbarThumbRef.current) return;
+      const scroller = taskScrollerRef.current;
+      const track = taskScrollbarTrackRef.current;
+      if (!scroller || !track) return;
+      event.preventDefault();
+      const rect = track.getBoundingClientRect();
+      const ratio = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+      const maxScrollTop = Math.max(scroller.scrollHeight - scroller.clientHeight, 0);
+      scroller.scrollTop = ratio * maxScrollTop;
+      scheduleTaskScrollbarUpdate();
+      showTaskScrollbarTemporarily();
+    },
+    [scheduleTaskScrollbarUpdate, showTaskScrollbarTemporarily],
+  );
+
+  const handleTaskScrollbarThumbPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      const scroller = taskScrollerRef.current;
+      const track = taskScrollbarTrackRef.current;
+      if (!scroller || !track) return;
+      event.preventDefault();
+      event.stopPropagation();
+      updateTaskScrollbar();
+      const trackHeight = track.clientHeight;
+      const thumbHeight = taskScrollbarThumbHeightRef.current;
+      const maxScrollTop = scroller.scrollHeight - scroller.clientHeight;
+      if (maxScrollTop <= 0 || trackHeight <= thumbHeight) return;
+      if (taskScrollbarHideTimerRef.current) window.clearTimeout(taskScrollbarHideTimerRef.current);
+      setTaskScrollbarActiveState(true);
+      setTaskScrollbarDragging(true);
+      taskScrollbarDraggingRef.current = true;
+      taskScrollbarDragRef.current = {
+        pointerId: event.pointerId,
+        startY: event.clientY,
+        startScrollTop: scroller.scrollTop,
+        trackHeight,
+        thumbHeight,
+        scrollHeight: scroller.scrollHeight,
+        clientHeight: scroller.clientHeight,
+      };
+      taskScrollbarThumbRef.current?.setPointerCapture(event.pointerId);
+    },
+    [setTaskScrollbarActiveState, updateTaskScrollbar],
+  );
+
+  const handleTaskScrollbarThumbPointerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const drag = taskScrollbarDragRef.current;
+      const scroller = taskScrollerRef.current;
+      if (!drag || !scroller || drag.pointerId !== event.pointerId) return;
+      const maxScrollTop = Math.max(drag.scrollHeight - drag.clientHeight, 0);
+      const maxThumbTop = Math.max(drag.trackHeight - drag.thumbHeight, 1);
+      const delta = event.clientY - drag.startY;
+      const nextScrollTop = drag.startScrollTop + (delta / maxThumbTop) * maxScrollTop;
+      scroller.scrollTop = Math.min(maxScrollTop, Math.max(0, nextScrollTop));
+      scheduleTaskScrollbarUpdate();
+    },
+    [scheduleTaskScrollbarUpdate],
+  );
+
+  const handleTaskScrollbarThumbPointerUp = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const drag = taskScrollbarDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      taskScrollbarDragRef.current = null;
+      taskScrollbarThumbRef.current?.releasePointerCapture(event.pointerId);
+      taskScrollbarDraggingRef.current = false;
+      setTaskScrollbarDragging(false);
+      showTaskScrollbarTemporarily();
+    },
+    [showTaskScrollbarTemporarily],
+  );
+
+  const handleTaskScrollbarMouseLeave = useCallback(() => {
+    if (taskScrollbarDraggingRef.current) return;
+    if (taskScrollbarHideTimerRef.current) window.clearTimeout(taskScrollbarHideTimerRef.current);
+    setTaskScrollbarActiveState(false);
+  }, [setTaskScrollbarActiveState]);
+
+  const handleTaskListScrollerChange = useCallback(
+    (node: HTMLDivElement | null) => {
+      taskScrollerRef.current = node;
+      setTaskScrollerNode(node);
+      scheduleTaskScrollbarUpdate();
+    },
+    [scheduleTaskScrollbarUpdate],
+  );
+
+  const handleTaskListScroll = useCallback(() => {
+    showTaskScrollbarTemporarily();
+    scheduleTaskScrollbarUpdate();
+  }, [scheduleTaskScrollbarUpdate, showTaskScrollbarTemporarily]);
+
+  useEffect(() => {
+    if (!taskScrollerNode) return;
+    const observer = new ResizeObserver(() => scheduleTaskScrollbarUpdate());
+    observer.observe(taskScrollerNode);
+    return () => observer.disconnect();
+  }, [scheduleTaskScrollbarUpdate, taskScrollerNode]);
+
+  useEffect(() => {
+    scheduleTaskScrollbarUpdate();
+  }, [scheduleTaskScrollbarUpdate, taskListItems.length]);
+
+  useEffect(() => {
+    return () => {
+      if (taskScrollbarHideTimerRef.current) window.clearTimeout(taskScrollbarHideTimerRef.current);
+      if (taskScrollbarRafRef.current != null) window.cancelAnimationFrame(taskScrollbarRafRef.current);
+    };
+  }, []);
+
   const loadMoreArchived = useCallback(() => {
     workspaceSnapshotStore.loadMoreArchived();
   }, [workspaceSnapshotStore]);
@@ -2152,8 +2360,17 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       archivedFetchState: workspaceSnapshot.fetchState.archived,
       hasMoreArchived: workspaceSnapshot.hasMoreArchived,
       onLoadMoreArchived: loadMoreArchived,
+      onScroll: handleTaskListScroll,
+      onScrollerChange: handleTaskListScrollerChange,
     }),
-    [archivedCollapsed, loadMoreArchived, workspaceSnapshot.fetchState.archived, workspaceSnapshot.hasMoreArchived],
+    [
+      archivedCollapsed,
+      handleTaskListScroll,
+      handleTaskListScrollerChange,
+      loadMoreArchived,
+      workspaceSnapshot.fetchState.archived,
+      workspaceSnapshot.hasMoreArchived,
+    ],
   );
 
   const onDeleteTask = useCallback(
@@ -3852,7 +4069,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           </div>
         </div>
 
-        <div className="wb-sidebar-section wb-sidebar-grow" style={{ minHeight: 0 }}>
+        <div
+          className="wb-sidebar-section wb-sidebar-grow wb-task-list-shell"
+          style={{ minHeight: 0 }}
+          onMouseLeave={handleTaskScrollbarMouseLeave}
+        >
           <Virtuoso
             style={{ flex: 1, minHeight: 0 }}
             data={taskListItems}
@@ -3863,6 +4084,31 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             rangeChanged={onTaskListRangeChanged}
             components={TASK_LIST_COMPONENTS}
           />
+          <div
+            className={`wb-scrollbar wb-task-scrollbar${taskScrollbarActive ? " is-active" : ""}${taskScrollbarDragging ? " is-dragging" : ""}${taskScrollbarNeeded ? "" : " is-hidden"}`}
+            aria-hidden="true"
+          >
+            <div
+              className="wb-scrollbar-track"
+              ref={(node) => {
+                taskScrollbarTrackRef.current = node;
+                if (node) scheduleTaskScrollbarUpdate();
+              }}
+              onPointerDown={handleTaskScrollbarTrackPointerDown}
+            >
+              <div
+                className="wb-scrollbar-thumb"
+                ref={(node) => {
+                  taskScrollbarThumbRef.current = node;
+                  if (node) scheduleTaskScrollbarUpdate();
+                }}
+                onPointerDown={handleTaskScrollbarThumbPointerDown}
+                onPointerMove={handleTaskScrollbarThumbPointerMove}
+                onPointerUp={handleTaskScrollbarThumbPointerUp}
+                onPointerCancel={handleTaskScrollbarThumbPointerUp}
+              />
+            </div>
+          </div>
         </div>
 
       </div>
