@@ -1458,6 +1458,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (!canonical) return optimistic;
     const canonicalPrimary = idToString(canonical.task.primary_session_id ?? "");
     const canonicalHasPrimary = Boolean(canonicalPrimary);
+    // Hold the optimistic summary until the canonical task has primary_session_id; this is about the non-atomic task+session creation noted in .ctx/docs/workbench_catchup_and_cache.md, not multi-session fallback.
     return canonicalHasPrimary ? canonical : optimistic;
   }, [activeTaskId, optimisticTasksById, tasksById]);
   const sessionSummaries = useMemo(() => activeTaskSummary?.sessions ?? [], [activeTaskSummary]);
