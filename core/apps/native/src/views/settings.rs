@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
 use gpui::{
-    AnyElement, ClickEvent, Context, ElementId, FontWeight, MouseButton, MouseUpEvent, Render, Window,
-    div, img, linear_color_stop, linear_gradient, prelude::*, px, relative, ObjectFit, Rgba,
+    AnyElement, ClickEvent, Context, ElementId, Focusable, FontWeight, MouseButton, MouseUpEvent,
+    ObjectFit, Render, Rgba, Window, div, img, linear_color_stop, linear_gradient, prelude::*, px,
+    relative,
 };
 use gpui_component::{input::Input, select::Select};
 use gpui_component::scroll::ScrollableElement;
@@ -547,6 +548,15 @@ impl Render for SettingsState {
             cx,
         );
         let query = search_state.read(cx).value().to_lowercase();
+        let search_focused = search_state.focus_handle(cx).is_focused(window);
+        let search_border = if search_focused { white(0.88) } else { white(0.06) };
+        let nav_text = white(0.5);
+        let nav_text_active = white(0.9);
+        let nav_text_hover = white(0.78);
+        let nav_bg_active = white(0.1);
+        let nav_bg_hover = white(0.05);
+        let nav_item_height = px(28.0);
+        let nav_item_radius = px(8.0);
 
         let filtered_sections: Vec<SettingsSection> = SETTINGS_SECTIONS
             .iter()
@@ -555,6 +565,18 @@ impl Render for SettingsState {
                 query.is_empty() || section.label().to_lowercase().contains(&query)
             })
             .collect();
+        let main_sections: Vec<SettingsSection> = filtered_sections
+            .iter()
+            .copied()
+            .filter(|section| section.group() == SettingsSectionGroup::Main)
+            .collect();
+        let advanced_sections: Vec<SettingsSection> = filtered_sections
+            .iter()
+            .copied()
+            .filter(|section| section.group() == SettingsSectionGroup::Advanced)
+            .collect();
+        let _has_main_sections = !main_sections.is_empty();
+        let _has_advanced_sections = !advanced_sections.is_empty();
 
         automation_tree::clear_prefix("settings-nav-main-item-");
         automation_tree::clear_prefix("settings-nav-advanced-item-");
@@ -587,6 +609,7 @@ impl Render for SettingsState {
             .child(
                 div()
                     .px(px(10.0))
+                    .pt(px(4.0))
                     .pb(px(8.0))
                     .grid()
                     .gap(px(10.0))
@@ -596,25 +619,25 @@ impl Render for SettingsState {
                             .text_color(white(0.45))
                             .cursor_pointer()
                             .hover(|style| style.text_color(white(0.75)))
-                            .child("← Back to Workspace".to_string())
+                            .child("← Back to Home".to_string())
                             .on_children_prepainted(automation_tree::track_children_bounds(
                                 "settings-back-to-workspace",
                                 "button",
-                                Some("Back to Workspace"),
+                                Some("Back to Home"),
                                 Some("settings-pane"),
                             ))
                             .id("settings-back-to-workspace")
                             .on_mouse_up(MouseButton::Left, cx.listener(|view, _: &MouseUpEvent, _window, cx| {
                                 if let Some(handle) = view.shell_handle.clone() {
                                     handle.update(cx, |shell, cx| {
-                                        shell.set_route(ShellRoute::Workbench, cx);
+                                        shell.set_route(ShellRoute::Workspaces, cx);
                                     });
                                 }
                             })),
                     )
                     .child(
                         div()
-                            .text_size(px(18.0))
+                            .text_size(px(20.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(white(0.9))
                             .child("Settings".to_string()),
@@ -631,18 +654,28 @@ impl Render for SettingsState {
                         Some("settings-pane"),
                     ))
                     .id("settings-search-input")
-                    .child(
-                        Input::new(&search_state)
-                            .appearance(true)
-                            .bg(white(0.06))
-                            .border_color(white(0.06))
-                            .rounded(px(8.0))
-                            .h(px(30.0))
+                    .child({
+                        div()
                             .w_full()
-                            .px(px(10.0))
-                            .text_size(px(13.0))
-                            .text_color(white(0.8)),
-                    ),
+                            .h(px(30.0))
+                            .rounded(px(8.0))
+                            .border_1()
+                            .border_color(search_border)
+                            .bg(white(0.06))
+                            .child(
+                            Input::new(&search_state)
+                                .appearance(true)
+                                .bg(rgba_u8(0, 0, 0, 0.0))
+                                .border_color(rgba_u8(0, 0, 0, 0.0))
+                                .focus_bordered(false)
+                                .rounded(px(8.0))
+                                .h(px(30.0))
+                                .w_full()
+                                .px(px(10.0))
+                                .text_size(px(13.0))
+                                .text_color(white(0.8)),
+                            )
+                    }),
             )
             .child(
                 div()
@@ -659,7 +692,7 @@ impl Render for SettingsState {
                                 Some("settings-pane"),
                             ))
                             .id("settings-nav-main-list")
-                            .children(filtered_sections.iter().copied().filter(|s| s.group() == SettingsSectionGroup::Main).enumerate().map(|(ix, section)| {
+                            .children(main_sections.iter().copied().enumerate().map(|(ix, section)| {
                                 let is_active = section == active_section;
                                 let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                     view.set_active_section(section, cx);
@@ -667,16 +700,17 @@ impl Render for SettingsState {
                                 let item_id = format!("settings-nav-main-item-{}", ix);
                                 let item_label = section.label().to_string();
                                 let item = div()
-                                    .h(px(28.0))
+                                    .h(nav_item_height)
+                                    .w_full()
                                     .px(px(10.0))
                                     .flex()
                                     .items_center()
-                                    .rounded(px(8.0))
+                                    .rounded(nav_item_radius)
                                     .text_size(px(13.0))
                                     .child(item_label.clone())
-                                    .text_color(if is_active { white(0.9) } else { white(0.55) })
-                                    .bg(if is_active { white(0.1) } else { rgba_u8(0, 0, 0, 0.0) })
-                                    .when(!is_active, |this| this.hover(|style| style.bg(white(0.06)).text_color(white(0.82))))
+                                    .text_color(if is_active { nav_text_active } else { nav_text })
+                                    .bg(if is_active { nav_bg_active } else { rgba_u8(0, 0, 0, 0.0) })
+                                    .when(!is_active, |this| this.hover(|style| style.bg(nav_bg_hover).text_color(nav_text_hover)))
                                     .cursor_pointer()
                                     .id(ElementId::named_usize("settings-nav-main", ix))
                                     .on_click(on_click);
@@ -702,7 +736,7 @@ impl Render for SettingsState {
                                 Some("settings-pane"),
                             ))
                             .id("settings-nav-advanced-list")
-                            .children(filtered_sections.iter().copied().filter(|s| s.group() == SettingsSectionGroup::Advanced).enumerate().map(|(ix, section)| {
+                            .children(advanced_sections.iter().copied().enumerate().map(|(ix, section)| {
                                 let is_active = section == active_section;
                                 let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                     view.set_active_section(section, cx);
@@ -710,16 +744,17 @@ impl Render for SettingsState {
                                 let item_id = format!("settings-nav-advanced-item-{}", ix);
                                 let item_label = section.label().to_string();
                                 let item = div()
-                                    .h(px(28.0))
+                                    .h(nav_item_height)
+                                    .w_full()
                                     .px(px(10.0))
                                     .flex()
                                     .items_center()
-                                    .rounded(px(8.0))
+                                    .rounded(nav_item_radius)
                                     .text_size(px(13.0))
                                     .child(item_label.clone())
-                                    .text_color(if is_active { white(0.9) } else { white(0.55) })
-                                    .bg(if is_active { white(0.1) } else { rgba_u8(0, 0, 0, 0.0) })
-                                    .when(!is_active, |this| this.hover(|style| style.bg(white(0.06)).text_color(white(0.82))))
+                                    .text_color(if is_active { nav_text_active } else { nav_text })
+                                    .bg(if is_active { nav_bg_active } else { rgba_u8(0, 0, 0, 0.0) })
+                                    .when(!is_active, |this| this.hover(|style| style.bg(nav_bg_hover).text_color(nav_text_hover)))
                                     .cursor_pointer()
                                     .id(ElementId::named_usize("settings-nav-advanced", ix))
                                     .on_click(on_click);
@@ -803,8 +838,6 @@ impl SettingsState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-
-        eprintln!("ctx-native: settings render active={:?} loaded={} load_error={:?}", active, loaded, load_error);
         if !loaded {
             return settings_empty("Loading…", false).into_any_element();
         }
@@ -818,6 +851,8 @@ impl SettingsState {
             SettingsSection::Sandboxing => self.render_sandboxing(window, cx),
             SettingsSection::WorktreeBootstrap => self.render_worktree_bootstrap(window, cx),
             SettingsSection::WorkspaceAttachments => self.render_workspace_attachments(window, cx),
+            SettingsSection::AgentSystemPrompt => self.render_agent_system_prompt(window, cx),
+            SettingsSection::MergeQueue => self.render_merge_queue(window, cx),
             SettingsSection::ContextPack => self.render_context_pack(window, cx),
             SettingsSection::ResourceGovernance => self.render_resource_governance(window, cx),
             SettingsSection::MobileAccess => self.render_mobile_access(window, cx),
@@ -828,6 +863,7 @@ impl SettingsState {
             SettingsSection::TeamEnterprise => self.render_team_enterprise(window, cx),
             SettingsSection::UsageAnalytics => self.render_usage_analytics(window, cx),
             SettingsSection::AgentHarnesses => self.render_agent_harnesses(window, cx),
+            SettingsSection::HarnessSubscriptions => self.render_harness_subscriptions(window, cx),
         }
     }
 
@@ -1664,32 +1700,8 @@ impl SettingsState {
     }
 
     fn render_context_pack(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> AnyElement {
-        let colors = self.colors;
-        let selected_workspace = self
-            .selected_workspace
-            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id));
-        let pack_path = selected_workspace
-            .map(|ws| format!("{}/.ctx/ctx-pack", ws.root_path))
-            .unwrap_or_else(|| ".ctx/ctx-pack".to_string());
-        let mut body = div()
-            .grid()
-            .gap(px(10.0))
-            .child(
-                div()
-                    .text_size(px(13.0))
-                    .text_color(white(0.7))
-                    .child("ctx pack stores specs, skills, and prompts for this workspace."),
-            )
-            .child(settings_code_block(&pack_path));
-        if selected_workspace.is_none() {
-            body = body.child(settings_empty_compact("Select a workspace to see the exact path."));
-        }
-
-        div()
-            .grid()
-            .gap(px(14.0))
-            .child(settings_card(colors, None, body))
-            .into_any_element()
+        // Match the web settings page: the "ctx pack" section is currently an empty page.
+        div().into_any_element()
     }
 
     fn render_team_enterprise(
@@ -3470,5 +3482,56 @@ impl SettingsState {
         }
 
         content.into_any_element()
+    }
+
+    fn render_harness_subscriptions(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let colors = self.colors;
+        div()
+            .grid()
+            .gap(px(14.0))
+            .child(settings_card(
+                colors,
+                Some("Codex"),
+                settings_empty("Not implemented in native yet.", false),
+            ))
+            .into_any_element()
+    }
+
+    fn render_agent_system_prompt(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let colors = self.colors;
+        div()
+            .grid()
+            .gap(px(14.0))
+            .child(settings_card(
+                colors,
+                Some("Agent System Prompt"),
+                settings_empty("Not implemented in native yet.", false),
+            ))
+            .into_any_element()
+    }
+
+    fn render_merge_queue(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let colors = self.colors;
+        div()
+            .grid()
+            .gap(px(14.0))
+            .child(settings_card(
+                colors,
+                Some("Merge Queue"),
+                settings_empty("Not implemented in native yet.", false),
+            ))
+            .into_any_element()
     }
 }

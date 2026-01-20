@@ -27,7 +27,8 @@ const FILE_COMPLETION_LIMIT: u32 = 10;
 const AUTOCOMPLETE_DEBOUNCE_MS: u64 = 120;
 const MENU_MARGIN: f32 = 10.0;
 const MENU_GAP: f32 = 8.0;
-const HARN_MENU_GAP: f32 = 10.0;
+const HARN_MENU_GAP: f32 = 1.0;
+const HARN_MENU_TOP_OFFSET: f32 = -6.0;
 const AUTOCOMPLETE_ROW_HEIGHT: f32 = 30.0;
 const AUTOCOMPLETE_CONTAINER_EXTRA_Y: f32 = 14.0;
 const AUTOCOMPLETE_MIN_WIDTH: f32 = 340.0;
@@ -1144,6 +1145,7 @@ impl ShellView {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn toggle_recording(
         &mut self,
         _: &ClickEvent,
@@ -2189,21 +2191,29 @@ impl ShellView {
     }
 
     pub(super) fn sync_composer_defaults(&mut self) {
+        let provider_exists = |id: &str| self.providers.iter().any(|p| p.provider_id == id);
+
         let default_provider = self
             .composer_provider_id
             .clone()
-            .filter(|id| self.providers.iter().any(|provider| provider.provider_id == *id))
-            .or_else(|| {
-                self.providers
-                    .iter()
-                    .find(|provider| provider.provider_id == "codex")
-                    .map(|provider| provider.provider_id.clone())
-            })
+            .filter(|id| provider_exists(id))
             .or_else(|| {
                 self.session_summary_map
                     .values()
-                    .next()
+                    .find(|summary| provider_exists(&summary.session.provider_id))
                     .map(|summary| summary.session.provider_id.clone())
+            })
+            .or_else(|| {
+                ["fake", "codex"]
+                    .into_iter()
+                    .find(|id| provider_exists(id))
+                    .map(|id| id.to_string())
+            })
+            .or_else(|| {
+                self.providers
+                    .iter()
+                    .find(|provider| provider.details.get("ui_hidden").map(|v| v != "true").unwrap_or(true))
+                    .map(|provider| provider.provider_id.clone())
             })
             .or_else(|| self.providers.first().map(|provider| provider.provider_id.clone()));
         self.composer_provider_id = default_provider;
@@ -2212,31 +2222,39 @@ impl ShellView {
             self.composer_model_id = None;
             return;
         };
-        let mut models =
-            model_ids_from_provider_options(self.composer_provider_options.get(&provider_id));
-        if models.is_empty() {
-            models = self.model_ids_for_provider(&provider_id);
-        }
-        let default_model =
-            model_id_from_provider_options(self.composer_provider_options.get(&provider_id))
-                .or_else(|| models.first().cloned());
-        if self
-            .composer_model_id
-            .as_ref()
-            .map(|id| !models.contains(id))
-            .unwrap_or(true)
-        {
-            if let Some(default_model) = default_model {
-                self.composer_model_id = Some(default_model);
-            } else if self.composer_model_id.is_none() {
-                if let Some(summary) = self
-                    .session_summary_map
-                    .values()
-                    .find(|summary| summary.session.provider_id == provider_id)
-                {
-                    self.composer_model_id = Some(summary.session.model_id.clone());
+        let has_explicit_model = self
+            .composer_draft_tracks
+            .iter()
+            .any(|track| !track.model_id.trim().is_empty());
+        if !self.new_task_mode || has_explicit_model {
+            let mut models =
+                model_ids_from_provider_options(self.composer_provider_options.get(&provider_id));
+            if models.is_empty() {
+                models = self.model_ids_for_provider(&provider_id);
+            }
+            let default_model =
+                model_id_from_provider_options(self.composer_provider_options.get(&provider_id))
+                    .or_else(|| models.first().cloned());
+            if self
+                .composer_model_id
+                .as_ref()
+                .map(|id| !models.contains(id))
+                .unwrap_or(true)
+            {
+                if let Some(default_model) = default_model {
+                    self.composer_model_id = Some(default_model);
+                } else if self.composer_model_id.is_none() {
+                    if let Some(summary) = self
+                        .session_summary_map
+                        .values()
+                        .find(|summary| summary.session.provider_id == provider_id)
+                    {
+                        self.composer_model_id = Some(summary.session.model_id.clone());
+                    }
                 }
             }
+        } else {
+            self.composer_model_id = None;
         }
 
         self.ensure_primary_draft_track();
@@ -2278,6 +2296,7 @@ impl ShellView {
         }];
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_use_multiple_agents(&mut self, enabled: bool, cx: &mut Context<Self>) {
         if self.composer_use_multiple_agents == enabled {
             return;
@@ -2474,9 +2493,17 @@ impl ShellView {
         provider_id: String,
         cx: &mut Context<Self>,
     ) {
+        let provider_changed = self
+            .composer_provider_id
+            .as_deref()
+            .map(|id| id != provider_id)
+            .unwrap_or(true);
         self.composer_provider_id = Some(provider_id.clone());
         self.composer_open_menu = None;
         if self.new_task_mode {
+            if provider_changed && !self.composer_use_multiple_agents {
+                self.composer_model_id = None;
+            }
             if self.composer_use_multiple_agents {
                 let exists = self
                     .composer_draft_tracks
@@ -2492,6 +2519,8 @@ impl ShellView {
             } else {
                 self.set_single_draft_track(provider_id.clone());
             }
+            cx.notify();
+            return;
         }
         let mut models =
             model_ids_from_provider_options(self.composer_provider_options.get(&provider_id));
@@ -2571,6 +2600,14 @@ impl ShellView {
         if !self.new_task_mode {
             return;
         }
+        let has_explicit_model = self
+            .composer_model_id
+            .as_ref()
+            .map(|id| !id.trim().is_empty())
+            .unwrap_or(false);
+        if !has_explicit_model {
+            return;
+        }
         if self.composer_draft_tracks.len() != 1 {
             return;
         }
@@ -2645,7 +2682,10 @@ impl ShellView {
                                 .insert(provider_id_for_update.clone(), options);
                         }
                         Err(err) => {
-                            view.composer_provider_action_error = Some(err.to_string());
+                            eprintln!(
+                                "ctx-native: provider options fetch failed for {}: {}",
+                                provider_id_for_update, err
+                            );
                         }
                     }
                     cx.notify();
@@ -3325,7 +3365,8 @@ fn compute_menu_placement(
 
     if menu == ComposerMenuId::Harness {
         let mut left = trigger.right() + px(HARN_MENU_GAP);
-        let mut top = trigger.top() + trigger.size.height / 2.0 - menu_h / 2.0;
+        let mut top = trigger.top() + trigger.size.height / 2.0 - menu_h / 2.0
+            + px(HARN_MENU_TOP_OFFSET);
 
         if left + menu_w > viewport.width - margin {
             left = (viewport.width - margin - menu_w).max(margin);

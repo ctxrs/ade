@@ -184,9 +184,10 @@ const LAYOUT_HASH_PRIME: u64 = 0x100000001b3;
 pub(crate) const THREAD_RENDER_CACHE_LIMIT: usize = 24;
 
 fn fresh_thread_list_state() -> ListState {
-    ListState::new(0, ListAlignment::Bottom, px(160.0))
+    ListState::new(0, ListAlignment::Top, px(160.0))
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 enum SessionControlAction {
     Interrupt,
@@ -221,6 +222,109 @@ pub(super) fn clear_placeholder_messages_in(messages: &mut Vec<MessageItem>) {
 }
 
 impl ShellView {
+    fn coerce_number(value: Option<&Value>) -> Option<f64> {
+        let value = value?;
+        match value {
+            Value::Number(number) => number.as_f64(),
+            Value::String(raw) => raw.trim().parse::<f64>().ok(),
+            _ => None,
+        }
+    }
+
+    fn normalize_context_window_metrics(metrics: Option<&Value>) -> Option<super::ContextWindowInfo> {
+        let metrics = metrics?.as_object()?;
+
+        let window_tokens = Self::coerce_number(metrics.get("context_window_tokens"))
+            .or_else(|| Self::coerce_number(metrics.get("context_window_size")))
+            .or_else(|| Self::coerce_number(metrics.get("context_window")))
+            .or_else(|| Self::coerce_number(metrics.get("context_size")))
+            .or_else(|| Self::coerce_number(metrics.get("window_tokens")))
+            .or_else(|| Self::coerce_number(metrics.get("max_context_tokens")))
+            .or_else(|| Self::coerce_number(metrics.get("max_tokens")))?;
+        if window_tokens <= 0.0 {
+            return None;
+        }
+
+        let input_tokens = Self::coerce_number(metrics.get("total_input_tokens"))
+            .or_else(|| Self::coerce_number(metrics.get("input_tokens")))
+            .or_else(|| Self::coerce_number(metrics.get("prompt_tokens")))
+            .or_else(|| Self::coerce_number(metrics.get("input")));
+        let output_tokens = Self::coerce_number(metrics.get("total_output_tokens"))
+            .or_else(|| Self::coerce_number(metrics.get("output_tokens")))
+            .or_else(|| Self::coerce_number(metrics.get("completion_tokens")))
+            .or_else(|| Self::coerce_number(metrics.get("output")));
+        let context_tokens_estimate = Self::coerce_number(metrics.get("context_tokens_estimate"))
+            .or_else(|| Self::coerce_number(metrics.get("context_tokens")));
+
+        let mut used_tokens = if input_tokens.is_some() || output_tokens.is_some() {
+            Some(input_tokens.unwrap_or(0.0) + output_tokens.unwrap_or(0.0))
+        } else {
+            context_tokens_estimate
+        };
+
+        let mut remaining_tokens = Self::coerce_number(metrics.get("remaining_tokens_estimate"))
+            .or_else(|| Self::coerce_number(metrics.get("remaining_tokens")));
+        let mut remaining_fraction = Self::coerce_number(metrics.get("remaining_fraction"))
+            .or_else(|| Self::coerce_number(metrics.get("remaining_pct")))
+            .or_else(|| Self::coerce_number(metrics.get("remaining_percent")));
+
+        if let Some(fraction) = remaining_fraction.as_mut() {
+            if *fraction > 1.0 {
+                *fraction = if *fraction <= 100.0 { *fraction / 100.0 } else { return None };
+            }
+            *fraction = fraction.max(0.0).min(1.0);
+        }
+
+        if remaining_tokens.is_none() {
+            if let Some(used) = used_tokens {
+                remaining_tokens = Some((window_tokens - used).max(0.0));
+            }
+        }
+        if used_tokens.is_none() {
+            if let Some(remaining) = remaining_tokens {
+                used_tokens = Some((window_tokens - remaining).max(0.0));
+            }
+        }
+        if remaining_fraction.is_none() {
+            if let Some(used) = used_tokens {
+                remaining_fraction = Some((1.0 - used / window_tokens).max(0.0).min(1.0));
+            }
+        }
+        if used_tokens.is_none() {
+            if let Some(fraction) = remaining_fraction {
+                used_tokens = Some((window_tokens * (1.0 - fraction)).round().max(0.0));
+            }
+        }
+
+        Some(super::ContextWindowInfo {
+            window_tokens: Some(window_tokens),
+            used_tokens,
+            remaining_tokens,
+            remaining_fraction,
+        })
+    }
+
+    fn update_composer_context_window(&mut self) {
+        if self.new_task_mode || self.selected_session_id().is_none() {
+            self.composer_context_window = None;
+            return;
+        }
+
+        let mut latest_metrics: Option<&Value> = None;
+        let mut latest_at = None;
+        for turn in &self.session_turns {
+            let Some(metrics) = turn.metrics_json.as_ref() else {
+                continue;
+            };
+            if latest_at.map_or(true, |at| turn.updated_at >= at) {
+                latest_at = Some(turn.updated_at);
+                latest_metrics = Some(metrics);
+            }
+        }
+
+        self.composer_context_window = Self::normalize_context_window_metrics(latest_metrics);
+    }
+
     pub(crate) fn on_interrupt_click(
         &mut self,
         _: &ClickEvent,
@@ -230,6 +334,7 @@ impl ShellView {
         self.request_session_control(SessionControlAction::Interrupt, cx);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn on_cancel_click(
         &mut self,
         _: &ClickEvent,
@@ -421,6 +526,7 @@ impl ShellView {
             let mut merged = new_turns;
             merged.extend(self.session_turns.drain(..));
             self.session_turns = merged;
+            self.update_composer_context_window();
         }
 
         if has_new_messages {
@@ -533,17 +639,18 @@ impl ShellView {
         session_id: SessionId,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(cache) = self.session_thread_cache.get(&session_id) else {
+        let Some(cache) = self.session_thread_cache.get(&session_id).cloned() else {
             return false;
         };
-        self.session_turns = cache.session_turns.clone();
-        self.session_turn_tools = cache.session_turn_tools.clone();
-        self.session_events = cache.session_events.clone();
+        self.session_turns = cache.session_turns;
+        self.session_turn_tools = cache.session_turn_tools;
+        self.session_events = cache.session_events;
         self.session_history_cursor = cache.history_cursor;
         self.session_history_has_more = cache.has_more_history;
         self.session_history_loading = false;
-        self.messages = cache.messages.clone();
+        self.messages = cache.messages;
         self.prefetch_attachment_images(cx);
+        self.update_composer_context_window();
         true
     }
 
@@ -551,6 +658,7 @@ impl ShellView {
         self.session_turns.clear();
         self.session_turn_tools.clear();
         self.session_events.clear();
+        self.composer_context_window = None;
         self.session_history_cursor = None;
         self.session_history_has_more = false;
         self.session_history_loading = false;
@@ -1005,6 +1113,7 @@ impl ShellView {
                                 view.session_history_loading = false;
                                 view.session_events = head.events.clone();
                                 view.session_turns = head.turns.clone();
+                                view.update_composer_context_window();
                                 view.session_turn_tools = build_turn_tool_snapshots(Some(head));
                                 view.replace_messages(messages, cx);
                                 view.cache_session_thread_state(data.session_id);

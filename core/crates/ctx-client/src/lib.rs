@@ -89,6 +89,13 @@ pub struct CreateTaskRequest {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct CreateWorkspaceRequest {
+    pub root_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct UpdateTaskTitleRequest<'a> {
     pub title: &'a str,
 }
@@ -870,6 +877,11 @@ impl Client {
 
     pub async fn list_workspaces(&self) -> Result<Vec<Workspace>> {
         self.request_json(Method::GET, "/api/workspaces", None::<&()>)
+            .await
+    }
+
+    pub async fn create_workspace(&self, req: &CreateWorkspaceRequest) -> Result<Workspace> {
+        self.request_json(Method::POST, "/api/workspaces", Some(req))
             .await
     }
 

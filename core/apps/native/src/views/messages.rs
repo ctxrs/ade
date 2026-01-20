@@ -10,8 +10,8 @@ use ctx_core::models::{MessageDelivery, MessageRole, SessionTurnStatus};
 use gpui::{
     Animation, AnimationExt, Transformation, div, img, linear_color_stop, linear_gradient, list,
     percentage, prelude::*, px, AnyElement, App, ClickEvent, Context, Edges, ElementId, Element,
-    Image, ImageFormat, InteractiveElement, ListState, ObjectFit, Pixels, Rgba, SharedString,
-    Stateful, StatefulInteractiveElement, StyleRefinement, WeakEntity, Window,
+    FontWeight, Image, ImageFormat, InteractiveElement, ListState, ObjectFit, Pixels, Rgba,
+    SharedString, Stateful, StatefulInteractiveElement, StyleRefinement, WeakEntity, Window,
 };
 use gpui_component::{Icon, IconName, StyledExt};
 use gpui_component::text::{InlineCodeStyle, TextView, TextViewStyle};
@@ -28,6 +28,10 @@ use super::super::state::ShellView;
 const COLLAPSED_MESSAGE_MAX_LINES: usize = 8;
 const COLLAPSED_MESSAGE_MAX_CHARS: usize = 1000;
 const SPINNER_DURATION: Duration = Duration::from_millis(800);
+
+const THREAD_MAX_WIDTH: f32 = 820.0;
+const THREAD_PADDING_X: f32 = 12.0;
+const BUBBLE_MAX_WIDTH: f32 = THREAD_MAX_WIDTH * 0.92;
 
 static SPINNER_ANCHOR: OnceLock<Instant> = OnceLock::new();
 
@@ -215,17 +219,17 @@ impl<'a> ThreadListView<'a> {
             } else {
                 div()
                     .absolute()
-                    .top(px(metrics.spacing.sm))
-                    .left(px(metrics.spacing.sm))
-                    .right(px(metrics.spacing.sm))
+                    .top(px(0.0))
+                    .left(px(THREAD_PADDING_X))
+                    .right(px(THREAD_PADDING_X))
                     .child(
                         div()
-                            .px(px(metrics.spacing.md))
-                            .py(px(metrics.spacing.sm))
-                            .bg(colors.panel)
+                            .px(px(metrics.spacing.lg))
+                            .py(px(metrics.spacing.md))
+                            .bg(colors.bg)
                             .border_1()
                             .border_color(colors.border)
-                            .rounded_md()
+                            .rounded(px(metrics.radii.xl))
                             .child(
                                 markdown_view(
                                     "sticky-turn-header",
@@ -285,6 +289,10 @@ impl<'a> ThreadListView<'a> {
         })
         .w_full()
         .h_full()
+        .px(px(THREAD_PADDING_X))
+        .max_w(px(THREAD_MAX_WIDTH + THREAD_PADDING_X * 2.0))
+        .ml_auto()
+        .mr_auto()
         .pb(px(metrics.spacing.md))
         .overflow_hidden()
         .bg(colors.bg);
@@ -364,17 +372,14 @@ fn render_thread_item(
     cx: &mut App,
 ) -> AnyElement {
     let metrics = ThemeMetrics::default();
+    let item_pad_x = metrics.spacing.xxs;
+    let item_pad_y = metrics.spacing.xs;
     match item {
         ThreadListItem::TurnHeader { id, header } => {
             let is_long =
                 header.plain_text.split('\n').count() > 4 || header.plain_text.len() > 280;
             let expanded = expanded_turn_headers.get(id).copied().unwrap_or(!is_long);
             let has_copy_button = !header.content.trim().is_empty();
-            let copy_inset = if has_copy_button {
-                metrics.spacing.xxl
-            } else {
-                0.0
-            };
             let header_max_height = 1.45 * 3.5 * 16.0;
             let header_bg = Rgba {
                 r: 1.0,
@@ -394,16 +399,12 @@ fn render_thread_item(
             )
             .selectable(true);
             let content = if expanded {
-                div()
-                    .when(copy_inset > 0.0, |this| this.pr(px(copy_inset)))
-                    .child(content)
-                    .into_any_element()
+                div().child(content).into_any_element()
             } else {
                 div()
                     .relative()
                     .max_h(px(header_max_height))
                     .overflow_hidden()
-                    .when(copy_inset > 0.0, |this| this.pr(px(copy_inset)))
                     .child(content)
                     .child(fade_overlay(px(header_max_height * 0.25), header_bg))
                     .into_any_element()
@@ -435,11 +436,9 @@ fn render_thread_item(
                         r: 1.0,
                         g: 1.0,
                         b: 1.0,
-                        a: 0.06,
+                        a: 0.05,
                     })
-                    .border_1()
-                    .border_color(colors.border)
-                    .opacity(if copied { 0.95 } else { 0.4 })
+                    .opacity(if copied { 0.95 } else { 0.0 })
                     .hover(|style| {
                         style.opacity(1.0).bg(Rgba {
                             r: 1.0,
@@ -475,6 +474,7 @@ fn render_thread_item(
                     })
                     .bg(header_bg)
                     .rounded(px(10.0))
+                    .hover(|style| style.border_color(colors.border_strong))
                     .px(px(metrics.spacing.lg))
                     .py(px(metrics.spacing.md))
                     .cursor_pointer()
@@ -492,7 +492,7 @@ fn render_thread_item(
             );
             div()
                 .id(id.clone())
-                .px(px(metrics.spacing.sm))
+                .px(px(0.0))
                 .pt(px(metrics.spacing.sm))
                 .pb(px(metrics.spacing.md))
                 .overflow_hidden()
@@ -622,9 +622,10 @@ fn render_thread_item(
                 .border_1()
                 .border_color(bubble_border)
                 .rounded(px(6.0))
+                .hover(|style| style.border_color(colors.border_strong))
                 .px(px(metrics.spacing.xl))
                 .py(px(metrics.spacing.lg))
-                .max_w(px(1200.0))
+                .max_w(px(BUBBLE_MAX_WIDTH))
                 .flex()
                 .flex_col()
                 .gap(px(metrics.spacing.xs))
@@ -639,7 +640,7 @@ fn render_thread_item(
             };
             div()
                 .id(id.clone())
-                .px(px(metrics.spacing.md))
+                .px(px(0.0))
                 .py(px(metrics.spacing.sm))
                 .overflow_hidden()
                 .child(bubble)
@@ -647,8 +648,9 @@ fn render_thread_item(
         }
         ThreadListItem::Item(ThreadItem::Assistant { id, content, .. }) => div()
             .id(id.clone())
-            .px(px(metrics.spacing.md))
-            .py(px(metrics.spacing.sm))
+            .px(px(item_pad_x))
+            .pt(px(0.0))
+            .pb(px(item_pad_y))
             .overflow_hidden()
             .child(
                 markdown_view(
@@ -664,13 +666,14 @@ fn render_thread_item(
             .into_any_element(),
         ThreadListItem::Item(ThreadItem::Thought { id, content, .. }) => div()
             .id(id.clone())
-            .px(px(metrics.spacing.md))
-            .py(px(metrics.spacing.sm))
+            .px(px(item_pad_x))
+            .pt(px(0.0))
+            .pb(px(item_pad_y))
             .overflow_hidden()
             .child(
                 div()
-                    .px(px(metrics.spacing.xs))
-                    .pb(px(metrics.spacing.sm))
+                    .px(px(item_pad_x))
+                    .pb(px(item_pad_y))
                     .text_sm()
                     .text_color(colors.muted)
                     .italic()
@@ -727,8 +730,9 @@ fn render_thread_item(
             let copy_button = if is_completed && has_content {
                 let text = assistant_messages_content.clone().unwrap_or_default();
                 let button = div()
-                    .p(px(2.0))
-                    .rounded(px(4.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
                     .opacity(if copied { 0.95 } else { 0.6 })
                     .hover(|style| style.opacity(1.0))
                     .cursor_pointer()
@@ -749,24 +753,38 @@ fn render_thread_item(
             } else {
                 div().into_any_element()
             };
+            let copy_dot = if is_completed && has_content {
+                div().text_color(colors.muted).child("·").into_any_element()
+            } else {
+                div().into_any_element()
+            };
             div()
                 .id(id.clone())
-                .px(px(metrics.spacing.md))
-                .py(px(metrics.spacing.xs))
+                .px(px(item_pad_x))
+                .pt(px(0.0))
+                .pb(px(item_pad_y))
                 .overflow_hidden()
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(metrics.spacing.xs))
-                        .px(px(metrics.spacing.xs))
-                        .pb(px(metrics.spacing.sm))
-                        .pt(px(metrics.spacing.xxs))
+                        .gap(px(metrics.spacing.sm))
                         .text_sm()
                         .text_color(colors.muted)
-                        .child(div().text_color(colors.text).child(label))
+                        .italic()
+                        .child(
+                            div()
+                                .text_color(colors.text)
+                                .font_weight(FontWeight(500.0))
+                                .child(label),
+                        )
                         .child(div().text_color(colors.muted).child("·"))
-                        .child(div().child(elapsed_label))
+                        .child(
+                            div()
+                                .font_family(metrics.type_scale.mono.clone())
+                                .child(elapsed_label),
+                        )
+                        .child(copy_dot)
                         .child(copy_button),
                 )
                 .into_any_element()
@@ -798,7 +816,7 @@ fn render_thread_item(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(metrics.spacing.sm))
+                    .gap(px(metrics.spacing.lg))
                     .children(tools.into_iter().map(|tool| {
                         let expanded_tool = expanded_tools
                             .get(tool.id.as_str())
@@ -821,21 +839,22 @@ fn render_thread_item(
             let toggle_id = id.clone();
             div()
                 .id(id.clone())
-                .px(px(metrics.spacing.md))
-                .py(px(metrics.spacing.xs))
+                .px(px(item_pad_x))
+                .pt(px(0.0))
+                .pb(px(item_pad_y))
                 .overflow_hidden()
                 .flex()
                 .flex_col()
-                .gap(px(metrics.spacing.xs))
+                .gap(px(metrics.spacing.sm))
                 .child(
                     with_click(
                         div()
                             .w_full()
                             .flex()
                             .items_center()
-                            .gap(px(metrics.spacing.xs))
+                            .gap(px(metrics.spacing.md))
                             .px(px(metrics.spacing.xxs))
-                            .py(px(metrics.spacing.xxs))
+                            .py(px(1.0))
                             .text_sm()
                             .text_color(colors.muted)
                             .italic()
@@ -873,7 +892,8 @@ fn render_thread_item(
                                     b: 1.0,
                                     a: 0.02,
                                 })
-                                .p(px(8.0))
+                                .px(px(metrics.spacing.lg))
+                                .py(px(metrics.spacing.md))
                         })
                         .child(tools_list),
                 )
@@ -927,42 +947,47 @@ fn render_tool_item(
     let mut title_iter = title.splitn(2, ' ');
     let verb = title_iter.next().unwrap_or_default().to_string();
     let rest = title_iter.next().unwrap_or("").trim().to_string();
+    let has_details = !tool.output_text.trim().is_empty() || tool.input.is_some();
+    let mut tool_text = div()
+        .flex()
+        .items_center()
+        .min_w(px(0.0))
+        .child(
+            div()
+                .text_color(colors.text)
+                .font_weight(FontWeight(500.0))
+                .child(verb)
+                .overflow_hidden()
+                .text_ellipsis(),
+        );
+    if !rest.is_empty() {
+        tool_text = tool_text
+            .child(
+                div()
+                    .px(px(4.0))
+                    .text_color(colors.muted)
+                    .opacity(0.65)
+                    .child("·"),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_color(colors.muted)
+                    .child(rest),
+            );
+    }
     let header = div()
         .flex()
         .items_center()
-        .gap(px(metrics.spacing.xs))
-        .text_sm()
-        .text_color(colors.muted)
-        .italic()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(metrics.spacing.xxs))
-                .min_w(px(0.0))
-                .child(
-                    div()
-                        .text_color(colors.text)
-                        .child(verb)
-                        .overflow_hidden()
-                        .text_ellipsis(),
-                )
-                .child(
-                    div()
-                        .text_color(colors.muted)
-                        .child(if rest.is_empty() { "".to_string() } else { format!(" · {}", rest) }),
-                )
-                .child(
-                    div()
-                        .text_color(colors.muted)
-                        .child(if tool.status.is_empty() {
-                            "".to_string()
-                        } else {
-                            format!(" · {}", tool.status)
-                        }),
-                ),
-        )
-        .child(div().ml_auto().child(if expanded { "▴" } else { "▾" }));
+        .min_w(px(0.0))
+        .child(tool_text)
+        .when(has_details, |this| {
+            this.child(div().ml_auto().child(if expanded { "▴" } else { "▾" }))
+        });
     let body = if expanded {
         let output = if tool.output_text.is_empty() {
             div().into_any_element()
@@ -1041,7 +1066,7 @@ fn render_tool_item(
         div()
             .flex()
             .flex_col()
-            .gap(px(metrics.spacing.xs))
+            .gap(px(metrics.spacing.lg))
             .child(copy_row)
             .child(input_row)
             .child(output)
@@ -1049,41 +1074,46 @@ fn render_tool_item(
     } else {
         div().into_any_element()
     };
-    let header_row = with_click(
-        div()
-            .flex()
-            .items_center()
-            .gap(px(metrics.spacing.xs))
-            .cursor_pointer()
-            .id(format!("tool-header-{}", tool.id))
-            .text_sm()
-            .text_color(colors.muted)
-            .hover(|style| {
-                style
-                    .bg(Rgba {
-                        r: 1.0,
-                        g: 1.0,
-                        b: 1.0,
-                        a: 0.02,
-                    })
-                    .rounded(px(8.0))
-            })
-            .child(header),
-        click_handler(
-            weak_view.clone(),
-            move |view, _ev, _window, cx| {
-                view.on_toggle_tool(tool_id.clone(), cx);
-            },
-        ),
-    );
+    let header_row = div()
+        .flex()
+        .items_center()
+        .gap(px(metrics.spacing.md))
+        .px(px(metrics.spacing.xxs))
+        .py(px(1.0))
+        .id(format!("tool-header-{}", tool.id))
+        .text_sm()
+        .text_color(colors.muted)
+        .italic()
+        .when(has_details, |this| {
+            with_click(
+                this.cursor_pointer().hover(|style| {
+                    style
+                        .bg(Rgba {
+                            r: 1.0,
+                            g: 1.0,
+                            b: 1.0,
+                            a: 0.02,
+                        })
+                        .rounded(px(8.0))
+                }),
+                click_handler(
+                    weak_view.clone(),
+                    move |view, _ev, _window, cx| {
+                        view.on_toggle_tool(tool_id.clone(), cx);
+                    },
+                ),
+            )
+        })
+        .child(header);
     div()
         .id(tool.id.clone())
-        .px(px(metrics.spacing.sm))
-        .py(px(metrics.spacing.sm))
+        .px(px(metrics.spacing.xxs))
+        .pt(px(0.0))
+        .pb(px(metrics.spacing.xs))
         .overflow_hidden()
         .flex()
         .flex_col()
-        .gap(px(metrics.spacing.xxs))
+        .gap(px(metrics.spacing.xs))
         .child(header_row)
         .child(
             div()

@@ -1,4 +1,5 @@
-use gpui::{ClickEvent, Context, FontWeight, div, prelude::*, px};
+use gpui::{ClickEvent, Context, FontWeight, Rgba, StyleRefinement, div, prelude::*, px};
+use gpui_component::{ElementExt, Icon as ComponentIcon, IconName as ComponentIconName};
 
 use crate::{automation_tree, theme::ThemeMetrics};
 
@@ -8,11 +9,15 @@ use super::diff_review::DiffReviewView;
 use super::messages::ThreadListView;
 use super::sessions_pane::SessionsPaneView;
 use super::super::icons::{Icon, IconName};
-use super::super::state::{DataLoadState, RightPaneMode, ShellView};
+use super::super::state::{ComposerMenuId, DataLoadState, RightPaneMode, ShellView};
 
 pub(crate) struct SessionView<'a> {
     pub(super) shell: &'a ShellView,
     pub(super) resyncing: bool,
+}
+
+fn tint(color: Rgba, alpha: f32) -> Rgba {
+    Rgba { a: alpha, ..color }
 }
 
 impl<'a> SessionView<'a> {
@@ -28,6 +33,13 @@ impl<'a> SessionView<'a> {
                 variant: ComposerVariant::NewTask,
             }
             .render(cx);
+            let composer_stack = div()
+                .w_full()
+                .max_w(px(825.0))
+                .flex()
+                .flex_col()
+                .gap(px(8.0))
+                .child(composer);
             return div()
                 .id("session-view")
                 .flex()
@@ -37,7 +49,7 @@ impl<'a> SessionView<'a> {
                 .items_center()
                 .justify_center()
                 .p(px(24.0))
-                .child(div().w_full().flex().justify_center().child(composer));
+                .child(div().w_full().flex().justify_center().child(composer_stack));
         }
         let has_session = shell
             .selected_session
@@ -81,84 +93,12 @@ impl<'a> SessionView<'a> {
                 Some("app-shell"),
             );
         }
-        let interrupt_color = if has_session {
-            shell.colors.text
-        } else {
-            shell.colors.muted
-        };
-        let interrupt_label = div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .child(Icon::new(
-                IconName::Interrupt,
-                12.0,
-                interrupt_color,
-            ))
-            .child("Interrupt");
-        let mut interrupt_button = div()
-            // Match web pill-button-inner: 4px x 10px
-            .px(px(metrics.spacing.lg))
-            .py(px(metrics.spacing.xs))
-            .text_sm()
-            .border_1()
-            .border_color(shell.colors.border)
-            .rounded_full()
-            .child(interrupt_label)
-            .id("session-interrupt");
-
-        if has_session {
-            interrupt_button = interrupt_button
-                .bg(shell.colors.panel)
-                .cursor_pointer()
-                .active(|style| style.opacity(0.85))
-                .on_click(cx.listener(ShellView::on_interrupt_click));
-        } else {
-            interrupt_button = interrupt_button
-                .bg(shell.colors.panel_2)
-                .text_color(shell.colors.muted);
-        }
-
-        let cancel_color = if has_session {
-            shell.colors.warning
-        } else {
-            shell.colors.muted
-        };
-        let cancel_label = div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .child(Icon::new(IconName::Cancel, 12.0, cancel_color))
-            .child("Cancel");
-        let mut cancel_button = div()
-            // Match web pill-button-inner: 4px x 10px
-            .px(px(metrics.spacing.lg))
-            .py(px(metrics.spacing.xs))
-            .text_sm()
-            .border_1()
-            .border_color(shell.colors.border)
-            .rounded_full()
-            .child(cancel_label)
-            .id("session-cancel");
-
-        if has_session {
-            cancel_button = cancel_button
-                .bg(shell.colors.panel)
-                .text_color(shell.colors.warning)
-                .cursor_pointer()
-                .active(|style| style.opacity(0.85))
-                .on_click(cx.listener(ShellView::on_cancel_click));
-        } else {
-            cancel_button = cancel_button
-                .bg(shell.colors.panel_2)
-                .text_color(shell.colors.muted);
-        }
         /*
         let sessions_toggle = {
             let (bg, color) = if show_sessions_pane {
-                (shell.colors.panel, shell.colors.text)
+                (toggle_active_bg, toggle_active_color)
             } else {
-                (shell.colors.panel_2, shell.colors.muted)
+                (toggle_idle_bg, toggle_idle_color)
             };
             div()
                 // Match web .wb-icon 22x22, radius 8
@@ -177,11 +117,16 @@ impl<'a> SessionView<'a> {
         };
         */
 
+        let toggle_active_bg = tint(shell.colors.accent, 0.22);
+        let toggle_active_color = tint(shell.colors.text, 0.92);
+        let toggle_idle_bg = tint(shell.colors.panel, 0.0);
+        let toggle_idle_color = tint(shell.colors.text, 0.62);
+
         let diff_toggle = {
             let (bg, color) = if show_diff_pane {
-                (shell.colors.panel, shell.colors.text)
+                (toggle_active_bg, toggle_active_color)
             } else {
-                (shell.colors.panel_2, shell.colors.muted)
+                (toggle_idle_bg, toggle_idle_color)
             };
             div()
                 // Match web .wb-icon 22x22, radius 8
@@ -195,15 +140,16 @@ impl<'a> SessionView<'a> {
                 .child(Icon::new(IconName::Diff, 14.0, color))
                 .cursor_pointer()
                 .id("pane-toggle-diff")
+                .hover(|style| style.bg(tint(shell.colors.text, 0.06)))
                 .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(ShellView::toggle_diff_pane))
         };
 
         let artifacts_toggle = {
             let (bg, color) = if show_artifacts_pane {
-                (shell.colors.panel, shell.colors.text)
+                (toggle_active_bg, toggle_active_color)
             } else {
-                (shell.colors.panel_2, shell.colors.muted)
+                (toggle_idle_bg, toggle_idle_color)
             };
             div()
                 // Match web .wb-icon 22x22, radius 8
@@ -217,15 +163,16 @@ impl<'a> SessionView<'a> {
                 .child(Icon::new(IconName::Image, 14.0, color))
                 .cursor_pointer()
                 .id("pane-toggle-artifacts")
+                .hover(|style| style.bg(tint(shell.colors.text, 0.06)))
                 .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(ShellView::toggle_artifacts_pane))
         };
 
         let terminal_toggle = {
             let (bg, color) = if shell.show_terminal_panel {
-                (shell.colors.panel, shell.colors.text)
+                (toggle_active_bg, toggle_active_color)
             } else {
-                (shell.colors.panel_2, shell.colors.muted)
+                (toggle_idle_bg, toggle_idle_color)
             };
             div()
                 // Match web .wb-icon 22x22, radius 8
@@ -239,6 +186,7 @@ impl<'a> SessionView<'a> {
                 .child(Icon::new(IconName::Terminal, 14.0, color))
                 .cursor_pointer()
                 .id("pane-toggle-terminal")
+                .hover(|style| style.bg(tint(shell.colors.text, 0.06)))
                 .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(ShellView::toggle_terminal_panel))
         };
@@ -262,16 +210,14 @@ impl<'a> SessionView<'a> {
                 .flex()
                 .items_center()
                 .gap(px(metrics.spacing.xs))
-                .px(px(metrics.spacing.sm))
-                .py(px(metrics.spacing.xxs))
-                .rounded_full()
-                .border_1()
-                .border_color(shell.colors.border)
-                .bg(shell.colors.panel)
                 .text_sm()
                 .text_color(shell.colors.muted)
-                .child(Icon::new(IconName::Folder, 12.0, shell.colors.text))
-                .child(format!("Worktree {short_id}"))
+                .child(short_id)
+                .child(
+                    ComponentIcon::new(ComponentIconName::Copy)
+                        .size(px(12.0))
+                        .text_color(shell.colors.muted),
+                )
                 .cursor_pointer()
                 .id("session-worktree-chip")
                 .active(|style| style.opacity(0.85))
@@ -282,7 +228,7 @@ impl<'a> SessionView<'a> {
 
         let mut title_row = div()
             .flex()
-            .items_end()
+            .items_center()
             .gap(px(metrics.spacing.md))
             .min_w(px(0.0))
             .child(
@@ -297,6 +243,39 @@ impl<'a> SessionView<'a> {
                 .child(chip);
         }
 
+        let view = cx.entity();
+        let mut overflow_toggle = div()
+            .w(px(22.0))
+            .h(px(22.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_lg()
+            .bg(toggle_idle_bg)
+            .child(Icon::new(IconName::Ellipsis, 14.0, toggle_idle_color))
+            .id("session-verbosity")
+            .on_prepaint(move |bounds, window, cx| {
+                view.update(cx, |view, cx| {
+                    view.update_composer_menu_trigger_bounds(
+                        ComposerMenuId::Verbosity,
+                        bounds,
+                        window,
+                        cx,
+                    );
+                });
+            });
+        if has_session {
+            overflow_toggle = overflow_toggle
+                .cursor_pointer()
+                .hover(|style: StyleRefinement| style.bg(tint(shell.colors.text, 0.06)))
+                .active(|style: StyleRefinement| style.opacity(0.85))
+                .on_click(cx.listener(|view, _: &ClickEvent, window, cx| {
+                    view.toggle_menu(ComposerMenuId::Verbosity, window, cx);
+                }));
+        } else {
+            overflow_toggle = overflow_toggle.opacity(0.55);
+        }
+
         let pane_toggle_row = div()
             .flex()
             .items_center()
@@ -304,21 +283,22 @@ impl<'a> SessionView<'a> {
             .child(artifacts_toggle)
             .child(diff_toggle)
             // .child(sessions_toggle)
-            .child(terminal_toggle);
+            .child(terminal_toggle)
+            .child(overflow_toggle);
 
-        let control_row = div()
-            .flex()
-            .items_center()
-            .gap(px(metrics.spacing.lg))
-            .child(pane_toggle_row)
-            .child(interrupt_button)
-            .child(cancel_button);
+        let control_row = div().flex().items_center().child(pane_toggle_row);
 
         let header_block = div()
+            .w_full()
             .flex()
             .items_center()
             .justify_between()
-            .gap(px(metrics.spacing.lg))
+            .gap(px(metrics.spacing.xxl))
+            .px(px(metrics.spacing.xl))
+            .pt(px(14.0))
+            .pb(px(metrics.spacing.xl))
+            .border_b_1()
+            .border_color(shell.colors.border)
             .child(title_row)
             .child(control_row);
         let notice_block = match &shell.data_state {
@@ -381,9 +361,10 @@ impl<'a> SessionView<'a> {
         let center_column = div()
             .flex()
             .flex_col()
-            .gap(px(metrics.spacing.xxl))
+            .gap(px(metrics.spacing.md))
             .flex_1()
             .min_h(px(0.0))
+            .h_full()
             .child(header_block)
             .child(thread_stack)
             .child(composer);
@@ -393,21 +374,22 @@ impl<'a> SessionView<'a> {
         let mut content_row = div()
             .flex()
             .flex_row()
-            .gap(px(metrics.spacing.gutter))
+            .gap(px(metrics.spacing.md))
             .flex_1()
             .min_h(px(0.0))
+            .h_full()
             .child(center_column);
 
         if show_right_pane {
             let right_pane_handle = div()
-                .w(px(metrics.spacing.xl))
+                .w(px(metrics.spacing.sm))
                 .flex()
                 .items_center()
                 .justify_center()
                 .flex_none()
                 .child(
                     div()
-                        .w(px(2.0))
+                        .w(px(1.0))
                         .h(px(metrics.spacing.gutter * 2.0))
                         .rounded_sm()
                         .bg(shell.colors.border),
@@ -521,8 +503,11 @@ impl<'a> SessionView<'a> {
             .flex()
             .flex_col()
             .flex_1()
-            .p(px(metrics.spacing.gutter))
-            .bg(shell.colors.panel)
+            .min_h(px(0.0))
+            .h_full()
+            .gap(px(metrics.spacing.md))
+            .pb(px(metrics.spacing.xl))
+            .bg(shell.colors.bg)
             .child(content_row);
 
         if shell.show_terminal_panel {

@@ -43,6 +43,8 @@ const MENU_DESC_EFFORT: &str = "Some models have a \"thinking effort\" or \"reas
 const MENU_DESC_MODE: &str = "Modes are basically just prompts, sometimes combined with access limitations. For example, the review mode is nothing more than prompting the agent to tell it to review the code and putting it in a read-only access level. That sounds fairly simple, but there is a hidden benefit: developers who build agent harnesses and models in conjunction will often train their custom model to use their bespoke harness, including its different modes. So in a way, this prompt can be more than just a regular prompt. It is a special prompt than has been trained on via reinforcement learning to achieve certain outcomes. For example, OpenAI trained their codex model to use their codex harness in review mode, so as to output only high value review comments with priority details. If you give the exact same prompt to a model that has not undergone the same RL, it will emit much less useful review comments. We recommend using RPIR (Research, Plan, Implement, Review) pattern for most changes except for small and easy ones.";
 const MENU_DESC_VERBOSITY: &str = "Verbosity controls how much activity is shown during a turn. Terse hides tools and thoughts, default shows summaries and thoughts, and verbose will eventually expand full tool details.";
 
+const ACTIVE_COMPOSER_MAX_WIDTH: f32 = 820.0;
+
 fn attachment_label(att: &MessageAttachment) -> String {
     match att {
         MessageAttachment::Image { name, mime_type, .. }
@@ -113,6 +115,19 @@ fn tint(color: Rgba, alpha: f32) -> Rgba {
         b: color.b,
         a: alpha,
     }
+}
+
+fn rgba_u8(r: u8, g: u8, b: u8, a: f32) -> Rgba {
+    Rgba {
+        r: r as f32 / 255.0,
+        g: g as f32 / 255.0,
+        b: b as f32 / 255.0,
+        a,
+    }
+}
+
+fn white(alpha: f32) -> Rgba {
+    rgba_u8(255, 255, 255, alpha)
 }
 
 fn model_options_from_models_value(raw: Option<&serde_json::Value>) -> Vec<ModelOption> {
@@ -238,6 +253,7 @@ fn active_model_id(shell: &ShellView, is_new: bool) -> Option<String> {
             if !track.model_id.trim().is_empty() {
                 return Some(track.model_id.clone());
             }
+            return None;
         }
     }
     shell
@@ -308,6 +324,8 @@ impl<'a> ComposerView<'a> {
         let font_size = px(13.0);
         let line_height = px(18.85);
         let pad = px(2.0);
+        let card_bg = rgba_u8(255, 255, 255, 0.03);
+        let new_card_border = rgba_u8(255, 255, 255, 0.10);
 
         let input_disabled = is_new && shell.composer_start_busy;
         let session_is_working = shell
@@ -392,7 +410,7 @@ impl<'a> ComposerView<'a> {
                         .border_1()
                         .border_color(colors.border)
                         .overflow_hidden()
-                        .bg(tint(colors.text, 0.02))
+                        .bg(rgba_u8(255, 255, 255, 0.02))
                         .child(
                             image_from_attachment(att, shell)
                                 .map(|image| {
@@ -422,14 +440,14 @@ impl<'a> ComposerView<'a> {
                                 .h(px(18.0))
                                 .rounded_full()
                                 .border_1()
-                                .border_color(tint(colors.text, 0.18))
+                                .border_color(rgba_u8(255, 255, 255, 0.18))
                                 .bg(Rgba {
                                     r: 0.0,
                                     g: 0.0,
                                     b: 0.0,
                                     a: 0.5,
                                 })
-                                .text_color(tint(colors.text, 0.92))
+                                .text_color(rgba_u8(255, 255, 255, 0.92))
                                 .flex()
                                 .items_center()
                                 .justify_center()
@@ -667,6 +685,16 @@ impl<'a> ComposerView<'a> {
         let provider_id = active_provider_id(shell, is_new).unwrap_or_else(|| "".to_string());
         let provider_entry = harness_entry(&provider_id);
         let provider_logo = provider_entry.map(|entry| harness_logo(entry, shell.is_dark));
+        let provider_label = provider_entry
+            .map(|entry| entry.label.to_string())
+            .or_else(|| {
+                if provider_id.is_empty() {
+                    None
+                } else {
+                    Some(provider_id.clone())
+                }
+            })
+            .unwrap_or_else(|| "Harness".to_string());
 
         let session_models_value = if is_new {
             None
@@ -715,6 +743,8 @@ impl<'a> ComposerView<'a> {
         let parsed = parse_model_id(&current_model_id, Some(&catalog));
         let current_base = if !parsed.base.is_empty() {
             parsed.base.clone()
+        } else if is_new && current_model_id.trim().is_empty() {
+            String::new()
         } else {
             catalog.base_ids.first().cloned().unwrap_or_default()
         };
@@ -803,6 +833,7 @@ impl<'a> ComposerView<'a> {
                 .items_center()
                 .gap(px(6.0))
                 .text_sm()
+                .text_color(tint(colors.text, if is_new { 0.90 } else { 0.62 }))
                 .id("composer-harness-button");
 
             if let Some(logo) = provider_logo {
@@ -817,6 +848,13 @@ impl<'a> ComposerView<'a> {
             }
 
             if is_new {
+                button = button.child(
+                    div()
+                        .max_w(px(360.0))
+                        .text_sm()
+                        .truncate()
+                        .child(provider_label.clone()),
+                );
                 button = button
                     .child(Icon::current(IconName::ChevronDown, 14.0))
                     .cursor_pointer()
@@ -967,37 +1005,27 @@ impl<'a> ComposerView<'a> {
             if disabled {
                 button = button.opacity(0.55).cursor(CursorStyle::OperationNotAllowed);
             } else {
-                button = button
-                    .cursor_pointer()
-                    .hover(|style| {
+                button = button.cursor_pointer();
+                if active {
+                    button = button.hover(|style| {
+                        style.bg(tint(colors.accent, 0.22))
+                    });
+                } else {
+                    button = button.hover(|style| {
                         style
                             .bg(tint(colors.text, 0.06))
                             .text_color(tint(colors.text, 0.92))
-                    })
-                    .on_click(on_click);
+                    });
+                }
+                button = button.on_click(on_click);
             }
             button
         };
 
+        let recording = shell.composer_recording;
+
         let action_row = {
             let mut row = div().flex().flex_row().items_center().gap(px(6.0));
-
-            if !is_new {
-                let verbosity_button = register_menu_trigger(
-                    view.clone(),
-                    ComposerMenuId::Verbosity,
-                    action_icon(
-                        IconName::Ellipsis,
-                        false,
-                        false,
-                        ElementId::from("composer-verbosity"),
-                        Box::new(cx.listener(|view, _: &ClickEvent, window, cx| {
-                            view.toggle_menu(ComposerMenuId::Verbosity, window, cx);
-                        })),
-                    ),
-                );
-                row = row.child(div().child(verbosity_button));
-            }
 
             row = row.child(action_icon(
                 IconName::Image,
@@ -1005,36 +1033,33 @@ impl<'a> ComposerView<'a> {
                 false,
                 ElementId::from("composer-attach-image"),
                 Box::new(cx.listener(ShellView::on_attach_click)),
-            ))
-                .child(action_icon(
-                    if shell.composer_recording {
-                        IconName::Square
-                    } else {
-                        IconName::Mic
-                    },
-                    shell.composer_recording,
-                    false,
-                    ElementId::from("composer-record"),
-                    Box::new(cx.listener(ShellView::toggle_recording)),
-                ));
+            ));
+
+            row = row.child(action_icon(
+                if recording { IconName::Square } else { IconName::Mic },
+                recording,
+                false,
+                ElementId::from("composer-record"),
+                Box::new(cx.listener(ShellView::toggle_recording)),
+            ));
 
             let send_disabled = !show_stop
                 && (!can_send_message
                     || (matches!(self.variant, ComposerVariant::NewTask)
                         && shell.composer_start_busy));
-            let send_foreground = if shell.is_dark {
-                tint(colors.text, 0.98)
-            } else {
-                tint(colors.bg, 0.98)
-            };
+            let send_foreground = rgba_u8(225, 242, 255, 0.98);
+            let send_bg = tint(colors.accent, 0.20);
+            let send_border = tint(colors.accent, 0.55);
+            let send_hover_bg = tint(colors.accent, 0.26);
+            let send_hover_border = tint(colors.accent, 0.70);
             let send_label = if show_stop { "Stop" } else { "Send" };
             let mut send_button = div()
                 .w(px(24.0))
                 .h(px(24.0))
                 .rounded_full()
                 .border_1()
-                .border_color(tint(colors.accent, 0.65))
-                .bg(tint(colors.accent, 0.20))
+                .border_color(send_border)
+                .bg(send_bg)
                 .flex()
                 .items_center()
                 .justify_center()
@@ -1056,8 +1081,8 @@ impl<'a> ComposerView<'a> {
                     .cursor_pointer()
                     .hover(|style| {
                         style
-                            .bg(tint(colors.accent, 0.26))
-                            .border_color(tint(colors.accent, 0.70))
+                            .bg(send_hover_bg)
+                            .border_color(send_hover_border)
                     })
                     .on_click(cx.listener(if show_stop {
                         ShellView::on_interrupt_click
@@ -1146,13 +1171,9 @@ impl<'a> ComposerView<'a> {
             .flex_col()
             .gap(px(10.0))
             .border_1()
-            .border_color(if is_new {
-                tint(colors.text, 0.10)
-            } else {
-                colors.border
-            })
+            .border_color(if is_new { new_card_border } else { colors.border })
             .rounded(if is_new { px(18.0) } else { px(12.0) })
-            .bg(tint(colors.text, 0.03))
+            .bg(card_bg)
             .child(attachments)
             .child(input_wrap)
             .child(
@@ -1160,6 +1181,7 @@ impl<'a> ComposerView<'a> {
                     .flex()
                     .items_center()
                     .justify_between()
+                    .gap(px(10.0))
                     .pt(px(6.0))
                     .child(switcher_row)
                     .child(action_row),
@@ -1199,11 +1221,11 @@ impl<'a> ComposerView<'a> {
             container = container.child(
                 div()
                     .absolute()
-                    .top(px(0.0))
+                    .top(px(1.0))
                     .left(px(0.0))
                     .right(px(0.0))
                     .h(px(1.0))
-                    .bg(tint(colors.text, 0.04)),
+                    .bg(rgba_u8(255, 255, 255, 0.04)),
             );
         } else {
             container = container.px(px(12.0)).py(px(10.0));
@@ -1218,7 +1240,8 @@ impl<'a> ComposerView<'a> {
                         .top(px(2.0))
                         .right(px(8.0))
                         .text_size(px(9.0))
-                        .text_color(tint(colors.text, 0.42))
+                        .line_height(px(10.8))
+                        .text_color(rgba_u8(255, 255, 255, 0.42))
                         .child(summary),
                 );
             }
@@ -1268,11 +1291,23 @@ impl<'a> ComposerView<'a> {
             container
         };
 
-        div()
+        let mut root = div()
             .child(body)
             .child(autocomplete_menu)
             .child(menu_overlay)
-            .child(count_menu)
+            .child(count_menu);
+
+        if is_new {
+            root = root.w_full();
+        } else {
+            root = root
+                .w_full()
+                .max_w(px(ACTIVE_COMPOSER_MAX_WIDTH))
+                .ml_auto()
+                .mr_auto();
+        }
+
+        root
     }
 
     fn render_menu_title_row(
@@ -1282,16 +1317,15 @@ impl<'a> ComposerView<'a> {
         description: &str,
         cx: &mut Context<ShellView>,
     ) -> gpui::Div {
-        let colors = self.shell.colors;
         let view = cx.entity();
         let info_button = div()
             .w(px(18.0))
             .h(px(18.0))
             .rounded_full()
             .border_1()
-            .border_color(tint(colors.text, 0.14))
-            .bg(tint(colors.text, 0.04))
-            .text_color(tint(colors.text, 0.80))
+            .border_color(white(0.14))
+            .bg(white(0.04))
+            .text_color(white(0.80))
             .flex()
             .items_center()
             .justify_center()
@@ -1302,8 +1336,8 @@ impl<'a> ComposerView<'a> {
             .cursor_pointer()
             .hover(|style| {
                 style
-                    .bg(tint(colors.text, 0.06))
-                    .border_color(tint(colors.text, 0.22))
+                    .bg(white(0.06))
+                    .border_color(white(0.22))
             })
             .on_hover({
                 let view = view.clone();
@@ -1337,7 +1371,7 @@ impl<'a> ComposerView<'a> {
                 div()
                     .text_sm()
                     .font_weight(FontWeight(600.0))
-                    .text_color(tint(colors.text, 0.92))
+                    .text_color(white(0.92))
                     .child(title.to_string()),
             )
             .child(info_button);
@@ -1678,14 +1712,15 @@ impl<'a> ComposerView<'a> {
     }
 
     fn render_menu_shell(&self, menu_id: ComposerMenuId, body: gpui::Div) -> gpui::Div {
-        let colors = self.shell.colors;
         let placement = self.shell.composer_menu_placements.get(&menu_id).copied();
+        let menu_padding = px(6.0);
+        let menu_bg = rgba_u8(34, 34, 34, 1.0);
         let mut shell = div()
             .border_1()
-            .border_color(colors.border)
+            .border_color(white(0.10))
             .rounded(px(12.0))
-            .bg(colors.panel_2)
-            .p(px(6.0))
+            .bg(menu_bg)
+            .p(menu_padding)
             .min_w(px(220.0))
             .max_w(px(440.0));
         if let Some(max_width) = placement.and_then(|placement| placement.max_width) {
@@ -1706,10 +1741,13 @@ impl<'a> ComposerView<'a> {
             spread_radius: px(0.0),
         }]);
         let body = if let Some(max_height) = placement.and_then(|placement| placement.max_height) {
+            let adjusted_height = (max_height - menu_padding * 2.0).max(px(0.0));
             if menu_id == ComposerMenuId::Harness {
-                body.max_h(max_height).overflow_hidden().into_any_element()
+                body.max_h(adjusted_height)
+                    .overflow_hidden()
+                    .into_any_element()
             } else {
-                body.max_h(max_height)
+                body.max_h(adjusted_height)
                     .overflow_y_scrollbar()
                     .into_any_element()
             }
@@ -2042,7 +2080,6 @@ impl<'a> ComposerView<'a> {
         let mut list = div()
             .flex()
             .flex_col()
-            .gap(px(4.0))
             .min_h(px(0.0))
             .flex_1()
             .overflow_y_scrollbar()
@@ -2121,30 +2158,40 @@ impl<'a> ComposerView<'a> {
                     .rounded(px(10.0))
                     .border_1()
                     .border_color(tint(colors.text, 0.0))
-                    .text_color(tint(colors.text, 0.92))
+                    .text_color(white(0.92))
+                    .flex_1()
+                    .min_w(px(0.0))
                     .id(row_id.clone());
 
+                let check_bg = if checked {
+                    white(0.16)
+                } else {
+                    Rgba {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.0,
+                    }
+                };
+                let check_border = if checked {
+                    white(0.65)
+                } else {
+                    white(0.35)
+                };
                 row = row.child(
                     div()
                         .w(px(16.0))
                         .h(px(16.0))
                         .rounded(px(4.0))
                         .border_1()
-                        .border_color(tint(colors.text, 0.35))
-                        .bg(if checked {
-                            tint(colors.text, 0.16)
-                        } else {
-                            Rgba {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 0.0,
-                            }
-                        })
+                        .border_color(check_border)
+                        .bg(check_bg)
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_xs()
+                        .text_size(px(11.0))
+                        .font_weight(FontWeight(600.0))
+                        .text_color(white(0.95))
                         .child(if checked { "✓" } else { "" }),
                 );
 
@@ -2161,11 +2208,16 @@ impl<'a> ComposerView<'a> {
                         div()
                             .w(px(16.0))
                             .h(px(16.0))
-                            .bg(tint(colors.text, 0.08)),
+                            .bg(white(0.08)),
                     );
                 }
 
-                row = row.child(div().text_sm().truncate().child(label.clone()));
+                row = row.child(
+                    div()
+                        .text_size(px(12.0))
+                        .truncate()
+                        .child(label.clone()),
+                );
 
                 if let Some((status_label, status_color)) = status {
                     row = row.child(
@@ -2186,7 +2238,7 @@ impl<'a> ComposerView<'a> {
                                 b: status_color.b,
                                 a: 0.14,
                             })
-                            .text_xs()
+                            .text_size(px(11.0))
                             .text_color(status_color)
                             .child(status_label),
                     );
@@ -2197,8 +2249,8 @@ impl<'a> ComposerView<'a> {
                         .cursor_pointer()
                         .hover(|style| {
                             style
-                                .bg(tint(colors.text, 0.06))
-                                .border_color(tint(colors.text, 0.08))
+                                .bg(white(0.06))
+                                .border_color(white(0.08))
                         })
                         .active(|style| style.opacity(0.85))
                         .on_click(cx.listener(move |view, _: &ClickEvent, _window, cx| {
@@ -2263,10 +2315,10 @@ impl<'a> ComposerView<'a> {
                         .w(px(78.0))
                         .rounded_full()
                         .border_1()
-                        .border_color(tint(colors.text, 0.12))
-                        .bg(tint(colors.text, 0.03))
+                        .border_color(white(0.12))
+                        .bg(white(0.03))
                         .text_size(px(12.0))
-                        .text_color(tint(colors.text, 0.92))
+                        .text_color(white(0.92))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -2302,8 +2354,8 @@ impl<'a> ComposerView<'a> {
                             .cursor_pointer()
                             .hover(|style| {
                                 style
-                                    .bg(tint(colors.text, 0.06))
-                                    .border_color(tint(colors.text, 0.18))
+                                    .bg(white(0.06))
+                                    .border_color(white(0.18))
                             })
                             .on_click(cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                 view.install_provider(id_for_install.clone(), cx);
@@ -2317,10 +2369,10 @@ impl<'a> ComposerView<'a> {
                             .px(px(10.0))
                             .rounded_full()
                             .border_1()
-                            .border_color(tint(colors.text, 0.12))
-                            .bg(tint(colors.text, 0.03))
+                            .border_color(white(0.12))
+                            .bg(white(0.03))
                             .text_size(px(12.0))
-                            .text_color(tint(colors.text, 0.88))
+                            .text_color(white(0.88))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -2342,8 +2394,8 @@ impl<'a> ComposerView<'a> {
                                 .cursor_pointer()
                                 .hover(|style| {
                                     style
-                                        .bg(tint(colors.text, 0.06))
-                                        .border_color(tint(colors.text, 0.18))
+                                        .bg(white(0.06))
+                                        .border_color(white(0.18))
                                 })
                                 .on_click(cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                     view.authenticate_provider(id_for_auth.clone(), cx);
@@ -2361,10 +2413,10 @@ impl<'a> ComposerView<'a> {
                             .px(px(10.0))
                             .rounded_full()
                             .border_1()
-                            .border_color(tint(colors.text, 0.12))
-                            .bg(tint(colors.text, 0.03))
+                            .border_color(white(0.12))
+                            .bg(white(0.03))
                             .text_size(px(12.0))
-                            .text_color(tint(colors.text, 0.88))
+                            .text_color(white(0.88))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -2386,8 +2438,8 @@ impl<'a> ComposerView<'a> {
                                 .cursor_pointer()
                                 .hover(|style| {
                                     style
-                                        .bg(tint(colors.text, 0.06))
-                                        .border_color(tint(colors.text, 0.18))
+                                        .bg(white(0.06))
+                                        .border_color(white(0.18))
                                 })
                                 .on_click(cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                     view.verify_provider(id_for_verify.clone(), cx);
@@ -2399,7 +2451,7 @@ impl<'a> ComposerView<'a> {
                     let can_configure = shell.composer_use_multiple_agents
                         && shell.composer_draft_tracks.len() > 1
                         && checked;
-                    if checked {
+                    if checked && shell.composer_use_multiple_agents {
                         let mut expand_button = div()
                             .w(px(22.0))
                             .h(px(22.0))
@@ -2407,7 +2459,7 @@ impl<'a> ComposerView<'a> {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .text_color(tint(colors.text, 0.85))
+                            .text_color(white(0.85))
                             .child(Icon::current(IconName::ChevronDown, 14.0))
                             .id(ElementId::from(format!(
                                 "composer-harness-expand-{id_for_action}"
@@ -2417,7 +2469,7 @@ impl<'a> ComposerView<'a> {
                             expand_button = expand_button
                                 .cursor_pointer()
                                 .hover(|style| {
-                                    style.bg(tint(colors.text, 0.06))
+                                    style.bg(white(0.06))
                                 })
                                 .on_click(cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                     view.ensure_provider_options(id_for_expand.clone(), false, cx);
@@ -2440,10 +2492,10 @@ impl<'a> ComposerView<'a> {
                             .px(px(10.0))
                             .rounded_full()
                             .border_1()
-                            .border_color(tint(colors.text, 0.12))
-                            .bg(tint(colors.text, 0.03))
+                            .border_color(white(0.12))
+                            .bg(white(0.03))
                             .text_size(px(12.0))
-                            .text_color(tint(colors.text, 0.88))
+                            .text_color(white(0.88))
                             .flex()
                             .items_center()
                             .gap(px(6.0))
@@ -2470,8 +2522,8 @@ impl<'a> ComposerView<'a> {
                             .cursor_pointer()
                             .hover(|style| {
                                 style
-                                    .bg(tint(colors.text, 0.06))
-                                    .border_color(tint(colors.text, 0.18))
+                                    .bg(white(0.06))
+                                    .border_color(white(0.18))
                             })
                             .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
                                 view.toggle_harness_count_menu(id_for_count.clone(), window, cx);
@@ -2486,7 +2538,6 @@ impl<'a> ComposerView<'a> {
                 div()
                     .flex()
                     .items_center()
-                    .justify_between()
                     .gap(px(8.0))
                     .py(px(4.0))
                     .child(row_main)
@@ -2508,8 +2559,8 @@ impl<'a> ComposerView<'a> {
                         .ml(px(30.0))
                         .rounded(px(10.0))
                         .border_1()
-                        .border_color(tint(colors.text, 0.10))
-                        .bg(tint(colors.text, 0.03))
+                        .border_color(white(0.10))
+                        .bg(white(0.03))
                         .p(px(8.0))
                         .flex()
                         .flex_col()
@@ -2540,10 +2591,10 @@ impl<'a> ComposerView<'a> {
                             .h(px(26.0))
                             .rounded(px(10.0))
                             .border_1()
-                            .border_color(tint(colors.text, 0.12))
-                            .bg(tint(colors.text, 0.04))
+                            .border_color(white(0.12))
+                            .bg(white(0.04))
                             .text_size(px(16.0))
-                            .text_color(tint(colors.text, 0.90))
+                            .text_color(white(0.90))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -2561,7 +2612,7 @@ impl<'a> ComposerView<'a> {
                             add_button = add_button
                                 .cursor_pointer()
                                 .hover(|style| {
-                                    style.bg(tint(colors.text, 0.08))
+                                    style.bg(white(0.08))
                                 })
                                 .on_click(cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                     view.add_track_for_provider(id_for_add.clone(), cx);
@@ -2573,10 +2624,10 @@ impl<'a> ComposerView<'a> {
                             .h(px(26.0))
                             .rounded(px(10.0))
                             .border_1()
-                            .border_color(tint(colors.text, 0.12))
-                            .bg(tint(colors.text, 0.04))
+                            .border_color(white(0.12))
+                            .bg(white(0.04))
                             .text_size(px(16.0))
-                            .text_color(tint(colors.text, 0.90))
+                            .text_color(white(0.90))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -2594,7 +2645,7 @@ impl<'a> ComposerView<'a> {
                             remove_button = remove_button
                                 .cursor_pointer()
                                 .hover(|style| {
-                                    style.bg(tint(colors.text, 0.08))
+                                    style.bg(white(0.08))
                                 })
                                 .on_click(cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                     view.remove_track_by_key(&key_for_remove, cx);
@@ -2617,7 +2668,7 @@ impl<'a> ComposerView<'a> {
                                         .child(
                                             div()
                                                 .text_sm()
-                                                .text_color(tint(colors.text, 0.65))
+                                                .text_color(white(0.65))
                                                 .child("Agent"),
                                         )
                                         .child(
@@ -2644,10 +2695,10 @@ impl<'a> ComposerView<'a> {
         if !found_any {
             list = list.child(
                 div()
-                    .px(px(8.0))
+                    .px(px(12.0))
                     .py(px(10.0))
                     .text_sm()
-                    .text_color(tint(colors.text, 0.55))
+                    .text_color(white(0.75))
                     .child("No matching agents."),
             );
         }
@@ -2657,10 +2708,10 @@ impl<'a> ComposerView<'a> {
             .px(px(10.0))
             .rounded_full()
             .border_1()
-            .border_color(tint(colors.text, 0.12))
-            .bg(tint(colors.text, 0.03))
+            .border_color(white(0.12))
+            .bg(white(0.03))
             .text_size(px(12.0))
-            .text_color(tint(colors.text, 0.90))
+            .text_color(white(0.90))
             .flex()
             .items_center()
             .justify_center()
@@ -2678,41 +2729,13 @@ impl<'a> ComposerView<'a> {
                 .cursor_pointer()
                 .hover(|style| {
                     style
-                        .bg(tint(colors.text, 0.06))
-                        .border_color(tint(colors.text, 0.18))
+                        .bg(white(0.06))
+                        .border_color(white(0.18))
                 })
                 .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
                     view.install_all_providers(cx);
                 }));
         }
-
-        let toggle = {
-            let mut toggle = div()
-                .w(px(30.0))
-                .h(px(16.0))
-                .rounded_full()
-                .border_1()
-                .border_color(tint(colors.text, 0.18))
-                .bg(tint(colors.text, 0.10))
-                .relative();
-            if shell.composer_use_multiple_agents {
-                toggle = toggle
-                    .bg(tint(colors.success, 0.30))
-                    .border_color(tint(colors.success, 0.55));
-            }
-            let knob_left =
-                if shell.composer_use_multiple_agents { px(16.0) } else { px(2.0) };
-            toggle.child(
-                div()
-                    .absolute()
-                    .top(px(1.0))
-                    .left(knob_left)
-                    .w(px(12.0))
-                    .h(px(12.0))
-                    .rounded_full()
-                    .bg(tint(colors.text, 0.85)),
-            )
-        };
 
         let banner = match (
             shell.composer_provider_action_error.as_ref(),
@@ -2736,10 +2759,10 @@ impl<'a> ComposerView<'a> {
                 .py(px(8.0))
                 .rounded(px(10.0))
                 .border_1()
-                .border_color(tint(colors.text, 0.10))
-                .bg(tint(colors.text, 0.04))
+                .border_color(white(0.10))
+                .bg(white(0.04))
                 .text_sm()
-                .text_color(tint(colors.text, 0.85))
+                .text_color(white(0.85))
                 .child(msg.clone())
                 .into_any_element(),
             _ => div().into_any_element(),
@@ -2758,7 +2781,7 @@ impl<'a> ComposerView<'a> {
                         .pt(px(4.0))
                         .pb(px(8.0))
                         .border_b_1()
-                        .border_color(tint(colors.text, 0.08))
+                        .border_color(white(0.08))
                         .mb(px(6.0))
                         .flex()
                         .flex_col()
@@ -2781,37 +2804,25 @@ impl<'a> ComposerView<'a> {
                                 .child(
                                     Input::new(&shell.composer_harness_search)
                                         .appearance(false)
-                                        .text_color(shell.colors.text)
+                                        .text_color(white(0.92))
                                         .text_size(px(12.0))
+                                        .h(px(28.0))
                                         .px(px(10.0))
-                                        .py(px(6.0))
+                                        .py(px(0.0))
                                         .w_full()
                                         .border_1()
-                                        .border_color(tint(colors.text, 0.10))
-                                        .bg(tint(colors.text, 0.04))
+                                        .border_color(white(0.10))
+                                        .bg(white(0.04))
                                         .rounded(px(10.0)),
                                 ),
                         )
-                       .child(
+                        .child(
                             div()
                                 .flex()
-                                .items_center()
-                                .justify_between()
-                                .gap(px(12.0))
-                                .text_sm()
-                                .text_color(tint(colors.text, 0.85))
-                                .child("Use Multiple Agents")
-                                .child(
-                                    div()
-                                        .id("composer-multi-agent-toggle")
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
-                                            view.set_use_multiple_agents(!view.composer_use_multiple_agents, cx);
-                                        }))
-                                        .child(toggle),
-                                ),
-                        )
-                        .child(div().flex().justify_end().child(install_all_button)),
+                                .justify_end()
+                                .w_full()
+                                .child(install_all_button),
+                        ),
                 )
                 .child(list)
                 .child(banner),
@@ -2822,7 +2833,6 @@ impl<'a> ComposerView<'a> {
 
     fn render_harness_count_menu(&self, cx: &mut Context<ShellView>) -> AnyElement {
         let shell = self.shell;
-        let colors = shell.colors;
         if !shell.composer_use_multiple_agents {
             return div().into_any_element();
         }
@@ -2841,11 +2851,12 @@ impl<'a> ComposerView<'a> {
             .clamp(1, MAX_TRACKS_PER_PROVIDER);
 
         let view = cx.entity();
+        let menu_bg = rgba_u8(34, 34, 34, 1.0);
         let mut menu = div()
             .border_1()
-            .border_color(colors.border)
+            .border_color(white(0.10))
             .rounded(px(12.0))
-            .bg(colors.panel_2)
+            .bg(menu_bg)
             .p(px(6.0))
             .min_w(px(140.0))
             .max_w(px(220.0))
@@ -2883,9 +2894,9 @@ impl<'a> ComposerView<'a> {
                 .py(px(6.0))
                 .rounded(px(8.0))
                 .border_1()
-                .border_color(tint(colors.text, if active { 0.08 } else { 0.0 }))
+                .border_color(white(if active { 0.08 } else { 0.0 }))
                 .bg(if active {
-                    tint(colors.text, 0.08)
+                    white(0.08)
                 } else {
                     Rgba {
                         r: 0.0,
@@ -2894,7 +2905,7 @@ impl<'a> ComposerView<'a> {
                         a: 0.0,
                     }
                 })
-                .text_color(tint(colors.text, 0.92))
+                .text_color(white(0.92))
                 .child(
                     div()
                         .flex()
@@ -2912,8 +2923,8 @@ impl<'a> ComposerView<'a> {
                 .cursor_pointer()
                 .hover(|style| {
                     style
-                        .bg(tint(colors.text, 0.06))
-                        .border_color(tint(colors.text, 0.08))
+                        .bg(white(0.06))
+                        .border_color(white(0.08))
                 })
                 .on_click(cx.listener(move |view, _: &ClickEvent, _window, cx| {
                     view.set_track_count_for_provider(provider_id_for_action.clone(), n, cx);
@@ -3000,6 +3011,51 @@ impl<'a> ComposerView<'a> {
 
 }
 
+fn format_token_count(value: f64) -> String {
+    if !value.is_finite() {
+        return "0".to_string();
+    }
+    if value >= 1_000_000.0 {
+        let scaled = value / 1_000_000.0;
+        let fixed = if scaled >= 10.0 {
+            format!("{scaled:.0}")
+        } else {
+            format!("{scaled:.1}")
+        };
+        return format!("{}m", fixed.trim_end_matches(".0"));
+    }
+    if value >= 1_000.0 {
+        let scaled = value / 1_000.0;
+        let fixed = if scaled >= 100.0 {
+            format!("{scaled:.0}")
+        } else {
+            format!("{scaled:.1}")
+        };
+        return format!("{}k", fixed.trim_end_matches(".0"));
+    }
+    format!("{}", value.round() as i64)
+}
+
+fn format_used_token_count(value: f64) -> String {
+    if !value.is_finite() {
+        return "0".to_string();
+    }
+    if value >= 1_000_000.0 {
+        let scaled = value / 1_000_000.0;
+        let fixed = if scaled >= 10.0 {
+            format!("{scaled:.0}")
+        } else {
+            format!("{scaled:.1}")
+        };
+        return format!("{}m", fixed.trim_end_matches(".0"));
+    }
+    if value >= 1_000.0 {
+        let rounded = (value / 1_000.0).round();
+        return format!("{}k", rounded as i64);
+    }
+    format!("{}", value.round() as i64)
+}
+
 fn format_context_window(info: &super::super::state::ContextWindowInfo) -> String {
     let Some(window_tokens) = info.window_tokens else {
         return String::new();
@@ -3016,5 +3072,7 @@ fn format_context_window(info: &super::super::state::ContextWindowInfo) -> Strin
     let window_tokens = window_tokens.max(1.0).round();
     let used = used.max(0.0).min(window_tokens).round();
     let percent = ((used / window_tokens) * 100.0).round();
-    format!("{}% · {}/{}", percent, used as i64, window_tokens as i64)
+    let used_label = format_used_token_count(used);
+    let window_label = format_token_count(window_tokens);
+    format!("{}% · {}/{}", percent, used_label, window_label)
 }

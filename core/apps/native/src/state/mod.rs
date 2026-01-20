@@ -169,6 +169,8 @@ pub(crate) struct ShellView {
     pub(crate) selected_task: Option<TaskId>,
     pub(crate) renaming_task_id: Option<TaskId>,
     pub(crate) rename_input: Entity<InputState>,
+    pub(crate) workspace_root_input: Entity<InputState>,
+    pub(crate) workspace_name_input: Entity<InputState>,
     pub(crate) rename_ignore_blur: bool,
     pub(crate) archive_pending: HashMap<TaskId, TaskArchiveAction>,
     pub(crate) task_mark_read_inflight: HashSet<TaskId>,
@@ -266,6 +268,7 @@ pub(crate) struct ShellView {
     pub(crate) composer_harness_count_menu_placement: Option<PopoverPlacement>,
     pub(crate) composer_harness_count_trigger_bounds: HashMap<String, Bounds<Pixels>>,
     pub(crate) composer_harness_count_menu_bounds: Option<Bounds<Pixels>>,
+    #[allow(dead_code)]
     pub(crate) composer_recording: bool,
     pub(crate) composer_harness_search: Entity<InputState>,
     pub(crate) composer_model_search: Entity<InputState>,

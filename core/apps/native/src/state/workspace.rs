@@ -73,6 +73,54 @@ impl ShellView {
         self.load_workspace(workspace.id, cx);
     }
 
+    pub(crate) fn create_workspace(&mut self, cx: &mut Context<Self>) {
+        let root_path = self
+            .workspace_root_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        if root_path.is_empty() {
+            return;
+        }
+        let name = self
+            .workspace_name_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        let request = ctx_client::CreateWorkspaceRequest {
+            root_path,
+            name: if name.is_empty() { None } else { Some(name) },
+        };
+
+        let task = Tokio::spawn_result(cx, async move {
+            let config = ctx_client::resolve_daemon_config()?;
+            let client = ctx_client::Client::new(config)?;
+            client.create_workspace(&request).await
+        });
+
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    match result {
+                        Ok(_) => {
+                            view.start_data_load(cx);
+                        }
+                        Err(err) => {
+                            eprintln!("ctx-native: create workspace failed: {err}");
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     pub(crate) fn start_data_load(&mut self, cx: &mut Context<Self>) {
         self.ensure_thread_list_handler(cx);
         self.data_state = DataLoadState::Loading;
@@ -987,6 +1035,7 @@ impl ShellView {
         self.new_task_mode_locked = true;
         self.composer_focus_pending = true;
         self.composer_needs_apply = true;
+        self.composer_context_window = None;
         self.right_pane = None;
         self.session = SessionInfo::placeholder();
         self.replace_messages(

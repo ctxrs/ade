@@ -73,10 +73,13 @@ pub(crate) enum SettingsSectionGroup {
 pub(crate) enum SettingsSection {
     General,
     AgentHarnesses,
+    HarnessSubscriptions,
     ModelsRouting,
     Sandboxing,
     WorktreeBootstrap,
+    AgentSystemPrompt,
     WorkspaceAttachments,
+    MergeQueue,
     ContextPack,
     ResourceGovernance,
     MobileAccess,
@@ -93,10 +96,13 @@ impl SettingsSection {
         match self {
             SettingsSection::General => "General",
             SettingsSection::AgentHarnesses => "Agent Harnesses",
+            SettingsSection::HarnessSubscriptions => "Harness Subscriptions",
             SettingsSection::ModelsRouting => "Models & Routing",
             SettingsSection::Sandboxing => "Sandboxing",
             SettingsSection::WorktreeBootstrap => "Worktree Bootstrap",
+            SettingsSection::AgentSystemPrompt => "Agent System Prompt",
             SettingsSection::WorkspaceAttachments => "Workspace Attachments",
+            SettingsSection::MergeQueue => "Merge Queue",
             SettingsSection::ContextPack => "ctx pack",
             SettingsSection::ResourceGovernance => "Resource Limits",
             SettingsSection::MobileAccess => "Mobile Access",
@@ -124,10 +130,13 @@ impl SettingsSection {
 pub(crate) const SETTINGS_SECTIONS: &[SettingsSection] = &[
     SettingsSection::General,
     SettingsSection::AgentHarnesses,
+    SettingsSection::HarnessSubscriptions,
     SettingsSection::ModelsRouting,
     SettingsSection::Sandboxing,
     SettingsSection::WorktreeBootstrap,
+    SettingsSection::AgentSystemPrompt,
     SettingsSection::WorkspaceAttachments,
+    SettingsSection::MergeQueue,
     SettingsSection::ContextPack,
     SettingsSection::ResourceGovernance,
     SettingsSection::MobileAccess,
@@ -329,7 +338,7 @@ impl SettingsState {
             auth_busy: HashMap::new(),
             verify_busy: HashMap::new(),
             opts_busy: HashMap::new(),
-            active_section: SettingsSection::General,
+            active_section: SettingsSection::ContextPack,
             saving: false,
             save_error: None,
             save_seq: 0,
@@ -1173,142 +1182,147 @@ impl SettingsState {
         event: &InputEvent,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(event, InputEvent::Change) {
-            return;
-        }
-        let value = input.read(cx).value().to_string();
-        match kind {
-            SettingsInputKind::Search => {
+        match event {
+            InputEvent::Change => {
+                let value = input.read(cx).value().to_string();
+                match kind {
+                    SettingsInputKind::Search => {}
+                    SettingsInputKind::EditorCustom => {
+                        if self.editor_custom_command == value {
+                            return;
+                        }
+                        self.editor_custom_command = value;
+                        self.schedule_editor_save(cx);
+                    }
+                    SettingsInputKind::EditorRemote => {
+                        if self.editor_remote_authority == value {
+                            return;
+                        }
+                        self.editor_remote_authority = value;
+                        self.schedule_editor_save(cx);
+                    }
+                    SettingsInputKind::AttachmentSource => {
+                        if self.attachment_source == value {
+                            return;
+                        }
+                        self.attachment_source = value;
+                    }
+                    SettingsInputKind::AttachmentName => {
+                        if self.attachment_name == value {
+                            return;
+                        }
+                        self.attachment_name = value;
+                    }
+                    SettingsInputKind::AttachmentRevision => {
+                        if self.attachment_revision == value {
+                            return;
+                        }
+                        self.attachment_revision = value;
+                    }
+                    SettingsInputKind::DocsSource => {
+                        if self.docs_attachment_source == value {
+                            return;
+                        }
+                        self.docs_attachment_source = value;
+                    }
+                    SettingsInputKind::DocsName => {
+                        if self.docs_attachment_name == value {
+                            return;
+                        }
+                        self.docs_attachment_name = value;
+                    }
+                    SettingsInputKind::ResourceCpu => {
+                        if self.resource_cpu_quota_pct == value {
+                            return;
+                        }
+                        self.resource_cpu_quota_pct = value;
+                        self.schedule_resource_save(cx);
+                    }
+                    SettingsInputKind::ResourceMemHigh => {
+                        if self.resource_memory_high_gb == value {
+                            return;
+                        }
+                        self.resource_memory_high_gb = value;
+                        self.schedule_resource_save(cx);
+                    }
+                    SettingsInputKind::ResourceMemMax => {
+                        if self.resource_memory_max_gb == value {
+                            return;
+                        }
+                        self.resource_memory_max_gb = value;
+                        self.schedule_resource_save(cx);
+                    }
+                    SettingsInputKind::DictationBaseUrl => {
+                        if self.dictation_base_url == value {
+                            return;
+                        }
+                        self.dictation_base_url = value;
+                        self.schedule_dictation_save(cx);
+                    }
+                    SettingsInputKind::DictationApiKey => {
+                        if self.dictation_api_key == value {
+                            return;
+                        }
+                        self.dictation_api_key = value;
+                        self.schedule_dictation_save(cx);
+                    }
+                    SettingsInputKind::DictationApiSecret => {
+                        if self.dictation_api_secret == value {
+                            return;
+                        }
+                        self.dictation_api_secret = value;
+                        self.schedule_dictation_save(cx);
+                    }
+                    SettingsInputKind::DictationLanguage => {
+                        if self.dictation_language == value {
+                            return;
+                        }
+                        self.dictation_language = value;
+                        self.schedule_dictation_save(cx);
+                    }
+                    SettingsInputKind::TitleBaseUrl => {
+                        if self.title_base_url == value {
+                            return;
+                        }
+                        self.title_base_url = value;
+                        self.schedule_title_save(cx);
+                    }
+                    SettingsInputKind::TitleApiKey => {
+                        if self.title_api_key == value {
+                            return;
+                        }
+                        self.title_api_key = value;
+                        self.schedule_title_save(cx);
+                    }
+                    SettingsInputKind::TitleModel => {
+                        if self.title_model == value {
+                            return;
+                        }
+                        self.title_model = value;
+                        self.schedule_title_save(cx);
+                    }
+                    SettingsInputKind::BillingEmail => {
+                        if self.billing_email == value {
+                            return;
+                        }
+                        self.billing_email = value;
+                    }
+                    SettingsInputKind::BillingPassword => {
+                        if self.billing_password == value {
+                            return;
+                        }
+                        self.billing_password = value;
+                    }
+                }
                 cx.notify();
             }
-            SettingsInputKind::EditorCustom => {
-                if self.editor_custom_command == value {
-                    return;
+            InputEvent::Focus | InputEvent::Blur => {
+                if matches!(kind, SettingsInputKind::Search) {
+                    cx.notify();
                 }
-                self.editor_custom_command = value;
-                self.schedule_editor_save(cx);
             }
-            SettingsInputKind::EditorRemote => {
-                if self.editor_remote_authority == value {
-                    return;
-                }
-                self.editor_remote_authority = value;
-                self.schedule_editor_save(cx);
-            }
-            SettingsInputKind::AttachmentSource => {
-                if self.attachment_source == value {
-                    return;
-                }
-                self.attachment_source = value;
-            }
-            SettingsInputKind::AttachmentName => {
-                if self.attachment_name == value {
-                    return;
-                }
-                self.attachment_name = value;
-            }
-            SettingsInputKind::AttachmentRevision => {
-                if self.attachment_revision == value {
-                    return;
-                }
-                self.attachment_revision = value;
-            }
-            SettingsInputKind::DocsSource => {
-                if self.docs_attachment_source == value {
-                    return;
-                }
-                self.docs_attachment_source = value;
-            }
-            SettingsInputKind::DocsName => {
-                if self.docs_attachment_name == value {
-                    return;
-                }
-                self.docs_attachment_name = value;
-            }
-            SettingsInputKind::ResourceCpu => {
-                if self.resource_cpu_quota_pct == value {
-                    return;
-                }
-                self.resource_cpu_quota_pct = value;
-                self.schedule_resource_save(cx);
-            }
-            SettingsInputKind::ResourceMemHigh => {
-                if self.resource_memory_high_gb == value {
-                    return;
-                }
-                self.resource_memory_high_gb = value;
-                self.schedule_resource_save(cx);
-            }
-            SettingsInputKind::ResourceMemMax => {
-                if self.resource_memory_max_gb == value {
-                    return;
-                }
-                self.resource_memory_max_gb = value;
-                self.schedule_resource_save(cx);
-            }
-            SettingsInputKind::DictationBaseUrl => {
-                if self.dictation_base_url == value {
-                    return;
-                }
-                self.dictation_base_url = value;
-                self.schedule_dictation_save(cx);
-            }
-            SettingsInputKind::DictationApiKey => {
-                if self.dictation_api_key == value {
-                    return;
-                }
-                self.dictation_api_key = value;
-                self.schedule_dictation_save(cx);
-            }
-            SettingsInputKind::DictationApiSecret => {
-                if self.dictation_api_secret == value {
-                    return;
-                }
-                self.dictation_api_secret = value;
-                self.schedule_dictation_save(cx);
-            }
-            SettingsInputKind::DictationLanguage => {
-                if self.dictation_language == value {
-                    return;
-                }
-                self.dictation_language = value;
-                self.schedule_dictation_save(cx);
-            }
-            SettingsInputKind::TitleBaseUrl => {
-                if self.title_base_url == value {
-                    return;
-                }
-                self.title_base_url = value;
-                self.schedule_title_save(cx);
-            }
-            SettingsInputKind::TitleApiKey => {
-                if self.title_api_key == value {
-                    return;
-                }
-                self.title_api_key = value;
-                self.schedule_title_save(cx);
-            }
-            SettingsInputKind::TitleModel => {
-                if self.title_model == value {
-                    return;
-                }
-                self.title_model = value;
-                self.schedule_title_save(cx);
-            }
-            SettingsInputKind::BillingEmail => {
-                if self.billing_email == value {
-                    return;
-                }
-                self.billing_email = value;
-            }
-            SettingsInputKind::BillingPassword => {
-                if self.billing_password == value {
-                    return;
-                }
-                self.billing_password = value;
-            }
+            InputEvent::PressEnter { .. } => {}
         }
-        cx.notify();
     }
 
     fn handle_select_event(

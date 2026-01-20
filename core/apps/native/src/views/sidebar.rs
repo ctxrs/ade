@@ -26,7 +26,7 @@ use super::super::state::{
 
 const SIDEBAR_BG: Rgba = rgba(24, 24, 24, 1.0);
 const SEARCH_BG: Rgba = rgba(255, 255, 255, 0.04);
-const BUTTON_BG: Rgba = rgba(255, 255, 255, 0.04);
+const BUTTON_BG: Rgba = rgba(255, 255, 255, 0.03);
 const HOVER_BG: Rgba = rgba(255, 255, 255, 0.04);
 const ACTIVE_BG: Rgba = rgba(255, 255, 255, 0.06);
 const MUTED_ICON: Rgba = rgba(255, 255, 255, 0.62);
@@ -310,7 +310,7 @@ impl<'a> SidebarView<'a> {
             .on_click(cx.listener(ShellView::focus_new_task))
             .child(Icon::new(
                 IconName::SquarePen,
-                14.0,
+                16.0,
                 shell.colors.text,
             ));
         let new_task = div()
@@ -338,6 +338,8 @@ impl<'a> SidebarView<'a> {
             .flex_1()
             .min_w(px(0.0));
         let search = div()
+            .flex_1()
+            .min_w(px(0.0))
             .on_children_prepainted(automation_tree::track_children_bounds(
                 "task-search-input",
                 "input",
@@ -347,14 +349,20 @@ impl<'a> SidebarView<'a> {
             .child(search);
 
         div()
-            .pl(px(12.0))
-            .pr(px(36.0))
-            .py(px(12.0))
+            .p(px(12.0))
             .flex()
-            .items_center()
-            .gap(px(8.0))
-            .child(search)
-            .child(new_task)
+            .flex_col()
+            .gap(px(10.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .pr(px(24.0))
+                    .child(search)
+                    .child(new_task)
+                    ,
+            )
     }
 
 
@@ -414,7 +422,7 @@ impl<'a> SidebarView<'a> {
             .child(list.w_full().h_full());
 
         div()
-            .px(px(12.0))
+            .px(px(6.0))
             .py(px(10.0))
             .flex()
             .flex_col()

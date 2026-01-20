@@ -1,6 +1,9 @@
 use gpui::{
-    ClickEvent, Context, ElementId, MouseButton, MouseDownEvent, Rgba, div, prelude::*, px,
+    ClickEvent, Context, ElementId, FontWeight, MouseButton, MouseDownEvent, Rgba, div, prelude::*,
+    px, relative,
 };
+use gpui_component::input::Input;
+use ctx_providers::adapters::ProviderHealth;
 
 use crate::{automation_tree, theme::{ThemeColors, ThemeMetrics}};
 
@@ -17,7 +20,11 @@ pub(crate) struct RouterView<'a> {
 
 impl<'a> RouterView<'a> {
     pub(crate) fn render(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
-        let sidebar = SidebarView { shell: self.shell }.render(cx).into_any_element();
+        let sidebar = if self.shell.route == ShellRoute::Workbench {
+            SidebarView { shell: self.shell }.render(cx).into_any_element()
+        } else {
+            div().into_any_element()
+        };
 
         let main = match self.shell.route {
             ShellRoute::Workbench => self.render_workbench(cx).into_any_element(),
@@ -106,22 +113,21 @@ impl<'a> RouterView<'a> {
     }
 
     fn render_sidebar_expand(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
-        let metrics = ThemeMetrics::default();
-        let tab_bg = rgba(255, 255, 255, 0.04);
+        let tab_bg = rgba(255, 255, 255, 0.03);
         let expand_button = div()
             .id("sidebar-expand")
             .absolute()
-            .top(px(metrics.spacing.xl))
+            .top(px(12.0))
             .left(px(0.0))
             .w(px(28.0))
             .h(px(28.0))
             .flex()
             .items_center()
             .justify_center()
-            .rounded_tl(px(8.0))
-            .rounded_bl(px(8.0))
-            .rounded_tr(px(0.0))
-            .rounded_br(px(0.0))
+            .rounded_tr(px(8.0))
+            .rounded_br(px(8.0))
+            .rounded_tl(px(0.0))
+            .rounded_bl(px(0.0))
             .border_1()
             .border_l_0()
             .border_color(self.shell.colors.border)
@@ -133,7 +139,7 @@ impl<'a> RouterView<'a> {
             }))
             .child(Icon::new(
                 IconName::ChevronsRight,
-                14.0,
+                16.0,
                 self.shell.colors.text,
             ));
         div()
@@ -147,23 +153,22 @@ impl<'a> RouterView<'a> {
     }
 
     fn render_sidebar_collapse_tab(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
-        let metrics = ThemeMetrics::default();
-        let tab_bg = rgba(255, 255, 255, 0.04);
+        let tab_bg = rgba(255, 255, 255, 0.03);
         let left = (self.shell.sidebar_width - 28.0).max(0.0);
         let collapse_button = div()
             .id("sidebar-collapse")
             .absolute()
-            .top(px(metrics.spacing.xl))
+            .top(px(12.0))
             .left(px(left))
             .w(px(28.0))
             .h(px(28.0))
             .flex()
             .items_center()
             .justify_center()
-            .rounded_tr(px(8.0))
-            .rounded_br(px(8.0))
-            .rounded_tl(px(0.0))
-            .rounded_bl(px(0.0))
+            .rounded_tl(px(8.0))
+            .rounded_bl(px(8.0))
+            .rounded_tr(px(0.0))
+            .rounded_br(px(0.0))
             .border_1()
             .border_r_0()
             .border_color(self.shell.colors.border)
@@ -175,7 +180,7 @@ impl<'a> RouterView<'a> {
             }))
             .child(Icon::new(
                 IconName::ChevronsLeft,
-                14.0,
+                16.0,
                 self.shell.colors.text,
             ));
         div()
@@ -201,55 +206,204 @@ impl<'a> RouterView<'a> {
             .flex()
             .flex_col()
             .flex_1()
-            .bg(self.shell.colors.panel)
+            .bg(self.shell.colors.bg)
             .child(self.shell.settings_state.clone())
     }
 
     fn render_workspaces(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let colors = self.shell.colors;
         let metrics = ThemeMetrics::default();
+        let ui_font = "DejaVu Sans".to_string();
+        let blend_tint = |base: Rgba, tint: Rgba, alpha: f32| -> Rgba {
+            base.blend(Rgba {
+                r: tint.r,
+                g: tint.g,
+                b: tint.b,
+                a: alpha,
+            })
+        };
         automation_tree::clear_prefix("workspace-item-");
-        let refresh_button = self
-            .action_button(colors, "Refresh")
-            .h(px(metrics.controls.h_sm))
+        let max_width = 960.0;
+        let banner_bg = blend_tint(colors.panel, colors.warning, 0.18);
+        let banner_border = blend_tint(colors.border, colors.warning, 0.30);
+        let list_divider = rgba(240, 240, 240, 1.0);
+        let show_harness_warning = self
+            .shell
+            .providers
+            .iter()
+            .any(|provider| !matches!(provider.health, ProviderHealth::Ok));
+
+        let mut warning_banner = div().into_any_element();
+        if show_harness_warning {
+            let link = div()
+                .id("workspaces-harness-warning-link")
+                .text_size(px(metrics.type_scale.md))
+                .text_color(colors.accent)
+                .font_family(ui_font.clone())
+                .line_height(relative(1.4))
+                .border_b_1()
+                .border_color(colors.accent)
+                .pb(px(1.0))
+                    .child("Install or update harnesses.")
+                    .cursor_pointer()
+                    .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
+                        view.set_route(ShellRoute::Providers, cx);
+                    }));
+            warning_banner = div()
+                .id("workspaces-harness-warning")
+                .flex()
+                .items_center()
+                .gap(px(metrics.spacing.xs))
+                .px(px(metrics.spacing.md))
+                .py(px(7.0))
+                .w_full()
+                .border_1()
+                .border_color(banner_border)
+                .rounded(px(6.0))
+                .bg(banner_bg)
+                .child(
+                    div()
+                        .text_size(px(metrics.type_scale.md))
+                        .font_family(ui_font.clone())
+                        .line_height(relative(1.4))
+                        .child("Some harnesses are not ready."),
+                )
+                .child(link)
+                .into_any_element();
+        }
+
+        let header_row = div()
             .flex()
             .items_center()
+            .w_full()
+            .mt(px(14.0))
+            .mb(px(3.0))
+            .child(
+                div()
+                    .text_size(px(26.0))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(colors.text)
+                    .font_family(ui_font.clone())
+                    .child("Workspaces"),
+            );
+
+        let root_input = Input::new(&self.shell.workspace_root_input)
+            .appearance(false)
+            .bordered(false)
+            .focus_bordered(false)
+            .px(px(8.0))
+            .py(px(10.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors.panel)
+            .text_size(px(13.0))
+            .line_height(relative(1.4))
+            .text_color(colors.text)
+            .w_full();
+        let name_input = Input::new(&self.shell.workspace_name_input)
+            .appearance(false)
+            .bordered(false)
+            .focus_bordered(false)
+            .px(px(8.0))
+            .py(px(10.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors.panel)
+            .text_size(px(13.0))
+            .line_height(relative(1.4))
+            .text_color(colors.text)
+            .w_full();
+
+        let add_button = div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .px(px(12.0))
+            .py(px(8.0))
+            .border_1()
+            .border_color(colors.border)
+            .rounded(px(6.0))
+            .bg(colors.panel_2)
+            .text_size(px(metrics.type_scale.md))
+            .font_family(ui_font.clone())
+            .id("workspaces-add")
             .cursor_pointer()
-            .id("workspaces-refresh")
             .active(|style| style.opacity(0.85))
             .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
-                view.start_data_load(cx);
-            }));
+                view.create_workspace(cx);
+            }))
+            .child("Add workspace");
 
-        let header = div()
+        let root_label = div()
+            .grid()
+            .gap(px(4.0))
+            .child(
+                div()
+                    .text_size(px(metrics.type_scale.md))
+                    .text_color(colors.text)
+                    .font_family(ui_font.clone())
+                    .line_height(relative(1.4))
+                    .child("Root path"),
+            )
+            .child(root_input)
+            .child(
+                div()
+                    .mt(px(6.0))
+                    .text_size(px(metrics.type_scale.md))
+                    .text_color(colors.muted)
+                    .font_family(ui_font.clone())
+                    .line_height(relative(1.4))
+                    .child("Must be a git repo root (contains .git). Tilde (~) is supported."),
+            );
+        let name_label = div()
+            .grid()
+            .gap(px(4.0))
+            .child(
+                div()
+                    .text_size(px(metrics.type_scale.md))
+                    .text_color(colors.text)
+                    .font_family(ui_font.clone())
+                    .line_height(relative(1.4))
+                    .child("Name (optional)"),
+            )
+            .child(name_input);
+        let form = div()
             .flex()
-            .items_center()
-            .justify_between()
-            .child(div().text_lg().child("Workspaces"))
-            .child(refresh_button);
+            .flex_col()
+            .gap(px(8.0))
+            .p(px(12.0))
+            .w_full()
+            .border_1()
+            .border_color(colors.border)
+            .rounded(px(8.0))
+            .bg(colors.panel)
+            .child(root_label)
+            .child(name_label)
+            .child(add_button);
 
         let list = if self.shell.workspaces.is_empty() {
-            div()
-                .text_sm()
+            let empty = div()
+                .text_size(px(metrics.type_scale.md))
                 .text_color(colors.muted)
-                .child("No workspaces yet.")
+                .font_family(ui_font.clone())
+                .line_height(relative(1.4))
+                .child("No workspaces yet.");
+            div()
+                .on_children_prepainted(automation_tree::track_children_bounds(
+                    "workspaces-list",
+                    "list",
+                    Some("Workspaces"),
+                    Some("app-shell"),
+                ))
+                .child(empty)
         } else {
             self.shell
                 .workspaces
                 .iter()
                 .enumerate()
-                .fold(div().flex().flex_col().gap_2(), |list, (index, workspace)| {
-                    let is_selected = self.shell.selected_workspace == Some(workspace.id);
-                    let item_bg = if is_selected {
-                        colors.panel
-                    } else {
-                        colors.panel_2
-                    };
-                    let item_border = if is_selected {
-                        colors.border_strong
-                    } else {
-                        colors.border
-                    };
+                .fold(div().flex().flex_col(), |list, (index, workspace)| {
                     let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                         view.select_workspace(index, cx);
                         view.set_route(ShellRoute::Workbench, cx);
@@ -258,18 +412,35 @@ impl<'a> RouterView<'a> {
                     let item_label = workspace.name.clone();
                     let item = div()
                         .flex()
-                        .items_center()
-                        .px_3()
-                        .py_2()
-                        .border_1()
-                        .border_color(item_border)
-                        .rounded_sm()
-                        .bg(item_bg)
-                        .text_sm()
-                        .child(item_label.clone())
+                        .flex_col()
+                        .items_start()
+                        .w_full()
+                        .py(px(metrics.spacing.md))
+                        .border_b_1()
+                        .border_color(list_divider)
                         .cursor_pointer()
                         .id(ElementId::named_usize("workspace", index))
-                        .on_click(on_click);
+                        .on_click(on_click)
+                        .child(
+                            div()
+                                .text_size(px(metrics.type_scale.md))
+                                .text_color(colors.accent)
+                                .font_family(ui_font.clone())
+                                .line_height(relative(1.4))
+                                .border_b_1()
+                                .border_color(colors.accent)
+                                .pb(px(1.0))
+                                .flex_none()
+                                .child(item_label.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(metrics.type_scale.md))
+                                .text_color(colors.muted)
+                                .font_family(ui_font.clone())
+                                .line_height(relative(1.4))
+                                .child(workspace.root_path.clone()),
+                        );
                     let tracked = div()
                         .on_children_prepainted(automation_tree::track_children_bounds_dynamic(
                             item_id,
@@ -277,6 +448,7 @@ impl<'a> RouterView<'a> {
                             Some(item_label),
                             Some("workspaces-list".to_string()),
                         ))
+                        .w_full()
                         .child(item);
                     list.child(tracked)
                 })
@@ -286,17 +458,30 @@ impl<'a> RouterView<'a> {
                     Some("Workspaces"),
                     Some("app-shell"),
                 ))
-        };
+        }
+        .w_full();
+
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .w_full()
+            .max_w(px(max_width))
+            .p(px(16.0))
+            .font_family(metrics.type_scale.ui.clone())
+            .child(header_row);
+        if show_harness_warning {
+            content = content.child(warning_banner);
+        }
+        content = content.child(form).child(list);
 
         div()
             .flex()
             .flex_col()
             .flex_1()
-            .gap_3()
-            .p(px(metrics.spacing.gutter))
-            .bg(colors.panel)
-            .child(header)
-            .child(list)
+            .items_center()
+            .bg(colors.bg)
+            .child(content)
     }
 
     fn render_diagnostics(&self, cx: &mut Context<ShellView>) -> impl IntoElement {

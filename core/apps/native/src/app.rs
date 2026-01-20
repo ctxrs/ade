@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use gpui::{
-    App, Application, Bounds, ClickEvent, Context, Entity, Global, KeyDownEvent, ListAlignment, ListState,
+    App, Application, Bounds, Context, Entity, Global, KeyDownEvent, ListAlignment, ListState,
     ScrollStrategy, Window, WindowBounds, WindowHandle, WindowOptions, div,
-    InteractiveElement as _, StatefulInteractiveElement as _, prelude::*, px, size,
+    prelude::*, px, size,
 };
-use gpui_component::{Root, TitleBar, VirtualListScrollHandle, input::{InputEvent, InputState}};
+use gpui_component::{Root, VirtualListScrollHandle, input::{InputEvent, InputState}};
 use ctx_core::models::MessageRole;
 
 use crate::automation;
@@ -37,7 +37,7 @@ pub(crate) mod state;
 #[path = "views/mod.rs"]
 mod views;
 
-use self::icons::{AppAssets, Icon, IconName};
+use self::icons::AppAssets;
 use self::models::{MessageItem, SessionInfo};
 use self::state::{
     ArtifactContentCache, ArtifactPreviewState, AtsCache, ComposerAutocompleteState, ComposerDraft,
@@ -141,6 +141,8 @@ fn create_shell_view(
         let task_search_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search Tasks"));
         let rename_input = cx.new(|cx| InputState::new(window, cx));
+        let workspace_root_input = cx.new(|cx| InputState::new(window, cx));
+        let workspace_name_input = cx.new(|cx| InputState::new(window, cx));
         let ui_state = UiStateStore::load();
         let archive_confirm_dismissed = ui_state.archive_confirm_dismissed();
         let composer_new_input = cx.new(|cx| {
@@ -194,6 +196,8 @@ fn create_shell_view(
             selected_task: None,
             renaming_task_id: None,
             rename_input: rename_input.clone(),
+            workspace_root_input: workspace_root_input.clone(),
+            workspace_name_input: workspace_name_input.clone(),
             rename_ignore_blur: false,
             archive_pending: HashMap::new(),
             task_mark_read_inflight: HashSet::new(),
@@ -314,7 +318,7 @@ fn create_shell_view(
             ats_cache: AtsCache::new(),
             composer_subscriptions: Vec::new(),
             composer_subscriptions_set: false,
-            thread_list_state: ListState::new(0, ListAlignment::Bottom, px(160.0)),
+            thread_list_state: ListState::new(0, ListAlignment::Top, px(160.0)),
             thread_list_len: 0,
             thread_item_layout_hashes: HashMap::new(),
             thread_auto_follow: true,
@@ -404,7 +408,6 @@ pub(crate) fn open_shell_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             app_id: Some("ctx".to_string()),
-            titlebar: Some(TitleBar::title_bar_options()),
             ..Default::default()
         },
         |window, cx| {
@@ -430,7 +433,7 @@ pub fn run(options: AppOptions) {
             window_size,
         });
         app_menus::init(cx);
-        let window = open_shell_window(cx, ShellRoute::Workbench).unwrap();
+        let window = open_shell_window(cx, ShellRoute::Workspaces).unwrap();
         automation::start(cx, window, options.automation.clone());
         cx.activate(true);
     });
@@ -447,7 +450,6 @@ impl Render for ShellView {
         self.update_composer_placeholders(window, cx);
         self.ensure_track_model_inputs(window, cx);
         self.sync_auxiliary_panes(cx);
-        let settings_icon = Icon::new(IconName::Settings, 14.0, self.colors.text);
         let resyncing = self
             .resyncing_session
             .and_then(|resync_id| {
@@ -456,52 +458,6 @@ impl Render for ShellView {
                     .map(|summary| summary.session_id == resync_id)
             })
             .unwrap_or(false);
-        let workspace_label = self
-            .selected_workspace
-            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id))
-            .map(|ws| ws.name.clone())
-            .unwrap_or_else(|| "No workspace".to_string());
-        let show_workspace_label = self.route != ShellRoute::Workbench;
-        let settings_button = div()
-            .id("settings-button")
-            .w(px(26.0))
-            .h(px(26.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_md()
-            .bg(self.colors.panel_2)
-            .border_1()
-            .border_color(self.colors.border)
-            .cursor_pointer()
-            .active(|style| style.opacity(0.85))
-            .child(settings_icon)
-            .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
-                view.set_route(ShellRoute::Settings, cx);
-            }));
-        let title_center = if show_workspace_label {
-            div()
-                .flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .child(workspace_label)
-        } else {
-            div().flex_1()
-        };
-        let title_bar = TitleBar::new()
-            .bg(self.colors.panel)
-            .border_color(self.colors.border_strong)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .w_full()
-                    .child(div().w(px(26.0)).flex_none())
-                    .child(title_center)
-                    .child(settings_button),
-            );
         div()
             .on_children_prepainted(automation_tree::track_children_bounds(
                 "app-shell",
@@ -540,9 +496,6 @@ impl Render for ShellView {
                     cx.stop_propagation();
                 }
             }))
-            .child(
-                title_bar,
-            )
             .child(
                 div()
                     .id("content")
