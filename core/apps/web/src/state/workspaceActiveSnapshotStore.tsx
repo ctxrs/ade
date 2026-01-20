@@ -956,22 +956,12 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
 
   private pickArchivedSessionId(task: Task, sessions: Session[]): string | null {
     const primaryId = idToString(task.primary_session_id ?? "");
-    if (primaryId && (sessions.length === 0 || sessions.some((s) => idToString(s.id) === primaryId))) {
-      return primaryId;
-    }
-    const selected = sessions.find((session) => session.relationship !== "sub_agent") ?? sessions[0];
-    return selected ? idToString(selected.id) : null;
+    return primaryId || null;
   }
 
   private pickArchivedSessionIdFromSummaries(task: Task, sessions: SessionSummary[]): string | null {
     const primaryId = idToString(task.primary_session_id ?? "");
-    if (primaryId && (sessions.length === 0 || sessions.some((s) => idToString(s.id) === primaryId))) {
-      return primaryId;
-    }
-    const nonSubagents = sessions.filter((session) => session.relationship !== "sub_agent");
-    const pool = nonSubagents.length ? nonSubagents : sessions;
-    const selected = pool[0];
-    return selected ? idToString(selected.id) : null;
+    return primaryId || null;
   }
 
   private normalizeSessionSummary(summary: SessionSnapshotSummary): SessionSnapshotSummary {

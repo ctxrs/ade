@@ -2651,29 +2651,12 @@ private func resolvePrimarySession(
     preferredSessionId: String?
 ) -> ResolvedPrimarySession {
     let sessions = task.sessions
-    guard !sessions.isEmpty else {
+    guard let primaryId = task.task.primarySessionId?.stringValue else {
         return ResolvedPrimarySession(sessionId: nil, session: nil)
     }
-
-    if let preferredSessionId,
-       let match = sessions.first(where: { $0.session.id.stringValue == preferredSessionId }) {
-        let summary = SessionSummary(session: match.session)
-        return ResolvedPrimarySession(sessionId: preferredSessionId, session: summary)
-    }
-
-    if let primaryId = task.task.primarySessionId?.stringValue,
-       let match = sessions.first(where: { $0.session.id.stringValue == primaryId }) {
-        let summary = SessionSummary(session: match.session)
-        return ResolvedPrimarySession(sessionId: primaryId, session: summary)
-    }
-
-    let fallback = sessions.first(where: { $0.session.relationship != "sub_agent" }) ?? sessions.first
-    guard let fallback else {
-        return ResolvedPrimarySession(sessionId: nil, session: nil)
-    }
-    let sessionId = fallback.session.id.stringValue
-    let summary = SessionSummary(session: fallback.session)
-    return ResolvedPrimarySession(sessionId: sessionId, session: summary)
+    let match = sessions.first(where: { $0.session.id.stringValue == primaryId })
+    let summary = match.map { SessionSummary(session: $0.session) }
+    return ResolvedPrimarySession(sessionId: primaryId, session: summary)
 }
 
 private func extractModelIds(from models: JSONValue?) -> [String] {
@@ -2784,12 +2767,7 @@ private func buildArchivedTaskSummary(
 }
 
 private func pickArchivedSessionId(task: Task, sessions: [Session]) -> String? {
-    if let primaryId = task.primarySessionId?.stringValue,
-       (sessions.isEmpty || sessions.contains(where: { $0.id.stringValue == primaryId })) {
-        return primaryId
-    }
-    let selected = sessions.first(where: { $0.relationship != "sub_agent" }) ?? sessions.first
-    return selected?.id.stringValue
+    return task.primarySessionId?.stringValue
 }
 
 // MARK: - Task list helpers (web parity)
@@ -3176,15 +3154,7 @@ private func taskHasWorkingSession(_ task: WorkspaceTaskSummary) -> Bool {
         }
         return summary.activity?.isWorking == true
     }
-
-    guard let fallback = task.sessions.first(where: { $0.session.relationship != "sub_agent" }) ?? task.sessions.first else {
-        return false
-    }
-    let status = fallback.session.status.lowercased()
-    if status == "failed" || status == "cancelled" || status == "completed" {
-        return false
-    }
-    return fallback.activity?.isWorking == true
+    return false
 }
 
 private func taskHasErrorSession(_ task: WorkspaceTaskSummary) -> Bool {

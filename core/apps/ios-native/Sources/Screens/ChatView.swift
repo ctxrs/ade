@@ -4237,16 +4237,8 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func resolvePrimarySessionId(for task: WorkspaceTaskSummary) -> String? {
-        let sessions = task.sessions
-        guard !sessions.isEmpty else { return nil }
-
-        if let primaryId = task.task.primarySessionId,
-           let match = sessions.first(where: { $0.session.id == primaryId }) {
-            return match.session.id.stringValue
-        }
-
-        let selected = sessions.first(where: { $0.session.relationship != "sub_agent" }) ?? sessions.first
-        return selected?.session.id.stringValue
+        guard let primaryId = task.task.primarySessionId else { return nil }
+        return primaryId.stringValue
     }
 
     private func resolveWorkspaceId() async -> String? {

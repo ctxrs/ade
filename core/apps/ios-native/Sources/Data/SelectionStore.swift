@@ -177,14 +177,9 @@ final class WorkbenchSelectionStore: ObservableObject {
         guard let normalizedTaskId = SelectionDefaults.normalizedId(taskId) else { return false }
         let currentTaskId = self.taskId
         let currentSessionId = self.sessionId
-        let normalizedPreferredSessionId = SelectionDefaults.normalizedId(preferredSessionId)
         let normalizedPrimarySessionId = SelectionDefaults.normalizedId(primarySessionId)
-        let persistedPreferredSessionId = currentTaskId == normalizedTaskId ? currentSessionId : nil
-        let sessionIds = Set(sessions.compactMap { SelectionDefaults.normalizedId($0.id) })
-        let persistedValidSessionId = persistedPreferredSessionId.flatMap { sessionIds.contains($0) ? $0 : nil }
         let resolvedSessionId = pickPreferredSessionId(
             from: sessions,
-            preferredSessionId: persistedValidSessionId ?? normalizedPreferredSessionId,
             primarySessionId: normalizedPrimarySessionId
         )
         guard currentTaskId != normalizedTaskId || resolvedSessionId != currentSessionId else { return false }
@@ -194,22 +189,8 @@ final class WorkbenchSelectionStore: ObservableObject {
 
     private func pickPreferredSessionId(
         from sessions: [SessionSummary],
-        preferredSessionId: String?,
         primarySessionId: String?
     ) -> String? {
-        let normalizedSessions: [(id: String, session: SessionSummary)] = sessions.compactMap { session in
-            guard let id = SelectionDefaults.normalizedId(session.id) else { return nil }
-            return (id: id, session: session)
-        }
-        if normalizedSessions.isEmpty { return nil }
-        if let preferredSessionId, normalizedSessions.contains(where: { $0.id == preferredSessionId }) {
-            return preferredSessionId
-        }
-        if let primarySessionId, normalizedSessions.contains(where: { $0.id == primarySessionId }) {
-            return primarySessionId
-        }
-        let nonSubagents = normalizedSessions.filter { $0.session.relationship != "sub_agent" }
-        let fallback = nonSubagents.first ?? normalizedSessions.first
-        return fallback?.id
+        return primarySessionId
     }
 }
