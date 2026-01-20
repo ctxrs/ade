@@ -275,6 +275,25 @@ export function WorkbenchTurnHeaderView({
   );
 }
 
+const COLLAPSE_MAX_LINES = 20;
+const COLLAPSE_MAX_CHARS = 1500;
+
+const getCollapsePreview = (content: string) => {
+  let lineCount = 1;
+  let cutoffIndex = content.length;
+  for (let i = 0; i < content.length; i++) {
+    if (content.charCodeAt(i) !== 10) continue;
+    lineCount += 1;
+    if (lineCount === COLLAPSE_MAX_LINES + 1) {
+      cutoffIndex = i;
+      break;
+    }
+  }
+  const isLong = content.length > COLLAPSE_MAX_CHARS || lineCount > COLLAPSE_MAX_LINES;
+  const preview = isLong ? content.slice(0, cutoffIndex) : content;
+  return { isLong, preview };
+};
+
 function CollapsibleMessage({
   id,
   role,
@@ -292,10 +311,10 @@ function CollapsibleMessage({
   onFileOpenError: (message: string | null) => void;
   modifierDown: boolean;
 }) {
-  const lines = (content || "").split("\n");
-  const isLong = lines.length > 20 || content.length > 1500;
+  const safeContent = content || "";
+  const { isLong, preview } = useMemo(() => getCollapsePreview(safeContent), [safeContent]);
   const [expanded, setExpanded] = useState(!isLong);
-  const shown = expanded ? content : lines.slice(0, 20).join("\n");
+  const shown = expanded ? safeContent : preview;
 
   return (
     <div className={`msg ${role}`}>

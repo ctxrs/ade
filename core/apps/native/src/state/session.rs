@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -9,6 +9,7 @@ use gpui::{
     ListState, WeakEntity, Window, px,
 };
 use gpui_tokio::Tokio;
+use serde_json::Value;
 
 use ctx_core::ids::{MessageId, SessionId, TurnId};
 use ctx_core::models::{
@@ -17,7 +18,7 @@ use ctx_core::models::{
 };
 use ctx_client;
 
-use super::{ArtifactPreviewState, ShellView};
+use super::{ArtifactPreviewState, ContextWindowInfo, ShellView};
 use super::super::models::{
     attachment_cache_key, build_message_items, build_thread_list_items, message_item_from_model,
     session_info_from_head, session_info_from_summary, MessageAttachment, MessageItem,
@@ -70,28 +71,109 @@ impl SessionThreadCache {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-struct ThreadViewCacheKey {
+#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+pub(crate) struct ThreadRenderCacheKey {
+    session_id: SessionId,
     snapshot_rev: i64,
     last_event_seq: i64,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum ThreadRenderUpdateKind {
+    Default,
+    History,
+}
+
 #[derive(Clone)]
-pub(crate) struct SessionThreadViewCache {
-    key: ThreadViewCacheKey,
+pub(super) struct ThreadRenderModel {
+    key: ThreadRenderCacheKey,
+    items: Arc<Vec<ThreadListItem>>,
+    update_kind: ThreadRenderUpdateKind,
+}
+
+pub(crate) struct ThreadRenderCache {
+    entries: HashMap<ThreadRenderCacheKey, Arc<ThreadRenderModel>>,
+    order: VecDeque<ThreadRenderCacheKey>,
+    capacity: usize,
+}
+
+impl ThreadRenderCache {
+    pub(crate) fn new(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            capacity,
+        }
+    }
+
+    pub(super) fn contains(&self, key: &ThreadRenderCacheKey) -> bool {
+        self.entries.contains_key(key)
+    }
+
+    pub(super) fn get(&mut self, key: &ThreadRenderCacheKey) -> Option<Arc<ThreadRenderModel>> {
+        let model = self.entries.get(key).cloned();
+        if model.is_some() {
+            self.touch(*key);
+        }
+        model
+    }
+
+    pub(super) fn insert(&mut self, model: Arc<ThreadRenderModel>) {
+        let key = model.key;
+        self.entries.insert(key, model);
+        self.touch(key);
+        self.evict_if_needed();
+    }
+
+    pub(super) fn remove_session(&mut self, session_id: SessionId) {
+        self.entries
+            .retain(|key, _| key.session_id != session_id);
+        self.order.retain(|key| key.session_id != session_id);
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.entries.clear();
+        self.order.clear();
+    }
+
+    fn touch(&mut self, key: ThreadRenderCacheKey) {
+        if let Some(index) = self.order.iter().position(|existing| *existing == key) {
+            self.order.remove(index);
+        }
+        self.order.push_back(key);
+    }
+
+    fn evict_if_needed(&mut self) {
+        while self.entries.len() > self.capacity {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct SessionThreadViewState {
     list_state: ListState,
-    thread_items: Vec<ThreadListItem>,
-    thread_item_layout_hashes: HashMap<String, u64>,
-    thread_list_len: usize,
     thread_auto_follow: bool,
     new_thread_item_count: usize,
     sticky_turn_header: Option<WorkbenchTurnHeader>,
     sticky_turn_header_at_top: bool,
-    expanded_turn_headers: HashMap<String, bool>,
-    expanded_messages: HashMap<String, bool>,
-    expanded_turn_details: HashMap<String, bool>,
-    expanded_tools: HashMap<String, bool>,
+    expanded_turn_headers: Arc<HashMap<String, bool>>,
+    expanded_messages: Arc<HashMap<String, bool>>,
+    expanded_turn_details: Arc<HashMap<String, bool>>,
+    expanded_tools: Arc<HashMap<String, bool>>,
     turn_tools_loading: HashSet<TurnId>,
+}
+
+struct ThreadRenderSource {
+    key: ThreadRenderCacheKey,
+    turns: Vec<SessionTurn>,
+    messages: Vec<MessageItem>,
+    tools: HashMap<TurnId, Vec<TurnToolSnapshot>>,
+    events: Vec<SessionEvent>,
+    verbosity: SessionViewVerbosity,
+    update_kind: ThreadRenderUpdateKind,
 }
 
 const COPIED_TIMEOUT: Duration = Duration::from_millis(1_000);
@@ -99,6 +181,7 @@ const SESSION_HISTORY_PAGE_LIMIT: u32 = 60;
 const SESSION_HISTORY_PREFETCH_THRESHOLD: usize = 6;
 const LAYOUT_HASH_SEED: u64 = 0xcbf29ce484222325;
 const LAYOUT_HASH_PRIME: u64 = 0x100000001b3;
+pub(crate) const THREAD_RENDER_CACHE_LIMIT: usize = 24;
 
 fn fresh_thread_list_state() -> ListState {
     ListState::new(0, ListAlignment::Bottom, px(160.0))
@@ -344,23 +427,10 @@ impl ShellView {
             self.prefetch_attachment_images(cx);
         }
 
-        self.rebuild_thread_items_with_prepend();
-    }
-
-    fn rebuild_thread_items_with_prepend(&mut self) {
-        let items = build_thread_list_items(
-            &self.session_turns,
-            &self.messages,
-            &self.session_turn_tools,
-            &self.session_events,
-        );
-        let items = filter_thread_list_items(items, self.verbosity);
-        self.apply_thread_items(items);
-        let new_len = self.thread_list_len;
-
-        if new_len == 0 {
-            self.sticky_turn_header = None;
-            self.sticky_turn_header_at_top = true;
+        if let Some(session_id) = self.selected_session_id() {
+            self.cache_session_thread_state(session_id);
+            self.invalidate_thread_render_cache(session_id);
+            self.schedule_thread_render_model(session_id, ThreadRenderUpdateKind::History, cx);
         }
     }
 
@@ -408,28 +478,28 @@ impl ShellView {
 
     pub(crate) fn on_toggle_turn_header(&mut self, id: String, cx: &mut Context<Self>) {
         let expanded = self.expanded_turn_headers.get(&id).copied().unwrap_or(false);
-        self.expanded_turn_headers.insert(id.clone(), !expanded);
+        Arc::make_mut(&mut self.expanded_turn_headers).insert(id.clone(), !expanded);
         self.invalidate_thread_item(&id);
         cx.notify();
     }
 
     pub(crate) fn on_toggle_message(&mut self, id: String, cx: &mut Context<Self>) {
         let expanded = self.expanded_messages.get(&id).copied().unwrap_or(false);
-        self.expanded_messages.insert(id.clone(), !expanded);
+        Arc::make_mut(&mut self.expanded_messages).insert(id.clone(), !expanded);
         self.invalidate_thread_item(&id);
         cx.notify();
     }
 
     pub(crate) fn on_toggle_turn_details(&mut self, id: String, cx: &mut Context<Self>) {
         let expanded = self.expanded_turn_details.get(&id).copied().unwrap_or(false);
-        self.expanded_turn_details.insert(id.clone(), !expanded);
+        Arc::make_mut(&mut self.expanded_turn_details).insert(id.clone(), !expanded);
         self.invalidate_thread_item(&id);
         cx.notify();
     }
 
     pub(crate) fn on_toggle_tool(&mut self, id: String, cx: &mut Context<Self>) {
         let expanded = self.expanded_tools.get(&id).copied().unwrap_or(false);
-        self.expanded_tools.insert(id.clone(), !expanded);
+        Arc::make_mut(&mut self.expanded_tools).insert(id.clone(), !expanded);
         self.invalidate_thread_item(&id);
         cx.notify();
     }
@@ -437,9 +507,11 @@ impl ShellView {
     pub(super) fn replace_messages(&mut self, messages: Vec<MessageItem>, cx: &mut Context<Self>) {
         self.messages = messages;
         self.prefetch_attachment_images(cx);
-        self.rebuild_thread_items();
         self.thread_auto_follow = true;
         self.new_thread_item_count = 0;
+        if let Some(session_id) = self.selected_session_id() {
+            self.schedule_thread_render_model(session_id, ThreadRenderUpdateKind::Default, cx);
+        }
     }
 
     pub(super) fn cache_session_thread_state(&mut self, session_id: SessionId) {
@@ -456,11 +528,10 @@ impl ShellView {
         );
     }
 
-    pub(super) fn apply_cached_thread_state(
+    pub(super) fn apply_cached_thread_data(
         &mut self,
         session_id: SessionId,
         cx: &mut Context<Self>,
-        preserve_thread_items: bool,
     ) -> bool {
         let Some(cache) = self.session_thread_cache.get(&session_id) else {
             return false;
@@ -471,16 +542,8 @@ impl ShellView {
         self.session_history_cursor = cache.history_cursor;
         self.session_history_has_more = cache.has_more_history;
         self.session_history_loading = false;
-        let thread_auto_follow = self.thread_auto_follow;
-        let new_thread_item_count = self.new_thread_item_count;
-        if preserve_thread_items {
-            self.messages = cache.messages.clone();
-            self.prefetch_attachment_images(cx);
-        } else {
-            self.replace_messages(cache.messages.clone(), cx);
-        }
-        self.thread_auto_follow = thread_auto_follow;
-        self.new_thread_item_count = new_thread_item_count;
+        self.messages = cache.messages.clone();
+        self.prefetch_attachment_images(cx);
         true
     }
 
@@ -491,7 +554,9 @@ impl ShellView {
         self.session_history_cursor = None;
         self.session_history_has_more = false;
         self.session_history_loading = false;
-        self.replace_messages(Vec::new(), cx);
+        self.messages.clear();
+        self.prefetch_attachment_images(cx);
+        self.reset_thread_view_state();
     }
 
     fn prefetch_attachment_images(&mut self, cx: &mut Context<Self>) {
@@ -588,29 +653,24 @@ impl ShellView {
         self.clear_placeholder_messages();
         self.messages.push(message);
         self.prefetch_attachment_images(cx);
-        let old_len = self.thread_list_len;
-        self.rebuild_thread_items();
-        let new_len = self.thread_list_len;
-        if self.thread_auto_follow {
-            self.scroll_thread_to_bottom();
-        } else if new_len > old_len {
-            self.new_thread_item_count =
-                self.new_thread_item_count.saturating_add(new_len - old_len);
+        if let Some(session_id) = self.selected_session_id() {
+            self.schedule_thread_render_model(session_id, ThreadRenderUpdateKind::Default, cx);
         }
     }
 
-    pub(super) fn remove_message_by_id(&mut self, message_id: MessageId) {
+    pub(super) fn remove_message_by_id(
+        &mut self,
+        message_id: MessageId,
+        cx: &mut Context<Self>,
+    ) {
         let before = self.messages.len();
         self.messages
             .retain(|message| message.id != Some(message_id));
         if self.messages.len() == before {
             return;
         }
-        self.rebuild_thread_items();
-        if self.thread_auto_follow {
-            self.scroll_thread_to_bottom();
-        } else if self.thread_list_len == 0 {
-            self.new_thread_item_count = 0;
+        if let Some(session_id) = self.selected_session_id() {
+            self.schedule_thread_render_model(session_id, ThreadRenderUpdateKind::Default, cx);
         }
     }
 
@@ -632,39 +692,32 @@ impl ShellView {
             .map(|summary| summary.session_id)
     }
 
-    fn thread_view_cache_key(&self, session_id: SessionId) -> Option<ThreadViewCacheKey> {
+    fn thread_render_cache_key(&self, session_id: SessionId) -> Option<ThreadRenderCacheKey> {
         let snapshot_rev = self.active_snapshot_rev?;
         let last_event_seq = self.session_last_event_seq.get(&session_id).copied()?;
-        Some(ThreadViewCacheKey {
+        Some(ThreadRenderCacheKey {
+            session_id,
             snapshot_rev,
             last_event_seq,
         })
     }
 
     fn cache_thread_view_state(&mut self, session_id: SessionId) {
-        let Some(key) = self.thread_view_cache_key(session_id) else {
-            return;
-        };
-        self.session_thread_view_cache
-            .insert(
-                session_id,
-                SessionThreadViewCache {
-                    key,
-                    list_state: self.thread_list_state.clone(),
-                    thread_items: self.thread_items.clone(),
-                    thread_item_layout_hashes: self.thread_item_layout_hashes.clone(),
-                    thread_list_len: self.thread_list_len,
-                    thread_auto_follow: self.thread_auto_follow,
-                    new_thread_item_count: self.new_thread_item_count,
-                    sticky_turn_header: self.sticky_turn_header.clone(),
-                    sticky_turn_header_at_top: self.sticky_turn_header_at_top,
-                    expanded_turn_headers: self.expanded_turn_headers.clone(),
-                    expanded_messages: self.expanded_messages.clone(),
-                    expanded_turn_details: self.expanded_turn_details.clone(),
-                    expanded_tools: self.expanded_tools.clone(),
-                    turn_tools_loading: self.turn_tools_loading.clone(),
-                },
-            );
+        self.session_thread_view_state.insert(
+            session_id,
+            SessionThreadViewState {
+                list_state: self.thread_list_state.clone(),
+                thread_auto_follow: self.thread_auto_follow,
+                new_thread_item_count: self.new_thread_item_count,
+                sticky_turn_header: self.sticky_turn_header.clone(),
+                sticky_turn_header_at_top: self.sticky_turn_header_at_top,
+                expanded_turn_headers: self.expanded_turn_headers.clone(),
+                expanded_messages: self.expanded_messages.clone(),
+                expanded_turn_details: self.expanded_turn_details.clone(),
+                expanded_tools: self.expanded_tools.clone(),
+                turn_tools_loading: self.turn_tools_loading.clone(),
+            },
+        );
     }
 
     fn apply_thread_view_state(
@@ -672,27 +725,12 @@ impl ShellView {
         session_id: SessionId,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(key) = self.thread_view_cache_key(session_id) else {
+        let Some(cache) = self.session_thread_view_state.get(&session_id) else {
             self.reset_thread_view_state();
             self.ensure_thread_list_handler(cx);
             return false;
         };
-        let Some(cache) = self.session_thread_view_cache.get(&session_id) else {
-            self.reset_thread_view_state();
-            self.ensure_thread_list_handler(cx);
-            return false;
-        };
-        if cache.key != key {
-            self.session_thread_view_cache.remove(&session_id);
-            self.reset_thread_view_state();
-            self.ensure_thread_list_handler(cx);
-            return false;
-        }
-
         self.thread_list_state = cache.list_state.clone();
-        self.thread_items = cache.thread_items.clone();
-        self.thread_item_layout_hashes = cache.thread_item_layout_hashes.clone();
-        self.thread_list_len = cache.thread_list_len;
         self.thread_auto_follow = cache.thread_auto_follow;
         self.new_thread_item_count = cache.new_thread_item_count;
         self.sticky_turn_header = cache.sticky_turn_header.clone();
@@ -705,6 +743,144 @@ impl ShellView {
         self.thread_list_handler_set = false;
         self.ensure_thread_list_handler(cx);
         true
+    }
+
+    fn thread_render_source(
+        &self,
+        session_id: SessionId,
+        update_kind: ThreadRenderUpdateKind,
+    ) -> Option<ThreadRenderSource> {
+        let key = self.thread_render_cache_key(session_id)?;
+        let (turns, messages, tools, events) = if self.is_session_selected(session_id) {
+            (
+                self.session_turns.clone(),
+                self.messages.clone(),
+                self.session_turn_tools.clone(),
+                self.session_events.clone(),
+            )
+        } else {
+            let cache = self.session_thread_cache.get(&session_id)?;
+            (
+                cache.session_turns.clone(),
+                cache.messages.clone(),
+                cache.session_turn_tools.clone(),
+                cache.session_events.clone(),
+            )
+        };
+        Some(ThreadRenderSource {
+            key,
+            turns,
+            messages,
+            tools,
+            events,
+            verbosity: self.verbosity,
+            update_kind,
+        })
+    }
+
+    pub(super) fn schedule_thread_render_model(
+        &mut self,
+        session_id: SessionId,
+        update_kind: ThreadRenderUpdateKind,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(source) = self.thread_render_source(session_id, update_kind) else {
+            return;
+        };
+        if self.thread_render_cache.contains(&source.key) {
+            return;
+        }
+        if self.thread_render_inflight.contains_key(&session_id) {
+            return;
+        }
+        self.spawn_thread_render_model(source, cx);
+    }
+
+    fn spawn_thread_render_model(&mut self, source: ThreadRenderSource, cx: &mut Context<Self>) {
+        let ThreadRenderSource {
+            key,
+            turns,
+            messages,
+            tools,
+            events,
+            verbosity,
+            update_kind,
+        } = source;
+        self.thread_render_inflight.insert(key.session_id, key);
+
+        let task = Tokio::spawn_result(cx, async move {
+            let items = build_thread_list_items(&turns, &messages, &tools, &events);
+            let items = filter_thread_list_items(items, verbosity);
+            Ok(ThreadRenderModel {
+                key,
+                items: Arc::new(items),
+                update_kind,
+            })
+        });
+
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    view.thread_render_inflight.remove(&key.session_id);
+                    let Ok(model) = result else {
+                        view.schedule_thread_render_model(
+                            key.session_id,
+                            ThreadRenderUpdateKind::Default,
+                            cx,
+                        );
+                        return;
+                    };
+                    if view.thread_render_cache_key(model.key.session_id) != Some(model.key) {
+                        view.schedule_thread_render_model(
+                            model.key.session_id,
+                            ThreadRenderUpdateKind::Default,
+                            cx,
+                        );
+                        return;
+                    }
+                    let model = Arc::new(model);
+                    view.thread_render_cache.insert(model.clone());
+                    if view.is_session_selected(model.key.session_id) {
+                        view.apply_thread_render_model(model, cx);
+                    }
+                    view.schedule_thread_render_model(
+                        key.session_id,
+                        ThreadRenderUpdateKind::Default,
+                        cx,
+                    );
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn apply_thread_render_model(&mut self, model: Arc<ThreadRenderModel>, cx: &mut Context<Self>) {
+        let update_new_items = matches!(model.update_kind, ThreadRenderUpdateKind::Default);
+        self.apply_thread_items(model.items.clone(), update_new_items);
+        cx.notify();
+    }
+
+    fn apply_cached_thread_render_model(
+        &mut self,
+        session_id: SessionId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(key) = self.thread_render_cache_key(session_id) else {
+            return false;
+        };
+        let Some(model) = self.thread_render_cache.get(&key) else {
+            return false;
+        };
+        self.apply_thread_items(model.items.clone(), false);
+        cx.notify();
+        true
+    }
+
+    fn invalidate_thread_render_cache(&mut self, session_id: SessionId) {
+        self.thread_render_cache.remove_session(session_id);
     }
 
     pub(crate) fn select_session(
@@ -746,16 +922,19 @@ impl ShellView {
         self.session_events.clear();
         self.selected_artifact = None;
         self.resyncing_session = None;
-        let applied_view_cache = self.apply_thread_view_state(session_id, cx);
-        let used_cache = self.apply_cached_thread_state(session_id, cx, applied_view_cache);
+        let applied_view_state = self.apply_thread_view_state(session_id, cx);
+        let used_cache = self.apply_cached_thread_data(session_id, cx);
         if !used_cache {
             self.apply_empty_thread_state(cx);
+        } else if !self.apply_cached_thread_render_model(session_id, cx) && applied_view_state {
+            self.clear_thread_items(true);
         }
         cx.notify();
         if !used_cache {
             self.load_session_details(session_id, cx);
         } else {
             self.load_session_state(session_id, cx);
+            self.schedule_thread_render_model(session_id, ThreadRenderUpdateKind::Default, cx);
         }
     }
 
@@ -851,12 +1030,7 @@ impl ShellView {
                                 view.session_events.clear();
                                 view.session_turns.clear();
                                 view.session_turn_tools.clear();
-                                view.thread_items.clear();
-                                view.thread_item_layout_hashes.clear();
-                                view.thread_list_state.reset(0);
-                                view.thread_list_len = 0;
-                                view.sticky_turn_header = None;
-                                view.sticky_turn_header_at_top = true;
+                                view.clear_thread_items(true);
                                 view.session_history_cursor = None;
                                 view.session_history_has_more = false;
                                 view.session_history_loading = false;
@@ -879,12 +1053,7 @@ impl ShellView {
                             view.session_events.clear();
                             view.session_turns.clear();
                             view.session_turn_tools.clear();
-                            view.thread_items.clear();
-                            view.thread_item_layout_hashes.clear();
-                            view.thread_list_state.reset(0);
-                            view.thread_list_len = 0;
-                            view.sticky_turn_header = None;
-                            view.sticky_turn_header_at_top = true;
+                            view.clear_thread_items(true);
                             view.session_history_cursor = None;
                             view.session_history_has_more = false;
                             view.session_history_loading = false;
@@ -1012,7 +1181,7 @@ impl ShellView {
     }
 
     fn reset_thread_view_state(&mut self) {
-        self.thread_items.clear();
+        self.thread_items = Arc::new(Vec::new());
         self.thread_item_layout_hashes.clear();
         self.thread_list_state = fresh_thread_list_state();
         self.thread_list_len = 0;
@@ -1020,40 +1189,18 @@ impl ShellView {
         self.new_thread_item_count = 0;
         self.sticky_turn_header = None;
         self.sticky_turn_header_at_top = true;
-        self.expanded_turn_headers.clear();
-        self.expanded_messages.clear();
-        self.expanded_turn_details.clear();
-        self.expanded_tools.clear();
+        Arc::make_mut(&mut self.expanded_turn_headers).clear();
+        Arc::make_mut(&mut self.expanded_messages).clear();
+        Arc::make_mut(&mut self.expanded_turn_details).clear();
+        Arc::make_mut(&mut self.expanded_tools).clear();
         self.turn_tools_loading.clear();
         self.thread_list_handler_set = false;
+        self.hovered_turn_header = None;
+        self.composer_context_window = None;
     }
 
-    pub(crate) fn rebuild_thread_items(&mut self) {
-        let items = build_thread_list_items(
-            &self.session_turns,
-            &self.messages,
-            &self.session_turn_tools,
-            &self.session_events,
-        );
-        let items = filter_thread_list_items(items, self.verbosity);
-        let old_len = self.thread_list_len;
-        self.apply_thread_items(items);
-        let new_len = self.thread_list_len;
-        if self.thread_auto_follow {
-            self.new_thread_item_count = 0;
-            self.scroll_thread_to_bottom();
-        } else if new_len > old_len {
-            self.new_thread_item_count =
-                self.new_thread_item_count.saturating_add(new_len - old_len);
-        }
-        if new_len == 0 {
-            self.sticky_turn_header = None;
-            self.sticky_turn_header_at_top = true;
-        }
-    }
-
-    fn apply_thread_items(&mut self, items: Vec<ThreadListItem>) {
-        let old_items = std::mem::take(&mut self.thread_items);
+    fn apply_thread_items(&mut self, items: Arc<Vec<ThreadListItem>>, update_new_items: bool) {
+        let old_items = self.thread_items.clone();
         let old_layout_hashes = std::mem::take(&mut self.thread_item_layout_hashes);
         let old_len = old_items.len();
         let new_len = items.len();
@@ -1101,6 +1248,39 @@ impl ShellView {
         for index in layout_invalidations {
             self.thread_list_state.splice(index..index + 1, 1);
         }
+
+        if update_new_items {
+            if self.thread_auto_follow {
+                self.new_thread_item_count = 0;
+                self.scroll_thread_to_bottom();
+            } else if new_len > old_len {
+                self.new_thread_item_count =
+                    self.new_thread_item_count.saturating_add(new_len - old_len);
+            }
+        }
+
+        if new_len == 0 {
+            self.sticky_turn_header = None;
+            self.sticky_turn_header_at_top = true;
+        }
+        self.refresh_composer_context_window();
+    }
+
+    fn clear_thread_items(&mut self, reset_list_state: bool) {
+        self.thread_items = Arc::new(Vec::new());
+        self.thread_item_layout_hashes.clear();
+        self.thread_list_len = 0;
+        self.new_thread_item_count = 0;
+        self.sticky_turn_header = None;
+        self.sticky_turn_header_at_top = true;
+        if reset_list_state {
+            self.thread_list_state = fresh_thread_list_state();
+            self.thread_list_handler_set = false;
+        }
+    }
+
+    fn refresh_composer_context_window(&mut self) {
+        self.composer_context_window = latest_context_window_info(&self.session_turns);
     }
 
     fn invalidate_thread_item(&mut self, id: &str) {
@@ -1311,6 +1491,125 @@ impl ShellView {
             }
         }
         self.sticky_turn_header = header;
+    }
+}
+
+fn latest_context_window_info(turns: &[SessionTurn]) -> Option<ContextWindowInfo> {
+    let mut latest: Option<&SessionTurn> = None;
+    for turn in turns {
+        if turn.metrics_json.is_none() {
+            continue;
+        }
+        if latest
+            .map(|existing| turn.updated_at >= existing.updated_at)
+            .unwrap_or(true)
+        {
+            latest = Some(turn);
+        }
+    }
+    let metrics = latest?.metrics_json.as_ref()?;
+    normalize_context_window_metrics(metrics)
+}
+
+fn normalize_context_window_metrics(metrics: &Value) -> Option<ContextWindowInfo> {
+    let window_tokens = pick_number(metrics, &[
+        "context_window_tokens",
+        "context_window_size",
+        "context_window",
+        "context_size",
+        "window_tokens",
+        "max_context_tokens",
+        "max_tokens",
+    ])?;
+    if window_tokens <= 0.0 {
+        return None;
+    }
+
+    let input_tokens = pick_number(metrics, &[
+        "total_input_tokens",
+        "input_tokens",
+        "prompt_tokens",
+        "input",
+    ]);
+    let output_tokens = pick_number(metrics, &[
+        "total_output_tokens",
+        "output_tokens",
+        "completion_tokens",
+        "output",
+    ]);
+    let context_tokens_estimate =
+        pick_number(metrics, &["context_tokens_estimate", "context_tokens"]);
+
+    let mut used_tokens = if input_tokens.is_some() || output_tokens.is_some() {
+        Some(input_tokens.unwrap_or(0.0) + output_tokens.unwrap_or(0.0))
+    } else {
+        context_tokens_estimate
+    };
+
+    let mut remaining_tokens =
+        pick_number(metrics, &["remaining_tokens_estimate", "remaining_tokens"]);
+    let mut remaining_fraction =
+        pick_number(metrics, &["remaining_fraction", "remaining_pct", "remaining_percent"]);
+
+    if let Some(fraction) = remaining_fraction {
+        if fraction > 1.0 {
+            remaining_fraction = if fraction <= 100.0 {
+                Some(fraction / 100.0)
+            } else {
+                None
+            };
+        }
+    }
+
+    if let Some(fraction) = remaining_fraction {
+        remaining_fraction = Some(fraction.max(0.0).min(1.0));
+    }
+
+    if remaining_tokens.is_none() {
+        if let Some(used) = used_tokens {
+            remaining_tokens = Some((window_tokens - used).max(0.0));
+        }
+    }
+    if used_tokens.is_none() {
+        if let Some(remaining) = remaining_tokens {
+            used_tokens = Some((window_tokens - remaining).max(0.0));
+        }
+    }
+    if remaining_fraction.is_none() {
+        if let Some(used) = used_tokens {
+            remaining_fraction = Some((1.0 - used / window_tokens).max(0.0).min(1.0));
+        }
+    }
+    if used_tokens.is_none() {
+        if let Some(fraction) = remaining_fraction {
+            used_tokens = Some((window_tokens * (1.0 - fraction)).max(0.0));
+        }
+    }
+
+    Some(ContextWindowInfo {
+        window_tokens: Some(window_tokens),
+        used_tokens,
+        remaining_tokens,
+        remaining_fraction,
+    })
+}
+
+fn pick_number(metrics: &Value, keys: &[&str]) -> Option<f64> {
+    for key in keys {
+        if let Some(value) = metrics.get(*key) {
+            if let Some(parsed) = coerce_number(value) {
+                return Some(parsed);
+            }
+        }
+    }
+    None
+}
+
+fn coerce_number(value: &Value) -> Option<f64> {
+    match value {
+        Value::Number(num) => num.as_f64(),
+        Value::String(raw) => raw.trim().parse::<f64>().ok(),
+        _ => None,
     }
 }
 

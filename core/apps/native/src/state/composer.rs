@@ -1219,7 +1219,7 @@ impl ShellView {
                             view.load_session_details(session_id, cx);
                         }
                         Err(_) => {
-                            view.remove_message_by_id(optimistic_id);
+                            view.remove_message_by_id(optimistic_id, cx);
                             let should_restore = view.is_session_selected(session_id)
                                 && view
                                     .active_composer_input()

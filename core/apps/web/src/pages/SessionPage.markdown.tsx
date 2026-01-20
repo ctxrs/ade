@@ -1,13 +1,21 @@
 import {
+  createContext,
   memo,
   useCallback,
+  useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  type ComponentPropsWithoutRef,
   type MouseEvent,
   type ReactNode,
 } from "react";
-import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import ReactMarkdown, {
+  defaultUrlTransform,
+  type Components,
+  type UrlTransform,
+} from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
 import { copyTextToClipboard } from "../utils/clipboard";
@@ -25,6 +33,48 @@ type MdastNode = {
   children?: MdastNode[];
   [key: string]: unknown;
 };
+
+type MarkdownContextValue = {
+  linkifyFiles: boolean;
+  worktreeId: string | null;
+  onFileOpenError?: (message: string | null) => void;
+};
+
+const MarkdownContext = createContext<MarkdownContextValue>({
+  linkifyFiles: false,
+  worktreeId: null,
+  onFileOpenError: undefined,
+});
+
+const useMarkdownContext = () => useContext(MarkdownContext);
+
+class LruCache<K, V> {
+  private map = new Map<K, V>();
+
+  constructor(private maxEntries: number) {}
+
+  get(key: K): V | undefined {
+    const value = this.map.get(key);
+    if (value === undefined) return undefined;
+    this.map.delete(key);
+    this.map.set(key, value);
+    return value;
+  }
+
+  set(key: K, value: V) {
+    if (this.map.has(key)) this.map.delete(key);
+    this.map.set(key, value);
+    if (this.map.size <= this.maxEntries) return;
+    const oldestKey = this.map.keys().next().value as K | undefined;
+    if (oldestKey !== undefined) this.map.delete(oldestKey);
+  }
+}
+
+const MARKDOWN_CACHE_MAX = 200;
+const MARKDOWN_CACHE_VERSION = 1;
+const markdownRenderCache = new LruCache<string, { version: number; node: ReactNode }>(
+  MARKDOWN_CACHE_MAX,
+);
 
 type ParsedContextOpen = {
   worktreeId?: string;
@@ -180,12 +230,16 @@ function TokenizedInlineCode({
     selection.addRange(range);
   }, []);
 
-  const content = buildCodeTokenNodes(codeString, {
-    enableLinks,
-    worktreeId,
-    onFileOpenError,
-    wrapPlainTokens: true,
-  });
+  const content = useMemo(
+    () =>
+      buildCodeTokenNodes(codeString, {
+        enableLinks,
+        worktreeId,
+        onFileOpenError,
+        wrapPlainTokens: true,
+      }),
+    [codeString, enableLinks, worktreeId, onFileOpenError],
+  );
   return (
     <code className={className} onDoubleClick={handleDoubleClick}>
       {content}
@@ -226,9 +280,13 @@ function FencedCodeBlock({
     setCopied(true);
   }, [codeString]);
 
-  const content = enableLinks
-    ? buildCodeTokenNodes(codeString, { enableLinks, worktreeId, onFileOpenError })
-    : codeString;
+  const content = useMemo(
+    () =>
+      enableLinks
+        ? buildCodeTokenNodes(codeString, { enableLinks, worktreeId, onFileOpenError })
+        : codeString,
+    [codeString, enableLinks, worktreeId, onFileOpenError],
+  );
 
   return (
     <div className="codeblock">
@@ -331,6 +389,136 @@ function remarkNormalizeCursorMarkdown() {
   };
 }
 
+const MARKDOWN_REMARK_PLUGINS: any[] = [remarkGfm, remarkNormalizeCursorMarkdown];
+
+const markdownUrlTransform: UrlTransform = (url) =>
+  url.startsWith("ctx://") ? url : defaultUrlTransform(url);
+
+type MarkdownLinkProps = ComponentPropsWithoutRef<"a"> & { node?: unknown };
+type MarkdownPreProps = ComponentPropsWithoutRef<"pre"> & { node?: unknown };
+type MarkdownCodeProps = ComponentPropsWithoutRef<"code"> & { inline?: boolean; node?: unknown };
+
+function MarkdownLink({
+  href,
+  children,
+  className,
+  ...rest
+}: MarkdownLinkProps) {
+  const { onFileOpenError } = useMarkdownContext();
+  const isContextOpen = typeof href === "string" && href.startsWith("ctx://open?");
+  if (!isContextOpen) {
+    return (
+      <a href={href} className={className} {...rest}>
+        {children}
+      </a>
+    );
+  }
+
+  const handleClick = async (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!isDesktopApp()) {
+      return;
+    }
+    if (!event.metaKey && !event.ctrlKey) return;
+    event.preventDefault();
+    if (!href) return;
+    const parsed = parseContextOpenUrl(href);
+    if (!parsed) return;
+    try {
+      if (parsed.worktreeId && parsed.file) {
+        await desktopOpenFile({
+          worktree_id: parsed.worktreeId,
+          path: parsed.file,
+          line: parsed.line ?? null,
+          col: parsed.col ?? null,
+        });
+      } else if (parsed.path) {
+        await desktopOpenPath({
+          path: parsed.path,
+          line: parsed.line ?? null,
+          col: parsed.col ?? null,
+        });
+      } else {
+        return;
+      }
+      onFileOpenError?.(null);
+    } catch {
+      // Ignore failures to keep interaction silent.
+    }
+  };
+
+  const combinedClassName = [className, "ctx-file-link"].filter(Boolean).join(" ");
+  return (
+    <a
+      href={href}
+      className={combinedClassName}
+      title="Cmd/Ctrl+Click to open in editor"
+      onClick={handleClick}
+      {...rest}
+    >
+      {children}
+    </a>
+  );
+}
+
+function MarkdownPre({ children }: MarkdownPreProps) {
+  return <>{children}</>;
+}
+
+function MarkdownCode({
+  inline,
+  className,
+  children,
+}: MarkdownCodeProps) {
+  const { linkifyFiles, worktreeId, onFileOpenError } = useMarkdownContext();
+  const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
+  const rawLang = match?.[1];
+  const lang = rawLang && rawLang !== "code" ? rawLang : undefined;
+  const codeString = String(children ?? "").replace(/[\r\n]+$/, "");
+  const enableLinks = Boolean(linkifyFiles);
+  if (inline || (!lang && !codeString.includes("\n"))) {
+    return (
+      <TokenizedInlineCode
+        codeString={codeString}
+        className={className}
+        enableLinks={enableLinks}
+        worktreeId={worktreeId}
+        onFileOpenError={onFileOpenError}
+      />
+    );
+  }
+
+  return (
+    <FencedCodeBlock
+      codeString={codeString}
+      enableLinks={enableLinks}
+      worktreeId={worktreeId}
+      onFileOpenError={onFileOpenError}
+    />
+  );
+}
+
+const MARKDOWN_COMPONENTS: Components = {
+  a: MarkdownLink,
+  pre: MarkdownPre,
+  code: MarkdownCode,
+};
+
+const renderMarkdownCached = (content: string): ReactNode => {
+  const cached = markdownRenderCache.get(content);
+  if (cached && cached.version === MARKDOWN_CACHE_VERSION) return cached.node;
+  const node = (
+    <ReactMarkdown
+      remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+      urlTransform={markdownUrlTransform}
+      components={MARKDOWN_COMPONENTS}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+  markdownRenderCache.set(content, { version: MARKDOWN_CACHE_VERSION, node });
+  return node;
+};
+
 export function Markdown({
   content,
   linkifyFiles = false,
@@ -342,109 +530,12 @@ export function Markdown({
   worktreeId?: string | null;
   onFileOpenError?: (message: string | null) => void;
 }) {
-  const remarkPlugins: any[] = [remarkGfm, remarkNormalizeCursorMarkdown];
-
   return (
-    <div>
-      <ReactMarkdown
-        remarkPlugins={remarkPlugins}
-        urlTransform={(url) =>
-          url.startsWith("ctx://")
-            ? url
-            : defaultUrlTransform(url)
-        }
-        components={{
-          a({ href, children, className, ...rest }) {
-            const isContextOpen =
-              typeof href === "string" && href.startsWith("ctx://open?");
-            if (!isContextOpen) {
-              return (
-                <a href={href} className={className} {...rest}>
-                  {children}
-                </a>
-              );
-            }
-
-            const handleClick = async (event: MouseEvent<HTMLAnchorElement>) => {
-              if (!isDesktopApp()) {
-                return;
-              }
-              if (!event.metaKey && !event.ctrlKey) return;
-              event.preventDefault();
-              if (!href) return;
-              const parsed = parseContextOpenUrl(href);
-              if (!parsed) return;
-              try {
-                if (parsed.worktreeId && parsed.file) {
-                  await desktopOpenFile({
-                    worktree_id: parsed.worktreeId,
-                    path: parsed.file,
-                    line: parsed.line ?? null,
-                    col: parsed.col ?? null,
-                  });
-                } else if (parsed.path) {
-                  await desktopOpenPath({
-                    path: parsed.path,
-                    line: parsed.line ?? null,
-                    col: parsed.col ?? null,
-                  });
-                } else {
-                  return;
-                }
-                onFileOpenError?.(null);
-              } catch {
-                // Ignore failures to keep interaction silent.
-              }
-            };
-
-            const combinedClassName = [className, "ctx-file-link"].filter(Boolean).join(" ");
-            return (
-              <a
-                href={href}
-                className={combinedClassName}
-                title="Cmd/Ctrl+Click to open in editor"
-                onClick={handleClick}
-                {...rest}
-              >
-                {children}
-              </a>
-            );
-          },
-          pre({ children }) {
-            return <>{children}</>;
-          },
-          code({ inline, className, children }: { inline?: boolean; className?: string; children?: ReactNode }) {
-            const match = /language-([A-Za-z0-9_-]+)/.exec(className || "");
-            const rawLang = match?.[1];
-            const lang = rawLang && rawLang !== "code" ? rawLang : undefined;
-            const codeString = String(children ?? "").replace(/[\r\n]+$/, "");
-            const enableLinks = Boolean(linkifyFiles);
-            if (inline || (!lang && !codeString.includes("\n"))) {
-              return (
-                <TokenizedInlineCode
-                  codeString={codeString}
-                  className={className}
-                  enableLinks={enableLinks}
-                  worktreeId={worktreeId}
-                  onFileOpenError={onFileOpenError}
-                />
-              );
-            }
-
-            return (
-              <FencedCodeBlock
-                codeString={codeString}
-                enableLinks={enableLinks}
-                worktreeId={worktreeId}
-                onFileOpenError={onFileOpenError}
-              />
-            );
-          },
-        }}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
+    <MarkdownContext.Provider
+      value={{ linkifyFiles: Boolean(linkifyFiles), worktreeId: worktreeId ?? null, onFileOpenError }}
+    >
+      <div>{renderMarkdownCached(content)}</div>
+    </MarkdownContext.Provider>
   );
 }
 

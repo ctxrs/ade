@@ -309,7 +309,6 @@ type TaskRowProps = {
   archivePendingAction: "archive" | "unarchive" | null;
   statusKind: "archive" | "error" | "working" | "unread" | "idle";
   selected: boolean;
-  hovered: boolean;
   isRenaming: boolean;
   ageIso: string | null | undefined;
   providerCount: number;
@@ -323,8 +322,6 @@ type TaskRowProps = {
   onDismiss?: (taskId: string) => void;
   dismissLabel?: string;
   onToggleArchive: (taskId: string, nextArchived: boolean, anchor?: AnchorRect | null) => Promise<void>;
-  onHoverEnter: (taskId: string) => void;
-  onHoverLeave: (taskId: string) => void;
   onCancelRename: () => void;
   onCommitRename: (taskId: string, nextValue: string) => void;
 };
@@ -402,6 +399,42 @@ const TASK_LIST_COMPONENTS = {
   Header: TaskListHeader,
 };
 
+const areHarnessesEqual = (a: TaskRowProps["harnesses"], b: TaskRowProps["harnesses"]): boolean => {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i]?.id !== b[i]?.id) return false;
+  }
+  return true;
+};
+
+const areTaskRowPropsEqual = (prev: TaskRowProps, next: TaskRowProps): boolean => {
+  return (
+    prev.taskId === next.taskId &&
+    prev.title === next.title &&
+    prev.archived === next.archived &&
+    prev.archivePending === next.archivePending &&
+    prev.archivePendingAction === next.archivePendingAction &&
+    prev.statusKind === next.statusKind &&
+    prev.selected === next.selected &&
+    prev.isRenaming === next.isRenaming &&
+    prev.ageIso === next.ageIso &&
+    prev.providerCount === next.providerCount &&
+    prev.menuEnabled === next.menuEnabled &&
+    prev.archiveEnabled === next.archiveEnabled &&
+    prev.dismissLabel === next.dismissLabel &&
+    prev.getRenameDraft === next.getRenameDraft &&
+    prev.setRenameDraft === next.setRenameDraft &&
+    prev.onFocusTask === next.onFocusTask &&
+    prev.onOpenMenu === next.onOpenMenu &&
+    prev.onDismiss === next.onDismiss &&
+    prev.onToggleArchive === next.onToggleArchive &&
+    prev.onCancelRename === next.onCancelRename &&
+    prev.onCommitRename === next.onCommitRename &&
+    areHarnessesEqual(prev.harnesses, next.harnesses)
+  );
+};
+
 export const TaskRow = React.memo(function TaskRow({
   taskId,
   title,
@@ -410,7 +443,6 @@ export const TaskRow = React.memo(function TaskRow({
   archivePendingAction,
   statusKind,
   selected,
-  hovered,
   isRenaming,
   ageIso,
   providerCount,
@@ -424,8 +456,6 @@ export const TaskRow = React.memo(function TaskRow({
   onDismiss,
   dismissLabel,
   onToggleArchive,
-  onHoverEnter,
-  onHoverLeave,
   onCancelRename,
   onCommitRename,
 }: TaskRowProps) {
@@ -484,13 +514,9 @@ export const TaskRow = React.memo(function TaskRow({
 
   return (
     <div
-      className={`wb-task-row ${archived ? "wb-task-row-archived" : ""} ${selected ? "wb-task-row-active" : ""} ${
-        hovered ? "wb-task-row-hovered" : ""
-      }`}
+      className={`wb-task-row ${archived ? "wb-task-row-archived" : ""} ${selected ? "wb-task-row-active" : ""}`}
       role="listitem"
       onClick={() => onFocusTask(taskId)}
-      onPointerEnter={() => onHoverEnter(taskId)}
-      onPointerLeave={() => onHoverLeave(taskId)}
       onContextMenu={(e) => {
         if (!showMenu) return;
         e.preventDefault();
@@ -631,7 +657,7 @@ export const TaskRow = React.memo(function TaskRow({
       </div>
     </div>
   );
-});
+}, areTaskRowPropsEqual);
 
 const isOptimisticTask = (summary: WorkspaceActiveSnapshotItem): summary is OptimisticTaskSummary => {
   return typeof (summary as OptimisticTaskSummary).localStatus === "string";
@@ -657,7 +683,7 @@ type WorkbenchSessionSlotProps = {
   snapshotRev: number;
 };
 
-function WorkbenchSessionSlot({
+const WorkbenchSessionSlot = React.memo(function WorkbenchSessionSlot({
   sessionId,
   active,
   scrollState,
@@ -711,21 +737,12 @@ function WorkbenchSessionSlot({
         onDraftChange={(text) => draft.setValue({ text, modeId: draft.value.modeId })}
         onDraftPersistNow={() => workbenchStore.flushDraft(sessionDraftKey(sessionId))}
         onModeChange={(modeId) => draft.setValue({ text: draft.value.text, modeId })}
-        scrollState={
-          scrollState
-            ? {
-                stickToBottom: scrollState.stickToBottom,
-                anchorItemId: scrollState.anchorItemId,
-                scrollTop: scrollState.scrollTop ?? null,
-                virtuosoState: scrollState.virtuosoState ?? null,
-              }
-            : null
-        }
+        scrollState={scrollState ?? null}
         onScrollStateChange={onScrollStateChange}
       />
     </div>
   );
-}
+});
 
 function sanitizeFileName(name: string): string {
   const raw = String(name ?? "").trim() || "conversation";
@@ -895,7 +912,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const archiveConfirmRef = useRef<HTMLDivElement | null>(null);
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
-  const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
   const renameDraftsRef = useRef<Map<string, string>>(new Map());
   const [convoMenu, setConvoMenu] = useState<{ style: React.CSSProperties } | null>(null);
@@ -1901,7 +1917,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const optimistic = isOptimisticTask(summary) ? summary : null;
       const localStatus = optimistic?.localStatus ?? null;
       const selected = tid === activeTaskId;
-      const hovered = tid === hoveredTaskId;
       const archived = !!opts?.archived;
       const pendingAction = archivePendingById[tid];
       const archivePending = typeof pendingAction !== "undefined";
@@ -1943,8 +1958,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         .filter(Boolean)
         .slice(0, 3) as Array<(typeof HARNESS_CATALOG)[number]>;
       const allowActions = !optimistic;
-      const dismissHandler = localStatus === "failed" ? () => dismissOptimisticTask(tid) : undefined;
-      const dismissText = localStatus === "failed" ? "Dismiss failed start" : undefined;
+      const showDismiss = localStatus === "failed";
+      const dismissText = showDismiss ? "Dismiss failed start" : undefined;
 
       return (
         <TaskRow
@@ -1956,7 +1971,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           archivePendingAction={pendingAction ?? null}
           statusKind={statusKind}
           selected={selected}
-          hovered={hovered}
           isRenaming={renamingTaskId === tid}
           ageIso={ageIso}
           providerCount={providerCount}
@@ -1967,11 +1981,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           onOpenMenu={openTaskMenu}
           menuEnabled={allowActions}
           archiveEnabled={allowActions}
-          onDismiss={dismissHandler}
+          onDismiss={showDismiss ? dismissOptimisticTask : undefined}
           dismissLabel={dismissText}
           onToggleArchive={onToggleArchive}
-          onHoverEnter={(id) => setHoveredTaskId(id)}
-          onHoverLeave={(id) => setHoveredTaskId((current) => (current === id ? null : current))}
           onCancelRename={cancelRenameTask}
           onCommitRename={commitRenameTask}
         />
@@ -1985,13 +1997,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       dismissOptimisticTask,
       focusTask,
       getRenameDraft,
-      hoveredTaskId,
       onToggleArchive,
       openTaskMenu,
       providerIdsByTaskFromSessions,
       renamingTaskId,
       setRenameDraft,
-      setHoveredTaskId,
       taskLiveInfo.errorByTask,
       taskLiveInfo.lastAssistantMsByTask,
       taskLiveInfo.workingByTask,

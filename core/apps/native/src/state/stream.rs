@@ -18,6 +18,7 @@ use ctx_core::models::{
 };
 
 use super::ShellView;
+use super::session::ThreadRenderUpdateKind;
 use super::session::{clear_placeholder_messages_in, SessionThreadCache};
 use super::super::models::{message_item_from_model, session_info_from_summary};
 
@@ -396,7 +397,7 @@ impl ShellView {
         if let Some(message) = message {
             self.push_message(message_item_from_model(&message), cx);
         } else {
-            self.rebuild_thread_items();
+            self.schedule_thread_render_model(session_id, ThreadRenderUpdateKind::Default, cx);
         }
 
         self.cache_session_thread_state(session_id);

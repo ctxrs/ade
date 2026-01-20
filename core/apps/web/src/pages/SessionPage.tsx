@@ -912,7 +912,8 @@ export function SessionView({
     [eventsKey],
   );
   const providerGuardCountdownTarget = providerGuardNotice?.killAtMs ?? null;
-  const needsNowMs = hasActiveTurn || (providerGuardCountdownTarget != null && providerGuardCountdownTarget > Date.now());
+  const needsNowMs =
+    isActive && (hasActiveTurn || (providerGuardCountdownTarget != null && providerGuardCountdownTarget > Date.now()));
 
   useEffect(() => {
     if (!needsNowMs) return;
@@ -1250,16 +1251,20 @@ export function SessionView({
     [askUserQuestionAnswers],
   );
   const threadCacheKey = useMemo(
-    () =>
-      `${id}:${snapshotRevValue}:${lastEventSeq}:${eventsKey}:${displayMessagesKey}:${displayTurnsKey}:${turnToolsKey}:${askUserAnswersKey}`,
-    [id, snapshotRevValue, lastEventSeq, eventsKey, displayMessagesKey, displayTurnsKey, turnToolsKey, askUserAnswersKey],
+    () => `${id}:${snapshotRevValue}:${lastEventSeq}`,
+    [id, snapshotRevValue, lastEventSeq],
+  );
+  const threadBuildKey = useMemo(
+    () => `${eventsKey}:${displayMessagesKey}:${displayTurnsKey}:${turnToolsKey}:${askUserAnswersKey}`,
+    [eventsKey, displayMessagesKey, displayTurnsKey, turnToolsKey, askUserAnswersKey],
   );
   const hasDisplayTurns = displayTurnsKey !== "0";
-  const workbenchThreadView = useMemo(() => {
-    if (!hasDisplayTurns) {
-      return EMPTY_THREAD_VIEW;
-    }
-    return getCachedWorkbenchThreadView(threadCacheKey, () =>
+  const workbenchThreadView = useCachedWorkbenchThreadView({
+    cacheKey: threadCacheKey,
+    buildKey: threadBuildKey,
+    enabled: hasDisplayTurns,
+    buildEnabled: isActive,
+    build: () =>
       buildWorkbenchThreadViewModelFromTurns(
         displayTurns,
         displayMessages,
@@ -1267,10 +1272,7 @@ export function SessionView({
         events,
         askUserQuestionAnswers,
       ),
-    );
-    // cache key captures thread inputs; avoid large deps
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadCacheKey, hasDisplayTurns]);
+  });
 
   const debugEvents = workbenchThreadView.debugEvents;
   const wbGroups = useMemo(
@@ -1540,6 +1542,11 @@ export function SessionView({
       .reverse()
       .find((e) => e.event_type === "init" && (e.payload_json?.models || e.payload_json?.modes));
   }, [eventsKey]);
+
+  const harnessInfo = useMemo(
+    () => HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? "")),
+    [session?.provider_id],
+  );
 
   const acpModels = entry?.acpModels ?? acpSessionInfo?.payload_json?.models;
   const acpCurrentModelId =
@@ -2400,12 +2407,9 @@ export function SessionView({
             if (dictationRecording) stopDictation().catch(() => { });
             else startDictation().catch(() => { });
           }}
-          harnessLabel={
-            HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.label ??
-            (session?.provider_id ?? "Provider")
-          }
-          harnessLogoSrc={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.logoSrc}
-          harnessLogoInvert={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInDark}
+          harnessLabel={harnessInfo?.label ?? (session?.provider_id ?? "Provider")}
+          harnessLogoSrc={harnessInfo?.logoSrc}
+          harnessLogoInvert={harnessInfo?.invertInDark}
           availableModels={modelOptions}
           currentModelId={currentModelId}
           onSetModelId={async (next) => {
@@ -2486,26 +2490,104 @@ function hashString(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
+type ThreadViewCacheEntry = {
+  value: WorkbenchThreadView;
+  buildKey: string;
+};
+
 const THREAD_VIEW_CACHE_LIMIT = 8;
-const threadViewCache = new Map<string, WorkbenchThreadView>();
+const threadViewCache = new Map<string, ThreadViewCacheEntry>();
 const EMPTY_THREAD_VIEW: WorkbenchThreadView = { groups: [], debugEvents: [] };
 
-function getCachedWorkbenchThreadView(key: string, build: () => WorkbenchThreadView): WorkbenchThreadView {
+function getThreadViewCacheEntry(key: string): ThreadViewCacheEntry | null {
   const cached = threadViewCache.get(key);
-  if (cached) {
-    threadViewCache.delete(key);
-    threadViewCache.set(key, cached);
-    return cached;
-  }
-  const value = build();
-  threadViewCache.set(key, value);
+  if (!cached) return null;
+  threadViewCache.delete(key);
+  threadViewCache.set(key, cached);
+  return cached;
+}
+
+function setThreadViewCacheEntry(key: string, buildKey: string, value: WorkbenchThreadView) {
+  threadViewCache.set(key, { value, buildKey });
   if (threadViewCache.size > THREAD_VIEW_CACHE_LIMIT) {
     const oldestKey = threadViewCache.keys().next().value;
     if (oldestKey) {
       threadViewCache.delete(oldestKey);
     }
   }
-  return value;
+}
+
+function scheduleThreadViewBuild(build: () => void): () => void {
+  if (typeof window === "undefined") {
+    build();
+    return () => {};
+  }
+  const requestIdleCallback = (window as any).requestIdleCallback as
+    | ((cb: () => void, opts?: { timeout?: number }) => number)
+    | undefined;
+  const cancelIdleCallback = (window as any).cancelIdleCallback as ((id: number) => void) | undefined;
+  if (typeof requestIdleCallback === "function") {
+    const handle = requestIdleCallback(build, { timeout: 120 });
+    return () => {
+      if (typeof cancelIdleCallback === "function") {
+        cancelIdleCallback(handle);
+      }
+    };
+  }
+  const timer = window.setTimeout(build, 0);
+  return () => window.clearTimeout(timer);
+}
+
+function useCachedWorkbenchThreadView(opts: {
+  cacheKey: string;
+  buildKey: string;
+  enabled: boolean;
+  buildEnabled?: boolean;
+  build: () => WorkbenchThreadView;
+}): WorkbenchThreadView {
+  const { cacheKey, buildKey, enabled, buildEnabled = enabled, build } = opts;
+  const buildRef = useRef(build);
+  buildRef.current = build;
+  const buildSeqRef = useRef(0);
+
+  const [view, setView] = useState<WorkbenchThreadView>(() => {
+    if (!enabled || !cacheKey) return EMPTY_THREAD_VIEW;
+    return getThreadViewCacheEntry(cacheKey)?.value ?? EMPTY_THREAD_VIEW;
+  });
+
+  useEffect(() => {
+    if (!enabled || !cacheKey) {
+      setView(EMPTY_THREAD_VIEW);
+      return;
+    }
+    const cached = getThreadViewCacheEntry(cacheKey);
+    if (cached) {
+      setView((prev) => (prev === cached.value ? prev : cached.value));
+    }
+    if (!buildEnabled) {
+      return;
+    }
+    if (cached && cached.buildKey === buildKey) {
+      return;
+    }
+
+    buildSeqRef.current += 1;
+    const seq = buildSeqRef.current;
+    let cancelled = false;
+    const cancel = scheduleThreadViewBuild(() => {
+      if (cancelled || buildSeqRef.current !== seq) return;
+      const next = buildRef.current();
+      setThreadViewCacheEntry(cacheKey, buildKey, next);
+      if (cancelled || buildSeqRef.current !== seq) return;
+      setView(next);
+    });
+    return () => {
+      cancelled = true;
+      cancel();
+    };
+  }, [cacheKey, buildKey, enabled, buildEnabled]);
+
+  return view;
 }
 
 function deriveTurnToolsKey(turnToolsByTurnId: Record<string, SessionTurnTool[]>): string {

@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+use std::sync::Arc;
 
 use chrono::Utc;
 use gpui::{
@@ -44,7 +45,7 @@ use self::state::{
     StreamStatus, TaskFetchState, TerminalPanelState, WorkbenchModeId,
 };
 use self::views::RouterView;
-pub(crate) use self::state::{ShellRoute, ShellView};
+pub(crate) use self::state::{ShellRoute, ShellView, ThreadRenderCache, THREAD_RENDER_CACHE_LIMIT};
 #[cfg(feature = "automation")]
 pub(crate) use self::state::ComposerMenuId;
 
@@ -220,13 +221,13 @@ fn create_shell_view(
             session_history_has_more: false,
             session_history_loading: false,
             session_turn_tools: HashMap::new(),
-            thread_items: Vec::new(),
+            thread_items: Arc::new(Vec::new()),
             sticky_turn_header: None,
             sticky_turn_header_at_top: true,
-            expanded_turn_headers: HashMap::new(),
-            expanded_messages: HashMap::new(),
-            expanded_turn_details: HashMap::new(),
-            expanded_tools: HashMap::new(),
+            expanded_turn_headers: Arc::new(HashMap::new()),
+            expanded_messages: Arc::new(HashMap::new()),
+            expanded_turn_details: Arc::new(HashMap::new()),
+            expanded_tools: Arc::new(HashMap::new()),
             turn_tools_loading: HashSet::new(),
             verbosity: SessionViewVerbosity::Default,
             verbosity_menu_open: false,
@@ -240,7 +241,9 @@ fn create_shell_view(
             session_events: Vec::new(),
             active_snapshot_rev: None,
             session_thread_cache: HashMap::new(),
-            session_thread_view_cache: HashMap::new(),
+            session_thread_view_state: HashMap::new(),
+            thread_render_cache: ThreadRenderCache::new(THREAD_RENDER_CACHE_LIMIT),
+            thread_render_inflight: HashMap::new(),
             session_head_meta: HashMap::new(),
             session_state_cache: HashMap::new(),
             session_state_loading: HashSet::new(),
@@ -317,6 +320,7 @@ fn create_shell_view(
             thread_auto_follow: true,
             new_thread_item_count: 0,
             copied_flags: HashMap::new(),
+            hovered_turn_header: None,
             stream_status: StreamStatus::Idle,
             resyncing_session: None,
             stream_subscribe_tx: None,
@@ -457,6 +461,7 @@ impl Render for ShellView {
             .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id))
             .map(|ws| ws.name.clone())
             .unwrap_or_else(|| "No workspace".to_string());
+        let show_workspace_label = self.route != ShellRoute::Workbench;
         let settings_button = div()
             .id("settings-button")
             .w(px(26.0))
@@ -474,6 +479,17 @@ impl Render for ShellView {
             .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
                 view.set_route(ShellRoute::Settings, cx);
             }));
+        let title_center = if show_workspace_label {
+            div()
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .child(workspace_label)
+        } else {
+            div().flex_1()
+        };
         let title_bar = TitleBar::new()
             .bg(self.colors.panel)
             .border_color(self.colors.border_strong)
@@ -483,15 +499,7 @@ impl Render for ShellView {
                     .items_center()
                     .w_full()
                     .child(div().w(px(26.0)).flex_none())
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .items_center()
-                            .justify_center()
-                            .text_sm()
-                            .child(workspace_label),
-                    )
+                    .child(title_center)
                     .child(settings_button),
             );
         div()

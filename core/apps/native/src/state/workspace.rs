@@ -285,7 +285,7 @@ impl ShellView {
         self.session_history_loading = false;
         self.replace_messages(Vec::new(), cx);
         if let Some(session_id) = self.selected_session_id() {
-            if !self.apply_cached_thread_state(session_id, cx, false) {
+            if !self.apply_cached_thread_data(session_id, cx) {
                 self.replace_messages(
                     vec![MessageItem::new(
                         MessageRole::Assistant,
@@ -408,7 +408,9 @@ impl ShellView {
         self.composer_model_menu_open = false;
         self.session_summary_map.clear();
         self.session_thread_cache.clear();
-        self.session_thread_view_cache.clear();
+        self.session_thread_view_state.clear();
+        self.thread_render_cache.clear();
+        self.thread_render_inflight.clear();
         self.session_last_event_seq.clear();
         self.resyncing_session = None;
         self.active_snapshot_rev = None;
@@ -469,7 +471,9 @@ impl ShellView {
         self.task_active_order.clear();
         if !preserve_session {
             self.session_thread_cache.clear();
-            self.session_thread_view_cache.clear();
+            self.session_thread_view_state.clear();
+            self.thread_render_cache.clear();
+            self.thread_render_inflight.clear();
             self.session_head_meta.clear();
             self.session_last_event_seq.clear();
         }

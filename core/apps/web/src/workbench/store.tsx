@@ -13,6 +13,7 @@ import {
 
 const WINDOW_ID_STORAGE_KEY = "contextUiWindowId.v1";
 const SCROLL_CACHE_LIMIT = 5;
+const NAV_PERSIST_DELAY_MS = 750;
 export const NEW_TASK_DRAFT_KEY = "new_task";
 
 export function sessionDraftKey(sessionId: string): string {
@@ -366,7 +367,10 @@ export class WorkbenchStore {
     const newTab: WorkbenchTab = { id: tabId, kind: "new_task" };
     const nextTabs = existing ? leaf.tabs : [newTab, ...leaf.tabs];
     const nextLeaf = ensureLeafActiveTab({ ...leaf, tabs: nextTabs, activeTabId: tabId });
-    this.setWindow({ ...win, layout: updateLeaf(win.layout, leafId, () => nextLeaf) }, { persistDelayMs: 0 });
+    this.setWindow(
+      { ...win, layout: updateLeaf(win.layout, leafId, () => nextLeaf) },
+      { persistDelayMs: NAV_PERSIST_DELAY_MS },
+    );
     return true;
   };
 
@@ -398,7 +402,10 @@ export class WorkbenchStore {
       : [newTab, ...leaf.tabs];
 
     const nextLeaf = ensureLeafActiveTab({ ...leaf, tabs: nextTabs, activeTabId: tabId });
-    this.setWindow({ ...win, layout: updateLeaf(win.layout, leafId, () => nextLeaf) }, { persistDelayMs: 0 });
+    this.setWindow(
+      { ...win, layout: updateLeaf(win.layout, leafId, () => nextLeaf) },
+      { persistDelayMs: NAV_PERSIST_DELAY_MS },
+    );
     return true;
   };
 
@@ -420,7 +427,10 @@ export class WorkbenchStore {
           : t,
       ),
     });
-    this.setWindow({ ...win, layout: updateLeaf(win.layout, leafId, () => nextLeaf) }, { persistDelayMs: 0 });
+    this.setWindow(
+      { ...win, layout: updateLeaf(win.layout, leafId, () => nextLeaf) },
+      { persistDelayMs: NAV_PERSIST_DELAY_MS },
+    );
     return true;
   };
 

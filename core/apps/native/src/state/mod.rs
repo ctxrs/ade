@@ -38,7 +38,8 @@ use super::models::{MessageItem, SessionInfo, ThreadListItem, TurnToolSnapshot, 
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem};
 pub(crate) use ats_cache::AtsCache;
 use ats_cache::SessionHeadMeta;
-use session::{SessionThreadCache, SessionThreadViewCache};
+use session::{SessionThreadCache, SessionThreadViewState, ThreadRenderCacheKey};
+pub(crate) use session::{ThreadRenderCache, THREAD_RENDER_CACHE_LIMIT};
 
 pub(crate) use artifacts::{ArtifactContentCache, ArtifactPreviewState};
 pub(crate) use composer::{
@@ -192,13 +193,13 @@ pub(crate) struct ShellView {
     pub(crate) session_history_has_more: bool,
     pub(crate) session_history_loading: bool,
     pub(crate) session_turn_tools: HashMap<TurnId, Vec<TurnToolSnapshot>>,
-    pub(crate) thread_items: Vec<ThreadListItem>,
+    pub(crate) thread_items: Arc<Vec<ThreadListItem>>,
     pub(crate) sticky_turn_header: Option<WorkbenchTurnHeader>,
     pub(crate) sticky_turn_header_at_top: bool,
-    pub(crate) expanded_turn_headers: HashMap<String, bool>,
-    pub(crate) expanded_messages: HashMap<String, bool>,
-    pub(crate) expanded_turn_details: HashMap<String, bool>,
-    pub(crate) expanded_tools: HashMap<String, bool>,
+    pub(crate) expanded_turn_headers: Arc<HashMap<String, bool>>,
+    pub(crate) expanded_messages: Arc<HashMap<String, bool>>,
+    pub(crate) expanded_turn_details: Arc<HashMap<String, bool>>,
+    pub(crate) expanded_tools: Arc<HashMap<String, bool>>,
     pub(crate) turn_tools_loading: HashSet<TurnId>,
     pub(crate) verbosity: SessionViewVerbosity,
     #[allow(dead_code)]
@@ -213,7 +214,9 @@ pub(crate) struct ShellView {
     pub(crate) session_events: Vec<SessionEvent>,
     pub(crate) active_snapshot_rev: Option<i64>,
     pub(crate) session_thread_cache: HashMap<SessionId, SessionThreadCache>,
-    pub(crate) session_thread_view_cache: HashMap<SessionId, SessionThreadViewCache>,
+    pub(crate) session_thread_view_state: HashMap<SessionId, SessionThreadViewState>,
+    pub(crate) thread_render_cache: ThreadRenderCache,
+    pub(crate) thread_render_inflight: HashMap<SessionId, ThreadRenderCacheKey>,
     pub(crate) session_head_meta: HashMap<SessionId, SessionHeadMeta>,
     pub(crate) session_state_cache: HashMap<SessionId, SessionState>,
     pub(crate) session_state_loading: HashSet<SessionId>,
@@ -289,6 +292,7 @@ pub(crate) struct ShellView {
     pub(crate) thread_auto_follow: bool,
     pub(crate) new_thread_item_count: usize,
     pub(crate) copied_flags: HashMap<String, Instant>,
+    pub(crate) hovered_turn_header: Option<String>,
     pub(crate) stream_status: StreamStatus,
     pub(crate) resyncing_session: Option<SessionId>,
     pub(crate) stream_subscribe_tx: Option<watch::Sender<WorkspaceActiveSnapshotClientMessage>>,

@@ -3379,7 +3379,8 @@ final class ChatViewModel: ObservableObject {
     private let threadPipeline = ChatThreadPipeline()
     private var threadBuildToken: Int = 0
     private var lastThreadBuildKey: ChatThreadBuildKey?
-    private var threadSnapshotRev: Int = 0
+    private var sessionStateRev: Int?
+    private var threadSnapshotRev: Int { sessionStateRev ?? 0 }
 
     init(client: DaemonAPIClient? = nil, initialSessionId: String? = nil, initialWorkspaceId: String? = nil) {
         self.client = client
@@ -3415,7 +3416,7 @@ final class ChatViewModel: ObservableObject {
             threadItemsRevision = 0
             lastThreadBuildKey = nil
             threadBuildToken += 1
-            threadSnapshotRev = 0
+            sessionStateRev = nil
             lastSetModelId = nil
             lastSetModeId = nil
             historyCursor = nil
@@ -3466,7 +3467,7 @@ final class ChatViewModel: ObservableObject {
             activeAskToolCallId = nil
             lastThreadBuildKey = nil
             threadBuildToken += 1
-            threadSnapshotRev = 0
+            sessionStateRev = nil
             lastSetModelId = nil
             lastSetModeId = nil
             setPendingAssistantResponse(false)
@@ -3561,7 +3562,7 @@ final class ChatViewModel: ObservableObject {
         threadItemsRevision = 0
         lastThreadBuildKey = nil
         threadBuildToken += 1
-        threadSnapshotRev = 0
+        sessionStateRev = nil
         lastSetModelId = nil
         lastSetModeId = nil
         historyCursor = nil
@@ -3619,7 +3620,7 @@ final class ChatViewModel: ObservableObject {
         latestEvents = cached.events ?? []
         latestToolSummaries = cached.toolSummaries ?? []
         lastEventSeq = cached.lastEventSeq
-        threadSnapshotRev = max(threadSnapshotRev, cached.lastEventSeq)
+        updateSessionStateRev(cached.stateRev)
         workspaceId = workspaceId ?? cached.session.workspaceId.stringValue
         if let turn = mostRecentTurn(in: cached.turns) {
             updateTurnStatus(from: turn)
@@ -3732,7 +3733,7 @@ final class ChatViewModel: ObservableObject {
             }
             latestEvents = head.events ?? []
             latestToolSummaries = head.toolSummaries ?? []
-            threadSnapshotRev = max(threadSnapshotRev, head.lastEventSeq)
+            updateSessionStateRev(head.stateRev)
             if let turn = mostRecentTurn(in: head.turns) {
                 updateTurnStatus(from: turn)
                 updateContextWindow(from: turn)
@@ -4187,6 +4188,15 @@ final class ChatViewModel: ObservableObject {
         contextWindowInfo = info
     }
 
+    private func updateSessionStateRev(_ nextRev: Int?) {
+        guard let nextRev else { return }
+        if let current = sessionStateRev {
+            sessionStateRev = max(current, nextRev)
+        } else {
+            sessionStateRev = nextRev
+        }
+    }
+
     private func assistantMessageContent(for turn: SessionTurn) -> String {
         if let partial = turn.assistantPartial?.trimmingCharacters(in: .whitespacesAndNewlines),
            !partial.isEmpty {
@@ -4250,7 +4260,7 @@ final class ChatViewModel: ObservableObject {
                 let resolved = head.session.workspaceId.stringValue
                 workspaceId = resolved
                 lastEventSeq = head.lastEventSeq
-                sessionStateRev = head.stateRev
+                updateSessionStateRev(head.stateRev)
                 return resolved
             }
         }
@@ -4269,7 +4279,7 @@ final class ChatViewModel: ObservableObject {
         if let snapshot = try? await client.getSessionSnapshot(sessionId: sessionId, limit: 1, includeEvents: false) {
             let head = snapshot.head
             lastEventSeq = head.lastEventSeq
-            sessionStateRev = head.stateRev
+            updateSessionStateRev(head.stateRev)
             workspaceId = workspaceId ?? head.session.workspaceId.stringValue
             if let turn = mostRecentTurn(in: head.turns) {
                 updateTurnStatus(from: turn)
@@ -4459,7 +4469,7 @@ final class ChatViewModel: ObservableObject {
                             await refreshArtifacts()
                         }
                     }
-                    sessionStateRev = max(sessionStateRev ?? 0, nextRev)
+                    updateSessionStateRev(nextRev)
                 }
                 if let turn = delta.turn {
                     applyTurnDelta(turn)
@@ -4495,7 +4505,7 @@ final class ChatViewModel: ObservableObject {
                 }
                 if let stateRev = summary.stateRev {
                     if let current = sessionStateRev, stateRev != current {
-                        sessionStateRev = stateRev
+                        updateSessionStateRev(stateRev)
                         _Concurrency.Task {
                             _ = await refreshMessages()
                             await refreshQueue()
@@ -4503,7 +4513,7 @@ final class ChatViewModel: ObservableObject {
                         }
                         return
                     }
-                    sessionStateRev = stateRev
+                    updateSessionStateRev(stateRev)
                 }
                 _Concurrency.Task {
                     _ = await refreshMessages()
