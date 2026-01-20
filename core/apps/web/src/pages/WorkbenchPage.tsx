@@ -1441,8 +1441,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (optimistic.localStatus !== "synced") return optimistic;
     if (!canonical) return optimistic;
     const canonicalPrimary = idToString(canonical.task.primary_session_id ?? "");
-    const canonicalHasSessions = Boolean(canonicalPrimary) || (canonical.sessions?.length ?? 0) > 0;
-    return canonicalHasSessions ? canonical : optimistic;
+    const canonicalHasPrimary = Boolean(canonicalPrimary);
+    return canonicalHasPrimary ? canonical : optimistic;
   }, [activeTaskId, optimisticTasksById, tasksById]);
   const sessionSummaries = useMemo(() => activeTaskSummary?.sessions ?? [], [activeTaskSummary]);
   const primarySessionId = useMemo(
@@ -1494,25 +1494,17 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
       return;
     }
-    if (activeTaskSessionIds.length === 0) {
+    if (!primarySessionId) {
       if (!snapshotReady) return;
       workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
       return;
     }
-    const next =
-      (activeSessionIdFromTabResolved &&
-        activeTaskSessionIds.includes(activeSessionIdFromTabResolved) &&
-        activeSessionIdFromTabResolved) ||
-      primarySessionId ||
-      activeTaskSessionIds[0] ||
-      null;
-    if (next !== activeSessionIdFromTabResolved) {
-      workbenchStore.setActiveSessionForActiveTask(next, { source: "system" });
+    if (activeSessionIdFromTabResolved !== primarySessionId) {
+      workbenchStore.setActiveSessionForActiveTask(primarySessionId, { source: "system" });
     }
   }, [
     activeSessionIdFromTabResolved,
     activeTaskId,
-    activeTaskSessionIds,
     activeTaskSummary,
     primarySessionId,
     workbenchStore,
@@ -1641,9 +1633,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       if (activeId && item.id === activeId) return false;
       const serverItem = tasksById[item.id];
       if (!serverItem) return false;
-      const hasSession =
-        (serverItem.sessions?.length ?? 0) > 0 || Boolean(serverItem.task.primary_session_id);
-      return hasSession;
+      const hasPrimary = Boolean(serverItem.task.primary_session_id);
+      return hasPrimary;
     });
     if (!shouldTrim) return;
     setOptimisticTasks((prev) => {
@@ -1653,9 +1644,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         if (activeId && item.id === activeId) return true;
         const serverItem = tasksById[item.id];
         if (!serverItem) return true;
-        const hasSession =
-          (serverItem.sessions?.length ?? 0) > 0 || Boolean(serverItem.task.primary_session_id);
-        if (!hasSession) return true;
+        const hasPrimary = Boolean(serverItem.task.primary_session_id);
+        if (!hasPrimary) return true;
         const keep = item.localStatus !== "synced";
         if (!keep) changed = true;
         return keep;
@@ -2180,10 +2170,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, []);
 
   const activeSessionId = useMemo(() => {
-    if (activeSessionIdFromTabResolved) return activeSessionIdFromTabResolved;
     if (primarySessionId) return primarySessionId;
-    return pickPreferredSessionId(sessions, null);
-  }, [activeSessionIdFromTabResolved, primarySessionId, sessions]);
+    return null;
+  }, [primarySessionId]);
 
   const [sessionViewPool, setSessionViewPool] = useState<string[]>([]);
   useEffect(() => {
