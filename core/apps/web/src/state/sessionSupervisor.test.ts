@@ -88,6 +88,37 @@ describe("SessionSupervisor", () => {
     expect(entry?.queue.length).toBe(1);
   });
 
+  it("stores local messages in snapshot", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-local";
+    const firstIso = new Date().toISOString();
+    const secondIso = new Date(Date.now() + 1000).toISOString();
+    const first: Message = {
+      id: { 0: "local-1" },
+      session_id: { 0: sessionId },
+      role: "user",
+      content: "hello",
+      delivery: "immediate",
+      created_at: firstIso,
+    };
+    const second: Message = {
+      id: { 0: "local-2" },
+      session_id: { 0: sessionId },
+      role: "user",
+      content: "follow-up",
+      delivery: "immediate",
+      created_at: secondIso,
+    };
+
+    const sup = new SessionSupervisor();
+    sup.setLocalMessages(sessionId, [first], { replace: true });
+    sup.setLocalMessages(sessionId, [second]);
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.localMessages.map((m) => m.content)).toEqual(["hello", "follow-up"]);
+  });
+
   it("applies session head deltas from workspace stream", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

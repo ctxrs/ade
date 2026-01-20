@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { unstable_batchedUpdates } from "react-dom";
 import { Virtuoso } from "react-virtuoso";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -1435,8 +1436,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const activeTaskSummary = useMemo(() => {
     if (!activeTaskId) return null;
     const optimistic = optimisticTasksById[activeTaskId];
-    if (optimistic && optimistic.localStatus !== "synced") return optimistic;
-    return tasksById[activeTaskId] ?? optimistic ?? null;
+    const canonical = tasksById[activeTaskId] ?? null;
+    if (!optimistic) return canonical;
+    if (optimistic.localStatus !== "synced") return optimistic;
+    if (!canonical) return optimistic;
+    const canonicalPrimary = idToString(canonical.task.primary_session_id ?? "");
+    const canonicalHasSessions = Boolean(canonicalPrimary) || (canonical.sessions?.length ?? 0) > 0;
+    return canonicalHasSessions ? canonical : optimistic;
   }, [activeTaskId, optimisticTasksById, tasksById]);
   const sessionSummaries = useMemo(() => activeTaskSummary?.sessions ?? [], [activeTaskSummary]);
   const primarySessionId = useMemo(
@@ -1629,8 +1635,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     if (optimisticTasks.length === 0) return;
+    const activeId = activeTaskId ?? "";
     const shouldTrim = optimisticTasks.some((item) => {
       if (item.localStatus !== "synced") return false;
+      if (activeId && item.id === activeId) return false;
       const serverItem = tasksById[item.id];
       if (!serverItem) return false;
       const hasSession =
@@ -1639,18 +1647,22 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     });
     if (!shouldTrim) return;
     setOptimisticTasks((prev) => {
+      let changed = false;
       const next = prev.filter((item) => {
         if (item.localStatus === "failed") return true;
+        if (activeId && item.id === activeId) return true;
         const serverItem = tasksById[item.id];
         if (!serverItem) return true;
         const hasSession =
           (serverItem.sessions?.length ?? 0) > 0 || Boolean(serverItem.task.primary_session_id);
         if (!hasSession) return true;
-        return item.localStatus !== "synced";
+        const keep = item.localStatus !== "synced";
+        if (!keep) changed = true;
+        return keep;
       });
-      return next.length === prev.length ? prev : next;
+      return changed ? next : prev;
     });
-  }, [optimisticTasks, tasksById]);
+  }, [activeTaskId, optimisticTasks, tasksById]);
 
   const providerIdsByTaskFromSessions = useMemo(() => {
     const byTask: Record<string, Array<{ providerId: string; updatedAt: number }>> = {};
@@ -2168,12 +2180,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, []);
 
   const activeSessionId = useMemo(() => {
-    if (activeSessionIdFromTabResolved && activeTaskSessionIds.includes(activeSessionIdFromTabResolved)) {
-      return activeSessionIdFromTabResolved;
-    }
+    if (activeSessionIdFromTabResolved) return activeSessionIdFromTabResolved;
     if (primarySessionId) return primarySessionId;
-    return activeTaskSessionIds[0] ?? null;
-  }, [activeSessionIdFromTabResolved, activeTaskSessionIds, primarySessionId]);
+    return pickPreferredSessionId(sessions, null);
+  }, [activeSessionIdFromTabResolved, primarySessionId, sessions]);
 
   const [sessionViewPool, setSessionViewPool] = useState<string[]>([]);
   useEffect(() => {
@@ -3023,7 +3033,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       session: optimisticSession,
       last_message_at: nowIso,
       last_message_preview: prompt.slice(0, 160),
-      activity: { is_working: true, last_turn_status: "queued" },
+      activity: { is_working: true, last_turn_status: "running" },
       unread: false,
     };
 
@@ -3057,12 +3067,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       role: "user",
       content: prompt,
       attachments: attachmentsToSend,
-      delivery: "queued",
+      delivery: "immediate",
       created_at: nowIso,
     };
 
     supervisor.setSession(optimisticSession);
-    supervisor.setMessages(optimisticSessionId, [optimisticMessage], { replace: true });
+    supervisor.setLocalMessages(optimisticSessionId, [optimisticMessage], { replace: true });
 
     setNewTaskDraft({ text: "", modeId: "default" });
     await workbenchStore.flushDraft(NEW_TASK_DRAFT_KEY);
@@ -3080,26 +3090,32 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       if (taskId !== currentTaskId) {
         const prevTaskId = currentTaskId;
         currentTaskId = taskId;
-        workbenchStore.replaceTaskId(prevTaskId, taskId);
-        supervisor.replaceSessionTaskId(currentSessionId, taskId);
-        setOptimisticTasks((prev) =>
-          prev.map((item) => {
-            if (item.id !== prevTaskId) return item;
-            const nextTask: Task = { ...task, primary_session_id: item.primarySessionId ?? null };
-            const nextSessions = item.sessions.map((summary) => ({
-              ...summary,
-              session: { ...summary.session, task_id: taskId, workspace_id: task.workspace_id ?? summary.session.workspace_id },
-            }));
-            return {
-              ...item,
-              id: taskId,
-              task: nextTask,
-              sessions: nextSessions,
-              sort_at: task.created_at ?? item.sort_at,
-              sortAtMs: Date.parse(task.created_at ?? item.sort_at ?? "") || item.sortAtMs,
-            };
-          }),
-        );
+        unstable_batchedUpdates(() => {
+          workbenchStore.replaceTaskId(prevTaskId, taskId);
+          supervisor.replaceSessionTaskId(currentSessionId, taskId);
+          setOptimisticTasks((prev) =>
+            prev.map((item) => {
+              if (item.id !== prevTaskId) return item;
+              const nextTask: Task = { ...task, primary_session_id: item.primarySessionId ?? null };
+              const nextSessions = item.sessions.map((summary) => ({
+                ...summary,
+                session: {
+                  ...summary.session,
+                  task_id: taskId,
+                  workspace_id: task.workspace_id ?? summary.session.workspace_id,
+                },
+              }));
+              return {
+                ...item,
+                id: taskId,
+                task: nextTask,
+                sessions: nextSessions,
+                sort_at: task.created_at ?? item.sort_at,
+                sortAtMs: Date.parse(task.created_at ?? item.sort_at ?? "") || item.sortAtMs,
+              };
+            }),
+          );
+        });
       }
 
       for (let i = 0; i < toStart.length; i++) {
@@ -3124,31 +3140,33 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           if (!primaryMessagePosted) {
             const prevSessionId = currentSessionId;
             currentSessionId = sessionId;
-            workbenchStore.replaceSessionId(prevSessionId, sessionId);
-            supervisor.replaceSessionId(prevSessionId, sessionId);
-            supervisor.setSession(session);
-            setOptimisticTasks((prev) =>
-              prev.map((item) => {
-                if (item.id !== currentTaskId) return item;
-                const nextSessions = item.sessions.map((summary) => {
-                  if (idToString(summary.session.id) !== prevSessionId) return summary;
-                  const nextSummary: SessionSnapshotSummary = {
-                    ...summary,
-                    session,
-                    last_message_at: nowIso,
-                    last_message_preview: summary.last_message_preview ?? prompt.slice(0, 160),
-                    activity: { is_working: true, last_turn_status: "queued" },
+            unstable_batchedUpdates(() => {
+              workbenchStore.replaceSessionId(prevSessionId, sessionId);
+              supervisor.replaceSessionId(prevSessionId, sessionId);
+              supervisor.setSession(session);
+              setOptimisticTasks((prev) =>
+                prev.map((item) => {
+                  if (item.id !== currentTaskId) return item;
+                  const nextSessions = item.sessions.map((summary) => {
+                    if (idToString(summary.session.id) !== prevSessionId) return summary;
+                    const nextSummary: SessionSnapshotSummary = {
+                      ...summary,
+                      session,
+                      last_message_at: nowIso,
+                      last_message_preview: summary.last_message_preview ?? prompt.slice(0, 160),
+                      activity: { is_working: true, last_turn_status: "running" },
+                    };
+                    return nextSummary;
+                  });
+                  return {
+                    ...item,
+                    sessions: nextSessions,
+                    primarySessionId: sessionId,
+                    task: { ...item.task, primary_session_id: sessionId },
                   };
-                  return nextSummary;
-                });
-                return {
-                  ...item,
-                  sessions: nextSessions,
-                  primarySessionId: sessionId,
-                  task: { ...item.task, primary_session_id: sessionId },
-                };
-              }),
-            );
+                }),
+              );
+            });
           } else {
             supervisor.setSession(session);
           }

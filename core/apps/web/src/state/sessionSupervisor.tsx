@@ -67,6 +67,7 @@ export type SessionCacheEntry = {
   hasMoreTurns: boolean;
   events: SessionEvent[];
   messages: Message[];
+  localMessages: Message[];
   artifacts: Artifact[];
   artifactsLoading: boolean;
   subagentInvocations: SubagentInvocation[];
@@ -328,11 +329,26 @@ export class SessionSupervisor {
     this.publish();
   };
 
+  setLocalMessages = (sessionId: string, messages: Message[], opts?: { replace?: boolean }) => {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
+    if (opts?.replace) {
+      entry.localMessages = [];
+    }
+    this.mergeLocalMessages(entry, messages);
+    entry.updatedAtMs = Date.now();
+    this.publish();
+  };
+
   replaceMessage = (sessionId: string, localId: string, message: Message) => {
     const id = String(sessionId || "").trim();
     if (!id) return;
     const entry = this.ensureEntry(id);
     const local = idToString(localId);
+    if (local) {
+      entry.localMessages = entry.localMessages.filter((m) => idToString(m.id) !== local);
+    }
     const next = entry.messages.filter((m) => idToString(m.id) !== local);
     next.push(message);
     entry.messages = [];
@@ -368,6 +384,9 @@ export class SessionSupervisor {
     entry.messages = entry.messages.map((msg) =>
       idToString(msg.session_id) === from ? { ...msg, session_id: to } : msg,
     );
+    entry.localMessages = entry.localMessages.map((msg) =>
+      idToString(msg.session_id) === from ? { ...msg, session_id: to } : msg,
+    );
     entry.queue = entry.queue.map((msg) =>
       idToString(msg.session_id) === from ? { ...msg, session_id: to } : msg,
     );
@@ -389,6 +408,7 @@ export class SessionSupervisor {
       entry.session = { ...entry.session, task_id: nextTaskId };
     }
     entry.messages = entry.messages.map((msg) => ({ ...msg, task_id: nextTaskId }));
+    entry.localMessages = entry.localMessages.map((msg) => ({ ...msg, task_id: nextTaskId }));
     entry.queue = entry.queue.map((msg) => ({ ...msg, task_id: nextTaskId }));
     entry.updatedAtMs = Date.now();
     this.publish();
@@ -518,6 +538,7 @@ export class SessionSupervisor {
         hasMoreTurns: e.hasMoreTurns,
         events: e.events,
         messages: e.messages,
+        localMessages: e.localMessages,
         artifacts: e.artifacts,
         artifactsLoading: e.artifactsLoading,
         subagentInvocations: e.subagentInvocations,
@@ -570,6 +591,7 @@ export class SessionSupervisor {
       hasMoreTurns: true,
       events: [],
       messages: [],
+      localMessages: [],
       artifacts: [],
       artifactsLoading: false,
       subagentInvocations: [],
@@ -1076,18 +1098,40 @@ export class SessionSupervisor {
       if (!id) continue;
       byId.set(id, m);
     }
-    const next = Array.from(byId.values()).sort((a, b) => {
-      const c = String(a.created_at).localeCompare(String(b.created_at));
-      if (c !== 0) return c;
-      const sa = Number(a.turn_sequence ?? Number.NaN);
-      const sb = Number(b.turn_sequence ?? Number.NaN);
-      if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
-      if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
-      if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
-      return String(idToString(a.id)).localeCompare(String(idToString(b.id)));
-    });
+    const next = Array.from(byId.values()).sort(this.compareMessageOrder);
     entry.messages = next;
     entry.queue = next.filter((m) => m.delivery === "queued");
+  }
+
+
+  private mergeLocalMessages(entry: InternalEntry, incoming: Message[]) {
+    entry.localMessages = this.mergeMessageList(entry.localMessages, incoming);
+  }
+
+  private mergeMessageList(existing: Message[], incoming: Message[]): Message[] {
+    if (incoming.length === 0) return existing;
+    const byId = new Map<string, Message>();
+    for (const m of existing) {
+      const id = idToString(m.id);
+      if (id) byId.set(id, m);
+    }
+    for (const m of incoming) {
+      const id = idToString(m.id);
+      if (!id) continue;
+      byId.set(id, m);
+    }
+    return Array.from(byId.values()).sort(this.compareMessageOrder);
+  }
+
+  private compareMessageOrder(a: Message, b: Message): number {
+    const c = String(a.created_at).localeCompare(String(b.created_at));
+    if (c !== 0) return c;
+    const sa = Number(a.turn_sequence ?? Number.NaN);
+    const sb = Number(b.turn_sequence ?? Number.NaN);
+    if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
+    if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
+    if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
+    return String(idToString(a.id)).localeCompare(String(idToString(b.id)));
   }
 
   private mergeEvents(entry: InternalEntry, incoming: SessionEvent[]) {

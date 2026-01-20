@@ -845,8 +845,14 @@ export function SessionView({
   const toolSummariesReady = entry?.toolSummariesReady ?? false;
   const hasMoreTurns = entry?.hasMoreTurns ?? false;
   const events: SessionEvent[] = entry?.events ?? [];
-  const messages: Message[] = entry?.messages ?? [];
+  const baseMessages: Message[] = entry?.messages ?? [];
+  const localMessages: Message[] = entry?.localMessages ?? [];
+  const messages = useMemo(
+    () => mergeLocalMessages(baseMessages, localMessages),
+    [deriveMessagesKey(baseMessages), deriveMessagesKey(localMessages)],
+  );
   const queue: Message[] = entry?.queue ?? [];
+  const showQueuePanel = queue.length > 0 && session?.status !== "starting";
   const subagentInvocations: SubagentInvocation[] = entry?.subagentInvocations ?? [];
   const subagentInvocationsLoading = entry?.subagentInvocationsLoading ?? false;
   const lastEventSeq = entry?.lastEventSeq ?? 0;
@@ -2318,7 +2324,7 @@ export function SessionView({
           </div>
         )}
 
-        {queue.length > 0 && (
+        {showQueuePanel && (
           <div className="queue-panel card">
             <div className="row">
               <strong>Pending messages ({queue.length})</strong>
@@ -2548,6 +2554,21 @@ const compareMessageOrder = (a: Message, b: Message): number => {
   if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
   return String(idToString(a.id)).localeCompare(String(idToString(b.id)));
 };
+
+function mergeLocalMessages(messages: Message[], local: Message[]): Message[] {
+  if (local.length === 0) return messages;
+  const byId = new Map<string, Message>();
+  for (const m of messages) {
+    const id = idToString(m.id);
+    if (id) byId.set(id, m);
+  }
+  for (const m of local) {
+    const id = idToString(m.id);
+    if (!id || byId.has(id)) continue;
+    byId.set(id, m);
+  }
+  return Array.from(byId.values()).sort(compareMessageOrder);
+}
 
 function mergeMessagesForView(messages: Message[], pending: PendingMessageEntry[]): Message[] {
   if (pending.length === 0) return messages;

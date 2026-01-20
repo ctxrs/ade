@@ -30,6 +30,7 @@ let sessionSnap = {
       hasMoreTurns: false,
       events: [],
       messages: [{ role: "assistant", created_at: baseIso }],
+      localMessages: [],
       queue: [],
       loading: false,
       subscribed: true,
