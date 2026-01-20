@@ -79,6 +79,9 @@ targets:
       - path: Tests/UITests
     info:
       path: Tests/UITests/Info.plist
+      properties:
+        CTX_IOS_BASE_URL: $(CTX_IOS_BASE_URL)
+        CTX_IOS_TOKEN: $(CTX_IOS_TOKEN)
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: rs.ctx.ios.uitests

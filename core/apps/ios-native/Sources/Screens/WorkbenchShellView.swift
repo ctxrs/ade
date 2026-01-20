@@ -77,6 +77,7 @@ struct WorkbenchShellView: View {
             let drawerWidth = min(320, proxy.size.width * 0.78)
             let taskTitle = resolvedTaskTitle()
             let conversationMenuContext = resolvedConversationMenuContext()
+            let isArchived = selectedTask?.task.archivedAt != nil
 
             ZStack(alignment: .leading) {
                 CtxBackgroundView()
@@ -91,6 +92,7 @@ struct WorkbenchShellView: View {
                     activePanel: $activePanel,
                     artifactsCount: $artifactsCount,
                     hasTaskSelection: workbenchSelection.taskId != nil,
+                    isArchived: isArchived,
                     isPreparingSession: isPreparingSession,
                     onTaskCreated: { _Concurrency.Task { await loadTasks() } }
                 )
@@ -269,7 +271,7 @@ struct WorkbenchShellView: View {
         let hasSession = session != nil
         let canCopyWorktree = session?.worktreeId?.isEmpty == false && selectedWorkspace?.id != nil
         let isArchived = selectedTask.task.archivedAt != nil
-        let runningSubagentIds = selectedTask.sessions.compactMap { summary in
+        let runningSubagentIds: [String] = selectedTask.sessions.compactMap { summary -> String? in
             guard summary.session.relationship == "sub_agent" else { return nil }
             guard summary.activity?.isWorking == true else { return nil }
             return summary.session.id.stringValue
@@ -1251,6 +1253,7 @@ private struct WorkbenchHomeView: View {
     @Binding var activePanel: WorkbenchPanel?
     @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
+    let isArchived: Bool
     let isPreparingSession: Bool
     let onTaskCreated: () -> Void
 
@@ -1266,6 +1269,7 @@ private struct WorkbenchHomeView: View {
                 activePanel: $activePanel,
                 artifactsCount: $artifactsCount,
                 hasTaskSelection: hasTaskSelection,
+                isArchived: isArchived,
                 isPreparingSession: isPreparingSession,
                 onTaskCreated: onTaskCreated
             )
@@ -1687,6 +1691,7 @@ private struct WorkbenchNavigationFlowView: View {
     @Binding var activePanel: WorkbenchPanel?
     @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
+    let isArchived: Bool
     let isPreparingSession: Bool
     let onTaskCreated: () -> Void
 
@@ -1708,7 +1713,7 @@ private struct WorkbenchNavigationFlowView: View {
                 if let selectedSession {
                     ChatDetailView(
                         session: selectedSession,
-                        isArchived: selectedTask?.task.archivedAt != nil,
+                        isArchived: isArchived,
                         activePanel: $activePanel,
                         artifactCount: $artifactsCount
                     )
@@ -1948,6 +1953,27 @@ private struct WorkbenchNewTaskView: View {
                 .stroke(Color.ctxLine, lineWidth: 1)
         )
     }
+
+    @ViewBuilder
+    private func newTaskMenuLabel(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            Text(text)
+                .font(.footnote.weight(.semibold))
+                .foregroundColor(.ctxTextPrimary)
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .foregroundColor(.ctxTextMuted)
+        }
+        .padding(.vertical, 7)
+        .padding(.horizontal, 10)
+        .background(Color.ctxSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.ctxLine, lineWidth: 1)
+        )
+    }
+
     private var promptTrimmed: String {
         prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     }
