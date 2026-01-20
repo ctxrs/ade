@@ -52,6 +52,7 @@ import {
   AssistantEntry,
   ThreadItemView,
   WorkbenchThreadStack,
+  WorkbenchCompactionRow,
   WorkbenchThoughtRow,
   WorkbenchToolGroupRow,
   WorkbenchToolRow,
@@ -1857,6 +1858,9 @@ export function SessionView({
     if (item.kind === "turn_status") {
       return <WorkbenchTurnStatusRow item={item} nowMs={nowMs} />;
     }
+    if (item.kind === "compaction") {
+      return <WorkbenchCompactionRow item={item} />;
+    }
     if (item.kind === "assistant") {
       return (
         <AssistantEntry
@@ -2801,7 +2805,7 @@ function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
 type ActivityEntry = {
   item: ThreadItem;
   created_at: string;
-  kind: "tool" | "thought" | "ask_user_question";
+  kind: "tool" | "thought" | "ask_user_question" | "compaction";
   order_seq?: number;
 };
 
@@ -2891,6 +2895,48 @@ function buildAskUserQuestionItem(
   };
 }
 
+function buildCompactionItem(
+  ev: SessionEvent,
+): Extract<ThreadItem, { kind: "compaction" }> | null {
+  if (ev.event_type !== "notice") return null;
+  const payload = ev.payload_json ?? {};
+  if (payload.kind !== "custom_compaction") return null;
+  const phaseValue = String(payload.phase ?? "").trim().toLowerCase();
+  if (phaseValue !== "started" && phaseValue !== "completed" && phaseValue !== "failed") return null;
+  const triggerValue = String(payload.trigger ?? "").trim().toLowerCase();
+  const trigger = triggerValue === "auto" ? "auto" : "manual";
+  const compactionId = String(payload.compaction_id ?? payload.compactionId ?? "").trim();
+  const id = compactionId || idToString(ev.id) || `compaction-${ev.seq ?? ev.created_at}`;
+  const error = payload.error ? String(payload.error) : null;
+  return {
+    kind: "compaction",
+    id,
+    created_at: ev.created_at,
+    phase: phaseValue as "started" | "completed" | "failed",
+    trigger,
+    output: payload.output ?? null,
+    error,
+  };
+}
+
+function upsertCompactionItem(
+  items: Array<Extract<ThreadItem, { kind: "compaction" }>>,
+  indexById: Map<string, number>,
+  next: Extract<ThreadItem, { kind: "compaction" }>,
+) {
+  const existingIndex = indexById.get(next.id);
+  if (existingIndex == null) {
+    indexById.set(next.id, items.length);
+    items.push(next);
+    return;
+  }
+  const existing = items[existingIndex];
+  if (existing && existing.phase !== "started" && next.phase === "started") {
+    return;
+  }
+  items[existingIndex] = { ...next, created_at: existing?.created_at ?? next.created_at };
+}
+
 function buildTurnActivityTimeline(opts: {
   turnId: string;
   turn: SessionTurn;
@@ -2906,9 +2952,43 @@ function buildTurnActivityTimeline(opts: {
   const activity: ActivityEntry[] = [];
   const toolInserted = new Set<string>();
   const askInserted = new Set<string>();
+  const compactionIndexById = new Map<string, number>();
 
   for (const ev of opts.events) {
     if (ev.event_type === "notice") {
+      const compactionItem = buildCompactionItem(ev);
+      if (compactionItem) {
+        const existingIndex = compactionIndexById.get(compactionItem.id);
+        if (existingIndex == null) {
+          activity.push({
+            item: compactionItem,
+            created_at: ev.created_at,
+            kind: "compaction",
+            order_seq: typeof ev.seq === "number" ? ev.seq : undefined,
+          });
+          compactionIndexById.set(compactionItem.id, activity.length - 1);
+        } else {
+          const existing = activity[existingIndex];
+          if (existing && existing.kind === "compaction") {
+            if (!(existing.item.phase !== "started" && compactionItem.phase === "started")) {
+              const prevSeq = existing.order_seq;
+              const nextSeq = typeof ev.seq === "number" ? ev.seq : prevSeq;
+              const mergedSeq =
+                Number.isFinite(prevSeq) && Number.isFinite(nextSeq)
+                  ? Math.min(prevSeq ?? 0, nextSeq ?? 0)
+                  : prevSeq ?? nextSeq;
+              const createdAt = existing.created_at;
+              activity[existingIndex] = {
+                ...existing,
+                item: { ...compactionItem, created_at: createdAt },
+                created_at: createdAt,
+                order_seq: mergedSeq,
+              };
+            }
+          }
+        }
+        continue;
+      }
       const askItem = buildAskUserQuestionItem(ev, opts.turnId, opts.askUserQuestionAnswers);
       if (askItem && !askInserted.has(askItem.tool_call_id)) {
         activity.push({
@@ -3301,8 +3381,14 @@ function buildWorkbenchThreadViewModelFromEvents(
       let thoughtAt: string | null = null;
       const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
       const askInserted = new Set<string>();
+      const compactionItems: Array<Extract<ThreadItem, { kind: "compaction" }>> = [];
+      const compactionIndexById = new Map<string, number>();
       for (const ev of events) {
         if (ev.event_type === "notice") {
+          const compactionItem = buildCompactionItem(ev);
+          if (compactionItem) {
+            upsertCompactionItem(compactionItems, compactionIndexById, compactionItem);
+          }
           const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
           if (askItem && !askInserted.has(askItem.tool_call_id)) {
             askItems.push(askItem);
@@ -3332,7 +3418,7 @@ function buildWorkbenchThreadViewModelFromEvents(
           content: thought,
         });
       }
-      const activityItems = [...g.toolItems, ...askItems];
+      const activityItems = [...g.toolItems, ...askItems, ...compactionItems];
       activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
       items.push(...activityItems);
       if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
@@ -3373,6 +3459,8 @@ function buildWorkbenchThreadViewModelFromEvents(
       const evs = eventsInRangeExclusive(u.created_at, nextUser?.created_at ?? null);
       const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
       const askInserted = new Set<string>();
+      const compactionItems: Array<Extract<ThreadItem, { kind: "compaction" }>> = [];
+      const compactionIndexById = new Map<string, number>();
 
       for (const ev of evs) {
         const eventId = idToString(ev.id) || `${ev.created_at}`;
@@ -3380,6 +3468,10 @@ function buildWorkbenchThreadViewModelFromEvents(
 
         switch (ev.event_type) {
           case "notice": {
+            const compactionItem = buildCompactionItem(ev);
+            if (compactionItem) {
+              upsertCompactionItem(compactionItems, compactionIndexById, compactionItem);
+            }
             const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
             if (askItem && !askInserted.has(askItem.tool_call_id)) {
               askItems.push(askItem);
@@ -3509,7 +3601,7 @@ function buildWorkbenchThreadViewModelFromEvents(
       }
 
       const items: ThreadItem[] = [];
-      const activityItems = [...g.toolItems, ...askItems];
+      const activityItems = [...g.toolItems, ...askItems, ...compactionItems];
       activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
       items.push(...activityItems);
       if (g.assistant?.thought.trim()) {
@@ -3593,6 +3685,8 @@ function buildWorkbenchThreadViewModelFromEvents(
     const evs = eventsInRange(u.created_at, endAt);
     const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
     const askInserted = new Set<string>();
+    const compactionItems: Array<Extract<ThreadItem, { kind: "compaction" }>> = [];
+    const compactionIndexById = new Map<string, number>();
 
     for (const ev of evs) {
       const eventId = idToString(ev.id) || `${ev.created_at}`;
@@ -3600,6 +3694,10 @@ function buildWorkbenchThreadViewModelFromEvents(
 
       switch (ev.event_type) {
         case "notice": {
+          const compactionItem = buildCompactionItem(ev);
+          if (compactionItem) {
+            upsertCompactionItem(compactionItems, compactionIndexById, compactionItem);
+          }
           const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
           if (askItem && !askInserted.has(askItem.tool_call_id)) {
             askItems.push(askItem);
@@ -3746,7 +3844,7 @@ function buildWorkbenchThreadViewModelFromEvents(
     }
 
     const items: ThreadItem[] = [];
-    const activityItems = [...g.toolItems, ...askItems];
+    const activityItems = [...g.toolItems, ...askItems, ...compactionItems];
     activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
     items.push(...activityItems);
     if (g.assistant?.thought.trim()) {
@@ -3795,8 +3893,14 @@ function buildWorkbenchThreadViewModelFromEvents(
     };
     const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
     const askInserted = new Set<string>();
+    const compactionItems: Array<Extract<ThreadItem, { kind: "compaction" }>> = [];
+    const compactionIndexById = new Map<string, number>();
     for (const ev of events) {
       if (ev.event_type === "notice") {
+        const compactionItem = buildCompactionItem(ev);
+        if (compactionItem) {
+          upsertCompactionItem(compactionItems, compactionIndexById, compactionItem);
+        }
         const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
         if (askItem && !askInserted.has(askItem.tool_call_id)) {
           askItems.push(askItem);
@@ -3809,7 +3913,7 @@ function buildWorkbenchThreadViewModelFromEvents(
       if (!toolCallId) continue;
       ensureTool(g, toolCallId, ev.created_at);
     }
-    const activityItems = [...g.toolItems, ...askItems];
+    const activityItems = [...g.toolItems, ...askItems, ...compactionItems];
     activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
     const items: ThreadItem[] = [...activityItems];
     if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });

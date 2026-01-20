@@ -4,6 +4,7 @@ import type { User } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import {
   DictationSettings,
+  CompactionSettings,
   InstallInfo,
   MobileAccessStatus,
   EnableMobileAccessResponse,
@@ -141,6 +142,7 @@ type SectionId =
   | "resource_governance"
   | "mobile_access"
   | "resource_utilization"
+  | "compaction"
   | "dictation"
   | "title_generation"
   | "billing"
@@ -173,6 +175,7 @@ const SECTIONS: Array<{
   { id: "resource_governance", label: "Resource Limits", group: "main" },
   { id: "mobile_access", label: "Mobile Access", group: "main" },
   { id: "resource_utilization", label: "Resource Utilization", group: "main" },
+  { id: "compaction", label: "Compaction", group: "advanced" },
   { id: "dictation", label: "Dictation", group: "advanced" },
   { id: "title_generation", label: "Title Generation", group: "advanced" },
   { id: "billing", label: "Billing", group: "advanced" },
@@ -470,6 +473,7 @@ export default function SettingsPage() {
   const telemetryHydrated = useRef(false);
   const dictationHydrated = useRef(false);
   const titleGenerationHydrated = useRef(false);
+  const compactionHydrated = useRef(false);
 
   const [telemetryEnabled, setTelemetryEnabled] = useState(true);
   const [telemetryEndpoint, setTelemetryEndpoint] = useState("");
@@ -486,6 +490,17 @@ export default function SettingsPage() {
   const [titleGenApiKey, setTitleGenApiKey] = useState("");
   const [titleGenModel, setTitleGenModel] = useState("google/gemini-3-flash-preview");
   const [titleGenUseJson, setTitleGenUseJson] = useState(true);
+
+  const [compactionEnabled, setCompactionEnabled] = useState(false);
+  const [compactionScriptPath, setCompactionScriptPath] = useState("");
+  const [compactionScriptTimeoutMs, setCompactionScriptTimeoutMs] = useState("");
+  const [compactionRetainTokens, setCompactionRetainTokens] = useState("");
+  const [compactionTailMessages, setCompactionTailMessages] = useState("");
+  const [compactionTailChars, setCompactionTailChars] = useState("");
+  const [compactionIncludeAttachments, setCompactionIncludeAttachments] = useState(false);
+  const [compactionAutoEnabled, setCompactionAutoEnabled] = useState(false);
+  const [compactionRemainingFraction, setCompactionRemainingFraction] = useState("");
+  const [compactionMaxContextTokens, setCompactionMaxContextTokens] = useState("");
   const resourceGovernanceHydrated = useRef(false);
   const sandboxingHydrated = useRef(false);
   const [resourceGovernanceEnabled, setResourceGovernanceEnabled] = useState(true);
@@ -794,6 +809,36 @@ export default function SettingsPage() {
           setTitleGenUseJson(Boolean(tg.use_json));
         }
 
+        const comp = s.compaction ?? null;
+        if (comp) {
+          const auto = comp.auto_compact ?? null;
+          setCompactionEnabled(comp.enabled);
+          setCompactionScriptPath(comp.script_path ?? "");
+          setCompactionScriptTimeoutMs(comp.script_timeout_ms ? String(comp.script_timeout_ms) : "");
+          setCompactionRetainTokens(comp.retain_full_transcript_tokens ? String(comp.retain_full_transcript_tokens) : "");
+          setCompactionTailMessages(comp.retain_tail_messages ? String(comp.retain_tail_messages) : "");
+          setCompactionTailChars(comp.retain_tail_chars_per_message ? String(comp.retain_tail_chars_per_message) : "");
+          setCompactionIncludeAttachments(Boolean(comp.include_attachments));
+          setCompactionAutoEnabled(Boolean(auto && auto.enabled));
+          setCompactionRemainingFraction(
+            auto && auto.remaining_fraction_threshold !== undefined
+              ? String(auto.remaining_fraction_threshold)
+              : "",
+          );
+          setCompactionMaxContextTokens(auto && auto.max_context_tokens ? String(auto.max_context_tokens) : "");
+        } else {
+          setCompactionEnabled(false);
+          setCompactionScriptPath("");
+          setCompactionScriptTimeoutMs("");
+          setCompactionRetainTokens("");
+          setCompactionTailMessages("");
+          setCompactionTailChars("");
+          setCompactionIncludeAttachments(false);
+          setCompactionAutoEnabled(false);
+          setCompactionRemainingFraction("");
+          setCompactionMaxContextTokens("");
+        }
+
         const rg = s.resource_governance ?? null;
         if (rg) {
           setResourceGovernanceEnabled(rg.enabled);
@@ -900,6 +945,48 @@ export default function SettingsPage() {
     };
   }, [titleGenApiKey, titleGenBaseUrl, titleGenModel, titleGenUseJson]);
 
+  const compactionPayload = useMemo((): CompactionSettings => {
+    const parseNumber = (value: string): number | null => {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed) || parsed <= 0) return null;
+      return parsed;
+    };
+    const parseFraction = (value: string): number | null => {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed)) return null;
+      return parsed;
+    };
+    return {
+      enabled: compactionEnabled,
+      script_path: compactionScriptPath.trim() ? compactionScriptPath.trim() : null,
+      script_timeout_ms: parseNumber(compactionScriptTimeoutMs),
+      retain_full_transcript_tokens: parseNumber(compactionRetainTokens),
+      retain_tail_messages: parseNumber(compactionTailMessages),
+      retain_tail_chars_per_message: parseNumber(compactionTailChars),
+      include_attachments: compactionIncludeAttachments,
+      auto_compact: {
+        enabled: compactionAutoEnabled,
+        remaining_fraction_threshold: parseFraction(compactionRemainingFraction),
+        max_context_tokens: parseNumber(compactionMaxContextTokens),
+      },
+    };
+  }, [
+    compactionAutoEnabled,
+    compactionEnabled,
+    compactionIncludeAttachments,
+    compactionMaxContextTokens,
+    compactionRemainingFraction,
+    compactionRetainTokens,
+    compactionScriptPath,
+    compactionScriptTimeoutMs,
+    compactionTailChars,
+    compactionTailMessages,
+  ]);
+
   const sandboxingPayload = useMemo((): SandboxingSettings => {
     return {
       provider_control_mode: providerControlMode,
@@ -985,6 +1072,19 @@ export default function SettingsPage() {
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, titleGenerationPayload]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (!compactionHydrated.current) {
+      compactionHydrated.current = true;
+      return;
+    }
+    const t = window.setTimeout(() => {
+      savePatch({ compaction: compactionPayload });
+    }, 450);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, compactionPayload]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -2839,6 +2939,148 @@ export default function SettingsPage() {
           </Card>
 
           {resourceError ? <div className="settings-banner settings-banner-error">{resourceError}</div> : null}
+        </>
+      );
+    }
+
+    if (active === "compaction") {
+      return (
+        <>
+          <Card>
+            <Row
+              title="Enable custom compaction"
+              description="Runs your compaction script and resets the harness session."
+              control={
+                <Toggle
+                  checked={compactionEnabled}
+                  disabled={!loaded}
+                  onChange={setCompactionEnabled}
+                  ariaLabel="Enable custom compaction"
+                />
+              }
+            />
+            <Row
+              title="Compaction script path"
+              description="Executable path; receives JSON input via stdin."
+              control={
+                <input
+                  className="settings-control settings-control-wide"
+                  value={compactionScriptPath}
+                  onChange={(e) => setCompactionScriptPath(e.target.value)}
+                  disabled={!compactionEnabled}
+                  placeholder=".ctx/scripts/compact.sh"
+                />
+              }
+            />
+            <Row
+              title="Script timeout (ms)"
+              description="Hard timeout for your compaction script."
+              control={
+                <input
+                  className="settings-control"
+                  value={compactionScriptTimeoutMs}
+                  onChange={(e) => setCompactionScriptTimeoutMs(e.target.value)}
+                  disabled={!compactionEnabled}
+                  placeholder="15000"
+                />
+              }
+            />
+          </Card>
+
+          <Card title="Retention rules">
+            <Row
+              title="Full transcript token limit"
+              description="Keep the entire transcript until this approximate token count."
+              control={
+                <input
+                  className="settings-control"
+                  value={compactionRetainTokens}
+                  onChange={(e) => setCompactionRetainTokens(e.target.value)}
+                  disabled={!compactionEnabled}
+                  placeholder="12000"
+                />
+              }
+            />
+            <Row
+              title="Tail message count"
+              description="Number of most recent messages to keep when trimming."
+              control={
+                <input
+                  className="settings-control"
+                  value={compactionTailMessages}
+                  onChange={(e) => setCompactionTailMessages(e.target.value)}
+                  disabled={!compactionEnabled}
+                  placeholder="40"
+                />
+              }
+            />
+            <Row
+              title="Tail max chars per message"
+              description="Trims long messages before sending to your script."
+              control={
+                <input
+                  className="settings-control"
+                  value={compactionTailChars}
+                  onChange={(e) => setCompactionTailChars(e.target.value)}
+                  disabled={!compactionEnabled}
+                  placeholder="4000"
+                />
+              }
+            />
+            <Row
+              title="Include attachment references"
+              description="Add attachment metadata to the seed text."
+              control={
+                <Toggle
+                  checked={compactionIncludeAttachments}
+                  disabled={!compactionEnabled}
+                  onChange={setCompactionIncludeAttachments}
+                  ariaLabel="Include attachment references"
+                />
+              }
+            />
+          </Card>
+
+          <Card title="Auto compaction">
+            <Row
+              title="Enable auto compaction"
+              description="Triggers after turns when the context window is tight."
+              control={
+                <Toggle
+                  checked={compactionAutoEnabled}
+                  disabled={!compactionEnabled}
+                  onChange={setCompactionAutoEnabled}
+                  ariaLabel="Enable auto compaction"
+                />
+              }
+            />
+            <Row
+              title="Remaining fraction threshold"
+              description="Auto-compact when remaining context fraction is below this value."
+              control={
+                <input
+                  className="settings-control"
+                  value={compactionRemainingFraction}
+                  onChange={(e) => setCompactionRemainingFraction(e.target.value)}
+                  disabled={!compactionEnabled || !compactionAutoEnabled}
+                  placeholder="0.2"
+                />
+              }
+            />
+            <Row
+              title="Max context tokens"
+              description="Auto-compact when estimated tokens exceed this value."
+              control={
+                <input
+                  className="settings-control"
+                  value={compactionMaxContextTokens}
+                  onChange={(e) => setCompactionMaxContextTokens(e.target.value)}
+                  disabled={!compactionEnabled || !compactionAutoEnabled}
+                  placeholder=""
+                />
+              }
+            />
+          </Card>
         </>
       );
     }

@@ -13,7 +13,7 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, MoreHorizontal } from "lucide-react";
 import { Virtuoso, type IndexLocationWithAlign, type StateSnapshot, type VirtuosoHandle } from "react-virtuoso";
 import { blobUrl, type MessageAttachment } from "../api/client";
 import { type SessionViewVerbosity } from "../state/uiStateStore";
@@ -170,6 +170,8 @@ export function ThreadItemView({
           modifierDown={modifierDown}
         />
       );
+    case "compaction":
+      return <WorkbenchCompactionRow item={item} />;
     case "assistant":
     case "tool":
       return null;
@@ -615,6 +617,195 @@ export function WorkbenchToolRow({
 
 export function WorkbenchThoughtRow({ item }: { item: Extract<ThreadItem, { kind: "thought" }> }) {
   return <div className="wb-thought-row">{item.content}</div>;
+}
+
+export function WorkbenchCompactionRow({
+  item,
+}: {
+  item: Extract<ThreadItem, { kind: "compaction" }>;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  const output = item.output ?? null;
+  const outputText = output ? JSON.stringify(output, null, 2) : "";
+  const hasOutput = outputText.trim().length > 0;
+
+  const label =
+    item.phase === "started"
+      ? "Custom Compacting"
+      : item.phase === "completed"
+        ? "Custom Compaction Complete"
+        : "Custom Compaction Failed";
+  const meta = item.trigger === "auto" ? "auto" : "manual";
+
+  const downloadText = useCallback((name: string, contents: string) => {
+    const blob = new Blob([contents], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      a.rel = "noopener";
+      a.click();
+    } finally {
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+  }, []);
+
+  const handleCopy = useCallback(async () => {
+    if (!hasOutput) return;
+    const ok = await copyTextToClipboard(outputText);
+    if (!ok) return;
+    setMenuOpen(false);
+  }, [hasOutput, outputText]);
+
+  const handleDownload = useCallback(() => {
+    if (!hasOutput) return;
+    const stamp = new Date(item.created_at).toISOString().replace(/[:.]/g, "-");
+    downloadText(`compaction-${stamp}.json`, outputText);
+    setMenuOpen(false);
+  }, [downloadText, hasOutput, item.created_at, outputText]);
+
+  const handleOpenSettings = useCallback(() => {
+    window.location.assign("/settings#compaction");
+  }, []);
+
+  const recomputeMenuPosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    const menu = menuRef.current;
+    if (!trigger || !menu) return;
+    const margin = 10;
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+    const triggerRect = trigger.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+
+    let left = triggerRect.right - menuRect.width;
+    let top = triggerRect.bottom + 8;
+
+    if (left < margin) left = margin;
+    if (left + menuRect.width > viewportW - margin) {
+      left = Math.max(margin, viewportW - margin - menuRect.width);
+    }
+
+    if (top + menuRect.height > viewportH - margin) {
+      top = triggerRect.top - menuRect.height - 8;
+    }
+    if (top < margin) top = margin;
+
+    setMenuStyle({
+      position: "fixed",
+      left,
+      top,
+      visibility: "visible",
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (e: globalThis.PointerEvent) => {
+      const target = e.target as Element | null;
+      if (target && (target.closest(".wb-compaction-menu") || target.closest(".wb-compaction-menu-trigger"))) {
+        return;
+      }
+      setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClose = () => setMenuOpen(false);
+    window.addEventListener("resize", onClose);
+    window.addEventListener("scroll", onClose, true);
+    return () => {
+      window.removeEventListener("resize", onClose);
+      window.removeEventListener("scroll", onClose, true);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) {
+      setMenuStyle(null);
+      return;
+    }
+    setMenuStyle({
+      position: "fixed",
+      left: 0,
+      top: 0,
+      visibility: "hidden",
+    });
+    const raf = window.requestAnimationFrame(() => {
+      recomputeMenuPosition();
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [menuOpen, recomputeMenuPosition]);
+
+  return (
+    <div className={`wb-compaction-row ${item.phase === "failed" ? "is-failed" : ""}`}>
+      <div className="wb-compaction-text">
+        <span className="wb-compaction-label">{label}</span>
+        <span className="wb-compaction-dot" aria-hidden="true">
+          ·
+        </span>
+        <span className="wb-compaction-meta">{meta}</span>
+        {item.error ? (
+          <>
+            <span className="wb-compaction-dot" aria-hidden="true">
+              ·
+            </span>
+            <span className="wb-compaction-error">{item.error}</span>
+          </>
+        ) : null}
+      </div>
+      {item.phase === "completed" && (
+        <button
+          ref={triggerRef}
+          type="button"
+          className="wb-compaction-menu-trigger wb-menu-trigger"
+          aria-label="Compaction actions"
+          title="Compaction actions"
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          <MoreHorizontal size={14} aria-hidden="true" />
+        </button>
+      )}
+      {menuOpen && (
+        <div
+          ref={menuRef}
+          className="wb-menu wb-compaction-menu"
+          role="menu"
+          style={menuStyle ?? undefined}
+        >
+          <button
+            type="button"
+            className="wb-menu-item"
+            role="menuitem"
+            disabled={!hasOutput}
+            onClick={() => void handleCopy()}
+          >
+            Copy compaction output
+          </button>
+          <button
+            type="button"
+            className="wb-menu-item"
+            role="menuitem"
+            disabled={!hasOutput}
+            onClick={handleDownload}
+          >
+            Download compaction output
+          </button>
+          <button type="button" className="wb-menu-item" role="menuitem" onClick={handleOpenSettings}>
+            Modify compaction settings
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function WorkbenchTurnStatusRow({

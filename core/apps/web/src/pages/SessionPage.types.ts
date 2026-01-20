@@ -82,6 +82,15 @@ export type ThreadItem =
       answers?: Record<string, string>;
       outcome?: "submitted" | "cancelled";
       answered: boolean;
+    }
+  | {
+      kind: "compaction";
+      id: string;
+      created_at: string;
+      phase: "started" | "completed" | "failed";
+      trigger: "manual" | "auto";
+      output?: any;
+      error?: string | null;
     };
 
 export type AskUserQuestionAnswerState = {

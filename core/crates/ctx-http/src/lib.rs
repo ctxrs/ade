@@ -1,6 +1,7 @@
 pub mod api;
 pub mod attachments;
 pub mod buffers;
+pub mod compaction;
 pub mod completions;
 pub mod daemon;
 pub mod dictation_livekit;

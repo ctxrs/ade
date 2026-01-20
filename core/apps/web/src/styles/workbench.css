@@ -2943,6 +2943,65 @@
   color: var(--muted);
 }
 
+.wb-compaction-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wb-compaction-row.is-failed {
+  color: var(--error);
+}
+
+.wb-compaction-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.wb-compaction-label {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.wb-compaction-meta {
+  font-family: var(--mono);
+}
+
+.wb-compaction-dot {
+  color: inherit;
+}
+
+.wb-compaction-error {
+  color: var(--error);
+}
+
+.wb-compaction-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.wb-compaction-row:hover .wb-compaction-menu-trigger,
+.wb-compaction-menu-trigger:focus-visible {
+  opacity: 1;
+}
+
+.wb-compaction-menu {
+  min-width: 220px;
+}
+
 .wb-turn-status-dot {
   color: inherit;
 }

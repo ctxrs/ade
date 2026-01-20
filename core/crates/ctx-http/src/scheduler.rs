@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{
@@ -19,6 +20,7 @@ use ctx_providers::adapters::{ProviderAdapter, RunHandle, TurnInput};
 use ctx_providers::events::NormalizedEvent;
 use ctx_store::store::SessionTurnToolCountDeltas;
 
+use crate::compaction::{self, CompactionOutcome, CompactionRequest};
 use crate::daemon::AppState;
 use crate::installer;
 use crate::ops_events::OpsEvent;
@@ -40,6 +42,7 @@ pub struct QueuedMessage {
 pub enum SchedulerCommand {
     Enqueue(QueuedMessage),
     RemoveQueued(MessageId),
+    Compact(CompactionRequest),
     Cancel,
     Interrupt,
 }
@@ -88,6 +91,7 @@ pub async fn session_worker(
     }
     let mut running: Option<RunningTurn> = None;
     let mut suspend_queue = false;
+    let mut pending_compact: Option<CompactionRequest> = None;
 
     let worktree = match store.get_worktree(session.worktree_id).await {
         Ok(Some(wt)) => wt,
@@ -110,26 +114,53 @@ pub async fn session_worker(
     state.ops_events.emit(worktree_event);
 
     loop {
-        if running.is_none() && !suspend_queue {
-            if let Some(msg) = queue.pop_front() {
-                let session_for_turn = match store.get_session(session.id).await {
+        if running.is_none() {
+            if let Some(request) = pending_compact.take() {
+                let session_for_compaction = match store.get_session(session.id).await {
                     Ok(Some(fresh)) => {
                         session = fresh.clone();
                         fresh
                     }
                     _ => session.clone(),
                 };
-                match start_turn(&state, &session_for_turn, &workdir, &env_target, msg).await {
-                    Ok(turn) => {
-                        state.set_running(session.id, true).await;
-                        running = Some(turn);
-                    }
-                    Err(_) => {
-                        state.set_running(session.id, false).await;
-                        running = None;
-                    }
+                if let Err(err) =
+                    handle_compaction_request(&state, &session_for_compaction, &workdir, request)
+                        .await
+                {
+                    tracing::warn!(session_id = %session.id.0, "auto compaction failed: {err:#}");
                 }
+                suspend_queue = false;
                 continue;
+            }
+            if !suspend_queue {
+                if let Some(msg) = queue.pop_front() {
+                    let session_for_turn = match store.get_session(session.id).await {
+                        Ok(Some(fresh)) => {
+                            session = fresh.clone();
+                            fresh
+                        }
+                        _ => session.clone(),
+                    };
+                    if compaction::is_compact_command(&msg.message.content) {
+                        if let Err(err) =
+                            handle_compact_command(&state, &session_for_turn, &workdir, msg).await
+                        {
+                            tracing::warn!(session_id = %session.id.0, "compaction command failed: {err:#}");
+                        }
+                        continue;
+                    }
+                    match start_turn(&state, &session_for_turn, &workdir, &env_target, msg).await {
+                        Ok(turn) => {
+                            state.set_running(session.id, true).await;
+                            running = Some(turn);
+                        }
+                        Err(_) => {
+                            state.set_running(session.id, false).await;
+                            running = None;
+                        }
+                    }
+                    continue;
+                }
             }
         }
 
@@ -154,6 +185,10 @@ pub async fn session_worker(
                             }
                         }
                         queue = next;
+                    }
+                    Some(SchedulerCommand::Compact(request)) => {
+                        pending_compact = Some(request);
+                        suspend_queue = true;
                     }
                     Some(SchedulerCommand::Cancel) => {
                         if let Some(turn) = running.take() {
@@ -221,6 +256,220 @@ pub async fn session_worker(
             }
         }
     }
+}
+
+async fn handle_compaction_request(
+    state: &Arc<AppState>,
+    session: &Session,
+    workdir: &Path,
+    request: CompactionRequest,
+) -> Result<()> {
+    let store = state.store_for_session(session.id).await?;
+    if matches!(request.kind, compaction::CompactionTriggerKind::Auto) {
+        let pending = store
+            .has_session_compaction_seed(session.id)
+            .await
+            .unwrap_or(false);
+        if pending {
+            return Ok(());
+        }
+    }
+    let _ = emit_event(
+        state,
+        session.id,
+        request.origin_run_id,
+        request.origin_turn_id,
+        SessionEventType::Notice,
+        compaction_notice_payload("started", &request, None, None),
+    )
+    .await?;
+
+    match compaction::run_compaction(state, session, workdir, &request).await {
+        Ok(outcome) => {
+            let _ = emit_event(
+                state,
+                session.id,
+                request.origin_run_id,
+                request.origin_turn_id,
+                SessionEventType::Notice,
+                compaction_notice_payload("completed", &request, Some(&outcome), None),
+            )
+            .await?;
+            Ok(())
+        }
+        Err(err) => {
+            let message = err.to_string();
+            let _ = emit_event(
+                state,
+                session.id,
+                request.origin_run_id,
+                request.origin_turn_id,
+                SessionEventType::Notice,
+                compaction_notice_payload("failed", &request, None, Some(&message)),
+            )
+            .await?;
+            Err(err)
+        }
+    }?;
+    Ok(())
+}
+
+async fn handle_compact_command(
+    state: &Arc<AppState>,
+    session: &Session,
+    workdir: &Path,
+    queued: QueuedMessage,
+) -> Result<()> {
+    let store = state.store_for_session(session.id).await?;
+    let mut message = queued.message;
+    if message.delivered_at.is_none() {
+        store.mark_message_delivered(message.id).await?;
+        message.delivery = MessageDelivery::Immediate;
+        message.delivered_at = Some(Utc::now());
+    }
+
+    let run_id = message
+        .run_id
+        .context("compaction message missing run_id")?;
+    let turn_id = message
+        .turn_id
+        .context("compaction message missing turn_id")?;
+    let request = CompactionRequest {
+        compaction_id: Uuid::new_v4(),
+        kind: compaction::CompactionTriggerKind::Manual,
+        reason: "manual_compact".to_string(),
+        context_window: None,
+        exclude_message_id: Some(message.id),
+        origin_run_id: Some(run_id),
+        origin_turn_id: Some(turn_id),
+    };
+
+    let _ = emit_event(
+        state,
+        session.id,
+        Some(run_id),
+        Some(turn_id),
+        SessionEventType::Notice,
+        compaction_notice_payload("started", &request, None, None),
+    )
+    .await?;
+
+    match compaction::run_compaction(state, session, workdir, &request).await {
+        Ok(outcome) => {
+            let _ = emit_event(
+                state,
+                session.id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::Notice,
+                compaction_notice_payload("completed", &request, Some(&outcome), None),
+            )
+            .await?;
+            let done_event = emit_event(
+                state,
+                session.id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::Done,
+                json!({"status": "compacted"}),
+            )
+            .await?;
+            let _ = store
+                .update_session_turn_status(
+                    session.id,
+                    turn_id,
+                    SessionTurnStatus::Completed,
+                    Some(done_event.seq),
+                    None,
+                    done_event.created_at,
+                )
+                .await;
+            if let Ok(saved) = persist_assistant_message(
+                &store,
+                session.id,
+                session.task_id,
+                run_id,
+                turn_id,
+                "Compaction complete. A fresh harness session will be used for the next turn."
+                    .to_string(),
+                1,
+                Utc::now(),
+            )
+            .await
+            {
+                let _ = emit_event(
+                    state,
+                    session.id,
+                    Some(run_id),
+                    Some(turn_id),
+                    SessionEventType::AssistantMessageInserted,
+                    json!({
+                        "message_id": saved.id.0,
+                        "turn_sequence": saved.turn_sequence.unwrap_or(1),
+                    }),
+                )
+                .await;
+            }
+        }
+        Err(err) => {
+            let message = err.to_string();
+            let _ = emit_event(
+                state,
+                session.id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::Notice,
+                compaction_notice_payload("failed", &request, None, Some(&message)),
+            )
+            .await?;
+            let error_event = emit_event(
+                state,
+                session.id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::Error,
+                json!({"message": err.to_string(), "source": "compaction"}),
+            )
+            .await?;
+            let _ = store
+                .update_session_turn_status(
+                    session.id,
+                    turn_id,
+                    SessionTurnStatus::Failed,
+                    Some(error_event.seq),
+                    None,
+                    error_event.created_at,
+                )
+                .await;
+            if let Ok(saved) = persist_assistant_message(
+                &store,
+                session.id,
+                session.task_id,
+                run_id,
+                turn_id,
+                format!("Compaction failed: {}", err),
+                1,
+                Utc::now(),
+            )
+            .await
+            {
+                let _ = emit_event(
+                    state,
+                    session.id,
+                    Some(run_id),
+                    Some(turn_id),
+                    SessionEventType::AssistantMessageInserted,
+                    json!({
+                        "message_id": saved.id.0,
+                        "turn_sequence": saved.turn_sequence.unwrap_or(1),
+                    }),
+                )
+                .await;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn start_turn(
@@ -392,6 +641,9 @@ async fn start_turn(
         }
     }
     let mut context_blocks = Vec::new();
+    if let Ok(Some(seed)) = store.take_session_compaction_seed(session.id).await {
+        context_blocks.push(json!({"type":"text","text": seed.seed_text}));
+    }
     if let Some(append) = system_prompt_append.as_deref() {
         if !provider_supports_system_prompt_append(&session.provider_id) {
             context_blocks.push(json!({"type":"text","text": append}));
@@ -884,7 +1136,7 @@ async fn start_turn(
                                 ))
                                 .await;
                         }
-                        let metrics = event.payload_json.get("context_window");
+                        let metrics = event.payload_json.get("context_window").cloned();
                         if terminal_status.is_none() {
                             let _ = store
                                 .update_session_turn_status(
@@ -892,7 +1144,7 @@ async fn start_turn(
                                     turn_id,
                                     SessionTurnStatus::Completed,
                                     Some(event.seq),
-                                    metrics,
+                                    metrics.as_ref(),
                                     event.created_at,
                                 )
                                 .await;
@@ -904,6 +1156,39 @@ async fn start_turn(
                                 &[SessionEventType::ThoughtChunk],
                             )
                             .await;
+                        if let Some(metrics) = metrics.as_ref() {
+                            let settings =
+                                settings::load_settings(&state_for_events.data_root).await;
+                            if let Some(compaction_settings) = settings.compaction.as_ref() {
+                                if compaction::should_auto_compact(metrics, compaction_settings) {
+                                    let pending = store
+                                        .has_session_compaction_seed(session_id)
+                                        .await
+                                        .unwrap_or(false);
+                                    if !pending {
+                                        if let Some(tx) =
+                                            state_for_events.scheduler_sender(session_id).await
+                                        {
+                                            let _ = tx
+                                                .send(SchedulerCommand::Compact(
+                                                    CompactionRequest {
+                                                        compaction_id: Uuid::new_v4(),
+                                                        kind:
+                                                            compaction::CompactionTriggerKind::Auto,
+                                                        reason: "auto_compaction_threshold"
+                                                            .to_string(),
+                                                        context_window: Some(metrics.clone()),
+                                                        exclude_message_id: None,
+                                                        origin_run_id: Some(run_id),
+                                                        origin_turn_id: Some(turn_id),
+                                                    },
+                                                ))
+                                                .await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     SessionEventType::TurnInterrupted => {
                         if !telemetry_emitted {
@@ -1308,6 +1593,44 @@ fn strip_emitted_prefix(full_content: &str, emitted: &str) -> Option<String> {
     } else {
         Some(full.to_string())
     }
+}
+
+fn compaction_notice_payload(
+    phase: &str,
+    request: &CompactionRequest,
+    outcome: Option<&CompactionOutcome>,
+    error: Option<&str>,
+) -> Value {
+    let trigger = match request.kind {
+        compaction::CompactionTriggerKind::Manual => "manual",
+        compaction::CompactionTriggerKind::Auto => "auto",
+    };
+    let mut payload = json!({
+        "kind": "custom_compaction",
+        "compaction_id": request.compaction_id.to_string(),
+        "phase": phase,
+        "trigger": trigger,
+        "reason": request.reason.clone(),
+    });
+
+    if let Some(outcome) = outcome {
+        let output = json!({
+            "compaction_id": request.compaction_id.to_string(),
+            "summary": outcome.summary.clone(),
+            "seed_text": outcome.seed_text.clone(),
+            "trigger": trigger,
+            "reason": request.reason.clone(),
+        });
+        payload["summary"] = json!(outcome.summary.clone());
+        payload["seed_text"] = json!(outcome.seed_text.clone());
+        payload["output"] = output;
+    }
+
+    if let Some(error) = error {
+        payload["error"] = json!(error);
+    }
+
+    payload
 }
 
 #[cfg(test)]

@@ -200,6 +200,23 @@ export type SandboxingSettings = {
   provider_control_mode: ProviderControlMode;
 };
 
+export type AutoCompactionSettings = {
+  enabled: boolean;
+  remaining_fraction_threshold?: number | null;
+  max_context_tokens?: number | null;
+};
+
+export type CompactionSettings = {
+  enabled: boolean;
+  script_path?: string | null;
+  script_timeout_ms?: number | null;
+  retain_full_transcript_tokens?: number | null;
+  retain_tail_messages?: number | null;
+  retain_tail_chars_per_message?: number | null;
+  include_attachments: boolean;
+  auto_compact?: AutoCompactionSettings | null;
+};
+
 export type ResourceGovernanceStatusState = "disabled" | "applied" | "pending" | "unsupported" | "error";
 
 export type ResourceGovernanceStatus = {
@@ -253,6 +270,7 @@ export type Settings = {
   provider_guard?: ProviderGuardSettings | null;
   subagents?: SubagentSettings | null;
   sandboxing?: SandboxingSettings | null;
+  compaction?: CompactionSettings | null;
 };
 
 export type WebSessionViewport = {

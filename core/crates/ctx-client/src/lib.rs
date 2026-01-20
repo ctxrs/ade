@@ -296,6 +296,8 @@ pub struct PublicSettings {
     pub resource_governance: Option<PublicResourceGovernanceSettings>,
     #[serde(default)]
     pub subagents: Option<PublicSubagentSettings>,
+    #[serde(default)]
+    pub compaction: Option<PublicCompactionSettings>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -333,6 +335,34 @@ pub struct PublicTitleGenerationSettings {
 pub struct PublicSubagentSettings {
     #[serde(default)]
     pub max_per_call: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicCompactionSettings {
+    pub enabled: bool,
+    #[serde(default)]
+    pub script_path: Option<String>,
+    #[serde(default)]
+    pub script_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub retain_full_transcript_tokens: Option<u32>,
+    #[serde(default)]
+    pub retain_tail_messages: Option<u32>,
+    #[serde(default)]
+    pub retain_tail_chars_per_message: Option<u32>,
+    #[serde(default)]
+    pub include_attachments: bool,
+    #[serde(default)]
+    pub auto_compact: Option<PublicAutoCompactionSettings>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicAutoCompactionSettings {
+    pub enabled: bool,
+    #[serde(default)]
+    pub remaining_fraction_threshold: Option<f64>,
+    #[serde(default)]
+    pub max_context_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -406,6 +436,8 @@ pub struct UpdateSettingsRequest {
     pub provider_guard: Option<UpdateProviderGuardSettingsRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subagents: Option<UpdateSubagentSettingsRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<UpdateCompactionSettingsRequest>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -471,6 +503,33 @@ pub struct UpdateProviderGuardSettingsRequest {
 pub struct UpdateSubagentSettingsRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_per_call: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateCompactionSettingsRequest {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script_timeout_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retain_full_transcript_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retain_tail_messages: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retain_tail_chars_per_message: Option<u32>,
+    pub include_attachments: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_compact: Option<UpdateAutoCompactionSettingsRequest>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateAutoCompactionSettingsRequest {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_fraction_threshold: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]

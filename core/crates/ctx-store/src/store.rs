@@ -20,6 +20,14 @@ pub struct SessionRetentionPruneStats {
     pub turn_thoughts_cleared: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionCompactionSeed {
+    pub session_id: SessionId,
+    pub seed_text: String,
+    pub reason: String,
+    pub created_at: DateTime<Utc>,
+}
+
 const SESSION_HEAD_MAX_TURNS: u32 = 200;
 const SESSION_HEAD_MESSAGE_LIMIT: usize = 200;
 const SESSION_HEAD_EVENT_LIMIT: usize = 200;
@@ -2331,6 +2339,80 @@ impl Store {
         .await?;
 
         Ok(checkpoint)
+    }
+
+    pub async fn upsert_session_compaction_seed(
+        &self,
+        session_id: SessionId,
+        seed_text: String,
+        reason: String,
+    ) -> Result<SessionCompactionSeed> {
+        let created_at = Utc::now();
+        sqlx::query(
+            r#"INSERT INTO session_compaction_seeds (
+                   session_id, seed_text, reason, created_at
+               )
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(session_id) DO UPDATE SET
+                   seed_text = excluded.seed_text,
+                   reason = excluded.reason,
+                   created_at = excluded.created_at"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(&seed_text)
+        .bind(&reason)
+        .bind(created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(SessionCompactionSeed {
+            session_id,
+            seed_text,
+            reason,
+            created_at,
+        })
+    }
+
+    pub async fn take_session_compaction_seed(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<SessionCompactionSeed>> {
+        let row = sqlx::query(
+            r#"SELECT seed_text, reason, created_at
+               FROM session_compaction_seeds
+               WHERE session_id = ?"#,
+        )
+        .bind(session_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let row = match row {
+            Some(row) => row,
+            None => return Ok(None),
+        };
+
+        sqlx::query(r#"DELETE FROM session_compaction_seeds WHERE session_id = ?"#)
+            .bind(session_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+
+        let created_at: String = row.try_get("created_at")?;
+        Ok(Some(SessionCompactionSeed {
+            session_id,
+            seed_text: row.try_get("seed_text")?,
+            reason: row.try_get("reason")?,
+            created_at: parse_dt(&created_at)?,
+        }))
+    }
+
+    pub async fn has_session_compaction_seed(&self, session_id: SessionId) -> Result<bool> {
+        let row = sqlx::query_scalar::<_, Option<i64>>(
+            r#"SELECT 1 FROM session_compaction_seeds WHERE session_id = ?"#,
+        )
+        .bind(session_id.0.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.is_some())
     }
 
     pub async fn upsert_subagent_invocation(

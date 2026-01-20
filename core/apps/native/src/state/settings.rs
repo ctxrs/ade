@@ -690,6 +690,7 @@ impl SettingsState {
                         resource_governance: None,
                         provider_guard: None,
                         subagents: None,
+                        compaction: None,
                     },
                     cx,
                 );
@@ -725,6 +726,7 @@ impl SettingsState {
                         resource_governance: None,
                         provider_guard: None,
                         subagents: None,
+                        compaction: None,
                     },
                     cx,
                 );
@@ -757,6 +759,7 @@ impl SettingsState {
                         resource_governance: None,
                         provider_guard: None,
                         subagents: None,
+                        compaction: None,
                     },
                     cx,
                 );
@@ -792,6 +795,7 @@ impl SettingsState {
                         resource_governance: Some(payload),
                         provider_guard: None,
                         subagents: None,
+                        compaction: None,
                     },
                     cx,
                 );
@@ -952,6 +956,7 @@ impl SettingsState {
                 resource_governance: Some(payload),
                 provider_guard: None,
                 subagents: None,
+                        compaction: None,
             },
             cx,
         );
