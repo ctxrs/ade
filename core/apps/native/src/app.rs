@@ -44,7 +44,7 @@ use self::state::{
     ComposerVerbosity, DataLoadState, DiffReviewState, SessionViewVerbosity, SettingsState,
     StreamStatus, TaskFetchState, TerminalPanelState, WorkbenchModeId,
 };
-use self::views::RouterView;
+use self::views::{RouterView, WorkspaceTabsView};
 pub(crate) use self::state::{ShellRoute, ShellView, ThreadRenderCache, THREAD_RENDER_CACHE_LIMIT};
 #[cfg(feature = "automation")]
 pub(crate) use self::state::ComposerMenuId;
@@ -171,6 +171,8 @@ fn create_shell_view(
             route,
             workspaces: Vec::new(),
             selected_workspace: None,
+            workspace_tabs: Vec::new(),
+            active_workspace_tab: None,
             providers: Vec::new(),
             composer_provider_id: None,
             composer_model_id: None,
@@ -496,6 +498,11 @@ impl Render for ShellView {
                     cx.stop_propagation();
                 }
             }))
+            .child(if self.route == ShellRoute::Workbench {
+                WorkspaceTabsView { shell: self }.render(cx).into_any_element()
+            } else {
+                div().h(px(0.0)).into_any_element()
+            })
             .child(
                 div()
                     .id("content")

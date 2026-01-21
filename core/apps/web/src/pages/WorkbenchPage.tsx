@@ -17,6 +17,7 @@ import {
   Laptop,
   LayersPlus,
   Mic,
+  Plus,
   SquarePen,
   Settings,
   Terminal,
@@ -56,6 +57,7 @@ import {
   installProvider,
   listWebSessions,
   listProviders,
+  listWorkspaces,
   markTaskRead as markTaskReadApi,
   markTaskUnread as markTaskUnreadApi,
   postMessage,
@@ -82,7 +84,14 @@ import { randomUuid } from "../utils/randomUuid";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { startMicPcmStream } from "../utils/micPcmStream";
-import { desktopSaveTextFile, isDesktopApp, isDesktopUi } from "../utils/desktop";
+import {
+  desktopListen,
+  desktopOpenWorkspaceInNewWindow,
+  desktopSaveTextFile,
+  desktopSetOpenWorkspaces,
+  isDesktopApp,
+  isDesktopUi,
+} from "../utils/desktop";
 import { parseWsJson } from "../utils/wsJson";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { copyTextToClipboard } from "../utils/clipboard";
@@ -108,6 +117,7 @@ import {
   saveWorkbenchDiffPaneOpenV1,
   saveWorkbenchSessionsPaneOpenV1,
   saveWorkbenchTerminalPanelOpenV1,
+  workbenchDaemonKey,
 } from "../workbench/persistence";
 import type { WorkbenchScrollState } from "../workbench/types";
 import {
@@ -123,8 +133,54 @@ function deriveTaskTitle(_prompt: string): string {
 }
 
 const ARCHIVE_CONFIRM_STORAGE_KEY = "wb.archiveConfirmDismissed";
+const WORKSPACE_TABS_STORAGE_KEY = "wb.workspaceTabs.v1";
+const UI_WINDOW_ID_STORAGE_KEY = "contextUiWindowId.v1";
 // Keep a small pool mounted to avoid remounting session views during task switches.
 const SESSION_VIEW_POOL_LIMIT = 3;
+
+type WorkspaceTabsState = {
+  openWorkspaceIds: string[];
+};
+
+const getOrCreateUiWindowId = (): string => {
+  try {
+    const existing = sessionStorage.getItem(UI_WINDOW_ID_STORAGE_KEY);
+    if (existing && existing.trim()) return existing;
+    const created = randomUuid();
+    sessionStorage.setItem(UI_WINDOW_ID_STORAGE_KEY, created);
+    return created;
+  } catch {
+    return randomUuid();
+  }
+};
+
+const loadWorkspaceTabsState = (storageKey: string): WorkspaceTabsState | null => {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as any;
+    const openWorkspaceIds = Array.isArray(parsed?.openWorkspaceIds)
+      ? parsed.openWorkspaceIds.map((v: any) => String(v)).filter((v: string) => v.trim())
+      : [];
+    return { openWorkspaceIds };
+  } catch {
+    return null;
+  }
+};
+
+const saveWorkspaceTabsState = (storageKey: string, state: WorkspaceTabsState) => {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+};
+
+const ensureWorkspaceIdInTabs = (state: WorkspaceTabsState, workspaceId: string): WorkspaceTabsState => {
+  if (!workspaceId) return state;
+  if (state.openWorkspaceIds.includes(workspaceId)) return state;
+  return { openWorkspaceIds: [...state.openWorkspaceIds, workspaceId] };
+};
 
 const normalizeGitStatusSummary = (
   value: GitStatusSummary | string | null | undefined,
@@ -839,6 +895,110 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const { value: newTaskDraft, setValue: setNewTaskDraft } = useNewTaskDraft();
   const draftPrompt = newTaskDraft.text;
   const draftMode = newTaskDraft.modeId;
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+
+  const uiWindowId = useMemo(() => getOrCreateUiWindowId(), []);
+  const workspaceTabsStorageKey = useMemo(
+    () => `${WORKSPACE_TABS_STORAGE_KEY}.${encodeURIComponent(workbenchDaemonKey())}.${encodeURIComponent(uiWindowId)}`,
+    [uiWindowId],
+  );
+  const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTabsState>(() => {
+    const loaded = loadWorkspaceTabsState(workspaceTabsStorageKey);
+    return ensureWorkspaceIdInTabs(loaded ?? { openWorkspaceIds: [] }, workspaceId);
+  });
+  useEffect(() => {
+    setWorkspaceTabs((prev) => ensureWorkspaceIdInTabs(prev, workspaceId));
+  }, [workspaceId]);
+  useEffect(() => {
+    saveWorkspaceTabsState(workspaceTabsStorageKey, workspaceTabs);
+  }, [workspaceTabs, workspaceTabsStorageKey]);
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    desktopSetOpenWorkspaces(workspaceTabs.openWorkspaceIds).catch(() => {});
+  }, [workspaceTabs.openWorkspaceIds]);
+
+  const [allWorkspaces, setAllWorkspaces] = useState<Workspace[]>([]);
+  useEffect(() => {
+    listWorkspaces().then(setAllWorkspaces).catch(() => {});
+  }, []);
+  const allWorkspacesById = useMemo(() => {
+    const map = new Map<string, Workspace>();
+    for (const ws of allWorkspaces) {
+      const id = idToString((ws as any).id);
+      if (!id) continue;
+      map.set(id, ws);
+    }
+    return map;
+  }, [allWorkspaces]);
+
+  const workspaceTabsResolved = useMemo(() => {
+    const out = [];
+    for (const id of workspaceTabs.openWorkspaceIds) {
+      const known = id === workspaceId ? workspace : allWorkspacesById.get(id);
+      out.push({ id, name: known?.name ?? "Workspace" });
+    }
+    return out;
+  }, [allWorkspacesById, workspace, workspaceId, workspaceTabs.openWorkspaceIds]);
+
+  const openWorkspaceTab = useCallback(
+    (id: string) => {
+      const trimmed = String(id || "").trim();
+      if (!trimmed) return;
+      setWorkspaceTabs((prev) => ensureWorkspaceIdInTabs(prev, trimmed));
+      navigate(`/workspaces/${encodeURIComponent(trimmed)}`);
+    },
+    [navigate],
+  );
+
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    let unlisten: (() => void) | null = null;
+    desktopListen<string>("workspace:open", (id) => openWorkspaceTab(id))
+      .then((u) => {
+        unlisten = u;
+      })
+      .catch(() => {});
+    return () => {
+      unlisten?.();
+    };
+  }, [openWorkspaceTab]);
+
+  const closeWorkspaceTab = useCallback(
+    (id: string) => {
+      const trimmed = String(id || "").trim();
+      if (!trimmed) return;
+      const open = workspaceTabs.openWorkspaceIds.filter((wsId) => wsId !== trimmed);
+      setWorkspaceTabs({ openWorkspaceIds: open });
+      if (trimmed !== workspaceId) return;
+      const next = open[open.length - 1] ?? open[0] ?? null;
+      navigate(next ? `/workspaces/${encodeURIComponent(next)}` : "/workspaces");
+    },
+    [navigate, workspaceId, workspaceTabs.openWorkspaceIds],
+  );
+
+  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
+  const workspacePickerBtnRef = useRef<HTMLButtonElement | null>(null);
+  const workspacePickerMenuRef = useRef<HTMLDivElement | null>(null);
+  const [workspacePickerAnchor, setWorkspacePickerAnchor] = useState<AnchorRect | null>(null);
+  useEffect(() => {
+    if (!workspacePickerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setWorkspacePickerOpen(false);
+    };
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (workspacePickerBtnRef.current?.contains(target)) return;
+      if (workspacePickerMenuRef.current?.contains(target)) return;
+      setWorkspacePickerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onClick);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onClick);
+    };
+  }, [workspacePickerOpen]);
 
   useEffect(() => {
     supervisor.bindWorkspaceActiveSnapshotStore(workspaceSnapshotStore);
@@ -867,7 +1027,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [sidebarResizing, setSidebarResizing] = useState(false);
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [daemonDataRoot, setDaemonDataRoot] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [providerInstallsById, setProviderInstallsById] = useState<
@@ -3952,18 +4111,175 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     document.title = title;
   }, [activeTask?.title, desktopUi, workspace?.name]);
 
+  const workspacePickerChoices = useMemo(() => {
+    const openSet = new Set(workspaceTabs.openWorkspaceIds);
+    return allWorkspaces
+      .map((ws) => {
+        const id = idToString((ws as any).id);
+        return id ? { id, ws } : null;
+      })
+      .filter((v): v is { id: string; ws: Workspace } => Boolean(v))
+      .filter((v) => !openSet.has(v.id));
+  }, [allWorkspaces, workspaceTabs.openWorkspaceIds]);
+
+  const topbar = (
+    <div className="wb-topbar" data-tauri-drag-region={desktopUi ? true : undefined}>
+      <div className="wb-topbar-tabs" role="tablist" aria-label="Workspaces">
+        {workspaceTabsResolved.map((t) => (
+          <div
+            key={t.id}
+            role="tab"
+            aria-selected={t.id === workspaceId}
+            className={`wb-topbar-tab ${t.id === workspaceId ? "wb-topbar-tab-active" : ""}`}
+            title={t.name}
+            onClick={() => openWorkspaceTab(t.id)}
+          >
+            <span className="wb-topbar-tab-label">{t.name}</span>
+            <button
+              type="button"
+              className="wb-topbar-tab-close"
+              aria-label={`Close ${t.name}`}
+              title="Close"
+              onClick={(e) => {
+                e.stopPropagation();
+                closeWorkspaceTab(t.id);
+              }}
+              data-tauri-drag-region={false}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        ))}
+        <button
+          ref={workspacePickerBtnRef}
+          type="button"
+          className="wb-topbar-tab-add"
+          aria-label="Open workspace"
+          title="Open workspace"
+          onClick={() => {
+            const rect = workspacePickerBtnRef.current?.getBoundingClientRect();
+            if (rect) {
+              setWorkspacePickerAnchor({
+                left: rect.left,
+                right: rect.right,
+                top: rect.top,
+                bottom: rect.bottom,
+                width: rect.width,
+                height: rect.height,
+              });
+            } else {
+              setWorkspacePickerAnchor(null);
+            }
+            setWorkspacePickerOpen((v) => !v);
+          }}
+          data-tauri-drag-region={false}
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+
+      {activeTask && <div className="wb-topbar-sub">{activeTask.title}</div>}
+
+      <div className="wb-topbar-right" data-tauri-drag-region={false}>
+        {showDebugIds && (
+          <button
+            type="button"
+            className="wb-topbar-ids"
+            title="Click to copy workspace/task/session IDs"
+            onClick={() =>
+              void copyTextToClipboard(
+                JSON.stringify(
+                  {
+                    workspaceId,
+                    taskId: activeTaskId,
+                    sessionId: activeSessionId,
+                  },
+                  null,
+                  2,
+                ),
+              )
+            }
+          >
+            {debugIdLabel}
+          </button>
+        )}
+        <Link
+          className="wb-topbar-icon"
+          to={`/settings?ws=${encodeURIComponent(String(workspaceId))}`}
+          title="Settings"
+          aria-label="Settings"
+        >
+          <Settings size={14} />
+        </Link>
+      </div>
+      {workspacePickerOpen && workspacePickerAnchor && (
+        <div
+          ref={workspacePickerMenuRef}
+          className="wb-menu"
+          style={{
+            left: Math.round(workspacePickerAnchor.left),
+            top: Math.round(workspacePickerAnchor.bottom + 6),
+          }}
+        >
+          <div className="wb-menu-top">
+            <div className="wb-menu-title-row">
+              <div className="wb-menu-title">Open workspace</div>
+              <button
+                type="button"
+                className="wb-topbar-icon"
+                aria-label="Close"
+                title="Close"
+                onClick={() => setWorkspacePickerOpen(false)}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+          {workspacePickerChoices.length === 0 ? (
+            <div className="wb-menu-empty">No other workspaces.</div>
+          ) : (
+            workspacePickerChoices.map(({ id, ws }) => (
+              <div key={id} className="wb-workspace-picker-row">
+                <button
+                  type="button"
+                  className="wb-menu-item wb-workspace-picker-open"
+                  onClick={() => {
+                    setWorkspacePickerOpen(false);
+                    openWorkspaceTab(id);
+                  }}
+                >
+                  {ws.name}
+                </button>
+                {isDesktopApp() && (
+                  <button
+                    type="button"
+                    className="wb-menu-item wb-workspace-picker-newwin"
+                    title="Open in new window"
+                    aria-label={`Open ${ws.name} in new window`}
+                    onClick={() => {
+                      setWorkspacePickerOpen(false);
+                      desktopOpenWorkspaceInNewWindow(id).catch(() => {});
+                    }}
+                  >
+                    New window
+                  </button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+
   if (!workbenchSnap.hydrated) {
     return (
       <div
-        className={`wb-root ${desktopUi ? "wb-root-no-topbar" : ""} ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
+        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
         style={rootStyle}
       >
         <WorktreeBootstrapSnackbar />
-        {!desktopUi && (
-          <div className="wb-topbar">
-            <div className="wb-topbar-title">{workspace?.name ?? "Workspace"}</div>
-          </div>
-        )}
+        {topbar}
         <div className="wb-main">
           <div className="wb-center">
             <div className="wb-muted" style={{ padding: 16 }}>
@@ -3977,48 +4293,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div
-      className={`wb-root ${desktopUi ? "wb-root-no-topbar" : ""} ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
+      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
       style={rootStyle}
     >
       <WorktreeBootstrapSnackbar />
-      {!desktopUi && (
-        <div className="wb-topbar">
-          <div className="wb-topbar-title">{workspace?.name ?? "Workspace"}</div>
-          {activeTask && <div className="wb-topbar-sub">{activeTask.title}</div>}
-          <div className="wb-topbar-right">
-            {showDebugIds && (
-              <button
-                type="button"
-                className="wb-topbar-ids"
-                title="Click to copy workspace/task/session IDs"
-                onClick={() =>
-                  void copyTextToClipboard(
-                    JSON.stringify(
-                      {
-                        workspaceId,
-                        taskId: activeTaskId,
-                        sessionId: activeSessionId,
-                      },
-                      null,
-                      2,
-                    ),
-                  )
-                }
-              >
-                {debugIdLabel}
-              </button>
-            )}
-            <Link
-              className="wb-topbar-icon"
-              to={`/settings?ws=${encodeURIComponent(String(workspaceId))}`}
-              title="Settings"
-              aria-label="Settings"
-            >
-              <Settings size={14} />
-            </Link>
-          </div>
-        </div>
-      )}
+      {topbar}
 
       {workbenchSnap.warnings.length > 0 && (
         <div className="banner" style={{ margin: "8px 12px 0" }}>

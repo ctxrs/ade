@@ -83,6 +83,18 @@ const invoke = async <T>(cmd: string, args?: any): Promise<T> => {
   return mod.invoke<T>(cmd, args);
 };
 
+export const desktopListen = async <T>(event: string, handler: (payload: T) => void): Promise<() => void> => {
+  const mod = await import("@tauri-apps/api/event");
+  const unlisten = await mod.listen<T>(event, (e) => handler(e.payload));
+  return () => {
+    try {
+      unlisten();
+    } catch {
+      // ignore
+    }
+  };
+};
+
 export const desktopGetConnection = async (): Promise<DesktopConnectionInfo> =>
   invoke<DesktopConnectionInfo>("desktop_get_connection");
 
@@ -145,3 +157,9 @@ export const desktopUploadBlob = async (args: {
   name?: string | null;
 }): Promise<any> =>
   invoke<any>("desktop_upload_blob", args);
+
+export const desktopSetOpenWorkspaces = async (workspace_ids: string[]): Promise<void> =>
+  invoke<void>("desktop_set_open_workspaces", { workspace_ids });
+
+export const desktopOpenWorkspaceInNewWindow = async (workspace_id: string): Promise<void> =>
+  invoke<void>("desktop_open_workspace_in_new_window", { workspace_id });

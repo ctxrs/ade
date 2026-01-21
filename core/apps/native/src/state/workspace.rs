@@ -48,6 +48,53 @@ pub(crate) enum DataLoadState {
 }
 
 impl ShellView {
+    fn ensure_workspace_tab(&mut self, workspace_id: WorkspaceId) {
+        if self.workspace_tabs.iter().any(|id| *id == workspace_id) {
+            return;
+        }
+        self.workspace_tabs.push(workspace_id);
+    }
+
+    pub(crate) fn open_workspace_tab(&mut self, workspace_id: WorkspaceId, cx: &mut Context<Self>) {
+        self.ensure_workspace_tab(workspace_id);
+        self.activate_workspace_tab(workspace_id, cx);
+    }
+
+    pub(crate) fn activate_workspace_tab(&mut self, workspace_id: WorkspaceId, cx: &mut Context<Self>) {
+        if self.active_workspace_tab == Some(workspace_id) && self.selected_workspace == Some(workspace_id) {
+            return;
+        }
+        self.active_workspace_tab = Some(workspace_id);
+        self.load_workspace(workspace_id, cx);
+    }
+
+    pub(crate) fn close_workspace_tab(&mut self, workspace_id: WorkspaceId, cx: &mut Context<Self>) {
+        let idx = self.workspace_tabs.iter().position(|id| *id == workspace_id);
+        if idx.is_none() {
+            return;
+        }
+        let idx = idx.unwrap();
+        self.workspace_tabs.retain(|id| *id != workspace_id);
+
+        if self.active_workspace_tab != Some(workspace_id) {
+            cx.notify();
+            return;
+        }
+
+        let next = self.workspace_tabs.get(idx).copied().or_else(|| self.workspace_tabs.last().copied());
+        if let Some(next_id) = next {
+            self.activate_workspace_tab(next_id, cx);
+            return;
+        }
+
+        self.active_workspace_tab = None;
+        self.selected_workspace = None;
+        self.stop_workspace_stream();
+        self.reset_workspace_view("No workspace selected.", cx);
+        self.data_state = DataLoadState::Loaded;
+        cx.notify();
+    }
+
     pub(crate) fn focus_new_task(
         &mut self,
         _: &ClickEvent,
@@ -67,10 +114,7 @@ impl ShellView {
         let Some(workspace) = self.workspaces.get(index) else {
             return;
         };
-        if self.selected_workspace == Some(workspace.id) {
-            return;
-        }
-        self.load_workspace(workspace.id, cx);
+        self.open_workspace_tab(workspace.id, cx);
     }
 
     pub(crate) fn create_workspace(&mut self, cx: &mut Context<Self>) {
@@ -156,17 +200,25 @@ impl ShellView {
                             view.workspaces = data.workspaces;
                             view.providers = data.providers;
                             view.sync_composer_defaults();
+                            view.workspace_tabs.retain(|id| view.workspaces.iter().any(|ws| ws.id == *id));
+                            if let Some(active) = view.active_workspace_tab {
+                                if !view.workspace_tabs.iter().any(|id| *id == active) {
+                                    view.active_workspace_tab = None;
+                                }
+                            }
                             if let Some(selected) = view.selected_workspace {
                                 if !view.workspaces.iter().any(|ws| ws.id == selected) {
                                     view.selected_workspace = None;
                                 }
                             }
-                            if view.selected_workspace.is_none() {
-                                view.selected_workspace =
-                                    view.workspaces.first().map(|workspace| workspace.id);
-                            }
-                            if let Some(workspace_id) = view.selected_workspace {
-                                view.load_workspace(workspace_id, cx);
+
+                            let workspace_id = view
+                                .active_workspace_tab
+                                .or(view.selected_workspace)
+                                .or_else(|| view.workspace_tabs.first().copied())
+                                .or_else(|| view.workspaces.first().map(|workspace| workspace.id));
+                            if let Some(workspace_id) = workspace_id {
+                                view.open_workspace_tab(workspace_id, cx);
                             } else {
                                 view.reset_workspace_view("No workspaces yet.", cx);
                                 view.data_state = DataLoadState::Loaded;
@@ -190,6 +242,8 @@ impl ShellView {
     }
 
     pub(crate) fn load_workspace(&mut self, workspace_id: WorkspaceId, cx: &mut Context<Self>) {
+        self.ensure_workspace_tab(workspace_id);
+        self.active_workspace_tab = Some(workspace_id);
         self.apply_workspace_ui_state(workspace_id);
         self.selected_workspace = Some(workspace_id);
         if let Some(workspace) = self.workspaces.iter().find(|ws| ws.id == workspace_id) {

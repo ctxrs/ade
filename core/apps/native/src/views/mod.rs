@@ -11,5 +11,7 @@ mod terminal;
 #[allow(dead_code)]
 mod turn_tools;
 mod router;
+mod workspace_tabs;
 
 pub(super) use router::RouterView;
+pub(super) use workspace_tabs::WorkspaceTabsView;

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, ErrorKind};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
+use tauri::Emitter;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use url::Url;
@@ -36,6 +37,8 @@ fn main() {
             desktop_open_path,
             desktop_read_file,
             desktop_get_deep_link_token,
+            desktop_set_open_workspaces,
+            desktop_open_workspace_in_new_window,
             desktop_register_workspace_window,
             desktop_unregister_workspace_window,
             desktop_upload_blob,
@@ -205,7 +208,7 @@ struct DeepLinkTokenStore {
 
 #[derive(Default)]
 struct WorkspaceWindowRegistry {
-    by_window: std::sync::Mutex<HashMap<String, String>>,
+    by_window: std::sync::Mutex<HashMap<String, HashSet<String>>>,
 }
 
 const DEEP_LINK_TOKEN_TTL: Duration = Duration::from_secs(600);
@@ -239,7 +242,9 @@ impl DeepLinkTokenStore {
 impl WorkspaceWindowRegistry {
     fn register(&self, window_label: &str, workspace_id: &str) {
         let mut map = self.by_window.lock().expect("workspace registry lock");
-        map.insert(window_label.to_string(), workspace_id.to_string());
+        map.entry(window_label.to_string())
+            .or_default()
+            .insert(workspace_id.to_string());
     }
 
     fn unregister_window(&self, window_label: &str) {
@@ -247,15 +252,43 @@ impl WorkspaceWindowRegistry {
         map.remove(window_label);
     }
 
+    fn set_window_workspaces(&self, window_label: &str, workspace_ids: Vec<String>) {
+        let mut map = self.by_window.lock().expect("workspace registry lock");
+        let mut set = HashSet::new();
+        for id in workspace_ids {
+            let trimmed = id.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            set.insert(trimmed.to_string());
+        }
+        if set.is_empty() {
+            map.remove(window_label);
+        } else {
+            map.insert(window_label.to_string(), set);
+        }
+    }
+
     fn window_for_workspace(&self, workspace_id: &str) -> Option<String> {
         let map = self.by_window.lock().expect("workspace registry lock");
-        map.iter()
-            .find_map(|(label, id)| if id == workspace_id { Some(label.clone()) } else { None })
+        map.iter().find_map(|(label, ids)| {
+            if ids.contains(workspace_id) {
+                Some(label.clone())
+            } else {
+                None
+            }
+        })
     }
 
     fn workspace_ids(&self) -> Vec<String> {
         let map = self.by_window.lock().expect("workspace registry lock");
-        map.values().cloned().collect()
+        let mut out = HashSet::new();
+        for ids in map.values() {
+            for id in ids {
+                out.insert(id.clone());
+            }
+        }
+        out.into_iter().collect()
     }
 }
 
@@ -406,6 +439,40 @@ fn desktop_get_deep_link_token(
     store: tauri::State<DeepLinkTokenStore>,
 ) -> Result<DesktopDeepLinkToken, String> {
     Ok(store.mint())
+}
+
+#[tauri::command]
+fn desktop_set_open_workspaces(
+    window: tauri::WebviewWindow,
+    registry: tauri::State<WorkspaceWindowRegistry>,
+    workspace_ids: Vec<String>,
+) -> Result<(), String> {
+    registry.set_window_workspaces(window.label(), workspace_ids);
+    Ok(())
+}
+
+#[tauri::command]
+fn desktop_open_workspace_in_new_window(
+    app: tauri::AppHandle,
+    registry: tauri::State<WorkspaceWindowRegistry>,
+    workspace_id: String,
+) -> Result<(), String> {
+    let workspace_id = workspace_id.trim();
+    if workspace_id.is_empty() {
+        return Err("workspace_id is required".to_string());
+    }
+
+    let label = format!("workbench:{}", uuid::Uuid::new_v4());
+    let url = format!("/workspaces/{workspace_id}");
+    let window = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
+        .title("ctx")
+        .inner_size(1200.0, 900.0)
+        .build()
+        .map_err(|e| format!("creating window failed: {e}"))?;
+    let _ = window.show();
+    let _ = window.set_focus();
+    registry.register(&label, workspace_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1165,29 +1232,38 @@ fn open_workspace_window(
     registry: &WorkspaceWindowRegistry,
     workspace_id: &str,
 ) -> Result<()> {
-    if let Some(label) = registry.window_for_workspace(workspace_id) {
-        if let Some(window) = app.get_webview_window(&label) {
+    if let Some(window_label) = registry.window_for_workspace(workspace_id) {
+        if let Some(window) = app.get_webview_window(&window_label) {
             let _ = window.show();
             let _ = window.set_focus();
+            let url = format!("/workspaces/{workspace_id}");
+            let js = format!(
+                "window.location.href = {};",
+                serde_json::to_string(&url).unwrap_or_else(|_| "\"/workspaces\"".to_string())
+            );
+            let _ = window.eval(&js);
+            let _ = window.emit("workspace:open", workspace_id.to_string());
+            registry.register(&window_label, workspace_id);
             return Ok(());
         }
+        registry.unregister_window(&window_label);
     }
 
-    let label = format!("workspace:{workspace_id}");
-    if let Some(window) = app.get_webview_window(&label) {
-        let _ = window.show();
-        let _ = window.set_focus();
-        registry.register(&label, workspace_id);
-        return Ok(());
-    }
+    open_main_window(app)?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| anyhow!("main window not available"))?;
+    let _ = window.show();
+    let _ = window.set_focus();
 
     let url = format!("/workspaces/{workspace_id}");
-    tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(url.into()))
-        .title("ctx")
-        .inner_size(1200.0, 900.0)
-        .build()
-        .context("creating workspace window")?;
-    registry.register(&label, workspace_id);
+    let js = format!(
+        "window.location.href = {};",
+        serde_json::to_string(&url).unwrap_or_else(|_| "\"/workspaces\"".to_string())
+    );
+    let _ = window.eval(&js);
+    let _ = window.emit("workspace:open", workspace_id.to_string());
+    registry.register("main", workspace_id);
     Ok(())
 }
 
