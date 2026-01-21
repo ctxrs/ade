@@ -4275,7 +4275,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   if (!workbenchSnap.hydrated) {
     return (
       <div
-        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
+        className={`wb-root ${desktopUi ? "wb-root-no-topbar" : ""} ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
         style={rootStyle}
       >
         <WorktreeBootstrapSnackbar />
@@ -4293,7 +4293,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div
-      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
+      className={`wb-root ${desktopUi ? "wb-root-no-topbar" : ""} ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
       style={rootStyle}
     >
       <WorktreeBootstrapSnackbar />
