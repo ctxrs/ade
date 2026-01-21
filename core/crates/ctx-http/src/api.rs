@@ -1,6 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::future::Future;
 use std::path::{Path as StdPath, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
@@ -16,7 +18,7 @@ use axum::response::Response;
 use axum::routing::{delete, get, post, put};
 use axum::Json;
 use base64::Engine;
-use futures::{SinkExt, Stream, StreamExt};
+use futures::{Sink, SinkExt, Stream, StreamExt};
 use opentelemetry::trace::SpanKind;
 use opentelemetry::KeyValue;
 use rand_core::RngCore;
@@ -25,7 +27,7 @@ use sha2::Digest;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom};
 use tokio::process::Command;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex, Notify};
 use tokio::task::JoinSet;
 use tokio_tungstenite::{connect_async, tungstenite::Message as TungsteniteMessage};
 use tokio_util::io::ReaderStream;
@@ -4982,11 +4984,12 @@ async fn mobile_secure_workspace_stream_ws(
 }
 
 async fn handle_mobile_secure_ws(
-    mut socket: WebSocket,
+    socket: WebSocket,
     state: Arc<AppState>,
     workspace_id: WorkspaceId,
     device_id: String,
 ) -> Result<(), anyhow::Error> {
+    let (sender, mut receiver) = socket.split();
     let device_uuid = uuid::Uuid::parse_str(&device_id)?;
     let cfg = state.global_store().get_mobile_access_config().await?;
     let cfg = cfg.ok_or_else(|| anyhow::anyhow!("mobile access not configured"))?;
@@ -5010,7 +5013,12 @@ async fn handle_mobile_secure_ws(
         .subscribe(workspace_id)
         .await;
     let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
-    let mut outbound_seq: i64 = 0;
+    let pending = Arc::new(StreamQueue::new(
+        WORKSPACE_STREAM_QUEUE_LIMIT,
+        WORKSPACE_STREAM_QUEUE_MAX_AGE,
+    ));
+    let send_control = Arc::new(StreamSendControl::new());
+    let mut reset_queued = false;
 
     let ready = WorkspaceActiveSnapshotEvent::Ready {
         workspace_id,
@@ -5023,144 +5031,231 @@ async fn handle_mobile_secure_ws(
             .current_archived_rev(workspace_id)
             .await,
     };
-    outbound_seq += 1;
-    send_secure_ws(&mut socket, &key, &device_id, outbound_seq, &ready).await?;
+    if pending.push(ready).await.is_err() {
+        return Ok(());
+    }
 
-    loop {
-        tokio::select! {
-            msg = socket.recv() => {
-                match msg {
-                    Some(Ok(WsMessage::Text(text))) => {
-                        let frame: MobileSecureEnvelope = match serde_json::from_str(&text) {
-                            Ok(v) => v,
-                            Err(_) => continue,
-                        };
-                        let payload = crate::mobile_e2ee::decrypt(
-                            &key,
-                            &device_id,
-                            frame.seq,
-                            &frame.nonce,
-                            &frame.ciphertext,
-                        )?;
-                        let message: WorkspaceActiveSnapshotClientMessage = serde_json::from_slice(&payload)?;
-                        let (session_ids, sessions) = match message {
-                            WorkspaceActiveSnapshotClientMessage::Subscribe { session_ids, sessions } => (session_ids, sessions),
-                        };
-                        let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = if !sessions.is_empty() {
-                            sessions
-                        } else {
-                            session_ids
-                                .into_iter()
-                                .map(|session_id| WorkspaceActiveSnapshotSessionSubscription { session_id, after_seq: None })
-                                .collect()
-                        };
-                        next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
-                        let mut next_map = HashMap::new();
-                        for sub in next {
-                            let after_seq = sub.after_seq.unwrap_or(0);
-                            let (last_sent, gap) = replay_session_events_secure(
-                                &mut socket,
-                                &state,
-                                workspace_id,
-                                sub.session_id,
-                                after_seq,
-                                &key,
-                                &device_id,
-                                &mut outbound_seq,
-                            )
-                            .await
-                            .map_err(|_| anyhow::anyhow!("replay failed"))?;
-                            if gap {
-                                next_map.insert(sub.session_id, SessionCursor { last_sent });
-                                continue;
-                            }
-                            next_map.insert(sub.session_id, SessionCursor { last_sent });
-                        }
-                        subscriptions = next_map;
-                    }
-                    Some(Ok(WsMessage::Close(_))) => break,
-                    Some(Ok(_)) => {},
-                    Some(Err(_)) => break,
-                    None => break,
-                }
-            }
-            event = rx.recv() => {
-                let event = match event {
-                    Ok(event) => event,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        let mut failed = false;
-                        for (session_id, cursor) in &mut subscriptions {
-                            let latest = match state.store_for_session(*session_id).await {
-                                Ok(store) => store
-                                    .get_session_last_event_seq(*session_id)
-                                    .await
-                                    .unwrap_or(cursor.last_sent),
-                                Err(_) => cursor.last_sent,
-                            };
-                            cursor.last_sent = latest;
-                            if !send_secure_workspace_gap(
-                                &mut socket,
-                                &state,
-                                workspace_id,
-                                *session_id,
-                                latest,
-                                "stream_lagged",
-                                &key,
-                                &device_id,
-                                &mut outbound_seq,
-                            )
-                            .await
-                            {
-                                failed = true;
-                                break;
-                            }
-                        }
-                        if failed {
-                            break;
-                        }
+    let send_task = {
+        let pending = pending.clone();
+        let send_control = send_control.clone();
+        let send_key = key.clone();
+        let send_device_id = device_id.clone();
+        tokio::spawn(async move {
+            let mut sender = sender;
+            let mut outbound_seq: i64 = 0;
+            loop {
+                let notified = pending.notify.notified();
+                if let Some(message) = pending.pop().await {
+                    outbound_seq += 1;
+                    if send_secure_ws(
+                        &mut sender,
+                        &send_key,
+                        &send_device_id,
+                        outbound_seq,
+                        &message,
+                    )
+                    .await
+                    .is_err()
+                    {
                         break;
                     }
-                    Err(_) => break,
-                };
+                    if send_control.should_disconnect_after_flush() && pending.is_empty().await {
+                        break;
+                    }
+                    continue;
+                }
+                if send_control.should_disconnect_after_flush() {
+                    break;
+                }
+                notified.await;
+            }
+        })
+    };
+    let mut send_task = send_task;
 
-                if let WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } = &event {
-                    let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
-                        continue;
-                    };
-                    if let Some(ev) = &delta.event {
-                        if ev.seq <= cursor.last_sent {
-                            continue;
+    let result = async {
+        loop {
+            tokio::select! {
+                _ = &mut send_task => break,
+                msg = receiver.next() => {
+                    match msg {
+                        Some(Ok(WsMessage::Text(text))) => {
+                            let frame: MobileSecureEnvelope = match serde_json::from_str(&text) {
+                                Ok(v) => v,
+                                Err(_) => continue,
+                            };
+                            let payload = crate::mobile_e2ee::decrypt(
+                                &key,
+                                &device_id,
+                                frame.seq,
+                                &frame.nonce,
+                                &frame.ciphertext,
+                            )?;
+                            let message: WorkspaceActiveSnapshotClientMessage = serde_json::from_slice(&payload)?;
+                            let (session_ids, sessions) = match message {
+                                WorkspaceActiveSnapshotClientMessage::Subscribe { session_ids, sessions } => (session_ids, sessions),
+                            };
+                            let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = if !sessions.is_empty() {
+                                sessions
+                            } else {
+                                session_ids
+                                    .into_iter()
+                                    .map(|session_id| WorkspaceActiveSnapshotSessionSubscription { session_id, after_seq: None })
+                                    .collect()
+                            };
+                            next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
+
+                            pending.clear().await;
+                            reset_queued = false;
+                            send_control.clear_disconnect_after_flush();
+
+                            let mut next_map = HashMap::new();
+                            let mut replay_failed = false;
+                            for sub in next {
+                                let after_seq = sub.after_seq.unwrap_or(0);
+                                let replay = replay_session_events_secure(
+                                    &state,
+                                    workspace_id,
+                                    sub.session_id,
+                                    after_seq,
+                                    |event| pending.push(event),
+                                )
+                                .await;
+                                let (last_sent, gap) = match replay {
+                                    Ok(v) => v,
+                                    Err(_) => {
+                                        replay_failed = true;
+                                        break;
+                                    }
+                                };
+                                if gap {
+                                    next_map.insert(sub.session_id, SessionCursor { last_sent });
+                                    continue;
+                                }
+                                next_map.insert(sub.session_id, SessionCursor { last_sent });
+                            }
+                            if replay_failed {
+                                pending.clear().await;
+                                if queue_session_gaps(
+                                    &pending,
+                                    &state,
+                                    workspace_id,
+                                    &subscriptions,
+                                    "stream_backpressure",
+                                )
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                                reset_queued = true;
+                                send_control.set_disconnect_after_flush();
+                                continue;
+                            }
+                            subscriptions = next_map;
                         }
-                        cursor.last_sent = ev.seq;
-                    } else if delta.last_event_seq <= cursor.last_sent {
-                        continue;
-                    } else {
-                        cursor.last_sent = delta.last_event_seq;
+                        Some(Ok(WsMessage::Close(_))) => break,
+                        Some(Ok(_)) => {}
+                        Some(Err(_)) => break,
+                        None => break,
                     }
                 }
+                event = rx.recv() => {
+                    let event = match event {
+                        Ok(event) => event,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            if reset_queued {
+                                continue;
+                            }
+                            pending.clear().await;
+                            if queue_session_gaps(
+                                &pending,
+                                &state,
+                                workspace_id,
+                                &subscriptions,
+                                "stream_lagged",
+                            )
+                            .await
+                            .is_err()
+                            {
+                                break;
+                            }
+                            reset_queued = true;
+                            send_control.set_disconnect_after_flush();
+                            continue;
+                        }
+                        Err(_) => break,
+                    };
 
-                outbound_seq += 1;
-                if send_secure_ws(&mut socket, &key, &device_id, outbound_seq, &event).await.is_err() {
-                    break;
+                    if reset_queued {
+                        continue;
+                    }
+
+                    if let WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } = &event {
+                        let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
+                            continue;
+                        };
+                        if let Some(ev) = &delta.event {
+                            if ev.seq <= cursor.last_sent {
+                                continue;
+                            }
+                            cursor.last_sent = ev.seq;
+                        } else if delta.last_event_seq <= cursor.last_sent {
+                            continue;
+                        } else {
+                            cursor.last_sent = delta.last_event_seq;
+                        }
+                    }
+
+                    if pending.push(event).await.is_err() {
+                        if reset_queued {
+                            continue;
+                        }
+                        pending.clear().await;
+                        if queue_session_gaps(
+                            &pending,
+                            &state,
+                            workspace_id,
+                            &subscriptions,
+                            "stream_backpressure",
+                        )
+                        .await
+                        .is_err()
+                        {
+                            break;
+                        }
+                        reset_queued = true;
+                        send_control.set_disconnect_after_flush();
+                    }
                 }
             }
         }
+        Ok(())
     }
+    .await;
 
-    Ok(())
+    send_control.set_disconnect_after_flush();
+    pending.notify.notify_one();
+    let _ = send_task.await;
+
+    result
 }
 
 struct SessionCursor {
     last_sent: i64,
 }
 
-async fn send_secure_ws(
-    socket: &mut WebSocket,
+async fn send_secure_ws<S>(
+    sink: &mut S,
     key: &crate::mobile_e2ee::E2eeKey,
     device_id: &str,
     seq: i64,
     payload: &WorkspaceActiveSnapshotEvent,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), anyhow::Error>
+where
+    S: Sink<WsMessage> + Unpin,
+    S::Error: std::error::Error + Send + Sync + 'static,
+{
     let plaintext = serde_json::to_vec(payload)?;
     let envelope = crate::mobile_e2ee::encrypt(key, device_id, seq, &plaintext)?;
     let frame = SecureEnvelope {
@@ -5170,7 +5265,7 @@ async fn send_secure_ws(
         ciphertext: envelope.ciphertext_b64,
     };
     let text = serde_json::to_string(&frame)?;
-    socket.send(WsMessage::Text(text)).await?;
+    sink.send(WsMessage::Text(text)).await?;
     Ok(())
 }
 
@@ -9091,6 +9186,10 @@ async fn create_task(
         tracing::warn!(task_id = %task.id.0, "failed to set primary worktree: {e:?}");
     }
 
+    if let Err(e) = attachments::sync_workspace_attachments(&state, &ws, false).await {
+        tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
+    }
+
     if let Err(e) =
         attachments::ensure_worktree_attachment_mounts(&state, &ws, &worktree, false).await
     {
@@ -9275,6 +9374,18 @@ async fn create_session_for_task(
                 {
                     tracing::warn!(task_id = %task.id.0, "worktree bootstrap failed: {e:?}");
                 }
+                if let Err(e) =
+                    attachments::sync_workspace_attachments(&state, &workspace, false).await
+                {
+                    tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
+                }
+                if let Err(e) = attachments::ensure_worktree_attachment_mounts(
+                    &state, &workspace, &worktree, false,
+                )
+                .await
+                {
+                    tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
+                }
                 worktree_id
             }
             "local" => {
@@ -9307,7 +9418,7 @@ async fn create_session_for_task(
                         bootstrap_script_path: None,
                     };
                     store
-                        .insert_worktree(worktree)
+                        .insert_worktree(worktree.clone())
                         .await
                         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
                     if let Err(e) = state
@@ -9319,6 +9430,18 @@ async fn create_session_for_task(
                             worktree_id = %worktree_id.0,
                             "failed to update worktree index: {e:?}"
                         );
+                    }
+                    if let Err(e) =
+                        attachments::sync_workspace_attachments(&state, &workspace, false).await
+                    {
+                        tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
+                    }
+                    if let Err(e) = attachments::ensure_worktree_attachment_mounts(
+                        &state, &workspace, &worktree, false,
+                    )
+                    .await
+                    {
+                        tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
                     }
                     worktree_id
                 }
@@ -10413,43 +10536,155 @@ async fn workspace_active_snapshot_stream_ws(
 }
 
 const SESSION_REPLAY_MAX_EVENTS: usize = 2000;
+const WORKSPACE_STREAM_QUEUE_LIMIT: usize = 256;
+const WORKSPACE_STREAM_QUEUE_MAX_AGE: Duration = Duration::from_secs(10);
 
-async fn send_workspace_active_gap(
-    socket: &mut WebSocket,
-    state: &Arc<AppState>,
+struct StreamQueueEntry<T> {
+    enqueued_at: Instant,
+    message: T,
+}
+
+struct StreamQueue<T> {
+    pending: Mutex<VecDeque<StreamQueueEntry<T>>>,
+    notify: Notify,
+    limit: usize,
+    max_age: Duration,
+}
+
+impl<T> StreamQueue<T> {
+    fn new(limit: usize, max_age: Duration) -> Self {
+        Self {
+            pending: Mutex::new(VecDeque::new()),
+            notify: Notify::new(),
+            limit,
+            max_age,
+        }
+    }
+
+    async fn push(&self, message: T) -> Result<(), ()> {
+        let now = Instant::now();
+        let mut guard = self.pending.lock().await;
+        if guard.len() >= self.limit {
+            return Err(());
+        }
+        if let Some(front) = guard.front() {
+            if now.duration_since(front.enqueued_at) >= self.max_age {
+                return Err(());
+            }
+        }
+        guard.push_back(StreamQueueEntry {
+            enqueued_at: now,
+            message,
+        });
+        self.notify.notify_one();
+        Ok(())
+    }
+
+    async fn clear(&self) {
+        let mut guard = self.pending.lock().await;
+        guard.clear();
+    }
+
+    async fn pop(&self) -> Option<T> {
+        let mut guard = self.pending.lock().await;
+        guard.pop_front().map(|entry| entry.message)
+    }
+
+    async fn is_empty(&self) -> bool {
+        self.pending.lock().await.is_empty()
+    }
+}
+
+struct StreamSendControl {
+    disconnect_after_flush: AtomicBool,
+}
+
+impl StreamSendControl {
+    fn new() -> Self {
+        Self {
+            disconnect_after_flush: AtomicBool::new(false),
+        }
+    }
+
+    fn set_disconnect_after_flush(&self) {
+        self.disconnect_after_flush.store(true, Ordering::Relaxed);
+    }
+
+    fn clear_disconnect_after_flush(&self) {
+        self.disconnect_after_flush.store(false, Ordering::Relaxed);
+    }
+
+    fn should_disconnect_after_flush(&self) -> bool {
+        self.disconnect_after_flush.load(Ordering::Relaxed)
+    }
+}
+
+fn make_workspace_active_gap_event(
     workspace_id: WorkspaceId,
+    snapshot_rev: i64,
     session_id: SessionId,
     after_seq: i64,
     reason: &str,
-) -> bool {
-    if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_gap").is_err() {
-        return false;
-    }
-    let snapshot_rev = state
-        .workspace_active_snapshot
-        .current_rev(workspace_id)
-        .await;
-    let event = WorkspaceActiveSnapshotEvent::SessionGap {
+) -> WorkspaceActiveSnapshotEvent {
+    WorkspaceActiveSnapshotEvent::SessionGap {
         workspace_id,
         snapshot_rev,
         session_id,
         after_seq,
         reason: Some(reason.to_string()),
-    };
-    if let Ok(text) = serde_json::to_string(&event) {
-        socket.send(WsMessage::Text(text)).await.is_ok()
-    } else {
-        false
     }
 }
 
-async fn replay_session_events_active(
-    socket: &mut WebSocket,
+async fn queue_session_gaps(
+    pending: &StreamQueue<WorkspaceActiveSnapshotEvent>,
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    subscriptions: &HashMap<SessionId, SessionCursor>,
+    reason: &str,
+) -> Result<(), ()> {
+    let snapshot_rev = state
+        .workspace_active_snapshot
+        .current_rev(workspace_id)
+        .await;
+    for (session_id, cursor) in subscriptions {
+        let latest = match state.store_for_session(*session_id).await {
+            Ok(store) => store
+                .get_session_last_event_seq(*session_id)
+                .await
+                .unwrap_or(cursor.last_sent),
+            Err(_) => cursor.last_sent,
+        };
+        if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_gap").is_err() {
+            return Err(());
+        }
+        if pending
+            .push(make_workspace_active_gap_event(
+                workspace_id,
+                snapshot_rev,
+                *session_id,
+                latest,
+                reason,
+            ))
+            .await
+            .is_err()
+        {
+            return Err(());
+        }
+    }
+    Ok(())
+}
+
+async fn replay_session_events_active<F, Fut>(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
     session_id: SessionId,
     after_seq: i64,
-) -> Result<(i64, bool), ()> {
+    mut emit: F,
+) -> Result<(i64, bool), ()>
+where
+    F: FnMut(WorkspaceActiveSnapshotEvent) -> Fut,
+    Fut: Future<Output = Result<(), ()>>,
+{
     let snapshot_rev = state
         .workspace_active_snapshot
         .current_rev(workspace_id)
@@ -10472,18 +10707,19 @@ async fn replay_session_events_active(
                         .get_session_last_event_seq(session_id)
                         .await
                         .unwrap_or(last_sent);
-                    if !send_workspace_active_gap(
-                        socket,
-                        state,
-                        workspace_id,
-                        session_id,
-                        latest,
-                        "replay_error",
-                    )
-                    .await
+                    if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_gap")
+                        .is_err()
                     {
                         return Err(());
                     }
+                    emit(make_workspace_active_gap_event(
+                        workspace_id,
+                        snapshot_rev,
+                        session_id,
+                        latest,
+                        "replay_error",
+                    ))
+                    .await?;
                     return Ok((latest, true));
                 }
             },
@@ -10492,18 +10728,18 @@ async fn replay_session_events_active(
                     .get_session_last_event_seq(session_id)
                     .await
                     .unwrap_or(last_sent);
-                if !send_workspace_active_gap(
-                    socket,
-                    state,
-                    workspace_id,
-                    session_id,
-                    latest,
-                    "replay_error",
-                )
-                .await
+                if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_gap").is_err()
                 {
                     return Err(());
                 }
+                emit(make_workspace_active_gap_event(
+                    workspace_id,
+                    snapshot_rev,
+                    session_id,
+                    latest,
+                    "replay_error",
+                ))
+                .await?;
                 return Ok((latest, true));
             }
         };
@@ -10513,18 +10749,17 @@ async fn replay_session_events_active(
             .get_session_last_event_seq(session_id)
             .await
             .unwrap_or(last_sent);
-        if !send_workspace_active_gap(
-            socket,
-            state,
+        if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_gap").is_err() {
+            return Err(());
+        }
+        emit(make_workspace_active_gap_event(
             workspace_id,
+            snapshot_rev,
             session_id,
             latest,
             "replay_too_large",
-        )
-        .await
-        {
-            return Err(());
-        }
+        ))
+        .await?;
         return Ok((latest, true));
     }
 
@@ -10574,23 +10809,31 @@ async fn replay_session_events_active(
             snapshot_rev,
             delta: Box::new(delta),
         };
-        let text = serde_json::to_string(&wrapped).map_err(|_| ())?;
         crate::fault_injection::maybe_fail("ctx_http.replay_session_events_active.send")
             .map_err(|_| ())?;
-        socket.send(WsMessage::Text(text)).await.map_err(|_| ())?;
+        emit(wrapped).await?;
         last_sent = next_seq;
     }
     Ok((last_sent, false))
 }
 
 async fn handle_workspace_active_snapshot_ws(
-    mut socket: WebSocket,
+    socket: WebSocket,
     state: Arc<AppState>,
     workspace_id: WorkspaceId,
 ) {
-    struct SessionCursor {
-        last_sent: i64,
-    }
+    let (sender, mut receiver) = socket.split();
+    let pending = Arc::new(StreamQueue::new(
+        WORKSPACE_STREAM_QUEUE_LIMIT,
+        WORKSPACE_STREAM_QUEUE_MAX_AGE,
+    ));
+    let send_control = Arc::new(StreamSendControl::new());
+    let mut rx = state
+        .workspace_active_snapshot
+        .subscribe(workspace_id)
+        .await;
+    let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
+    let mut reset_queued = false;
 
     let ready = WorkspaceActiveSnapshotEvent::Ready {
         workspace_id,
@@ -10603,20 +10846,42 @@ async fn handle_workspace_active_snapshot_ws(
             .current_archived_rev(workspace_id)
             .await,
     };
-    if let Ok(text) = serde_json::to_string(&ready) {
-        if socket.send(WsMessage::Text(text)).await.is_err() {
-            return;
-        }
+    if pending.push(ready).await.is_err() {
+        return;
     }
-    let mut rx = state
-        .workspace_active_snapshot
-        .subscribe(workspace_id)
-        .await;
-    let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
+
+    let send_task = {
+        let pending = pending.clone();
+        let send_control = send_control.clone();
+        tokio::spawn(async move {
+            let mut sender = sender;
+            loop {
+                let notified = pending.notify.notified();
+                if let Some(message) = pending.pop().await {
+                    let Ok(text) = serde_json::to_string(&message) else {
+                        break;
+                    };
+                    if sender.send(WsMessage::Text(text)).await.is_err() {
+                        break;
+                    }
+                    if send_control.should_disconnect_after_flush() && pending.is_empty().await {
+                        break;
+                    }
+                    continue;
+                }
+                if send_control.should_disconnect_after_flush() {
+                    break;
+                }
+                notified.await;
+            }
+        })
+    };
+    let mut send_task = send_task;
 
     loop {
         tokio::select! {
-            msg = socket.recv() => {
+            _ = &mut send_task => break,
+            msg = receiver.next() => {
                 match msg {
                     Some(Ok(WsMessage::Text(text))) => {
                         if let Ok(message) = serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text) {
@@ -10632,26 +10897,53 @@ async fn handle_workspace_active_snapshot_ws(
                                     .collect()
                             };
                             next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
+
+                            pending.clear().await;
+                            reset_queued = false;
+                            send_control.clear_disconnect_after_flush();
+
                             let mut next_map = HashMap::new();
+                            let mut replay_failed = false;
                             for sub in next {
                                 let after_seq = sub.after_seq.unwrap_or(0);
-                                let (last_sent, gap) = match replay_session_events_active(
-                                    &mut socket,
+                                let replay = replay_session_events_active(
                                     &state,
                                     workspace_id,
                                     sub.session_id,
                                     after_seq,
+                                    |event| pending.push(event),
                                 )
-                                .await
-                                {
+                                .await;
+                                let (last_sent, gap) = match replay {
                                     Ok(v) => v,
-                                    Err(_) => return,
+                                    Err(_) => {
+                                        replay_failed = true;
+                                        break;
+                                    }
                                 };
                                 if gap {
                                     next_map.insert(sub.session_id, SessionCursor { last_sent });
                                     continue;
                                 }
                                 next_map.insert(sub.session_id, SessionCursor { last_sent });
+                            }
+                            if replay_failed {
+                                pending.clear().await;
+                                if queue_session_gaps(
+                                    &pending,
+                                    &state,
+                                    workspace_id,
+                                    &subscriptions,
+                                    "stream_backpressure",
+                                )
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                                reset_queued = true;
+                                send_control.set_disconnect_after_flush();
+                                continue;
                             }
                             subscriptions = next_map;
                         }
@@ -10671,20 +10963,29 @@ async fn handle_workspace_active_snapshot_ws(
                                         .collect()
                                 };
                                 next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
+
+                                pending.clear().await;
+                                reset_queued = false;
+                                send_control.clear_disconnect_after_flush();
+
                                 let mut next_map = HashMap::new();
+                                let mut replay_failed = false;
                                 for sub in next {
                                     let after_seq = sub.after_seq.unwrap_or(0);
-                                    let (last_sent, gap) = match replay_session_events_active(
-                                        &mut socket,
+                                    let replay = replay_session_events_active(
                                         &state,
                                         workspace_id,
                                         sub.session_id,
                                         after_seq,
+                                        |event| pending.push(event),
                                     )
-                                    .await
-                                    {
+                                    .await;
+                                    let (last_sent, gap) = match replay {
                                         Ok(v) => v,
-                                        Err(_) => return,
+                                        Err(_) => {
+                                            replay_failed = true;
+                                            break;
+                                        }
                                     };
                                     if gap {
                                         next_map.insert(sub.session_id, SessionCursor { last_sent });
@@ -10692,12 +10993,30 @@ async fn handle_workspace_active_snapshot_ws(
                                     }
                                     next_map.insert(sub.session_id, SessionCursor { last_sent });
                                 }
+                                if replay_failed {
+                                    pending.clear().await;
+                                    if queue_session_gaps(
+                                        &pending,
+                                        &state,
+                                        workspace_id,
+                                        &subscriptions,
+                                        "stream_backpressure",
+                                    )
+                                    .await
+                                    .is_err()
+                                    {
+                                        break;
+                                    }
+                                    reset_queued = true;
+                                    send_control.set_disconnect_after_flush();
+                                    continue;
+                                }
                                 subscriptions = next_map;
                             }
                         }
                     }
                     Some(Ok(WsMessage::Close(_))) => break,
-                    Some(Ok(_)) => {},
+                    Some(Ok(_)) => {}
                     Some(Err(_)) => break,
                     None => break,
                 }
@@ -10706,28 +11025,32 @@ async fn handle_workspace_active_snapshot_ws(
                 let event = match event {
                     Ok(event) => event,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        let mut failed = false;
-                        for (session_id, cursor) in &mut subscriptions {
-                            let latest = match state.store_for_session(*session_id).await {
-                                Ok(store) => store
-                                    .get_session_last_event_seq(*session_id)
-                                    .await
-                                    .unwrap_or(cursor.last_sent),
-                                Err(_) => cursor.last_sent,
-                            };
-                            cursor.last_sent = latest;
-                            if !send_workspace_active_gap(&mut socket, &state, workspace_id, *session_id, latest, "stream_lagged").await {
-                                failed = true;
-                                break;
-                            }
+                        if reset_queued {
+                            continue;
                         }
-                        if failed {
+                        pending.clear().await;
+                        if queue_session_gaps(
+                            &pending,
+                            &state,
+                            workspace_id,
+                            &subscriptions,
+                            "stream_lagged",
+                        )
+                        .await
+                        .is_err()
+                        {
                             break;
                         }
-                        break;
+                        reset_queued = true;
+                        send_control.set_disconnect_after_flush();
+                        continue;
                     }
                     Err(_) => break,
                 };
+
+                if reset_queued {
+                    continue;
+                }
 
                 if let WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } = &event {
                     let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
@@ -10745,59 +11068,46 @@ async fn handle_workspace_active_snapshot_ws(
                     }
                 }
 
-                if let Ok(text) = serde_json::to_string(&event) {
-                    if socket.send(WsMessage::Text(text)).await.is_err() {
+                if pending.push(event).await.is_err() {
+                    if reset_queued {
+                        continue;
+                    }
+                    pending.clear().await;
+                    if queue_session_gaps(
+                        &pending,
+                        &state,
+                        workspace_id,
+                        &subscriptions,
+                        "stream_backpressure",
+                    )
+                    .await
+                    .is_err()
+                    {
                         break;
                     }
+                    reset_queued = true;
+                    send_control.set_disconnect_after_flush();
                 }
             }
         }
     }
+
+    send_control.set_disconnect_after_flush();
+    pending.notify.notify_one();
+    let _ = send_task.await;
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn send_secure_workspace_gap(
-    socket: &mut WebSocket,
+async fn replay_session_events_secure<F, Fut>(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
     session_id: SessionId,
     after_seq: i64,
-    reason: &str,
-    key: &crate::mobile_e2ee::E2eeKey,
-    device_id: &str,
-    outbound_seq: &mut i64,
-) -> bool {
-    if crate::fault_injection::maybe_fail("ctx_http.send_secure_workspace_gap").is_err() {
-        return false;
-    }
-    let snapshot_rev = state
-        .workspace_active_snapshot
-        .current_rev(workspace_id)
-        .await;
-    let event = WorkspaceActiveSnapshotEvent::SessionGap {
-        workspace_id,
-        snapshot_rev,
-        session_id,
-        after_seq,
-        reason: Some(reason.to_string()),
-    };
-    *outbound_seq += 1;
-    send_secure_ws(socket, key, device_id, *outbound_seq, &event)
-        .await
-        .is_ok()
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn replay_session_events_secure(
-    socket: &mut WebSocket,
-    state: &Arc<AppState>,
-    workspace_id: WorkspaceId,
-    session_id: SessionId,
-    after_seq: i64,
-    key: &crate::mobile_e2ee::E2eeKey,
-    device_id: &str,
-    outbound_seq: &mut i64,
-) -> Result<(i64, bool), ()> {
+    mut emit: F,
+) -> Result<(i64, bool), ()>
+where
+    F: FnMut(WorkspaceActiveSnapshotEvent) -> Fut,
+    Fut: Future<Output = Result<(), ()>>,
+{
     let snapshot_rev = state
         .workspace_active_snapshot
         .current_rev(workspace_id)
@@ -10810,30 +11120,49 @@ async fn replay_session_events_secure(
     let limit = u32::try_from(SESSION_REPLAY_MAX_EVENTS + 1).unwrap_or(u32::MAX);
     let events =
         match crate::fault_injection::maybe_fail("ctx_http.replay_session_events_secure.list") {
-            Ok(()) => store
+            Ok(()) => match store
                 .list_session_events_page_by_seq(session_id, Some(last_sent), Some(limit), false)
                 .await
-                .map_err(|_| ())?,
+            {
+                Ok(events) => events,
+                Err(_) => {
+                    let latest = store
+                        .get_session_last_event_seq(session_id)
+                        .await
+                        .unwrap_or(last_sent);
+                    if crate::fault_injection::maybe_fail("ctx_http.send_secure_workspace_gap")
+                        .is_err()
+                    {
+                        return Err(());
+                    }
+                    emit(make_workspace_active_gap_event(
+                        workspace_id,
+                        snapshot_rev,
+                        session_id,
+                        latest,
+                        "replay_error",
+                    ))
+                    .await?;
+                    return Ok((latest, true));
+                }
+            },
             Err(_) => {
                 let latest = store
                     .get_session_last_event_seq(session_id)
                     .await
                     .unwrap_or(last_sent);
-                if !send_secure_workspace_gap(
-                    socket,
-                    state,
-                    workspace_id,
-                    session_id,
-                    latest,
-                    "replay_error",
-                    key,
-                    device_id,
-                    outbound_seq,
-                )
-                .await
+                if crate::fault_injection::maybe_fail("ctx_http.send_secure_workspace_gap").is_err()
                 {
                     return Err(());
                 }
+                emit(make_workspace_active_gap_event(
+                    workspace_id,
+                    snapshot_rev,
+                    session_id,
+                    latest,
+                    "replay_error",
+                ))
+                .await?;
                 return Ok((latest, true));
             }
         };
@@ -10843,21 +11172,17 @@ async fn replay_session_events_secure(
             .get_session_last_event_seq(session_id)
             .await
             .unwrap_or(last_sent);
-        if !send_secure_workspace_gap(
-            socket,
-            state,
+        if crate::fault_injection::maybe_fail("ctx_http.send_secure_workspace_gap").is_err() {
+            return Err(());
+        }
+        emit(make_workspace_active_gap_event(
             workspace_id,
+            snapshot_rev,
             session_id,
             latest,
             "replay_too_large",
-            key,
-            device_id,
-            outbound_seq,
-        )
-        .await
-        {
-            return Err(());
-        }
+        ))
+        .await?;
         return Ok((latest, true));
     }
 
@@ -10907,10 +11232,7 @@ async fn replay_session_events_secure(
             snapshot_rev,
             delta: Box::new(delta),
         };
-        *outbound_seq += 1;
-        send_secure_ws(socket, key, device_id, *outbound_seq, &wrapped)
-            .await
-            .map_err(|_| ())?;
+        emit(wrapped).await?;
         last_sent = next_seq;
     }
     Ok((last_sent, false))

@@ -79,7 +79,7 @@ import {
 } from "../utils/entitlementsCache";
 import { getSupabaseClient } from "../utils/supabaseClient";
 
-const AGENT_PROMPT_DEFAULT = "You are working inside ctx, an agent development environment. Use ctx MCP tools to attach photos/videos as artifacts, start persistent web sessions (Playwright REPL/scripts), and run sub-agents for research or well-scoped implementations. Check `.ctx/.refs/` and `.ctx/docs/` for extra reference repos and docs." as const;
+const AGENT_PROMPT_DEFAULT = "You are working inside ctx, an agent development environment. Use ctx MCP tools to attach photos/videos as artifacts, start persistent web sessions (Playwright REPL/scripts), and run sub-agents for research or well-scoped implementations. Check `.ctx/attachments/refs/` and `.ctx/attachments/docs/` for extra reference repos and docs." as const;
 const SUBAGENT_PROMPT_DEFAULT = "Subagents may use rg/grep and other token-heavy commands the main agent avoids." as const;
 
 const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
@@ -2198,7 +2198,9 @@ export default function SettingsPage() {
             <Row
               title="Mount paths"
               description="Reference repos are mounted inside each track."
-              control={<span className="settings-pill wb-mono">.ctx/.refs/&lt;name&gt;</span>}
+              control={
+                <span className="settings-pill wb-mono">.ctx/attachments/refs/&lt;name&gt;</span>
+              }
             />
           </Card>
 

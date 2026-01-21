@@ -122,6 +122,6 @@ async fn attachments_demo_react_smoketest() {
         .unwrap();
 
     assert!(!mounts.is_empty());
-    assert!(ws_root.join(".ctx/.refs/react").exists());
-    assert!(ws_root.join(".ctx/.docs/react-docs").exists());
+    assert!(ws_root.join(".ctx/attachments/refs/react").exists());
+    assert!(ws_root.join(".ctx/attachments/docs/react-docs").exists());
 }

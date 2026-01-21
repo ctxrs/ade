@@ -1333,7 +1333,7 @@ impl SettingsState {
             settings_row(
                 "Mount paths",
                 Some("Reference repos are mounted inside each worktree."),
-                settings_pill(".ctx/.refs/<name>", PillVariant::Default, true),
+                settings_pill(".ctx/attachments/refs/<name>", PillVariant::Default, true),
                 false,
             )
             .into_any_element(),

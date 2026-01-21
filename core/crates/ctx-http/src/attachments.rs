@@ -636,7 +636,7 @@ async fn ensure_git_exclude(worktree_root: &Path) -> Result<()> {
         String::new()
     };
 
-    let lines = [".ctx/.refs/", ".ctx/.docs/"];
+    let lines = [".ctx/attachments/refs/", ".ctx/attachments/docs/"];
     let mut changed = false;
     for line in lines {
         if !content.lines().any(|l| l.trim() == line) {
@@ -809,8 +809,8 @@ fn sanitize_mount_relpath(value: &str) -> Result<PathBuf> {
 fn default_mount_relpath(kind: &WorkspaceAttachmentKind, name: &str) -> String {
     let safe_name = sanitize_name(name);
     match kind {
-        WorkspaceAttachmentKind::ReferenceRepo => format!(".ctx/.refs/{safe_name}"),
-        WorkspaceAttachmentKind::DocMirror => format!(".ctx/.docs/{safe_name}"),
+        WorkspaceAttachmentKind::ReferenceRepo => format!(".ctx/attachments/refs/{safe_name}"),
+        WorkspaceAttachmentKind::DocMirror => format!(".ctx/attachments/docs/{safe_name}"),
     }
 }
 
