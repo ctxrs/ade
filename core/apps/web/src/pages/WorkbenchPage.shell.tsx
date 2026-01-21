@@ -3399,7 +3399,12 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const topbar = (
     <div className="wb-topbar" data-tauri-drag-region={desktopUi ? true : undefined}>
-      <div className="wb-topbar-tabs" role="tablist" aria-label="Workspaces">
+      <div
+        className="wb-topbar-tabs"
+        role="tablist"
+        aria-label="Workspaces"
+        data-tauri-drag-region={false}
+      >
         {workspaceTabsResolved.map((t) => (
           <div
             key={t.id}
@@ -3408,6 +3413,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             className={`wb-topbar-tab ${t.id === workspaceId ? "wb-topbar-tab-active" : ""}`}
             title={t.name}
             onClick={() => openWorkspaceTab(t.id)}
+            data-tauri-drag-region={false}
           >
             <span className="wb-topbar-tab-label">{t.name}</span>
             <button

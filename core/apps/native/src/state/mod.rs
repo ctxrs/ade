@@ -145,6 +145,7 @@ pub(crate) struct ShellView {
     pub(crate) selected_workspace: Option<WorkspaceId>,
     pub(crate) workspace_tabs: Vec<WorkspaceId>,
     pub(crate) active_workspace_tab: Option<WorkspaceId>,
+    pub(crate) workspace_tab_hovered: Option<WorkspaceId>,
     pub(crate) providers: Vec<ProviderItem>,
     pub(crate) composer_provider_id: Option<String>,
     pub(crate) composer_model_id: Option<String>,

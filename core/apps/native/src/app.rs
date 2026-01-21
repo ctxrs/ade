@@ -176,6 +176,7 @@ fn create_shell_view(
             selected_workspace: None,
             workspace_tabs: Vec::new(),
             active_workspace_tab: None,
+            workspace_tab_hovered: None,
             providers: Vec::new(),
             composer_provider_id: None,
             composer_model_id: None,
