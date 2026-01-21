@@ -550,7 +550,7 @@ struct WorkbenchShellView: View {
             }
         } catch {
             workspaces = []
-            workspaceError = "Failed to load workspaces."
+            workspaceError = daemonErrorMessage(error, fallback: "Failed to load workspaces.")
         }
         isLoadingWorkspaces = false
     }
@@ -1275,6 +1275,7 @@ private struct WorkbenchHomeView: View {
             )
                 .padding(.top, 8)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -1604,7 +1605,6 @@ private struct WorkbenchDrawerView: View {
                 .stroke(Color.ctxGlassStroke, lineWidth: 0.8)
         )
         .shadow(color: Color.ctxShadow, radius: 24, x: 0, y: 12)
-        .padding(.bottom, 24)
         .padding(.leading, 12)
     }
 }

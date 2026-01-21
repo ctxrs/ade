@@ -1594,15 +1594,12 @@ struct WorkspaceSwitchView: View {
     @EnvironmentObject private var connection: ConnectionStore
     @EnvironmentObject private var workspaceSelection: WorkspaceSelectionStore
     @EnvironmentObject private var workbenchSelection: WorkbenchSelectionStore
+    @EnvironmentObject private var rootNavigation: RootNavigationStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var workspaces: [WorkspaceSummary] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
-    @State private var newWorkspacePath = ""
-    @State private var newWorkspaceName = ""
-    @State private var isCreating = false
-    @State private var createError: String?
     @State private var deleteAlert: WorkspaceDeleteAlert?
     @State private var deleteInFlight: Set<String> = []
 
@@ -1645,25 +1642,20 @@ struct WorkspaceSwitchView: View {
                     }
 
                     GlassPanel {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Create workspace")
-                                .font(.headline)
-                                .foregroundColor(.ctxTextPrimary)
-                            CtxField(title: "Root path", placeholder: "/path/to/repo", text: $newWorkspacePath)
-                            CtxField(title: "Name (optional)", placeholder: "Workspace name", text: $newWorkspaceName)
-                            if let createError {
-                                Text(createError)
-                                    .font(.caption)
-                                    .foregroundColor(.ctxError)
+                        Button {
+                            _Concurrency.Task {
+                                await connection.disconnect()
+                                rootNavigation.route = .launcher
+                                dismiss()
                             }
-                            Button {
-                                _Concurrency.Task { await createWorkspace() }
-                            } label: {
-                                Text(isCreating ? "Creating..." : "Create workspace")
+                        } label: {
+                            HStack {
+                                Image(systemName: "qrcode.viewfinder")
+                                Text("Add workspace")
+                                Spacer()
                             }
-                            .buttonStyle(CtxPrimaryButtonStyle())
-                            .disabled(isCreating || newWorkspacePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
+                        .buttonStyle(CtxPrimaryButtonStyle())
                     }
                 }
                 .padding(.horizontal, 20)
@@ -1704,7 +1696,7 @@ struct WorkspaceSwitchView: View {
             workspaces = try await client.listWorkspaces()
         } catch {
             workspaces = []
-            errorMessage = "Failed to load workspaces."
+            errorMessage = daemonErrorMessage(error, fallback: "Failed to load workspaces.")
         }
         isLoading = false
     }
@@ -1714,32 +1706,6 @@ struct WorkspaceSwitchView: View {
         workbenchSelection.setContext(daemonKey: connection.baseURLText, workspaceId: workspace.id)
         workbenchSelection.setSelection(taskId: nil, sessionId: nil)
         dismiss()
-    }
-
-    @MainActor
-    private func createWorkspace() async {
-        guard let client = connection.apiClient else {
-            createError = "Connect to a daemon to create workspaces."
-            return
-        }
-        let rootPath = newWorkspacePath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !rootPath.isEmpty else {
-            createError = "Root path is required."
-            return
-        }
-        let name = newWorkspaceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        isCreating = true
-        createError = nil
-        do {
-            let workspace = try await client.createWorkspace(rootPath: rootPath, name: name.isEmpty ? nil : name)
-            newWorkspacePath = ""
-            newWorkspaceName = ""
-            await loadWorkspaces()
-            selectWorkspace(workspace)
-        } catch {
-            createError = "Failed to create workspace."
-        }
-        isCreating = false
     }
 
     @MainActor
@@ -1917,4 +1883,5 @@ private struct SettingsNavigationRowView: View {
         .environmentObject(PushNotificationManager.shared)
         .environmentObject(WorkspaceSelectionStore())
         .environmentObject(WorkbenchSelectionStore())
+        .environmentObject(RootNavigationStore())
 }

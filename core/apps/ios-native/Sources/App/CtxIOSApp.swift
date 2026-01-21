@@ -7,6 +7,7 @@ struct CtxIOSApp: App {
     @StateObject private var connectionStore: ConnectionStore
     @StateObject private var workspaceSelectionStore = WorkspaceSelectionStore()
     @StateObject private var workbenchSelectionStore = WorkbenchSelectionStore()
+    @StateObject private var rootNavigationStore = RootNavigationStore()
     @StateObject private var pushManager = PushNotificationManager.shared
 
     init() {
@@ -28,6 +29,7 @@ struct CtxIOSApp: App {
                 .environmentObject(connectionStore)
                 .environmentObject(workspaceSelectionStore)
                 .environmentObject(workbenchSelectionStore)
+                .environmentObject(rootNavigationStore)
                 .environmentObject(pushManager)
         }
     }

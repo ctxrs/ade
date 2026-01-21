@@ -4,11 +4,11 @@ import _Concurrency
 
 struct ConnectionView: View {
     @EnvironmentObject private var connection: ConnectionStore
+    @EnvironmentObject private var rootNavigation: RootNavigationStore
     @State private var daemonURL = ""
     @State private var accessToken = ""
     @State private var rememberDevice = true
     @State private var isConnecting = false
-    @State private var shouldNavigate = false
     @State private var isShowingScanner = false
     @State private var recentConnections: [ConnectionHistoryEntry] = []
 
@@ -76,7 +76,7 @@ struct ConnectionView: View {
                                     isConnecting = false
                                     recentConnections = ConnectionHistoryStore.load()
                                     if connection.isConnected {
-                                        shouldNavigate = true
+                                        rootNavigation.route = .workbench
                                     }
                                 }
                             } label: {
@@ -158,7 +158,7 @@ struct ConnectionView: View {
         }
         .onChange(of: connection.isConnected) { connected in
             if connected {
-                shouldNavigate = true
+                rootNavigation.route = .workbench
             }
         }
         .onChange(of: connection.baseURLText) { baseURL in
@@ -167,10 +167,6 @@ struct ConnectionView: View {
         .onChange(of: connection.tokenText) { token in
             accessToken = token
         }
-        .background(
-            NavigationLink("", destination: WorkbenchShellView(), isActive: $shouldNavigate)
-                .opacity(0)
-        )
         .fullScreenCover(isPresented: $isShowingScanner) {
             QRCodeScannerView { result in
                 switch result {
@@ -270,7 +266,7 @@ struct ConnectionView: View {
             connection.tokenText = ""
             await connection.connect()
             if connection.isConnected {
-                shouldNavigate = true
+                rootNavigation.route = .workbench
             }
         } catch let error as DaemonAPIError {
             setPairingError(formatPairingError(error), error: error)
@@ -421,4 +417,5 @@ private struct ConnectionRowView: View {
 #Preview {
     ConnectionView()
         .environmentObject(ConnectionStore())
+        .environmentObject(RootNavigationStore())
 }

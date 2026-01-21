@@ -14,8 +14,9 @@ final class ConnectionStore: ObservableObject {
 
     init(baseURLText: String = "http://127.0.0.1:4399", tokenText: String = "") {
         let storedSecure = SecureConnectionDefaults.load()
+        let lastBaseURL = ConnectionHistoryStore.load().first?.baseURL
         self.secureConfig = storedSecure
-        self.baseURLText = storedSecure?.baseURL ?? baseURLText
+        self.baseURLText = storedSecure?.baseURL ?? lastBaseURL ?? baseURLText
         self.tokenText = tokenText
         self.tokenStore = KeychainTokenStore()
     }
@@ -39,6 +40,27 @@ final class ConnectionStore: ObservableObject {
         if let config {
             baseURLText = config.baseURL
         }
+    }
+
+
+    func autoConnectIfPossible() async -> Bool {
+        guard await hasStoredCredentials() else { return false }
+        await connect()
+        return isConnected
+    }
+
+    private func hasStoredCredentials() async -> Bool {
+        if secureConfig != nil {
+            return true
+        }
+        if !tokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        let stored = (try? await tokenStore.loadToken()) ?? nil
+        if let stored, !stored.isEmpty {
+            return true
+        }
+        return false
     }
 
     func connect() async {
@@ -77,8 +99,11 @@ final class ConnectionStore: ObservableObject {
         do {
             let trimmedToken = tokenText.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmedToken.isEmpty {
-                let stored = try await client.loadToken()
-                tokenPrefix = stored.map { String($0.prefix(6)) }
+                guard let stored = try await client.loadToken(), !stored.isEmpty else {
+                    lastError = "Missing access token. Scan the QR code again."
+                    return
+                }
+                tokenPrefix = String(stored.prefix(6))
             } else {
                 try await client.setToken(tokenText)
                 tokenPrefix = String(trimmedToken.prefix(6))

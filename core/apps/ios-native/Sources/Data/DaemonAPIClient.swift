@@ -8,6 +8,34 @@ enum DaemonAPIError: Error {
     case requestFailed(statusCode: Int, message: String)
 }
 
+extension DaemonAPIError {
+    var userMessage: String {
+        switch self {
+        case .invalidURL:
+            return "Invalid daemon URL."
+        case .missingToken:
+            return "Missing access token. Open the launcher to reconnect."
+        case .invalidResponse:
+            return "Invalid response from daemon."
+        case .requestFailed(let statusCode, let message):
+            if message.isEmpty {
+                return "Request failed (\(statusCode))."
+            }
+            return "Request failed (\(statusCode)): \(message)"
+        }
+    }
+}
+
+func daemonErrorMessage(_ error: Error, fallback: String) -> String {
+    if let apiError = error as? DaemonAPIError {
+        return apiError.userMessage
+    }
+    if let urlError = error as? URLError {
+        return "Network error: \(urlError.localizedDescription)"
+    }
+    return fallback
+}
+
 enum HTTPMethod: String {
     case get = "GET"
     case post = "POST"
