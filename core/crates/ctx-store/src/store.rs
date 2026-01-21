@@ -15,6 +15,13 @@ pub struct Store {
     pool: Pool<Sqlite>,
 }
 
+#[derive(Debug, Clone)]
+pub struct EventLogStats {
+    pub published_seq: i64,
+    pub durable_seq: i64,
+    pub queue_depth: u64,
+}
+
 pub struct SessionRetentionPruneStats {
     pub tool_summaries_deleted: u64,
     pub turn_thoughts_cleared: u64,
@@ -359,6 +366,14 @@ impl Store {
 
     pub fn pool(&self) -> &Pool<Sqlite> {
         &self.pool
+    }
+
+    pub fn event_log_stats(&self) -> EventLogStats {
+        EventLogStats {
+            published_seq: 0,
+            durable_seq: 0,
+            queue_depth: 0,
+        }
     }
 
     pub async fn close(&self) {
