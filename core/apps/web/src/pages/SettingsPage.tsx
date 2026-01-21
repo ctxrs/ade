@@ -36,6 +36,7 @@ import {
   getMergeQueueEntryLogs,
   getMobileAccessStatus,
   getCodexAccountUsage,
+  completeCodexLogin,
   Workspace,
   authenticateProviderForWorkspace,
   getInstall,
@@ -558,6 +559,7 @@ export default function SettingsPage() {
   const [codexUsageBusy, setCodexUsageBusy] = useState(false);
   const [codexUsageError, setCodexUsageError] = useState<string | null>(null);
   const [codexNewLabel, setCodexNewLabel] = useState("");
+  const [codexCallbackUrls, setCodexCallbackUrls] = useState<Record<string, string>>({});
 
   const [agentPromptConfig, setAgentPromptConfig] = useState<AgentSystemPromptConfig | null>(null);
   const [agentPromptLoading, setAgentPromptLoading] = useState(false);
@@ -1733,6 +1735,26 @@ export default function SettingsPage() {
       openCodexAuthUrl(res.auth_url);
       setCodexNewLabel("");
       await refreshCodexAccounts();
+    } catch (e: any) {
+      setCodexAccountsError(e?.message ?? String(e));
+    } finally {
+      setCodexAccountsBusy(false);
+    }
+  };
+
+  const onCodexCompleteLogin = async (accountId: string) => {
+    const callbackUrl = (codexCallbackUrls[accountId] ?? "").trim();
+    if (!callbackUrl) {
+      setCodexAccountsError("Paste the callback URL to finish login.");
+      return;
+    }
+    setCodexAccountsBusy(true);
+    setCodexAccountsError(null);
+    try {
+      await completeCodexLogin(accountId, callbackUrl);
+      setCodexCallbackUrls((prev) => ({ ...prev, [accountId]: "" }));
+      await refreshCodexAccounts();
+      refreshCodexUsage({ refresh: true, silent: true }).catch(() => {});
     } catch (e: any) {
       setCodexAccountsError(e?.message ?? String(e));
     } finally {
@@ -3597,6 +3619,7 @@ export default function SettingsPage() {
 
     if (active === "harness_subscriptions") {
       const codexProvider = providers.find((p) => p.provider_id === "codex");
+      const isDesktop = isDesktopApp();
       const codexAccountsList = codexAccounts?.accounts ?? [];
       const codexActiveId = codexAccounts?.active_account_id ?? null;
       const codexLogins = codexAccounts?.logins ?? [];
@@ -3786,22 +3809,57 @@ export default function SettingsPage() {
                       <div>Pending logins</div>
                       <div />
                     </div>
-                    {codexPendingLogins.map((login) => (
-                      <div key={login.account_id} className="settings-table-row">
-                        <div className="settings-table-sub">
-                          Login in progress for {login.account_id}
-                        </div>
-                        <div>
-                          <button
-                            type="button"
-                            className="settings-btn settings-btn-secondary settings-btn-compact"
-                            onClick={() => openCodexAuthUrl(login.auth_url)}
+                    {codexPendingLogins.map((login) => {
+                      const callbackValue = codexCallbackUrls[login.account_id] ?? "";
+                      return (
+                        <div key={login.account_id} className="settings-table-row">
+                          <div>
+                            <div className="settings-table-sub">Login in progress for {login.account_id}</div>
+                            {!isDesktop ? (
+                              <>
+                                <div className="settings-table-sub" style={{ marginTop: 6 }}>
+                                  Paste the /auth/callback URL from the login flow to finish on this daemon.
+                                </div>
+                                <input
+                                  className="settings-control"
+                                  style={{ width: "100%", marginTop: 6 }}
+                                  value={callbackValue}
+                                  onChange={(e) =>
+                                    setCodexCallbackUrls((prev) => ({
+                                      ...prev,
+                                      [login.account_id]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="http://localhost:1455/auth/callback?code=..."
+                                  disabled={codexAccountsBusy}
+                                />
+                              </>
+                            ) : null}
+                          </div>
+                          <div
+                            style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}
                           >
-                            Open login
-                          </button>
+                            <button
+                              type="button"
+                              className="settings-btn settings-btn-secondary settings-btn-compact"
+                              onClick={() => openCodexAuthUrl(login.auth_url)}
+                            >
+                              Open login
+                            </button>
+                            {!isDesktop ? (
+                              <button
+                                type="button"
+                                className="settings-btn settings-btn-secondary settings-btn-compact"
+                                onClick={() => onCodexCompleteLogin(login.account_id)}
+                                disabled={codexAccountsBusy}
+                              >
+                                {codexAccountsBusy ? "Submitting..." : "Complete login"}
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : null}
                 {codexFailedLogins.length ? (

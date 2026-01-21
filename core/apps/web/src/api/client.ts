@@ -1418,6 +1418,12 @@ export const startCodexLogin = (label?: string) =>
     body: JSON.stringify(label ? { label } : {}),
   });
 
+export const completeCodexLogin = (accountId: string, callback_url: string) =>
+  apiAny<CodexLoginStatus>(`/api/providers/codex/accounts/login/${accountId}/callback`, {
+    method: "POST",
+    body: JSON.stringify({ callback_url }),
+  });
+
 export const getCodexLogin = (accountId: string) =>
   apiAny<CodexLoginStatus>(`/api/providers/codex/accounts/login/${accountId}`);
 

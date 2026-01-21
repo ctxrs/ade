@@ -216,6 +216,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(get_codex_login),
         )
         .route(
+            "/api/providers/codex/accounts/login/:id/callback",
+            post(complete_codex_login),
+        )
+        .route(
             "/api/providers/codex/active-account",
             put(set_codex_active_account),
         )
@@ -5531,6 +5535,11 @@ struct CodexLoginStartResp {
 }
 
 #[derive(Debug, Deserialize)]
+struct CodexLoginCompleteReq {
+    callback_url: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct CodexActiveAccountReq {
     account_id: Option<String>,
 }
@@ -5550,6 +5559,25 @@ struct CodexLoginCompletion {
 }
 
 const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn parse_codex_login_metadata(auth_url: &str) -> (Option<String>, Option<u16>) {
+    let parsed = match Url::parse(auth_url) {
+        Ok(url) => url,
+        Err(_) => return (None, None),
+    };
+    let mut state = None;
+    let mut redirect_port = None;
+    for (key, value) in parsed.query_pairs() {
+        if key == "state" {
+            state = Some(value.to_string());
+        } else if key == "redirect_uri" {
+            if let Ok(uri) = Url::parse(&value) {
+                redirect_port = uri.port();
+            }
+        }
+    }
+    (state, redirect_port)
+}
 
 async fn list_codex_accounts(
     State(state): State<Arc<AppState>>,
@@ -5668,11 +5696,14 @@ async fn start_codex_login(
             ));
         }
     };
+    let (login_state, redirect_port) = parse_codex_login_metadata(&login.auth_url);
     let status = provider_accounts::CodexLoginStatus {
         account_id: account_id.clone(),
         auth_url: login.auth_url.clone(),
         status: "pending".to_string(),
         error: None,
+        state: login_state,
+        redirect_port,
     };
     {
         let mut map = state.codex_login_sessions.lock().await;
@@ -5704,6 +5735,113 @@ async fn get_codex_login(
             }),
         )
     })?;
+    Ok(Json(status))
+}
+
+async fn complete_codex_login(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<CodexLoginCompleteReq>,
+) -> Result<Json<provider_accounts::CodexLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    let callback_url = req.callback_url.trim();
+    if callback_url.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "callback_url is required".to_string(),
+            }),
+        ));
+    }
+    let parsed = Url::parse(callback_url).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: format!("invalid callback_url: {e}"),
+            }),
+        )
+    })?;
+    if parsed.path() != "/auth/callback" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "callback_url must point to /auth/callback".to_string(),
+            }),
+        ));
+    }
+
+    let status = {
+        let map = state.codex_login_sessions.lock().await;
+        map.get(&id).cloned().ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "login not found".to_string(),
+                }),
+            )
+        })?
+    };
+    if status.status != "pending" {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "login is not pending".to_string(),
+            }),
+        ));
+    }
+
+    if let Some(expected_state) = status.state.as_ref() {
+        let state_ok = parsed
+            .query_pairs()
+            .find_map(|(key, value)| (key == "state").then_some(value))
+            .map(|value| value.as_ref() == expected_state.as_str())
+            .unwrap_or(false);
+        if !state_ok {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "callback_url state does not match pending login".to_string(),
+                }),
+            ));
+        }
+    }
+
+    let port = parsed.port().or(status.redirect_port).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "callback_url missing port".to_string(),
+            }),
+        )
+    })?;
+    let mut forward = format!("http://127.0.0.1:{port}{}", parsed.path());
+    if let Some(query) = parsed.query() {
+        forward.push('?');
+        forward.push_str(query);
+    }
+
+    let resp = reqwest::Client::new()
+        .get(forward)
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: format!("failed to forward callback: {e}"),
+                }),
+            )
+        })?;
+    if resp.status().is_client_error() || resp.status().is_server_error() {
+        let status_code = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(ApiErrorResp {
+                error: format!("login server rejected callback: {status_code}; {body}"),
+            }),
+        ));
+    }
+
     Ok(Json(status))
 }
 
