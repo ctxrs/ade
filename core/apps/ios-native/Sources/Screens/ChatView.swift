@@ -3380,7 +3380,6 @@ final class ChatViewModel: ObservableObject {
     private let threadPipeline = ChatThreadPipeline()
     private var threadBuildToken: Int = 0
     private var lastThreadBuildKey: ChatThreadBuildKey?
-    private var sessionStateRev: Int?
     private var threadSnapshotRev: Int { sessionStateRev ?? 0 }
 
     init(client: DaemonAPIClient? = nil, initialSessionId: String? = nil, initialWorkspaceId: String? = nil) {
