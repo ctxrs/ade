@@ -476,6 +476,40 @@ function findNodeById(node, targetId) {
   return null;
 }
 
+async function waitForNodeBounds(app, { timeoutMs, nodeId }) {
+  const start = Date.now();
+  let last = null;
+  while (Date.now() - start < timeoutMs) {
+    const tree = await app.rpc("automation.tree.snapshot").catch(() => null);
+    if (!tree) {
+      await sleep(200);
+      continue;
+    }
+    const node = findNodeById(tree, nodeId);
+    if (node && node.bounds) {
+      last = node.bounds;
+      const width = Number(node.bounds.width ?? 0);
+      const height = Number(node.bounds.height ?? 0);
+      if (width > 1 && height > 1) {
+        return node.bounds;
+      }
+    }
+    await sleep(200);
+  }
+  throw new Error(`Timed out waiting for node bounds for ${nodeId}: ${JSON.stringify({ last })}`);
+}
+
+async function scrollThreadForParity(app, { addr, settleMs, timeoutMs }) {
+  const bounds = await waitForNodeBounds(app, { timeoutMs, nodeId: "thread-list" });
+  const x = Number(bounds.x ?? 0) + Number(bounds.width ?? 0) / 2;
+  const y = Number(bounds.y ?? 0) + Number(bounds.height ?? 0) / 2;
+  for (let i = 0; i < 6; i += 1) {
+    await app.page.mouse.wheel(0, -320, { x, y, precise: true }).catch(() => {});
+    await sleep(50);
+  }
+  await waitIdle(addr, settleMs);
+}
+
 function findThreadItemId(node) {
   if (!node || typeof node !== "object") return "";
   const id = typeof node.id === "string" ? node.id : "";
@@ -822,6 +856,11 @@ async function main() {
         if (debug) {
           log(`thread.debug: ${JSON.stringify(debug)}`);
         }
+      });
+      await scrollThreadForParity(app, {
+        addr: args.addr,
+        settleMs: args.settleMs,
+        timeoutMs: args.readyTimeoutMs,
       });
       await waitIdle(args.addr, args.settleMs);
       await screenshot(args.addr, "active-session/native.png");

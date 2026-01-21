@@ -218,6 +218,28 @@ pub fn track_children_bounds(
     }
 }
 
+pub fn track_bounds(
+    id: &'static str,
+    role: &'static str,
+    name: Option<&'static str>,
+    parent: Option<&'static str>,
+) -> impl Fn(Bounds<Pixels>, &mut Window, &mut App) + 'static {
+    let target = AutomationTarget::new(id, role, name, parent);
+    let registry = registry();
+    move |bounds, _window, _cx| {
+        let width = f32::from(bounds.size.width);
+        let height = f32::from(bounds.size.height);
+        let visible = width > 0.0 && height > 0.0;
+        let bounds = AutomationBounds {
+            x: f32::from(bounds.origin.x),
+            y: f32::from(bounds.origin.y),
+            width,
+            height,
+        };
+        registry.update_target(target, Some(bounds), visible, true);
+    }
+}
+
 pub fn register_hidden(
     id: &'static str,
     role: &'static str,

@@ -4,6 +4,7 @@ import { mkdir } from "fs/promises";
 import { execFileSync } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
+import WebSocket from "ws";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,26 +27,20 @@ const NATIVE_HEADLESS_RUN = path.join(
   REPO_ROOT,
   "core/apps/native/scripts/headless-run.mjs",
 );
+const PREPARE_PARITY_REPO = path.join(
+  REPO_ROOT,
+  "core/scripts/prepare-parity-repo.mjs",
+);
 
 async function ensureDir(p: string) {
   await mkdir(p, { recursive: true });
 }
 
-function ensureRepo(repo: string) {
-  rmSync(repo, { recursive: true, force: true });
-  mkdirSync(repo, { recursive: true });
-  execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
-  execFileSync("git", ["config", "user.email", "test@example.com"], {
-    cwd: repo,
+function prepareRepo(repo: string, mode: "clean" | "dirty" | "dirty_worktree") {
+  execFileSync("node", [PREPARE_PARITY_REPO, "--repo", repo, "--mode", mode], {
+    cwd: REPO_ROOT,
     stdio: "ignore",
   });
-  execFileSync("git", ["config", "user.name", "Test"], {
-    cwd: repo,
-    stdio: "ignore",
-  });
-  writeFileSync(path.join(repo, "file.txt"), "hello\n");
-  execFileSync("git", ["add", "."], { cwd: repo, stdio: "ignore" });
-  execFileSync("git", ["commit", "-m", "init"], { cwd: repo, stdio: "ignore" });
 }
 
 async function readAuthToken(): Promise<string> {
@@ -88,6 +83,227 @@ function idToString(value: any): string {
 function workspaceIdFromPath(pathname: string): string {
   const match = String(pathname || "").match(/\/workspaces\/([^/?#]+)/);
   return match?.[1] ?? "";
+}
+
+async function listWorkspaceTasks(page: any, token: string, workspaceId: string): Promise<any[]> {
+  const res = await page.request.get(`/api/workspaces/${workspaceId}/tasks`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok()) {
+    throw new Error(`list tasks failed: HTTP ${res.status()} ${res.statusText()}`);
+  }
+  const data = await res.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
+}
+
+async function listTaskSessions(page: any, token: string, taskId: string): Promise<any[]> {
+  const res = await page.request.get(`/api/tasks/${taskId}/sessions`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok()) {
+    throw new Error(`list task sessions failed: HTTP ${res.status()} ${res.statusText()}`);
+  }
+  const data = await res.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
+}
+
+async function resolveTaskSessionId(
+  page: any,
+  token: string,
+  workspaceId: string,
+  taskTitle: string,
+): Promise<{ taskId: string; sessionId: string }> {
+  const tasks = await listWorkspaceTasks(page, token, workspaceId);
+  const trimmedTitle = String(taskTitle ?? "").trim();
+  const matching = tasks.filter((t) => String((t as any)?.title ?? "").trim() === trimmedTitle);
+  if (matching.length === 0) {
+    throw new Error(`Failed to resolve task for title "${trimmedTitle}"`);
+  }
+  matching.sort((a, b) =>
+    String((b as any)?.updated_at ?? "").localeCompare(String((a as any)?.updated_at ?? "")),
+  );
+  const task = matching[0] as any;
+  const taskId = idToString(task?.id);
+  let sessionId = idToString(task?.primary_session_id);
+  if (!sessionId && taskId) {
+    const sessions = await listTaskSessions(page, token, taskId);
+    sessionId = idToString((sessions as any[])?.[0]?.id);
+  }
+  if (!taskId || !sessionId) {
+    throw new Error(`Failed to resolve task/session ids: ${JSON.stringify({ taskId, sessionId })}`);
+  }
+  return { taskId, sessionId };
+}
+
+async function waitForSessionCompleted(page: any, token: string, sessionId: string) {
+  await expect
+    .poll(
+      async () => {
+        const res = await page.request.get(`/api/sessions/${sessionId}/snapshot?limit=100`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (!res.ok()) return false;
+        const snapshot = await res.json().catch(() => null);
+        const head = snapshot?.head ?? {};
+        const messages = Array.isArray(head.messages) ? head.messages : [];
+        const turns = Array.isArray(head.turns) ? head.turns : [];
+        const hasAssistant = messages.some(
+          (m: any) => m?.role === "assistant" && String(m?.content ?? "").trim().length > 0,
+        );
+        const hasCompletedTurn = turns.some((t: any) => t?.status === "completed");
+        return hasAssistant && hasCompletedTurn;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+}
+
+async function resolveWorktreeRootForSession(page: any, token: string, sessionId: string): Promise<string> {
+  const snapRes = await page.request.get(`/api/sessions/${sessionId}/snapshot?limit=1`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!snapRes.ok()) {
+    throw new Error(`get session snapshot failed: HTTP ${snapRes.status()} ${snapRes.statusText()}`);
+  }
+  const snapshot = await snapRes.json().catch(() => null);
+  const worktreeId = idToString(snapshot?.summary?.session?.worktree_id ?? snapshot?.head?.session?.worktree_id);
+  if (!worktreeId) {
+    throw new Error(`Failed to resolve worktree id from session snapshot: ${JSON.stringify(snapshot?.summary?.session)}`);
+  }
+
+  const wtRes = await page.request.get(`/api/worktrees/${worktreeId}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!wtRes.ok()) {
+    throw new Error(`get worktree ${worktreeId} failed: HTTP ${wtRes.status()} ${wtRes.statusText()}`);
+  }
+  const worktree = await wtRes.json().catch(() => null);
+  const rootPath = String(worktree?.root_path ?? "").trim();
+  if (!rootPath) {
+    throw new Error(`worktree ${worktreeId} missing root_path`);
+  }
+  return rootPath;
+}
+
+async function seedQueuedTranscriptMessages(page: any, token: string, sessionId: string) {
+  for (let i = 1; i <= 28; i += 1) {
+    const content = `scroll seed ${String(i).padStart(2, "0")}`;
+    const res = await page.request.post(`/api/sessions/${sessionId}/messages`, {
+      headers: { authorization: `Bearer ${token}` },
+      data: { content, delivery: "queued" },
+    });
+    if (!res.ok()) {
+      throw new Error(`seed transcript failed on message ${i}: HTTP ${res.status()} ${res.statusText()}`);
+    }
+  }
+}
+
+async function seedArtifacts(page: any, token: string, sessionId: string) {
+  const a = path.join(OUT_DIR, "artifact-seed-a.txt");
+  const b = path.join(OUT_DIR, "artifact-seed-b.txt");
+  writeFileSync(a, "parity artifact A\n", "utf8");
+  writeFileSync(b, "parity artifact B\n", "utf8");
+  const res = await page.request.post(`/api/sessions/${sessionId}/artifacts`, {
+    headers: { authorization: `Bearer ${token}` },
+    data: {
+      artifacts: [
+        { absolute_file_path: a, name: "artifact-a.txt", mime_type: "text/plain" },
+        { absolute_file_path: b, name: "artifact-b.txt", mime_type: "text/plain" },
+      ],
+    },
+  });
+  if (!res.ok()) {
+    throw new Error(`set artifacts failed: HTTP ${res.status()} ${res.statusText()}`);
+  }
+}
+
+async function waitForGitStatusIncludes(page: any, token: string, sessionId: string, needles: string[]) {
+  await expect.poll(
+    async () => {
+      const res = await page.request.get(`/api/sessions/${sessionId}/git/status`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!res.ok()) return false;
+      const json = await res.json().catch(() => null);
+      const raw = String(json?.raw ?? "");
+      return needles.every((needle) => raw.includes(needle));
+    },
+    { timeout: 20_000 },
+  ).toBe(true);
+}
+
+function terminalWsUrl(baseURL: string, token: string, terminalId: string): string {
+  const url = new URL(`/api/terminals/${terminalId}/stream`, baseURL);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("token", token);
+  return url.toString();
+}
+
+async function seedTerminalOutput(baseURL: string, token: string, terminalId: string, repoDir: string) {
+  const wsUrl = terminalWsUrl(baseURL, token, terminalId);
+  const command = [
+    "export PS1='$ ' PROMPT_COMMAND=''",
+    `cd ${JSON.stringify(repoDir)}`,
+    "printf '\\033[2J\\033[H'",
+    "i=1; while [ $i -le 220 ]; do printf 'parity term %03d\\n' $i; i=$((i+1)); done",
+    "echo PARITY_TERM_DONE",
+  ].join(" && ");
+
+  await new Promise<void>((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    const deadline = setTimeout(() => {
+      try {
+        ws.close();
+      } catch {}
+      reject(new Error("Timed out seeding terminal output"));
+    }, 25_000);
+
+    const finish = () => {
+      clearTimeout(deadline);
+      try {
+        ws.close();
+      } catch {}
+      resolve();
+    };
+
+    ws.on("open", () => {
+      ws.send(JSON.stringify({ kind: "resize", cols: 120, rows: 34 }));
+      ws.send(JSON.stringify({ kind: "input", data: `${command}\n` }));
+    });
+
+    ws.on("message", (data) => {
+      const buf = typeof data === "string" ? Buffer.from(data) : Buffer.from(data as any);
+      if (buf.includes(Buffer.from("PARITY_TERM_DONE"))) {
+        finish();
+      }
+    });
+
+    ws.on("error", (err) => {
+      clearTimeout(deadline);
+      reject(err);
+    });
+  });
+}
+
+async function setTranscriptScroll(page: any) {
+  const list = page.locator(".wb-thread-list").first();
+  await expect(list).toBeVisible({ timeout: 20_000 });
+
+  const metrics = await list
+    .evaluate((el) => ({
+      sh: (el as HTMLElement).scrollHeight,
+      ch: (el as HTMLElement).clientHeight,
+    }))
+    .catch(() => null);
+  if (!metrics || metrics.sh <= metrics.ch) return;
+
+  await list
+    .evaluate((el) => {
+      const element = el as HTMLElement;
+      const target = Math.max(0, element.scrollHeight - element.clientHeight - 520);
+      element.scrollTop = target;
+    })
+    .catch(() => {});
 }
 
 async function listWorkspaceTerminals(page: any, token: string, workspaceId: string): Promise<any[]> {
@@ -176,20 +392,20 @@ test.describe("parity screenshots (web vs GPUI native)", () => {
     "Set CTX_GPUI_PARITY=1 (or use playwright.parity.config.ts) to run this opt-in parity harness.",
   );
 
-  test.setTimeout(300_000);
+  test.setTimeout(600_000);
 
-  test("launcher, new task, active session, settings", async () => {
-    rmSync(OUT_DIR, { recursive: true, force: true });
-    mkdirSync(OUT_DIR, { recursive: true });
-    ensureRepo(REPO_DIR);
-    const token = await readAuthToken();
+	  test("launcher, new task, active session, settings", async () => {
+	    rmSync(OUT_DIR, { recursive: true, force: true });
+	    mkdirSync(OUT_DIR, { recursive: true });
+	    prepareRepo(REPO_DIR, "clean");
+	    const token = await readAuthToken();
 
-      const browser = await chromium.launch();
-      const page = await browser.newPage({
-        viewport: VIEWPORT,
-        deviceScaleFactor: 1,
-        reducedMotion: "reduce",
-      });
+    const browser = await chromium.launch();
+    const page = await browser.newPage({
+      viewport: VIEWPORT,
+      deviceScaleFactor: 1,
+      reducedMotion: "reduce",
+    });
 
     try {
       console.log("[parity] web: open workspaces");
@@ -233,17 +449,17 @@ test.describe("parity screenshots (web vs GPUI native)", () => {
       await expect(page.locator(".wb-root-no-topbar")).toBeVisible({ timeout: 20_000 });
 
       // Workbench baseline.
-      await expect(page.getByText("Archived")).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByText("Archived").first()).toBeVisible({ timeout: 20_000 });
 
       // Create a task + session once in web so native sees identical backend state.
       console.log("[parity] web: select harness + send task");
-      await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
+      await page.locator(".wb-new-composer-stack").getByTitle("Harness").first().click();
       await expect(page.locator(".wb-harness-menu")).toBeVisible({ timeout: 20_000 });
       console.log("[parity] web: screenshot harness menu");
       await takeShot(page, "new-task/menu/harness", "web");
       await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-      await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
-      await page.locator(".wb-new-composer-stack button[title=\"Harness\"]").click();
+      await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).first().click();
+      await page.locator(".wb-new-composer-stack button[title=\"Harness\"]").first().click();
       await page
         .locator(".wb-harness-menu")
         .waitFor({ state: "hidden", timeout: 5_000 })
@@ -262,8 +478,16 @@ test.describe("parity screenshots (web vs GPUI native)", () => {
       await expect(page.locator(".wb-new-composer-stack textarea.wb-composer-textarea")).toBeVisible({
         timeout: 20_000,
       });
-      await expect(rows.first()).toBeVisible({ timeout: 20_000 });
-      await expect(rows.filter({ hasText: "hello" }).first()).toBeVisible({ timeout: 20_000 });
+	      await expect(rows.first()).toBeVisible({ timeout: 20_000 });
+	      await expect(rows.filter({ hasText: "hello" }).first()).toBeVisible({ timeout: 20_000 });
+
+	      const { sessionId } = await resolveTaskSessionId(page, token, workspaceId, "hello");
+	      await waitForSessionCompleted(page, token, sessionId);
+	      const worktreeRoot = await resolveWorktreeRootForSession(page, token, sessionId);
+	      prepareRepo(worktreeRoot, "dirty_worktree");
+	      await seedQueuedTranscriptMessages(page, token, sessionId);
+	      await seedArtifacts(page, token, sessionId);
+	      await waitForGitStatusIncludes(page, token, sessionId, ["file.txt", "z_added.txt"]);
 
       // New task baseline (after task exists, so the sidebar state matches native).
       console.log("[parity] web: screenshot new-task");
@@ -282,33 +506,37 @@ test.describe("parity screenshots (web vs GPUI native)", () => {
 
       console.log("[parity] web: screenshot archived empty");
       await page.locator(".wb-section-header-archived .wb-section-toggle").click();
-      await expect(page.getByText("No archived tasks.")).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByText("No archived tasks.").first()).toBeVisible({ timeout: 20_000 });
       await takeShot(page, "archived/empty", "web");
       await page.locator(".wb-section-header-archived .wb-section-toggle").click();
-      await expect(page.getByText("No archived tasks.")).toBeHidden({ timeout: 20_000 });
+      await expect(page.getByText("No archived tasks.").first()).toBeHidden({ timeout: 20_000 });
 
       console.log("[parity] web: open active session");
       await rows.first().click();
       await expect(page.locator(".wb-session textarea.wb-active-textarea").first()).toBeVisible({
         timeout: 20_000,
       });
-      await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(1, {
-        timeout: 20_000,
-      });
-      const assistantEntry = page.locator(".wb-session .wb-assistant-entry").first();
-      await assistantEntry.scrollIntoViewIfNeeded();
-      await expect(assistantEntry).toBeVisible({ timeout: 20_000 });
-      await expect(assistantEntry).toContainText(/\S+/, { timeout: 20_000 });
+      await expect(page.locator(".wb-thread-list").first()).toBeVisible({ timeout: 20_000 });
+      await setTranscriptScroll(page);
 
       console.log("[parity] web: screenshot active-session");
       await takeShot(page, "active-session", "web");
 
       // Integrated terminal (open panel).
       console.log("[parity] web: open terminal panel");
-      const terminalToggle = page.getByRole("button", { name: "Toggle terminal panel" });
+      const terminalToggle = page.getByRole("button", { name: "Toggle terminal panel" }).first();
       await expect(terminalToggle).toBeVisible({ timeout: 20_000 });
       await terminalToggle.click();
       await expect(page.locator(".wb-terminal-panel-inner")).toBeVisible({ timeout: 20_000 });
+
+      const baseURL = new URL(page.url()).origin;
+      const terminals = await listWorkspaceTerminals(page, token, workspaceId);
+      const terminalId = idToString((terminals as any[])?.[0]?.id);
+      if (!terminalId) {
+        throw new Error(`Failed to resolve parity terminal id: ${JSON.stringify({ terminals_len: terminals.length })}`);
+      }
+      await seedTerminalOutput(baseURL, token, terminalId, REPO_DIR);
+
       await page
         .locator(".wb-terminal-panel-inner")
         .getByRole("button", { name: "Workspace" })
@@ -328,21 +556,25 @@ test.describe("parity screenshots (web vs GPUI native)", () => {
 
       // Active session with right pane (artifacts).
       console.log("[parity] web: open artifacts pane");
-      const artifactsToggle = page.getByRole("button", { name: "Toggle artifacts" });
+      const artifactsToggle = page.getByRole("button", { name: "Toggle artifacts" }).first();
       await expect(artifactsToggle).toBeVisible({ timeout: 20_000 });
       await artifactsToggle.click();
       await expect(page.locator(".wb-artifacts")).toBeVisible({ timeout: 20_000 });
+      await expect(page.locator(".wb-artifact-card").first()).toBeVisible({ timeout: 20_000 });
       console.log("[parity] web: screenshot active-session artifacts pane");
       await takeShot(page, "active-session/right-pane/artifacts", "web");
       await takeShot(page, "right-pane/artifacts", "web");
 
       // Active session with right pane (diff).
       console.log("[parity] web: open diff pane");
-      const diffToggle = page.getByRole("button", { name: "Toggle diff view" });
+      const diffToggle = page.getByRole("button", { name: "Toggle diff view" }).first();
       await expect(diffToggle).toBeVisible({ timeout: 20_000 });
       await diffToggle.click();
       await expect(page.locator(".wb-right-pane.wb-diff")).toBeVisible({ timeout: 20_000 });
       await expect(page.locator(".wb-diff-status-title")).toHaveText("git status -sb", {
+        timeout: 20_000,
+      });
+      await expect(page.locator(".wb-git-status-path").filter({ hasText: "file.txt" }).first()).toBeVisible({
         timeout: 20_000,
       });
       console.log("[parity] web: screenshot active-session diff pane");
@@ -364,7 +596,6 @@ test.describe("parity screenshots (web vs GPUI native)", () => {
       await takeShot(page, "settings/focus/search", "web");
 
       // Native capture (headless X + GPUI automation).
-      const baseURL = new URL(page.url()).origin;
       console.log("[parity] native: capture screenshots");
       execFileSync(
         "node",

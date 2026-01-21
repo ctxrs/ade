@@ -2,6 +2,7 @@ use gpui::{
     ClickEvent, Context, ElementId, FontWeight, MouseButton, MouseDownEvent, Rgba, div, prelude::*,
     px, relative,
 };
+use gpui_component::ElementExt;
 use gpui_component::input::Input;
 use ctx_providers::adapters::ProviderHealth;
 
@@ -172,8 +173,14 @@ impl<'a> RouterView<'a> {
     fn render_sidebar_expand(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let tab_bg = rgba(255, 255, 255, 0.03);
         let tab_top = SIDEBAR_TAB_TOP;
-        let expand_button = div()
+        div()
             .id("sidebar-expand")
+            .on_prepaint(automation_tree::track_bounds(
+                "sidebar-expand",
+                "button",
+                Some("Expand"),
+                Some("app-shell"),
+            ))
             .absolute()
             .top(px(tab_top))
             .left(px(0.0))
@@ -199,23 +206,21 @@ impl<'a> RouterView<'a> {
                 IconName::ChevronsRight,
                 16.0,
                 self.shell.colors.text,
-            ));
-        div()
-            .on_children_prepainted(automation_tree::track_children_bounds(
-                "sidebar-expand",
-                "button",
-                Some("Expand"),
-                Some("app-shell"),
             ))
-            .child(expand_button)
     }
 
     fn render_sidebar_collapse_tab(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let tab_bg = rgba(255, 255, 255, 0.03);
         let tab_top = SIDEBAR_TAB_TOP;
         let left = (self.shell.sidebar_width - SIDEBAR_TAB_SIZE).max(0.0);
-        let collapse_button = div()
+        div()
             .id("sidebar-collapse")
+            .on_prepaint(automation_tree::track_bounds(
+                "sidebar-collapse",
+                "button",
+                Some("Collapse"),
+                Some("app-shell"),
+            ))
             .absolute()
             .top(px(tab_top))
             .left(px(left))
@@ -241,15 +246,7 @@ impl<'a> RouterView<'a> {
                 IconName::ChevronsLeft,
                 16.0,
                 self.shell.colors.text,
-            ));
-        div()
-            .on_children_prepainted(automation_tree::track_children_bounds(
-                "sidebar-collapse",
-                "button",
-                Some("Collapse"),
-                Some("app-shell"),
             ))
-            .child(collapse_button)
     }
 
     fn render_workbench(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
