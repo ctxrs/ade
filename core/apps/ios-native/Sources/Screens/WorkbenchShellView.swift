@@ -167,7 +167,7 @@ struct WorkbenchShellView: View {
                         deleteAlert = WorkbenchDeleteAlert(taskId: task.task.id.stringValue, title: task.task.title)
                     }
                 )
-                .offset(x: isDrawerOpen ? 0 : -drawerWidth - 24)
+                .offset(x: isDrawerOpen ? 0 : -drawerWidth)
             }
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isDrawerOpen)
         }
@@ -1594,16 +1594,9 @@ private struct WorkbenchDrawerView: View {
             )
         }
         .accessibilityIdentifier("drawer.container")
-        .safeAreaInset(edge: .top, spacing: 0) {
-            Color.clear.frame(height: 12)
-        }
         .frame(width: drawerWidth)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(Color.ctxGlassStroke, lineWidth: 0.8)
-        )
+        .background(.ultraThinMaterial)
         .shadow(color: Color.ctxShadow, radius: 24, x: 0, y: 12)
         .padding(.leading, 12)
     }
