@@ -2949,7 +2949,7 @@ export default function SettingsPage() {
           <Card>
             <Row
               title="Enable custom compaction"
-              description="Runs your compaction script and resets the harness session."
+              description="Runs ctx-managed compaction and resets the harness session."
               control={
                 <Toggle
                   checked={compactionEnabled}
@@ -2961,14 +2961,14 @@ export default function SettingsPage() {
             />
             <Row
               title="Compaction script path"
-              description="Executable path; receives JSON input via stdin."
+              description="Optional executable path for custom compaction; receives JSON input via stdin."
               control={
                 <input
                   className="settings-control settings-control-wide"
                   value={compactionScriptPath}
                   onChange={(e) => setCompactionScriptPath(e.target.value)}
                   disabled={!compactionEnabled}
-                  placeholder=".ctx/scripts/compact.sh"
+                  placeholder="(optional) .ctx/scripts/compact.sh"
                 />
               }
             />

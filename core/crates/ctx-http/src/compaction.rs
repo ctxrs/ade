@@ -8,15 +8,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use tokio::sync::mpsc;
 
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{
-    Message, MessageAttachment, MessageRole, Session, SessionSummaryCheckpoint,
+    Message, MessageAttachment, MessageRole, Session, SessionEvent, SessionEventType,
+    SessionSummaryCheckpoint,
 };
+use ctx_providers::adapters::TurnInput;
+use ctx_providers::events::NormalizedEvent;
 use uuid::Uuid;
 
 use crate::daemon::AppState;
-use crate::settings::{AutoCompactionSettings, CompactionSettings};
+use crate::installer;
+use crate::provider_accounts;
+use crate::settings::{AutoCompactionSettings, CompactionSettings, ProviderControlMode};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -182,8 +188,7 @@ pub async fn run_compaction(
         .script_path
         .as_ref()
         .map(|path| path.trim().to_string())
-        .filter(|path| !path.is_empty())
-        .context("compaction script_path is required")?;
+        .filter(|path| !path.is_empty());
 
     let store = state.store_for_session(session.id).await?;
     let mut messages = store.list_messages_for_session(session.id).await?;
@@ -191,47 +196,63 @@ pub async fn run_compaction(
         messages.retain(|msg| msg.id != exclude_id);
     }
 
-    let full_transcript =
-        build_compaction_messages(&messages, compaction.retain_tail_chars_per_message);
+    let full_transcript = if script_path.is_some() {
+        build_compaction_messages(&messages, compaction.retain_tail_chars_per_message)
+    } else {
+        build_compaction_messages(&messages, None)
+    };
     let candidate_transcript = build_candidate_transcript(&full_transcript, compaction);
 
-    let input = CompactionScriptInput {
-        session: CompactionSessionInfo {
-            session_id: session.id.0.to_string(),
-            task_id: session.task_id.0.to_string(),
-            workspace_id: session.workspace_id.0.to_string(),
-            worktree_id: session.worktree_id.0.to_string(),
-            provider_id: session.provider_id.clone(),
-            model_id: session.model_id.clone(),
-        },
-        trigger: CompactionTriggerInfo {
-            kind: request.kind,
-            reason: request.reason.clone(),
-            context_window: request.context_window.clone(),
-        },
-        settings: CompactionSettingsSnapshot {
-            enabled: compaction.enabled,
-            script_path: compaction.script_path.clone(),
-            script_timeout_ms: compaction.script_timeout_ms,
-            retain_full_transcript_tokens: compaction.retain_full_transcript_tokens,
-            retain_tail_messages: compaction.retain_tail_messages,
-            retain_tail_chars_per_message: compaction.retain_tail_chars_per_message,
-            include_attachments: compaction.include_attachments,
-            auto_compact: compaction.auto_compact.clone(),
-        },
-        transcript: full_transcript.clone(),
-        candidate_transcript: candidate_transcript.clone(),
-    };
+    let output = if let Some(script_path) = script_path.as_deref() {
+        let input = CompactionScriptInput {
+            session: CompactionSessionInfo {
+                session_id: session.id.0.to_string(),
+                task_id: session.task_id.0.to_string(),
+                workspace_id: session.workspace_id.0.to_string(),
+                worktree_id: session.worktree_id.0.to_string(),
+                provider_id: session.provider_id.clone(),
+                model_id: session.model_id.clone(),
+            },
+            trigger: CompactionTriggerInfo {
+                kind: request.kind,
+                reason: request.reason.clone(),
+                context_window: request.context_window.clone(),
+            },
+            settings: CompactionSettingsSnapshot {
+                enabled: compaction.enabled,
+                script_path: compaction.script_path.clone(),
+                script_timeout_ms: compaction.script_timeout_ms,
+                retain_full_transcript_tokens: compaction.retain_full_transcript_tokens,
+                retain_tail_messages: compaction.retain_tail_messages,
+                retain_tail_chars_per_message: compaction.retain_tail_chars_per_message,
+                include_attachments: compaction.include_attachments,
+                auto_compact: compaction.auto_compact.clone(),
+            },
+            transcript: full_transcript.clone(),
+            candidate_transcript: candidate_transcript.clone(),
+        };
 
-    let output = run_compaction_script(
-        &script_path,
-        compaction.script_timeout_ms,
-        &input,
-        workdir,
-        session,
-        request,
-    )
-    .await?;
+        run_compaction_script(
+            script_path,
+            compaction.script_timeout_ms,
+            &input,
+            workdir,
+            session,
+            request,
+        )
+        .await?
+    } else {
+        run_default_compaction(
+            state,
+            session,
+            workdir,
+            request,
+            compaction,
+            &full_transcript,
+            &candidate_transcript,
+        )
+        .await?
+    };
 
     let summary = output.summary.trim().to_string();
     if summary.is_empty() {
@@ -441,6 +462,403 @@ fn build_message_lookup(transcript: &[CompactionMessage]) -> HashMap<String, Com
         map.insert(msg.id.clone(), msg.clone());
     }
     map
+}
+
+async fn run_default_compaction(
+    state: &AppState,
+    session: &Session,
+    workdir: &Path,
+    _request: &CompactionRequest,
+    compaction: &CompactionSettings,
+    full_transcript: &[CompactionMessage],
+    candidate_transcript: &[CompactionMessage],
+) -> Result<CompactionScriptOutput> {
+    let store = state.store_for_session(session.id).await?;
+    let events = store.list_session_events(session.id).await?;
+    let session_log = render_session_log(&events);
+    let transcript_text =
+        render_compaction_transcript(full_transcript, compaction.include_attachments);
+    let prompt = build_summary_prompt(&session_log, &transcript_text);
+
+    let summary = run_compaction_summary_llm(
+        state,
+        session,
+        workdir,
+        &prompt,
+        compaction.script_timeout_ms,
+    )
+    .await?;
+    let seed_transcript =
+        render_compaction_transcript(candidate_transcript, compaction.include_attachments);
+    let seed_text = render_default_seed_text(&summary, &seed_transcript);
+
+    Ok(CompactionScriptOutput {
+        summary,
+        seed_text: Some(seed_text),
+        tail_message_ids: None,
+        tail_messages: Some(candidate_transcript.to_vec()),
+    })
+}
+
+fn build_summary_prompt(session_log: &str, transcript: &str) -> String {
+    let mut out = String::new();
+    out.push_str("You are generating a compaction summary for a coding session.\n");
+    out.push_str(
+        "Summarize the session for continuation, capturing intent, key decisions, open items, and referenced files or commands.\n",
+    );
+    out.push_str("Return JSON only with a single key: {\"summary\":\"...\"}.\n\n");
+    out.push_str("<session_log>\n");
+    out.push_str(session_log);
+    out.push_str("\n</session_log>\n\n");
+    out.push_str("<transcript>\n");
+    out.push_str(transcript);
+    out.push_str("\n</transcript>\n");
+    out
+}
+
+fn render_default_seed_text(summary: &str, transcript: &str) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "You are continuing a session that has been compacted. Below you will find the raw transcript with the user. Other context such as files you've read and commands you've run have been replaced by an LLM-generated summary. After reading the summary and transcript, catch up with the necessary context (such as referenced files or docs) and continue from wherever you last left off with the user.\n\n",
+    );
+    out.push_str("<summary>\n");
+    out.push_str(summary.trim());
+    out.push_str("\n</summary>\n\n");
+    out.push_str("<transcript>\n");
+    out.push_str(transcript);
+    out.push_str("\n</transcript>");
+    out
+}
+
+fn render_compaction_transcript(
+    transcript: &[CompactionMessage],
+    include_attachments: bool,
+) -> String {
+    let mut out = String::new();
+    for (idx, msg) in transcript.iter().enumerate() {
+        let role = match msg.role {
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::System => "system",
+        };
+        out.push_str(role);
+        out.push_str(": ");
+        out.push_str(&msg.content);
+        if include_attachments && !msg.attachments.is_empty() {
+            let attachment_line = render_attachment_line(&msg.attachments);
+            if !attachment_line.is_empty() {
+                out.push('\n');
+                out.push_str(&attachment_line);
+            }
+        }
+        if idx + 1 < transcript.len() {
+            out.push_str("\n\n");
+        }
+    }
+    out
+}
+
+fn render_session_log(events: &[SessionEvent]) -> String {
+    let mut out = String::new();
+    for event in events {
+        let entry = serde_json::json!({
+            "seq": event.seq,
+            "created_at": event.created_at.to_rfc3339(),
+            "event_type": compaction_event_type_label(&event.event_type),
+            "run_id": event.run_id.map(|id| id.0.to_string()),
+            "turn_id": event.turn_id.map(|id| id.0.to_string()),
+            "payload": event.payload_json.clone(),
+        });
+        out.push_str(&entry.to_string());
+        out.push('\n');
+    }
+    out
+}
+
+fn compaction_event_type_label(event_type: &SessionEventType) -> &'static str {
+    match event_type {
+        SessionEventType::Init => "init",
+        SessionEventType::UserMessage => "user_message",
+        SessionEventType::InputQueued => "input_queued",
+        SessionEventType::AuthRequired => "auth_required",
+        SessionEventType::Notice => "notice",
+        SessionEventType::AssistantChunk => "assistant_chunk",
+        SessionEventType::ThoughtChunk => "thought_chunk",
+        SessionEventType::AssistantComplete => "assistant_complete",
+        SessionEventType::AssistantMessageInserted => "assistant_message_inserted",
+        SessionEventType::ToolCall => "tool_call",
+        SessionEventType::ToolCallUpdate => "tool_call_update",
+        SessionEventType::ToolResult => "tool_result",
+        SessionEventType::Plan => "plan",
+        SessionEventType::ArtifactsSet => "artifacts_set",
+        SessionEventType::Done => "done",
+        SessionEventType::InterruptRequested => "interrupt_requested",
+        SessionEventType::TurnInterrupted => "turn_interrupted",
+        SessionEventType::Error => "error",
+    }
+}
+
+async fn run_compaction_summary_llm(
+    state: &AppState,
+    session: &Session,
+    workdir: &Path,
+    prompt: &str,
+    timeout_ms: Option<u64>,
+) -> Result<String> {
+    let adapter = {
+        let map = state.providers.lock().await;
+        map.get(&session.provider_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("provider not available: {}", session.provider_id))?
+    };
+
+    let (ev_tx, mut ev_rx) = mpsc::channel::<NormalizedEvent>(128);
+    let provider_env = build_compaction_provider_env(state, session, workdir).await?;
+    let handle = adapter
+        .run(
+            TurnInput {
+                content: prompt.to_string(),
+                attachments: Vec::new(),
+                context_blocks: Vec::new(),
+                model_id: normalize_session_model_id(&session.model_id),
+            },
+            workdir.to_path_buf(),
+            provider_env,
+            ev_tx,
+        )
+        .await?;
+
+    let mut done = handle.done;
+    let cancel = handle.cancel;
+    let abort = handle.abort;
+
+    let timeout = Duration::from_millis(timeout_ms.unwrap_or(60000));
+    let collected = tokio::time::timeout(timeout, async {
+        let mut output = String::new();
+        let mut completed: Option<String> = None;
+        let mut error: Option<String> = None;
+
+        loop {
+            tokio::select! {
+                maybe = ev_rx.recv() => {
+                    let Some(ev) = maybe else { break; };
+                    match ev.event_type {
+                        SessionEventType::AssistantChunk => {
+                            if let Some(fragment) = ev.payload_json.get("content_fragment").and_then(Value::as_str) {
+                                output.push_str(fragment);
+                            }
+                        }
+                        SessionEventType::AssistantComplete => {
+                            let full = ev
+                                .payload_json
+                                .get("full_content")
+                                .and_then(Value::as_str)
+                                .or_else(|| ev.payload_json.get("content").and_then(Value::as_str))
+                                .unwrap_or("");
+                            if !full.trim().is_empty() {
+                                completed = Some(full.to_string());
+                            }
+                        }
+                        SessionEventType::Error => {
+                            error = extract_compaction_error(&ev.payload_json);
+                        }
+                        _ => {}
+                    }
+                }
+                _ = &mut done => {
+                    break;
+                }
+            }
+        }
+
+        while let Some(ev) = ev_rx.recv().await {
+            match ev.event_type {
+                SessionEventType::AssistantChunk => {
+                    if let Some(fragment) = ev.payload_json.get("content_fragment").and_then(Value::as_str) {
+                        output.push_str(fragment);
+                    }
+                }
+                SessionEventType::AssistantComplete => {
+                    let full = ev
+                        .payload_json
+                        .get("full_content")
+                        .and_then(Value::as_str)
+                        .or_else(|| ev.payload_json.get("content").and_then(Value::as_str))
+                        .unwrap_or("");
+                    if !full.trim().is_empty() {
+                        completed = Some(full.to_string());
+                    }
+                }
+                SessionEventType::Error => {
+                    error = extract_compaction_error(&ev.payload_json);
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(error) = error {
+            return Err(anyhow!("compaction summary failed: {}", error));
+        }
+
+        Ok(completed.unwrap_or(output))
+    })
+    .await;
+
+    if collected.is_err() {
+        if let Some(cancel) = cancel {
+            let _ = cancel.send(());
+        }
+        if let Some(abort) = abort {
+            abort.abort();
+        }
+        return Err(anyhow!("compaction summary timed out"));
+    }
+
+    let raw = collected??;
+    parse_summary_output(&raw)
+}
+
+async fn build_compaction_provider_env(
+    state: &AppState,
+    session: &Session,
+    workdir: &Path,
+) -> Result<HashMap<String, String>> {
+    let mut provider_env = HashMap::new();
+    provider_env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
+    provider_env.insert(
+        "CTX_DATA_ROOT".to_string(),
+        state.data_root.to_string_lossy().to_string(),
+    );
+    provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
+    provider_env.insert("CTX_MODEL_ID".to_string(), session.model_id.clone());
+    provider_env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
+    if let Some(token) = state.auth_token.clone() {
+        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
+    }
+
+    let provider_control_mode = crate::settings::load_settings(&state.data_root)
+        .await
+        .sandboxing
+        .as_ref()
+        .map(|s| s.provider_control_mode.clone())
+        .unwrap_or_default();
+    if let Some(mode_id) = provider_mode_id_for(&session.provider_id, &provider_control_mode) {
+        provider_env.insert("CTX_PROVIDER_MODE".to_string(), mode_id.to_string());
+    }
+
+    if session.provider_id == "codex" {
+        if let Ok(env) = provider_accounts::codex_env_for_active_account(&state.data_root).await {
+            for (key, value) in env {
+                provider_env.insert(key, value);
+            }
+        }
+    }
+
+    if let Ok(cfg) = installer::load_agent_server_config(&state.data_root).await {
+        if let Some(cmd) = cfg.providers.get(&session.provider_id) {
+            let mut bin_dirs: Vec<std::path::PathBuf> = Vec::new();
+            for dep in &cmd.dependencies {
+                if let Some(meta) = cfg.managed_installs.get(dep) {
+                    if let Some(rel) = meta.bin_dir_rel.as_ref() {
+                        bin_dirs.push(state.data_root.join(rel));
+                    }
+                }
+            }
+            if !bin_dirs.is_empty() {
+                let mut path_parts: Vec<std::path::PathBuf> = bin_dirs;
+                if let Some(current) = std::env::var_os("PATH") {
+                    path_parts.extend(std::env::split_paths(&current));
+                }
+                if let Ok(joined) = std::env::join_paths(path_parts) {
+                    provider_env.insert("PATH".to_string(), joined.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    if let Ok(v) = std::env::var("CTX_MCP_COMMAND") {
+        provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
+    }
+    if let Ok(v) = std::env::var("CTX_MCP_DISABLED") {
+        provider_env
+            .entry("CTX_MCP_DISABLED".to_string())
+            .or_insert(v);
+    }
+
+    if workdir.as_os_str().is_empty() {
+        return Err(anyhow!("compaction workdir is required"));
+    }
+
+    Ok(provider_env)
+}
+
+fn normalize_session_model_id(model_id: &str) -> Option<String> {
+    let trimmed = model_id.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn provider_mode_id_for(
+    provider_id: &str,
+    control_mode: &ProviderControlMode,
+) -> Option<&'static str> {
+    match control_mode {
+        ProviderControlMode::Full => match provider_id {
+            "codex" => Some("full-access"),
+            "claude" => Some("bypassPermissions"),
+            _ => None,
+        },
+        ProviderControlMode::HarnessNative | ProviderControlMode::CtxEnforced => None,
+    }
+}
+
+fn extract_compaction_error(payload: &Value) -> Option<String> {
+    payload
+        .get("message")
+        .or_else(|| payload.get("error"))
+        .or_else(|| payload.get("detail"))
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn parse_summary_output(raw: &str) -> Result<String> {
+    let cleaned = strip_code_fence(raw).trim().to_string();
+    if cleaned.is_empty() {
+        return Err(anyhow!("compaction summary is required"));
+    }
+    if cleaned.starts_with('{') {
+        if let Ok(parsed) = serde_json::from_str::<Value>(&cleaned) {
+            let summary = parsed
+                .get("summary")
+                .and_then(Value::as_str)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            if let Some(summary) = summary {
+                return Ok(summary);
+            }
+        }
+    }
+    Ok(cleaned)
+}
+
+fn strip_code_fence(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if !trimmed.starts_with("```") {
+        return trimmed.to_string();
+    }
+    let mut lines = trimmed.lines();
+    let _ = lines.next();
+    let mut out_lines: Vec<&str> = lines.collect();
+    if let Some(last) = out_lines.last() {
+        if last.trim().starts_with("```") {
+            out_lines.pop();
+        }
+    }
+    out_lines.join("\n").trim().to_string()
 }
 
 async fn run_compaction_script(
