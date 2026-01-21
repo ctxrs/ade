@@ -15,6 +15,8 @@ use super::super::state::{DataLoadState, ShellRoute, ShellView, SidebarResizeSta
 
 const SIDEBAR_TAB_SIZE: f32 = 28.0;
 const SIDEBAR_TAB_TOP: f32 = 12.0;
+const TERMINAL_RESIZER_HEIGHT: f32 = 6.0;
+const TERMINAL_PANEL_HEIGHT: f32 = 260.0;
 
 pub(crate) struct RouterView<'a> {
     pub(crate) shell: &'a ShellView,
@@ -54,16 +56,68 @@ impl<'a> RouterView<'a> {
             div().into_any_element()
         };
 
-        div()
+        let workbench_row = div()
             .flex()
             .flex_row()
             .flex_1()
+            .min_h(px(0.0))
             .relative()
             .child(sidebar)
             .child(main)
             .child(resizer)
             .child(sidebar_expand)
-            .child(sidebar_collapse)
+            .child(sidebar_collapse);
+
+        let terminal_shell = if self.shell.route == ShellRoute::Workbench && self.shell.show_terminal_panel {
+            self.render_terminal_shell(cx).into_any_element()
+        } else {
+            automation_tree::register_hidden(
+                "terminal-panel",
+                "pane",
+                Some("Terminal"),
+                Some("app-shell"),
+            );
+            div().into_any_element()
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .child(workbench_row)
+            .child(terminal_shell)
+    }
+
+    fn render_terminal_shell(&self, _cx: &mut Context<ShellView>) -> impl IntoElement {
+        // Match web `terminalHeight=260` and `wb-terminal-resizer` (6px).
+        div()
+            .id("terminal-shell")
+            .flex()
+            .flex_col()
+            .flex_none()
+            .min_h(px(0.0))
+            .child(
+                div()
+                    .id("terminal-resizer")
+                    .h(px(TERMINAL_RESIZER_HEIGHT))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_row_resize()
+                    .bg(rgba(0, 0, 0, 0.0))
+                    .child(div().w_full().h(px(1.0)).bg(self.shell.colors.border)),
+            )
+            .child(
+                div()
+                    .id("terminal-pane")
+                    .h(px(TERMINAL_PANEL_HEIGHT))
+                    .w_full()
+                    .overflow_hidden()
+                    .bg(self.shell.colors.panel)
+                    .child(self.shell.terminal_panel_state.clone()),
+            )
     }
 
     fn render_sidebar_resizer(&self, cx: &mut Context<ShellView>) -> impl IntoElement {

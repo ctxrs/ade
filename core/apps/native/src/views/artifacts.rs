@@ -1,5 +1,6 @@
-use gpui::{ClickEvent, Context, ElementId, ObjectFit, div, img, prelude::*, px};
+use gpui::{ClickEvent, Context, ElementId, FontWeight, ObjectFit, Rgba, div, img, prelude::*, px};
 use ctx_core::models::Artifact;
+use gpui_component::scroll::ScrollableElement;
 
 use crate::theme::{ThemeColors, ThemeMetrics};
 
@@ -175,7 +176,7 @@ impl<'a> ArtifactsView<'a> {
                                 .whitespace_nowrap()
                                 .id("artifact-preview-lines")
                                 .overflow_x_scroll()
-                                .overflow_y_scroll()
+                                .overflow_y_scrollbar()
                                 .h(preview_height)
                                 .w_full();
                             for line in &preview.lines {
@@ -411,71 +412,97 @@ impl<'a> ArtifactsView<'a> {
             .id("artifacts")
             .flex()
             .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .px(px(metrics.spacing.xl))
-                    .py(px(metrics.spacing.lg))
+                    .px(px(12.0))
+                    .py(px(10.0))
                     .border_b_1()
                     .border_color(self.colors.border)
-                    .bg(self.colors.panel)
-                    .text_sm()
+                    .bg(Rgba {
+                        r: 20.0 / 255.0,
+                        g: 20.0 / 255.0,
+                        b: 20.0 / 255.0,
+                        a: 0.95,
+                    })
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .child(Icon::new(IconName::Image, 12.0, self.colors.muted))
-                            .child(div().text_color(self.colors.text).child("Artifacts")),
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight(600.0))
+                            .text_color(self.colors.text)
+                            .child("Artifacts"),
                     )
                     .child(
                         div()
-                            .px(px(metrics.spacing.md))
-                            .py(px(0.0))
-                            .text_sm()
+                            .text_size(px(11.0))
+                            .text_color(Rgba {
+                                r: 1.0,
+                                g: 1.0,
+                                b: 1.0,
+                                a: 0.7,
+                            })
+                            .bg(Rgba {
+                                r: 1.0,
+                                g: 1.0,
+                                b: 1.0,
+                                a: 0.08,
+                            })
                             .border_1()
-                            .border_color(self.colors.border)
+                            .border_color(Rgba {
+                                r: 1.0,
+                                g: 1.0,
+                                b: 1.0,
+                                a: 0.12,
+                            })
                             .rounded_full()
-                            .bg(self.colors.panel)
-                            .text_color(self.colors.text)
+                            .px(px(8.0))
+                            .py(px(2.0))
                             .child(format!("{}", self.artifacts.len())),
                     ),
             )
             .child(
                 div()
                     .flex()
-                    .flex_row()
-                    .gap_3()
-                    .child(
+                    .flex_col()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scrollbar()
+                    .p(px(12.0))
+                    .gap(px(10.0))
+                    .child(if self.artifacts.is_empty() {
+                        div()
+                            .text_sm()
+                            .text_color(self.colors.muted)
+                            .child("No artifacts yet.")
+                            .into_any_element()
+                    } else {
                         div()
                             .flex()
-                            .flex_col()
-                            .w(px(260.0))
-                            .p(px(metrics.spacing.xl))
-                            .gap_2()
-                            .child(if self.artifacts.is_empty() {
+                            .flex_row()
+                            .gap_3()
+                            .min_h(px(0.0))
+                            .child(
                                 div()
-                                    .p(px(metrics.spacing.xl))
-                                    .text_sm()
-                                    .text_color(self.colors.muted)
-                                    .child("No artifacts yet.")
-                            } else {
-                                list
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .border_l_1()
-                            .border_color(self.colors.border)
-                            .bg(self.colors.panel_2)
-                            .p(px(metrics.spacing.xl))
-                            .child(detail),
-                    ),
+                                    .flex()
+                                    .flex_col()
+                                    .w(px(260.0))
+                                    .gap_2()
+                                    .child(list),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .min_h(px(0.0))
+                                    .child(detail),
+                            )
+                            .into_any_element()
+                    }),
             )
     }
 }

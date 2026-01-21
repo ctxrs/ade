@@ -1,6 +1,6 @@
 use gpui::{
-    ClickEvent, Context, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Rgba, div,
-    prelude::*, px,
+    ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Rgba, div, prelude::*, px,
 };
 use gpui_component::scroll::ScrollableElement;
 
@@ -151,11 +151,17 @@ impl<'a> DiffReviewView<'a> {
                 }
             } else if !status.lines.is_empty() {
                 for line in &status.lines {
+                    let is_branch_line = line.starts_with("## ");
                     status_body = status_body.child(
                         div()
                             .text_sm()
+                            .text_size(if is_branch_line { px(11.0) } else { px(12.0) })
                             .font_family(MONO_FONT_FAMILY)
-                            .text_color(self.colors.text)
+                            .text_color(if is_branch_line {
+                                self.colors.muted
+                            } else {
+                                self.colors.text
+                            })
                             .child(line.clone()),
                     );
                 }
@@ -163,7 +169,6 @@ impl<'a> DiffReviewView<'a> {
                 status_body = status_body.child(
                     div()
                         .text_sm()
-                        .font_family(MONO_FONT_FAMILY)
                         .text_color(self.colors.text)
                         .child("Git status unavailable."),
                 );
@@ -172,7 +177,6 @@ impl<'a> DiffReviewView<'a> {
             status_body = status_body.child(
                 div()
                     .text_sm()
-                    .font_family(MONO_FONT_FAMILY)
                     .text_color(self.colors.text)
                     .child("Select a session to view status."),
             );
@@ -180,7 +184,6 @@ impl<'a> DiffReviewView<'a> {
             status_body = status_body.child(
                 div()
                     .text_sm()
-                    .font_family(MONO_FONT_FAMILY)
                     .text_color(self.colors.text)
                     .child("Loading git status..."),
             );
@@ -188,7 +191,6 @@ impl<'a> DiffReviewView<'a> {
             status_body = status_body.child(
                 div()
                     .text_sm()
-                    .font_family(MONO_FONT_FAMILY)
                     .text_color(self.colors.text)
                     .child("Git status unavailable."),
             );
@@ -197,17 +199,22 @@ impl<'a> DiffReviewView<'a> {
             div()
                 .flex()
                 .flex_col()
-                .gap_1()
-                .px(px(metrics.spacing.md))
-                .py(px(metrics.spacing.sm))
-                .border_1()
+                .gap(px(6.0))
+                .px(px(12.0))
+                .py(px(10.0))
+                .border_b_1()
                 .border_color(self.colors.border)
-                .rounded_sm()
-                .bg(self.colors.panel_2)
+                .bg(Rgba {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                    a: 0.02,
+                })
                 .child(
                     div()
-                        .text_sm()
-                        .text_color(self.colors.muted)
+                        .text_size(px(12.0))
+                        .font_weight(FontWeight(600.0))
+                        .text_color(self.colors.text)
                         .child("git status -sb"),
                 )
                 .child(status_body),
@@ -228,9 +235,10 @@ impl<'a> DiffReviewView<'a> {
         if !has_changes {
             return root.child(
                 div()
+                    .p(px(16.0))
                     .text_sm()
                     .text_color(self.colors.muted)
-                    .child("No changes."),
+                    .child("No changes on this worktree."),
             );
         }
 

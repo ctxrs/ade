@@ -85,14 +85,6 @@ impl<'a> SessionView<'a> {
                 Some("app-shell"),
             );
         }
-        if !shell.show_terminal_panel {
-            automation_tree::register_hidden(
-                "terminal-panel",
-                "pane",
-                Some("Terminal"),
-                Some("app-shell"),
-            );
-        }
         /*
         let sessions_toggle = {
             let (bg, color) = if show_sessions_pane {
@@ -377,32 +369,32 @@ impl<'a> SessionView<'a> {
         let mut content_row = div()
             .flex()
             .flex_row()
-            .gap(px(metrics.spacing.md))
             .flex_1()
             .min_h(px(0.0))
             .h_full()
             .child(center_column);
 
         if show_right_pane {
-            let right_pane_handle = div()
-                .w(px(metrics.spacing.sm))
+            let splitter = div()
+                .w(px(6.0))
+                .flex_none()
                 .flex()
                 .items_center()
                 .justify_center()
-                .flex_none()
-                .child(
-                    div()
-                        .w(px(1.0))
-                        .h(px(metrics.spacing.gutter * 2.0))
-                        .rounded_sm()
-                        .bg(shell.colors.border),
-                );
+                .cursor_col_resize()
+                .bg(Rgba {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.0,
+                })
+                .child(div().w(px(1.0)).h_full().bg(shell.colors.border));
+
             let mut right_pane = div()
                 .flex()
                 .flex_col()
-                .gap(px(metrics.spacing.gutter))
-                .w(px(360.0))
-                .pl(px(metrics.spacing.sm))
+                .w(px(480.0))
+                .min_w(px(320.0))
                 .min_h(px(0.0));
 
             if show_sessions_pane {
@@ -417,12 +409,14 @@ impl<'a> SessionView<'a> {
                         .id("sessions-pane")
                         .flex()
                         .flex_col()
-                        .gap(px(metrics.spacing.xl))
-                        .border_1()
-                        .border_color(shell.colors.border)
-                        .rounded_sm()
-                        .bg(shell.colors.panel_2)
-                        .p(px(metrics.spacing.xl))
+                        .gap(px(0.0))
+                        .bg(Rgba {
+                            r: 1.0,
+                            g: 1.0,
+                            b: 1.0,
+                            a: 0.01,
+                        })
+                        .min_h(px(0.0))
                         .child(
                             SessionsPaneView {
                                 colors: shell.colors,
@@ -452,17 +446,13 @@ impl<'a> SessionView<'a> {
                             Some("Diff"),
                             Some("app-shell"),
                         ))
-                        .id("diff-review-pane")
+                        .id("diff-pane")
                         .flex()
                         .flex_col()
-                        .gap(px(metrics.spacing.xl))
+                        .gap(px(0.0))
                         .flex_1()
                         .min_h(px(0.0))
-                        .border_1()
-                        .border_color(shell.colors.border)
-                        .rounded_sm()
-                        .bg(shell.colors.panel_2)
-                        .p(px(metrics.spacing.xl))
+                        .bg(shell.colors.panel)
                         .child(diff_review_view),
                 );
             } else if show_artifacts_pane {
@@ -477,14 +467,10 @@ impl<'a> SessionView<'a> {
                         .id("artifacts-pane")
                         .flex()
                         .flex_col()
-                        .gap(px(metrics.spacing.xl))
+                        .gap(px(0.0))
                         .flex_1()
                         .min_h(px(0.0))
-                        .border_1()
-                        .border_color(shell.colors.border)
-                        .rounded_sm()
-                        .bg(shell.colors.panel_2)
-                        .p(px(metrics.spacing.xl))
+                        .bg(shell.colors.panel)
                         .child(
                             ArtifactsView {
                                 colors: shell.colors,
@@ -498,10 +484,10 @@ impl<'a> SessionView<'a> {
                 );
             }
 
-            content_row = content_row.child(right_pane_handle).child(right_pane);
+            content_row = content_row.child(splitter).child(right_pane);
         }
 
-        let mut root = div()
+        let root = div()
             .id("session-view")
             .flex()
             .flex_col()
@@ -512,32 +498,6 @@ impl<'a> SessionView<'a> {
             .pb(px(metrics.spacing.xl))
             .bg(shell.colors.bg)
             .child(content_row);
-
-        if shell.show_terminal_panel {
-            root = root
-                .child(
-                    div()
-                        .h(px(metrics.spacing.xl))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .w(px(metrics.spacing.gutter * 2.0))
-                                .h(px(2.0))
-                                .rounded_sm()
-                                .bg(shell.colors.border),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("terminal-pane")
-                        .border_t_1()
-                        .border_color(shell.colors.border)
-                        .pt(px(metrics.spacing.xl))
-                        .child(shell.terminal_panel_state.clone()),
-                );
-        }
 
         root
     }

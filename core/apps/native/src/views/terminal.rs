@@ -1,22 +1,20 @@
-use gpui::{AnyElement, CursorStyle, MouseButton, StyledText, div, prelude::*, px, Window};
+use gpui::{div, prelude::*, px, AnyElement, CursorStyle, MouseButton, Rgba, StyledText, Window};
 use gpui_component::ElementExt;
-use ctx_core::models::TerminalStatus;
 
 use crate::automation_tree;
 
 use super::super::icons::{Icon, IconName};
 use super::super::state::terminal::{
-    terminal_line_height, MONO_FONT_FAMILY, TerminalLoadState, TerminalPanelState, TerminalScope,
-    TerminalStreamState, TERMINAL_FONT_SIZE,
+    terminal_line_height, TerminalLoadState, TerminalPanelState, TerminalScope,
+    TerminalStreamState, MONO_FONT_FAMILY, TERMINAL_FONT_SIZE,
 };
 
-fn terminal_status_text(terminal: &ctx_core::models::TerminalSession) -> String {
-    match terminal.status {
-        TerminalStatus::Running => "Running".to_string(),
-        TerminalStatus::Exited => match terminal.exit_code {
-            Some(code) => format!("Exited ({code})"),
-            None => "Exited".to_string(),
-        },
+const fn rgba(r: u8, g: u8, b: u8, a: f32) -> Rgba {
+    Rgba {
+        r: r as f32 / 255.0,
+        g: g as f32 / 255.0,
+        b: b as f32 / 255.0,
+        a,
     }
 }
 
@@ -42,85 +40,62 @@ impl Render for TerminalPanelState {
             TerminalLoadState::Error(message) => (Some(message.clone()), colors.error),
         };
         let active_stream_state = self.active_stream_state();
-        let active_stream_output = self.active_stream_output();
-        let (stream_label, stream_color) = match &active_stream_state {
-            TerminalStreamState::Idle => ("Stream: Idle".to_string(), colors.muted),
-            TerminalStreamState::Connecting => ("Stream: Connecting".to_string(), colors.muted),
-            TerminalStreamState::Connected => ("Stream: Connected".to_string(), colors.success),
-            TerminalStreamState::Reconnecting { .. } => {
-                ("Stream: Reconnecting".to_string(), colors.warning)
-            }
-            TerminalStreamState::Error(message) => (format!("Stream error: {message}"), colors.error),
-        };
-        let stream_detail = active_stream_state
-            .detail()
-            .map(|detail| format!("Detail: {detail}"));
-        let terminal_status = selected_terminal.map(|terminal| {
-            let status_text = terminal_status_text(terminal);
-            let status_color = match terminal.status {
-                TerminalStatus::Running => colors.success,
-                TerminalStatus::Exited => colors.muted,
-            };
-            (status_text, status_color)
-        });
-        let status_pill = |label: String, color| {
-            div()
-                .px(px(metrics.spacing.md))
-                .py(px(0.0))
-                .text_sm()
-                .border_1()
-                .border_color(colors.border)
-                .rounded_full()
-                .bg(colors.panel)
-                .text_color(color)
-                .child(label)
+        let stream_detail = active_stream_state.detail().map(ToOwned::to_owned);
+        let stream_error = match &active_stream_state {
+            TerminalStreamState::Error(message) => Some(message.clone()),
+            _ => None,
         };
 
+        let action_hover_bg = rgba(255, 255, 255, 0.06);
         let mut refresh_button = div()
-            .px(px(metrics.spacing.md))
-            .py(px(metrics.spacing.sm))
-            .text_sm()
-            .border_1()
-            .border_color(colors.border)
-            .rounded_sm()
-            .child("Refresh")
-            .id("terminal-refresh");
+            .w(px(22.0))
+            .h(px(22.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.0))
+            .id("terminal-refresh")
+            .bg(rgba(0, 0, 0, 0.0))
+            .child(Icon::new(IconName::ChevronDown, 14.0, colors.muted));
         if can_create {
             refresh_button = refresh_button
-                .bg(colors.panel)
                 .cursor_pointer()
+                .hover(move |style| style.bg(action_hover_bg))
                 .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(TerminalPanelState::on_refresh_click));
         } else {
-            refresh_button = refresh_button
-                .bg(colors.panel_2)
-                .text_color(colors.muted);
+            refresh_button = refresh_button.opacity(0.5);
         }
 
         let mut create_button = div()
-            .px(px(metrics.spacing.md))
-            .py(px(metrics.spacing.sm))
-            .text_sm()
-            .border_1()
-            .border_color(colors.border)
-            .rounded_sm()
-            .child("New")
-            .id("terminal-new");
+            .w(px(22.0))
+            .h(px(22.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.0))
+            .id("terminal-new")
+            .bg(rgba(0, 0, 0, 0.0))
+            .child(Icon::new(IconName::LayersPlus, 14.0, colors.muted));
         if can_create {
             create_button = create_button
-                .bg(colors.panel)
                 .cursor_pointer()
+                .hover(move |style| style.bg(action_hover_bg))
                 .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(TerminalPanelState::on_create_terminal_click));
         } else {
-            create_button = create_button
-                .bg(colors.panel_2)
-                .text_color(colors.muted);
+            create_button = create_button.opacity(0.5);
         }
 
+        let reconnect_visible = matches!(
+            active_stream_state,
+            TerminalStreamState::Error(_)
+                | TerminalStreamState::Idle
+                | TerminalStreamState::Reconnecting { .. }
+        );
         let mut reconnect_button = div()
-            .px(px(metrics.spacing.md))
-            .py(px(metrics.spacing.sm))
+            .px(px(metrics.spacing.sm))
+            .py(px(metrics.spacing.xs))
             .text_sm()
             .border_1()
             .border_color(colors.border)
@@ -134,149 +109,134 @@ impl Render for TerminalPanelState {
                 .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(TerminalPanelState::on_reconnect_click));
         } else {
-            reconnect_button = reconnect_button
-                .bg(colors.panel_2)
-                .text_color(colors.muted);
+            reconnect_button = reconnect_button.bg(colors.panel_2).text_color(colors.muted);
         }
 
+        let scope_container_bg = rgba(255, 255, 255, 0.04);
+        let scope_active_bg = rgba(255, 255, 255, 0.08);
         let mut task_scope_button = div()
-            .px(px(metrics.spacing.md))
-            .py(px(metrics.spacing.sm))
-            .text_sm()
-            .border_1()
-            .border_color(colors.border)
-            .rounded_full()
+            .text_size(px(11.0))
+            .px(px(8.0))
+            .py(px(2.0))
+            .text_color(if self.scope == TerminalScope::Task {
+                colors.text
+            } else {
+                colors.muted
+            })
+            .bg(if self.scope == TerminalScope::Task {
+                scope_active_bg
+            } else {
+                rgba(0, 0, 0, 0.0)
+            })
             .child(TerminalScope::Task.label())
             .id("terminal-scope-task");
         if task_scope_disabled {
-            task_scope_button = task_scope_button.bg(colors.panel_2).text_color(colors.muted);
-        } else if self.scope == TerminalScope::Task {
-            task_scope_button = task_scope_button
-                .bg(colors.panel)
-                .text_color(colors.text)
-                .cursor_pointer()
-                .active(|style| style.opacity(0.85))
-                .on_click(cx.listener(TerminalPanelState::on_scope_task_click));
+            task_scope_button = task_scope_button.opacity(0.5);
         } else {
             task_scope_button = task_scope_button
-                .bg(colors.panel_2)
-                .text_color(colors.muted)
                 .cursor_pointer()
                 .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(TerminalPanelState::on_scope_task_click));
         }
 
         let mut workspace_scope_button = div()
-            .px(px(metrics.spacing.md))
-            .py(px(metrics.spacing.sm))
-            .text_sm()
-            .border_1()
-            .border_color(colors.border)
-            .rounded_full()
+            .text_size(px(11.0))
+            .px(px(8.0))
+            .py(px(2.0))
+            .text_color(if self.scope == TerminalScope::Workspace {
+                colors.text
+            } else {
+                colors.muted
+            })
+            .bg(if self.scope == TerminalScope::Workspace {
+                scope_active_bg
+            } else {
+                rgba(0, 0, 0, 0.0)
+            })
             .child(TerminalScope::Workspace.label())
             .id("terminal-scope-workspace");
-        if self.scope == TerminalScope::Workspace {
-            workspace_scope_button = workspace_scope_button
-                .bg(colors.panel)
-                .text_color(colors.text)
-                .cursor_pointer()
-                .active(|style| style.opacity(0.85))
-                .on_click(cx.listener(TerminalPanelState::on_scope_workspace_click));
+        if self.context.workspace_id.is_none() {
+            workspace_scope_button = workspace_scope_button.opacity(0.5);
         } else {
             workspace_scope_button = workspace_scope_button
-                .bg(colors.panel_2)
-                .text_color(colors.muted)
                 .cursor_pointer()
                 .active(|style| style.opacity(0.85))
                 .on_click(cx.listener(TerminalPanelState::on_scope_workspace_click));
         }
 
         let list = if scope_terminals.is_empty() {
-            div()
-                .text_sm()
-                .text_color(colors.muted)
-                .child("No terminals")
+            div().flex_1().min_h(px(0.0))
         } else {
             scope_terminals
                 .iter()
-                .fold(div().flex().flex_row().gap_1(), |list, terminal| {
-                let is_selected = Some(terminal.id) == self.selected_terminal_id;
-                let status_text = terminal_status_text(terminal);
-                let status_color = match terminal.status {
-                    TerminalStatus::Running => colors.success,
-                    TerminalStatus::Exited => colors.muted,
-                };
-                let terminal_id = terminal.id;
-                let terminal_key = format!("{terminal_id:?}");
-                let select_click = cx.listener(move |view, _, _, cx| {
-                    view.select_terminal(terminal_id, cx);
-                });
-                let delete_click = cx.listener(move |view, _, _, cx| {
-                    view.delete_terminal(terminal_id, cx);
-                });
-                let indicator = div()
-                    .w(px(6.0))
-                    .h(px(6.0))
-                    .rounded_full()
-                    .bg(if is_selected { colors.accent } else { colors.border });
-                let select_button = div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .flex_1()
-                    .cursor_pointer()
-                    .id(format!("terminal-select-{terminal_key}"))
-                    .active(|style| style.opacity(0.85))
-                    .on_click(select_click)
-                    .child(indicator)
-                    .child(div().text_sm().child(terminal.title.clone()))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(status_color)
-                            .child(status_text),
-                    );
-                let delete_button = div()
-                    .px(px(metrics.spacing.xs))
-                    .py(px(0.0))
-                    .text_sm()
-                    .border_1()
-                    .border_color(colors.border)
-                    .rounded_sm()
-                    .bg(colors.panel)
-                    .text_color(colors.muted)
-                    .cursor_pointer()
-                    .id(format!("terminal-delete-{terminal_key}"))
-                    .active(|style| style.opacity(0.85))
-                    .on_click(delete_click)
-                    .child("x");
-                list.child(
-                    div()
+                .fold(div().flex().flex_col(), |list, terminal| {
+                    let is_selected = Some(terminal.id) == self.selected_terminal_id;
+                    let terminal_id = terminal.id;
+                    let terminal_key = terminal_id.0.to_string();
+                    let select_click = cx.listener(move |view, _, _, cx| {
+                        view.select_terminal(terminal_id, cx);
+                    });
+                    let delete_click = cx.listener(move |view, _, _, cx| {
+                        view.delete_terminal(terminal_id, cx);
+                    });
+                    let accent_bar = div().w(px(2.0)).h_full().bg(if is_selected {
+                        colors.accent
+                    } else {
+                        colors.panel_2
+                    });
+                    let select_button = div()
                         .flex()
                         .items_center()
-                        .gap_1()
-                        .px(px(metrics.spacing.md))
-                        .py(px(metrics.spacing.sm))
-                        .border_1()
-                        .border_color(if is_selected {
-                            colors.border_strong
-                        } else {
-                            colors.border
-                        })
+                        .gap_2()
+                        .flex_1()
+                        .cursor_pointer()
+                        .id(format!("terminal-select-{terminal_key}"))
+                        .active(|style| style.opacity(0.85))
+                        .on_click(select_click)
+                        .child(Icon::new(IconName::Terminal, 12.0, colors.muted))
+                        .child(div().text_sm().child(terminal.title.clone()));
+                    let delete_button = div()
+                        .w(px(18.0))
+                        .h(px(18.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
                         .rounded_sm()
-                        .bg(if is_selected { colors.panel } else { colors.panel_2 })
-                        .child(select_button)
-                        .child(delete_button),
-                )
-            })
+                        .cursor_pointer()
+                        .id(format!("terminal-delete-{terminal_key}"))
+                        .active(|style| style.opacity(0.85))
+                        .on_click(delete_click)
+                        .child(Icon::new(IconName::Cancel, 12.0, colors.muted));
+                    list.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .h(px(30.0))
+                            .px(px(metrics.spacing.sm))
+                            .bg(if is_selected {
+                                colors.panel
+                            } else {
+                                colors.panel_2
+                            })
+                            .border_b_1()
+                            .border_color(colors.border)
+                            .child(accent_bar)
+                            .child(select_button)
+                            .child(delete_button),
+                    )
+                })
         };
 
-        let output_text = if selected_terminal.is_none() {
+        let has_terminals = !scope_terminals.is_empty();
+        let output_text = if !has_terminals {
+            "No terminals yet.".to_string()
+        } else if selected_terminal.is_none() {
             "Select a terminal to view output.".to_string()
         } else {
             "No output yet.".to_string()
         };
-        let output_is_empty = selected_terminal.is_none();
+        let output_is_empty = !has_terminals || selected_terminal.is_none();
         let rendered_output = self.active_stream_rendered();
         let output_color = if output_is_empty || rendered_output.is_none() {
             colors.muted
@@ -292,136 +252,7 @@ impl Render for TerminalPanelState {
         } else {
             div().child(output_text.clone()).into_any_element()
         };
-        let can_clear_output = !active_stream_output.is_empty();
-        let can_copy_output = !active_stream_output.trim().is_empty();
-        let mut copy_button = div()
-            .px(px(metrics.spacing.md))
-            .py(px(metrics.spacing.sm))
-            .text_sm()
-            .border_1()
-            .border_color(colors.border)
-            .rounded_sm()
-            .child("Copy")
-            .id("terminal-copy");
-        if can_copy_output {
-            copy_button = copy_button
-                .bg(colors.panel)
-                .cursor_pointer()
-                .active(|style| style.opacity(0.85))
-                .on_click(cx.listener(TerminalPanelState::on_copy_output_click));
-        } else {
-            copy_button = copy_button
-                .bg(colors.panel_2)
-                .text_color(colors.muted);
-        }
-        let mut clear_button = div()
-            .px(px(metrics.spacing.md))
-            .py(px(metrics.spacing.sm))
-            .text_sm()
-            .border_1()
-            .border_color(colors.border)
-            .rounded_sm()
-            .child("Clear")
-            .id("terminal-clear");
-        if can_clear_output {
-            clear_button = clear_button
-                .bg(colors.panel)
-                .cursor_pointer()
-                .active(|style| style.opacity(0.85))
-                .on_click(cx.listener(TerminalPanelState::on_clear_output_click));
-        } else {
-            clear_button = clear_button
-                .bg(colors.panel_2)
-                .text_color(colors.muted);
-        }
-        let input_placeholder = if selected_terminal.is_some() {
-            "Type to send keystrokes..."
-        } else {
-            "Select a terminal to send input."
-        };
-        let (input_text, input_is_placeholder) = if self.input.text().is_empty() {
-            (format!("|{input_placeholder}"), true)
-        } else {
-            let mut cursor = self.input.cursor().min(self.input.text().len());
-            while cursor > 0 && !self.input.text().is_char_boundary(cursor) {
-                cursor -= 1;
-            }
-            let mut display = String::with_capacity(self.input.text().len() + 1);
-            display.push_str(&self.input.text()[..cursor]);
-            display.push('|');
-            display.push_str(&self.input.text()[cursor..]);
-            (display, false)
-        };
-        let input_color = if input_is_placeholder {
-            colors.muted
-        } else {
-            colors.text
-        };
-        let input_empty = self.input.text().is_empty();
-        let can_send_input = selected_terminal.is_some() && !input_empty;
-        let input_field = div()
-            .flex_1()
-            .text_sm()
-            .font_family(MONO_FONT_FAMILY)
-            .text_color(input_color)
-            .whitespace_nowrap()
-            .cursor(CursorStyle::IBeam)
-            .track_focus(&self.input_focus)
-            .id("terminal-input")
-            .on_click(cx.listener(TerminalPanelState::focus_input))
-            .on_key_down(cx.listener(TerminalPanelState::on_input_key_down))
-            .child(input_text);
-        let send_icon_color = if can_send_input {
-            colors.text
-        } else {
-            colors.muted
-        };
-        let send_label = div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .child(Icon::new(IconName::Send, 12.0, send_icon_color))
-            .child("Send");
-        let mut send_button = div()
-            .px(px(metrics.spacing.md))
-            .py(px(metrics.spacing.sm))
-            .text_sm()
-            .border_1()
-            .border_color(colors.border)
-            .rounded_full()
-            .child(send_label)
-            .id("terminal-send");
-        if can_send_input {
-            send_button = send_button
-                .bg(colors.panel)
-                .cursor_pointer()
-                .active(|style| style.opacity(0.85))
-                .on_click(cx.listener(TerminalPanelState::on_send_input_click));
-        } else {
-            send_button = send_button
-                .bg(colors.panel_2)
-                .text_color(colors.muted);
-        }
-
-        let output_header = div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(colors.muted)
-                    .child("Output"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(copy_button)
-                    .child(clear_button),
-            );
-        let output_padding = px(metrics.spacing.md);
+        let output_padding = px(8.0);
         let output_line_height = terminal_line_height(window);
         let output_view = div()
             .text_sm()
@@ -431,12 +262,15 @@ impl Render for TerminalPanelState {
             .text_color(output_color)
             .whitespace_nowrap()
             .overflow_hidden()
-            .border_1()
-            .border_color(colors.border)
-            .rounded_sm()
             .bg(colors.panel)
-            .p(output_padding)
-            .h(px(220.0))
+            .px(px(8.0))
+            .py(px(6.0))
+            .flex_1()
+            .cursor(CursorStyle::IBeam)
+            .track_focus(&self.input_focus)
+            .id("terminal-input")
+            .on_click(cx.listener(TerminalPanelState::focus_input))
+            .on_key_down(cx.listener(TerminalPanelState::on_input_key_down))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(TerminalPanelState::on_output_mouse_down),
@@ -485,143 +319,97 @@ impl Render for TerminalPanelState {
             })
             .child(output_body);
 
-        let header = div()
+        let sidebar = div()
+            .w(px(120.0))
+            .flex_none()
             .flex()
-            .items_center()
-            .justify_between()
-            .px(px(metrics.spacing.xl))
-            .py(px(metrics.spacing.lg))
-            .border_b_1()
-            .border_color(colors.border)
+            .flex_col()
             .bg(colors.panel)
+            .border_r_1()
+            .border_color(colors.border)
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
-                    .text_sm()
-                    .child(Icon::new(IconName::Terminal, 14.0, colors.muted))
-                    .child("Terminals")
+                    .justify_start()
+                    .px(px(6.0))
+                    .pt(px(4.0))
+                    .pb(px(2.0))
                     .child(
                         div()
-                            .px(px(metrics.spacing.md))
-                            .py(px(0.0))
-                            .text_sm()
-                            .border_1()
-                            .border_color(colors.border)
-                            .rounded_full()
-                            .bg(colors.panel)
-                            .text_color(colors.text)
-                            .child(format!("{}", scope_terminals.len())),
-                    ),
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .child(create_button)
+                            .child(refresh_button),
+                    )
             )
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
-                    .child(refresh_button)
-                    .child(create_button),
-            );
-
-        let body = div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .bg(colors.panel_2)
-            .border_1()
-            .border_color(colors.border)
-            .rounded_sm()
-            .p(px(metrics.spacing.xl))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
+                    .mx(px(6.0))
+                    .mt(px(6.0))
+                    .mb(px(4.0))
+                    .rounded_full()
+                    .border_1()
+                    .border_color(colors.border)
+                    .overflow_hidden()
+                    .bg(scope_container_bg)
                     .child(task_scope_button)
                     .child(workspace_scope_button),
             )
             .child(if let Some(message) = load_message {
-                div().text_sm().text_color(load_color).child(message)
+                div()
+                    .px(px(metrics.spacing.sm))
+                    .pb(px(metrics.spacing.sm))
+                    .text_sm()
+                    .text_color(load_color)
+                    .child(message)
             } else {
                 div()
             })
             .child(if let Some(error) = &self.last_error {
                 div()
+                    .px(px(metrics.spacing.sm))
+                    .pb(px(metrics.spacing.sm))
                     .text_sm()
                     .text_color(colors.error)
                     .child(error.clone())
             } else {
                 div()
             })
-            .child(list)
-            .child(
+            .child(div().flex_1().overflow_hidden().child(list))
+            .child(if reconnect_visible {
                 div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
+                    .px(px(metrics.spacing.sm))
+                    .py(px(metrics.spacing.sm))
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(status_pill(stream_label, stream_color))
-                            .child(if let Some(detail) = stream_detail {
-                                div().text_sm().text_color(colors.muted).child(detail)
-                            } else {
+                            .child(reconnect_button)
+                            .child(if let Some(detail) = stream_detail.clone().or(stream_error.clone()) {
                                 div()
-                            })
-                            .child(if let Some((label, color)) = terminal_status {
-                                status_pill(format!("Terminal: {label}"), color)
+                                    .text_sm()
+                                    .text_color(colors.muted)
+                                    .child(detail)
+                                    .into_any_element()
                             } else {
-                                div()
+                                div().into_any_element()
                             }),
                     )
-                    .child(reconnect_button),
-            )
-            .child(
+            } else {
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(output_header)
-                    .child(output_view),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(colors.muted)
-                            .child("Input"),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .border_1()
-                                    .border_color(colors.border)
-                                    .rounded_sm()
-                                    .bg(colors.panel)
-                                    .p(px(metrics.spacing.md))
-                                    .on_children_prepainted(automation_tree::track_children_bounds(
-                                        "terminal-input",
-                                        "textbox",
-                                        Some("Terminal Input"),
-                                        Some("terminal-panel"),
-                                    ))
-                                    .child(input_field),
-                            )
-                            .child(send_button),
-                    ),
-            );
+            });
+
+        let viewport = div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .bg(colors.panel)
+            .child(output_view);
 
         div()
             .on_children_prepainted(automation_tree::track_children_bounds(
@@ -632,9 +420,9 @@ impl Render for TerminalPanelState {
             ))
             .id("terminal-panel")
             .flex()
-            .flex_col()
-            .gap_2()
-            .child(header)
-            .child(body)
+            .flex_row()
+            .bg(colors.panel)
+            .child(sidebar)
+            .child(viewport)
     }
 }

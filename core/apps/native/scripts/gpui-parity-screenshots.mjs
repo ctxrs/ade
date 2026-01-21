@@ -349,6 +349,59 @@ async function resolveTaskSession({
   return { workspaceId, taskId, sessionId };
 }
 
+async function deleteAllWorkspaceTerminals({ daemonUrl, token, workspaceId, timeoutMs }) {
+  if (!daemonUrl || !token || !workspaceId) return;
+  const start = Date.now();
+  const requestTimeoutMs = Math.min(timeoutMs, DAEMON_REQUEST_TIMEOUT_MS);
+  while (Date.now() - start < timeoutMs) {
+    const terminals = await callDaemonJson(daemonUrl, `/api/workspaces/${workspaceId}/terminals`, {
+      token,
+      timeoutMs: requestTimeoutMs,
+    }).catch(() => []);
+    const list = Array.isArray(terminals) ? terminals : [];
+    if (list.length === 0) {
+      return;
+    }
+    await Promise.all(
+      list.map((terminal) => {
+        const terminalId = idToString(terminal?.id);
+        if (!terminalId) return Promise.resolve();
+        return callDaemonJson(daemonUrl, `/api/terminals/${terminalId}`, {
+          method: "DELETE",
+          token,
+          timeoutMs: requestTimeoutMs,
+        }).catch(() => {});
+      }),
+    );
+    await sleep(200);
+  }
+  throw new Error("Timed out deleting workspace terminals via daemon");
+}
+
+async function listWorkspaceTerminalsViaDaemon({ daemonUrl, token, workspaceId, timeoutMs }) {
+  if (!daemonUrl || !token || !workspaceId) return [];
+  const requestTimeoutMs = Math.min(timeoutMs, DAEMON_REQUEST_TIMEOUT_MS);
+  const terminals = await callDaemonJson(daemonUrl, `/api/workspaces/${workspaceId}/terminals`, {
+    token,
+    timeoutMs: requestTimeoutMs,
+  }).catch(() => []);
+  return Array.isArray(terminals) ? terminals : [];
+}
+
+async function createWorkspaceTerminalViaDaemon({ daemonUrl, token, workspaceId, cwd, timeoutMs }) {
+  if (!daemonUrl || !token || !workspaceId) return "";
+  const requestTimeoutMs = Math.min(timeoutMs, DAEMON_REQUEST_TIMEOUT_MS);
+  const created = await callDaemonJson(daemonUrl, `/api/workspaces/${workspaceId}/terminals`, {
+    method: "POST",
+    token,
+    timeoutMs: requestTimeoutMs,
+    body: {
+      cwd: cwd ?? null,
+    },
+  }).catch(() => null);
+  return idToString(created?.id);
+}
+
 async function waitForSessionContent({
   daemonUrl,
   token,
@@ -452,6 +505,39 @@ function findTaskRowId(node, taskText) {
     }
   });
   return match;
+}
+
+function findVisibleIdsByPrefix(node, prefix) {
+  const matches = [];
+  walk(node, (child) => {
+    const id = typeof child.id === "string" ? child.id : "";
+    if (!id.startsWith(prefix)) return;
+    if (child.visible !== true) return;
+    matches.push(id);
+  });
+  return matches;
+}
+
+async function closeAllTerminals(app, { addr, timeoutMs }) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const tree = await app.rpc("automation.tree.snapshot").catch(() => null);
+    if (!tree) {
+      await sleep(200);
+      continue;
+    }
+
+    const deleteIds = findVisibleIdsByPrefix(tree, "terminal-delete-");
+    if (deleteIds.length === 0) {
+      return;
+    }
+
+    // Click one at a time; IDs should remain stable across snapshots.
+    await app.page.locator(`#${deleteIds[0]}`).click();
+    await waitIdle(addr, 250);
+  }
+
+  throw new Error("Timed out closing terminals");
 }
 
 async function waitForTaskRowId(app, { timeoutMs, taskText }) {
@@ -739,6 +825,93 @@ async function main() {
       });
       await waitIdle(args.addr, args.settleMs);
       await screenshot(args.addr, "active-session/native.png");
+
+      // Integrated terminal (open panel).
+      log("open terminal panel");
+      let parityTerminalId = "";
+      if (args.daemonUrl && daemonToken && resolved?.workspaceId) {
+        const workspaceId = resolved.workspaceId;
+        const terminals = await listWorkspaceTerminalsViaDaemon({
+          daemonUrl: args.daemonUrl,
+          token: daemonToken,
+          workspaceId,
+          timeoutMs: args.readyTimeoutMs,
+        });
+        if (terminals.length === 1) {
+          parityTerminalId = idToString(terminals[0]?.id);
+        } else if (terminals.length > 1) {
+          await deleteAllWorkspaceTerminals({
+            daemonUrl: args.daemonUrl,
+            token: daemonToken,
+            workspaceId,
+            timeoutMs: args.readyTimeoutMs,
+          });
+          parityTerminalId = await createWorkspaceTerminalViaDaemon({
+            daemonUrl: args.daemonUrl,
+            token: daemonToken,
+            workspaceId,
+            cwd: process.env.CTX_PARITY_REPO_DIR ?? null,
+            timeoutMs: args.readyTimeoutMs,
+          });
+        } else {
+          parityTerminalId = await createWorkspaceTerminalViaDaemon({
+            daemonUrl: args.daemonUrl,
+            token: daemonToken,
+            workspaceId,
+            cwd: process.env.CTX_PARITY_REPO_DIR ?? null,
+            timeoutMs: args.readyTimeoutMs,
+          });
+        }
+      }
+      await focus(args.addr, "terminal_panel");
+      await waitIdle(args.addr, args.settleMs);
+      await expect(app.page.locator("#terminal-panel")).toBeVisible({
+        timeoutMs: args.readyTimeoutMs,
+      });
+      await app.page.locator("#terminal-scope-workspace").click().catch(() => {});
+      await app.page.locator("#terminal-refresh").click().catch(() => {});
+      await waitIdle(args.addr, args.settleMs);
+      if (parityTerminalId) {
+        const parityTerminalLocator = app.page.locator(
+          `#terminal-select-${parityTerminalId}`,
+        );
+        const parityTerminalVisible = await expect(parityTerminalLocator)
+          .toBeVisible({
+            timeoutMs: args.readyTimeoutMs,
+          })
+          .then(() => true)
+          .catch(() => false);
+        if (parityTerminalVisible) {
+          await parityTerminalLocator.click().catch(() => {});
+          await waitIdle(args.addr, args.settleMs);
+        } else {
+          log(
+            `warn: terminal-select-${parityTerminalId} never became visible; capturing terminal anyway`,
+          );
+        }
+      } else {
+        await closeAllTerminals(app, { addr: args.addr, timeoutMs: args.readyTimeoutMs });
+      }
+      await screenshot(args.addr, "terminal/native.png");
+
+      // Right pane (artifacts).
+      log("open artifacts pane");
+      await focus(args.addr, "artifacts_pane");
+      await waitIdle(args.addr, args.settleMs);
+      await expect(app.page.locator("#artifacts-pane")).toBeVisible({
+        timeoutMs: args.readyTimeoutMs,
+      });
+      await screenshot(args.addr, "right-pane/artifacts/native.png");
+      await screenshot(args.addr, "active-session/right-pane/artifacts/native.png");
+
+      // Right pane (diff).
+      log("open diff pane");
+      await focus(args.addr, "diff_pane");
+      await waitIdle(args.addr, args.settleMs);
+      await expect(app.page.locator("#diff-pane")).toBeVisible({
+        timeoutMs: args.readyTimeoutMs,
+      });
+      await screenshot(args.addr, "right-pane/diff/native.png");
 
       // Settings
       log("open settings");

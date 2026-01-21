@@ -176,10 +176,6 @@ impl TerminalEmulator {
         Self { term, parser }
     }
 
-    fn reset(&mut self) {
-        *self = Self::new();
-    }
-
     fn feed_bytes(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.term, bytes);
     }
@@ -481,12 +477,6 @@ impl TerminalStreamEntry {
             return;
         }
         self.emulator.feed_bytes(chunk.as_bytes());
-        self.output = self.emulator.render_plain_text();
-        self.rendered = self.emulator.render_snapshot(theme);
-    }
-
-    fn clear_output(&mut self, theme: ThemeColors) {
-        self.emulator.reset();
         self.output = self.emulator.render_plain_text();
         self.rendered = self.emulator.render_snapshot(theme);
     }
@@ -813,36 +803,6 @@ impl TerminalPanelState {
         self.start_terminal_stream(terminal_id, true, cx);
     }
 
-    pub(crate) fn on_clear_output_click(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.active_stream_output().is_empty() {
-            return;
-        }
-        let colors = self.colors;
-        if let Some(entry) = self.active_stream_entry_mut() {
-            entry.clear_output(colors);
-        }
-        cx.notify();
-    }
-
-    pub(crate) fn on_copy_output_click(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let output = self.active_stream_output().trim_end();
-        if output.is_empty() {
-            return;
-        }
-        cx.write_to_clipboard(ClipboardItem::new_string(output.to_string()));
-        cx.notify();
-    }
-
     pub(crate) fn update_terminal_output_bounds(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -1135,15 +1095,6 @@ impl TerminalPanelState {
         }
     }
 
-    pub(crate) fn on_send_input_click(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.send_buffered_input(cx);
-    }
-
     pub(crate) fn send_input(&mut self, data: String, cx: &mut Context<Self>) {
         if data.is_empty() {
             return;
@@ -1163,12 +1114,6 @@ impl TerminalPanelState {
         } else {
             self.last_error = None;
         }
-        cx.notify();
-    }
-
-    fn send_buffered_input(&mut self, cx: &mut Context<Self>) {
-        self.send_input("\r".to_string(), cx);
-        self.input.clear();
         cx.notify();
     }
 
@@ -1401,12 +1346,6 @@ impl TerminalPanelState {
         self.active_stream_entry()
             .map(|entry| entry.state.clone())
             .unwrap_or(TerminalStreamState::Idle)
-    }
-
-    pub(crate) fn active_stream_output(&self) -> &str {
-        self.active_stream_entry()
-            .map(|entry| entry.output.as_str())
-            .unwrap_or("")
     }
 
     pub(crate) fn active_stream_rendered(&self) -> Option<&TerminalRenderSnapshot> {

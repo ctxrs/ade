@@ -71,6 +71,75 @@ async function readAuthToken(): Promise<string> {
   return token;
 }
 
+function idToString(value: any): string {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object") {
+    if (Object.prototype.hasOwnProperty.call(value, 0)) {
+      return String((value as any)[0] ?? "");
+    }
+    if (Object.prototype.hasOwnProperty.call(value, "0")) {
+      return String((value as any)["0"] ?? "");
+    }
+  }
+  return String(value ?? "");
+}
+
+function workspaceIdFromPath(pathname: string): string {
+  const match = String(pathname || "").match(/\/workspaces\/([^/?#]+)/);
+  return match?.[1] ?? "";
+}
+
+async function listWorkspaceTerminals(page: any, token: string, workspaceId: string): Promise<any[]> {
+  const res = await page.request.get(`/api/workspaces/${workspaceId}/terminals`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok()) {
+    throw new Error(`list terminals failed: HTTP ${res.status()} ${res.statusText()}`);
+  }
+  const data = await res.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
+}
+
+async function deleteTerminal(page: any, token: string, terminalId: string): Promise<void> {
+  if (!terminalId) return;
+  const res = await page.request.delete(`/api/terminals/${terminalId}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok()) {
+    throw new Error(`delete terminal ${terminalId} failed: HTTP ${res.status()} ${res.statusText()}`);
+  }
+}
+
+async function createWorkspaceTerminal(page: any, token: string, workspaceId: string, cwd: string | null) {
+  const res = await page.request.post(`/api/workspaces/${workspaceId}/terminals`, {
+    headers: { authorization: `Bearer ${token}` },
+    data: {
+      cwd,
+    },
+  });
+  if (!res.ok()) {
+    throw new Error(`create terminal failed: HTTP ${res.status()} ${res.statusText()}`);
+  }
+  const created = await res.json().catch(() => null);
+  return idToString((created as any)?.id);
+}
+
+async function ensureNoWorkspaceTerminals(page: any, token: string, workspaceId: string) {
+  if (!workspaceId) throw new Error("Failed to determine workspace id for terminal cleanup");
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const terminals = await listWorkspaceTerminals(page, token, workspaceId);
+    if (terminals.length === 0) return;
+    await Promise.all(
+      terminals.map((t) => deleteTerminal(page, token, idToString((t as any)?.id)).catch(() => {})),
+    );
+    await page.waitForTimeout(200);
+  }
+  const terminals = await listWorkspaceTerminals(page, token, workspaceId);
+  throw new Error(`Timed out deleting terminals (remaining: ${terminals.length})`);
+}
+
 async function takeShot(page: any, screen: string, variant: string) {
   const dir = path.join(OUT_DIR, screen);
   await ensureDir(dir);
@@ -145,6 +214,14 @@ test.describe("parity screenshots (web vs GPUI native)", () => {
       await expect(workspaceLink.first()).toBeVisible({ timeout: 20_000 });
       console.log("[parity] web: screenshot launcher");
       await takeShot(page, "launcher", "web");
+
+      const workspaceHref = (await workspaceLink.first().getAttribute("href")) ?? "";
+      const workspaceId = workspaceIdFromPath(workspaceHref);
+      if (!workspaceId) {
+        throw new Error(`Failed to parse workspace id from link href: ${workspaceHref || "<empty>"}`);
+      }
+      await ensureNoWorkspaceTerminals(page, token, workspaceId);
+      await createWorkspaceTerminal(page, token, workspaceId, REPO_DIR);
 
       // Enter workbench (new task).
       console.log("[parity] web: enter workbench");
@@ -226,6 +303,51 @@ test.describe("parity screenshots (web vs GPUI native)", () => {
       console.log("[parity] web: screenshot active-session");
       await takeShot(page, "active-session", "web");
 
+      // Integrated terminal (open panel).
+      console.log("[parity] web: open terminal panel");
+      const terminalToggle = page.getByRole("button", { name: "Toggle terminal panel" });
+      await expect(terminalToggle).toBeVisible({ timeout: 20_000 });
+      await terminalToggle.click();
+      await expect(page.locator(".wb-terminal-panel-inner")).toBeVisible({ timeout: 20_000 });
+      await page
+        .locator(".wb-terminal-panel-inner")
+        .getByRole("button", { name: "Workspace" })
+        .click()
+        .catch(() => {});
+      await expect(page.locator(".wb-terminal-panel-inner .wb-terminal-tab")).toHaveCount(1, {
+        timeout: 20_000,
+      });
+      await expect(page.locator(".wb-terminal-panel-inner .wb-terminal-empty")).toBeHidden({
+        timeout: 20_000,
+      });
+      await expect(page.locator(".wb-terminal-panel-inner .xterm")).toBeVisible({ timeout: 20_000 });
+      console.log("[parity] web: screenshot terminal");
+      await takeShot(page, "terminal", "web");
+      await terminalToggle.click();
+      await expect(page.locator(".wb-terminal-panel-inner")).toBeHidden({ timeout: 20_000 });
+
+      // Active session with right pane (artifacts).
+      console.log("[parity] web: open artifacts pane");
+      const artifactsToggle = page.getByRole("button", { name: "Toggle artifacts" });
+      await expect(artifactsToggle).toBeVisible({ timeout: 20_000 });
+      await artifactsToggle.click();
+      await expect(page.locator(".wb-artifacts")).toBeVisible({ timeout: 20_000 });
+      console.log("[parity] web: screenshot active-session artifacts pane");
+      await takeShot(page, "active-session/right-pane/artifacts", "web");
+      await takeShot(page, "right-pane/artifacts", "web");
+
+      // Active session with right pane (diff).
+      console.log("[parity] web: open diff pane");
+      const diffToggle = page.getByRole("button", { name: "Toggle diff view" });
+      await expect(diffToggle).toBeVisible({ timeout: 20_000 });
+      await diffToggle.click();
+      await expect(page.locator(".wb-right-pane.wb-diff")).toBeVisible({ timeout: 20_000 });
+      await expect(page.locator(".wb-diff-status-title")).toHaveText("git status -sb", {
+        timeout: 20_000,
+      });
+      console.log("[parity] web: screenshot active-session diff pane");
+      await takeShot(page, "right-pane/diff", "web");
+
       // Settings (pick a mostly-static section).
       console.log("[parity] web: open settings");
       await page.goto("/settings?desktop_ui=1#context_pack");
@@ -266,6 +388,7 @@ test.describe("parity screenshots (web vs GPUI native)", () => {
             CTX_DAEMON_URL: baseURL,
             CTX_PARITY_WORKSPACE_NAME: WORKSPACE_NAME,
             CTX_PARITY_TASK_TEXT: "hello",
+            CTX_PARITY_REPO_DIR: REPO_DIR,
             CARGO_TARGET_DIR: NATIVE_CARGO_TARGET_DIR,
           },
         },
