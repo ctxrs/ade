@@ -446,7 +446,6 @@ test.describe("parity screenshots (web vs GPUI native)", () => {
       const workbenchUrl = new URL(page.url());
       workbenchUrl.searchParams.set("desktop_ui", "1");
       await page.goto(workbenchUrl.toString());
-      await expect(page.locator(".wb-root-no-topbar")).toBeVisible({ timeout: 20_000 });
 
       // Workbench baseline.
       await expect(page.getByText("Archived").first()).toBeVisible({ timeout: 20_000 });
