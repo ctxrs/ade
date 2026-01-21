@@ -633,7 +633,9 @@ impl SettingsState {
         let payload = self.build_editor_settings();
 
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            tokio::time::sleep(Duration::from_millis(350)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(350))
+                .await;
 
             let should_save = this
                 .update(cx, |view, cx| {
@@ -677,7 +679,9 @@ impl SettingsState {
         let payload = self.telemetry_payload();
 
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(250))
+                .await;
             this.update(cx, |view, cx| {
                 if view.telemetry_save_seq != seq {
                     return;
@@ -713,7 +717,9 @@ impl SettingsState {
         let payload = self.dictation_payload();
 
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            tokio::time::sleep(Duration::from_millis(450)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(450))
+                .await;
             this.update(cx, |view, cx| {
                 if view.dictation_save_seq != seq {
                     return;
@@ -746,7 +752,9 @@ impl SettingsState {
         let payload = self.title_payload();
 
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            tokio::time::sleep(Duration::from_millis(450)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(450))
+                .await;
             this.update(cx, |view, cx| {
                 if view.title_save_seq != seq {
                     return;
@@ -782,7 +790,9 @@ impl SettingsState {
         let payload = self.resource_payload();
 
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            tokio::time::sleep(Duration::from_millis(450)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(450))
+                .await;
             this.update(cx, |view, cx| {
                 if view.resource_save_seq != seq {
                     return;
@@ -1765,7 +1775,9 @@ impl SettingsState {
                     }
                 }
 
-                tokio::time::sleep(Duration::from_millis(900)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(900))
+                    .await;
             }
         })
         .detach();
@@ -1844,7 +1856,9 @@ impl SettingsState {
 
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             loop {
-                tokio::time::sleep(Duration::from_millis(3000)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(3000))
+                    .await;
                 let keep = this
                     .update(cx, |view, cx| {
                         if view.resource_poll_token != token

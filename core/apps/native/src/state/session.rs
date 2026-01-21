@@ -547,7 +547,7 @@ impl ShellView {
         cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
-                tokio::time::sleep(COPIED_TIMEOUT).await;
+                cx.background_executor().timer(COPIED_TIMEOUT).await;
                 this.update(&mut cx, |view, cx| {
                     let now = Instant::now();
                     if matches!(view.copied_flags.get(&key), Some(expiry) if *expiry <= now) {

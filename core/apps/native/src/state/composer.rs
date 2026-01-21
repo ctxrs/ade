@@ -11,7 +11,6 @@ use gpui::{
 use gpui_component::input::{Escape, IndentInline, InputEvent, InputState, MoveDown, MoveUp};
 use gpui_component::RopeExt;
 use gpui_tokio::Tokio;
-use tokio::time::sleep;
 
 use ctx_client::{EnvTarget, InstallInfo, InstallProgressEvent, InstallStateKind, ProviderOptions};
 use ctx_core::ids::{MessageId, SessionId};
@@ -877,7 +876,9 @@ impl ShellView {
         cx.spawn(move |this: gpui::WeakEntity<ShellView>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
-                sleep(Duration::from_millis(180)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(180))
+                    .await;
                 this.update(&mut cx, |view, cx| {
                     if view.composer_tooltip_close_id == close_id
                         && view.composer_tooltip_open == Some(menu)
@@ -1819,6 +1820,8 @@ impl ShellView {
         cx.notify();
     }
 
+    // Uses Tokio runtime via Tokio::spawn_result for debounce.
+    #[allow(clippy::disallowed_methods)]
     fn schedule_file_completions(
         &mut self,
         token: ComposerAutocompleteToken,
@@ -2979,7 +2982,9 @@ impl ShellView {
                     }
                 }
 
-                tokio::time::sleep(Duration::from_millis(900)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(900))
+                    .await;
             }
         })
         .detach();

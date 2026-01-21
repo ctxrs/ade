@@ -1777,6 +1777,8 @@ async fn wait_for_draw(
     }
 }
 
+// Runs on a Tokio runtime for automation RPC.
+#[allow(clippy::disallowed_methods)]
 async fn wait_for_idle(state: &AutomationState, params: WaitIdleParams) -> Result<Value, RpcError> {
     let frames = params.frames.map(|frames| frames.max(1));
     let timeout_ms = params.timeout_ms.unwrap_or(3_000);

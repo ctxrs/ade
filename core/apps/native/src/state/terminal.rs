@@ -1751,6 +1751,8 @@ enum TerminalStreamUpdate {
     Output(String),
 }
 
+// Runs on a Tokio runtime (spawned via Tokio::spawn_result).
+#[allow(clippy::disallowed_methods)]
 async fn run_terminal_stream(
     ws_url: String,
     mut stop_rx: watch::Receiver<bool>,
