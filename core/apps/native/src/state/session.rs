@@ -10,6 +10,8 @@ use gpui::{
 };
 use gpui_tokio::Tokio;
 use serde_json::Value;
+#[cfg(feature = "automation")]
+use serde_json::json;
 
 use ctx_core::ids::{MessageId, SessionId, TurnId};
 use ctx_core::models::{
@@ -74,8 +76,9 @@ impl SessionThreadCache {
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub(crate) struct ThreadRenderCacheKey {
     session_id: SessionId,
-    snapshot_rev: i64,
     last_event_seq: i64,
+    verbosity: SessionViewVerbosity,
+    data_fingerprint: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -642,6 +645,9 @@ impl ShellView {
         let Some(cache) = self.session_thread_cache.get(&session_id).cloned() else {
             return false;
         };
+        if cache.messages.is_empty() && cache.session_turns.is_empty() {
+            return false;
+        }
         self.session_turns = cache.session_turns;
         self.session_turn_tools = cache.session_turn_tools;
         self.session_events = cache.session_events;
@@ -784,8 +790,11 @@ impl ShellView {
 
     fn scroll_thread_to_bottom(&mut self) {
         let count = self.thread_list_len;
+        if count == 0 {
+            return;
+        }
         self.thread_list_state.scroll_to(ListOffset {
-            item_ix: count,
+            item_ix: count.saturating_sub(1),
             offset_in_item: px(0.0),
         });
     }
@@ -800,13 +809,156 @@ impl ShellView {
             .map(|summary| summary.session_id)
     }
 
+    #[cfg(feature = "automation")]
+    pub(crate) fn thread_render_status(&self) -> Value {
+        let mut total = 0usize;
+        let mut assistant = 0usize;
+        let mut tool = 0usize;
+        let mut status = 0usize;
+
+        for item in self.thread_items.iter() {
+            total += 1;
+            if let ThreadListItem::Item(item) = item {
+                match item {
+                    ThreadItem::Assistant { .. } => assistant += 1,
+                    ThreadItem::Message { role, .. } => {
+                        if matches!(role, &MessageRole::Assistant) {
+                            assistant += 1;
+                        }
+                    }
+                    ThreadItem::Tool(_) | ThreadItem::ToolGroup { .. } => tool += 1,
+                    ThreadItem::TurnStatus { .. } => status += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        let selected_session_id = self.selected_session_id().map(|id| id.0.to_string());
+        let selected_task_id = self.selected_task.map(|id| id.0.to_string());
+        let selected_session_last_event_seq = self
+            .selected_session_id()
+            .and_then(|id| self.session_last_event_seq.get(&id).copied());
+
+        json!({
+            "total": total,
+            "assistant": assistant,
+            "tool": tool,
+            "status": status,
+            "messages_len": self.messages.len(),
+            "turns_len": self.session_turns.len(),
+            "events_len": self.session_events.len(),
+            "tool_summaries_turns_len": self.session_turn_tools.len(),
+            "active_snapshot_rev": self.active_snapshot_rev,
+            "selected_session_last_event_seq": selected_session_last_event_seq,
+            "sessions_total": self.sessions.len(),
+            "selected_session_index": self.selected_session,
+            "selected_session_id": selected_session_id,
+            "selected_task_id": selected_task_id,
+            "history_loading": self.session_history_loading,
+            "resyncing": self.resyncing_session.is_some(),
+        })
+    }
+
+    #[cfg(feature = "automation")]
+    pub(crate) fn thread_render_debug(&self) -> Value {
+        let Some(session_id) = self.selected_session_id() else {
+            return json!({ "selected": false });
+        };
+        let key = self.thread_render_cache_key(session_id);
+
+        let items = build_thread_list_items(
+            &self.session_turns,
+            &self.messages,
+            &self.session_turn_tools,
+            &self.session_events,
+        );
+        let items = filter_thread_list_items(items, self.verbosity);
+
+        let mut assistant = 0usize;
+        let mut tool = 0usize;
+        let mut status = 0usize;
+        for item in items.iter() {
+            if let ThreadListItem::Item(item) = item {
+                match item {
+                    ThreadItem::Assistant { .. } => assistant += 1,
+                    ThreadItem::Message { role, .. } => {
+                        if matches!(role, &MessageRole::Assistant) {
+                            assistant += 1;
+                        }
+                    }
+                    ThreadItem::Tool(_) | ThreadItem::ToolGroup { .. } => tool += 1,
+                    ThreadItem::TurnStatus { .. } => status += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        let sample = items
+            .iter()
+            .take(12)
+            .map(|item| {
+                let kind = match item {
+                    ThreadListItem::TurnHeader { .. } => "turn_header",
+                    ThreadListItem::Item(ThreadItem::Message { .. }) => "message",
+                    ThreadListItem::Item(ThreadItem::Assistant { .. }) => "assistant",
+                    ThreadListItem::Item(ThreadItem::Thought { .. }) => "thought",
+                    ThreadListItem::Item(ThreadItem::TurnStatus { .. }) => "turn_status",
+                    ThreadListItem::Item(ThreadItem::Tool(_)) => "tool",
+                    ThreadListItem::Item(ThreadItem::ToolGroup { .. }) => "tool_group",
+                    ThreadListItem::Item(ThreadItem::Spacer { .. }) => "spacer",
+                };
+                json!({ "id": item.id(), "kind": kind })
+            })
+            .collect::<Vec<_>>();
+
+        json!({
+            "selected": true,
+            "key": key.map(|key| json!({
+                "session_id": key.session_id.0.to_string(),
+                "last_event_seq": key.last_event_seq,
+                "verbosity": format!("{:?}", key.verbosity),
+                "data_fingerprint": key.data_fingerprint,
+            })),
+            "computed_total": items.len(),
+            "computed_assistant": assistant,
+            "computed_tool": tool,
+            "computed_status": status,
+            "computed_sample": sample,
+        })
+    }
+
     fn thread_render_cache_key(&self, session_id: SessionId) -> Option<ThreadRenderCacheKey> {
-        let snapshot_rev = self.active_snapshot_rev?;
-        let last_event_seq = self.session_last_event_seq.get(&session_id).copied()?;
+        let last_event_seq = self.session_last_event_seq.get(&session_id).copied().unwrap_or(0);
+        let mut fingerprint = LAYOUT_HASH_SEED;
+        hash_mix(&mut fingerprint, self.session_turns.len() as u64);
+        hash_mix(&mut fingerprint, self.messages.len() as u64);
+        hash_mix(&mut fingerprint, self.session_turn_tools.len() as u64);
+        hash_mix(&mut fingerprint, self.session_events.len() as u64);
+        if let Some(turn) = self.session_turns.last() {
+            let uuid = turn.turn_id.0.as_u128();
+            hash_mix(&mut fingerprint, (uuid >> 64) as u64);
+            hash_mix(&mut fingerprint, uuid as u64);
+            hash_mix(&mut fingerprint, turn.updated_at.timestamp_millis() as u64);
+        }
+        if let Some(message) = self.messages.last() {
+            if let Some(id) = message.id {
+                let uuid = id.0.as_u128();
+                hash_mix(&mut fingerprint, (uuid >> 64) as u64);
+                hash_mix(&mut fingerprint, uuid as u64);
+            } else {
+                hash_mix(&mut fingerprint, message.created_at.timestamp_millis() as u64);
+            }
+            hash_mix(&mut fingerprint, message.content.len() as u64);
+        }
+        if let Some(event) = self.session_events.last() {
+            hash_mix(&mut fingerprint, event.seq as u64);
+            hash_mix(&mut fingerprint, event.created_at.timestamp_millis() as u64);
+        }
         Some(ThreadRenderCacheKey {
             session_id,
-            snapshot_rev,
             last_event_seq,
+            verbosity: self.verbosity,
+            data_fingerprint: fingerprint,
         })
     }
 
@@ -1003,6 +1155,10 @@ impl ShellView {
         let session_id = summary.session_id;
         let prev_session_id = self.selected_session_id();
         if prev_session_id == Some(session_id) {
+            if !self.apply_cached_thread_render_model(session_id, cx) {
+                self.schedule_thread_render_model(session_id, ThreadRenderUpdateKind::Default, cx);
+            }
+            cx.notify();
             return;
         }
         if let Some(prev_session_id) = prev_session_id {
@@ -1123,6 +1279,11 @@ impl ShellView {
                                 );
                                 view.update_session_head_meta(head.session.id, head);
                                 view.persist_cached_session_head(head.session.id, cx);
+                                view.schedule_thread_render_model(
+                                    head.session.id,
+                                    ThreadRenderUpdateKind::Default,
+                                    cx,
+                                );
                                 if let Some(state) = snapshot.state.as_ref() {
                                     view.apply_session_state(data.session_id, state, cx);
                                 } else {

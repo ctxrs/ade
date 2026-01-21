@@ -13,6 +13,9 @@ use super::sidebar::SidebarView;
 use super::super::icons::{Icon, IconName};
 use super::super::state::{DataLoadState, ShellRoute, ShellView, SidebarResizeState};
 
+const SIDEBAR_TAB_SIZE: f32 = 28.0;
+const SIDEBAR_TAB_TOP: f32 = 12.0;
+
 pub(crate) struct RouterView<'a> {
     pub(crate) shell: &'a ShellView,
     pub(crate) resyncing: bool,
@@ -114,13 +117,14 @@ impl<'a> RouterView<'a> {
 
     fn render_sidebar_expand(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let tab_bg = rgba(255, 255, 255, 0.03);
+        let tab_top = SIDEBAR_TAB_TOP;
         let expand_button = div()
             .id("sidebar-expand")
             .absolute()
-            .top(px(12.0))
+            .top(px(tab_top))
             .left(px(0.0))
-            .w(px(28.0))
-            .h(px(28.0))
+            .w(px(SIDEBAR_TAB_SIZE))
+            .h(px(SIDEBAR_TAB_SIZE))
             .flex()
             .items_center()
             .justify_center()
@@ -154,14 +158,15 @@ impl<'a> RouterView<'a> {
 
     fn render_sidebar_collapse_tab(&self, cx: &mut Context<ShellView>) -> impl IntoElement {
         let tab_bg = rgba(255, 255, 255, 0.03);
-        let left = (self.shell.sidebar_width - 28.0).max(0.0);
+        let tab_top = SIDEBAR_TAB_TOP;
+        let left = (self.shell.sidebar_width - SIDEBAR_TAB_SIZE).max(0.0);
         let collapse_button = div()
             .id("sidebar-collapse")
             .absolute()
-            .top(px(12.0))
+            .top(px(tab_top))
             .left(px(left))
-            .w(px(28.0))
-            .h(px(28.0))
+            .w(px(SIDEBAR_TAB_SIZE))
+            .h(px(SIDEBAR_TAB_SIZE))
             .flex()
             .items_center()
             .justify_center()

@@ -287,6 +287,8 @@ impl<'a> SessionView<'a> {
             .child(overflow_toggle);
 
         let control_row = div().flex().items_center().child(pane_toggle_row);
+        let header_base_padding = metrics.spacing.xxl;
+        let header_left_padding = header_base_padding + if shell.sidebar_collapsed { 28.0 } else { 0.0 };
 
         let header_block = div()
             .w_full()
@@ -294,7 +296,8 @@ impl<'a> SessionView<'a> {
             .items_center()
             .justify_between()
             .gap(px(metrics.spacing.xxl))
-            .px(px(metrics.spacing.xl))
+            .pl(px(header_left_padding))
+            .pr(px(header_base_padding))
             .pt(px(14.0))
             .pb(px(metrics.spacing.xl))
             .border_b_1()

@@ -27,11 +27,13 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::timeout;
+use uuid::Uuid;
 
 use crate::app::{ComposerMenuId, ShellView};
 use crate::app::state::RightPaneMode;
 use crate::app::state::ShellRoute;
 use crate::automation_tree;
+use ctx_core::ids::TaskId;
 
 #[derive(Clone, Debug, Default)]
 pub struct AutomationConfig {
@@ -346,6 +348,7 @@ enum FocusTarget {
     ArchivedTasks,
     ArchivedTasksClose,
     TaskSearch,
+    SettingsSearch,
     Composer,
     ComposerAttachments,
     ComposerProviderMenu,
@@ -365,6 +368,7 @@ impl FocusTarget {
             FocusTarget::ArchivedTasks => "archived_tasks",
             FocusTarget::ArchivedTasksClose => "archived_tasks_close",
             FocusTarget::TaskSearch => "task_search",
+            FocusTarget::SettingsSearch => "settings_search",
             FocusTarget::Composer => "composer",
             FocusTarget::ComposerAttachments => "composer_attachments",
             FocusTarget::ComposerProviderMenu => "composer_provider_menu",
@@ -597,7 +601,10 @@ enum AutomationCommand {
         precise: bool,
     },
     ComposerStatus,
+    ThreadStatus,
+    ThreadDebug,
     SelectSession { index: usize },
+    SelectTask { task_id: TaskId },
     SelectWorkspace { index: usize },
     Type { text: String },
     KeyPress { keystroke: Keystroke },
@@ -680,6 +687,30 @@ async fn run_command_loop(
                     .map_err(|err| err.to_string())
                     .and_then(|result| result)
             }
+            AutomationCommand::ThreadStatus => {
+                let mut cx = cx.clone();
+                window
+                    .update(&mut cx, |root, _window, cx| {
+                        let status = with_shell_view(root, cx, |view, _cx| {
+                            view.thread_render_status()
+                        })?;
+                        Ok(status)
+                    })
+                    .map_err(|err| err.to_string())
+                    .and_then(|result| result)
+            }
+            AutomationCommand::ThreadDebug => {
+                let mut cx = cx.clone();
+                window
+                    .update(&mut cx, |root, _window, cx| {
+                        let status = with_shell_view(root, cx, |view, _cx| {
+                            view.thread_render_debug()
+                        })?;
+                        Ok(status)
+                    })
+                    .map_err(|err| err.to_string())
+                    .and_then(|result| result)
+            }
             AutomationCommand::Screenshot { path } => {
                 capture_window(&cx, &window, &state, path)
                 .await
@@ -744,6 +775,19 @@ async fn run_command_loop(
                         })?;
                         mark_input(&state);
                         Ok(json!({ "index": index }))
+                    })
+                    .map_err(|err| err.to_string())
+                    .and_then(|result| result)
+            }
+            AutomationCommand::SelectTask { task_id } => {
+                let mut cx = cx.clone();
+                window
+                    .update(&mut cx, |root, window, cx| {
+                        with_shell_view(root, cx, |view, cx| {
+                            view.focus_task(task_id, window, cx);
+                        })?;
+                        mark_input(&state);
+                        Ok(json!({ "task_id": task_id.0.to_string() }))
                     })
                     .map_err(|err| err.to_string())
                     .and_then(|result| result)
@@ -917,6 +961,12 @@ fn apply_focus_target(
             view.composer_has_focus = false;
             view.task_search_input
                 .update(cx, |state, cx| state.focus(window, cx));
+        }
+        FocusTarget::SettingsSearch => {
+            view.set_route(ShellRoute::Settings, cx);
+            cx.update_entity(&view.settings_state, |state, cx| {
+                state.focus_search(window, cx);
+            });
         }
         FocusTarget::Composer => {
             view.focus_composer(&ClickEvent::default(), window, cx);
@@ -1270,6 +1320,16 @@ async fn handle_rpc_method(
                 .await
                 .map_err(RpcError::server_error)
         }
+        "automation.thread.status" => {
+            dispatch_command(state, AutomationCommand::ThreadStatus)
+                .await
+                .map_err(RpcError::server_error)
+        }
+        "automation.thread.debug" => {
+            dispatch_command(state, AutomationCommand::ThreadDebug)
+                .await
+                .map_err(RpcError::server_error)
+        }
         "automation.ready" => {
             let params: ReadyQuery = parse_params(params)?;
             let ready = wait_ready(state, params.timeout_ms.unwrap_or(30_000))
@@ -1429,6 +1489,15 @@ async fn handle_rpc_method(
                 .await
                 .map_err(RpcError::server_error)
         }
+        "ctx.tasks.select" => {
+            let params: SelectTaskParams = parse_params(params)?;
+            let task_id = Uuid::parse_str(params.task_id.trim())
+                .map(TaskId)
+                .map_err(|_| RpcError::invalid_params("task_id must be a UUID"))?;
+            dispatch_command(state, AutomationCommand::SelectTask { task_id })
+                .await
+                .map_err(RpcError::server_error)
+        }
         "ctx.input.type" => {
             let params: TypeParams = parse_params(params)?;
             dispatch_command(
@@ -1511,6 +1580,7 @@ fn focus_target_for_selector(selector: &Selector) -> Option<FocusTarget> {
         "app-shell" => Some(FocusTarget::Main),
         "sidebar-new-task" => Some(FocusTarget::NewTask),
         "task-search-input" => Some(FocusTarget::TaskSearch),
+        "settings-search-input" => Some(FocusTarget::SettingsSearch),
         "composer-input" | "composer-send" => Some(FocusTarget::Composer),
         "sessions-list" => Some(FocusTarget::SessionsPane),
         "diff-pane" => Some(FocusTarget::DiffPane),
@@ -1554,6 +1624,11 @@ struct ScrollParams {
 #[derive(Debug, Deserialize)]
 struct SelectSessionParams {
     index: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct SelectTaskParams {
+    task_id: String,
 }
 
 #[derive(Debug, Deserialize)]

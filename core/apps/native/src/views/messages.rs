@@ -49,6 +49,7 @@ fn markdown_view(
     let weak_for_actions = weak.clone();
     TextView::markdown(id, text)
         .style(style)
+        .text_color(colors.text)
         .code_block_actions(move |block, _window, cx| {
             let code = block.code();
             let span_key = block
@@ -372,8 +373,10 @@ fn render_thread_item(
     cx: &mut App,
 ) -> AnyElement {
     let metrics = ThemeMetrics::default();
-    let item_pad_x = metrics.spacing.xxs;
-    let item_pad_y = metrics.spacing.xs;
+    // Match the web workbench thread item padding (2px inline, 4px bottom).
+    let item_pad_x = 2.0;
+    let item_pad_y = 4.0;
+    let thread_indent_x = 4.0;
     match item {
         ThreadListItem::TurnHeader { id, header } => {
             let is_long =
@@ -616,7 +619,8 @@ fn render_thread_item(
                 attachment_failed,
                 AttachmentVariant::Message,
             );
-            let role_label = format!("{:?}", role).to_lowercase();
+            let role_label = format!("{:?}", role).to_uppercase();
+            let role_font_size = px(metrics.type_scale.md * 0.75);
             let mut bubble = div()
                 .bg(bubble_bg)
                 .border_1()
@@ -629,7 +633,12 @@ fn render_thread_item(
                 .flex()
                 .flex_col()
                 .gap(px(metrics.spacing.xs))
-                .child(div().text_sm().text_color(colors.muted).child(role_label))
+                .child(
+                    div()
+                        .text_size(role_font_size)
+                        .text_color(colors.muted)
+                        .child(role_label),
+                )
                 .child(body)
                 .child(attachments)
                 .child(toggle);
@@ -648,7 +657,8 @@ fn render_thread_item(
         }
         ThreadListItem::Item(ThreadItem::Assistant { id, content, .. }) => div()
             .id(id.clone())
-            .px(px(item_pad_x))
+            .pl(px(thread_indent_x + item_pad_x))
+            .pr(px(item_pad_x))
             .pt(px(0.0))
             .pb(px(item_pad_y))
             .overflow_hidden()
@@ -666,14 +676,13 @@ fn render_thread_item(
             .into_any_element(),
         ThreadListItem::Item(ThreadItem::Thought { id, content, .. }) => div()
             .id(id.clone())
-            .px(px(item_pad_x))
-            .pt(px(0.0))
-            .pb(px(item_pad_y))
+            .pl(px(thread_indent_x + metrics.spacing.xs))
+            .pr(px(metrics.spacing.xs))
+            .pt(px(metrics.spacing.xxs))
+            .pb(px(metrics.spacing.sm))
             .overflow_hidden()
             .child(
                 div()
-                    .px(px(item_pad_x))
-                    .pb(px(item_pad_y))
                     .text_sm()
                     .text_color(colors.muted)
                     .italic()
@@ -760,7 +769,8 @@ fn render_thread_item(
             };
             div()
                 .id(id.clone())
-                .px(px(item_pad_x))
+                .pl(px(thread_indent_x + item_pad_x))
+                .pr(px(item_pad_x))
                 .pt(px(0.0))
                 .pb(px(item_pad_y))
                 .overflow_hidden()
@@ -768,20 +778,16 @@ fn render_thread_item(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(metrics.spacing.sm))
+                        .gap(px(6.0))
                         .text_sm()
                         .text_color(colors.muted)
                         .italic()
-                        .child(
-                            div()
-                                .text_color(colors.text)
-                                .font_weight(FontWeight(500.0))
-                                .child(label),
-                        )
+                        .child(div().child(label))
                         .child(div().text_color(colors.muted).child("·"))
                         .child(
                             div()
                                 .font_family(metrics.type_scale.mono.clone())
+                                .italic()
                                 .child(elapsed_label),
                         )
                         .child(copy_dot)
@@ -839,7 +845,8 @@ fn render_thread_item(
             let toggle_id = id.clone();
             div()
                 .id(id.clone())
-                .px(px(item_pad_x))
+                .pl(px(thread_indent_x))
+                .pr(px(0.0))
                 .pt(px(0.0))
                 .pb(px(item_pad_y))
                 .overflow_hidden()
@@ -1077,8 +1084,8 @@ fn render_tool_item(
     let header_row = div()
         .flex()
         .items_center()
-        .gap(px(metrics.spacing.md))
-        .px(px(metrics.spacing.xxs))
+        .gap(px(8.0))
+        .px(px(2.0))
         .py(px(1.0))
         .id(format!("tool-header-{}", tool.id))
         .text_sm()
@@ -1107,9 +1114,12 @@ fn render_tool_item(
         .child(header);
     div()
         .id(tool.id.clone())
-        .px(px(metrics.spacing.xxs))
+        // Match web tool row padding (handled inside header row).
+        .px(px(0.0))
+        .pl(px(4.0))
+        .pr(px(0.0))
         .pt(px(0.0))
-        .pb(px(metrics.spacing.xs))
+        .pb(px(4.0))
         .overflow_hidden()
         .flex()
         .flex_col()

@@ -69,6 +69,8 @@ const HEADER_HEIGHT: f32 = 22.0;
 const HEADER_GAP: f32 = 12.0;
 const ARCHIVED_HEADER_MARGIN: f32 = 12.0;
 const STATUS_ROW_HEIGHT: f32 = 18.0;
+const STATUS_SLOT_SIZE: f32 = 16.0;
+const STATUS_SLOT_GAP: f32 = 8.0;
 
 const SIDEBAR_ANIM_DURATION: Duration = Duration::from_millis(180);
 const SIDEBAR_FADE_RATIO: f32 = 140.0 / 180.0;
@@ -755,6 +757,19 @@ fn render_task_row(
             .into_any_element()
     };
 
+    let row_bg = if selected {
+        ACTIVE_BG
+    } else if hovered {
+        HOVER_BG
+    } else {
+        rgba(0, 0, 0, 0.0)
+    };
+    let row_border = if selected {
+        view.colors.border
+    } else {
+        rgba(0, 0, 0, 0.0)
+    };
+
     let mut row = div()
         .w_full()
         .px(px(8.0))
@@ -764,8 +779,8 @@ fn render_task_row(
         .items_center()
         .rounded(px(10.0))
         .border_1()
-        .border_color(if selected { view.colors.border } else { rgba(0, 0, 0, 0.0) })
-        .bg(if selected { ACTIVE_BG } else { rgba(0, 0, 0, 0.0) })
+        .border_color(row_border)
+        .bg(row_bg)
         .cursor_pointer()
         .id(ElementId::from((ElementId::from(task_id.0), "task-row")))
         .child(leading)
@@ -799,9 +814,6 @@ fn render_task_row(
             }
         }));
 
-    if hovered && !selected {
-        row = row.bg(HOVER_BG);
-    }
     if archived {
         row = row.opacity(0.85);
     }
@@ -875,6 +887,29 @@ fn render_task_meta(
     show_actions: bool,
     cx: &mut Context<ShellView>,
 ) -> impl IntoElement {
+    let show_now_dot = !archive_pending && !working && dot_kind.is_none() && age_label == "Now";
+    let status_indicator = if archive_pending {
+        Some(render_task_spinner(task_id, "archive", SPINNER_ARCHIVE, view.colors.warning))
+    } else if working {
+        Some(render_task_spinner(task_id, "work", SPINNER_BG, SPINNER_ACCENT))
+    } else if let Some(kind) = dot_kind {
+        Some(render_status_dot(kind).into_any_element())
+    } else if show_now_dot {
+        Some(render_status_dot("unread").into_any_element())
+    } else {
+        None
+    };
+
+    let status_slot = div()
+        .w(px(STATUS_SLOT_SIZE))
+        .h(px(STATUS_SLOT_SIZE))
+        .ml(px(STATUS_SLOT_GAP))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .child(status_indicator.unwrap_or_else(render_status_placeholder));
+
     let status = div()
         .flex()
         .items_center()
@@ -889,26 +924,7 @@ fn render_task_meta(
                 .text_color(view.colors.muted)
                 .child(age_label),
         )
-        .child(render_task_spinner(
-            task_id,
-            "work",
-            working,
-            SPINNER_BG,
-            SPINNER_ACCENT,
-        ))
-        .child(render_task_spinner(
-            task_id,
-            "archive",
-            archiving,
-            SPINNER_ARCHIVE,
-            view.colors.warning,
-        ));
-
-    let status = if let Some(kind) = dot_kind {
-        status.child(render_status_dot(kind))
-    } else {
-        status
-    };
+        .child(status_slot);
 
     let actions = render_task_actions(
         view,
@@ -960,14 +976,9 @@ fn render_task_meta(
 fn render_task_spinner(
     task_id: TaskId,
     kind: &'static str,
-    active: bool,
     base: Rgba,
     accent: Rgba,
-) -> impl IntoElement {
-    if !active {
-        return div().into_any_element();
-    }
-
+) -> gpui::AnyElement {
     let base_id = ElementId::from(task_id.0);
     let spinner_id = ElementId::from((base_id, kind));
     let arc = Icon::new(IconName::SpinnerArc, 12.0, accent).with_animation(
@@ -979,7 +990,6 @@ fn render_task_spinner(
     div()
         .w(px(12.0))
         .h(px(12.0))
-        .ml(px(8.0))
         .relative()
         .child(
             div()
@@ -1005,17 +1015,23 @@ fn render_task_spinner(
 }
 
 fn render_status_dot(kind: &str) -> impl IntoElement {
-    let color = match kind {
-        "error" => rgba(255, 69, 58, 0.95),
-        _ => rgba(78, 163, 255, 0.95),
+    let mut dot = div().w(px(6.0)).h(px(6.0)).rounded_full();
+
+    dot = match kind {
+        "error" => dot.bg(rgba(255, 69, 58, 0.95)),
+        _ => dot.bg(rgba(78, 163, 255, 0.95)),
     };
 
+    dot
+}
+
+fn render_status_placeholder() -> gpui::AnyElement {
     div()
         .w(px(6.0))
         .h(px(6.0))
-        .ml(px(8.0))
         .rounded_full()
-        .bg(color)
+        .opacity(0.0)
+        .into_any_element()
 }
 
 fn render_task_actions(

@@ -31,6 +31,18 @@ const XORG_MODULES = path.join(XORG_USER_ROOT, 'usr', 'lib', 'xorg', 'modules');
 function now() { return Date.now(); }
 function log(msg) { console.log(`[headless] ${msg}`); }
 
+function killChild(child) {
+  if (!child) return;
+  if (child.exitCode !== null && child.exitCode !== undefined) return;
+  try { child.stdout?.destroy?.(); } catch {}
+  try { child.stderr?.destroy?.(); } catch {}
+  try { child.stdin?.destroy?.(); } catch {}
+  try { child.kill('SIGINT'); } catch {}
+  try { child.kill('SIGTERM'); } catch {}
+  try { child.kill('SIGKILL'); } catch {}
+  try { child.unref?.(); } catch {}
+}
+
 function spawnLogged(cmd, args, opts, logFilePath) {
   const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts });
   const logStream = logFilePath ? createWriteStream(logFilePath, { flags: 'a' }) : null;
@@ -104,7 +116,7 @@ function listDisplayIdsFromProcesses() {
   return ids;
 }
 
-async function findFreeDisplay(start = 210, end = 260) {
+async function findFreeDisplay(start = 210, end = 400) {
   const processDisplays = listDisplayIdsFromProcesses();
   for (let d = start; d <= end; d++) {
     const sock = `/tmp/.X11-unix/X${d}`;
@@ -168,7 +180,28 @@ async function waitForXSocket(displayNumber, timeoutMs = 10000) {
   return false;
 }
 
-async function countPngs(dir) { try { const files = await fs.readdir(dir); return files.filter(f => f.toLowerCase().endsWith('.png')).length; } catch { return 0; } }
+async function countPngs(dir) {
+  try {
+    let count = 0;
+    const stack = [dir];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) break;
+      const entries = await fs.readdir(current, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(fullPath);
+        } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.png')) {
+          count += 1;
+        }
+      }
+    }
+    return count;
+  } catch {
+    return 0;
+  }
+}
 
 function parseArgs(argv) {
   const args = {
@@ -272,132 +305,170 @@ async function main() {
     ].filter(Boolean).join(':'),
   };
 
-  // Start X server
-  const xorg = useXvfb
-    ? spawnLogged(
-        'Xvfb',
-        [
-          DISPLAY,
-          '-screen',
-          '0',
-          `${args.width}x${args.height}x24`,
-          '-nolisten',
-          'tcp',
-          '-ac',
-          '+extension',
-          'RANDR',
-          '+extension',
-          'RENDER',
-          '+extension',
-          'XFIXES',
-          '+extension',
-          'GLX',
-        ],
-        { env: xEnv },
-        logs.xorg,
-      )
-    : spawnLogged(XORG_BIN, [DISPLAY, '-noreset', '+extension', 'RANDR', '+extension', 'XFIXES', '+extension', 'RENDER', '+extension', 'GLX', '-config', xorgConf, '-logfile', logs.xorg, '-modulepath', XORG_MODULES], { env: xEnv }, logs.xorg);
-  const xReady = await waitForXSocket(displayNumber, 15000);
-  if (!xReady) throw new Error('Xorg socket did not appear in time');
+  let xorg = null;
+  let ob = null;
+  let app = null;
+  try {
+    // Start X server
+    xorg = useXvfb
+      ? spawnLogged(
+          'Xvfb',
+          [
+            DISPLAY,
+            '-screen',
+            '0',
+            `${args.width}x${args.height}x24`,
+            '-nolisten',
+            'tcp',
+            '-ac',
+            '+extension',
+            'RANDR',
+            '+extension',
+            'RENDER',
+            '+extension',
+            'XFIXES',
+            '+extension',
+            'GLX',
+          ],
+          { env: xEnv },
+          logs.xorg,
+        )
+      : spawnLogged(
+          XORG_BIN,
+          [
+            DISPLAY,
+            '-noreset',
+            '+extension',
+            'RANDR',
+            '+extension',
+            'XFIXES',
+            '+extension',
+            'RENDER',
+            '+extension',
+            'GLX',
+            '-config',
+            xorgConf,
+            '-logfile',
+            logs.xorg,
+            '-modulepath',
+            XORG_MODULES,
+          ],
+          { env: xEnv },
+          logs.xorg,
+        );
+    const xReady = await waitForXSocket(displayNumber, 15000);
+    if (!xReady) throw new Error('Xorg socket did not appear in time');
 
-  // Start openbox
-  const ob = spawnLogged('openbox', ['--sm-disable'], { env: xEnv }, logs.xorg);
-  await sleep(500);
+    // Start openbox
+    ob = spawnLogged('openbox', ['--sm-disable'], { env: xEnv }, logs.xorg);
+    await sleep(500);
 
-  // Build app
-  const tBuild0 = now();
-  await runLogged('bash', ['-lc', 'cargo build --manifest-path core/apps/native/Cargo.toml --features automation'], { cwd: REPO_ROOT, env: xEnv }, logs.build);
-  const tBuild1 = now();
+    // Build app
+    const tBuild0 = now();
+    await runLogged(
+      'bash',
+      ['-lc', 'cargo build --manifest-path core/apps/native/Cargo.toml --features automation'],
+      { cwd: REPO_ROOT, env: xEnv },
+      logs.build,
+    );
+    const tBuild1 = now();
 
-  // Run app
-  const addrInfo = resolveAddr(args.addr);
-  const port = addrInfo ? Number(addrInfo.hostPort.split(':').pop()) : await findFreePort();
-  const addr = addrInfo?.hostPort || `127.0.0.1:${port}`;
-  const targetDir = process.env.CARGO_TARGET_DIR || path.join(REPO_ROOT, 'target');
-  const appBin = path.join(targetDir, 'debug', os.platform() === 'win32' ? 'ctx.exe' : 'ctx');
-  const appArgs = [ '--automation-addr', addr, '--screenshot-dir', shotsDir, '--window-size', winSize ];
-  if (args.fixture) {
-    appArgs.push('--fixture', args.fixture);
-  }
-  const appEnv = {
-    ...xEnv,
-    RUST_LOG: process.env.RUST_LOG || 'info',
-    CTX_SCREENSHOT_DIR: shotsDir,
-    CTX_WINDOW_SIZE: winSize,
-  };
-  const app = spawnLogged(appBin, appArgs, { cwd: REPO_ROOT, env: appEnv }, logs.app);
-
-  // Wait for /ready
-  const httpUrl = addrInfo?.httpUrl || `http://${addr}`;
-  const readyUrl = `${httpUrl}/ready?timeout_ms=${args.readyTimeoutMs}`;
-  const tReady0 = now();
-  let readyOk = false;
-  let appExit = null;
-  app.on('exit', (code, signal) => {
-    appExit = { code, signal };
-  });
-  const readyDeadline = tReady0 + Math.max(args.readyTimeoutMs + 5000, 20000);
-  while (!readyOk && now() < readyDeadline) {
-    try { const res = await httpGet(readyUrl, Math.max(5000, args.readyTimeoutMs)); readyOk = res.statusCode === 200; if (readyOk) break; } catch (_) {}
-    await sleep(250);
-  }
-  const tReady1 = now();
-  if (!readyOk) {
-    const exitNote = appExit ? ` (app exited code=${appExit.code ?? 'null'} signal=${appExit.signal ?? 'null'})` : '';
-    throw new Error(`App did not become ready in time${exitNote}. See ${logs.app}`);
-  }
-
-  // Run automation script
-  const tAuto0 = now();
-  const automationScript = args.automationScript
-    ? (path.isAbsolute(args.automationScript) ? args.automationScript : path.resolve(REPO_ROOT, args.automationScript))
-    : AUTOMATION_SCRIPT;
-  await new Promise((resolve, reject) => {
-    const automationArgs = ['--addr', httpUrl, '--ready-timeout-ms', String(args.readyTimeoutMs)];
-    if (Number.isFinite(args.automationSettleMs)) {
-      automationArgs.push('--settle-ms', String(args.automationSettleMs));
+    // Run app
+    const addrInfo = resolveAddr(args.addr);
+    const port = addrInfo ? Number(addrInfo.hostPort.split(':').pop()) : await findFreePort();
+    const addr = addrInfo?.hostPort || `127.0.0.1:${port}`;
+    const targetDir = process.env.CARGO_TARGET_DIR || path.join(REPO_ROOT, 'target');
+    const appBin = path.join(targetDir, 'debug', os.platform() === 'win32' ? 'ctx.exe' : 'ctx');
+    const appArgs = [ '--automation-addr', addr, '--screenshot-dir', shotsDir, '--window-size', winSize ];
+    if (args.fixture) {
+      appArgs.push('--fixture', args.fixture);
     }
-    if (args.automationNewTaskText) {
-      automationArgs.push('--new-task-text', args.automationNewTaskText);
-    }
-    const child = spawn('node', ['--experimental-websocket', automationScript, ...automationArgs], { cwd: REPO_ROOT, env: appEnv });
-    const logStream = createWriteStream(logs.automation, { flags: 'a' });
-    child.stdout.on('data', (d) => logStream.write(d));
-    child.stderr.on('data', (d) => logStream.write(d));
-    child.on('error', (e) => { logStream.end(); reject(e); });
-    child.on('close', (code) => {
-      logStream.end();
-      if (code && code !== 0) {
-        reject(new Error(`Automation script failed with exit code ${code}. See ${logs.automation}`));
-        return;
-      }
-      resolve();
+    const appEnv = {
+      ...xEnv,
+      RUST_LOG: process.env.RUST_LOG || 'info',
+      CTX_SCREENSHOT_DIR: shotsDir,
+      CTX_WINDOW_SIZE: winSize,
+    };
+    app = spawnLogged(appBin, appArgs, { cwd: REPO_ROOT, env: appEnv }, logs.app);
+
+    // Wait for /ready
+    const httpUrl = addrInfo?.httpUrl || `http://${addr}`;
+    const readyUrl = `${httpUrl}/ready?timeout_ms=${args.readyTimeoutMs}`;
+    const tReady0 = now();
+    let readyOk = false;
+    let appExit = null;
+    app.on('exit', (code, signal) => {
+      appExit = { code, signal };
     });
-  });
-  const tAuto1 = now();
+    const readyDeadline = tReady0 + Math.max(args.readyTimeoutMs + 5000, 20000);
+    while (!readyOk && now() < readyDeadline) {
+      try {
+        const res = await httpGet(readyUrl, Math.max(5000, args.readyTimeoutMs));
+        readyOk = res.statusCode === 200;
+        if (readyOk) break;
+      } catch (_) {}
+      await sleep(250);
+    }
+    const tReady1 = now();
+    if (!readyOk) {
+      const exitNote = appExit
+        ? ` (app exited code=${appExit.code ?? 'null'} signal=${appExit.signal ?? 'null'})`
+        : '';
+      throw new Error(`App did not become ready in time${exitNote}. See ${logs.app}`);
+    }
 
-  // Teardown
-  try { app.kill('SIGINT'); } catch {}
-  try { ob.kill('SIGINT'); } catch {}
-  try { xorg.kill('SIGINT'); } catch {}
+    // Run automation script
+    const tAuto0 = now();
+    const automationScript = args.automationScript
+      ? (path.isAbsolute(args.automationScript) ? args.automationScript : path.resolve(REPO_ROOT, args.automationScript))
+      : AUTOMATION_SCRIPT;
+    await new Promise((resolve, reject) => {
+      const automationArgs = ['--addr', httpUrl, '--ready-timeout-ms', String(args.readyTimeoutMs)];
+      if (Number.isFinite(args.automationSettleMs)) {
+        automationArgs.push('--settle-ms', String(args.automationSettleMs));
+      }
+      if (args.automationNewTaskText) {
+        automationArgs.push('--new-task-text', args.automationNewTaskText);
+      }
+      const child = spawn('node', ['--experimental-websocket', automationScript, ...automationArgs], { cwd: REPO_ROOT, env: appEnv });
+      const logStream = createWriteStream(logs.automation, { flags: 'a' });
+      child.stdout.on('data', (d) => logStream.write(d));
+      child.stderr.on('data', (d) => logStream.write(d));
+      child.on('error', (e) => { logStream.end(); reject(e); });
+      child.on('close', (code) => {
+        logStream.end();
+        if (code && code !== 0) {
+          reject(new Error(`Automation script failed with exit code ${code}. See ${logs.automation}`));
+          return;
+        }
+        resolve();
+      });
+    });
+    const tAuto1 = now();
 
-  // Summary
-  const shots = await countPngs(shotsDir);
-  const summary = {
-    display: DISPLAY,
-    addr: httpUrl,
-    shotsDir,
-    screenshots: shots,
-    timings_ms: {
-      extract: extracted ? (tExtract1 - tExtract0) : 0,
-      build: tBuild1 - tBuild0,
-      ready: tReady1 - tReady0,
-      automation: tAuto1 - tAuto0,
-      total: now() - t0,
-    },
-    logs: logs,
-  };
-  console.log(JSON.stringify(summary, null, 2));
+    // Summary
+    const shots = await countPngs(shotsDir);
+    const summary = {
+      display: DISPLAY,
+      addr: httpUrl,
+      shotsDir,
+      screenshots: shots,
+      timings_ms: {
+        extract: extracted ? (tExtract1 - tExtract0) : 0,
+        build: tBuild1 - tBuild0,
+        ready: tReady1 - tReady0,
+        automation: tAuto1 - tAuto0,
+        total: now() - t0,
+      },
+      logs: logs,
+    };
+    console.log(JSON.stringify(summary, null, 2));
+  } finally {
+    // Ensure we always tear down children so errors don't hang the caller.
+    killChild(app);
+    killChild(ob);
+    killChild(xorg);
+  }
 }
 
 main().catch((err) => { console.error('[headless] ERROR:', err?.message || err); process.exitCode = 1; });

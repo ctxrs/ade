@@ -321,9 +321,10 @@ impl<'a> ComposerView<'a> {
         } else {
             (px(28.0), px(220.0))
         };
-        let font_size = px(13.0);
-        let line_height = px(18.85);
-        let pad = px(2.0);
+        let font_size_value = if is_new { 13.0 } else { 14.0 };
+        let font_size = px(font_size_value);
+        let line_height = px(font_size_value * 1.45);
+        let pad = px(if is_new { 2.0 } else { 0.0 });
         let card_bg = rgba_u8(255, 255, 255, 0.03);
         let new_card_border = rgba_u8(255, 255, 255, 0.10);
 
@@ -391,9 +392,7 @@ impl<'a> ComposerView<'a> {
                 }
             })
             .child(input);
-        if is_new {
-            input_wrap = input_wrap.min_h(min_height);
-        }
+        input_wrap = input_wrap.min_h(min_height);
 
         let attachments = if shell.composer_attachments.is_empty() {
             div()
@@ -1025,7 +1024,7 @@ impl<'a> ComposerView<'a> {
         let recording = shell.composer_recording;
 
         let action_row = {
-            let mut row = div().flex().flex_row().items_center().gap(px(6.0));
+            let mut row = div().flex().flex_row().items_center().gap(px(8.0));
 
             row = row.child(action_icon(
                 IconName::Image,
@@ -1182,7 +1181,7 @@ impl<'a> ComposerView<'a> {
                     .items_center()
                     .justify_between()
                     .gap(px(10.0))
-                    .pt(px(6.0))
+                    .when(is_new, |this| this.pt(px(6.0)))
                     .child(switcher_row)
                     .child(action_row),
             )

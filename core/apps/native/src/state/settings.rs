@@ -1399,6 +1399,20 @@ impl SettingsState {
         input
     }
 
+    #[cfg(feature = "automation")]
+    pub(crate) fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let search_state = Self::ensure_input_state(
+            &mut self.search_input,
+            "Search settings ⌘F",
+            SettingsInputKind::Search,
+            &mut self.input_subscriptions,
+            window,
+            cx,
+        );
+        search_state.update(cx, |state, cx| state.focus(window, cx));
+        cx.notify();
+    }
+
     pub(crate) fn ensure_select_state(
         slot: &mut Option<Entity<SelectState<SearchableVec<LabeledOption>>>>,
         items: Vec<LabeledOption>,

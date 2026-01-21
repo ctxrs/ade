@@ -111,7 +111,7 @@ pub(crate) struct SidebarResizeState {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum SessionViewVerbosity {
     Terse,
     Default,

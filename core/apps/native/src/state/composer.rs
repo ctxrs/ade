@@ -549,6 +549,13 @@ impl ShellView {
         let key = event.keystroke.key.to_lowercase();
         if key == "b" && (modifiers.platform || modifiers.control) {
             self.set_sidebar_collapsed(!self.sidebar_collapsed, cx);
+            window.prevent_default();
+            cx.stop_propagation();
+            return;
+        }
+        if modifiers.control && (key == "`" || key == "grave" || key == "backquote" || key == "~") {
+            self.toggle_terminal_panel(&ClickEvent::default(), window, cx);
+            window.prevent_default();
             cx.stop_propagation();
             return;
         }

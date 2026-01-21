@@ -1,4 +1,4 @@
-use gpui::{App, KeyBinding, Menu, MenuItem, actions};
+use gpui::{actions, App, ClickEvent, KeyBinding, Menu, MenuItem};
 #[cfg(target_os = "macos")]
 use gpui::SystemMenuType;
 use gpui_component::Root;
@@ -13,6 +13,7 @@ actions!(
         NewLauncherWindow,
         NewTask,
         ToggleSidebar,
+        ToggleTerminal,
         Quit,
         Hide,
         HideOthers,
@@ -26,6 +27,7 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(new_launcher_window);
     cx.on_action(new_task);
     cx.on_action(toggle_sidebar);
+    cx.on_action(toggle_terminal);
     cx.on_action(quit);
     cx.on_action(hide);
     cx.on_action(hide_others);
@@ -40,6 +42,7 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("shift-cmd-,", NewSettingsWindow, None),
         KeyBinding::new("cmd-b", ToggleSidebar, None),
         KeyBinding::new("ctrl-b", ToggleSidebar, None),
+        KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new("cmd-q", Quit, None),
     ]);
 
@@ -75,7 +78,10 @@ fn set_app_menus(cx: &mut App) {
         MenuItem::action("New Task", NewTask),
         MenuItem::action("New Launcher Window", NewLauncherWindow),
     ];
-    let view_items = vec![MenuItem::action("Toggle Sidebar", ToggleSidebar)];
+    let view_items = vec![
+        MenuItem::action("Toggle Sidebar", ToggleSidebar),
+        MenuItem::action("Toggle Terminal", ToggleTerminal),
+    ];
 
     cx.set_menus(vec![
         Menu {
@@ -158,6 +164,32 @@ fn toggle_sidebar(_: &ToggleSidebar, cx: &mut App) {
                 }
                 let collapsed = view.sidebar_collapsed;
                 view.set_sidebar_collapsed(!collapsed, cx);
+                cx.stop_propagation();
+            });
+        });
+    });
+}
+
+fn toggle_terminal(_: &ToggleTerminal, cx: &mut App) {
+    let Some(active_window) = cx.active_window() else {
+        return;
+    };
+
+    let _ = active_window.update(cx, |root_view, window, cx| {
+        let Ok(root) = root_view.downcast::<Root>() else {
+            return;
+        };
+
+        root.update(cx, |root, cx| {
+            let Ok(shell_view) = root.view().clone().downcast::<ShellView>() else {
+                return;
+            };
+            let _ = shell_view.update(cx, |view, cx| {
+                if view.route != ShellRoute::Workbench {
+                    return;
+                }
+                view.toggle_terminal_panel(&ClickEvent::default(), window, cx);
+                cx.stop_propagation();
             });
         });
     });

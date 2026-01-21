@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
 import { connect, expect } from "./native-driver.mjs";
 
 const DEFAULT_ADDR = "http://127.0.0.1:6160";
 const DEFAULT_READY_TIMEOUT_MS = 30000;
 const DEFAULT_SETTLE_MS = 150;
+const DAEMON_REQUEST_TIMEOUT_MS = 8000;
+const AUTH_FILENAME = "daemon_auth.json";
 
 function log(msg) {
   console.log(`[gpui-parity] ${msg}`);
@@ -17,6 +22,7 @@ Options:
   --addr <host:port|url>       Automation server address (default: ${DEFAULT_ADDR})
   --ready-timeout-ms <ms>      Timeout for /ready (default: ${DEFAULT_READY_TIMEOUT_MS})
   --settle-ms <ms>             Wait for a stable render before screenshot (default: ${DEFAULT_SETTLE_MS})
+  --daemon-url <url>           Daemon base URL (default: $CTX_DAEMON_URL)
   --workspace-name <name>      Workspace display name (default: $CTX_PARITY_WORKSPACE_NAME || ws-parity)
   --task-text <text>           Task title text to select (default: $CTX_PARITY_TASK_TEXT || hello)
   -h, --help                   Show this help
@@ -55,6 +61,7 @@ function parseArgs(argv) {
     addr: DEFAULT_ADDR,
     readyTimeoutMs: DEFAULT_READY_TIMEOUT_MS,
     settleMs: DEFAULT_SETTLE_MS,
+    daemonUrl: process.env.CTX_DAEMON_URL ?? "",
     workspaceName: process.env.CTX_PARITY_WORKSPACE_NAME ?? "ws-parity",
     taskText: process.env.CTX_PARITY_TASK_TEXT ?? "hello",
     showHelp: false,
@@ -102,6 +109,18 @@ function parseArgs(argv) {
       args.settleMs = arg.slice("--settle-ms=".length);
       continue;
     }
+    if (arg === "--daemon-url") {
+      if (i + 1 >= argv.length) {
+        throw new Error("--daemon-url requires a value");
+      }
+      args.daemonUrl = argv[i + 1];
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("--daemon-url=")) {
+      args.daemonUrl = arg.slice("--daemon-url=".length);
+      continue;
+    }
     if (arg === "--workspace-name") {
       if (i + 1 >= argv.length) {
         throw new Error("--workspace-name requires a value");
@@ -133,6 +152,7 @@ function parseArgs(argv) {
   args.addr = normalizeAddr(args.addr);
   args.readyTimeoutMs = toPositiveInt(args.readyTimeoutMs, "--ready-timeout-ms");
   args.settleMs = toNonNegativeInt(args.settleMs, "--settle-ms");
+  args.daemonUrl = args.daemonUrl ? normalizeAddr(args.daemonUrl) : "";
   return args;
 }
 
@@ -178,6 +198,11 @@ async function callJson(baseUrl, reqPath, options = {}) {
   }
 }
 
+function sleep(ms) {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function waitIdle(addr, settleMs) {
   await callJson(addr, "/wait", {
     body: { settle_ms: settleMs, timeout_ms: 15000 },
@@ -198,6 +223,351 @@ async function focus(addr, target) {
   await callJson(addr, "/focus", {
     body: { target },
   });
+}
+
+async function readDaemonAuthToken() {
+  const dataDir = process.env.CTX_DATA_DIR || process.env.CTX_E2E_DATA_DIR;
+  if (!dataDir) {
+    return "";
+  }
+  const authPath = path.join(dataDir, AUTH_FILENAME);
+  try {
+    const raw = await readFile(authPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const token = String(parsed?.token ?? "").trim();
+    return token;
+  } catch {
+    return "";
+  }
+}
+
+function idToString(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object") {
+    if (Object.prototype.hasOwnProperty.call(value, 0)) {
+      return String(value[0] ?? "");
+    }
+    if (Object.prototype.hasOwnProperty.call(value, "0")) {
+      return String(value["0"] ?? "");
+    }
+  }
+  return String(value ?? "");
+}
+
+async function callDaemonJson(baseUrl, reqPath, options = {}) {
+  const { method = "GET", body, timeoutMs = 15000, token = "" } = options;
+  const url = new URL(reqPath, baseUrl);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const headers = { accept: "application/json" };
+  if (body !== undefined) {
+    headers["content-type"] = "application/json";
+  }
+  if (token) {
+    headers.authorization = `Bearer ${token}`;
+  }
+
+  try {
+    const response = await fetch(url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    let payload = null;
+    if (text) {
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = null;
+      }
+    }
+    if (!response.ok) {
+      const detail = payload?.error || text || `HTTP ${response.status} ${response.statusText}`;
+      throw new Error(detail);
+    }
+    if (payload === null && text) {
+      throw new Error("invalid JSON response");
+    }
+    return payload;
+  } catch (err) {
+    throw new Error(`Request ${method} ${url} failed: ${err.message}`);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function resolveTaskSession({
+  daemonUrl,
+  token,
+  workspaceName,
+  taskText,
+  timeoutMs,
+}) {
+  const requestTimeoutMs = Math.min(timeoutMs, DAEMON_REQUEST_TIMEOUT_MS);
+  const workspaces = await callDaemonJson(daemonUrl, "/api/workspaces", {
+    token,
+    timeoutMs: requestTimeoutMs,
+  });
+  const workspace = (workspaces || []).find(
+    (item) => String(item?.name ?? "") === workspaceName,
+  );
+  if (!workspace) {
+    return null;
+  }
+  const workspaceId = idToString(workspace.id);
+  if (!workspaceId) {
+    return null;
+  }
+  const tasks = await callDaemonJson(daemonUrl, `/api/workspaces/${workspaceId}/tasks`, {
+    token,
+    timeoutMs: requestTimeoutMs,
+  });
+  const targetTitle = String(taskText ?? "").trim();
+  const matching = (tasks || []).filter(
+    (task) => String(task?.title ?? "").trim() === targetTitle,
+  );
+  if (matching.length === 0) {
+    return null;
+  }
+  matching.sort((a, b) => String(b?.updated_at ?? "").localeCompare(String(a?.updated_at ?? "")));
+  const task = matching[0];
+  const taskId = idToString(task?.id);
+  let sessionId = idToString(task?.primary_session_id);
+  if (!sessionId && taskId) {
+    const sessions = await callDaemonJson(daemonUrl, `/api/tasks/${taskId}/sessions`, {
+      token,
+      timeoutMs: requestTimeoutMs,
+    });
+    sessionId = idToString(sessions?.[0]?.id);
+  }
+  if (!sessionId) {
+    return null;
+  }
+  return { workspaceId, taskId, sessionId };
+}
+
+async function waitForSessionContent({
+  daemonUrl,
+  token,
+  workspaceName,
+  taskText,
+  timeoutMs,
+  sessionId: initialSessionId = "",
+}) {
+  if (!daemonUrl) {
+    log("daemon URL not set; skipping session content wait");
+    return "";
+  }
+  const start = Date.now();
+  let sessionId = initialSessionId;
+  const requestTimeoutMs = Math.min(timeoutMs, DAEMON_REQUEST_TIMEOUT_MS);
+  while (Date.now() - start < timeoutMs) {
+    if (!sessionId) {
+      const resolved = await resolveTaskSession({
+        daemonUrl,
+        token,
+        workspaceName,
+        taskText,
+        timeoutMs: requestTimeoutMs,
+      }).catch(() => null);
+      sessionId = resolved?.sessionId ?? "";
+      if (!sessionId) {
+        await sleep(250);
+        continue;
+      }
+    }
+    const snapshot = await callDaemonJson(
+      daemonUrl,
+      `/api/sessions/${sessionId}/snapshot?limit=50`,
+      { token, timeoutMs: requestTimeoutMs },
+    ).catch(() => null);
+    const head = snapshot?.head ?? {};
+    const messages = Array.isArray(head.messages) ? head.messages : [];
+    const turns = Array.isArray(head.turns) ? head.turns : [];
+    const hasAssistant = messages.some(
+      (msg) =>
+        msg?.role === "assistant" && String(msg?.content ?? "").trim().length > 0,
+    );
+    const hasCompletedTurn = turns.some((turn) => turn?.status === "completed");
+    if (hasAssistant && hasCompletedTurn) {
+      return sessionId;
+    }
+    await sleep(250);
+  }
+  throw new Error(
+    `Timed out waiting for session content for task "${taskText}"`,
+  );
+}
+
+const THREAD_ITEM_PREFIXES = ["assistant-", "tool-", "turn-status-"];
+
+function hasRenderableBounds(node) {
+  if (!node || typeof node !== "object") return false;
+  const bounds = node.bounds;
+  if (!bounds) return true;
+  return Number(bounds.width ?? 0) > 1 && Number(bounds.height ?? 0) > 1;
+}
+
+function findNodeById(node, targetId) {
+  if (!node || typeof node !== "object") return null;
+  if (node.id === targetId) return node;
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) {
+      const found = findNodeById(child, targetId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function findThreadItemId(node) {
+  if (!node || typeof node !== "object") return "";
+  const id = typeof node.id === "string" ? node.id : "";
+  const visible = node.visible === true && hasRenderableBounds(node);
+  if (visible && id && THREAD_ITEM_PREFIXES.some((prefix) => id.startsWith(prefix))) {
+    return id;
+  }
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) {
+      const found = findThreadItemId(child);
+      if (found) return found;
+    }
+  }
+  return "";
+}
+
+function findTaskRowId(node, taskText) {
+  let match = "";
+  walk(node, (child) => {
+    if (match) return;
+    const id = typeof child.id === "string" ? child.id : "";
+    if (!id.startsWith("task-row-")) return;
+    if (child.visible !== true) return;
+    const name = typeof child.name === "string" ? child.name : "";
+    if (name.includes(taskText)) {
+      match = id;
+    }
+  });
+  return match;
+}
+
+async function waitForTaskRowId(app, { timeoutMs, taskText }) {
+  const target = String(taskText ?? "").trim();
+  if (!target) {
+    throw new Error("Task text must not be empty");
+  }
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const tree = await app.rpc("automation.tree.snapshot").catch(() => null);
+    if (tree) {
+      const match = findTaskRowId(tree, target);
+      if (match) {
+        return match;
+      }
+    }
+    await sleep(250);
+  }
+  throw new Error(`Timed out waiting for task row containing "${target}"`);
+}
+
+async function waitForThreadRender(app, { timeoutMs }) {
+  const start = Date.now();
+  let lastStatus = null;
+  let lastThreadItemId = "";
+  while (Date.now() - start < timeoutMs) {
+    const tree = await app.rpc("automation.tree.snapshot").catch(() => null);
+    const threadRoot = tree ? findNodeById(tree, "thread-list") ?? tree : null;
+    const threadItemId = threadRoot ? findThreadItemId(threadRoot) : "";
+    if (threadItemId) {
+      lastThreadItemId = threadItemId;
+    }
+
+    const status = await app.rpc("automation.thread.status").catch(() => null);
+    if (status && typeof status === "object") {
+      lastStatus = status;
+      const total = Number(status.total ?? 0);
+      const historyLoading = status.history_loading === true;
+      const resyncing = status.resyncing === true;
+      if (total > 0 && !historyLoading && !resyncing && threadItemId) {
+        return status;
+      }
+    }
+    if (threadItemId) {
+      if (!lastStatus) {
+        return { assistant: threadItemId.startsWith("assistant-") ? 1 : 0, total: 1 };
+      }
+    }
+    await sleep(250);
+  }
+  throw new Error(
+    `Timed out waiting for thread render: ${JSON.stringify({
+      last_thread_item_id: lastThreadItemId || null,
+      last_status: lastStatus,
+    })}`,
+  );
+}
+
+async function waitForSessionsLoaded(app, { timeoutMs }) {
+  const start = Date.now();
+  let lastStatus = null;
+  while (Date.now() - start < timeoutMs) {
+    const status = await app.rpc("automation.thread.status").catch(() => null);
+    if (status && typeof status === "object") {
+      lastStatus = status;
+      const sessionsTotal = Number(status.sessions_total ?? 0);
+      if (sessionsTotal > 0) {
+        return status;
+      }
+    }
+    await sleep(250);
+  }
+  throw new Error(
+    `Timed out waiting for sessions to load: ${JSON.stringify({ last_status: lastStatus })}`,
+  );
+}
+
+async function waitForSelectedTask(app, { timeoutMs, taskId }) {
+  const start = Date.now();
+  let lastStatus = null;
+  const target = String(taskId ?? "").trim();
+  if (!target) {
+    throw new Error("taskId must not be empty");
+  }
+  while (Date.now() - start < timeoutMs) {
+    const status = await app.rpc("automation.thread.status").catch(() => null);
+    if (status && typeof status === "object") {
+      lastStatus = status;
+      if (String(status.selected_task_id ?? "").trim() === target) {
+        return status;
+      }
+    }
+    await sleep(250);
+  }
+  throw new Error(
+    `Timed out waiting for selected task ${target}: ${JSON.stringify({ last_status: lastStatus })}`,
+  );
+}
+
+async function waitForSelectedSession(app, { timeoutMs, index }) {
+  const start = Date.now();
+  let lastStatus = null;
+  const targetIndex = Number(index);
+  while (Date.now() - start < timeoutMs) {
+    const status = await app.rpc("automation.thread.status").catch(() => null);
+    if (status && typeof status === "object") {
+      lastStatus = status;
+      if (Number(status.selected_session_index ?? -1) === targetIndex) {
+        return status;
+      }
+    }
+    await sleep(250);
+  }
+  throw new Error(
+    `Timed out waiting for selected session ${targetIndex}: ${JSON.stringify({ last_status: lastStatus })}`,
+  );
 }
 
 function walk(node, f) {
@@ -263,10 +633,17 @@ async function main() {
       log("select workspace 0");
       await callJson(args.addr, "/select_workspace", { body: { index: 0 } });
       await waitIdle(args.addr, args.settleMs);
+      await waitForTaskRowId(app, {
+        timeoutMs: args.readyTimeoutMs,
+        taskText: args.taskText,
+      });
 
       // New task
       await focus(args.addr, "new_task");
       await waitIdle(args.addr, args.settleMs);
+      await expect(app.page.locator("#composer-input")).toBeVisible({
+        timeoutMs: args.readyTimeoutMs,
+      });
       await screenshot(args.addr, "new-task/native.png");
 
       // Harness menu (open)
@@ -297,8 +674,69 @@ async function main() {
       await waitIdle(args.addr, args.settleMs);
 
       // Active session (assumes exactly one task was created in web)
+      const daemonToken = await readDaemonAuthToken();
+      const resolved =
+        args.daemonUrl && daemonToken
+          ? await resolveTaskSession({
+              daemonUrl: args.daemonUrl,
+              token: daemonToken,
+              workspaceName: args.workspaceName,
+              taskText: args.taskText,
+              timeoutMs: args.readyTimeoutMs,
+            }).catch(() => null)
+          : null;
+      if (args.daemonUrl && daemonToken) {
+        await waitForSessionContent({
+          daemonUrl: args.daemonUrl,
+          token: daemonToken,
+          workspaceName: args.workspaceName,
+          taskText: args.taskText,
+          timeoutMs: args.readyTimeoutMs,
+          sessionId: resolved?.sessionId ?? "",
+        });
+      }
+
+      if (resolved?.taskId) {
+        log(`select task via daemon ${resolved.taskId}`);
+        await app.rpc("ctx.tasks.select", { task_id: resolved.taskId });
+        await waitIdle(args.addr, args.settleMs);
+        await waitForSelectedTask(app, {
+          timeoutMs: args.readyTimeoutMs,
+          taskId: resolved.taskId,
+        });
+      } else {
+        log(`select task containing '${args.taskText}'`);
+        const taskRowId = await waitForTaskRowId(app, {
+          timeoutMs: args.readyTimeoutMs,
+          taskText: args.taskText,
+        });
+        const taskRow = app.page.locator(`#${taskRowId}`);
+        await expect(taskRow).toBeVisible({ timeoutMs: args.readyTimeoutMs });
+        await taskRow.click();
+        await waitIdle(args.addr, args.settleMs);
+      }
+
       log("select session 0");
+      await waitForSessionsLoaded(app, { timeoutMs: args.readyTimeoutMs });
       await app.page.clickSession(0);
+      await waitIdle(args.addr, args.settleMs);
+      await waitForSelectedSession(app, {
+        timeoutMs: args.readyTimeoutMs,
+        index: 0,
+      });
+
+      await expect(app.page.locator("#thread-list")).toBeVisible({
+        timeoutMs: args.readyTimeoutMs,
+      });
+      await waitForThreadRender(app, {
+        timeoutMs: args.readyTimeoutMs,
+      }).catch(async (err) => {
+        log(`warn: thread did not render in time (${err.message})`);
+        const debug = await app.rpc("automation.thread.debug").catch(() => null);
+        if (debug) {
+          log(`thread.debug: ${JSON.stringify(debug)}`);
+        }
+      });
       await waitIdle(args.addr, args.settleMs);
       await screenshot(args.addr, "active-session/native.png");
 
@@ -313,7 +751,7 @@ async function main() {
       await screenshot(args.addr, "settings/native.png");
 
       log("focus settings search");
-      await app.page.locator("#settings-search-input").click();
+      await focus(args.addr, "settings_search");
       await waitIdle(args.addr, args.settleMs);
       await screenshot(args.addr, "settings/focus/search/native.png");
     } catch (err) {
