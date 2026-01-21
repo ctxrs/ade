@@ -12982,11 +12982,25 @@ async fn build_subagent_results_from_invocation(
     Ok(results)
 }
 
+#[derive(Clone)]
+struct IngestContext {
+    start: Instant,
+    labels: HashMap<String, String>,
+    run_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct IngestTiming {
+    runtime_apply_ms: u64,
+    enqueue_ms: u64,
+}
+
 async fn enqueue_subagent_prompt(
     state: &Arc<AppState>,
     session: &Session,
     prompt: String,
-) -> Result<(RunId, Message), (StatusCode, Json<ApiErrorResp>)> {
+    ingest: Option<IngestContext>,
+) -> Result<(RunId, Message, Option<IngestTiming>), (StatusCode, Json<ApiErrorResp>)> {
     let store = state.store_for_session(session.id).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -13066,6 +13080,22 @@ async fn enqueue_subagent_prompt(
     let _ = store.insert_session_turn(turn).await;
     state.publish_event(event).await;
 
+    let mut ingest_timing = ingest.as_ref().map(|_| IngestTiming::default());
+    if let Some(ctx) = ingest.as_ref() {
+        let runtime_apply_ms = ctx.start.elapsed().as_millis() as u64;
+        record_ingest_stage_metric(
+            state,
+            ctx.run_id.clone(),
+            &ctx.labels,
+            "runtime_apply",
+            runtime_apply_ms,
+        )
+        .await;
+        if let Some(timing) = ingest_timing.as_mut() {
+            timing.runtime_apply_ms = runtime_apply_ms;
+        }
+    }
+
     let tx = state.ensure_scheduler(session.clone()).await;
     let queued = crate::scheduler::QueuedMessage {
         message: saved.clone(),
@@ -13074,12 +13104,28 @@ async fn enqueue_subagent_prompt(
     };
     let _ = tx.send(SchedulerCommand::Enqueue(queued)).await;
 
-    Ok((run_id, saved))
+    if let Some(ctx) = ingest.as_ref() {
+        let enqueue_ms = ctx.start.elapsed().as_millis() as u64;
+        record_ingest_stage_metric(
+            state,
+            ctx.run_id.clone(),
+            &ctx.labels,
+            "enqueue",
+            enqueue_ms,
+        )
+        .await;
+        if let Some(timing) = ingest_timing.as_mut() {
+            timing.enqueue_ms = enqueue_ms;
+        }
+    }
+
+    Ok((run_id, saved, ingest_timing))
 }
 
 async fn mcp_agent_init(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<AgentInitReq>,
 ) -> Result<Json<AgentInitResp>, (StatusCode, Json<ApiErrorResp>)> {
     let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
@@ -13090,6 +13136,19 @@ async fn mcp_agent_init(
             }),
         )
     })?);
+
+    let run_id_header = headers
+        .get("x-ctx-run-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string());
+    let ingest_start = Instant::now();
+    let ingest_labels = ingest_base_labels("/api/mcp/sessions/:id/agent_init", "immediate");
+    let ingest_ctx = IngestContext {
+        start: ingest_start,
+        labels: ingest_labels.clone(),
+        run_id: run_id_header.clone(),
+    };
+    let ingest_timing_max = Arc::new(Mutex::new(IngestTiming::default()));
 
     if req.agents.is_empty() {
         return Err((
@@ -13340,6 +13399,8 @@ async fn mcp_agent_init(
         let tool_call_id = tool_call_id.clone();
         let child_ids = child_ids.clone();
         let parent_turn_id = parent_turn_id;
+        let ingest_ctx = ingest_ctx.clone();
+        let ingest_timing_max = ingest_timing_max.clone();
         futures.push(async move {
             let store = state.store_for_session(parent.id).await.map_err(|e| {
                 (
@@ -13447,7 +13508,17 @@ async fn mcp_agent_init(
             }
 
             let child_created_at = chrono::Utc::now();
-            let (run_id, _message) = enqueue_subagent_prompt(&state, &session, prompt).await?;
+            let (run_id, _message, ingest_timing) =
+                enqueue_subagent_prompt(&state, &session, prompt, Some(ingest_ctx)).await?;
+            if let Some(ingest_timing) = ingest_timing {
+                let mut max_timing = ingest_timing_max.lock().await;
+                if ingest_timing.runtime_apply_ms > max_timing.runtime_apply_ms {
+                    max_timing.runtime_apply_ms = ingest_timing.runtime_apply_ms;
+                }
+                if ingest_timing.enqueue_ms > max_timing.enqueue_ms {
+                    max_timing.enqueue_ms = ingest_timing.enqueue_ms;
+                }
+            }
             let child_session_id = session.id;
             let child = SubagentInvocationChild {
                 invocation_id: invocation_id.clone(),
@@ -13600,6 +13671,45 @@ async fn mcp_agent_init(
                 tracing::warn!(error = %error, "failed to finalize subagent invocation");
             }
 
+            let response_ms = ingest_start.elapsed().as_millis() as u64;
+            record_ingest_stage_metric(
+                &state,
+                run_id_header.clone(),
+                &ingest_labels,
+                "response",
+                response_ms,
+            )
+            .await;
+
+            let stats = store.event_log_stats();
+            let durable_lag = if stats.published_seq >= stats.durable_seq {
+                (stats.published_seq - stats.durable_seq) as u64
+            } else {
+                0
+            };
+            record_persister_metrics(
+                &state,
+                run_id_header.clone(),
+                &ingest_labels,
+                stats.queue_depth,
+                durable_lag,
+            )
+            .await;
+
+            if ingest_timing_enabled() {
+                let timing = ingest_timing_max.lock().await;
+                tracing::info!(
+                    endpoint = "/api/mcp/sessions/:id/agent_init",
+                    delivery = "immediate",
+                    runtime_apply_ms = timing.runtime_apply_ms,
+                    enqueue_ms = timing.enqueue_ms,
+                    response_ms,
+                    persister_queue_depth = stats.queue_depth,
+                    persister_durable_lag = durable_lag,
+                    "ingest pipeline timing"
+                );
+            }
+
             Ok(Json(AgentInitResp {
                 invocation_id,
                 status: final_status.to_string(),
@@ -13635,6 +13745,45 @@ async fn mcp_agent_init(
                 .map(|child| build_agent_init_result(child, "running".to_string(), None))
                 .collect();
 
+            let response_ms = ingest_start.elapsed().as_millis() as u64;
+            record_ingest_stage_metric(
+                &state,
+                run_id_header.clone(),
+                &ingest_labels,
+                "response",
+                response_ms,
+            )
+            .await;
+
+            let stats = store.event_log_stats();
+            let durable_lag = if stats.published_seq >= stats.durable_seq {
+                (stats.published_seq - stats.durable_seq) as u64
+            } else {
+                0
+            };
+            record_persister_metrics(
+                &state,
+                run_id_header.clone(),
+                &ingest_labels,
+                stats.queue_depth,
+                durable_lag,
+            )
+            .await;
+
+            if ingest_timing_enabled() {
+                let timing = ingest_timing_max.lock().await;
+                tracing::info!(
+                    endpoint = "/api/mcp/sessions/:id/agent_init",
+                    delivery = "immediate",
+                    runtime_apply_ms = timing.runtime_apply_ms,
+                    enqueue_ms = timing.enqueue_ms,
+                    response_ms,
+                    persister_queue_depth = stats.queue_depth,
+                    persister_durable_lag = durable_lag,
+                    "ingest pipeline timing"
+                );
+            }
+
             Ok(Json(AgentInitResp {
                 invocation_id,
                 status: "running".to_string(),
@@ -13647,6 +13796,7 @@ async fn mcp_agent_init(
 async fn mcp_agent_reply(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<AgentReplyReq>,
 ) -> Result<Json<AgentReplyResp>, (StatusCode, Json<ApiErrorResp>)> {
     let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
@@ -13657,6 +13807,20 @@ async fn mcp_agent_reply(
             }),
         )
     })?);
+
+    let run_id_header = headers
+        .get("x-ctx-run-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string());
+    let ingest_start = Instant::now();
+    let ingest_labels = ingest_base_labels("/api/mcp/sessions/:id/agent_reply", "immediate");
+    let ingest_ctx = IngestContext {
+        start: ingest_start,
+        labels: ingest_labels.clone(),
+        run_id: run_id_header.clone(),
+    };
+    let mut runtime_apply_ms = 0;
+    let mut enqueue_ms = 0;
 
     let store = state.store_for_session(parent_id).await.map_err(|e| {
         (
@@ -13731,7 +13895,12 @@ async fn mcp_agent_reply(
         ));
     }
 
-    let (run_id, _message) = enqueue_subagent_prompt(&state, &child, prompt).await?;
+    let (run_id, _message, ingest_timing) =
+        enqueue_subagent_prompt(&state, &child, prompt, Some(ingest_ctx)).await?;
+    if let Some(ingest_timing) = ingest_timing {
+        runtime_apply_ms = ingest_timing.runtime_apply_ms;
+        enqueue_ms = ingest_timing.enqueue_ms;
+    }
     let terminal = wait_for_run_terminal_event(&state, child.id, run_id).await;
     let status = match terminal {
         Ok(SessionEventType::Done) => "completed",
@@ -13748,6 +13917,44 @@ async fn mcp_agent_reply(
         .ok()
         .flatten()
         .map(|m| m.content);
+
+    let response_ms = ingest_start.elapsed().as_millis() as u64;
+    record_ingest_stage_metric(
+        &state,
+        run_id_header.clone(),
+        &ingest_labels,
+        "response",
+        response_ms,
+    )
+    .await;
+
+    let stats = store.event_log_stats();
+    let durable_lag = if stats.published_seq >= stats.durable_seq {
+        (stats.published_seq - stats.durable_seq) as u64
+    } else {
+        0
+    };
+    record_persister_metrics(
+        &state,
+        run_id_header.clone(),
+        &ingest_labels,
+        stats.queue_depth,
+        durable_lag,
+    )
+    .await;
+
+    if ingest_timing_enabled() {
+        tracing::info!(
+            endpoint = "/api/mcp/sessions/:id/agent_reply",
+            delivery = "immediate",
+            runtime_apply_ms,
+            enqueue_ms,
+            response_ms,
+            persister_queue_depth = stats.queue_depth,
+            persister_durable_lag = durable_lag,
+            "ingest pipeline timing"
+        );
+    }
 
     Ok(Json(AgentReplyResp {
         session_id: child.id,
