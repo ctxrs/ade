@@ -75,6 +75,7 @@ struct WorkbenchShellView: View {
     var body: some View {
         GeometryReader { proxy in
             let drawerWidth = min(320, proxy.size.width * 0.78)
+            let drawerHiddenOffset = drawerWidth + 32
             let taskTitle = resolvedTaskTitle()
             let conversationMenuContext = resolvedConversationMenuContext()
             let isArchived = selectedTask?.task.archivedAt != nil
@@ -167,7 +168,7 @@ struct WorkbenchShellView: View {
                         deleteAlert = WorkbenchDeleteAlert(taskId: task.task.id.stringValue, title: task.task.title)
                     }
                 )
-                .offset(x: isDrawerOpen ? 0 : -drawerWidth)
+                .offset(x: isDrawerOpen ? 0 : -drawerHiddenOffset)
             }
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isDrawerOpen)
         }
