@@ -13,6 +13,8 @@ pub struct Settings {
     #[serde(default)]
     pub title_generation: Option<TitleGenerationSettings>,
     #[serde(default)]
+    pub oracle: Option<OracleSettings>,
+    #[serde(default)]
     pub resource_governance: Option<ResourceGovernanceSettings>,
     #[serde(default)]
     pub provider_guard: Option<ProviderGuardSettings>,
@@ -69,6 +71,34 @@ pub struct TitleGenerationSettings {
     pub model: String,
     #[serde(default)]
     pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OracleSettings {
+    pub enabled: bool,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub max_output_tokens: Option<u32>,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+impl Default for OracleSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: "https://api.openai.com/v1".to_string(),
+            api_key: String::new(),
+            model: "gpt-5.2-pro".to_string(),
+            reasoning_effort: Some("high".to_string()),
+            max_output_tokens: None,
+            timeout_ms: Some(10 * 60 * 1000),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -365,6 +395,8 @@ pub struct PublicSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title_generation: Option<PublicTitleGenerationSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub oracle: Option<PublicOracleSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resource_governance: Option<PublicResourceGovernanceSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_guard: Option<PublicProviderGuardSettings>,
@@ -405,6 +437,20 @@ pub struct PublicTitleGenerationSettings {
     pub api_key: String,
     pub model: String,
     pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicOracleSettings {
+    pub enabled: bool,
+    pub base_url: String,
+    pub api_key_set: bool,
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -510,6 +556,8 @@ pub struct UpdateSettingsReq {
     #[serde(default)]
     pub title_generation: Option<UpdateTitleGenerationSettingsReq>,
     #[serde(default)]
+    pub oracle: Option<UpdateOracleSettingsReq>,
+    #[serde(default)]
     pub resource_governance: Option<UpdateResourceGovernanceSettingsReq>,
     #[serde(default)]
     pub provider_guard: Option<UpdateProviderGuardSettingsReq>,
@@ -551,6 +599,21 @@ pub struct UpdateTitleGenerationSettingsReq {
     pub model: String,
     #[serde(default)]
     pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateOracleSettingsReq {
+    pub enabled: bool,
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    pub model: String,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub max_output_tokens: Option<u32>,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -698,6 +761,28 @@ pub async fn load_settings(data_root: &Path) -> Settings {
         }
     }
 
+    if let Ok(api_key) = std::env::var("CTX_ORACLE_API_KEY") {
+        let oracle = settings.oracle.get_or_insert_with(OracleSettings::default);
+        if oracle.api_key.trim().is_empty() {
+            oracle.api_key = api_key;
+        }
+        if !oracle.api_key.trim().is_empty() {
+            oracle.enabled = true;
+        }
+    }
+    if let Ok(base_url) = std::env::var("CTX_ORACLE_BASE_URL") {
+        let oracle = settings.oracle.get_or_insert_with(OracleSettings::default);
+        if oracle.base_url.trim() == "https://api.openai.com/v1" {
+            oracle.base_url = base_url;
+        }
+    }
+    if let Ok(model) = std::env::var("CTX_ORACLE_MODEL") {
+        let oracle = settings.oracle.get_or_insert_with(OracleSettings::default);
+        if oracle.model.trim() == "gpt-5.2-pro" {
+            oracle.model = model;
+        }
+    }
+
     settings
 }
 
@@ -745,6 +830,15 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
                 model: t.model.clone(),
                 use_json: t.use_json,
             });
+    let oracle = settings.oracle.as_ref().map(|o| PublicOracleSettings {
+        enabled: o.enabled,
+        base_url: o.base_url.clone(),
+        api_key_set: !o.api_key.trim().is_empty(),
+        model: o.model.clone(),
+        reasoning_effort: o.reasoning_effort.clone(),
+        max_output_tokens: o.max_output_tokens,
+        timeout_ms: o.timeout_ms,
+    });
     let resource_governance =
         settings
             .resource_governance
@@ -802,6 +896,7 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
         dictation,
         telemetry,
         title_generation,
+        oracle,
         resource_governance,
         provider_guard,
         subagents,
@@ -850,6 +945,19 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
         next.model = t.model;
         next.use_json = t.use_json;
         current.title_generation = Some(next);
+    }
+    if let Some(o) = req.oracle {
+        let mut next = current.oracle.unwrap_or_default();
+        next.enabled = o.enabled;
+        next.base_url = o.base_url;
+        if let Some(api_key) = o.api_key {
+            next.api_key = api_key;
+        }
+        next.model = o.model;
+        next.reasoning_effort = o.reasoning_effort;
+        next.max_output_tokens = o.max_output_tokens;
+        next.timeout_ms = o.timeout_ms;
+        current.oracle = Some(next);
     }
     if let Some(r) = req.resource_governance {
         let mut next = current.resource_governance.unwrap_or_default();

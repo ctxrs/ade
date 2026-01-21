@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use axum::{routing::get, routing::post, Json, Router};
+use axum::{extract::Path, routing::get, routing::post, Json, Router};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
@@ -8,6 +8,67 @@ use tower::ServiceBuilder;
 
 fn mcp_bin() -> &'static str {
     env!("CARGO_BIN_EXE_ctx-mcp")
+}
+
+#[tokio::test]
+async fn mcp_tools_list_hides_lsp_by_default() {
+    let bin = mcp_bin();
+    let mut child = Command::new(bin)
+        .arg("--stdio")
+        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
+
+    for msg in [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    ] {
+        stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+    }
+    stdin.flush().await.unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut got_list = false;
+    while tokio::time::Instant::now() < deadline {
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
+        let v: Value = serde_json::from_str(&line).unwrap();
+        if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
+            let tools = v["result"]["tools"].as_array().expect("tools array");
+            let names: Vec<String> = tools
+                .iter()
+                .filter_map(|t| {
+                    t.get("name")
+                        .and_then(|n| n.as_str())
+                        .map(|s| s.to_string())
+                })
+                .collect();
+            assert!(
+                !names.iter().any(|n| n.starts_with("lsp_")),
+                "expected lsp_* tools to be hidden by default"
+            );
+            assert!(
+                !names.iter().any(|n| matches!(
+                    n.as_str(),
+                    "list_edit_plans" | "get_edit_plan" | "apply_edit_plan" | "discard_edit_plan"
+                )),
+                "expected edit plan tools to be hidden by default"
+            );
+            got_list = true;
+            break;
+        }
+    }
+
+    assert!(got_list, "did not receive tools/list response");
+    let _ = child.kill().await;
 }
 
 #[tokio::test]
@@ -223,6 +284,110 @@ async fn mcp_merge_queue_submit_scrubs_internal_ids() {
         Some("00000000-0000-0000-0000-000000000000"),
         "expected session context to be passed to daemon"
     );
+
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
+async fn mcp_oracle_forwards_prompt_and_overrides() {
+    let body_tx = std::sync::Arc::new(tokio::sync::Mutex::new(None::<Value>));
+    let body_tx2 = body_tx.clone();
+
+    let app = Router::new()
+        .route(
+            "/api/mcp/sessions/:id/oracle",
+            post(move |Path(_id): Path<String>, Json(body): Json<Value>| {
+                let body_tx2 = body_tx2.clone();
+                async move {
+                    *body_tx2.lock().await = Some(body);
+                    Json(json!({
+                        "model":"gpt-5.2-pro",
+                        "reasoning_effort":"high",
+                        "text":"ok"
+                    }))
+                }
+            }),
+        )
+        .layer(ServiceBuilder::new());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let bin = mcp_bin();
+    let mut child = Command::new(bin)
+        .arg("--stdio")
+        .env("CTX_DAEMON_URL", format!("http://{}", addr))
+        .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
+
+    for msg in [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+        json!({
+            "jsonrpc":"2.0",
+            "id":2,
+            "method":"tools/call",
+            "params":{
+                "name":"ctx.oracle",
+                "arguments":{
+                    "prompt":"hello",
+                    "model":"gpt-5.2-pro",
+                    "reasoning_effort":"high",
+                    "max_output_tokens":123,
+                    "timeout_ms":4567
+                }
+            }
+        }),
+    ] {
+        stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+    }
+    stdin.flush().await.unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut got_call = false;
+    while tokio::time::Instant::now() < deadline {
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
+        let v: Value = serde_json::from_str(&line).unwrap();
+        if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
+            let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
+            let payload: Value = serde_json::from_str(text).unwrap();
+            let obj = payload.as_object().expect("response must be object");
+            assert_eq!(obj.get("text").and_then(|v| v.as_str()), Some("ok"));
+            got_call = true;
+            break;
+        }
+    }
+
+    assert!(got_call, "did not receive oracle response");
+
+    let body = body_tx.lock().await.clone().expect("missing request body");
+    let obj = body.as_object().expect("oracle request must be object");
+    assert_eq!(obj.get("prompt").and_then(|v| v.as_str()), Some("hello"));
+    assert_eq!(
+        obj.get("model").and_then(|v| v.as_str()),
+        Some("gpt-5.2-pro")
+    );
+    assert_eq!(
+        obj.get("reasoning_effort").and_then(|v| v.as_str()),
+        Some("high")
+    );
+    assert_eq!(
+        obj.get("max_output_tokens").and_then(|v| v.as_i64()),
+        Some(123)
+    );
+    assert_eq!(obj.get("timeout_ms").and_then(|v| v.as_i64()), Some(4567));
 
     let _ = child.kill().await;
 }

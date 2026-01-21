@@ -16,6 +16,7 @@ pub mod merge_queue;
 pub mod mobile_e2ee;
 pub mod mobile_tunnel;
 pub mod ops_events;
+pub mod oracle;
 pub mod perf_telemetry;
 pub mod provider_accounts;
 pub mod provider_guard;
