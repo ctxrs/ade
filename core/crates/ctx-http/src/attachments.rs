@@ -127,19 +127,14 @@ pub async fn ensure_worktree_attachment_mounts_for_attachments(
     refresh: bool,
     materialize: bool,
 ) -> Result<Vec<WorktreeAttachmentMount>> {
-    let worktree_root = PathBuf::from(&worktree.root_path);
-    if tokio::fs::metadata(worktree_root.join(".git"))
-        .await
-        .is_ok()
-    {
-        ensure_git_exclude(&worktree_root).await?;
-    }
-
     if attachments.is_empty() {
         return Ok(vec![]);
     }
 
     let store = state.store_for_workspace(workspace.id).await?;
+
+    let worktree_root = PathBuf::from(&worktree.root_path);
+    ensure_git_exclude(&worktree_root).await?;
 
     let mut mounts = Vec::with_capacity(attachments.len());
     for attachment in attachments {
