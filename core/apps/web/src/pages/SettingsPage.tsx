@@ -234,21 +234,51 @@ function isLinuxPlatform(): boolean {
   return platform.includes("linux") || agent.includes("linux");
 }
 
-function codexResetAfterSeconds(window?: any): number | null {
+function codexResetAtMs(window?: any): number | null {
   if (!window) return null;
-  if (Number.isFinite(window.reset_after_seconds)) return window.reset_after_seconds as number;
-  if (Number.isFinite(window.resetAfterSeconds)) return window.resetAfterSeconds as number;
-  if (Number.isFinite(window.reset_at)) return window.reset_at - Math.floor(Date.now() / 1000);
-  if (Number.isFinite(window.resetAt)) return window.resetAt - Math.floor(Date.now() / 1000);
+  if (Number.isFinite(window.reset_at)) return (window.reset_at as number) * 1000;
+  if (Number.isFinite(window.resetAt)) return (window.resetAt as number) * 1000;
+  if (Number.isFinite(window.reset_after_seconds)) {
+    return Date.now() + (window.reset_after_seconds as number) * 1000;
+  }
+  if (Number.isFinite(window.resetAfterSeconds)) {
+    return Date.now() + (window.resetAfterSeconds as number) * 1000;
+  }
   return null;
+}
+
+function codexRemainingPct(window?: any): number | null {
+  if (!window) return null;
+  if (Number.isFinite(window.remaining_percent)) return clampPct(window.remaining_percent as number);
+  if (Number.isFinite(window.remainingPercent)) return clampPct(window.remainingPercent as number);
+  if (Number.isFinite(window.used_percent)) return clampPct(100 - (window.used_percent as number));
+  if (Number.isFinite(window.usedPercent)) return clampPct(100 - (window.usedPercent as number));
+  return null;
+}
+
+function formatResetLabel(resetAtMs?: number | null): string {
+  if (!Number.isFinite(resetAtMs)) return "Reset time unavailable";
+  const date = new Date(resetAtMs as number);
+  if (!Number.isFinite(date.getTime())) return "Reset time unavailable";
+  const now = new Date();
+  const options: Intl.DateTimeFormatOptions = {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  };
+  if (date.getFullYear() !== now.getFullYear()) {
+    options.year = "numeric";
+  }
+  return `Resets ${date.toLocaleString(undefined, options)}`;
 }
 
 type CodexUsageSummary = {
   planType: string | null;
-  primaryUsed: number | null;
-  secondaryUsed: number | null;
-  primaryReset: number | null;
-  secondaryReset: number | null;
+  primaryRemaining: number | null;
+  secondaryRemaining: number | null;
+  primaryResetAt: number | null;
+  secondaryResetAt: number | null;
   creditsValue: string;
   creditsSub: string;
   updatedLabel: string;
@@ -263,14 +293,10 @@ function summarizeCodexUsage(snapshot?: ProviderUsageSnapshot | null): CodexUsag
   const primaryWindow = rateLimit?.primary_window ?? rateLimit?.primaryWindow ?? null;
   const secondaryWindow = rateLimit?.secondary_window ?? rateLimit?.secondaryWindow ?? null;
   const credits = payload?.credits ?? null;
-  const primaryUsed = Number.isFinite(primaryWindow?.used_percent)
-    ? (primaryWindow.used_percent as number)
-    : null;
-  const secondaryUsed = Number.isFinite(secondaryWindow?.used_percent)
-    ? (secondaryWindow.used_percent as number)
-    : null;
-  const primaryReset = codexResetAfterSeconds(primaryWindow);
-  const secondaryReset = codexResetAfterSeconds(secondaryWindow);
+  const primaryRemaining = codexRemainingPct(primaryWindow);
+  const secondaryRemaining = codexRemainingPct(secondaryWindow);
+  const primaryResetAt = codexResetAtMs(primaryWindow);
+  const secondaryResetAt = codexResetAtMs(secondaryWindow);
   const creditsValue = (() => {
     if (!credits) return "—";
     if (credits.unlimited) return "Unlimited";
@@ -295,10 +321,10 @@ function summarizeCodexUsage(snapshot?: ProviderUsageSnapshot | null): CodexUsag
 
   return {
     planType,
-    primaryUsed,
-    secondaryUsed,
-    primaryReset,
-    secondaryReset,
+    primaryRemaining,
+    secondaryRemaining,
+    primaryResetAt,
+    secondaryResetAt,
     creditsValue,
     creditsSub,
     updatedLabel,
@@ -3807,25 +3833,17 @@ export default function SettingsPage() {
       const usageEntries = codexUsage?.entries ?? [];
       const usageById = new Map<string, ProviderUsageSnapshot>();
       for (const entry of usageEntries) {
-        usageById.set(entry.account_id ?? "__default__", entry.usage);
+        if (!entry.account_id) continue;
+        usageById.set(entry.account_id, entry.usage);
       }
 
-      const accountRows = [
-        {
-          account_id: null,
-          label: "Default (~/.codex)",
-          email: null,
-          plan_type: null,
-          last_used_at: null,
-        },
-        ...codexAccountsList.map((account) => ({
-          account_id: account.id,
-          label: account.label,
-          email: account.email ?? null,
-          plan_type: account.plan_type ?? null,
-          last_used_at: account.last_used_at ?? null,
-        })),
-      ];
+      const accountRows = codexAccountsList.map((account) => ({
+        account_id: account.id,
+        label: account.label,
+        email: account.email ?? null,
+        plan_type: account.plan_type ?? null,
+        last_used_at: account.last_used_at ?? null,
+      }));
 
       return (
         <>
@@ -3833,7 +3851,7 @@ export default function SettingsPage() {
             <Card title="Codex">
               <Row
                 title="Usage"
-                description={codexUsageBusy ? "Refreshing usage…" : "Usage for each saved Codex account."}
+                description={codexUsageBusy ? "Refreshing usage…" : "Remaining usage for each saved Codex account."}
                 control={
                   <button
                     type="button"
@@ -3850,36 +3868,25 @@ export default function SettingsPage() {
                   <div className="settings-table settings-table-codex-usage">
                     <div className="settings-table-head">
                       <div>Account</div>
-                      <div>Session (5h)</div>
-                      <div>Weekly</div>
+                      <div>Remaining (5h)</div>
+                      <div>Remaining (weekly)</div>
                       <div>Credits</div>
                       <div>Updated</div>
                       <div />
                     </div>
                     {accountRows.map((account) => {
-                      const key = account.account_id ?? "__default__";
+                      const key = account.account_id;
                       const accountId = account.account_id;
                       const usage = usageById.get(key) ?? null;
                       const summary = summarizeCodexUsage(usage);
                       const planLabel = account.plan_type ?? summary.planType;
-                      const primaryResetLabel =
-                        summary.primaryReset !== null
-                          ? `Resets in ${formatAge(summary.primaryReset * 1000)}`
-                          : "Reset time unavailable";
-                      const secondaryResetLabel =
-                        summary.secondaryReset !== null
-                          ? `Resets in ${formatAge(summary.secondaryReset * 1000)}`
-                          : "Reset time unavailable";
+                      const primaryResetLabel = formatResetLabel(summary.primaryResetAt);
+                      const secondaryResetLabel = formatResetLabel(summary.secondaryResetAt);
                       const accountSub = (() => {
-                        if (!account.account_id) {
-                          return summary.planType
-                            ? `Uses ~/.codex/auth.json · ${summary.planType}`
-                            : "Uses ~/.codex/auth.json";
-                        }
                         const base = account.email ?? account.account_id;
                         return planLabel ? `${base} · ${planLabel}` : base;
                       })();
-                      const isActive = accountId ? accountId === codexActiveId : !codexActiveId;
+                      const isActive = accountId === codexActiveId;
                       return (
                         <div key={key} className="settings-table-row">
                           <div>
@@ -3894,11 +3901,15 @@ export default function SettingsPage() {
                             <div className="settings-table-sub">{accountSub}</div>
                           </div>
                           <div>
-                            <div className="settings-table-mono">{formatPct(summary.primaryUsed)}</div>
+                            <div className="settings-table-mono">
+                              {formatPct(summary.primaryRemaining)}
+                            </div>
                             <div className="settings-table-sub">{primaryResetLabel}</div>
                           </div>
                           <div>
-                            <div className="settings-table-mono">{formatPct(summary.secondaryUsed)}</div>
+                            <div className="settings-table-mono">
+                              {formatPct(summary.secondaryRemaining)}
+                            </div>
                             <div className="settings-table-sub">{secondaryResetLabel}</div>
                           </div>
                           <div>
@@ -3917,16 +3928,14 @@ export default function SettingsPage() {
                             ) : null}
                           </div>
                           <div>
-                            {accountId ? (
-                              <button
-                                type="button"
-                                className="settings-btn settings-btn-secondary settings-btn-compact"
-                                onClick={() => onCodexDelete(accountId)}
-                                disabled={codexAccountsBusy}
-                              >
-                                Remove
-                              </button>
-                            ) : null}
+                            <button
+                              type="button"
+                              className="settings-btn settings-btn-secondary settings-btn-compact"
+                              onClick={() => onCodexDelete(accountId)}
+                              disabled={codexAccountsBusy}
+                            >
+                              Remove
+                            </button>
                           </div>
                         </div>
                       );
@@ -3947,9 +3956,11 @@ export default function SettingsPage() {
                     className="settings-control settings-select"
                     value={codexActiveId ?? ""}
                     onChange={(e) => onCodexSetActive(e.target.value || null)}
-                    disabled={codexAccountsBusy}
+                    disabled={codexAccountsBusy || codexAccountsList.length === 0}
                   >
-                    <option value="">Default (~/.codex)</option>
+                    <option value="" disabled>
+                      {codexAccountsList.length ? "Select an account" : "No accounts connected"}
+                    </option>
                     {codexAccountsList.map((account) => (
                       <option key={account.id} value={account.id}>
                         {account.label}

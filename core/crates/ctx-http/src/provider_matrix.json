@@ -12,11 +12,11 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.8.2-ctx.3",
+        "version": "0.8.2-ctx.4",
         "args": [],
         "targets": {
           "linux-x86_64": {
-            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.8.2-ctx.3/codex-acp-0.8.2-ctx.3-x86_64-unknown-linux-gnu.tar.gz",
+            "url": "https://github.com/ctxrs/codex-acp/releases/download/v0.8.2-ctx.4/codex-acp-0.8.2-ctx.4-x86_64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-acp"
           }
@@ -125,6 +125,12 @@
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Linux x86_64 only; fixes duplicate assistant streaming when non-delta and delta events race"
+        },
+        {
+          "version": "0.8.2-ctx.4",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Linux x86_64 only; adds mid-turn Codex account switching"
         }
       ]
     },

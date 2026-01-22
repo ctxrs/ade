@@ -660,7 +660,13 @@
 
 .settings-table-codex-usage .settings-table-head,
 .settings-table-codex-usage .settings-table-row {
-  grid-template-columns: 1.6fr 0.7fr 0.7fr 0.8fr 1fr auto;
+  grid-template-columns:
+    minmax(220px, 2fr)
+    minmax(110px, 0.8fr)
+    minmax(110px, 0.8fr)
+    minmax(110px, 0.8fr)
+    minmax(180px, 1.2fr)
+    auto;
 }
 
 .settings-table-codex-logins .settings-table-head,

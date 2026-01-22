@@ -43,6 +43,10 @@ pub fn codex_accounts_root(data_root: &Path) -> PathBuf {
     data_root.join("providers").join("codex").join("accounts")
 }
 
+pub fn codex_fallback_home(data_root: &Path) -> PathBuf {
+    codex_accounts_root(data_root).join("fallback")
+}
+
 pub fn codex_registry_path(data_root: &Path) -> PathBuf {
     codex_accounts_root(data_root).join("index.json")
 }
@@ -132,10 +136,17 @@ pub fn codex_env_for_account(data_root: &Path, account_id: &str) -> HashMap<Stri
 pub async fn codex_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
     let registry = load_codex_registry(data_root).await;
     if let Some(active) = registry.active_account_id.as_deref() {
-        Ok(codex_env_for_account(data_root, active))
-    } else {
-        Ok(HashMap::new())
+        let _ = ensure_codex_account_dir(data_root, active).await?;
+        return Ok(codex_env_for_account(data_root, active));
     }
+    let fallback = codex_fallback_home(data_root);
+    tokio::fs::create_dir_all(&fallback).await?;
+    let mut env = HashMap::new();
+    env.insert(
+        "CODEX_HOME".to_string(),
+        fallback.to_string_lossy().to_string(),
+    );
+    Ok(env)
 }
 
 pub fn normalize_label(label: Option<String>, account_id: &str) -> String {

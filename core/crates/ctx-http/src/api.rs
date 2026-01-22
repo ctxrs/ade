@@ -5823,27 +5823,6 @@ async fn get_codex_accounts_usage(
     };
 
     let mut entries = Vec::new();
-    let default_usage = if active_id.is_none() {
-        if let Some(snapshot) = cached_active.clone() {
-            snapshot
-        } else {
-            provider_usage::fetch_codex_usage_snapshot(HashMap::new())
-                .await
-                .map_err(to_err)?
-        }
-    } else {
-        provider_usage::fetch_codex_usage_snapshot(HashMap::new())
-            .await
-            .map_err(to_err)?
-    };
-    entries.push(CodexAccountUsageEntry {
-        account_id: None,
-        label: "Default (~/.codex)".to_string(),
-        email: None,
-        plan_type: None,
-        last_used_at: None,
-        usage: default_usage,
-    });
 
     for account in registry.accounts {
         let env = provider_accounts::codex_env_for_account(&state.data_root, &account.id);
