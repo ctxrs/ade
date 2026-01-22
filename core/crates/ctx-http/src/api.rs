@@ -5073,6 +5073,7 @@ async fn handle_mobile_secure_ws(
     let result = async {
         loop {
             tokio::select! {
+                biased;
                 _ = &mut send_task => break,
                 msg = receiver.next() => {
                     match msg {
@@ -10803,6 +10804,7 @@ async fn handle_workspace_active_snapshot_ws(
 
     loop {
         tokio::select! {
+            biased;
             _ = &mut send_task => break,
             msg = receiver.next() => {
                 match msg {
