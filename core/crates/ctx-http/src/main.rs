@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 use tokio::time::MissedTickBehavior;
 use tracing::{warn, Metadata};
 use tracing_subscriber::fmt::writer::MakeWriter;
+use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
@@ -140,6 +141,13 @@ fn env_u64(key: &str) -> Option<u64> {
         .and_then(|raw| raw.trim().parse().ok())
 }
 
+fn env_string(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn daemon_log_path_for_date(logs_dir: &Path, date: &str) -> std::path::PathBuf {
     logs_dir.join(format!("{DAEMON_LOG_PREFIX}{date}"))
 }
@@ -249,18 +257,24 @@ async fn main() -> Result<()> {
             .with_ansi(false)
             .with_writer(file_writer);
 
-        if daemon_log_config.stdout_enabled {
-            tracing_subscriber::registry()
-                .with(file_layer)
-                .with(tracing_subscriber::fmt::layer().with_ansi(true))
-                .with(tracing_subscriber::EnvFilter::from_default_env())
-                .init();
+        let stdout_layer = if daemon_log_config.stdout_enabled {
+            let stdout_filter = env_string("CTX_DAEMON_LOG_STDOUT_FILTER")
+                .and_then(|value| tracing_subscriber::EnvFilter::try_new(value).ok())
+                .unwrap_or_else(|| tracing_subscriber::EnvFilter::new("error"));
+            Some(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(true)
+                    .with_filter(stdout_filter),
+            )
         } else {
-            tracing_subscriber::registry()
-                .with(file_layer)
-                .with(tracing_subscriber::EnvFilter::from_default_env())
-                .init();
-        }
+            None
+        };
+
+        tracing_subscriber::registry()
+            .with(file_layer)
+            .with(stdout_layer)
+            .with(tracing_subscriber::EnvFilter::from_default_env())
+            .init();
 
         spawn_daemon_log_maintenance(logs_dir.clone(), daemon_log_config, file_blocked);
     } else {

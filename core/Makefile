@@ -13,6 +13,24 @@ SUPABASE_FUNCTIONS ?= 1
 SUPABASE_FUNCTIONS_BG ?= 1
 SUPABASE_PROD ?= 0
 CTX_WEB_PORT ?= 5173
+DEV_LOG ?= 1
+DEV_RUST_LOG ?= trace
+DEV_BACKTRACE ?= 1
+DEV_LOG_STDOUT ?= 1
+DEV_LOG_STDOUT_FILTER ?= error
+
+DEV_LOG_ENV := $(if $(filter 1,$(DEV_LOG)),\
+	RUST_LOG=$(if $(RUST_LOG),$(RUST_LOG),$(DEV_RUST_LOG)) \
+	RUST_BACKTRACE=$(if $(RUST_BACKTRACE),$(RUST_BACKTRACE),$(DEV_BACKTRACE)) \
+	CTX_DAEMON_LOG_STDOUT=$(if $(CTX_DAEMON_LOG_STDOUT),$(CTX_DAEMON_LOG_STDOUT),$(DEV_LOG_STDOUT)) \
+	CTX_DAEMON_LOG_STDOUT_FILTER=$(if $(CTX_DAEMON_LOG_STDOUT_FILTER),$(CTX_DAEMON_LOG_STDOUT_FILTER),$(DEV_LOG_STDOUT_FILTER)) \
+)
+DEV_LOG_SETENV := $(if $(filter 1,$(DEV_LOG)),\
+	--setenv RUST_LOG=$(if $(RUST_LOG),$(RUST_LOG),$(DEV_RUST_LOG)) \
+	--setenv RUST_BACKTRACE=$(if $(RUST_BACKTRACE),$(RUST_BACKTRACE),$(DEV_BACKTRACE)) \
+	--setenv CTX_DAEMON_LOG_STDOUT=$(if $(CTX_DAEMON_LOG_STDOUT),$(CTX_DAEMON_LOG_STDOUT),$(DEV_LOG_STDOUT)) \
+	--setenv CTX_DAEMON_LOG_STDOUT_FILTER=$(if $(CTX_DAEMON_LOG_STDOUT_FILTER),$(CTX_DAEMON_LOG_STDOUT_FILTER),$(DEV_LOG_STDOUT_FILTER)) \
+)
 export CARGO_TARGET_DIR
 
 ifeq ($(SUPABASE_PROD),1)
@@ -43,13 +61,14 @@ ifeq ($(shell uname -s),Linux)
 			systemctl --user reset-failed $(CTX_DAEMON_UNIT).scope >/dev/null 2>&1 || true; \
 		fi; \
 		systemd-run --user --scope --unit $(CTX_DAEMON_UNIT) --same-dir --collect \
+			$(DEV_LOG_SETENV) \
 			--setenv CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) \
 			cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
 	else \
-		CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
+		$(DEV_LOG_ENV) CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
 	fi
 else
-	CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
+	$(DEV_LOG_ENV) CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
 endif
 
 dev-preflight:
