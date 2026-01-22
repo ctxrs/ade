@@ -5260,7 +5260,7 @@ async fn handle_mobile_secure_ws(
                             subscriptions = next_map;
                         }
                         Some(Ok(WsMessage::Close(_))) => break,
-                        Some(Ok(_)) => {}
+                        Some(Ok(_)) => {},
                         Some(Err(_)) => break,
                         None => break,
                     }
