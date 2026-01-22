@@ -10,15 +10,18 @@ import React, {
 } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { ChevronDown, Plus, SplitSquareVertical, Terminal as TerminalIcon, X } from "lucide-react";
+import { ChevronDown, ExternalLink, Plus, SplitSquareVertical, Terminal as TerminalIcon, X } from "lucide-react";
 import type { TerminalSession } from "@ctx/types";
 import {
   authToken,
   createWorkspaceTerminal,
   deleteTerminal,
   resolveDaemonWsBaseUrl,
+  listWorkspacePorts,
+  portPreviewUrl,
   idToString,
   listWorkspaceTerminals,
+  type PortPreviewEntry,
   type CreateTerminalRequest,
 } from "../api/client";
 import type {
@@ -36,6 +39,9 @@ import {
   saveWorkbenchTerminalTitlesV1,
 } from "../workbench/persistence";
 import { randomUuid } from "../utils/randomUuid";
+import { useSettingsSnapshot, useSettingsStore } from "../state/settingsStore";
+import { formatRelativeAgeShort } from "../utils/relativeTime";
+import { useRelativeNowMs } from "../utils/useRelativeNowMs";
 
 export type TerminalPanelHandle = {
   createTerminal: (opts: CreateTerminalOptions) => Promise<string | null>;
@@ -253,6 +259,7 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
   ref,
 ) {
   const [terminals, setTerminals] = useState<TerminalSession[]>([]);
+  const [ports, setPorts] = useState<PortPreviewEntry[]>([]);
   const [panelState, setPanelState] = useState<PersistedWorkbenchTerminalLayoutV1>(defaultPanelState);
   const [layoutHydrated, setLayoutHydrated] = useState(false);
   const [titlesHydrated, setTitlesHydrated] = useState(false);
@@ -266,11 +273,21 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
   const clientsRef = useRef<Map<string, TerminalClient>>(new Map());
   const resizeFrameRef = useRef<number | null>(null);
   const autoCreateWorkspaceRef = useRef(false);
+  const settingsStore = useSettingsStore();
+  const settingsSnapshot = useSettingsSnapshot();
+  const autoForwardEnabled = settingsSnapshot.settings?.port_forwarding?.auto_forward ?? true;
+  const nowMs = useRelativeNowMs(10_000);
 
   const refreshTerminals = useCallback(async () => {
     if (!workspaceId) return;
     const list = await listWorkspaceTerminals(workspaceId);
     setTerminals(list);
+  }, [workspaceId]);
+
+  const refreshPorts = useCallback(async () => {
+    if (!workspaceId) return;
+    const list = await listWorkspacePorts(workspaceId);
+    setPorts(list);
   }, [workspaceId]);
 
   useEffect(() => {
@@ -340,6 +357,25 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
   useEffect(() => {
     refreshTerminals().catch(() => {});
   }, [refreshTerminals]);
+
+  useEffect(() => {
+    if (!open || !workspaceId) {
+      setPorts([]);
+      return;
+    }
+    const poll = async () => {
+      try {
+        await refreshPorts();
+      } catch {
+        // ignore
+      }
+    };
+    void poll();
+    const interval = window.setInterval(poll, 4000);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [open, refreshPorts, workspaceId]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -434,6 +470,10 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
   }, [activeTaskId, terminals]);
 
   const scopeTerminals = panelState.scope === "workspace" ? workspaceTerminals : taskTerminals;
+  const visiblePorts = useMemo(() => {
+    if (panelState.scope !== "task" || !activeTaskId) return ports;
+    return ports.filter((entry) => idToString(entry.task_id) === activeTaskId);
+  }, [activeTaskId, panelState.scope, ports]);
 
   const terminalsById = useMemo(() => {
     const map = new Map<string, TerminalSession>();
@@ -856,6 +896,16 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
     [panelState.scope],
   );
 
+  const handleToggleAutoForward = useCallback(async () => {
+    try {
+      await settingsStore.update({
+        port_forwarding: { auto_forward: !autoForwardEnabled },
+      });
+    } catch {
+      // ignore update failures
+    }
+  }, [autoForwardEnabled, settingsStore]);
+
   const handleLayoutActivate = useCallback(
     (leafId: string, _terminalId: string) => {
       updateScopeState(panelState.scope, (state) => ({
@@ -1040,6 +1090,49 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
                 </div>
               );
             })}
+          </div>
+          <div className="wb-terminal-preview">
+            <div className="wb-terminal-preview-header">
+              <span>Preview</span>
+              <label className="wb-terminal-preview-toggle">
+                <input
+                  type="checkbox"
+                  checked={autoForwardEnabled}
+                  onChange={() => {
+                    void handleToggleAutoForward();
+                  }}
+                  disabled={!settingsSnapshot.loaded}
+                />
+                <span>Auto-forward</span>
+              </label>
+            </div>
+            <div className="wb-terminal-preview-list">
+              {visiblePorts.length === 0 ? (
+                <div className="wb-terminal-preview-empty">No previews yet</div>
+              ) : (
+                visiblePorts.map((entry) => {
+                  const href = portPreviewUrl(entry.id);
+                  const lastSeen = formatRelativeAgeShort(entry.last_seen_at, nowMs);
+                  return (
+                    <div key={entry.id} className="wb-terminal-preview-item">
+                      <span className="wb-terminal-preview-port">
+                        {entry.host}:{entry.port}
+                      </span>
+                      <span className="wb-terminal-preview-age">{lastSeen}</span>
+                      <a
+                        className="wb-terminal-preview-open"
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Open preview"
+                      >
+                        <ExternalLink size={12} />
+                      </a>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
         <div className="wb-terminal-view">

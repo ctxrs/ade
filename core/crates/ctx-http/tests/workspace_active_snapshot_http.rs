@@ -10,6 +10,47 @@ use ctx_http::daemon::AppState;
 
 mod common;
 
+fn parse_workspace_event(txt: &str) -> Option<ctx_core::models::WorkspaceActiveSnapshotEvent> {
+    let payload: serde_json::Value = serde_json::from_str(txt).ok()?;
+    serde_json::from_value::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(
+        payload.clone(),
+    )
+    .ok()
+    .and_then(|message| match message {
+        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => Some(event),
+        _ => None,
+    })
+    .or_else(|| {
+        serde_json::from_value::<ctx_core::models::WorkspaceActiveSnapshotEvent>(payload).ok()
+    })
+}
+
+fn is_ready_message(txt: &str) -> bool {
+    if let Ok(message) =
+        serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(txt)
+    {
+        match message {
+            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot { .. } => true,
+            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+                matches!(
+                    event,
+                    ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. }
+                )
+            }
+            _ => false,
+        }
+    } else if let Ok(event) =
+        serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(txt)
+    {
+        matches!(
+            event,
+            ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. }
+        )
+    } else {
+        false
+    }
+}
+
 async fn setup() -> (
     tempfile::TempDir,
     tempfile::TempDir,
@@ -208,11 +249,6 @@ async fn workspace_stream_replays_from_after_seq() {
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
-    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
 
     let subscribe = json!({
         "type": "subscribe",
@@ -238,10 +274,10 @@ async fn workspace_stream_replays_from_after_seq() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            if let Some(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
                 delta,
                 ..
-            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
+            }) = parse_workspace_event(&txt)
             {
                 if delta.session_id != session.id {
                     continue;
@@ -337,11 +373,6 @@ async fn workspace_stream_replays_tool_events() {
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
-    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
 
     let subscribe = json!({
         "type": "subscribe",
@@ -367,10 +398,10 @@ async fn workspace_stream_replays_tool_events() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            if let Some(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
                 delta,
                 ..
-            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
+            }) = parse_workspace_event(&txt)
             {
                 if delta.session_id != session.id {
                     continue;
@@ -451,11 +482,6 @@ async fn workspace_stream_emits_gap_on_large_replay() {
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
-    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
 
     let subscribe = json!({
         "type": "subscribe",
@@ -480,10 +506,10 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap {
+            if let Some(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap {
                 session_id,
                 ..
-            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
+            }) = parse_workspace_event(&txt)
             {
                 if session_id == session.id {
                     seen_gap = true;
@@ -514,17 +540,24 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let subscribe = json!({
+        "type": "subscribe",
+        "sessions": [],
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
     let ready_msg = tokio::time::timeout(Duration::from_secs(2), socket.next())
         .await
         .unwrap()
         .unwrap()
         .unwrap();
     if let WsMessage::Text(txt) = ready_msg {
-        let evt: ctx_core::models::WorkspaceActiveSnapshotEvent =
-            serde_json::from_str(&txt).unwrap();
-        match evt {
-            ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. } => {}
-            other => panic!("expected ready, got {other:?}"),
+        if !is_ready_message(&txt) {
+            panic!("expected ready or snapshot, got {txt:?}");
         }
     } else {
         panic!("expected ready text frame");
@@ -560,11 +593,10 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let ctx_core::models::WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+            if let Some(ctx_core::models::WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
                 task: summary,
                 ..
-            } = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
-                .unwrap()
+            }) = parse_workspace_event(&txt)
             {
                 if summary.task.id == task.id {
                     saw_upsert = true;
@@ -633,11 +665,6 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
-    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
 
     let subscribe = json!({
         "type": "subscribe",
@@ -676,10 +703,10 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            if let Some(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
                 delta,
                 ..
-            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
+            }) = parse_workspace_event(&txt)
             {
                 if delta.session_id == session_a.id {
                     seen_a = true;

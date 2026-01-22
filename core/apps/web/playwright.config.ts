@@ -1,12 +1,35 @@
 import { defineConfig } from "playwright/test";
 import crypto from "crypto";
 import os from "os";
+import { execSync } from "child_process";
 
 const HOST = "127.0.0.1";
-const PORT = process.env.CTX_E2E_PORT ?? "4401";
+const resolvePort = (): string => {
+  if (process.env.CTX_E2E_PORT) {
+    return process.env.CTX_E2E_PORT;
+  }
+  try {
+    const port = execSync(
+      "node -e \"const net=require('net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>process.stdout.write(String(p)));});\""
+    )
+      .toString()
+      .trim();
+    if (port) return port;
+  } catch {
+    // Fall back to a fixed port if the helper fails.
+  }
+  return "4401";
+};
+const PORT = resolvePort();
 const baseURL = `http://${HOST}:${PORT}`;
 const dataDir =
   process.env.CTX_E2E_DATA_DIR ?? `${os.tmpdir()}/ctx-e2e-${process.pid}`;
+if (!process.env.CTX_E2E_DATA_DIR) {
+  process.env.CTX_E2E_DATA_DIR = dataDir;
+}
+if (!process.env.CTX_E2E_PORT) {
+  process.env.CTX_E2E_PORT = PORT;
+}
 const cargoHash = crypto
   .createHash("sha1")
   .update(process.cwd())

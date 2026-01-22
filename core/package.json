@@ -6,6 +6,7 @@
     "test": "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} cargo test -q && pnpm -C apps/web test",
     "test:agent": "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} cargo test -q -p ctx-core -p ctx-providers -p ctx-http -p ctx-mcp -p ctx-lsp && pnpm -C apps/web test:quiet",
     "test:e2e": "pnpm -C apps/web test:e2e",
+    "verify:e2e": "pnpm -C apps/web test:e2e",
     "test:providers:e2e": "cargo test -p ctx-providers --test real_acp_e2e -- --ignored --nocapture --test-threads=1",
     "test:providers:e2e:runner": "cargo test -p ctx-http --test provider_runner_acp_e2e -- --ignored --nocapture --test-threads=1",
     "desktop:prep": "node scripts/desktop_check_versions.cjs && CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} cargo build -p ctx-http -p ctx-mcp && pnpm -C apps/web build && node scripts/desktop_sync_resources.cjs --profile debug",

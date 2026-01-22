@@ -6,6 +6,34 @@ export type DesktopConnectionInfo = {
   token?: string | null;
 };
 
+export type DesktopDaemonLaunchMode = "host" | "container";
+
+export type DesktopLastConnection =
+  | {
+      kind: "local";
+    }
+  | {
+      kind: "ssh";
+      host: string;
+      user?: string | null;
+      remote_port: number;
+      start_remote?: boolean;
+      remote_data_dir?: string | null;
+    };
+
+export type DesktopDaemonSettings = {
+  auto_start: boolean;
+  launch_mode?: DesktopDaemonLaunchMode | null;
+  docker_passthrough?: boolean | null;
+  last_connection?: DesktopLastConnection | null;
+  last_workspace_id?: string | null;
+};
+
+export type DesktopConnectLocalOptions = {
+  launch_mode?: DesktopDaemonLaunchMode;
+  workspace_roots?: string[];
+};
+
 export type SshConnectReq = {
   host: string;
   user?: string | null;
@@ -55,8 +83,20 @@ export type DesktopEditorSettings = {
   remote_authority?: string | null;
 };
 
+type DesktopTestBridge = {
+  isDesktopApp?: boolean;
+  invoke?: <T>(cmd: string, args?: any) => Promise<T>;
+};
+
+const getDesktopBridge = (): DesktopTestBridge | null => {
+  if (typeof window === "undefined") return null;
+  return (window as any).__CTX_DESKTOP_BRIDGE__ ?? null;
+};
+
 export const isDesktopApp = (): boolean => {
   try {
+    const bridge = getDesktopBridge();
+    if (bridge?.isDesktopApp) return true;
     return Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
   } catch {
     return false;
@@ -79,6 +119,8 @@ export const isDesktopUi = (): boolean => {
 };
 
 const invoke = async <T>(cmd: string, args?: any): Promise<T> => {
+  const bridge = getDesktopBridge();
+  if (bridge?.invoke) return bridge.invoke<T>(cmd, args);
   const mod = await import("@tauri-apps/api/core");
   return mod.invoke<T>(cmd, args);
 };
@@ -101,8 +143,10 @@ export const desktopGetConnection = async (): Promise<DesktopConnectionInfo> =>
 export const desktopDisconnect = async (): Promise<void> =>
   invoke<void>("desktop_disconnect");
 
-export const desktopConnectLocal = async (): Promise<DesktopConnectionInfo> =>
-  invoke<DesktopConnectionInfo>("desktop_connect_local");
+export const desktopConnectLocal = async (
+  opts?: DesktopConnectLocalOptions,
+): Promise<DesktopConnectionInfo> =>
+  invoke<DesktopConnectionInfo>("desktop_connect_local", opts ? { req: opts } : undefined);
 
 export const desktopConnectSsh = async (req: SshConnectReq): Promise<DesktopConnectionInfo> =>
   invoke<DesktopConnectionInfo>("desktop_connect_ssh", { req });
@@ -142,6 +186,17 @@ export const desktopUpdateEditorSettings = async (
   settings: DesktopEditorSettings,
 ): Promise<DesktopEditorSettings> =>
   invoke<DesktopEditorSettings>("desktop_update_editor_settings", { settings });
+
+export const desktopGetDaemonSettings = async (): Promise<DesktopDaemonSettings> =>
+  invoke<DesktopDaemonSettings>("desktop_get_daemon_settings");
+
+export const desktopUpdateDaemonSettings = async (
+  settings: DesktopDaemonSettings,
+): Promise<DesktopDaemonSettings> =>
+  invoke<DesktopDaemonSettings>("desktop_update_daemon_settings", { settings });
+
+export const desktopSetLastWorkspace = async (workspace_id: string | null): Promise<void> =>
+  invoke<void>("desktop_set_last_workspace", { workspace_id });
 
 export const desktopDaemonRequest = async (req: {
   method: string;

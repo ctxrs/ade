@@ -4521,6 +4521,18 @@ impl Store {
             .await
     }
 
+    pub async fn get_session_head_snapshot(
+        &self,
+        session_id: SessionId,
+        limit: u32,
+        include_events: bool,
+    ) -> Result<Option<SessionHeadSnapshot>> {
+        Ok(self
+            .get_session_head(session_id, limit, include_events)
+            .await?
+            .map(session_head_to_snapshot))
+    }
+
     async fn get_session_head_with_kind(
         &self,
         session_id: SessionId,

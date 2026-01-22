@@ -5,8 +5,11 @@ import type {
   SessionSummary,
   SessionSnapshotSummary,
   Task,
+  WorkspaceActiveHeadBatch,
+  WorkspaceActiveSnapshot,
   WorkspaceActiveSnapshotEvent,
   WorkspaceActiveSnapshotSessionSubscription,
+  WorkspaceActiveSnapshotStreamMessage,
   WorkspaceActiveTaskSummary,
   WorkspaceIndexCursor,
   WorkspaceTaskSummary,
@@ -108,6 +111,14 @@ const normalizeSubscriptions = (
   }
   out.sort((a, b) => String(idToString(a.session_id)).localeCompare(String(idToString(b.session_id))));
   return out;
+};
+
+const isWorkspaceActiveSnapshotStreamMessage = (
+  payload: unknown,
+): payload is WorkspaceActiveSnapshotStreamMessage => {
+  if (!payload || typeof payload !== "object") return false;
+  const type = (payload as { type?: string }).type;
+  return type === "snapshot" || type === "event" || type === "reset_required";
 };
 
 const sortSessionSummaries = (summaries: SessionSnapshotSummary[]): SessionSnapshotSummary[] => {
@@ -424,60 +435,9 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     };
     try {
       const snapshot = await getWorkspaceActiveSnapshot(this.workspaceId, params);
-      this.snapshotRev = Math.max(this.snapshotRev, snapshot.snapshot_rev ?? 0);
-      if (typeof snapshot.archived_rev === "number" && snapshot.archived_rev > this.archivedRev) {
-        this.archivedRev = snapshot.archived_rev;
-        this.archivedLoaded = false;
-        this.archivedCursor = null;
-      }
-      const nextTotalActive = snapshot.active.total_count ?? this.totalActive;
-      this.totalActive = nextTotalActive;
-      const shouldClearActive = reset;
-      const previousTasks = shouldClearActive ? new Map(this.tasks) : null;
-      const archivedHeads = shouldClearActive ? this.collectArchivedHeads() : null;
-      if (shouldClearActive) {
-        for (const [id, item] of this.tasks.entries()) {
-          if (!item.task.archived_at) {
-            this.tasks.delete(id);
-          }
-        }
-        this.activeOrder = [];
-        this.sessionHeadsById.clear();
-        if (archivedHeads) {
-          for (const [sessionId, head] of archivedHeads) {
-            this.sessionHeadsById.set(sessionId, head);
-          }
-        }
-      }
-
-      const activeTasks = snapshot.active.tasks ?? [];
-      const nextActiveIds = new Set<string>();
-      for (const summary of activeTasks) {
-        const id = idToString(summary.task.id);
-        const existing = (previousTasks ?? this.tasks).get(id);
-        const normalized = this.normalizeActiveSummary(summary, existing);
-        nextActiveIds.add(normalized.id);
-        this.tasks.set(normalized.id, normalized);
-        this.placeInOrders(normalized);
-      }
-
-      if (this.activeLimit >= this.totalActive) {
-        const prevActive = [...this.activeOrder];
-        for (const id of prevActive) {
-          if (nextActiveIds.has(id)) continue;
-          const existing = this.tasks.get(id);
-          if (!existing) continue;
-          if (!existing.task.archived_at) {
-            this.removeTask(id, { adjustCounts: false });
-          }
-        }
-      }
-
-      this.rebuildSessionLastEventSeq();
-      this.snapshot.initialized = true;
-      this.liveSnapshotApplied = true;
-      this.publish();
-      this.schedulePersistCache();
+      const nextTotalActive = snapshot.active?.total_count ?? this.totalActive;
+      const dropMissing = this.activeLimit >= nextTotalActive;
+      this.applyActiveSnapshot(snapshot, { reset, dropMissing });
     } catch {
       this.setFetchState("active", "error");
       return;
@@ -521,6 +481,89 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       return;
     }
     this.setFetchState("archived", "idle");
+  }
+
+  private applyActiveSnapshot(
+    snapshot: WorkspaceActiveSnapshot,
+    opts?: {
+      reset?: boolean;
+      dropMissing?: boolean;
+      activeHeads?: SessionHeadSnapshot[] | null;
+    },
+  ) {
+    const nextSnapshotRev = typeof snapshot.snapshot_rev === "number" ? snapshot.snapshot_rev : 0;
+    this.snapshotRev = Math.max(this.snapshotRev, nextSnapshotRev);
+    if (typeof snapshot.archived_rev === "number" && snapshot.archived_rev > this.archivedRev) {
+      this.archivedRev = snapshot.archived_rev;
+      this.archivedLoaded = false;
+      this.archivedCursor = null;
+    }
+
+    const active = snapshot.active;
+    const nextTotalActive = Number.isFinite(active?.total_count) ? active.total_count : this.totalActive;
+    this.totalActive = nextTotalActive;
+
+    const reset = opts?.reset ?? false;
+    const previousTasks = reset ? new Map(this.tasks) : null;
+    const archivedHeads = reset ? this.collectArchivedHeads() : null;
+    if (reset) {
+      for (const [id, item] of this.tasks.entries()) {
+        if (!item.task.archived_at) {
+          this.tasks.delete(id);
+        }
+      }
+      this.activeOrder = [];
+      this.sessionHeadsById.clear();
+      if (archivedHeads) {
+        for (const [sessionId, head] of archivedHeads) {
+          this.sessionHeadsById.set(sessionId, head);
+        }
+      }
+    }
+
+    this.applyActiveHeads(opts?.activeHeads);
+
+    const activeTasks = Array.isArray(active?.tasks) ? active.tasks : [];
+    const nextActiveIds = new Set<string>();
+    for (const summary of activeTasks) {
+      const id = idToString(summary.task.id);
+      const existing = (previousTasks ?? this.tasks).get(id);
+      const normalized = this.normalizeActiveSummary(summary, existing);
+      nextActiveIds.add(normalized.id);
+      this.tasks.set(normalized.id, normalized);
+      this.placeInOrders(normalized);
+    }
+
+    const dropMissing = opts?.dropMissing ?? this.activeLimit >= nextTotalActive;
+    if (dropMissing) {
+      const prevActive = [...this.activeOrder];
+      for (const id of prevActive) {
+        if (nextActiveIds.has(id)) continue;
+        const existing = this.tasks.get(id);
+        if (!existing) continue;
+        if (!existing.task.archived_at) {
+          this.removeTask(id, { adjustCounts: false });
+        }
+      }
+    }
+
+    this.rebuildSessionLastEventSeq();
+    this.snapshot.initialized = true;
+    this.liveSnapshotApplied = true;
+    this.publish();
+    this.schedulePersistCache();
+  }
+
+  private applyActiveHeads(heads?: SessionHeadSnapshot[] | null) {
+    if (!Array.isArray(heads)) return;
+    for (const head of heads) {
+      this.rememberSessionHead(head);
+    }
+  }
+
+  private readActiveHeads(batch?: WorkspaceActiveHeadBatch | null): SessionHeadSnapshot[] {
+    if (!batch || !Array.isArray(batch.heads)) return [];
+    return batch.heads;
   }
 
   private async connectStream() {
@@ -629,7 +672,44 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   private async handleStreamMessage(data: unknown) {
     const parsed = await parseWsJson(data);
     if (!parsed || typeof parsed !== "object") return;
-    const evt = parsed as WorkspaceActiveSnapshotEvent;
+    if (isWorkspaceActiveSnapshotStreamMessage(parsed)) {
+      this.handleStreamEnvelope(parsed);
+      return;
+    }
+    this.applyWorkspaceEvent(parsed as WorkspaceActiveSnapshotEvent);
+  }
+
+  private handleStreamEnvelope(message: WorkspaceActiveSnapshotStreamMessage) {
+    switch (message.type) {
+      case "snapshot": {
+        const snapshot = message.active_snapshot;
+        if (!snapshot || typeof snapshot !== "object") return;
+        if (typeof snapshot.snapshot_rev === "number" && snapshot.snapshot_rev < this.snapshotRev) {
+          this.ensureActiveSnapshot(true).catch(() => {});
+          return;
+        }
+        const activeHeads = this.readActiveHeads(message.active_heads);
+        const totalCount = snapshot.active?.total_count ?? 0;
+        const taskCount = Array.isArray(snapshot.active?.tasks) ? snapshot.active.tasks.length : 0;
+        const snapshotComplete = taskCount >= totalCount;
+        const reset = !this.snapshot.initialized || snapshotComplete;
+        this.applyActiveSnapshot(snapshot, { reset, dropMissing: snapshotComplete, activeHeads });
+        break;
+      }
+      case "event":
+        if (message.event) {
+          this.applyWorkspaceEvent(message.event);
+        }
+        break;
+      case "reset_required":
+        this.ensureActiveSnapshot(true).catch(() => {});
+        break;
+      default:
+        break;
+    }
+  }
+
+  private applyWorkspaceEvent(evt: WorkspaceActiveSnapshotEvent) {
     if (typeof evt.snapshot_rev === "number") {
       if (evt.snapshot_rev < this.snapshotRev) {
         this.snapshotRev = evt.snapshot_rev;

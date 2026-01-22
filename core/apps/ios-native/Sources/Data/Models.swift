@@ -357,6 +357,12 @@ struct WorkspaceActiveSnapshot: Codable, Sendable {
     let active: WorkspaceActivePage
 }
 
+struct WorkspaceActiveHeadBatch: Codable, Sendable {
+    let workspaceId: CtxID
+    let snapshotRev: Int
+    let heads: [SessionHead]
+}
+
 enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
     case ready(workspaceId: CtxID, snapshotRev: Int, archivedRev: Int)
     case activeTaskUpsert(workspaceId: CtxID, snapshotRev: Int, task: WorkspaceActiveTaskSummary)
@@ -490,6 +496,64 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
     }
 }
 
+enum WorkspaceActiveSnapshotStreamMessage: Codable, Sendable {
+    case snapshot(rev: Int, activeSnapshot: WorkspaceActiveSnapshot, activeHeads: WorkspaceActiveHeadBatch?)
+    case event(rev: Int, event: WorkspaceActiveSnapshotEvent)
+    case resetRequired(latestRev: Int)
+
+    private enum MessageType: String, Codable {
+        case snapshot
+        case event
+        case resetRequired = "reset_required"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case rev
+        case activeSnapshot
+        case activeHeads
+        case event
+        case latestRev
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(MessageType.self, forKey: .type)
+        switch type {
+        case .snapshot:
+            let rev = try container.decode(Int.self, forKey: .rev)
+            let activeSnapshot = try container.decode(WorkspaceActiveSnapshot.self, forKey: .activeSnapshot)
+            let activeHeads = try container.decodeIfPresent(WorkspaceActiveHeadBatch.self, forKey: .activeHeads)
+            self = .snapshot(rev: rev, activeSnapshot: activeSnapshot, activeHeads: activeHeads)
+        case .event:
+            let rev = try container.decode(Int.self, forKey: .rev)
+            let event = try container.decode(WorkspaceActiveSnapshotEvent.self, forKey: .event)
+            self = .event(rev: rev, event: event)
+        case .resetRequired:
+            let latestRev = try container.decode(Int.self, forKey: .latestRev)
+            self = .resetRequired(latestRev: latestRev)
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .snapshot(let rev, let activeSnapshot, let activeHeads):
+            try container.encode(MessageType.snapshot, forKey: .type)
+            try container.encode(rev, forKey: .rev)
+            try container.encode(activeSnapshot, forKey: .activeSnapshot)
+            try container.encodeIfPresent(activeHeads, forKey: .activeHeads)
+        case .event(let rev, let event):
+            try container.encode(MessageType.event, forKey: .type)
+            try container.encode(rev, forKey: .rev)
+            try container.encode(event, forKey: .event)
+        case .resetRequired(let latestRev):
+            try container.encode(MessageType.resetRequired, forKey: .type)
+            try container.encode(latestRev, forKey: .latestRev)
+        }
+    }
+}
+
 struct WorkspaceActiveSnapshotSessionSubscription: Codable, Sendable {
     let sessionId: CtxID
     let afterSeq: Int?
@@ -499,6 +563,7 @@ struct WorkspaceActiveSnapshotClientMessage: Codable, Sendable {
     let type: String
     let sessionIds: [CtxID]
     let sessions: [WorkspaceActiveSnapshotSessionSubscription]
+    let includeActiveHeads: Bool? = nil
 }
 
 struct WorkspaceIndexCursor: Codable, Sendable {

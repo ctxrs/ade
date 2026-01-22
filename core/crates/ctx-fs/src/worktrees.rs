@@ -8,6 +8,19 @@ use ctx_core::ids::{WorkspaceId, WorktreeId};
 
 use crate::git;
 
+pub fn host_visible_data_root(data_root: impl AsRef<Path>) -> PathBuf {
+    if let Ok(raw) = std::env::var("CTX_HOST_DATA_DIR") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            let candidate = PathBuf::from(trimmed);
+            if candidate.is_absolute() {
+                return candidate;
+            }
+        }
+    }
+    data_root.as_ref().to_path_buf()
+}
+
 pub fn worktrees_root(data_root: impl AsRef<Path>) -> PathBuf {
     data_root.as_ref().join("worktrees")
 }

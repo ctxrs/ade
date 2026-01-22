@@ -1,4 +1,4 @@
-import { test, expect } from "playwright/test";
+import { test, expect } from "./utils/fixtures";
 import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
@@ -25,12 +25,14 @@ test("workbench: second message gets a response", async ({ page }) => {
 
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello 1");
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
-  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(1, { timeout: 20000 });
+  const activeSession = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
+  await expect(activeSession.locator(".wb-assistant-entry")).toHaveCount(1, { timeout: 20000 });
 
-  const sessionComposer = page.locator(".wb-session textarea.wb-active-textarea");
+  const sessionComposer = activeSession.locator("textarea.wb-active-textarea");
   await expect(sessionComposer).toBeVisible({ timeout: 20000 });
   await sessionComposer.fill("hello 2");
-  await expect(page.locator(".wb-session button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
-  await page.locator(".wb-session button[aria-label=\"Send\"]").click();
-  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(2, { timeout: 20000 });
+  const sendButton = activeSession.locator("button[aria-label=\"Send\"]");
+  await expect(sendButton).toBeEnabled({ timeout: 20000 });
+  await sendButton.click();
+  await expect(activeSession.locator(".wb-assistant-entry")).toHaveCount(2, { timeout: 20000 });
 });

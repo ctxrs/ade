@@ -22,6 +22,8 @@ use ctx_store::store::SessionTurnToolCountDeltas;
 
 use crate::compaction::{self, CompactionOutcome, CompactionRequest};
 use crate::daemon::AppState;
+use crate::docker_proxy;
+use crate::egress_proxy;
 use crate::installer;
 use crate::ops_events::OpsEvent;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
@@ -574,14 +576,48 @@ async fn start_turn(
     provider_env.insert("CTX_MODEL_ID".to_string(), session.model_id.clone());
     let mcp_token = uuid::Uuid::new_v4().to_string();
     provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
-    let provider_control_mode = settings::load_settings(&state.data_root)
-        .await
+    let daemon_settings = settings::load_settings(&state.data_root).await;
+    let provider_control_mode = daemon_settings
         .sandboxing
         .as_ref()
         .map(|s| s.provider_control_mode.clone())
         .unwrap_or_default();
+    let network_settings = daemon_settings.network.unwrap_or_default();
     if let Some(mode_id) = provider_mode_id_for(&session.provider_id, &provider_control_mode) {
         provider_env.insert("CTX_PROVIDER_MODE".to_string(), mode_id.to_string());
+    }
+    provider_env.insert(
+        "CTX_NETWORK_PROFILE".to_string(),
+        network_settings.profile.as_str().to_string(),
+    );
+    provider_env.insert(
+        "CTX_MCP_BYPASS_PROXY".to_string(),
+        if network_settings.mcp_bypass {
+            "1".to_string()
+        } else {
+            "0".to_string()
+        },
+    );
+    if network_settings.profile != settings::NetworkProfile::Full {
+        let proxy_token = state.proxy_token_for_session(session.id).await;
+        if let Some(proxy_url) = egress_proxy::proxy_url_for_daemon(&state.daemon_url, &proxy_token)
+        {
+            provider_env.insert("HTTP_PROXY".to_string(), proxy_url.clone());
+            provider_env.insert("HTTPS_PROXY".to_string(), proxy_url.clone());
+            provider_env.insert("ALL_PROXY".to_string(), proxy_url);
+            provider_env.insert(
+                "NO_PROXY".to_string(),
+                egress_proxy::build_no_proxy(&state.daemon_url),
+            );
+        }
+    }
+    let mut docker_host_override = docker_proxy::docker_passthrough_host();
+    if docker_host_override.is_none() && std::env::var_os("DOCKER_HOST").is_none() {
+        docker_host_override =
+            docker_proxy::docker_host_for_session(state.as_ref(), session.id).await;
+    }
+    if let Some(docker_host) = docker_host_override {
+        provider_env.insert("DOCKER_HOST".to_string(), docker_host);
     }
     if let Ok(v) = std::env::var("CTX_MCP_COMMAND") {
         provider_env.insert("CTX_MCP_COMMAND".to_string(), v);

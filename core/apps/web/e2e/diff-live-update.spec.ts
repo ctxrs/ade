@@ -1,4 +1,4 @@
-import { test, expect } from "playwright/test";
+import { test, expect } from "./utils/fixtures";
 import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
@@ -31,7 +31,8 @@ async function createWorkspaceAndStartRun(opts: {
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(prompt);
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
 
-  const sessionComposer = page.locator(".wb-session textarea.wb-active-textarea");
+  const activeSession = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
+  const sessionComposer = activeSession.locator("textarea.wb-active-textarea");
   await expect(sessionComposer).toBeVisible({ timeout: 20_000 });
 
   const readId = (v: any): string => {
@@ -138,7 +139,8 @@ test("workbench: diff updates for manual edits while idle", async ({ page, reque
     prompt: taskTitle,
   });
 
-  await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: `done: ${taskTitle}` })).toBeVisible({
+  const activeSession = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
+  await expect(activeSession.locator(".wb-assistant-entry").filter({ hasText: `done: ${taskTitle}` })).toBeVisible({
     timeout: 20_000,
   });
 

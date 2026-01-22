@@ -1,7 +1,11 @@
-use gpui::{div, prelude::*, px, AnyElement, CursorStyle, MouseButton, Rgba, StyledText, Window};
+use chrono::{DateTime, Utc};
+use gpui::{
+    div, prelude::*, px, AnyElement, ClickEvent, CursorStyle, MouseButton, Rgba, StyledText, Window,
+};
 use gpui_component::ElementExt;
 
 use crate::automation_tree;
+use super::super::relative_time::format_relative_age_short;
 
 use super::super::icons::{Icon, IconName};
 use super::super::state::terminal::{
@@ -18,11 +22,18 @@ const fn rgba(r: u8, g: u8, b: u8, a: f32) -> Rgba {
     }
 }
 
+fn parse_port_seen_at(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
 impl Render for TerminalPanelState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = self.colors;
         let metrics = crate::theme::ThemeMetrics::default();
         let scope_terminals = self.scope_terminals();
+        let scope_ports = self.scope_ports();
         let selected_terminal = self
             .selected_terminal_id
             .and_then(|id| scope_terminals.iter().find(|terminal| terminal.id == id))
@@ -229,6 +240,140 @@ impl Render for TerminalPanelState {
         };
 
         let has_terminals = !scope_terminals.is_empty();
+        let auto_forward_label = if self.auto_forward_enabled { "On" } else { "Off" };
+        let auto_forward_disabled = !self.auto_forward_loaded || self.auto_forward_busy;
+        let mut auto_forward_toggle = div()
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.xs))
+            .text_sm()
+            .border_1()
+            .border_color(colors.border)
+            .rounded_full()
+            .child(format!("Auto-forward {auto_forward_label}"))
+            .id("terminal-preview-auto-forward");
+        if auto_forward_disabled {
+            auto_forward_toggle = auto_forward_toggle
+                .bg(colors.panel_2)
+                .text_color(colors.muted);
+        } else {
+            auto_forward_toggle = auto_forward_toggle
+                .bg(colors.panel)
+                .cursor_pointer()
+                .active(|style| style.opacity(0.85))
+                .on_click(cx.listener(TerminalPanelState::on_toggle_auto_forward));
+        }
+
+        let preview_header = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(colors.muted)
+                    .child("Previews"),
+            )
+            .child(auto_forward_toggle);
+
+        let preview_list: AnyElement = if self.ports_loading && scope_ports.is_empty() {
+            div()
+                .text_sm()
+                .text_color(colors.muted)
+                .child("Loading previews...")
+                .into_any_element()
+        } else if scope_ports.is_empty() {
+            div()
+                .text_sm()
+                .text_color(colors.muted)
+                .child("No previews yet")
+                .into_any_element()
+        } else {
+            scope_ports.iter().fold(div().flex().flex_col().gap_1(), |list, entry| {
+                let last_seen = format_relative_age_short(
+                    parse_port_seen_at(&entry.last_seen_at),
+                    Utc::now(),
+                );
+                let port_id = entry.id.clone();
+                let open_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                    view.open_port_preview(port_id.clone(), cx);
+                });
+                let open_button = div()
+                    .px(px(metrics.spacing.sm))
+                    .py(px(metrics.spacing.xs))
+                    .text_sm()
+                    .border_1()
+                    .border_color(colors.border)
+                    .rounded_sm()
+                    .bg(colors.panel)
+                    .text_color(colors.text)
+                    .cursor_pointer()
+                    .id(format!("terminal-preview-open-{}", entry.id))
+                    .on_click(open_click)
+                    .child("Open");
+                let last_seen = if last_seen.is_empty() {
+                    "Now".to_string()
+                } else {
+                    last_seen
+                };
+                list.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .px(px(metrics.spacing.md))
+                        .py(px(metrics.spacing.sm))
+                        .border_1()
+                        .border_color(colors.border)
+                        .rounded_sm()
+                        .bg(colors.panel)
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(colors.text)
+                                        .child(format!("{}:{}", entry.host, entry.port)),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(colors.muted)
+                                        .child(last_seen),
+                                ),
+                        )
+                        .child(open_button),
+                )
+            })
+            .into_any_element()
+        };
+
+        let preview_block = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(preview_header)
+            .child(preview_list)
+            .child(if let Some(err) = &self.port_error {
+                div()
+                    .text_sm()
+                    .text_color(colors.error)
+                    .child(format!("Preview error: {err}"))
+            } else {
+                div()
+            })
+            .child(if let Some(err) = &self.auto_forward_error {
+                div()
+                    .text_sm()
+                    .text_color(colors.error)
+                    .child(format!("Auto-forward unavailable: {err}"))
+            } else {
+                div()
+            });
+
         let output_text = if !has_terminals {
             "No terminals yet.".to_string()
         } else if selected_terminal.is_none() {
@@ -380,6 +525,7 @@ impl Render for TerminalPanelState {
                 div()
             })
             .child(div().flex_1().overflow_hidden().child(list))
+            .child(preview_block)
             .child(if reconnect_visible {
                 div()
                     .px(px(metrics.spacing.sm))

@@ -18,6 +18,8 @@ ctx-store = { path = "../ctx-store" }
 directories.workspace = true
 futures.workspace = true
 http = "1"
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 reqwest.workspace = true
 rcgen.workspace = true
 rustls.workspace = true
@@ -52,6 +54,7 @@ semver = "1"
 atty = "0.2"
 urlencoding = "2"
 url = "2"
+regex = "1"
 lsp-types = { version = "0.97", features = ["proposed"] }
 similar = "2"
 jsonwebtoken = "9"
@@ -74,7 +77,6 @@ azure_identity = { version = "0.21", default-features = false, features = ["deve
 azure_core = { version = "0.21", default-features = false, features = ["enable_reqwest_rustls"] }
 gcp_auth = "0.12"
 tempfile = "3"
-hyper = { version = "1", features = ["full"] }
 reqwest.workspace = true
 
 [features]

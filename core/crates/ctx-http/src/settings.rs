@@ -24,6 +24,9 @@ pub struct Settings {
     pub sandboxing: Option<SandboxingSettings>,
     #[serde(default)]
     pub compaction: Option<CompactionSettings>,
+    pub network: Option<NetworkSettings>,
+    #[serde(default)]
+    pub port_forwarding: Option<PortForwardingSettings>,
     #[serde(default)]
     pub cloud_workers: Option<CloudWorkersSettings>,
 }
@@ -117,6 +120,44 @@ pub enum ProviderControlMode {
     CtxEnforced,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkProfile {
+    None,
+    DepsOnly,
+    McpOnly,
+    DepsPlusMcp,
+    Full,
+}
+
+impl NetworkProfile {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NetworkProfile::None => "none",
+            NetworkProfile::DepsOnly => "deps_only",
+            NetworkProfile::McpOnly => "mcp_only",
+            NetworkProfile::DepsPlusMcp => "deps_plus_mcp",
+            NetworkProfile::Full => "full",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkSettings {
+    pub profile: NetworkProfile,
+    #[serde(default)]
+    pub mcp_bypass: bool,
+}
+
+impl Default for NetworkSettings {
+    fn default() -> Self {
+        Self {
+            profile: NetworkProfile::Full,
+            mcp_bypass: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxingSettings {
     pub provider_control_mode: ProviderControlMode,
@@ -180,6 +221,17 @@ impl Default for AutoCompactionSettings {
             remaining_fraction_threshold: Some(0.2),
             max_context_tokens: None,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortForwardingSettings {
+    pub auto_forward: bool,
+}
+
+impl Default for PortForwardingSettings {
+    fn default() -> Self {
+        Self { auto_forward: true }
     }
 }
 
@@ -406,6 +458,9 @@ pub struct PublicSettings {
     pub sandboxing: Option<PublicSandboxingSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compaction: Option<PublicCompactionSettings>,
+    pub network: Option<PublicNetworkSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_forwarding: Option<PublicPortForwardingSettings>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -483,6 +538,17 @@ pub struct PublicAutoCompactionSettings {
     pub remaining_fraction_threshold: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_context_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicNetworkSettings {
+    pub profile: NetworkProfile,
+    pub mcp_bypass: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicPortForwardingSettings {
+    pub auto_forward: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -567,6 +633,9 @@ pub struct UpdateSettingsReq {
     pub sandboxing: Option<UpdateSandboxingSettingsReq>,
     #[serde(default)]
     pub compaction: Option<UpdateCompactionSettingsReq>,
+    pub network: Option<UpdateNetworkSettingsReq>,
+    #[serde(default)]
+    pub port_forwarding: Option<UpdatePortForwardingSettingsReq>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -681,6 +750,18 @@ pub struct UpdateAutoCompactionSettingsReq {
     pub max_context_tokens: Option<u32>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateNetworkSettingsReq {
+    pub profile: NetworkProfile,
+    #[serde(default)]
+    pub mcp_bypass: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdatePortForwardingSettingsReq {
+    pub auto_forward: bool,
+}
+
 fn settings_path(data_root: &Path) -> PathBuf {
     data_root.join(SETTINGS_FILE_NAME)
 }
@@ -702,6 +783,13 @@ pub async fn load_settings(data_root: &Path) -> Settings {
     }
     if settings.compaction.is_none() {
         settings.compaction = Some(CompactionSettings::default());
+    }
+    if settings.network.is_none() {
+        settings.network = Some(NetworkSettings::default());
+    }
+
+    if settings.port_forwarding.is_none() {
+        settings.port_forwarding = Some(PortForwardingSettings::default());
     }
 
     // Environment overrides (optional) for easy local bring-up.
@@ -892,6 +980,16 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
                     max_context_tokens: auto.max_context_tokens,
                 }),
         });
+    let network = settings.network.as_ref().map(|n| PublicNetworkSettings {
+        profile: n.profile.clone(),
+        mcp_bypass: n.mcp_bypass,
+    });
+    let port_forwarding = settings
+        .port_forwarding
+        .as_ref()
+        .map(|p| PublicPortForwardingSettings {
+            auto_forward: p.auto_forward,
+        });
     PublicSettings {
         dictation,
         telemetry,
@@ -902,6 +1000,8 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
         subagents,
         sandboxing,
         compaction,
+        network,
+        port_forwarding,
     }
 }
 
@@ -1003,6 +1103,17 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
             max_context_tokens: auto.max_context_tokens,
         });
         current.compaction = Some(next);
+    }
+    if let Some(n) = req.network {
+        let mut next = current.network.unwrap_or_default();
+        next.profile = n.profile;
+        next.mcp_bypass = n.mcp_bypass;
+        current.network = Some(next);
+    }
+    if let Some(p) = req.port_forwarding {
+        let mut next = current.port_forwarding.unwrap_or_default();
+        next.auto_forward = p.auto_forward;
+        current.port_forwarding = Some(next);
     }
     current
 }

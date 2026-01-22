@@ -217,6 +217,17 @@ export type CompactionSettings = {
   auto_compact?: AutoCompactionSettings | null;
 };
 
+export type NetworkProfile = "none" | "deps_only" | "mcp_only" | "deps_plus_mcp" | "full";
+
+export type NetworkSettings = {
+  profile: NetworkProfile;
+  mcp_bypass: boolean;
+};
+
+export type PortForwardingSettings = {
+  auto_forward: boolean;
+};
+
 export type ResourceGovernanceStatusState = "disabled" | "applied" | "pending" | "unsupported" | "error";
 
 export type ResourceGovernanceStatus = {
@@ -271,6 +282,36 @@ export type Settings = {
   subagents?: SubagentSettings | null;
   sandboxing?: SandboxingSettings | null;
   compaction?: CompactionSettings | null;
+  network?: NetworkSettings | null;
+  port_forwarding?: PortForwardingSettings | null;
+};
+
+export type UpdateSettingsPatch = {
+  dictation?: DictationSettings | null;
+  telemetry?: TelemetrySettings | null;
+  title_generation?: TitleGenerationSettings | null;
+  resource_governance?: ResourceGovernanceSettings | null;
+  provider_guard?: ProviderGuardSettings | null;
+  subagents?: SubagentSettings | null;
+  sandboxing?: SandboxingSettings | null;
+  compaction?: CompactionSettings | null;
+  network?: NetworkSettings | null;
+  port_forwarding?: PortForwardingSettings | null;
+};
+
+export type PortPreviewEntry = {
+  id: string;
+  workspace_id: { 0: string } | string;
+  task_id?: { 0: string } | string | null;
+  session_id?: { 0: string } | string | null;
+  worktree_id?: { 0: string } | string | null;
+  terminal_id?: { 0: string } | string | null;
+  host: string;
+  port: number;
+  scheme: string;
+  source: string;
+  first_seen_at: string;
+  last_seen_at: string;
 };
 
 export type WebSessionViewport = {
@@ -822,7 +863,7 @@ export const listWorkspaces = () =>
 export const getSettings = () =>
   apiAny<Settings>("/api/settings");
 
-export const updateSettings = (settings: Settings) =>
+export const updateSettings = (settings: UpdateSettingsPatch) =>
   apiAny<Settings>("/api/settings", {
     method: "POST",
     body: JSON.stringify(settings),
@@ -918,6 +959,9 @@ export type CreateTerminalRequest = {
 
 export const listWorkspaceTerminals = (workspaceId: string) =>
   apiAny<TerminalSession[]>(`/api/workspaces/${workspaceId}/terminals`);
+
+export const listWorkspacePorts = (workspaceId: string) =>
+  apiAny<PortPreviewEntry[]>(`/api/workspaces/${workspaceId}/ports`);
 
 export const createWorkspaceTerminal = (workspaceId: string, req: CreateTerminalRequest) =>
   apiAny<TerminalSession>(`/api/workspaces/${workspaceId}/terminals`, {
@@ -1512,6 +1556,14 @@ export const artifactUrl = (artifactId: string): string => {
   const token = authToken();
   const prefix = base ? base.replace(/\/+$/, "") : "";
   const url = `${prefix}/api/artifacts/${encodeURIComponent(String(artifactId || ""))}`;
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+};
+
+export const portPreviewUrl = (portId: string): string => {
+  const base = resolveDaemonBaseUrl();
+  const token = authToken();
+  const prefix = base ? base.replace(/\/+$/, "") : "";
+  const url = `${prefix}/api/ports/${encodeURIComponent(String(portId || ""))}/preview`;
   return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 };
 

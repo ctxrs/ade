@@ -9,7 +9,9 @@ use gpui_component::scroll::ScrollableElement;
 use qrcode::{Color as QrColor, QrCode};
 
 use crate::automation_tree;
-use ctx_client::{MobileTunnelState, ResourceGovernanceMode, ResourceGovernanceStatusState};
+use ctx_client::{
+    MobileTunnelState, NetworkProfile, ResourceGovernanceMode, ResourceGovernanceStatusState,
+};
 use ctx_core::models::WorkspaceAttachmentKind;
 use ctx_providers::adapters::ProviderHealth;
 
@@ -942,6 +944,66 @@ impl SettingsState {
                 }))
             });
 
+        let supports_container = cfg!(target_os = "linux");
+        let daemon_disabled = !self.daemon_loaded || self.daemon_error.is_some();
+        let auto_start_toggle = settings_toggle(self.daemon_auto_start, daemon_disabled)
+            .id("settings-daemon-auto-start-toggle")
+            .when(!daemon_disabled, |this| {
+                this.on_click(cx.listener(|view, _, _window, cx| {
+                    view.set_daemon_auto_start(!view.daemon_auto_start, cx);
+                }))
+            });
+        let docker_disabled = daemon_disabled || !supports_container;
+        let docker_toggle = settings_toggle(self.daemon_docker_passthrough, docker_disabled)
+            .id("settings-daemon-docker-toggle")
+            .when(!docker_disabled, |this| {
+                this.on_click(cx.listener(|view, _, _window, cx| {
+                    view.set_daemon_docker_passthrough(!view.daemon_docker_passthrough, cx);
+                }))
+            });
+
+        let default_launch_label = if supports_container {
+            "Container (host-mounted)"
+        } else {
+            "Host"
+        };
+        let mut launch_mode_options = vec![LabeledOption {
+            value: "".to_string(),
+            label: format!("Default ({default_launch_label})"),
+        }];
+        if supports_container {
+            launch_mode_options.push(LabeledOption {
+                value: "container".to_string(),
+                label: "Container (host-mounted)".to_string(),
+            });
+        }
+        launch_mode_options.push(LabeledOption {
+            value: "host".to_string(),
+            label: "Host".to_string(),
+        });
+        let launch_mode_value = self
+            .daemon_launch_mode
+            .map(|mode| mode.as_str().to_string())
+            .unwrap_or_default();
+        let launch_mode_select = Self::ensure_select_state(
+            &mut self.daemon_launch_mode_select,
+            launch_mode_options,
+            Some(launch_mode_value),
+            super::super::state::SettingsSelectKind::DaemonLaunchMode,
+            &mut self.input_subscriptions,
+            window,
+            cx,
+        );
+        let launch_mode_control = Select::new(&launch_mode_select)
+            .appearance(true)
+            .bg(white(0.06))
+            .border_color(white(0.08))
+            .rounded(px(8.0))
+            .h(px(30.0))
+            .px(px(10.0))
+            .text_size(px(13.0))
+            .disabled(daemon_disabled);
+
         let editor_control = Select::new(&editor_select)
             .appearance(true)
             .bg(white(0.06))
@@ -976,6 +1038,33 @@ impl SettingsState {
                 Some("Share anonymous usage metrics (no code, prompts, or file paths)."),
                 telemetry_toggle,
                 true,
+            )
+            .into_any_element(),
+            settings_row(
+                "Auto-start local daemon",
+                Some("Reconnect to the last daemon on launch; restart it if missing."),
+                auto_start_toggle,
+                false,
+            )
+            .into_any_element(),
+            settings_row(
+                "Local runtime",
+                Some("Choose how the local daemon runs."),
+                div()
+                    .id("settings-daemon-launch-mode")
+                    .child(launch_mode_control),
+                false,
+            )
+            .into_any_element(),
+            settings_row(
+                "Enable Docker passthrough (unsafe)",
+                Some(if supports_container {
+                    "Allow the daemon container to access the host Docker socket."
+                } else {
+                    "Available on Linux desktop."
+                }),
+                docker_toggle,
+                false,
             )
             .into_any_element(),
             settings_row(
@@ -1036,6 +1125,9 @@ impl SettingsState {
             .gap(px(14.0))
             .child(settings_card(colors, None, settings_rows(rows)));
         if let Some(error) = self.editor_error.clone() {
+            content = content.child(settings_banner(&error, true));
+        }
+        if let Some(error) = self.daemon_error.clone() {
             content = content.child(settings_banner(&error, true));
         }
         content.into_any_element()
@@ -1115,22 +1207,97 @@ impl SettingsState {
             .into_any_element()
     }
 
-    fn render_sandboxing(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> AnyElement {
+    fn render_sandboxing(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let colors = self.colors;
-        let rows = vec![settings_row(
-            "Provider control",
-            Some("Default is full capability. Harness-native controls are not yet available here."),
-            settings_pill("Full capability", PillVariant::Default, false),
-            true,
-        )
-        .into_any_element()];
+        let network_disabled = self.settings.is_none();
+        let network_options = vec![
+            LabeledOption {
+                value: "full".to_string(),
+                label: "Full outbound".to_string(),
+            },
+            LabeledOption {
+                value: "deps_plus_mcp".to_string(),
+                label: "Dependencies + MCP".to_string(),
+            },
+            LabeledOption {
+                value: "deps_only".to_string(),
+                label: "Dependencies only".to_string(),
+            },
+            LabeledOption {
+                value: "mcp_only".to_string(),
+                label: "MCP only".to_string(),
+            },
+            LabeledOption {
+                value: "none".to_string(),
+                label: "No outbound".to_string(),
+            },
+        ];
+        let network_value = match self.network_profile {
+            NetworkProfile::None => "none",
+            NetworkProfile::DepsOnly => "deps_only",
+            NetworkProfile::McpOnly => "mcp_only",
+            NetworkProfile::DepsPlusMcp => "deps_plus_mcp",
+            NetworkProfile::Full => "full",
+        };
+        let network_select = Self::ensure_select_state(
+            &mut self.network_profile_select,
+            network_options,
+            Some(network_value.to_string()),
+            super::super::state::SettingsSelectKind::NetworkProfile,
+            &mut self.input_subscriptions,
+            window,
+            cx,
+        );
+        let network_control = Select::new(&network_select)
+            .appearance(true)
+            .bg(white(0.06))
+            .border_color(white(0.08))
+            .rounded(px(8.0))
+            .h(px(30.0))
+            .px(px(10.0))
+            .text_size(px(13.0))
+            .disabled(network_disabled);
+
+        let mcp_toggle = settings_toggle(self.network_mcp_bypass, network_disabled)
+            .id("settings-network-mcp-bypass")
+            .when(!network_disabled, |this| {
+                this.on_click(cx.listener(|view, _, _window, cx| {
+                    view.set_network_mcp_bypass(!view.network_mcp_bypass, cx);
+                }))
+            });
+
+        let rows = vec![
+            settings_row(
+                "Provider control",
+                Some("Default is full capability. Harness-native controls are not yet available here."),
+                settings_pill("Full capability", PillVariant::Default, false),
+                true,
+            )
+            .into_any_element(),
+            settings_row(
+                "Network profile",
+                Some("Controls outbound network access for agent sessions."),
+                div()
+                    .id("settings-network-profile")
+                    .child(network_control),
+                false,
+            )
+            .into_any_element(),
+            settings_row(
+                "MCP proxy bypass",
+                Some("Allow MCP tool traffic to bypass the egress proxy."),
+                mcp_toggle,
+                false,
+            )
+            .into_any_element(),
+        ];
 
         div()
             .grid()
             .gap(px(12.0))
             .child(settings_card(colors, None, settings_rows(rows)))
             .child(settings_banner(
-                "Sandboxing settings are read-only in native for now.",
+                "Provider control is read-only in native for now.",
                 false,
             ))
             .into_any_element()

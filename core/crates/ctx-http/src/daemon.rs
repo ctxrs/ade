@@ -32,6 +32,7 @@ use ctx_providers::tier1::Tier1AcpAdapter;
 use ctx_store::{Store, StoreManager};
 
 use crate::api;
+use crate::egress_proxy::ProxySessionStore;
 use crate::installer;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
 use crate::mobile_tunnel::MobileTunnelManager;
@@ -158,6 +159,9 @@ pub struct AppState {
     pub telemetry: Telemetry,
     pub ops_events: OpsEvents,
     pub perf_telemetry: PerfTelemetry,
+    pub proxy_client: reqwest::Client,
+    proxy_sessions: Mutex<ProxySessionStore>,
+    docker_proxy_sessions: Mutex<ProxySessionStore>,
     pub resource_governance: Mutex<ResourceGovernanceRuntime>,
     pub provider_guard: Mutex<provider_guard::ProviderGuardRuntime>,
     pub provider_usage_cache: Mutex<HashMap<String, provider_usage::ProviderUsageSnapshot>>,
@@ -276,6 +280,10 @@ impl AppState {
         let workspace_active_snapshot = WorkspaceActiveSnapshotHub::new();
         let web_sessions = Arc::new(WebSessionManager::new());
         let merge_queue_notify = Arc::new(Notify::new());
+        let proxy_client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             data_root,
             stores,
@@ -301,6 +309,9 @@ impl AppState {
             telemetry,
             ops_events,
             perf_telemetry,
+            proxy_client,
+            proxy_sessions: Mutex::new(ProxySessionStore::default()),
+            docker_proxy_sessions: Mutex::new(ProxySessionStore::default()),
             resource_governance: Mutex::new(ResourceGovernanceRuntime::default()),
             provider_guard: Mutex::new(provider_guard::ProviderGuardRuntime::default()),
             provider_usage_cache: Mutex::new(HashMap::new()),
@@ -327,6 +338,30 @@ impl AppState {
 
     pub fn edit_plans_dir(&self) -> PathBuf {
         edit_plans_dir(&self.data_root)
+    }
+
+    pub fn proxy_client(&self) -> &reqwest::Client {
+        &self.proxy_client
+    }
+
+    pub async fn proxy_token_for_session(&self, session_id: SessionId) -> String {
+        let mut sessions = self.proxy_sessions.lock().await;
+        sessions.token_for_session(session_id)
+    }
+
+    pub async fn proxy_session_for_token(&self, token: &str) -> Option<SessionId> {
+        let sessions = self.proxy_sessions.lock().await;
+        sessions.session_for_token(token)
+    }
+
+    pub async fn docker_proxy_token_for_session(&self, session_id: SessionId) -> String {
+        let mut sessions = self.docker_proxy_sessions.lock().await;
+        sessions.token_for_session(session_id)
+    }
+
+    pub async fn docker_proxy_session_for_token(&self, token: &str) -> Option<SessionId> {
+        let sessions = self.docker_proxy_sessions.lock().await;
+        sessions.session_for_token(token)
     }
 
     pub fn persist_edit_plan(&self, plan: &EditPlan) {

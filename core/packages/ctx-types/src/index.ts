@@ -309,6 +309,12 @@ export type WorkspaceActiveSnapshot = {
   active: WorkspaceActivePage;
 };
 
+export type WorkspaceActiveHeadBatch = {
+  workspace_id: { 0: string } | string;
+  snapshot_rev: number;
+  heads: SessionHeadSnapshot[];
+};
+
 export type SessionSummaryCheckpoint = {
   session_id: { 0: string } | string;
   checkpoint_id: string;
@@ -446,6 +452,23 @@ export type WorkspaceActiveSnapshotEvent =
       task_id: { 0: string } | string;
     };
 
+export type WorkspaceActiveSnapshotStreamMessage =
+  | {
+      type: "snapshot";
+      rev: number;
+      active_snapshot: WorkspaceActiveSnapshot;
+      active_heads?: WorkspaceActiveHeadBatch | null;
+    }
+  | {
+      type: "event";
+      rev: number;
+      event: WorkspaceActiveSnapshotEvent;
+    }
+  | {
+      type: "reset_required";
+      latest_rev: number;
+    };
+
 export type WorkspaceActiveSnapshotSessionSubscription = {
   session_id: { 0: string } | string;
   after_seq?: number | null;
@@ -456,6 +479,7 @@ export type WorkspaceActiveSnapshotClientMessage =
       type: "subscribe";
       session_ids?: ({ 0: string } | string)[];
       sessions?: WorkspaceActiveSnapshotSessionSubscription[];
+      include_active_heads?: boolean;
     };
 
 export type Message = {

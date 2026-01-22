@@ -1,4 +1,4 @@
-import { test, expect } from "playwright/test";
+import { test, expect } from "./utils/fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 test.describe.serial("workbench: tool summaries stability", () => {

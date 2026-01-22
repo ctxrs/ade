@@ -1,11 +1,14 @@
-import { test, expect } from "playwright/test";
+import { test, expect } from "./utils/fixtures";
 import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
+const allowInstall = process.env.CTX_E2E_INSTALL_PROVIDERS === "1";
+
 test("providers: install all completes for supported providers", async ({ page, request }) => {
+  test.skip(!allowInstall, "requires provider installers and network access");
   test.setTimeout(15 * 60 * 1000);
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });

@@ -1,4 +1,4 @@
-import { test, expect } from "playwright/test";
+import { test, expect } from "./utils/fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 test("workbench: replay restores missed assistant message after stream drop", async ({ page, request }) => {
@@ -105,7 +105,8 @@ test("workbench: replay restores missed assistant message after stream drop", as
   await expect(rows).toHaveCount(1);
   await rows.first().click();
   await page.waitForTimeout(400);
-  await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
+  const activeSession = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
+  await expect(activeSession.locator("textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
 
   await page.waitForFunction(() => (window as any).__contextStreamOpenCount > 0, null, {
     timeout: 10000,
@@ -147,7 +148,7 @@ test("workbench: replay restores missed assistant message after stream drop", as
     (window as any).__contextForceClose?.();
   });
 
-  await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: assistantText })).toBeVisible({
+  await expect(activeSession.locator(".wb-assistant-entry").filter({ hasText: assistantText })).toBeVisible({
     timeout: 20000,
   });
 

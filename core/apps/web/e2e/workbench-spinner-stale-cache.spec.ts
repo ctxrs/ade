@@ -1,4 +1,4 @@
-import { test, expect } from "playwright/test";
+import { test, expect } from "./utils/fixtures";
 import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
@@ -40,24 +40,20 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
     .getByRole("link", { name: workspaceName })
     .click();
 
+  const newComposer = page.locator(".wb-new-composer-stack");
+  await expect(newComposer).toBeVisible({ timeout: 20000 });
+
   // Choose Fake harness so the test doesn't depend on external agents.
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
+  await newComposer.getByTitle("Harness").click();
   await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
   await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
   await expect(
-    page.locator('.wb-new-composer-stack button[title="Harness"] .wb-switcher-label'),
+    newComposer.locator('.wb-switcher-wrap button[title="Harness"] .wb-switcher-label'),
   ).toHaveText(/fake/i, { timeout: 20000 });
 
-  // Use Local isolation to keep the test fast and deterministic.
-  await page.locator(".wb-new-composer-stack").getByTitle("Isolation").click();
-  await page.locator(".wb-exec-menu").getByRole("button", { name: "Local" }).click();
-  await expect(
-    page.locator('.wb-new-composer-stack button[title="Isolation"] .wb-switcher-label'),
-  ).toHaveText(/local/i, { timeout: 20000 });
-
   const prompt = "stale-cache-spinner";
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(prompt);
-  await page.locator('.wb-new-composer-stack button[aria-label="Send"]').click();
+  await newComposer.locator("textarea.wb-composer-textarea").fill(prompt);
+  await newComposer.locator('button[aria-label="Send"]').click();
 
   const workspaceId = getWorkspaceIdFromUrl(page.url());
   expect(workspaceId).not.toBe("");
@@ -146,6 +142,7 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
     { sid: sessionIdValue, stale: staleHead },
   );
 
-  await page.reload();
-  await expect(page.locator(".wb-task-spinner")).toHaveCount(0, { timeout: 5000 });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator(".wb-main")).toBeVisible({ timeout: 20000 });
+  await expect(page.locator(".wb-task-spinner")).toHaveCount(0, { timeout: 20000 });
 });

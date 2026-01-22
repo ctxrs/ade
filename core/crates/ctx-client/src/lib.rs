@@ -130,6 +130,26 @@ pub struct CreateTerminalRequest {
     pub shell: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct PortPreviewEntry {
+    pub id: String,
+    pub workspace_id: WorkspaceId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<TaskId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_id: Option<WorktreeId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_id: Option<TerminalId>,
+    pub host: String,
+    pub port: u16,
+    pub scheme: String,
+    pub source: String,
+    pub first_seen_at: String,
+    pub last_seen_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PostMessageRequest {
     pub content: String,
@@ -298,6 +318,10 @@ pub struct PublicSettings {
     pub subagents: Option<PublicSubagentSettings>,
     #[serde(default)]
     pub compaction: Option<PublicCompactionSettings>,
+    #[serde(default)]
+    pub network: Option<PublicNetworkSettings>,
+    #[serde(default)]
+    pub port_forwarding: Option<PublicPortForwardingSettings>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -365,12 +389,33 @@ pub struct PublicAutoCompactionSettings {
     pub max_context_tokens: Option<u32>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicNetworkSettings {
+    pub profile: NetworkProfile,
+    pub mcp_bypass: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicPortForwardingSettings {
+    pub auto_forward: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DictationProvider {
     Disabled,
     #[serde(rename = "livekit_inference")]
     LiveKitInference,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkProfile {
+    None,
+    DepsOnly,
+    McpOnly,
+    DepsPlusMcp,
+    Full,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -438,6 +483,9 @@ pub struct UpdateSettingsRequest {
     pub subagents: Option<UpdateSubagentSettingsRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compaction: Option<UpdateCompactionSettingsRequest>,
+    pub network: Option<UpdateNetworkSettingsRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_forwarding: Option<UpdatePortForwardingSettingsRequest>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -530,6 +578,17 @@ pub struct UpdateAutoCompactionSettingsRequest {
     pub remaining_fraction_threshold: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_context_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateNetworkSettingsRequest {
+    pub profile: NetworkProfile,
+    pub mcp_bypass: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdatePortForwardingSettingsRequest {
+    pub auto_forward: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1089,11 +1148,36 @@ impl Client {
         Ok(url.to_string())
     }
 
+    pub fn port_preview_url(&self, port_id: &str) -> Result<String> {
+        let mut url = Url::parse(&self.base_url)
+            .with_context(|| format!("invalid base url: {}", self.base_url))?;
+        let prefix = url.path().trim_end_matches('/');
+        let path = if prefix.is_empty() {
+            format!("/api/ports/{port_id}/preview")
+        } else {
+            format!("{prefix}/api/ports/{port_id}/preview")
+        };
+        url.set_path(&path);
+        url.set_query(None);
+        if let Some(token) = &self.auth_token {
+            url.query_pairs_mut().append_pair("token", token);
+        }
+        Ok(url.to_string())
+    }
+
     pub async fn list_workspace_terminals(
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<Vec<TerminalSession>> {
         let path = format!("/api/workspaces/{}/terminals", workspace_id.0);
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn list_workspace_ports(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Vec<PortPreviewEntry>> {
+        let path = format!("/api/workspaces/{}/ports", workspace_id.0);
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 

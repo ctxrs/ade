@@ -4,6 +4,7 @@ use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use gpui::{AsyncApp, Context, WeakEntity};
 use gpui_tokio::Tokio;
+use serde::Deserialize;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{
     connect_async,
@@ -13,6 +14,7 @@ use tokio_tungstenite::{
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
     SessionEvent, SessionEventType, SessionHeadDelta, SessionSnapshotSummary,
+    WorkspaceActiveSnapshot,
     WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotClientMessage,
     WorkspaceActiveSnapshotSessionSubscription,
 };
@@ -51,9 +53,25 @@ impl StreamStatus {
 enum StreamUpdate {
     Status(StreamStatus),
     Event(WorkspaceActiveSnapshotEvent),
+    Snapshot(WorkspaceActiveSnapshot),
+    ResetRequired { latest_rev: i64 },
 }
 
 const MAX_SESSION_EVENTS: usize = 200;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum WorkspaceActiveSnapshotStreamMessage {
+    Snapshot {
+        active_snapshot: WorkspaceActiveSnapshot,
+    },
+    Event {
+        event: WorkspaceActiveSnapshotEvent,
+    },
+    ResetRequired {
+        latest_rev: i64,
+    },
+}
 
 fn push_session_event_with_limit(events: &mut Vec<SessionEvent>, event: SessionEvent) {
     events.push(event);
@@ -181,6 +199,7 @@ impl ShellView {
         WorkspaceActiveSnapshotClientMessage::Subscribe {
             session_ids: Vec::new(),
             sessions,
+            include_active_heads: false,
         }
     }
 
@@ -197,6 +216,24 @@ impl ShellView {
                 cx.notify();
             }
             StreamUpdate::Event(event) => self.apply_workspace_event(event, cx),
+            StreamUpdate::Snapshot(snapshot) => {
+                self.active_snapshot_rev = Some(
+                    self.active_snapshot_rev
+                        .map(|current| current.max(snapshot.snapshot_rev))
+                        .unwrap_or(snapshot.snapshot_rev),
+                );
+                self.refresh_active_snapshot(cx);
+                self.prefetch_archived_head_window(cx);
+            }
+            StreamUpdate::ResetRequired { latest_rev } => {
+                self.active_snapshot_rev = Some(
+                    self.active_snapshot_rev
+                        .map(|current| current.max(latest_rev))
+                        .unwrap_or(latest_rev),
+                );
+                self.refresh_active_snapshot(cx);
+                self.prefetch_archived_head_window(cx);
+            }
         }
     }
 
@@ -467,8 +504,8 @@ async fn run_workspace_stream(
             msg = read.next() => msg,
         };
         if let Some(Ok(msg)) = ready {
-            if let Some(event) = parse_workspace_stream_event(msg) {
-                let _ = update_tx.send(StreamUpdate::Event(event));
+            if let Some(update) = parse_workspace_stream_update(msg) {
+                let _ = update_tx.send(update);
             }
         } else {
             let _ = update_tx.send(StreamUpdate::Status(StreamStatus::Reconnecting {
@@ -511,8 +548,8 @@ async fn run_workspace_stream(
                 msg = read.next() => {
                     match msg {
                         Some(Ok(frame)) => {
-                            if let Some(event) = parse_workspace_stream_event(frame) {
-                                if update_tx.send(StreamUpdate::Event(event)).is_err() {
+                            if let Some(update) = parse_workspace_stream_update(frame) {
+                                if update_tx.send(update).is_err() {
                                     return Ok(());
                                 }
                             }
@@ -531,13 +568,27 @@ async fn run_workspace_stream(
     }
 }
 
-fn parse_workspace_stream_event(message: WsMessage) -> Option<WorkspaceActiveSnapshotEvent> {
+fn parse_workspace_stream_update(message: WsMessage) -> Option<StreamUpdate> {
     let text = match message {
         WsMessage::Text(text) => text.to_string(),
         WsMessage::Binary(bytes) => String::from_utf8(bytes.to_vec()).ok()?,
         _ => return None,
     };
-    serde_json::from_str::<WorkspaceActiveSnapshotEvent>(&text).ok()
+    if let Ok(message) = serde_json::from_str::<WorkspaceActiveSnapshotStreamMessage>(&text) {
+        let update = match message {
+            WorkspaceActiveSnapshotStreamMessage::Snapshot { active_snapshot } => {
+                StreamUpdate::Snapshot(active_snapshot)
+            }
+            WorkspaceActiveSnapshotStreamMessage::Event { event } => StreamUpdate::Event(event),
+            WorkspaceActiveSnapshotStreamMessage::ResetRequired { latest_rev } => {
+                StreamUpdate::ResetRequired { latest_rev }
+            }
+        };
+        return Some(update);
+    }
+    serde_json::from_str::<WorkspaceActiveSnapshotEvent>(&text)
+        .ok()
+        .map(StreamUpdate::Event)
 }
 
 async fn send_workspace_subscribe<S>(

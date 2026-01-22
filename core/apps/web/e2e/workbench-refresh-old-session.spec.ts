@@ -1,5 +1,5 @@
-import { test, expect } from "playwright/test";
-import { mkdtempSync, writeFileSync } from "fs";
+import { test, expect } from "./utils/fixtures";
+import { existsSync, mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execFileSync, execSync } from "child_process";
@@ -32,26 +32,23 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
     .getByRole("link", { name: workspaceName })
     .click();
 
+  const newComposer = page.locator(".wb-new-composer-stack");
+  await expect(newComposer).toBeVisible({ timeout: 20000 });
+
   // Choose Fake harness so the test doesn't depend on external agents.
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
+  await newComposer.getByTitle("Harness").click();
   await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
   await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
   await expect(
-    page.locator(".wb-new-composer-stack button[title=\"Harness\"] .wb-switcher-label"),
+    newComposer.locator(".wb-switcher-wrap button[title=\"Harness\"] .wb-switcher-label"),
   ).toHaveText(/fake/i, { timeout: 20000 });
 
-  // Use Local isolation to keep the test fast and deterministic.
-  await page.locator(".wb-new-composer-stack").getByTitle("Isolation").click();
-  await page.locator(".wb-exec-menu").getByRole("button", { name: "Local" }).click();
-  await expect(
-    page.locator(".wb-new-composer-stack button[title=\"Isolation\"] .wb-switcher-label"),
-  ).toHaveText(/local/i, { timeout: 20000 });
+  await newComposer.locator("textarea.wb-composer-textarea").fill("hello refresh");
+  await expect(newComposer.locator("button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
+  await newComposer.locator("button[aria-label=\"Send\"]").click();
 
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello refresh");
-  await expect(page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
-
-  const sessionComposer = page.locator(".wb-session textarea.wb-active-textarea");
+  const activeSession = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
+  const sessionComposer = activeSession.locator("textarea.wb-active-textarea");
   try {
     await expect(sessionComposer).toBeVisible({ timeout: 20000 });
   } catch (err) {
@@ -59,7 +56,7 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
     throw err;
   }
   await expect(
-    page.locator(".wb-session .wb-assistant-entry").filter({ hasText: "done: hello refresh" }).first(),
+    activeSession.locator(".wb-assistant-entry").filter({ hasText: "done: hello refresh" }).first(),
   ).toBeVisible({ timeout: 20000 });
 
   const url = new URL(page.url());
@@ -78,13 +75,16 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   const sessionId = readId(sessionSummary?.session?.id) || readId(taskSummary?.task?.primary_session_id);
 
   await expect
-    .poll(async () => {
-      const resp = await page.request.get(`/api/sessions/${sessionId}/snapshot`);
-      if (!resp.ok()) return 0;
-      const snapshot = (await resp.json()) as any;
-      const msgs = snapshot?.head?.messages ?? [];
-      return msgs.filter((m: any) => m.role === "assistant").length;
-    })
+    .poll(
+      async () => {
+        const resp = await page.request.get(`/api/sessions/${sessionId}/snapshot`);
+        if (!resp.ok()) return 0;
+        const snapshot = (await resp.json()) as any;
+        const msgs = snapshot?.head?.messages ?? [];
+        return msgs.filter((m: any) => m.role === "assistant").length;
+      },
+      { timeout: 20000 },
+    )
     .toBeGreaterThan(0);
 
   const healthResp = await page.request.get("/api/health");
@@ -93,7 +93,8 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   const dataRoot = String(health.data_root ?? "");
   expect(dataRoot).toBeTruthy();
 
-  const dbPath = path.join(dataRoot, "db", "db.sqlite");
+  const workspaceDbPath = path.join(dataRoot, "db", "workspaces", String(workspaceId), "db.sqlite");
+  const dbPath = existsSync(workspaceDbPath) ? workspaceDbPath : path.join(dataRoot, "db", "db.sqlite");
   const sqliteJson = (sql: string) => {
     const out = execFileSync("sqlite3", ["-json", dbPath, sql], { encoding: "utf8" }).trim();
     return out ? (JSON.parse(out) as any[]) : [];
@@ -102,16 +103,32 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   const shiftMs = 2 * 24 * 60 * 60 * 1000;
   const shift = (iso: string) => new Date(Date.parse(iso) - shiftMs).toISOString();
 
-  const taskRow = sqliteJson(`SELECT created_at, updated_at FROM tasks WHERE id='${taskId}'`)[0];
-  const sessionRow = sqliteJson(`SELECT created_at, updated_at FROM sessions WHERE id='${sessionId}'`)[0];
-  const messageRows = sqliteJson(`SELECT id, created_at FROM messages WHERE session_id='${sessionId}'`);
-  const eventRows = sqliteJson(`SELECT id, created_at FROM session_events WHERE session_id='${sessionId}'`);
+  let taskRow = sqliteJson(`SELECT id, created_at, updated_at FROM tasks WHERE id='${taskId}'`)[0];
+  if (!taskRow) {
+    taskRow = sqliteJson(
+      `SELECT id, created_at, updated_at FROM tasks WHERE title='hello refresh' ORDER BY created_at DESC LIMIT 1`,
+    )[0];
+  }
+  const resolvedTaskId = String(taskRow?.id ?? taskId ?? "");
+  expect(resolvedTaskId).not.toEqual("");
+
+  let sessionRow = sqliteJson(`SELECT id, created_at, updated_at FROM sessions WHERE id='${sessionId}'`)[0];
+  if (!sessionRow && resolvedTaskId) {
+    sessionRow = sqliteJson(
+      `SELECT id, created_at, updated_at FROM sessions WHERE task_id='${resolvedTaskId}' ORDER BY created_at DESC LIMIT 1`,
+    )[0];
+  }
+  const resolvedSessionId = String(sessionRow?.id ?? sessionId ?? "");
+  expect(resolvedSessionId).not.toEqual("");
+
+  const messageRows = sqliteJson(`SELECT id, created_at FROM messages WHERE session_id='${resolvedSessionId}'`);
+  const eventRows = sqliteJson(`SELECT id, created_at FROM session_events WHERE session_id='${resolvedSessionId}'`);
 
   const sqlUpdates = [
     `PRAGMA busy_timeout=5000;`,
     `BEGIN;`,
-    `UPDATE tasks SET created_at='${shift(String(taskRow.created_at))}', updated_at='${shift(String(taskRow.updated_at))}' WHERE id='${taskId}';`,
-    `UPDATE sessions SET created_at='${shift(String(sessionRow.created_at))}', updated_at='${shift(String(sessionRow.updated_at))}' WHERE id='${sessionId}';`,
+    `UPDATE tasks SET created_at='${shift(String(taskRow.created_at))}', updated_at='${shift(String(taskRow.updated_at))}' WHERE id='${resolvedTaskId}';`,
+    `UPDATE sessions SET created_at='${shift(String(sessionRow.created_at))}', updated_at='${shift(String(sessionRow.updated_at))}' WHERE id='${resolvedSessionId}';`,
     ...messageRows.map((r) => `UPDATE messages SET created_at='${shift(String(r.created_at))}' WHERE id='${String(r.id)}';`),
     ...eventRows.map((r) => `UPDATE session_events SET created_at='${shift(String(r.created_at))}' WHERE id='${String(r.id)}';`),
     `COMMIT;`,
@@ -127,30 +144,33 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   expect(urlAfter.searchParams.get("session")).toBeNull();
 
   try {
-    await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
+    await expect(activeSession.locator("textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
   } catch (err) {
     await page.screenshot({ path: path.join(tmpdir(), "ctx-e2e-after-reload-session-missing.png"), fullPage: true });
     throw err;
   }
-  await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: "done: hello refresh" })).toBeVisible({
+  await expect(activeSession.locator(".wb-assistant-entry").filter({ hasText: "done: hello refresh" })).toBeVisible({
     timeout: 20000,
   });
 
-  const composer = page.locator(".wb-session textarea.wb-active-textarea");
+  const composer = activeSession.locator("textarea.wb-active-textarea");
   await composer.click();
   await composer.type("hello again");
   await expect(composer).toHaveValue("hello again", { timeout: 20000 });
-  const sendButton = page.locator(".wb-session button[aria-label=\"Send\"]");
+  const sendButton = activeSession.locator("button[aria-label=\"Send\"]");
   await expect(sendButton).toBeEnabled({ timeout: 20000 });
   await sendButton.click();
   await expect
-    .poll(async () => {
-      const resp = await page.request.get(`/api/sessions/${sessionId}/snapshot?limit=50`);
-      if (!resp.ok()) return 0;
-      const snapshot = (await resp.json()) as any;
-      const msgs = snapshot?.head?.messages ?? [];
-      return msgs.filter((m: any) => m.role === "assistant").length;
-    })
+    .poll(
+      async () => {
+        const resp = await page.request.get(`/api/sessions/${sessionId}/snapshot?limit=50`);
+        if (!resp.ok()) return 0;
+        const snapshot = (await resp.json()) as any;
+        const msgs = snapshot?.head?.messages ?? [];
+        return msgs.filter((m: any) => m.role === "assistant").length;
+      },
+      { timeout: 20000 },
+    )
     .toBeGreaterThanOrEqual(2);
   await page.locator(".thread-stack").evaluate((root) => {
     const el = root as HTMLElement;

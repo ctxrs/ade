@@ -20,6 +20,7 @@ use gpui_tokio::Tokio;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
+use ctx_client::{PortPreviewEntry, UpdatePortForwardingSettingsRequest, UpdateSettingsRequest};
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorktreeId, WorkspaceId};
 use ctx_core::models::TerminalSession;
 
@@ -502,6 +503,14 @@ pub(crate) struct TerminalPanelState {
     pub(crate) scope: TerminalScope,
     pub(crate) context: TerminalContext,
     pub(crate) terminals: Vec<TerminalSession>,
+    pub(crate) ports: Vec<PortPreviewEntry>,
+    pub(crate) ports_loading: bool,
+    pub(crate) port_error: Option<String>,
+    port_poll_token: u64,
+    pub(crate) auto_forward_enabled: bool,
+    pub(crate) auto_forward_loaded: bool,
+    pub(crate) auto_forward_busy: bool,
+    pub(crate) auto_forward_error: Option<String>,
     pub(crate) selected_terminal_id: Option<TerminalId>,
     pub(crate) load_state: TerminalLoadState,
     terminal_streams: HashMap<TerminalId, TerminalStreamEntry>,
@@ -524,6 +533,14 @@ impl TerminalPanelState {
             scope: TerminalScope::Workspace,
             context: TerminalContext::default(),
             terminals: Vec::new(),
+            ports: Vec::new(),
+            ports_loading: false,
+            port_error: None,
+            port_poll_token: 0,
+            auto_forward_enabled: true,
+            auto_forward_loaded: false,
+            auto_forward_busy: false,
+            auto_forward_error: None,
             selected_terminal_id: None,
             load_state: TerminalLoadState::Idle,
             terminal_streams: HashMap::new(),
@@ -552,10 +569,25 @@ impl TerminalPanelState {
             self.load_state = TerminalLoadState::Idle;
             self.clear_streams(cx);
             self.load_terminals(cx);
+            self.ports.clear();
+            self.ports_loading = false;
+            self.port_error = None;
+            self.auto_forward_enabled = true;
+            self.auto_forward_loaded = false;
+            self.auto_forward_busy = false;
+            self.auto_forward_error = None;
         } else {
             self.reconcile_selection(cx);
-            cx.notify();
         }
+        if self.context.workspace_id.is_some() {
+            self.start_port_polling(cx);
+            if workspace_changed || !self.auto_forward_loaded {
+                self.refresh_port_settings(cx);
+            }
+        } else {
+            self.port_poll_token = self.port_poll_token.wrapping_add(1);
+        }
+        cx.notify();
     }
 
     pub(crate) fn set_scope(&mut self, scope: TerminalScope, cx: &mut Context<Self>) {
@@ -569,6 +601,15 @@ impl TerminalPanelState {
             self.reconcile_selection(cx);
             cx.notify();
         }
+    }
+
+    pub(crate) fn on_toggle_auto_forward(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_auto_forward(cx);
     }
 
     pub(crate) fn select_terminal(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
@@ -631,6 +672,192 @@ impl TerminalPanelState {
         .detach();
     }
 
+    pub(crate) fn refresh_ports(&mut self, cx: &mut Context<Self>) {
+        let Some(workspace_id) = self.context.workspace_id else {
+            self.ports.clear();
+            self.ports_loading = false;
+            self.port_error = None;
+            cx.notify();
+            return;
+        };
+
+        self.ports_loading = true;
+        self.port_error = None;
+        cx.notify();
+
+        let task = Tokio::spawn_result(cx, async move {
+            let config = ctx_client::resolve_daemon_config()?;
+            let client = ctx_client::Client::new(config)?;
+            let ports = client.list_workspace_ports(workspace_id).await?;
+            Ok(ports)
+        });
+
+        cx.spawn(
+            move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    let result = task.await;
+                    this.update(&mut cx, |view, cx| {
+                        if view.context.workspace_id != Some(workspace_id) {
+                            return;
+                        }
+                        match result {
+                            Ok(ports) => {
+                                view.ports = ports;
+                                view.ports_loading = false;
+                                view.port_error = None;
+                            }
+                            Err(err) => {
+                                view.ports_loading = false;
+                                view.port_error = Some(err.to_string());
+                            }
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn start_port_polling(&mut self, cx: &mut Context<Self>) {
+        self.port_poll_token = self.port_poll_token.wrapping_add(1);
+        let token = self.port_poll_token;
+        self.refresh_ports(cx);
+
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            loop {
+                tokio::time::sleep(Duration::from_millis(4000)).await;
+                let keep = this
+                    .update(cx, |view, cx| {
+                        if view.port_poll_token != token || view.context.workspace_id.is_none() {
+                            return false;
+                        }
+                        view.refresh_ports(cx);
+                        true
+                    })
+                    .unwrap_or(false);
+                if !keep {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn refresh_port_settings(&mut self, cx: &mut Context<Self>) {
+        self.auto_forward_loaded = false;
+        self.auto_forward_error = None;
+        self.auto_forward_busy = false;
+        cx.notify();
+
+        let task = Tokio::spawn_result(cx, async move {
+            let client = ctx_client::Client::from_env()?;
+            let settings = client.get_settings().await?;
+            Ok(settings)
+        });
+
+        cx.spawn(
+            move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    let result = task.await;
+                    this.update(&mut cx, |view, cx| {
+                        match result {
+                            Ok(settings) => {
+                                view.auto_forward_enabled = settings
+                                    .port_forwarding
+                                    .map(|port| port.auto_forward)
+                                    .unwrap_or(true);
+                                view.auto_forward_loaded = true;
+                                view.auto_forward_error = None;
+                            }
+                            Err(err) => {
+                                view.auto_forward_error = Some(err.to_string());
+                                view.auto_forward_loaded = false;
+                            }
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn toggle_auto_forward(&mut self, cx: &mut Context<Self>) {
+        if !self.auto_forward_loaded || self.auto_forward_busy {
+            return;
+        }
+        let next = !self.auto_forward_enabled;
+        self.auto_forward_busy = true;
+        self.auto_forward_error = None;
+        cx.notify();
+
+        let request = UpdateSettingsRequest {
+            dictation: None,
+            telemetry: None,
+            title_generation: None,
+            resource_governance: None,
+            provider_guard: None,
+            subagents: None,
+            compaction: None,
+            network: None,
+            port_forwarding: Some(UpdatePortForwardingSettingsRequest { auto_forward: next }),
+        };
+
+        let task = Tokio::spawn_result(cx, async move {
+            let client = ctx_client::Client::from_env()?;
+            let settings = client.update_settings(&request).await?;
+            Ok(settings)
+        });
+
+        cx.spawn(
+            move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    let result = task.await;
+                    this.update(&mut cx, |view, cx| {
+                        match result {
+                            Ok(settings) => {
+                                view.auto_forward_enabled = settings
+                                    .port_forwarding
+                                    .map(|port| port.auto_forward)
+                                    .unwrap_or(next);
+                                view.auto_forward_loaded = true;
+                                view.auto_forward_error = None;
+                            }
+                            Err(err) => {
+                                view.auto_forward_error = Some(err.to_string());
+                            }
+                        }
+                        view.auto_forward_busy = false;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            },
+        )
+        .detach();
+    }
+
+    pub(crate) fn open_port_preview(&mut self, port_id: String, cx: &mut Context<Self>) {
+        let url = ctx_client::Client::from_env()
+            .and_then(|client| client.port_preview_url(&port_id))
+            .map_err(|err| err.to_string());
+        match url {
+            Ok(url) => {
+                cx.open_url(&url);
+                self.port_error = None;
+            }
+            Err(err) => {
+                self.port_error = Some(err);
+            }
+        }
+        cx.notify();
+    }
     pub(crate) fn create_terminal(&mut self, opts: CreateTerminalOptions, cx: &mut Context<Self>) {
         let Some(workspace_id) = self.context.workspace_id else {
             self.last_error = Some("Select a workspace before creating a terminal.".to_string());
@@ -1127,6 +1354,38 @@ impl TerminalPanelState {
             (TerminalScope::Task, None) => Vec::new(),
             (TerminalScope::Workspace, _) => self.terminals.iter().collect(),
         }
+    }
+
+    pub(crate) fn scope_ports(&self) -> Vec<&PortPreviewEntry> {
+        if self.scope == TerminalScope::Workspace {
+            return self.ports.iter().collect();
+        }
+
+        let session_id = self.context.session_id;
+        let worktree_id = self.context.worktree_id;
+        let task_id = self.context.task_id;
+
+        self.ports
+            .iter()
+            .filter(|entry| {
+                if let Some(session_id) = session_id {
+                    if entry.session_id == Some(session_id) {
+                        return true;
+                    }
+                }
+                if let Some(worktree_id) = worktree_id {
+                    if entry.worktree_id == Some(worktree_id) {
+                        return true;
+                    }
+                }
+                if let Some(task_id) = task_id {
+                    if entry.task_id == Some(task_id) {
+                        return true;
+                    }
+                }
+                false
+            })
+            .collect()
     }
 
     fn reconcile_selection(&mut self, cx: &mut Context<Self>) {

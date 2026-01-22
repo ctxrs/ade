@@ -2,6 +2,7 @@ pub(super) mod artifacts;
 pub(super) mod ats_cache;
 pub(super) mod composer;
 pub(super) mod diff_review;
+pub(super) mod launcher;
 pub(super) mod session;
 pub(super) mod settings;
 pub(super) mod stream;
@@ -47,6 +48,10 @@ pub(crate) use composer::{
     ContextWindowInfo, DraftTrack, PopoverPlacement, ProviderInstallState, WorkbenchModeId,
 };
 pub(crate) use diff_review::DiffReviewState;
+pub(crate) use launcher::{
+    default_launcher_progress_items, LauncherExecutionMode, LauncherHostKind, LauncherProgressId,
+    LauncherProgressItem, LauncherProgressStatus, LauncherStep, LAUNCHER_STEPS,
+};
 pub(crate) use settings::{
     LabeledOption, SettingsInputKind, SettingsSection, SettingsSectionGroup, SettingsSelectKind,
     SettingsState, SETTINGS_SECTIONS,
@@ -189,6 +194,16 @@ pub(crate) struct ShellView {
     pub(crate) relative_now: DateTime<Utc>,
     pub(crate) relative_time_task: Option<Task<()>>,
     pub(crate) ui_state: UiStateStore,
+    pub(crate) launcher_step: LauncherStep,
+    pub(crate) launcher_host_kind: LauncherHostKind,
+    pub(crate) launcher_execution_mode: LauncherExecutionMode,
+    pub(crate) launcher_workspace_path: String,
+    pub(crate) launcher_workspace_input: Entity<InputState>,
+    pub(crate) launcher_progress: Vec<LauncherProgressItem>,
+    pub(crate) launcher_busy: bool,
+    pub(crate) launcher_error: Option<String>,
+    pub(crate) launcher_error_step: Option<LauncherStep>,
+    pub(crate) launcher_workspace_id: Option<WorkspaceId>,
     pub(crate) sessions: Vec<SessionSummaryItem>,
     pub(crate) selected_session: Option<usize>,
     pub(crate) messages: Vec<MessageItem>,

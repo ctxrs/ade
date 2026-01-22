@@ -88,6 +88,7 @@ import {
   desktopListen,
   desktopOpenWorkspaceInNewWindow,
   desktopSaveTextFile,
+  desktopSetLastWorkspace,
   desktopSetOpenWorkspaces,
   isDesktopApp,
   isDesktopUi,
@@ -865,6 +866,11 @@ async function saveMarkdownExport(suggestedName: string, contents: string): Prom
 
 export default function WorkbenchPage() {
   const { id: workspaceId } = useParams<{ id: string }>();
+  useEffect(() => {
+    if (!workspaceId) return;
+    if (!isDesktopApp()) return;
+    desktopSetLastWorkspace(workspaceId).catch(() => {});
+  }, [workspaceId]);
   if (!workspaceId) return null;
   return (
     <WorkspaceActiveSnapshotProvider workspaceId={workspaceId}>

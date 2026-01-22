@@ -1,7 +1,7 @@
-import { test, expect } from "playwright/test";
+import { test, expect } from "./utils/fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
-test("workbench: archived pagination uses workspace task listing", async ({ page, request }) => {
+test("workbench: archived pagination uses archived task summary listing", async ({ page, request }) => {
   const seed = await seedDummyWorkspace(request, {
     tasks: 52,
     sessionsPerTask: 0,
@@ -17,7 +17,7 @@ test("workbench: archived pagination uses workspace task listing", async ({ page
   const seenRequests: string[] = [];
   page.on("request", (req) => {
     const url = req.url();
-    if (url.includes(`/api/workspaces/${seed.workspaceId}/tasks`)) {
+    if (url.includes(`/api/workspaces/${seed.workspaceId}/archived_task_summaries`)) {
       seenRequests.push(url);
     }
   });
@@ -25,7 +25,9 @@ test("workbench: archived pagination uses workspace task listing", async ({ page
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "Archived" }).click();
 
-  await page.waitForRequest((req) => req.url().includes(`/api/workspaces/${seed.workspaceId}/tasks`));
+  await expect
+    .poll(() => seenRequests.length, { timeout: 20000 })
+    .toBeGreaterThan(0);
   await expect(page.locator(".wb-task-row-archived").first()).toBeVisible({ timeout: 20000 });
 
   const scroller = page.locator(".wb-task-scroll");

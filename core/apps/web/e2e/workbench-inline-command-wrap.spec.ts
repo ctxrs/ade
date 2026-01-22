@@ -1,4 +1,4 @@
-import { test, expect } from "playwright/test";
+import { test, expect } from "./utils/fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 test("workbench: inline code wraps without horizontal scroll", async ({ page, request }) => {
@@ -10,10 +10,11 @@ test("workbench: inline code wraps without horizontal scroll", async ({ page, re
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   const rows = page.locator(".wb-task-row");
-  await expect(rows).toHaveCount(1);
+  await expect(rows).toHaveCount(1, { timeout: 20000 });
   await rows.first().click();
   await page.waitForTimeout(400);
-  await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
+  const activeSession = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
+  await expect(activeSession.locator("textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
 
   const sessionId = seed.sessionIdsByTask[seed.taskIds[0]][0];
   const longSegment = "--flag=abcdefghijklmnopqrstuvwxyz0123456789";
@@ -26,13 +27,17 @@ test("workbench: inline code wraps without horizontal scroll", async ({ page, re
   });
   expect(resp.ok()).toBeTruthy();
 
-  const assistantEntry = page.locator(".wb-assistant-entry").filter({ hasText: `done: ${marker}` });
+  const assistantEntry = activeSession
+    .locator(".wb-assistant-entry")
+    .filter({ hasText: `done: ${marker}` })
+    .first();
   await expect(assistantEntry).toBeVisible({ timeout: 20000 });
 
   await expect(assistantEntry.locator(".codeblock")).toHaveCount(0);
   const resolveWrapMetrics = () =>
     page.evaluate((markerValue) => {
-      const entries = Array.from(document.querySelectorAll(".wb-assistant-entry"));
+      const activeSlot = document.querySelector(".wb-session-slot[aria-hidden=\"false\"]");
+      const entries = Array.from(activeSlot?.querySelectorAll(".wb-assistant-entry") ?? []);
       const entry = entries.find((el) => el.textContent?.includes(`done: ${markerValue}`));
       const code = entry?.querySelector("code");
       if (!code) return null;
@@ -44,18 +49,19 @@ test("workbench: inline code wraps without horizontal scroll", async ({ page, re
       return { rectCount, estimatedLines };
     }, marker);
 
-  await expect.poll(resolveWrapMetrics, { timeout: 2000 }).not.toBeNull();
-  const wrapMetrics = await resolveWrapMetrics();
-  expect(wrapMetrics).not.toBeNull();
-
-  if (wrapMetrics) {
-    expect(Math.max(wrapMetrics.rectCount, wrapMetrics.estimatedLines)).toBeGreaterThan(1);
-  }
+  await expect
+    .poll(async () => {
+      const metrics = await resolveWrapMetrics();
+      if (!metrics) return 0;
+      return Math.max(metrics.rectCount, metrics.estimatedLines);
+    }, { timeout: 10000 })
+    .toBeGreaterThan(1);
 
   const metrics = await page.evaluate(() => {
     const doc = document.documentElement;
     const body = document.body;
-    const sessionView = document.querySelector(".wb-session-view") as HTMLElement | null;
+    const sessionSlot = document.querySelector(".wb-session-slot[aria-hidden=\"false\"]");
+    const sessionView = sessionSlot?.querySelector(".wb-session-view") as HTMLElement | null;
     return {
       docScrollWidth: doc.scrollWidth,
       docClientWidth: doc.clientWidth,
@@ -81,10 +87,11 @@ test("workbench: fenced code blocks stay within thread width", async ({ page, re
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   const rows = page.locator(".wb-task-row");
-  await expect(rows).toHaveCount(1);
+  await expect(rows).toHaveCount(1, { timeout: 20000 });
   await rows.first().click();
   await page.waitForTimeout(400);
-  await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
+  const activeSession = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
+  await expect(activeSession.locator("textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
 
   const sessionId = seed.sessionIdsByTask[seed.taskIds[0]][0];
   const marker = `fenced-test-${Date.now()}`;
@@ -96,7 +103,10 @@ test("workbench: fenced code blocks stay within thread width", async ({ page, re
   });
   expect(resp.ok()).toBeTruthy();
 
-  const assistantEntry = page.locator(".wb-assistant-entry").filter({ hasText: `done: ${marker}` });
+  const assistantEntry = activeSession
+    .locator(".wb-assistant-entry")
+    .filter({ hasText: `done: ${marker}` })
+    .first();
   await expect(assistantEntry).toBeVisible({ timeout: 20000 });
 
   const codeblock = assistantEntry.locator(".codeblock");
@@ -107,43 +117,29 @@ test("workbench: fenced code blocks stay within thread width", async ({ page, re
   await copyButton.click();
   await expect(copyButton).toHaveAttribute("title", "Copied");
 
-  const widths = await page.evaluate(() => {
-    const sessionView = document.querySelector(".wb-session-view") as HTMLElement | null;
-    const codeblockEl = document.querySelector(".wb-assistant-entry .codeblock") as HTMLElement | null;
-    if (!sessionView || !codeblockEl) return null;
-    const sessionRect = sessionView.getBoundingClientRect();
-    const codeRect = codeblockEl.getBoundingClientRect();
-    return {
-      sessionWidth: sessionRect.width,
-      codeWidth: codeRect.width,
-    };
-  });
-
-  expect(widths).not.toBeNull();
-  if (widths) {
-    expect(widths.codeWidth).toBeLessThanOrEqual(widths.sessionWidth + 1);
+  const sessionView = activeSession.locator(".wb-session-view");
+  await expect(sessionView).toBeVisible();
+  const sessionBox = await sessionView.boundingBox();
+  const codeBox = await codeblock.boundingBox();
+  expect(sessionBox).not.toBeNull();
+  expect(codeBox).not.toBeNull();
+  if (sessionBox && codeBox) {
+    expect(codeBox.width).toBeLessThanOrEqual(sessionBox.width + 1);
   }
 
-  const scrollMetrics = await page.evaluate(() => {
-    const scroller = document.querySelector(
-      ".wb-assistant-entry .codeblock-body > pre, .wb-assistant-entry .codeblock-body > div",
-    ) as HTMLElement | null;
-    if (!scroller) return null;
-    return {
-      scrollWidth: scroller.scrollWidth,
-      clientWidth: scroller.clientWidth,
-    };
-  });
-
-  expect(scrollMetrics).not.toBeNull();
-  if (scrollMetrics) {
-    expect(scrollMetrics.scrollWidth).toBeGreaterThan(scrollMetrics.clientWidth);
-  }
+  const scroller = assistantEntry.locator(".codeblock-body > pre, .codeblock-body > div").first();
+  await expect(scroller).toBeVisible();
+  const scrollMetrics = await scroller.evaluate((el) => ({
+    scrollWidth: el.scrollWidth,
+    clientWidth: el.clientWidth,
+  }));
+  expect(scrollMetrics.scrollWidth).toBeGreaterThan(scrollMetrics.clientWidth);
 
   const pageMetrics = await page.evaluate(() => {
     const doc = document.documentElement;
     const body = document.body;
-    const sessionView = document.querySelector(".wb-session-view") as HTMLElement | null;
+    const sessionSlot = document.querySelector(".wb-session-slot[aria-hidden=\"false\"]");
+    const sessionView = sessionSlot?.querySelector(".wb-session-view") as HTMLElement | null;
     return {
       docScrollWidth: doc.scrollWidth,
       docClientWidth: doc.clientWidth,

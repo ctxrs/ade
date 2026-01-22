@@ -15,6 +15,8 @@ import {
   ResourceGovernanceSettings,
   ResourceGovernanceStatus,
   ResourceUtilization,
+  NetworkSettings,
+  UpdateSettingsPatch,
   SandboxingSettings,
   Settings,
   AgentSystemPromptConfig,
@@ -63,9 +65,12 @@ import {
   verifyProviderForWorkspace,
 } from "../api/client";
 import {
+  type DesktopDaemonSettings,
   type DesktopEditorSettings,
+  desktopGetDaemonSettings,
   desktopGetEditorSettings,
   desktopSaveTextFile,
+  desktopUpdateDaemonSettings,
   desktopUpdateEditorSettings,
   isDesktopApp,
 } from "../utils/desktop";
@@ -220,6 +225,13 @@ function formatAge(ms?: number | null): string {
   const mins = Math.floor(totalSeconds / 60);
   const secs = totalSeconds % 60;
   return `${mins}m ${secs}s`;
+}
+
+function isLinuxPlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const platform = navigator.platform?.toLowerCase() ?? "";
+  const agent = navigator.userAgent?.toLowerCase() ?? "";
+  return platform.includes("linux") || agent.includes("linux");
 }
 
 function codexResetAfterSeconds(window?: any): number | null {
@@ -504,8 +516,11 @@ export default function SettingsPage() {
   const [compactionMaxContextTokens, setCompactionMaxContextTokens] = useState("");
   const resourceGovernanceHydrated = useRef(false);
   const sandboxingHydrated = useRef(false);
+  const networkHydrated = useRef(false);
   const [resourceGovernanceEnabled, setResourceGovernanceEnabled] = useState(true);
   const [providerControlMode, setProviderControlMode] = useState<SandboxingSettings["provider_control_mode"]>("full");
+  const [networkProfile, setNetworkProfile] = useState<NetworkSettings["profile"]>("full");
+  const [mcpBypassProxy, setMcpBypassProxy] = useState(true);
   const [resourceGovernanceMode, setResourceGovernanceMode] =
     useState<ResourceGovernanceSettings["mode"]>("auto");
   const [resourceCpuQuotaPct, setResourceCpuQuotaPct] = useState("");
@@ -523,6 +538,18 @@ export default function SettingsPage() {
   const [editorSaving, setEditorSaving] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
   const editorHydrated = useRef(false);
+
+  const [daemonSettings, setDaemonSettings] = useState<DesktopDaemonSettings>({
+    auto_start: true,
+    launch_mode: null,
+    docker_passthrough: false,
+    last_connection: null,
+    last_workspace_id: null,
+  });
+  const [daemonLoaded, setDaemonLoaded] = useState(false);
+  const [daemonSaving, setDaemonSaving] = useState(false);
+  const [daemonError, setDaemonError] = useState<string | null>(null);
+  const daemonHydrated = useRef(false);
 
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -851,6 +878,15 @@ export default function SettingsPage() {
           setProviderControlMode(sb.provider_control_mode);
         }
 
+        const nw = s.network ?? null;
+        if (nw) {
+          setNetworkProfile(nw.profile ?? "full");
+          setMcpBypassProxy(Boolean(nw.mcp_bypass));
+        } else {
+          setNetworkProfile("full");
+          setMcpBypassProxy(true);
+        }
+
         if (rg) {
           setResourceGovernanceMode(rg.mode ?? "auto");
           setResourceCpuQuotaPct(rg.cpu_quota_pct ? String(rg.cpu_quota_pct) : "");
@@ -891,12 +927,31 @@ export default function SettingsPage() {
     };
   }, []);
 
-  const savePatch = async (patch: Partial<Settings>) => {
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    let cancelled = false;
+    desktopGetDaemonSettings()
+      .then((settings) => {
+        if (cancelled) return;
+        setDaemonSettings(settings);
+        setDaemonLoaded(true);
+      })
+      .catch((e: any) => {
+        if (cancelled) return;
+        setDaemonError(e?.message ?? String(e));
+        setDaemonLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const savePatch = async (patch: UpdateSettingsPatch) => {
     setSaveError(null);
     setSaving(true);
     const seq = ++saveSeq.current;
     try {
-      const next = await updateSettings(patch as Settings);
+      const next = await updateSettings(patch);
       if (seq !== saveSeq.current) return;
       if (next.dictation?.livekit?.api_secret_set) {
         setApiSecret("");
@@ -915,6 +970,10 @@ export default function SettingsPage() {
       }
       if (next.sandboxing?.provider_control_mode) {
         setProviderControlMode(next.sandboxing.provider_control_mode);
+      }
+      if (next.network) {
+        setNetworkProfile(next.network.profile ?? "full");
+        setMcpBypassProxy(Boolean(next.network.mcp_bypass));
       }
     } catch (e: any) {
       if (seq !== saveSeq.current) return;
@@ -994,6 +1053,13 @@ export default function SettingsPage() {
       provider_control_mode: providerControlMode,
     };
   }, [providerControlMode]);
+
+  const networkPayload = useMemo((): NetworkSettings => {
+    return {
+      profile: networkProfile,
+      mcp_bypass: mcpBypassProxy,
+    };
+  }, [networkProfile, mcpBypassProxy]);
 
   const resourceGovernancePayload = useMemo((): ResourceGovernanceSettings => {
     const cpuQuota = Number(resourceCpuQuotaPct);
@@ -1103,6 +1169,19 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!loaded) return;
+    if (!networkHydrated.current) {
+      networkHydrated.current = true;
+      return;
+    }
+    const t = window.setTimeout(() => {
+      savePatch({ network: networkPayload });
+    }, 450);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, networkPayload]);
+
+  useEffect(() => {
+    if (!loaded) return;
     if (!resourceGovernanceHydrated.current) {
       resourceGovernanceHydrated.current = true;
       return;
@@ -1140,6 +1219,32 @@ export default function SettingsPage() {
     }, 350);
     return () => window.clearTimeout(t);
   }, [editorSettings, editorLoaded]);
+
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    if (!daemonLoaded) return;
+    if (daemonError) return;
+    if (!daemonHydrated.current) {
+      daemonHydrated.current = true;
+      return;
+    }
+    const t = window.setTimeout(() => {
+      setDaemonSaving(true);
+      setDaemonError(null);
+      const next: DesktopDaemonSettings = {
+        auto_start: Boolean(daemonSettings.auto_start),
+        launch_mode: daemonSettings.launch_mode ?? null,
+        docker_passthrough: Boolean(daemonSettings.docker_passthrough),
+        last_connection: daemonSettings.last_connection ?? null,
+        last_workspace_id: daemonSettings.last_workspace_id ?? null,
+      };
+      desktopUpdateDaemonSettings(next)
+        .then((next) => setDaemonSettings(next))
+        .catch((e: any) => setDaemonError(e?.message ?? String(e)))
+        .finally(() => setDaemonSaving(false));
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, [daemonSettings, daemonLoaded, daemonError]);
 
   const refreshProviders = () =>
     listProviders()
@@ -1938,7 +2043,7 @@ export default function SettingsPage() {
     }
   }, [workspaceFromQuery, workspaceId]);
 
-  const anySaving = saving || editorSaving || agentPromptSaving || subagentPromptSaving;
+  const anySaving = saving || editorSaving || daemonSaving || agentPromptSaving || subagentPromptSaving;
 
   const vscodeRemoteTargets: DesktopEditorSettings["target"][] = [
     "vscode",
@@ -1948,6 +2053,9 @@ export default function SettingsPage() {
     "antigravity",
   ];
   const showRemoteAuthority = vscodeRemoteTargets.includes(editorSettings.target);
+  const supportsContainer = isDesktopApp() && isLinuxPlatform();
+  const defaultLaunchModeLabel = supportsContainer ? "Container (host-mounted)" : "Host";
+  const launchModeValue = daemonSettings.launch_mode ?? "";
 
   const renderMain = () => {
     if (!loaded) return <div className="settings-empty">Loading…</div>;
@@ -1962,6 +2070,57 @@ export default function SettingsPage() {
               description="Share anonymous usage metrics (no code, prompts, or file paths)."
               control={
                 <Toggle checked={telemetryEnabled} disabled={!loaded} onChange={setTelemetryEnabled} ariaLabel="Telemetry" />
+              }
+            />
+            <Row
+              title="Auto-start local daemon"
+              description={isDesktopApp() ? "Reconnect to the last daemon on launch; restart it if missing." : "Available in the desktop app."}
+              control={
+                <Toggle
+                  checked={daemonSettings.auto_start}
+                  disabled={!isDesktopApp() || !daemonLoaded || Boolean(daemonError)}
+                  onChange={(value) => setDaemonSettings((prev) => ({ ...prev, auto_start: value }))}
+                  ariaLabel="Auto-start local daemon"
+                />
+              }
+            />
+            <Row
+              title="Local runtime"
+              description={isDesktopApp() ? "Choose how the local daemon runs." : "Available in the desktop app."}
+              control={
+                <select
+                  className="settings-control settings-select"
+                  value={launchModeValue}
+                  onChange={(e) =>
+                    setDaemonSettings((prev) => ({
+                      ...prev,
+                      launch_mode: (e.target.value || null) as DesktopDaemonSettings["launch_mode"],
+                    }))
+                  }
+                  disabled={!isDesktopApp() || !daemonLoaded || Boolean(daemonError)}
+                >
+                  <option value="">{`Default (${defaultLaunchModeLabel})`}</option>
+                  <option value="container" disabled={!supportsContainer}>
+                    Container (host-mounted)
+                  </option>
+                  <option value="host">Host</option>
+                </select>
+              }
+            />
+            <Row
+              title="Enable Docker passthrough (unsafe)"
+              description={
+                supportsContainer
+                  ? "Allow the daemon container to access the host Docker socket."
+                  : "Available on Linux desktop."
+              }
+              control={
+                <Toggle
+                  checked={Boolean(daemonSettings.docker_passthrough)}
+                  disabled={!supportsContainer || !daemonLoaded || Boolean(daemonError)}
+                  onChange={(value) => setDaemonSettings((prev) => ({ ...prev, docker_passthrough: value }))}
+                  ariaLabel="Enable Docker passthrough"
+                />
               }
             />
             <Row
@@ -2018,6 +2177,7 @@ export default function SettingsPage() {
               />
             ) : null}
           </Card>
+          {daemonError ? <div className="settings-banner settings-banner-error">{daemonError}</div> : null}
           {editorError ? <div className="settings-banner settings-banner-error">{editorError}</div> : null}
         </>
       );
@@ -3918,6 +4078,36 @@ export default function SettingsPage() {
                   <option value="harness_native">Harness-native permissions</option>
                   <option value="ctx_enforced">ctx-enforced (coming soon)</option>
                 </select>
+              }
+            />
+            <Row
+              title="Network profile"
+              description="Controls outbound network access for agent sessions."
+              control={
+                <select
+                  className="settings-control settings-select"
+                  value={networkProfile}
+                  onChange={(e) => setNetworkProfile(e.target.value as NetworkSettings["profile"])}
+                  disabled={!loaded}
+                >
+                  <option value="full">Full outbound</option>
+                  <option value="deps_plus_mcp">Dependencies + MCP</option>
+                  <option value="deps_only">Dependencies only</option>
+                  <option value="mcp_only">MCP only</option>
+                  <option value="none">No outbound</option>
+                </select>
+              }
+            />
+            <Row
+              title="MCP proxy bypass"
+              description="Allow MCP tool traffic to bypass the egress proxy."
+              control={
+                <Toggle
+                  checked={mcpBypassProxy}
+                  disabled={!loaded}
+                  onChange={setMcpBypassProxy}
+                  ariaLabel="MCP proxy bypass"
+                />
               }
             />
           </Card>

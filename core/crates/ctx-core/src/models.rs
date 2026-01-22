@@ -573,6 +573,13 @@ pub struct WorkspaceActiveSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceActiveHeadBatch {
+    pub workspace_id: WorkspaceId,
+    pub snapshot_rev: i64,
+    pub heads: Vec<SessionHeadSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSnapshotSummary {
     pub session: SessionMetadata,
     pub last_message_at: Option<DateTime<Utc>>,
@@ -809,6 +816,24 @@ pub enum WorkspaceActiveSnapshotEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkspaceActiveSnapshotStreamMessage {
+    Snapshot {
+        rev: i64,
+        active_snapshot: WorkspaceActiveSnapshot,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        active_heads: Option<WorkspaceActiveHeadBatch>,
+    },
+    Event {
+        rev: i64,
+        event: WorkspaceActiveSnapshotEvent,
+    },
+    ResetRequired {
+        latest_rev: i64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceActiveSnapshotSessionSubscription {
     pub session_id: SessionId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -823,6 +848,8 @@ pub enum WorkspaceActiveSnapshotClientMessage {
         session_ids: Vec<SessionId>,
         #[serde(default)]
         sessions: Vec<WorkspaceActiveSnapshotSessionSubscription>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        include_active_heads: bool,
     },
 }
 

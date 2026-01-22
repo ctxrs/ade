@@ -41,8 +41,9 @@ use self::icons::AppAssets;
 use self::models::{MessageItem, SessionInfo};
 use self::state::{
     ArtifactContentCache, ArtifactPreviewState, AtsCache, ComposerAutocompleteState, ComposerDraft,
-    ComposerVerbosity, DataLoadState, DiffReviewState, SessionViewVerbosity, SettingsState,
-    StreamStatus, TaskFetchState, TerminalPanelState, WorkbenchModeId,
+    ComposerVerbosity, DataLoadState, DiffReviewState, LauncherExecutionMode, LauncherHostKind,
+    LauncherStep, SessionViewVerbosity, SettingsState, StreamStatus, TaskFetchState,
+    TerminalPanelState, WorkbenchModeId, default_launcher_progress_items,
 };
 use self::views::{RouterView, WorkspaceTabsView};
 pub(crate) use self::state::{ShellRoute, ShellView, ThreadRenderCache, THREAD_RENDER_CACHE_LIMIT};
@@ -144,6 +145,18 @@ fn create_shell_view(
         let workspace_root_input = cx.new(|cx| InputState::new(window, cx));
         let workspace_name_input = cx.new(|cx| InputState::new(window, cx));
         let ui_state = UiStateStore::load();
+        let mut launcher_execution_mode = ui_state
+            .launcher_execution_mode()
+            .as_deref()
+            .and_then(LauncherExecutionMode::from_str)
+            .unwrap_or_else(LauncherExecutionMode::default_for_platform);
+        if launcher_execution_mode == LauncherExecutionMode::Container && !cfg!(target_os = "linux")
+        {
+            launcher_execution_mode = LauncherExecutionMode::Host;
+        }
+        let launcher_workspace_path = ui_state
+            .launcher_workspace_path()
+            .unwrap_or_default();
         let archive_confirm_dismissed = ui_state.archive_confirm_dismissed();
         let composer_new_input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -164,6 +177,14 @@ fn create_shell_view(
         let composer_model_manual = cx.new(|cx| {
             InputState::new(window, cx).placeholder("model_id")
         });
+        let launcher_workspace_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("~/code/my-repo")
+        });
+        if !launcher_workspace_path.is_empty() {
+            launcher_workspace_input.update(cx, |state, cx| {
+                state.set_value(launcher_workspace_path.clone(), window, cx);
+            });
+        }
         let mut view = ShellView {
             colors,
             base_url,
@@ -216,6 +237,16 @@ fn create_shell_view(
             relative_now: Utc::now(),
             relative_time_task: None,
             ui_state,
+            launcher_step: LauncherStep::Host,
+            launcher_host_kind: LauncherHostKind::Local,
+            launcher_execution_mode,
+            launcher_workspace_path,
+            launcher_workspace_input,
+            launcher_progress: default_launcher_progress_items(),
+            launcher_busy: false,
+            launcher_error: None,
+            launcher_error_step: None,
+            launcher_workspace_id: None,
             sessions: Vec::new(),
             selected_session: None,
             messages: vec![MessageItem::new(
@@ -384,6 +415,22 @@ fn create_shell_view(
             },
         );
         rename_subscription.detach();
+
+        let launcher_workspace_subscription = cx.subscribe_in(
+            &view.launcher_workspace_input,
+            window,
+            |view, state: &gpui::Entity<InputState>, event, _window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let value = state.read(cx).value().to_string();
+                    if view.launcher_workspace_path != value {
+                        view.launcher_workspace_path = value.clone();
+                        view.ui_state.set_launcher_workspace_path(Some(&value));
+                        cx.notify();
+                    }
+                }
+            },
+        );
+        launcher_workspace_subscription.detach();
 
         view.start_relative_time(cx);
         view.start_data_load(cx);

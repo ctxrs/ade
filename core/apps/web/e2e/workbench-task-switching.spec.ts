@@ -1,4 +1,4 @@
-import { test, expect } from "playwright/test";
+import { test, expect } from "./utils/fixtures";
 import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
@@ -18,25 +18,23 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
 
   await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
 
+  const newComposer = page.locator(".wb-new-composer-stack");
+  await expect(newComposer).toBeVisible({ timeout: 20000 });
+
   // Choose Fake harness so the test doesn't depend on external agents.
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
+  await newComposer.getByTitle("Harness").click();
   await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
   await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
-  await expect(page.locator(".wb-new-composer-stack button[title=\"Harness\"] .wb-switcher-label")).toHaveText(/fake/i, {
-    timeout: 20000,
-  });
-
-  // Use Local isolation to keep the test fast and deterministic.
-  await page.locator(".wb-new-composer-stack").getByTitle("Isolation").click();
-  await page.locator(".wb-exec-menu").getByRole("button", { name: "Local" }).click();
-  await expect(page.locator(".wb-new-composer-stack button[title=\"Isolation\"] .wb-switcher-label")).toHaveText(/local/i, {
+  await expect(newComposer.locator("button[title=\"Harness\"] .wb-switcher-label")).toHaveText(/fake/i, {
     timeout: 20000,
   });
 
   const msg1 = `task one marker ${Date.now()}`;
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(msg1);
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
-  await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: `done: ${msg1}` })).toBeVisible({ timeout: 20000 });
+  await newComposer.locator("textarea.wb-composer-textarea").fill(msg1);
+  await newComposer.locator("button[aria-label=\"Send\"]").click();
+  const activeSession = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
+  const msg1Entry = activeSession.locator(".wb-assistant-entry").filter({ hasText: `done: ${msg1}` }).first();
+  await expect(msg1Entry).toBeVisible({ timeout: 20000 });
   const url1 = new URL(page.url());
   expect(url1.searchParams.get("task")).toBeNull();
   expect(url1.searchParams.get("track")).toBeNull();
@@ -44,17 +42,18 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
 
   // New Task must clear selection and stay cleared (no snap-back).
   await page.getByRole("button", { name: "New Task" }).click();
-  await expect(page.locator(".wb-new-composer-stack textarea.wb-composer-textarea")).toBeVisible({ timeout: 20000 });
-  await page.waitForTimeout(500);
+  await expect(newComposer.locator("textarea.wb-composer-textarea")).toBeVisible({ timeout: 20000 });
+  await expect(page.locator(".wb-task-row.wb-task-row-active")).toHaveCount(0, { timeout: 20000 });
   const urlAfterNew = new URL(page.url());
   expect(urlAfterNew.searchParams.get("task")).toBeNull();
   expect(urlAfterNew.searchParams.get("track")).toBeNull();
   expect(urlAfterNew.searchParams.get("session")).toBeNull();
 
   const msg2 = `task two marker ${Date.now()}`;
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(msg2);
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
-  await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: `done: ${msg2}` })).toBeVisible({ timeout: 20000 });
+  await newComposer.locator("textarea.wb-composer-textarea").fill(msg2);
+  await newComposer.locator("button[aria-label=\"Send\"]").click();
+  const msg2Entry = activeSession.locator(".wb-assistant-entry").filter({ hasText: `done: ${msg2}` }).first();
+  await expect(msg2Entry).toBeVisible({ timeout: 20000 });
   const url2 = new URL(page.url());
   expect(url2.searchParams.get("task")).toBeNull();
   expect(url2.searchParams.get("track")).toBeNull();
@@ -63,18 +62,22 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
   // Switching tasks must keep sidebar + conversation pane aligned.
   const taskRows = page.locator(".wb-task-row");
   await expect(taskRows).toHaveCount(2, { timeout: 20000 });
-  const newestTaskRow = taskRows.nth(0);
-  const olderTaskRow = taskRows.nth(1);
+  const olderTaskRow = page.locator(".wb-task-row", { hasText: msg1 });
+  const newestTaskRow = page.locator(".wb-task-row", { hasText: msg2 });
+  await expect(olderTaskRow).toBeVisible({ timeout: 20000 });
+  await expect(newestTaskRow).toBeVisible({ timeout: 20000 });
 
   await olderTaskRow.click();
-  await expect(page.locator(".wb-session")).toContainText(`done: ${msg1}`, { timeout: 20000 });
+  await expect(olderTaskRow).toHaveClass(/wb-task-row-active/, { timeout: 20000 });
+  await expect(msg1Entry).toBeVisible({ timeout: 20000 });
 
   await newestTaskRow.click();
-  await expect(page.locator(".wb-session")).toContainText(`done: ${msg2}`, { timeout: 20000 });
+  await expect(newestTaskRow).toHaveClass(/wb-task-row-active/, { timeout: 20000 });
+  await expect(msg2Entry).toBeVisible({ timeout: 20000 });
 
   // Refresh should restore the same selection from IndexedDB (window-scoped).
-  await page.reload();
-  await expect(page.locator(".wb-session")).toContainText(`done: ${msg2}`, { timeout: 20000 });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(msg2Entry).toBeVisible({ timeout: 20000 });
   const urlAfterReload = new URL(page.url());
   expect(urlAfterReload.searchParams.get("task")).toBeNull();
   expect(urlAfterReload.searchParams.get("track")).toBeNull();
