@@ -75,6 +75,7 @@ struct CompactionSettingsSnapshot {
     retain_tail_messages: Option<u32>,
     retain_tail_chars_per_message: Option<u32>,
     include_attachments: bool,
+    transcript_only: bool,
     auto_compact: Option<AutoCompactionSettings>,
 }
 
@@ -226,6 +227,7 @@ pub async fn run_compaction(
                 retain_tail_messages: compaction.retain_tail_messages,
                 retain_tail_chars_per_message: compaction.retain_tail_chars_per_message,
                 include_attachments: compaction.include_attachments,
+                transcript_only: compaction.transcript_only,
                 auto_compact: compaction.auto_compact.clone(),
             },
             transcript: full_transcript.clone(),
@@ -473,6 +475,19 @@ async fn run_default_compaction(
     full_transcript: &[CompactionMessage],
     candidate_transcript: &[CompactionMessage],
 ) -> Result<CompactionScriptOutput> {
+    let seed_transcript =
+        render_compaction_transcript(candidate_transcript, compaction.include_attachments);
+    if compaction.transcript_only {
+        let summary = "Transcript-only compaction; summary omitted.".to_string();
+        let seed_text = render_transcript_only_seed_text(&seed_transcript);
+        return Ok(CompactionScriptOutput {
+            summary,
+            seed_text: Some(seed_text),
+            tail_message_ids: None,
+            tail_messages: Some(candidate_transcript.to_vec()),
+        });
+    }
+
     let store = state.store_for_session(session.id).await?;
     let events = store.list_session_events(session.id).await?;
     let session_log = render_session_log(&events);
@@ -488,8 +503,6 @@ async fn run_default_compaction(
         compaction.script_timeout_ms,
     )
     .await?;
-    let seed_transcript =
-        render_compaction_transcript(candidate_transcript, compaction.include_attachments);
     let seed_text = render_default_seed_text(&summary, &seed_transcript);
 
     Ok(CompactionScriptOutput {
@@ -524,6 +537,17 @@ fn render_default_seed_text(summary: &str, transcript: &str) -> String {
     out.push_str("<summary>\n");
     out.push_str(summary.trim());
     out.push_str("\n</summary>\n\n");
+    out.push_str("<transcript>\n");
+    out.push_str(transcript);
+    out.push_str("\n</transcript>");
+    out
+}
+
+fn render_transcript_only_seed_text(transcript: &str) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "You are continuing a session that has been compacted. The full transcript is preserved below without an LLM summary. Other context such as files you've read and commands you've run has been removed, so reopen what you need and continue from where you left off.\n\n",
+    );
     out.push_str("<transcript>\n");
     out.push_str(transcript);
     out.push_str("\n</transcript>");

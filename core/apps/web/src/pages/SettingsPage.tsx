@@ -511,6 +511,7 @@ export default function SettingsPage() {
   const [compactionTailMessages, setCompactionTailMessages] = useState("");
   const [compactionTailChars, setCompactionTailChars] = useState("");
   const [compactionIncludeAttachments, setCompactionIncludeAttachments] = useState(false);
+  const [compactionTranscriptOnly, setCompactionTranscriptOnly] = useState(false);
   const [compactionAutoEnabled, setCompactionAutoEnabled] = useState(false);
   const [compactionRemainingFraction, setCompactionRemainingFraction] = useState("");
   const [compactionMaxContextTokens, setCompactionMaxContextTokens] = useState("");
@@ -848,6 +849,7 @@ export default function SettingsPage() {
           setCompactionTailMessages(comp.retain_tail_messages ? String(comp.retain_tail_messages) : "");
           setCompactionTailChars(comp.retain_tail_chars_per_message ? String(comp.retain_tail_chars_per_message) : "");
           setCompactionIncludeAttachments(Boolean(comp.include_attachments));
+          setCompactionTranscriptOnly(Boolean(comp.transcript_only));
           setCompactionAutoEnabled(Boolean(auto && auto.enabled));
           setCompactionRemainingFraction(
             auto && auto.remaining_fraction_threshold !== undefined
@@ -863,6 +865,7 @@ export default function SettingsPage() {
           setCompactionTailMessages("");
           setCompactionTailChars("");
           setCompactionIncludeAttachments(false);
+          setCompactionTranscriptOnly(false);
           setCompactionAutoEnabled(false);
           setCompactionRemainingFraction("");
           setCompactionMaxContextTokens("");
@@ -1029,6 +1032,7 @@ export default function SettingsPage() {
       retain_tail_messages: parseNumber(compactionTailMessages),
       retain_tail_chars_per_message: parseNumber(compactionTailChars),
       include_attachments: compactionIncludeAttachments,
+      transcript_only: compactionTranscriptOnly,
       auto_compact: {
         enabled: compactionAutoEnabled,
         remaining_fraction_threshold: parseFraction(compactionRemainingFraction),
@@ -1046,6 +1050,7 @@ export default function SettingsPage() {
     compactionScriptTimeoutMs,
     compactionTailChars,
     compactionTailMessages,
+    compactionTranscriptOnly,
   ]);
 
   const sandboxingPayload = useMemo((): SandboxingSettings => {
@@ -3166,6 +3171,18 @@ export default function SettingsPage() {
                   onChange={(e) => setCompactionScriptTimeoutMs(e.target.value)}
                   disabled={!compactionEnabled}
                   placeholder="15000"
+                />
+              }
+            />
+            <Row
+              title="Transcript-only compaction"
+              description="Skip the LLM summary and seed with transcript only (applies when no script path is set)."
+              control={
+                <Toggle
+                  checked={compactionTranscriptOnly}
+                  disabled={!compactionEnabled}
+                  onChange={setCompactionTranscriptOnly}
+                  ariaLabel="Transcript-only compaction"
                 />
               }
             />

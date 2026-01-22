@@ -214,6 +214,7 @@ export type CompactionSettings = {
   retain_tail_messages?: number | null;
   retain_tail_chars_per_message?: number | null;
   include_attachments: boolean;
+  transcript_only: boolean;
   auto_compact?: AutoCompactionSettings | null;
 };
 

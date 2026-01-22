@@ -187,6 +187,8 @@ pub struct CompactionSettings {
     #[serde(default)]
     pub include_attachments: bool,
     #[serde(default)]
+    pub transcript_only: bool,
+    #[serde(default)]
     pub auto_compact: Option<AutoCompactionSettings>,
 }
 
@@ -200,6 +202,7 @@ impl Default for CompactionSettings {
             retain_tail_messages: Some(40),
             retain_tail_chars_per_message: Some(4000),
             include_attachments: true,
+            transcript_only: false,
             auto_compact: Some(AutoCompactionSettings::default()),
         }
     }
@@ -527,6 +530,7 @@ pub struct PublicCompactionSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retain_tail_chars_per_message: Option<u32>,
     pub include_attachments: bool,
+    pub transcript_only: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_compact: Option<PublicAutoCompactionSettings>,
 }
@@ -737,6 +741,8 @@ pub struct UpdateCompactionSettingsReq {
     pub retain_tail_chars_per_message: Option<u32>,
     #[serde(default)]
     pub include_attachments: bool,
+    #[serde(default)]
+    pub transcript_only: bool,
     #[serde(default)]
     pub auto_compact: Option<UpdateAutoCompactionSettingsReq>,
 }
@@ -971,6 +977,7 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
             retain_tail_messages: c.retain_tail_messages,
             retain_tail_chars_per_message: c.retain_tail_chars_per_message,
             include_attachments: c.include_attachments,
+            transcript_only: c.transcript_only,
             auto_compact: c
                 .auto_compact
                 .as_ref()
@@ -1097,6 +1104,7 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
         next.retain_tail_messages = c.retain_tail_messages;
         next.retain_tail_chars_per_message = c.retain_tail_chars_per_message;
         next.include_attachments = c.include_attachments;
+        next.transcript_only = c.transcript_only;
         next.auto_compact = c.auto_compact.map(|auto| AutoCompactionSettings {
             enabled: auto.enabled,
             remaining_fraction_threshold: auto.remaining_fraction_threshold,

@@ -377,6 +377,8 @@ pub struct PublicCompactionSettings {
     #[serde(default)]
     pub include_attachments: bool,
     #[serde(default)]
+    pub transcript_only: bool,
+    #[serde(default)]
     pub auto_compact: Option<PublicAutoCompactionSettings>,
 }
 
@@ -567,6 +569,7 @@ pub struct UpdateCompactionSettingsRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retain_tail_chars_per_message: Option<u32>,
     pub include_attachments: bool,
+    pub transcript_only: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_compact: Option<UpdateAutoCompactionSettingsRequest>,
 }

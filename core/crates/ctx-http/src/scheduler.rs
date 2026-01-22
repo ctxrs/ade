@@ -392,8 +392,7 @@ async fn handle_compact_command(
                 session.task_id,
                 run_id,
                 turn_id,
-                "Compaction complete. A fresh harness session will be used for the next turn."
-                    .to_string(),
+                "Compaction complete.".to_string(),
                 1,
                 Utc::now(),
             )
