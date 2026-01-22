@@ -3,9 +3,36 @@ import ReactDOM from "react-dom/client";
 import { applyContextTheme } from "@ctx/design/web";
 import App from "./App";
 import { initLoadTestTelemetry } from "./utils/loadTestTelemetry";
+import { getDaemonBaseUrl, setDaemonBaseUrl } from "./api/client";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 
+const primeAuthSession = () => {
+  if (typeof window === "undefined") return;
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("token");
+  if (token) {
+    sessionStorage.setItem("ctxAuthToken", token);
+    params.delete("token");
+    const next =
+      window.location.pathname +
+      (params.toString() ? `?${params.toString()}` : "") +
+      window.location.hash;
+    window.history.replaceState({}, "", next);
+  }
+  if (import.meta.env.DEV) {
+    const envToken = import.meta.env.VITE_CTX_AUTH_TOKEN;
+    const envDaemonUrl = import.meta.env.VITE_CTX_DAEMON_URL;
+    if (envToken && !sessionStorage.getItem("ctxAuthToken")) {
+      sessionStorage.setItem("ctxAuthToken", envToken);
+    }
+    if (envDaemonUrl && !getDaemonBaseUrl()) {
+      setDaemonBaseUrl(envDaemonUrl, true);
+    }
+  }
+};
+
+primeAuthSession();
 applyContextTheme();
 initLoadTestTelemetry();
 

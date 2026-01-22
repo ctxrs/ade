@@ -89,7 +89,6 @@ import {
   desktopSaveTextFile,
   desktopSetOpenWorkspaces,
   isDesktopApp,
-  isDesktopUi,
 } from "../utils/desktop";
 import { parseWsJson } from "../utils/wsJson";
 import { registerDropScope } from "../utils/dragDropScopes";
@@ -4071,6 +4070,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       ["--wb-terminal-offset" as any]: `${terminalOffset}px`,
     } as React.CSSProperties;
   }, [sidebarWidth, terminalHeight, terminalOpen]);
+
+  const desktopUi = isDesktopApp();
 
   useEffect(() => {
     if (!desktopUi) return;

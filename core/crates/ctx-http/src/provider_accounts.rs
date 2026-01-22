@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -129,18 +129,13 @@ pub fn codex_env_for_account(data_root: &Path, account_id: &str) -> HashMap<Stri
     env
 }
 
-pub async fn codex_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
-    let registry = load_codex_registry(data_root).await;
-    if let Some(active) = registry.active_account_id.as_deref() {
-        let _ = ensure_codex_account_dir(data_root, active).await?;
-        return Ok(codex_env_for_account(data_root, active));
-    }
-    let fallback = codex_fallback_home(data_root);
-    tokio::fs::create_dir_all(&fallback).await?;
+pub async fn codex_env_for_active_account(_data_root: &Path) -> Result<HashMap<String, String>> {
+    let base = directories::BaseDirs::new().ok_or_else(|| anyhow!("missing home dir"))?;
+    let codex_home = base.home_dir().join(".codex");
     let mut env = HashMap::new();
     env.insert(
         "CODEX_HOME".to_string(),
-        fallback.to_string_lossy().to_string(),
+        codex_home.to_string_lossy().to_string(),
     );
     Ok(env)
 }
