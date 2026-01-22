@@ -2,7 +2,6 @@ pub(super) mod artifacts;
 pub(super) mod ats_cache;
 pub(super) mod composer;
 pub(super) mod diff_review;
-pub(super) mod launcher;
 pub(super) mod session;
 pub(super) mod settings;
 pub(super) mod stream;
@@ -39,8 +38,7 @@ use super::models::{MessageItem, SessionInfo, ThreadListItem, TurnToolSnapshot, 
 use super::workspace_summary::{SessionSummaryItem, TaskSummaryItem};
 pub(crate) use ats_cache::AtsCache;
 use ats_cache::SessionHeadMeta;
-use session::{SessionThreadCache, SessionThreadViewState, ThreadRenderCacheKey};
-pub(crate) use session::{ThreadRenderCache, THREAD_RENDER_CACHE_LIMIT};
+use session::SessionThreadCache;
 
 pub(crate) use artifacts::{ArtifactContentCache, ArtifactPreviewState};
 pub(crate) use composer::{
@@ -48,10 +46,6 @@ pub(crate) use composer::{
     ContextWindowInfo, DraftTrack, PopoverPlacement, ProviderInstallState, WorkbenchModeId,
 };
 pub(crate) use diff_review::DiffReviewState;
-pub(crate) use launcher::{
-    default_launcher_progress_items, LauncherExecutionMode, LauncherHostKind, LauncherProgressId,
-    LauncherProgressItem, LauncherProgressStatus, LauncherStep, LAUNCHER_STEPS,
-};
 pub(crate) use settings::{
     LabeledOption, SettingsInputKind, SettingsSection, SettingsSectionGroup, SettingsSelectKind,
     SettingsState, SETTINGS_SECTIONS,
@@ -116,7 +110,7 @@ pub(crate) struct SidebarResizeState {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionViewVerbosity {
     Terse,
     Default,
@@ -170,14 +164,14 @@ pub(crate) struct ShellView {
     pub(crate) task_archived_cursor: Option<WorkspaceIndexCursor>,
     pub(crate) task_query: String,
     pub(crate) task_search_input: Entity<InputState>,
+    pub(crate) workspace_root_input: Entity<InputState>,
+    pub(crate) workspace_name_input: Entity<InputState>,
     pub(crate) task_list_scroll_handle: VirtualListScrollHandle,
     pub(crate) task_hovered: Option<TaskId>,
     pub(crate) task_menu: Option<TaskMenuState>,
     pub(crate) selected_task: Option<TaskId>,
     pub(crate) renaming_task_id: Option<TaskId>,
     pub(crate) rename_input: Entity<InputState>,
-    pub(crate) workspace_root_input: Entity<InputState>,
-    pub(crate) workspace_name_input: Entity<InputState>,
     pub(crate) rename_ignore_blur: bool,
     pub(crate) archive_pending: HashMap<TaskId, TaskArchiveAction>,
     pub(crate) task_mark_read_inflight: HashSet<TaskId>,
@@ -194,16 +188,6 @@ pub(crate) struct ShellView {
     pub(crate) relative_now: DateTime<Utc>,
     pub(crate) relative_time_task: Option<Task<()>>,
     pub(crate) ui_state: UiStateStore,
-    pub(crate) launcher_step: LauncherStep,
-    pub(crate) launcher_host_kind: LauncherHostKind,
-    pub(crate) launcher_execution_mode: LauncherExecutionMode,
-    pub(crate) launcher_workspace_path: String,
-    pub(crate) launcher_workspace_input: Entity<InputState>,
-    pub(crate) launcher_progress: Vec<LauncherProgressItem>,
-    pub(crate) launcher_busy: bool,
-    pub(crate) launcher_error: Option<String>,
-    pub(crate) launcher_error_step: Option<LauncherStep>,
-    pub(crate) launcher_workspace_id: Option<WorkspaceId>,
     pub(crate) sessions: Vec<SessionSummaryItem>,
     pub(crate) selected_session: Option<usize>,
     pub(crate) messages: Vec<MessageItem>,
@@ -212,13 +196,13 @@ pub(crate) struct ShellView {
     pub(crate) session_history_has_more: bool,
     pub(crate) session_history_loading: bool,
     pub(crate) session_turn_tools: HashMap<TurnId, Vec<TurnToolSnapshot>>,
-    pub(crate) thread_items: Arc<Vec<ThreadListItem>>,
+    pub(crate) thread_items: Vec<ThreadListItem>,
     pub(crate) sticky_turn_header: Option<WorkbenchTurnHeader>,
     pub(crate) sticky_turn_header_at_top: bool,
-    pub(crate) expanded_turn_headers: Arc<HashMap<String, bool>>,
-    pub(crate) expanded_messages: Arc<HashMap<String, bool>>,
-    pub(crate) expanded_turn_details: Arc<HashMap<String, bool>>,
-    pub(crate) expanded_tools: Arc<HashMap<String, bool>>,
+    pub(crate) expanded_turn_headers: HashMap<String, bool>,
+    pub(crate) expanded_messages: HashMap<String, bool>,
+    pub(crate) expanded_turn_details: HashMap<String, bool>,
+    pub(crate) expanded_tools: HashMap<String, bool>,
     pub(crate) turn_tools_loading: HashSet<TurnId>,
     pub(crate) verbosity: SessionViewVerbosity,
     #[allow(dead_code)]
@@ -231,11 +215,7 @@ pub(crate) struct ShellView {
     pub(crate) artifact_prefetch_session_id: Option<SessionId>,
     pub(crate) artifact_prefetch_inflight: HashSet<ArtifactId>,
     pub(crate) session_events: Vec<SessionEvent>,
-    pub(crate) active_snapshot_rev: Option<i64>,
     pub(crate) session_thread_cache: HashMap<SessionId, SessionThreadCache>,
-    pub(crate) session_thread_view_state: HashMap<SessionId, SessionThreadViewState>,
-    pub(crate) thread_render_cache: ThreadRenderCache,
-    pub(crate) thread_render_inflight: HashMap<SessionId, ThreadRenderCacheKey>,
     pub(crate) session_head_meta: HashMap<SessionId, SessionHeadMeta>,
     pub(crate) session_state_cache: HashMap<SessionId, SessionState>,
     pub(crate) session_state_loading: HashSet<SessionId>,
@@ -285,7 +265,6 @@ pub(crate) struct ShellView {
     pub(crate) composer_harness_count_menu_placement: Option<PopoverPlacement>,
     pub(crate) composer_harness_count_trigger_bounds: HashMap<String, Bounds<Pixels>>,
     pub(crate) composer_harness_count_menu_bounds: Option<Bounds<Pixels>>,
-    #[allow(dead_code)]
     pub(crate) composer_recording: bool,
     pub(crate) composer_harness_search: Entity<InputState>,
     pub(crate) composer_model_search: Entity<InputState>,
@@ -312,7 +291,6 @@ pub(crate) struct ShellView {
     pub(crate) thread_auto_follow: bool,
     pub(crate) new_thread_item_count: usize,
     pub(crate) copied_flags: HashMap<String, Instant>,
-    pub(crate) hovered_turn_header: Option<String>,
     pub(crate) stream_status: StreamStatus,
     pub(crate) resyncing_session: Option<SessionId>,
     pub(crate) stream_subscribe_tx: Option<watch::Sender<WorkspaceActiveSnapshotClientMessage>>,

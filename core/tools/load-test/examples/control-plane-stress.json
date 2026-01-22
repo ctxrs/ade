@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "control-plane-stress",
+  "mode": "daemon",
+  "duration_ms": 120000,
+  "seed": 11,
+  "workload": {
+    "tasks": 20,
+    "subagents_min": 2,
+    "subagents_max": 4,
+    "message_interval_ms": 750,
+    "message_size": 64,
+    "tool_calls_per_message": 1
+  },
+  "control_plane": {
+    "active_snapshot_interval_ms": 250,
+    "session_snapshot_interval_ms": 500,
+    "session_head_interval_ms": 250,
+    "ws_replay_interval_ms": 2000,
+    "reconnect_interval_ms": 2000,
+    "health_interval_ms": 500
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "max-push",
+  "mode": "daemon",
+  "duration_ms": 120000,
+  "seed": 7,
+  "workload": {
+    "tasks": 50,
+    "subagents_min": 4,
+    "subagents_max": 6,
+    "message_interval_ms": 250,
+    "message_size": 64,
+    "tool_calls_per_message": 1
+  },
+  "control_plane": {
+    "active_snapshot_interval_ms": 1000,
+    "session_snapshot_interval_ms": 1500,
+    "session_head_interval_ms": 1500,
+    "ws_replay_interval_ms": 5000,
+    "reconnect_interval_ms": 5000,
+    "health_interval_ms": 2000
+  }
+}

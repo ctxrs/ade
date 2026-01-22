@@ -1,4 +1,4 @@
-import { test, expect } from "./utils/fixtures";
+import { test, expect } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 test.describe.serial("settings: resource utilization", () => {

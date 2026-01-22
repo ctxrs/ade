@@ -1,5 +1,5 @@
-import { test, expect } from "./utils/fixtures";
-import type { Page } from "./utils/fixtures";
+import { test, expect } from "playwright/test";
+import type { Page } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 async function ensureArchivedExpanded(page: Page) {

@@ -30,7 +30,6 @@ let sessionSnap = {
       hasMoreTurns: false,
       events: [],
       messages: [{ role: "assistant", created_at: baseIso }],
-      localMessages: [],
       queue: [],
       loading: false,
       subscribed: true,
@@ -41,7 +40,6 @@ let sessionSnap = {
 
 let workspaceSnapshotSnap = {
   workspaceId,
-  snapshotRev: 0,
   initialized: true,
   connection: "connected",
   tasksById: {

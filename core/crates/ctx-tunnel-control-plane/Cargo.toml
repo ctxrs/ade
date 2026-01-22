@@ -21,7 +21,7 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 
 redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
-sqlx = { workspace = true, features = ["postgres"] }
+sqlx = { workspace = true, features = ["sqlite"] }
 url = "2"
 
 [dev-dependencies]

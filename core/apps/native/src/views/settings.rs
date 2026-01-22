@@ -1,17 +1,14 @@
 use chrono::{DateTime, Utc};
 use gpui::{
-    AnyElement, ClickEvent, Context, ElementId, Focusable, FontWeight, MouseButton, MouseUpEvent,
-    ObjectFit, Render, Rgba, Window, div, img, linear_color_stop, linear_gradient, prelude::*, px,
-    relative,
+    AnyElement, ClickEvent, Context, ElementId, FontWeight, MouseButton, MouseUpEvent, Render, Window,
+    div, img, linear_color_stop, linear_gradient, prelude::*, px, relative, ObjectFit, Rgba,
 };
 use gpui_component::{input::Input, select::Select};
 use gpui_component::scroll::ScrollableElement;
 use qrcode::{Color as QrColor, QrCode};
 
 use crate::automation_tree;
-use ctx_client::{
-    MobileTunnelState, NetworkProfile, ResourceGovernanceMode, ResourceGovernanceStatusState,
-};
+use ctx_client::{MobileTunnelState, ResourceGovernanceMode, ResourceGovernanceStatusState};
 use ctx_core::models::WorkspaceAttachmentKind;
 use ctx_providers::adapters::ProviderHealth;
 
@@ -550,15 +547,6 @@ impl Render for SettingsState {
             cx,
         );
         let query = search_state.read(cx).value().to_lowercase();
-        let search_focused = search_state.focus_handle(cx).is_focused(window);
-        let search_border = if search_focused { white(0.88) } else { white(0.06) };
-        let nav_text = white(0.5);
-        let nav_text_active = white(0.9);
-        let nav_text_hover = white(0.78);
-        let nav_bg_active = white(0.1);
-        let nav_bg_hover = white(0.05);
-        let nav_item_height = px(28.0);
-        let nav_item_radius = px(8.0);
 
         let filtered_sections: Vec<SettingsSection> = SETTINGS_SECTIONS
             .iter()
@@ -567,18 +555,6 @@ impl Render for SettingsState {
                 query.is_empty() || section.label().to_lowercase().contains(&query)
             })
             .collect();
-        let main_sections: Vec<SettingsSection> = filtered_sections
-            .iter()
-            .copied()
-            .filter(|section| section.group() == SettingsSectionGroup::Main)
-            .collect();
-        let advanced_sections: Vec<SettingsSection> = filtered_sections
-            .iter()
-            .copied()
-            .filter(|section| section.group() == SettingsSectionGroup::Advanced)
-            .collect();
-        let _has_main_sections = !main_sections.is_empty();
-        let _has_advanced_sections = !advanced_sections.is_empty();
 
         automation_tree::clear_prefix("settings-nav-main-item-");
         automation_tree::clear_prefix("settings-nav-advanced-item-");
@@ -611,7 +587,6 @@ impl Render for SettingsState {
             .child(
                 div()
                     .px(px(10.0))
-                    .pt(px(4.0))
                     .pb(px(8.0))
                     .grid()
                     .gap(px(10.0))
@@ -621,25 +596,25 @@ impl Render for SettingsState {
                             .text_color(white(0.45))
                             .cursor_pointer()
                             .hover(|style| style.text_color(white(0.75)))
-                            .child("← Back to Home".to_string())
+                            .child("← Back to Workspace".to_string())
                             .on_children_prepainted(automation_tree::track_children_bounds(
                                 "settings-back-to-workspace",
                                 "button",
-                                Some("Back to Home"),
+                                Some("Back to Workspace"),
                                 Some("settings-pane"),
                             ))
                             .id("settings-back-to-workspace")
                             .on_mouse_up(MouseButton::Left, cx.listener(|view, _: &MouseUpEvent, _window, cx| {
                                 if let Some(handle) = view.shell_handle.clone() {
                                     handle.update(cx, |shell, cx| {
-                                        shell.set_route(ShellRoute::Workspaces, cx);
+                                        shell.set_route(ShellRoute::Workbench, cx);
                                     });
                                 }
                             })),
                     )
                     .child(
                         div()
-                            .text_size(px(20.0))
+                            .text_size(px(18.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(white(0.9))
                             .child("Settings".to_string()),
@@ -656,28 +631,18 @@ impl Render for SettingsState {
                         Some("settings-pane"),
                     ))
                     .id("settings-search-input")
-                    .child({
-                        div()
-                            .w_full()
-                            .h(px(30.0))
-                            .rounded(px(8.0))
-                            .border_1()
-                            .border_color(search_border)
+                    .child(
+                        Input::new(&search_state)
+                            .appearance(true)
                             .bg(white(0.06))
-                            .child(
-                            Input::new(&search_state)
-                                .appearance(true)
-                                .bg(rgba_u8(0, 0, 0, 0.0))
-                                .border_color(rgba_u8(0, 0, 0, 0.0))
-                                .focus_bordered(false)
-                                .rounded(px(8.0))
-                                .h(px(30.0))
-                                .w_full()
-                                .px(px(10.0))
-                                .text_size(px(13.0))
-                                .text_color(white(0.8)),
-                            )
-                    }),
+                            .border_color(white(0.06))
+                            .rounded(px(8.0))
+                            .h(px(30.0))
+                            .w_full()
+                            .px(px(10.0))
+                            .text_size(px(13.0))
+                            .text_color(white(0.8)),
+                    ),
             )
             .child(
                 div()
@@ -694,7 +659,7 @@ impl Render for SettingsState {
                                 Some("settings-pane"),
                             ))
                             .id("settings-nav-main-list")
-                            .children(main_sections.iter().copied().enumerate().map(|(ix, section)| {
+                            .children(filtered_sections.iter().copied().filter(|s| s.group() == SettingsSectionGroup::Main).enumerate().map(|(ix, section)| {
                                 let is_active = section == active_section;
                                 let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                     view.set_active_section(section, cx);
@@ -702,17 +667,16 @@ impl Render for SettingsState {
                                 let item_id = format!("settings-nav-main-item-{}", ix);
                                 let item_label = section.label().to_string();
                                 let item = div()
-                                    .h(nav_item_height)
-                                    .w_full()
+                                    .h(px(28.0))
                                     .px(px(10.0))
                                     .flex()
                                     .items_center()
-                                    .rounded(nav_item_radius)
+                                    .rounded(px(8.0))
                                     .text_size(px(13.0))
                                     .child(item_label.clone())
-                                    .text_color(if is_active { nav_text_active } else { nav_text })
-                                    .bg(if is_active { nav_bg_active } else { rgba_u8(0, 0, 0, 0.0) })
-                                    .when(!is_active, |this| this.hover(|style| style.bg(nav_bg_hover).text_color(nav_text_hover)))
+                                    .text_color(if is_active { white(0.9) } else { white(0.55) })
+                                    .bg(if is_active { white(0.1) } else { rgba_u8(0, 0, 0, 0.0) })
+                                    .when(!is_active, |this| this.hover(|style| style.bg(white(0.06)).text_color(white(0.82))))
                                     .cursor_pointer()
                                     .id(ElementId::named_usize("settings-nav-main", ix))
                                     .on_click(on_click);
@@ -738,7 +702,7 @@ impl Render for SettingsState {
                                 Some("settings-pane"),
                             ))
                             .id("settings-nav-advanced-list")
-                            .children(advanced_sections.iter().copied().enumerate().map(|(ix, section)| {
+                            .children(filtered_sections.iter().copied().filter(|s| s.group() == SettingsSectionGroup::Advanced).enumerate().map(|(ix, section)| {
                                 let is_active = section == active_section;
                                 let on_click = cx.listener(move |view, _: &ClickEvent, _window, cx| {
                                     view.set_active_section(section, cx);
@@ -746,17 +710,16 @@ impl Render for SettingsState {
                                 let item_id = format!("settings-nav-advanced-item-{}", ix);
                                 let item_label = section.label().to_string();
                                 let item = div()
-                                    .h(nav_item_height)
-                                    .w_full()
+                                    .h(px(28.0))
                                     .px(px(10.0))
                                     .flex()
                                     .items_center()
-                                    .rounded(nav_item_radius)
+                                    .rounded(px(8.0))
                                     .text_size(px(13.0))
                                     .child(item_label.clone())
-                                    .text_color(if is_active { nav_text_active } else { nav_text })
-                                    .bg(if is_active { nav_bg_active } else { rgba_u8(0, 0, 0, 0.0) })
-                                    .when(!is_active, |this| this.hover(|style| style.bg(nav_bg_hover).text_color(nav_text_hover)))
+                                    .text_color(if is_active { white(0.9) } else { white(0.55) })
+                                    .bg(if is_active { white(0.1) } else { rgba_u8(0, 0, 0, 0.0) })
+                                    .when(!is_active, |this| this.hover(|style| style.bg(white(0.06)).text_color(white(0.82))))
                                     .cursor_pointer()
                                     .id(ElementId::named_usize("settings-nav-advanced", ix))
                                     .on_click(on_click);
@@ -840,6 +803,8 @@ impl SettingsState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+
+        eprintln!("ctx-native: settings render active={:?} loaded={} load_error={:?}", active, loaded, load_error);
         if !loaded {
             return settings_empty("Loading…", false).into_any_element();
         }
@@ -853,8 +818,6 @@ impl SettingsState {
             SettingsSection::Sandboxing => self.render_sandboxing(window, cx),
             SettingsSection::WorktreeBootstrap => self.render_worktree_bootstrap(window, cx),
             SettingsSection::WorkspaceAttachments => self.render_workspace_attachments(window, cx),
-            SettingsSection::AgentSystemPrompt => self.render_agent_system_prompt(window, cx),
-            SettingsSection::MergeQueue => self.render_merge_queue(window, cx),
             SettingsSection::ContextPack => self.render_context_pack(window, cx),
             SettingsSection::ResourceGovernance => self.render_resource_governance(window, cx),
             SettingsSection::MobileAccess => self.render_mobile_access(window, cx),
@@ -865,7 +828,6 @@ impl SettingsState {
             SettingsSection::TeamEnterprise => self.render_team_enterprise(window, cx),
             SettingsSection::UsageAnalytics => self.render_usage_analytics(window, cx),
             SettingsSection::AgentHarnesses => self.render_agent_harnesses(window, cx),
-            SettingsSection::HarnessSubscriptions => self.render_harness_subscriptions(window, cx),
         }
     }
 
@@ -944,66 +906,6 @@ impl SettingsState {
                 }))
             });
 
-        let supports_container = cfg!(target_os = "linux");
-        let daemon_disabled = !self.daemon_loaded || self.daemon_error.is_some();
-        let auto_start_toggle = settings_toggle(self.daemon_auto_start, daemon_disabled)
-            .id("settings-daemon-auto-start-toggle")
-            .when(!daemon_disabled, |this| {
-                this.on_click(cx.listener(|view, _, _window, cx| {
-                    view.set_daemon_auto_start(!view.daemon_auto_start, cx);
-                }))
-            });
-        let docker_disabled = daemon_disabled || !supports_container;
-        let docker_toggle = settings_toggle(self.daemon_docker_passthrough, docker_disabled)
-            .id("settings-daemon-docker-toggle")
-            .when(!docker_disabled, |this| {
-                this.on_click(cx.listener(|view, _, _window, cx| {
-                    view.set_daemon_docker_passthrough(!view.daemon_docker_passthrough, cx);
-                }))
-            });
-
-        let default_launch_label = if supports_container {
-            "Container (host-mounted)"
-        } else {
-            "Host"
-        };
-        let mut launch_mode_options = vec![LabeledOption {
-            value: "".to_string(),
-            label: format!("Default ({default_launch_label})"),
-        }];
-        if supports_container {
-            launch_mode_options.push(LabeledOption {
-                value: "container".to_string(),
-                label: "Container (host-mounted)".to_string(),
-            });
-        }
-        launch_mode_options.push(LabeledOption {
-            value: "host".to_string(),
-            label: "Host".to_string(),
-        });
-        let launch_mode_value = self
-            .daemon_launch_mode
-            .map(|mode| mode.as_str().to_string())
-            .unwrap_or_default();
-        let launch_mode_select = Self::ensure_select_state(
-            &mut self.daemon_launch_mode_select,
-            launch_mode_options,
-            Some(launch_mode_value),
-            super::super::state::SettingsSelectKind::DaemonLaunchMode,
-            &mut self.input_subscriptions,
-            window,
-            cx,
-        );
-        let launch_mode_control = Select::new(&launch_mode_select)
-            .appearance(true)
-            .bg(white(0.06))
-            .border_color(white(0.08))
-            .rounded(px(8.0))
-            .h(px(30.0))
-            .px(px(10.0))
-            .text_size(px(13.0))
-            .disabled(daemon_disabled);
-
         let editor_control = Select::new(&editor_select)
             .appearance(true)
             .bg(white(0.06))
@@ -1038,33 +940,6 @@ impl SettingsState {
                 Some("Share anonymous usage metrics (no code, prompts, or file paths)."),
                 telemetry_toggle,
                 true,
-            )
-            .into_any_element(),
-            settings_row(
-                "Auto-start local daemon",
-                Some("Reconnect to the last daemon on launch; restart it if missing."),
-                auto_start_toggle,
-                false,
-            )
-            .into_any_element(),
-            settings_row(
-                "Local runtime",
-                Some("Choose how the local daemon runs."),
-                div()
-                    .id("settings-daemon-launch-mode")
-                    .child(launch_mode_control),
-                false,
-            )
-            .into_any_element(),
-            settings_row(
-                "Enable Docker passthrough (unsafe)",
-                Some(if supports_container {
-                    "Allow the daemon container to access the host Docker socket."
-                } else {
-                    "Available on Linux desktop."
-                }),
-                docker_toggle,
-                false,
             )
             .into_any_element(),
             settings_row(
@@ -1125,9 +1000,6 @@ impl SettingsState {
             .gap(px(14.0))
             .child(settings_card(colors, None, settings_rows(rows)));
         if let Some(error) = self.editor_error.clone() {
-            content = content.child(settings_banner(&error, true));
-        }
-        if let Some(error) = self.daemon_error.clone() {
             content = content.child(settings_banner(&error, true));
         }
         content.into_any_element()
@@ -1207,97 +1079,22 @@ impl SettingsState {
             .into_any_element()
     }
 
-    fn render_sandboxing(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_sandboxing(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> AnyElement {
         let colors = self.colors;
-        let network_disabled = self.settings.is_none();
-        let network_options = vec![
-            LabeledOption {
-                value: "full".to_string(),
-                label: "Full outbound".to_string(),
-            },
-            LabeledOption {
-                value: "deps_plus_mcp".to_string(),
-                label: "Dependencies + MCP".to_string(),
-            },
-            LabeledOption {
-                value: "deps_only".to_string(),
-                label: "Dependencies only".to_string(),
-            },
-            LabeledOption {
-                value: "mcp_only".to_string(),
-                label: "MCP only".to_string(),
-            },
-            LabeledOption {
-                value: "none".to_string(),
-                label: "No outbound".to_string(),
-            },
-        ];
-        let network_value = match self.network_profile {
-            NetworkProfile::None => "none",
-            NetworkProfile::DepsOnly => "deps_only",
-            NetworkProfile::McpOnly => "mcp_only",
-            NetworkProfile::DepsPlusMcp => "deps_plus_mcp",
-            NetworkProfile::Full => "full",
-        };
-        let network_select = Self::ensure_select_state(
-            &mut self.network_profile_select,
-            network_options,
-            Some(network_value.to_string()),
-            super::super::state::SettingsSelectKind::NetworkProfile,
-            &mut self.input_subscriptions,
-            window,
-            cx,
-        );
-        let network_control = Select::new(&network_select)
-            .appearance(true)
-            .bg(white(0.06))
-            .border_color(white(0.08))
-            .rounded(px(8.0))
-            .h(px(30.0))
-            .px(px(10.0))
-            .text_size(px(13.0))
-            .disabled(network_disabled);
-
-        let mcp_toggle = settings_toggle(self.network_mcp_bypass, network_disabled)
-            .id("settings-network-mcp-bypass")
-            .when(!network_disabled, |this| {
-                this.on_click(cx.listener(|view, _, _window, cx| {
-                    view.set_network_mcp_bypass(!view.network_mcp_bypass, cx);
-                }))
-            });
-
-        let rows = vec![
-            settings_row(
-                "Provider control",
-                Some("Default is full capability. Harness-native controls are not yet available here."),
-                settings_pill("Full capability", PillVariant::Default, false),
-                true,
-            )
-            .into_any_element(),
-            settings_row(
-                "Network profile",
-                Some("Controls outbound network access for agent sessions."),
-                div()
-                    .id("settings-network-profile")
-                    .child(network_control),
-                false,
-            )
-            .into_any_element(),
-            settings_row(
-                "MCP proxy bypass",
-                Some("Allow MCP tool traffic to bypass the egress proxy."),
-                mcp_toggle,
-                false,
-            )
-            .into_any_element(),
-        ];
+        let rows = vec![settings_row(
+            "Provider control",
+            Some("Default is full capability. Harness-native controls are not yet available here."),
+            settings_pill("Full capability", PillVariant::Default, false),
+            true,
+        )
+        .into_any_element()];
 
         div()
             .grid()
             .gap(px(12.0))
             .child(settings_card(colors, None, settings_rows(rows)))
             .child(settings_banner(
-                "Provider control is read-only in native for now.",
+                "Sandboxing settings are read-only in native for now.",
                 false,
             ))
             .into_any_element()
@@ -1867,8 +1664,32 @@ impl SettingsState {
     }
 
     fn render_context_pack(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> AnyElement {
-        // Match the web settings page: the "ctx pack" section is currently an empty page.
-        div().into_any_element()
+        let colors = self.colors;
+        let selected_workspace = self
+            .selected_workspace
+            .and_then(|id| self.workspaces.iter().find(|ws| ws.id == id));
+        let pack_path = selected_workspace
+            .map(|ws| format!("{}/.ctx/ctx-pack", ws.root_path))
+            .unwrap_or_else(|| ".ctx/ctx-pack".to_string());
+        let mut body = div()
+            .grid()
+            .gap(px(10.0))
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .text_color(white(0.7))
+                    .child("ctx pack stores specs, skills, and prompts for this workspace."),
+            )
+            .child(settings_code_block(&pack_path));
+        if selected_workspace.is_none() {
+            body = body.child(settings_empty_compact("Select a workspace to see the exact path."));
+        }
+
+        div()
+            .grid()
+            .gap(px(14.0))
+            .child(settings_card(colors, None, body))
+            .into_any_element()
     }
 
     fn render_team_enterprise(
@@ -3649,56 +3470,5 @@ impl SettingsState {
         }
 
         content.into_any_element()
-    }
-
-    fn render_harness_subscriptions(
-        &mut self,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let colors = self.colors;
-        div()
-            .grid()
-            .gap(px(14.0))
-            .child(settings_card(
-                colors,
-                Some("Codex"),
-                settings_empty("Not implemented in native yet.", false),
-            ))
-            .into_any_element()
-    }
-
-    fn render_agent_system_prompt(
-        &mut self,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let colors = self.colors;
-        div()
-            .grid()
-            .gap(px(14.0))
-            .child(settings_card(
-                colors,
-                Some("Agent System Prompt"),
-                settings_empty("Not implemented in native yet.", false),
-            ))
-            .into_any_element()
-    }
-
-    fn render_merge_queue(
-        &mut self,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let colors = self.colors;
-        div()
-            .grid()
-            .gap(px(14.0))
-            .child(settings_card(
-                colors,
-                Some("Merge Queue"),
-                settings_empty("Not implemented in native yet.", false),
-            ))
-            .into_any_element()
     }
 }

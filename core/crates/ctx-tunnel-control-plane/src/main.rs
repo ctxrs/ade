@@ -10,7 +10,7 @@ use hmac::{Hmac, Mac};
 use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use sqlx::{postgres::PgPoolOptions, Pool, Postgres, Row};
+use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
@@ -27,7 +27,7 @@ struct Args {
 
 #[derive(Clone)]
 struct AppState {
-    db: Pool<Postgres>,
+    db: Pool<Sqlite>,
     client: reqwest::Client,
     config: ControlPlaneConfig,
     redis: Option<redis::aio::ConnectionManager>,
@@ -96,15 +96,17 @@ async fn main() -> Result<()> {
         .context("missing MOBILE_TUNNEL_MASTER_SECRET")?
         .into_bytes();
 
-    let db = PgPoolOptions::new()
+    let db = SqlitePoolOptions::new()
         .max_connections(10)
         .connect(&database_url)
         .await
-        .context("connecting to postgres")?;
-    sqlx::migrate!("./migrations")
-        .run(&db)
-        .await
-        .context("running migrations")?;
+        .context("connecting to database")?;
+    let migrator = sqlx::migrate::Migrator::new(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
+    )
+    .await
+    .context("loading migrations")?;
+    migrator.run(&db).await.context("running migrations")?;
 
     let redis = match std::env::var("CONTROL_PLANE_REDIS_URL") {
         Ok(url) if !url.trim().is_empty() => {
@@ -179,7 +181,7 @@ async fn enable_mobile_access_inner(
     sqlx::query(
         r#"INSERT INTO mobile_tunnels
            (tunnel_id, user_id, relay_base_url, public_base_url, created_at)
-           VALUES ($1, $2, $3, $4, NOW())"#,
+           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)"#,
     )
     .bind(&tunnel_id)
     .bind(&user_id)
@@ -232,8 +234,8 @@ async fn revoke_mobile_access(
 
     let result = sqlx::query(
         r#"UPDATE mobile_tunnels
-           SET disabled_at = NOW()
-           WHERE user_id = $1 AND disabled_at IS NULL"#,
+           SET disabled_at = CURRENT_TIMESTAMP
+           WHERE user_id = ? AND disabled_at IS NULL"#,
     )
     .bind(&user_id)
     .execute(&state.db)
@@ -261,7 +263,7 @@ async fn load_existing_tunnel(
     let row = sqlx::query(
         r#"SELECT tunnel_id, relay_base_url, public_base_url
            FROM mobile_tunnels
-           WHERE user_id = $1 AND disabled_at IS NULL
+           WHERE user_id = ? AND disabled_at IS NULL
            ORDER BY created_at DESC
            LIMIT 1"#,
     )

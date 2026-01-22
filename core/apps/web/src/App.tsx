@@ -15,6 +15,17 @@ import { SettingsStoreProvider } from "./state/settingsStore";
 
 export default function App() {
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    if (token) {
+      sessionStorage.setItem("ctxAuthToken", token);
+      params.delete("token");
+      const next =
+        window.location.pathname +
+        (params.toString() ? `?${params.toString()}` : "") +
+        window.location.hash;
+      window.history.replaceState({}, "", next);
+    }
     if (import.meta.env.DEV) {
       const envToken = import.meta.env.VITE_CTX_AUTH_TOKEN;
       const envDaemonUrl = import.meta.env.VITE_CTX_DAEMON_URL;

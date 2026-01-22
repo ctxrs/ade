@@ -18,7 +18,6 @@ const CHEVRON_DOWN_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width=
 const AT_SIGN_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg>"#;
 const SLASH_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 2 22"/></svg>"#;
 const MIC_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg>"#;
-const PAPERCLIP_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>"#;
 const ELLIPSIS_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>"#;
 const LAPTOP_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2z"/><path d="M20.054 15.987H3.946"/></svg>"#;
 const CONTAINER_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 7.7c0-.6-.4-1.2-.8-1.5l-6.3-3.9a1.72 1.72 0 0 0-1.7 0l-10.3 6c-.5.2-.9.8-.9 1.4v6.6c0 .5.4 1.2.8 1.5l6.3 3.9a1.72 1.72 0 0 0 1.7 0l10.3-6c.5-.3.9-1 .9-1.5Z"/><path d="M10 21.9V14L2.1 9.1"/><path d="m10 14 11.9-6.9"/><path d="M14 19.8v-8.1"/><path d="M18 17.5V9.4"/></svg>"#;
@@ -52,7 +51,6 @@ pub(crate) enum IconName {
     AtSign,
     Slash,
     Mic,
-    Paperclip,
     Ellipsis,
     Laptop,
     Container,
@@ -88,7 +86,6 @@ impl IconName {
             Self::AtSign => "icons/at-sign.svg",
             Self::Slash => "icons/slash.svg",
             Self::Mic => "icons/mic.svg",
-            Self::Paperclip => "icons/paperclip.svg",
             Self::Ellipsis => "icons/ellipsis.svg",
             Self::Laptop => "icons/laptop.svg",
             Self::Container => "icons/container.svg",
@@ -124,7 +121,6 @@ impl IconName {
             Self::AtSign => AT_SIGN_SVG,
             Self::Slash => SLASH_SVG,
             Self::Mic => MIC_SVG,
-            Self::Paperclip => PAPERCLIP_SVG,
             Self::Ellipsis => ELLIPSIS_SVG,
             Self::Laptop => LAPTOP_SVG,
             Self::Container => CONTAINER_SVG,
@@ -171,7 +167,6 @@ impl AssetSource for IconAssets {
             "icons/at-sign.svg" => IconName::AtSign.svg(),
             "icons/slash.svg" => IconName::Slash.svg(),
             "icons/mic.svg" => IconName::Mic.svg(),
-            "icons/paperclip.svg" => IconName::Paperclip.svg(),
             "icons/ellipsis.svg" => IconName::Ellipsis.svg(),
             "icons/laptop.svg" => IconName::Laptop.svg(),
             "icons/container.svg" => IconName::Container.svg(),
@@ -215,7 +210,6 @@ impl AssetSource for IconAssets {
                 SharedString::from("at-sign.svg"),
                 SharedString::from("slash.svg"),
                 SharedString::from("mic.svg"),
-                SharedString::from("paperclip.svg"),
                 SharedString::from("ellipsis.svg"),
                 SharedString::from("laptop.svg"),
                 SharedString::from("container.svg"),

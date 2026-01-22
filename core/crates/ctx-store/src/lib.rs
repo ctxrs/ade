@@ -1,7 +1,7 @@
 pub mod manager;
 pub mod store;
 
-pub use manager::StoreManager;
+pub use manager::{StoreManager, StoreManagerConfig};
 pub use store::{Store, WorktreeBootstrapResultUpdate};
 
 #[cfg(feature = "fault_injection")]
@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(summaries.len(), 1);
         let summary = &summaries[0];
         assert_eq!(summary.primary_session.session.id, primary.id);
-        assert_eq!(summary.primary_session_head.session.id, primary.id);
+        assert!(summary.primary_session_head.is_none());
         assert_eq!(summary.sessions.len(), 1);
         assert_eq!(summary.sessions[0].session.id, subagent.id);
     }

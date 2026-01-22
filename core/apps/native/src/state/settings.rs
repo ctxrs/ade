@@ -24,9 +24,9 @@ use super::workspace::WorkspaceItem;
 use ctx_client::{
     Client, CreateWorkspaceAttachmentRequest, DeleteWorkspaceAttachmentRequest, DictationProvider,
     EnableMobileAccessResponse, InstallInfo, InstallProgressEvent, InstallStateKind,
-    MobileAccessStatus, NetworkProfile, ProviderOptions, PublicResourceGovernanceLimits,
+    MobileAccessStatus, ProviderOptions, PublicResourceGovernanceLimits,
     PublicResourceGovernanceStatus, PublicSettings, ResourceGovernanceMode,
-    ResourceUtilizationSnapshot, UpdateNetworkSettingsRequest,
+ResourceUtilizationSnapshot,
     UpdateDictationSettingsRequest, UpdateLiveKitDictationSettingsRequest,
     UpdateResourceGovernanceSettingsRequest, UpdateSettingsRequest,
     UpdateTelemetrySettingsRequest, UpdateTitleGenerationSettingsRequest,
@@ -62,76 +62,6 @@ impl Default for DesktopEditorSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum DesktopDaemonLaunchMode {
-    Host,
-    Container,
-}
-
-impl DesktopDaemonLaunchMode {
-    pub(crate) fn as_str(&self) -> &'static str {
-        match self {
-            DesktopDaemonLaunchMode::Host => "host",
-            DesktopDaemonLaunchMode::Container => "container",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum DesktopLastConnection {
-    Local,
-    Ssh {
-        host: String,
-        #[serde(default)]
-        user: Option<String>,
-        remote_port: u16,
-        #[serde(default)]
-        start_remote: bool,
-        #[serde(default)]
-        remote_data_dir: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DesktopDaemonSettings {
-    #[serde(default = "default_daemon_auto_start")]
-    auto_start: bool,
-    #[serde(default)]
-    launch_mode: Option<DesktopDaemonLaunchMode>,
-    #[serde(default)]
-    docker_passthrough: bool,
-    #[serde(default)]
-    last_connection: Option<DesktopLastConnection>,
-    #[serde(default)]
-    last_workspace_id: Option<String>,
-}
-
-impl Default for DesktopDaemonSettings {
-    fn default() -> Self {
-        Self {
-            auto_start: default_daemon_auto_start(),
-            launch_mode: None,
-            docker_passthrough: false,
-            last_connection: None,
-            last_workspace_id: None,
-        }
-    }
-}
-
-fn default_daemon_auto_start() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct DesktopSettings {
-    #[serde(default)]
-    editor: DesktopEditorSettings,
-    #[serde(default)]
-    daemon: DesktopDaemonSettings,
-}
-
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettingsSectionGroup {
@@ -143,13 +73,10 @@ pub(crate) enum SettingsSectionGroup {
 pub(crate) enum SettingsSection {
     General,
     AgentHarnesses,
-    HarnessSubscriptions,
     ModelsRouting,
     Sandboxing,
     WorktreeBootstrap,
-    AgentSystemPrompt,
     WorkspaceAttachments,
-    MergeQueue,
     ContextPack,
     ResourceGovernance,
     MobileAccess,
@@ -166,13 +93,10 @@ impl SettingsSection {
         match self {
             SettingsSection::General => "General",
             SettingsSection::AgentHarnesses => "Agent Harnesses",
-            SettingsSection::HarnessSubscriptions => "Harness Subscriptions",
             SettingsSection::ModelsRouting => "Models & Routing",
             SettingsSection::Sandboxing => "Sandboxing",
             SettingsSection::WorktreeBootstrap => "Worktree Bootstrap",
-            SettingsSection::AgentSystemPrompt => "Agent System Prompt",
             SettingsSection::WorkspaceAttachments => "Workspace Attachments",
-            SettingsSection::MergeQueue => "Merge Queue",
             SettingsSection::ContextPack => "ctx pack",
             SettingsSection::ResourceGovernance => "Resource Limits",
             SettingsSection::MobileAccess => "Mobile Access",
@@ -200,13 +124,10 @@ impl SettingsSection {
 pub(crate) const SETTINGS_SECTIONS: &[SettingsSection] = &[
     SettingsSection::General,
     SettingsSection::AgentHarnesses,
-    SettingsSection::HarnessSubscriptions,
     SettingsSection::ModelsRouting,
     SettingsSection::Sandboxing,
     SettingsSection::WorktreeBootstrap,
-    SettingsSection::AgentSystemPrompt,
     SettingsSection::WorkspaceAttachments,
-    SettingsSection::MergeQueue,
     SettingsSection::ContextPack,
     SettingsSection::ResourceGovernance,
     SettingsSection::MobileAccess,
@@ -263,10 +184,8 @@ pub(crate) enum SettingsInputKind {
 #[derive(Clone, Copy)]
 pub(crate) enum SettingsSelectKind {
     EditorTarget,
-    DaemonLaunchMode,
     Workspace,
     ResourceMode,
-    NetworkProfile,
     DictationModel,
 }
 
@@ -309,16 +228,6 @@ pub(crate) struct SettingsState {
     pub(crate) editor_error: Option<String>,
     pub(crate) editor_hydrated: bool,
     pub(crate) editor_save_seq: u64,
-    pub(crate) daemon_auto_start: bool,
-    pub(crate) daemon_launch_mode: Option<DesktopDaemonLaunchMode>,
-    pub(crate) daemon_docker_passthrough: bool,
-    pub(crate) daemon_last_connection: Option<DesktopLastConnection>,
-    pub(crate) daemon_last_workspace_id: Option<String>,
-    pub(crate) daemon_loaded: bool,
-    pub(crate) daemon_saving: bool,
-    pub(crate) daemon_error: Option<String>,
-    pub(crate) daemon_hydrated: bool,
-    pub(crate) daemon_save_seq: u64,
     pub(crate) attachments: Vec<WorkspaceAttachment>,
     pub(crate) attachments_loading: bool,
     pub(crate) attachments_error: Option<String>,
@@ -363,14 +272,10 @@ pub(crate) struct SettingsState {
     pub(crate) resource_memory_high_gb: String,
     pub(crate) resource_memory_max_gb: String,
     pub(crate) resource_save_seq: u64,
-    pub(crate) network_profile: NetworkProfile,
-    pub(crate) network_mcp_bypass: bool,
-    pub(crate) network_save_seq: u64,
     pub(crate) inputs_dirty: bool,
     pub(crate) dictation_hydrated: bool,
     pub(crate) title_hydrated: bool,
     pub(crate) resource_hydrated: bool,
-    pub(crate) network_hydrated: bool,
     pub(crate) billing_email: String,
     pub(crate) billing_password: String,
     pub(crate) search_input: Option<Entity<InputState>>,
@@ -394,10 +299,8 @@ pub(crate) struct SettingsState {
     pub(crate) billing_email_input: Option<Entity<InputState>>,
     pub(crate) billing_password_input: Option<Entity<InputState>>,
     pub(crate) editor_target_select: Option<Entity<SelectState<SearchableVec<LabeledOption>>>>,
-    pub(crate) daemon_launch_mode_select: Option<Entity<SelectState<SearchableVec<LabeledOption>>>>,
     pub(crate) workspace_select: Option<Entity<SelectState<SearchableVec<LabeledOption>>>>,
     pub(crate) resource_mode_select: Option<Entity<SelectState<SearchableVec<LabeledOption>>>>,
-    pub(crate) network_profile_select: Option<Entity<SelectState<SearchableVec<LabeledOption>>>>,
     pub(crate) dictation_model_select: Option<Entity<SelectState<SearchableVec<LabeledOption>>>>,
     pub(crate) input_subscriptions: Vec<Subscription>,
 }
@@ -426,7 +329,7 @@ impl SettingsState {
             auth_busy: HashMap::new(),
             verify_busy: HashMap::new(),
             opts_busy: HashMap::new(),
-            active_section: SettingsSection::ContextPack,
+            active_section: SettingsSection::General,
             saving: false,
             save_error: None,
             save_seq: 0,
@@ -442,16 +345,6 @@ impl SettingsState {
             editor_error: None,
             editor_hydrated: false,
             editor_save_seq: 0,
-            daemon_auto_start: default_daemon_auto_start(),
-            daemon_launch_mode: None,
-            daemon_docker_passthrough: false,
-            daemon_last_connection: None,
-            daemon_last_workspace_id: None,
-            daemon_loaded: false,
-            daemon_saving: false,
-            daemon_error: None,
-            daemon_hydrated: false,
-            daemon_save_seq: 0,
             attachments: Vec::new(),
             attachments_loading: false,
             attachments_error: None,
@@ -496,14 +389,10 @@ impl SettingsState {
             resource_memory_high_gb: String::new(),
             resource_memory_max_gb: String::new(),
             resource_save_seq: 0,
-            network_profile: NetworkProfile::Full,
-            network_mcp_bypass: true,
-            network_save_seq: 0,
             inputs_dirty: false,
             dictation_hydrated: false,
             title_hydrated: false,
             resource_hydrated: false,
-            network_hydrated: false,
             billing_email: String::new(),
             billing_password: String::new(),
             search_input: None,
@@ -527,10 +416,8 @@ impl SettingsState {
             billing_email_input: None,
             billing_password_input: None,
             editor_target_select: None,
-            daemon_launch_mode_select: None,
             workspace_select: None,
             resource_mode_select: None,
-            network_profile_select: None,
             dictation_model_select: None,
             input_subscriptions: Vec::new(),
         }
@@ -540,7 +427,7 @@ impl SettingsState {
         self.refresh_workspaces(cx);
         self.refresh_providers(cx);
         self.refresh_settings(cx);
-        self.refresh_desktop_settings(cx);
+        self.refresh_editor_settings(cx);
         self.refresh_workspace_attachments(cx);
         self.refresh_resource_utilization(cx);
         self.refresh_mobile_access_status(cx);
@@ -666,25 +553,21 @@ impl SettingsState {
         .detach();
     }
 
-    pub(crate) fn refresh_desktop_settings(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_editor_settings(&mut self, cx: &mut Context<Self>) {
         self.editor_loaded = false;
-        self.daemon_loaded = false;
         self.editor_error = None;
-        self.daemon_error = None;
         cx.notify();
 
-        let task = Tokio::spawn_result(cx, async move { load_desktop_settings().await });
+        let task = Tokio::spawn_result(cx, async move { load_editor_settings().await });
 
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let result = task.await;
             this.update(cx, |view, cx| {
                 match result {
-                    Ok(settings) => view.apply_desktop_settings(settings),
+                    Ok(settings) => view.apply_editor_settings(settings),
                     Err(err) => {
                         view.editor_loaded = true;
-                        view.daemon_loaded = true;
                         view.editor_error = Some(err.to_string());
-                        view.daemon_error = Some(err.to_string());
                     }
                 }
                 cx.notify();
@@ -694,24 +577,12 @@ impl SettingsState {
         .detach();
     }
 
-    fn apply_desktop_settings(&mut self, settings: DesktopSettings) {
-        self.editor_target = settings.editor.target;
-        self.editor_custom_command = settings.editor.custom_command.unwrap_or_default();
-        self.editor_remote_authority = settings.editor.remote_authority.unwrap_or_default();
+    fn apply_editor_settings(&mut self, settings: DesktopEditorSettings) {
+        self.editor_target = settings.target;
+        self.editor_custom_command = settings.custom_command.unwrap_or_default();
+        self.editor_remote_authority = settings.remote_authority.unwrap_or_default();
         self.editor_loaded = true;
         self.editor_hydrated = false;
-        self.daemon_auto_start = settings.daemon.auto_start;
-        self.daemon_launch_mode = settings.daemon.launch_mode;
-        if !cfg!(target_os = "linux")
-            && matches!(self.daemon_launch_mode, Some(DesktopDaemonLaunchMode::Container))
-        {
-            self.daemon_launch_mode = None;
-        }
-        self.daemon_docker_passthrough = settings.daemon.docker_passthrough;
-        self.daemon_last_connection = settings.daemon.last_connection;
-        self.daemon_last_workspace_id = settings.daemon.last_workspace_id;
-        self.daemon_loaded = true;
-        self.daemon_hydrated = false;
         self.inputs_dirty = true;
     }
 
@@ -739,23 +610,6 @@ impl SettingsState {
         }
     }
 
-    fn build_daemon_settings(&self) -> DesktopDaemonSettings {
-        DesktopDaemonSettings {
-            auto_start: self.daemon_auto_start,
-            launch_mode: self.daemon_launch_mode,
-            docker_passthrough: self.daemon_docker_passthrough,
-            last_connection: self.daemon_last_connection.clone(),
-            last_workspace_id: self.daemon_last_workspace_id.clone(),
-        }
-    }
-
-    fn build_desktop_settings(&self) -> DesktopSettings {
-        DesktopSettings {
-            editor: self.build_editor_settings(),
-            daemon: self.build_daemon_settings(),
-        }
-    }
-
     fn schedule_editor_save(&mut self, cx: &mut Context<Self>) {
         if !self.editor_loaded {
             return;
@@ -767,83 +621,35 @@ impl SettingsState {
 
         self.editor_save_seq += 1;
         let seq = self.editor_save_seq;
+        let payload = self.build_editor_settings();
 
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            cx.background_executor()
-                .timer(Duration::from_millis(350))
-                .await;
+            tokio::time::sleep(Duration::from_millis(350)).await;
 
-            let payload = this
+            let should_save = this
                 .update(cx, |view, cx| {
                     if view.editor_save_seq != seq {
-                        return None;
+                        return false;
                     }
                     view.editor_saving = true;
                     view.editor_error = None;
                     cx.notify();
-                    Some(view.build_desktop_settings())
+                    true
                 })
-                .unwrap_or(None);
-            let Some(payload) = payload else {
+                .unwrap_or(false);
+            if !should_save {
                 return;
-            };
+            }
 
-            let result = save_desktop_settings(&payload).await;
+            let result = save_editor_settings(&payload).await;
             this.update(cx, |view, cx| {
                 if view.editor_save_seq != seq {
                     return;
                 }
                 view.editor_saving = false;
                 match result {
-                    Ok(saved) => view.apply_desktop_settings(saved),
+                    Ok(saved) => view.apply_editor_settings(saved),
                     Err(err) => view.editor_error = Some(err.to_string()),
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn schedule_daemon_save(&mut self, cx: &mut Context<Self>) {
-        if !self.daemon_loaded {
-            return;
-        }
-        if !self.daemon_hydrated {
-            self.daemon_hydrated = true;
-            return;
-        }
-
-        self.daemon_save_seq += 1;
-        let seq = self.daemon_save_seq;
-
-        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-
-            let payload = this
-                .update(cx, |view, cx| {
-                    if view.daemon_save_seq != seq {
-                        return None;
-                    }
-                    view.daemon_saving = true;
-                    view.daemon_error = None;
-                    cx.notify();
-                    Some(view.build_desktop_settings())
-                })
-                .unwrap_or(None);
-            let Some(payload) = payload else {
-                return;
-            };
-
-            let result = save_desktop_settings(&payload).await;
-            this.update(cx, |view, cx| {
-                if view.daemon_save_seq != seq {
-                    return;
-                }
-                view.daemon_saving = false;
-                match result {
-                    Ok(saved) => view.apply_desktop_settings(saved),
-                    Err(err) => view.daemon_error = Some(err.to_string()),
                 }
                 cx.notify();
             })
@@ -862,9 +668,7 @@ impl SettingsState {
         let payload = self.telemetry_payload();
 
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            cx.background_executor()
-                .timer(Duration::from_millis(250))
-                .await;
+            tokio::time::sleep(Duration::from_millis(250)).await;
             this.update(cx, |view, cx| {
                 if view.telemetry_save_seq != seq {
                     return;
@@ -877,44 +681,6 @@ impl SettingsState {
                         resource_governance: None,
                         provider_guard: None,
                         subagents: None,
-                        compaction: None,
-                        network: None,
-                        port_forwarding: None,
-                    },
-                    cx,
-                );
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn schedule_network_save(&mut self, cx: &mut Context<Self>) {
-        if !self.network_hydrated {
-            self.network_hydrated = true;
-            return;
-        }
-        self.network_save_seq += 1;
-        let seq = self.network_save_seq;
-        let payload = self.network_payload();
-
-        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            this.update(cx, |view, cx| {
-                if view.network_save_seq != seq {
-                    return;
-                }
-                view.save_settings_patch(
-                    UpdateSettingsRequest {
-                        telemetry: None,
-                        dictation: None,
-                        title_generation: None,
-                        resource_governance: None,
-                        provider_guard: None,
-                        subagents: None,
-                        compaction: None,
-                        network: Some(payload),
-                        port_forwarding: None,
                     },
                     cx,
                 );
@@ -937,9 +703,7 @@ impl SettingsState {
         let payload = self.dictation_payload();
 
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            cx.background_executor()
-                .timer(Duration::from_millis(450))
-                .await;
+            tokio::time::sleep(Duration::from_millis(450)).await;
             this.update(cx, |view, cx| {
                 if view.dictation_save_seq != seq {
                     return;
@@ -952,9 +716,6 @@ impl SettingsState {
                         resource_governance: None,
                         provider_guard: None,
                         subagents: None,
-                        compaction: None,
-                        network: None,
-                        port_forwarding: None,
                     },
                     cx,
                 );
@@ -974,9 +735,7 @@ impl SettingsState {
         let payload = self.title_payload();
 
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            cx.background_executor()
-                .timer(Duration::from_millis(450))
-                .await;
+            tokio::time::sleep(Duration::from_millis(450)).await;
             this.update(cx, |view, cx| {
                 if view.title_save_seq != seq {
                     return;
@@ -989,9 +748,6 @@ impl SettingsState {
                         resource_governance: None,
                         provider_guard: None,
                         subagents: None,
-                        compaction: None,
-                        network: None,
-                        port_forwarding: None,
                     },
                     cx,
                 );
@@ -1014,9 +770,7 @@ impl SettingsState {
         let payload = self.resource_payload();
 
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            cx.background_executor()
-                .timer(Duration::from_millis(450))
-                .await;
+            tokio::time::sleep(Duration::from_millis(450)).await;
             this.update(cx, |view, cx| {
                 if view.resource_save_seq != seq {
                     return;
@@ -1029,9 +783,6 @@ impl SettingsState {
                         resource_governance: Some(payload),
                         provider_guard: None,
                         subagents: None,
-                        compaction: None,
-                        network: None,
-                        port_forwarding: None,
                     },
                     cx,
                 );
@@ -1045,13 +796,6 @@ impl SettingsState {
         UpdateTelemetrySettingsRequest {
             enabled: self.telemetry_enabled,
             endpoint: self.telemetry_endpoint.trim().to_string(),
-        }
-    }
-
-    fn network_payload(&self) -> UpdateNetworkSettingsRequest {
-        UpdateNetworkSettingsRequest {
-            profile: self.network_profile.clone(),
-            mcp_bypass: self.network_mcp_bypass,
         }
     }
 
@@ -1151,39 +895,12 @@ impl SettingsState {
         true
     }
 
-    pub(crate) fn set_daemon_auto_start(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        if self.daemon_auto_start == enabled {
-            return;
-        }
-        self.daemon_auto_start = enabled;
-        self.schedule_daemon_save(cx);
-        cx.notify();
-    }
-
-    pub(crate) fn set_daemon_docker_passthrough(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        if self.daemon_docker_passthrough == enabled {
-            return;
-        }
-        self.daemon_docker_passthrough = enabled;
-        self.schedule_daemon_save(cx);
-        cx.notify();
-    }
-
     pub(crate) fn set_telemetry_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         if self.telemetry_enabled == enabled {
             return;
         }
         self.telemetry_enabled = enabled;
         self.schedule_telemetry_save(cx);
-        cx.notify();
-    }
-
-    pub(crate) fn set_network_mcp_bypass(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        if self.network_mcp_bypass == enabled {
-            return;
-        }
-        self.network_mcp_bypass = enabled;
-        self.schedule_network_save(cx);
         cx.notify();
     }
 
@@ -1226,9 +943,6 @@ impl SettingsState {
                 resource_governance: Some(payload),
                 provider_guard: None,
                 subagents: None,
-                compaction: None,
-                network: None,
-                port_forwarding: None,
             },
             cx,
         );
@@ -1334,21 +1048,12 @@ impl SettingsState {
             self.resource_status = None;
         }
 
-        if let Some(network) = settings.network.as_ref() {
-            self.network_profile = network.profile.clone();
-            self.network_mcp_bypass = network.mcp_bypass;
-        } else {
-            self.network_profile = NetworkProfile::Full;
-            self.network_mcp_bypass = true;
-        }
-
         self.settings = Some(settings);
         self.inputs_dirty = true;
         self.telemetry_hydrated = false;
         self.dictation_hydrated = false;
         self.title_hydrated = false;
         self.resource_hydrated = false;
-        self.network_hydrated = false;
     }
 
     pub(crate) fn sync_input_values(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1456,12 +1161,8 @@ impl SettingsState {
         self.dictation_hydrated = true;
         self.title_hydrated = true;
         self.resource_hydrated = true;
-        self.network_hydrated = true;
         if self.editor_loaded {
             self.editor_hydrated = true;
-        }
-        if self.daemon_loaded {
-            self.daemon_hydrated = true;
         }
     }
 
@@ -1472,147 +1173,142 @@ impl SettingsState {
         event: &InputEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            InputEvent::Change => {
-                let value = input.read(cx).value().to_string();
-                match kind {
-                    SettingsInputKind::Search => {}
-                    SettingsInputKind::EditorCustom => {
-                        if self.editor_custom_command == value {
-                            return;
-                        }
-                        self.editor_custom_command = value;
-                        self.schedule_editor_save(cx);
-                    }
-                    SettingsInputKind::EditorRemote => {
-                        if self.editor_remote_authority == value {
-                            return;
-                        }
-                        self.editor_remote_authority = value;
-                        self.schedule_editor_save(cx);
-                    }
-                    SettingsInputKind::AttachmentSource => {
-                        if self.attachment_source == value {
-                            return;
-                        }
-                        self.attachment_source = value;
-                    }
-                    SettingsInputKind::AttachmentName => {
-                        if self.attachment_name == value {
-                            return;
-                        }
-                        self.attachment_name = value;
-                    }
-                    SettingsInputKind::AttachmentRevision => {
-                        if self.attachment_revision == value {
-                            return;
-                        }
-                        self.attachment_revision = value;
-                    }
-                    SettingsInputKind::DocsSource => {
-                        if self.docs_attachment_source == value {
-                            return;
-                        }
-                        self.docs_attachment_source = value;
-                    }
-                    SettingsInputKind::DocsName => {
-                        if self.docs_attachment_name == value {
-                            return;
-                        }
-                        self.docs_attachment_name = value;
-                    }
-                    SettingsInputKind::ResourceCpu => {
-                        if self.resource_cpu_quota_pct == value {
-                            return;
-                        }
-                        self.resource_cpu_quota_pct = value;
-                        self.schedule_resource_save(cx);
-                    }
-                    SettingsInputKind::ResourceMemHigh => {
-                        if self.resource_memory_high_gb == value {
-                            return;
-                        }
-                        self.resource_memory_high_gb = value;
-                        self.schedule_resource_save(cx);
-                    }
-                    SettingsInputKind::ResourceMemMax => {
-                        if self.resource_memory_max_gb == value {
-                            return;
-                        }
-                        self.resource_memory_max_gb = value;
-                        self.schedule_resource_save(cx);
-                    }
-                    SettingsInputKind::DictationBaseUrl => {
-                        if self.dictation_base_url == value {
-                            return;
-                        }
-                        self.dictation_base_url = value;
-                        self.schedule_dictation_save(cx);
-                    }
-                    SettingsInputKind::DictationApiKey => {
-                        if self.dictation_api_key == value {
-                            return;
-                        }
-                        self.dictation_api_key = value;
-                        self.schedule_dictation_save(cx);
-                    }
-                    SettingsInputKind::DictationApiSecret => {
-                        if self.dictation_api_secret == value {
-                            return;
-                        }
-                        self.dictation_api_secret = value;
-                        self.schedule_dictation_save(cx);
-                    }
-                    SettingsInputKind::DictationLanguage => {
-                        if self.dictation_language == value {
-                            return;
-                        }
-                        self.dictation_language = value;
-                        self.schedule_dictation_save(cx);
-                    }
-                    SettingsInputKind::TitleBaseUrl => {
-                        if self.title_base_url == value {
-                            return;
-                        }
-                        self.title_base_url = value;
-                        self.schedule_title_save(cx);
-                    }
-                    SettingsInputKind::TitleApiKey => {
-                        if self.title_api_key == value {
-                            return;
-                        }
-                        self.title_api_key = value;
-                        self.schedule_title_save(cx);
-                    }
-                    SettingsInputKind::TitleModel => {
-                        if self.title_model == value {
-                            return;
-                        }
-                        self.title_model = value;
-                        self.schedule_title_save(cx);
-                    }
-                    SettingsInputKind::BillingEmail => {
-                        if self.billing_email == value {
-                            return;
-                        }
-                        self.billing_email = value;
-                    }
-                    SettingsInputKind::BillingPassword => {
-                        if self.billing_password == value {
-                            return;
-                        }
-                        self.billing_password = value;
-                    }
-                }
+        if !matches!(event, InputEvent::Change) {
+            return;
+        }
+        let value = input.read(cx).value().to_string();
+        match kind {
+            SettingsInputKind::Search => {
                 cx.notify();
             }
-            InputEvent::Focus | InputEvent::Blur => {
-                if matches!(kind, SettingsInputKind::Search) {
-                    cx.notify();
+            SettingsInputKind::EditorCustom => {
+                if self.editor_custom_command == value {
+                    return;
                 }
+                self.editor_custom_command = value;
+                self.schedule_editor_save(cx);
             }
-            InputEvent::PressEnter { .. } => {}
+            SettingsInputKind::EditorRemote => {
+                if self.editor_remote_authority == value {
+                    return;
+                }
+                self.editor_remote_authority = value;
+                self.schedule_editor_save(cx);
+            }
+            SettingsInputKind::AttachmentSource => {
+                if self.attachment_source == value {
+                    return;
+                }
+                self.attachment_source = value;
+            }
+            SettingsInputKind::AttachmentName => {
+                if self.attachment_name == value {
+                    return;
+                }
+                self.attachment_name = value;
+            }
+            SettingsInputKind::AttachmentRevision => {
+                if self.attachment_revision == value {
+                    return;
+                }
+                self.attachment_revision = value;
+            }
+            SettingsInputKind::DocsSource => {
+                if self.docs_attachment_source == value {
+                    return;
+                }
+                self.docs_attachment_source = value;
+            }
+            SettingsInputKind::DocsName => {
+                if self.docs_attachment_name == value {
+                    return;
+                }
+                self.docs_attachment_name = value;
+            }
+            SettingsInputKind::ResourceCpu => {
+                if self.resource_cpu_quota_pct == value {
+                    return;
+                }
+                self.resource_cpu_quota_pct = value;
+                self.schedule_resource_save(cx);
+            }
+            SettingsInputKind::ResourceMemHigh => {
+                if self.resource_memory_high_gb == value {
+                    return;
+                }
+                self.resource_memory_high_gb = value;
+                self.schedule_resource_save(cx);
+            }
+            SettingsInputKind::ResourceMemMax => {
+                if self.resource_memory_max_gb == value {
+                    return;
+                }
+                self.resource_memory_max_gb = value;
+                self.schedule_resource_save(cx);
+            }
+            SettingsInputKind::DictationBaseUrl => {
+                if self.dictation_base_url == value {
+                    return;
+                }
+                self.dictation_base_url = value;
+                self.schedule_dictation_save(cx);
+            }
+            SettingsInputKind::DictationApiKey => {
+                if self.dictation_api_key == value {
+                    return;
+                }
+                self.dictation_api_key = value;
+                self.schedule_dictation_save(cx);
+            }
+            SettingsInputKind::DictationApiSecret => {
+                if self.dictation_api_secret == value {
+                    return;
+                }
+                self.dictation_api_secret = value;
+                self.schedule_dictation_save(cx);
+            }
+            SettingsInputKind::DictationLanguage => {
+                if self.dictation_language == value {
+                    return;
+                }
+                self.dictation_language = value;
+                self.schedule_dictation_save(cx);
+            }
+            SettingsInputKind::TitleBaseUrl => {
+                if self.title_base_url == value {
+                    return;
+                }
+                self.title_base_url = value;
+                self.schedule_title_save(cx);
+            }
+            SettingsInputKind::TitleApiKey => {
+                if self.title_api_key == value {
+                    return;
+                }
+                self.title_api_key = value;
+                self.schedule_title_save(cx);
+            }
+            SettingsInputKind::TitleModel => {
+                if self.title_model == value {
+                    return;
+                }
+                self.title_model = value;
+                self.schedule_title_save(cx);
+            }
+            SettingsInputKind::BillingEmail => {
+                if self.billing_email == value {
+                    return;
+                }
+                self.billing_email = value;
+            }
+            SettingsInputKind::BillingPassword => {
+                if self.billing_password == value {
+                    return;
+                }
+                self.billing_password = value;
+            }
         }
+        cx.notify();
     }
 
     fn handle_select_event(
@@ -1633,18 +1329,6 @@ impl SettingsState {
                 self.editor_target = value.clone();
                 self.schedule_editor_save(cx);
             }
-            SettingsSelectKind::DaemonLaunchMode => {
-                let mode = match value.as_str() {
-                    "host" => Some(DesktopDaemonLaunchMode::Host),
-                    "container" => Some(DesktopDaemonLaunchMode::Container),
-                    _ => None,
-                };
-                if self.daemon_launch_mode == mode {
-                    return;
-                }
-                self.daemon_launch_mode = mode;
-                self.schedule_daemon_save(cx);
-            }
             SettingsSelectKind::Workspace => {
                 self.set_selected_workspace_by_value(value, cx);
             }
@@ -1658,20 +1342,6 @@ impl SettingsState {
                 }
                 self.resource_mode = mode;
                 self.schedule_resource_save(cx);
-            }
-            SettingsSelectKind::NetworkProfile => {
-                let profile = match value.as_str() {
-                    "none" => NetworkProfile::None,
-                    "deps_only" => NetworkProfile::DepsOnly,
-                    "mcp_only" => NetworkProfile::McpOnly,
-                    "deps_plus_mcp" => NetworkProfile::DepsPlusMcp,
-                    _ => NetworkProfile::Full,
-                };
-                if self.network_profile == profile {
-                    return;
-                }
-                self.network_profile = profile;
-                self.schedule_network_save(cx);
             }
             SettingsSelectKind::DictationModel => {
                 if self.dictation_model == *value {
@@ -1708,20 +1378,6 @@ impl SettingsState {
         input_subscriptions.push(subscription);
         *slot = Some(input.clone());
         input
-    }
-
-    #[cfg(feature = "automation")]
-    pub(crate) fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let search_state = Self::ensure_input_state(
-            &mut self.search_input,
-            "Search settings ⌘F",
-            SettingsInputKind::Search,
-            &mut self.input_subscriptions,
-            window,
-            cx,
-        );
-        search_state.update(cx, |state, cx| state.focus(window, cx));
-        cx.notify();
     }
 
     pub(crate) fn ensure_select_state(
@@ -2076,9 +1732,7 @@ impl SettingsState {
                     }
                 }
 
-                cx.background_executor()
-                    .timer(Duration::from_millis(900))
-                    .await;
+                tokio::time::sleep(Duration::from_millis(900)).await;
             }
         })
         .detach();
@@ -2157,9 +1811,7 @@ impl SettingsState {
 
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(3000))
-                    .await;
+                tokio::time::sleep(Duration::from_millis(3000)).await;
                 let keep = this
                     .update(cx, |view, cx| {
                         if view.resource_poll_token != token
@@ -2606,38 +2258,26 @@ impl SettingsState {
 
 }
 
-async fn load_desktop_settings() -> Result<DesktopSettings> {
-    let path = desktop_settings_path()?;
+async fn load_editor_settings() -> Result<DesktopEditorSettings> {
+    let path = editor_settings_path()?;
     let data = match fs::read_to_string(&path).await {
         Ok(data) => data,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(DesktopSettings::default())
+            return Ok(DesktopEditorSettings::default())
         }
         Err(err) => {
             return Err(err).with_context(|| {
-                format!("reading desktop settings {}", path.display())
+                format!("reading editor settings {}", path.display())
             })
         }
     };
 
-    let parsed = match serde_json::from_str::<serde_json::Value>(&data) {
-        Ok(value) => value,
-        Err(_) => return Ok(DesktopSettings::default()),
-    };
-    let settings = if parsed.get("editor").is_some() || parsed.get("daemon").is_some() {
-        serde_json::from_value::<DesktopSettings>(parsed).unwrap_or_default()
-    } else {
-        let editor = serde_json::from_value::<DesktopEditorSettings>(parsed).unwrap_or_default();
-        DesktopSettings {
-            editor,
-            daemon: DesktopDaemonSettings::default(),
-        }
-    };
-    Ok(settings)
+    let parsed = serde_json::from_str::<DesktopEditorSettings>(&data).unwrap_or_default();
+    Ok(parsed)
 }
 
-async fn save_desktop_settings(settings: &DesktopSettings) -> Result<DesktopSettings> {
-    let path = desktop_settings_path()?;
+async fn save_editor_settings(settings: &DesktopEditorSettings) -> Result<DesktopEditorSettings> {
+    let path = editor_settings_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).await.ok();
     }
@@ -2648,7 +2288,7 @@ async fn save_desktop_settings(settings: &DesktopSettings) -> Result<DesktopSett
     Ok(settings.clone())
 }
 
-fn desktop_settings_path() -> Result<PathBuf> {
+fn editor_settings_path() -> Result<PathBuf> {
     let dirs = ProjectDirs::from("rs", "ctx", "ctx").context("resolving project dirs")?;
     Ok(dirs.data_dir().join("desktop-settings.json"))
 }

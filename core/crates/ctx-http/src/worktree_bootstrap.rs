@@ -623,8 +623,15 @@ async fn emit_failure_notice(
     workspace_id: ctx_core::ids::WorkspaceId,
     notice: WorktreeBootstrapNotice,
 ) {
+    let snapshot_rev = match state.store_for_workspace(workspace_id).await {
+        Ok(store) => store
+            .bump_workspace_active_snapshot_rev(workspace_id)
+            .await
+            .unwrap_or(0),
+        Err(_) => 0,
+    };
     state
         .workspace_active_snapshot
-        .publish_worktree_bootstrap(workspace_id, notice)
+        .publish_worktree_bootstrap(workspace_id, snapshot_rev, notice)
         .await;
 }

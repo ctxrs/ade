@@ -1,4 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+use anyhow::{anyhow, Context as _, Result};
 
 use gpui::{AppContext as _, AsyncApp, ClickEvent, Context, WeakEntity, Window};
 use gpui_tokio::Tokio;
@@ -6,7 +8,8 @@ use gpui_tokio::Tokio;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
     MessageRole, SessionHeadSnapshot, SessionSnapshot, SessionSnapshotSummary, Task,
-    WorkspaceActiveSnapshot, WorkspaceActiveTaskSummary, WorkspaceTaskSummary,
+    WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, WorkspaceActiveTaskSummary,
+    WorkspaceTaskSummary,
 };
 use ctx_providers::adapters::ProviderStatus;
 
@@ -14,6 +17,7 @@ use super::{
     AnchorRect, ArchiveConfirmState, ArtifactPreviewState, RightPaneMode, ShellView, StreamStatus,
     TaskArchiveAction, TaskMenuState,
 };
+use super::ats_cache::CachedSessionHead;
 use super::session::SessionThreadCache;
 use super::super::models::{
     session_info_from_summary, MessageItem,
@@ -39,6 +43,7 @@ struct InitialLoadResult {
 
 struct WorkspaceLoadResult {
     active_snapshot: WorkspaceActiveSnapshot,
+    active_heads: Option<WorkspaceActiveHeadBatch>,
 }
 
 pub(crate) enum DataLoadState {
@@ -117,7 +122,7 @@ impl ShellView {
         self.open_workspace_tab(workspace.id, cx);
     }
 
-    pub(crate) fn create_workspace(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn create_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root_path = self
             .workspace_root_input
             .read(cx)
@@ -125,23 +130,38 @@ impl ShellView {
             .trim()
             .to_string();
         if root_path.is_empty() {
+            self.data_state = DataLoadState::Error("Workspace root path is required.".to_string());
+            cx.notify();
             return;
         }
-        let name = self
+
+        let name_value = self
             .workspace_name_input
             .read(cx)
             .value()
             .trim()
             .to_string();
-        let request = ctx_client::CreateWorkspaceRequest {
-            root_path,
-            name: if name.is_empty() { None } else { Some(name) },
+        let name = if name_value.is_empty() {
+            None
+        } else {
+            Some(name_value)
         };
+
+        cx.update_entity(&self.workspace_root_input, |state, cx| {
+            state.set_value("", window, cx);
+        });
+        cx.update_entity(&self.workspace_name_input, |state, cx| {
+            state.set_value("", window, cx);
+        });
+
+        self.data_state = DataLoadState::Loading;
+        cx.notify();
 
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
             let client = ctx_client::Client::new(config)?;
-            client.create_workspace(&request).await
+            client.create_workspace(root_path, name).await?;
+            client.list_workspaces().await
         });
 
         cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
@@ -150,11 +170,40 @@ impl ShellView {
                 let result = task.await;
                 this.update(&mut cx, |view, cx| {
                     match result {
-                        Ok(_) => {
-                            view.start_data_load(cx);
+                        Ok(workspaces) => {
+                            view.workspaces = workspaces
+                                .into_iter()
+                                .map(|workspace| WorkspaceItem {
+                                    id: workspace.id,
+                                    name: workspace.name,
+                                    root_path: workspace.root_path,
+                                })
+                                .collect();
+                            view.workspace_tabs
+                                .retain(|id| view.workspaces.iter().any(|ws| ws.id == *id));
+                            if let Some(active) = view.active_workspace_tab {
+                                if !view.workspace_tabs.iter().any(|id| *id == active) {
+                                    view.active_workspace_tab = None;
+                                }
+                            }
+                            if let Some(selected) = view.selected_workspace {
+                                if !view.workspaces.iter().any(|ws| ws.id == selected) {
+                                    view.selected_workspace = None;
+                                }
+                            }
+                            if view.active_workspace_tab.is_none() {
+                                if let Some(workspace_id) =
+                                    view.workspaces.first().map(|ws| ws.id)
+                                {
+                                    view.open_workspace_tab(workspace_id, cx);
+                                } else {
+                                    view.reset_workspace_view("No workspaces yet.", cx);
+                                }
+                            }
+                            view.data_state = DataLoadState::Loaded;
                         }
                         Err(err) => {
-                            eprintln!("ctx-native: create workspace failed: {err}");
+                            view.data_state = DataLoadState::Error(err.to_string());
                         }
                     }
                     cx.notify();
@@ -258,15 +307,17 @@ impl ShellView {
 
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
-            let client = ctx_client::Client::new(config)?;
+            let client = ctx_client::Client::new(config.clone())?;
             let params = ctx_client::WorkspaceActiveSnapshotParams {
                 limit: Some(50),
             };
             let active_snapshot = client
                 .get_workspace_active_snapshot(workspace_id, &params)
                 .await?;
+            let active_heads = fetch_active_heads_batch(&config, workspace_id).await.ok();
             Ok(WorkspaceLoadResult {
                 active_snapshot,
+                active_heads,
             })
         });
 
@@ -282,6 +333,9 @@ impl ShellView {
                     Ok(data) => {
                         let preserve_session = view.task_store_initialized;
                         view.apply_active_snapshot(&data.active_snapshot, preserve_session, cx);
+                        if let Some(batch) = data.active_heads.as_ref() {
+                            view.apply_active_head_batch(batch, cx);
+                        }
                         view.persist_active_snapshot(&data.active_snapshot, cx);
                         if !preserve_session {
                             view.hydrate_loaded_snapshot_state(cx);
@@ -311,7 +365,24 @@ impl ShellView {
     fn hydrate_cached_active_snapshot(&mut self, workspace_id: WorkspaceId, cx: &mut Context<Self>) {
         let cache = self.ats_cache.clone();
         let task = Tokio::spawn_result(cx, async move {
-            cache.load_active_snapshot(workspace_id).await
+            let snapshot = cache.load_active_snapshot(workspace_id).await?;
+            let Some(snapshot) = snapshot else {
+                return Ok(None);
+            };
+            let mut session_ids = HashSet::new();
+            for task in &snapshot.active.tasks {
+                session_ids.insert(task.primary_session.session.id);
+                for session in &task.sessions {
+                    session_ids.insert(session.session.id);
+                }
+            }
+            let mut cached_heads = Vec::new();
+            for session_id in session_ids {
+                if let Ok(Some(head)) = cache.load_session_head(session_id).await {
+                    cached_heads.push((session_id, head));
+                }
+            }
+            Ok(Some((snapshot, cached_heads)))
         });
 
         cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
@@ -325,10 +396,13 @@ impl ShellView {
                     if view.task_store_initialized {
                         return;
                     }
-                    let Ok(Some(snapshot)) = result else {
+                    let Ok(Some((snapshot, cached_heads))) = result else {
                         return;
                     };
                     view.apply_active_snapshot(&snapshot, false, cx);
+                    for (session_id, cached) in cached_heads {
+                        view.apply_cached_session_head(session_id, cached);
+                    }
                     view.hydrate_loaded_snapshot_state(cx);
                     view.hydrate_cached_archived_head(workspace_id, cx);
                     cx.notify();
@@ -387,7 +461,7 @@ impl ShellView {
         self.session_history_loading = false;
         self.replace_messages(Vec::new(), cx);
         if let Some(session_id) = self.selected_session_id() {
-            if !self.apply_cached_thread_data(session_id, cx) {
+            if !self.apply_cached_thread_state(session_id, cx) {
                 self.replace_messages(
                     vec![MessageItem::new(
                         MessageRole::Assistant,
@@ -510,14 +584,32 @@ impl ShellView {
         self.composer_model_menu_open = false;
         self.session_summary_map.clear();
         self.session_thread_cache.clear();
-        self.session_thread_view_state.clear();
-        self.thread_render_cache.clear();
-        self.thread_render_inflight.clear();
         self.session_last_event_seq.clear();
         self.resyncing_session = None;
-        self.active_snapshot_rev = None;
         self.session = SessionInfo::placeholder();
     }
+}
+
+async fn fetch_active_heads_batch(
+    config: &ctx_client::DaemonConfig,
+    workspace_id: WorkspaceId,
+) -> Result<WorkspaceActiveHeadBatch> {
+    let base = config.base_url.trim_end_matches('/');
+    let url = format!("{}/api/workspaces/{}/active_heads", base, workspace_id.0);
+    let http = reqwest::Client::new();
+    let mut req = http.get(url);
+    if let Some(token) = &config.auth_token {
+        req = req.bearer_auth(token);
+    }
+    let resp = req.send().await.context("requesting active heads")?;
+    if !resp.status().is_success() {
+        return Err(anyhow!("active heads request failed: {}", resp.status()));
+    }
+    let batch = resp
+        .json::<WorkspaceActiveHeadBatch>()
+        .await
+        .context("decoding active heads batch")?;
+    Ok(batch)
 }
 
 impl ShellView {
@@ -543,7 +635,7 @@ impl ShellView {
         &mut self,
         snapshot: &WorkspaceActiveSnapshot,
         preserve_session: bool,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
         let archived_items = if preserve_session {
             self.task_archived_order
@@ -557,7 +649,6 @@ impl ShellView {
         self.task_store_initialized = true;
         self.workspace_snapshot_rev = self.workspace_snapshot_rev.max(snapshot.snapshot_rev);
         self.archived_snapshot_rev = self.archived_snapshot_rev.max(snapshot.archived_rev);
-        self.active_snapshot_rev = Some(snapshot.snapshot_rev);
         self.task_fetch_active = super::TaskFetchState::Idle;
         self.task_has_more_active = false;
 
@@ -573,9 +664,6 @@ impl ShellView {
         self.task_active_order.clear();
         if !preserve_session {
             self.session_thread_cache.clear();
-            self.session_thread_view_state.clear();
-            self.thread_render_cache.clear();
-            self.thread_render_inflight.clear();
             self.session_head_meta.clear();
             self.session_last_event_seq.clear();
         }
@@ -583,7 +671,6 @@ impl ShellView {
         for summary in &snapshot.active.tasks {
             let item = TaskSummaryItem::from_active(&summary);
             self.tasks_by_id.insert(item.id, item);
-            self.cache_session_snapshot(&summary.primary_session, &summary.primary_session_head, cx);
         }
 
         if preserve_session {
@@ -594,6 +681,30 @@ impl ShellView {
 
         self.rebuild_task_orders();
         self.rebuild_session_state();
+    }
+
+    fn apply_cached_session_head(&mut self, session_id: SessionId, cached: CachedSessionHead) {
+        self.session_thread_cache.insert(session_id, cached.cache);
+        self.session_head_meta.insert(session_id, cached.meta);
+        let mut seq = cached.last_event_seq;
+        if let Some(prev) = self.session_last_event_seq.get(&session_id) {
+            seq = seq.max(*prev);
+        }
+        self.session_last_event_seq.insert(session_id, seq);
+    }
+
+    fn apply_active_head_batch(
+        &mut self,
+        batch: &WorkspaceActiveHeadBatch,
+        cx: &mut Context<Self>,
+    ) {
+        for head in &batch.heads {
+            let session_id = head.session.id;
+            let summary = self.session_summary_map.get(&session_id).cloned();
+            if let Some(summary) = summary {
+                self.cache_session_snapshot(&summary, head, cx);
+            }
+        }
     }
 
     pub(crate) fn load_more_active_tasks(&mut self, cx: &mut Context<Self>) {
@@ -611,14 +722,15 @@ impl ShellView {
 
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
-            let client = ctx_client::Client::new(config)?;
+            let client = ctx_client::Client::new(config.clone())?;
             let params = ctx_client::WorkspaceActiveSnapshotParams {
                 limit: Some(50),
             };
             let snapshot = client
                 .get_workspace_active_snapshot(workspace_id, &params)
                 .await?;
-            Ok(snapshot)
+            let active_heads = fetch_active_heads_batch(&config, workspace_id).await.ok();
+            Ok((snapshot, active_heads))
         });
 
         cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
@@ -626,8 +738,11 @@ impl ShellView {
             async move {
                 let result = task.await;
                 this.update(&mut cx, |view, cx| match result {
-                    Ok(snapshot) => {
+                    Ok((snapshot, active_heads)) => {
                         view.apply_active_snapshot(&snapshot, true, cx);
+                        if let Some(batch) = active_heads.as_ref() {
+                            view.apply_active_head_batch(batch, cx);
+                        }
                         view.persist_active_snapshot(&snapshot, cx);
                         view.send_stream_subscribe();
                         view.task_fetch_active = super::TaskFetchState::Idle;
@@ -657,14 +772,15 @@ impl ShellView {
 
         let task = Tokio::spawn_result(cx, async move {
             let config = ctx_client::resolve_daemon_config()?;
-            let client = ctx_client::Client::new(config)?;
+            let client = ctx_client::Client::new(config.clone())?;
             let params = ctx_client::WorkspaceActiveSnapshotParams {
                 limit: Some(50),
             };
             let snapshot = client
                 .get_workspace_active_snapshot(workspace_id, &params)
                 .await?;
-            Ok(snapshot)
+            let active_heads = fetch_active_heads_batch(&config, workspace_id).await.ok();
+            Ok((snapshot, active_heads))
         });
 
         cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
@@ -672,8 +788,11 @@ impl ShellView {
             async move {
                 let result = task.await;
                 this.update(&mut cx, |view, cx| match result {
-                    Ok(snapshot) => {
+                    Ok((snapshot, active_heads)) => {
                         view.apply_active_snapshot(&snapshot, true, cx);
+                        if let Some(batch) = active_heads.as_ref() {
+                            view.apply_active_head_batch(batch, cx);
+                        }
                         view.persist_active_snapshot(&snapshot, cx);
                         view.send_stream_subscribe();
                         view.task_fetch_active = super::TaskFetchState::Idle;
@@ -817,7 +936,9 @@ impl ShellView {
     ) {
         let item = TaskSummaryItem::from_active(&summary);
         self.tasks_by_id.insert(item.id, item);
-        self.cache_session_snapshot(&summary.primary_session, &summary.primary_session_head, cx);
+        if let Some(head) = summary.primary_session_head.as_ref() {
+            self.cache_session_snapshot(&summary.primary_session, head, cx);
+        }
         self.rebuild_task_orders();
         self.rebuild_session_state();
     }
@@ -825,8 +946,8 @@ impl ShellView {
     pub(crate) fn upsert_archived_task_summary(
         &mut self,
         summary: WorkspaceTaskSummary,
-        snapshot: Option<SessionSnapshot>,
-        cx: &mut Context<Self>,
+        _snapshot: Option<SessionSnapshot>,
+        _cx: &mut Context<Self>,
     ) {
         let fallback_worktree_id = summary.task.primary_worktree_id;
         let sessions = summary
@@ -836,9 +957,6 @@ impl ShellView {
             .collect::<Vec<_>>();
         let item = TaskSummaryItem::from_archived(summary.task, sessions);
         self.tasks_by_id.insert(item.id, item);
-        if let Some(snapshot) = snapshot.as_ref() {
-            self.cache_session_snapshot(&snapshot.summary, &snapshot.head, cx);
-        }
         self.rebuild_task_orders();
         self.rebuild_session_state();
     }
@@ -900,7 +1018,7 @@ impl ShellView {
         self.rebuild_session_state();
     }
 
-    fn cache_session_snapshot(
+    pub(crate) fn cache_session_snapshot(
         &mut self,
         summary: &SessionSnapshotSummary,
         head: &SessionHeadSnapshot,
@@ -1089,7 +1207,6 @@ impl ShellView {
         self.new_task_mode_locked = true;
         self.composer_focus_pending = true;
         self.composer_needs_apply = true;
-        self.composer_context_window = None;
         self.right_pane = None;
         self.session = SessionInfo::placeholder();
         self.replace_messages(

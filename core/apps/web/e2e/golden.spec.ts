@@ -1,4 +1,4 @@
-import { test, expect } from "./utils/fixtures";
+import { test, expect } from "playwright/test";
 import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
@@ -30,7 +30,6 @@ test("golden path: workspace → task → session → message", async ({ page })
   await expect(rows).toHaveCount(1, { timeout: 20000 });
   await rows.first().click();
 
-  const activeSession = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
-  await expect(activeSession.locator("textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
-  await expect(activeSession.locator(".wb-assistant-entry")).toHaveCount(1, { timeout: 20000 });
+  await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
+  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(1, { timeout: 20000 });
 });

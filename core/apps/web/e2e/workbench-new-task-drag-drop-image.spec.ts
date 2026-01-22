@@ -1,4 +1,4 @@
-import { test, expect } from "./utils/fixtures";
+import { test, expect } from "playwright/test";
 import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
@@ -25,8 +25,7 @@ test("workbench: New Task composer accepts drag-dropped images after switching f
 
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello 1");
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
-  const activeSession = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
-  await expect(activeSession.locator(".wb-assistant-entry")).toHaveCount(1, { timeout: 20000 });
+  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(1, { timeout: 20000 });
 
   // Switch into the New Task composer (this previously caused the drop scope to never register).
   await page.getByRole("button", { name: "New Task" }).click();

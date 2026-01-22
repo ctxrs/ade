@@ -382,20 +382,6 @@ pub(crate) fn build_acp_client_config(env: &HashMap<String, String>) -> AcpClien
         mcp_env.insert("CTX_SESSION_ID".to_string(), session_id.clone());
     }
 
-    let mcp_bypass = env
-        .get("CTX_MCP_BYPASS_PROXY")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    if mcp_bypass {
-        mcp_env.insert("NO_PROXY".to_string(), "*".to_string());
-    } else {
-        for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"] {
-            if let Some(value) = env.get(key) {
-                mcp_env.insert(key.to_string(), value.clone());
-            }
-        }
-    }
-
     let mcp_command = env
         .get("CTX_MCP_COMMAND")
         .cloned()

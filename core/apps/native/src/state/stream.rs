@@ -4,7 +4,6 @@ use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use gpui::{AsyncApp, Context, WeakEntity};
 use gpui_tokio::Tokio;
-use serde::Deserialize;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{
     connect_async,
@@ -14,14 +13,14 @@ use tokio_tungstenite::{
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
     SessionEvent, SessionEventType, SessionHeadDelta, SessionSnapshotSummary,
-    WorkspaceActiveSnapshot,
     WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotClientMessage,
     WorkspaceActiveSnapshotSessionSubscription,
 };
 
 use super::ShellView;
-use super::session::ThreadRenderUpdateKind;
-use super::session::{clear_placeholder_messages_in, SessionThreadCache};
+use super::session::{
+    clear_placeholder_messages_in, is_partial_event, strip_partial_turn, SessionThreadCache,
+};
 use super::super::models::{message_item_from_model, session_info_from_summary};
 
 #[derive(Clone)]
@@ -53,25 +52,9 @@ impl StreamStatus {
 enum StreamUpdate {
     Status(StreamStatus),
     Event(WorkspaceActiveSnapshotEvent),
-    Snapshot(WorkspaceActiveSnapshot),
-    ResetRequired { latest_rev: i64 },
 }
 
 const MAX_SESSION_EVENTS: usize = 200;
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum WorkspaceActiveSnapshotStreamMessage {
-    Snapshot {
-        active_snapshot: WorkspaceActiveSnapshot,
-    },
-    Event {
-        event: WorkspaceActiveSnapshotEvent,
-    },
-    ResetRequired {
-        latest_rev: i64,
-    },
-}
 
 fn push_session_event_with_limit(events: &mut Vec<SessionEvent>, event: SessionEvent) {
     events.push(event);
@@ -83,6 +66,7 @@ fn push_session_event_with_limit(events: &mut Vec<SessionEvent>, event: SessionE
 
 fn apply_delta_to_cache(cache: &mut SessionThreadCache, delta: SessionHeadDelta) {
     if let Some(turn) = delta.turn {
+        let turn = strip_partial_turn(&turn);
         let mut found = false;
         for existing in &mut cache.session_turns {
             if existing.turn_id == turn.turn_id {
@@ -100,7 +84,9 @@ fn apply_delta_to_cache(cache: &mut SessionThreadCache, delta: SessionHeadDelta)
     }
 
     if let Some(event) = delta.event {
-        push_session_event_with_limit(&mut cache.session_events, event);
+        if !is_partial_event(&event) {
+            push_session_event_with_limit(&mut cache.session_events, event);
+        }
     }
 
     if let Some(message) = delta.message {
@@ -216,24 +202,6 @@ impl ShellView {
                 cx.notify();
             }
             StreamUpdate::Event(event) => self.apply_workspace_event(event, cx),
-            StreamUpdate::Snapshot(snapshot) => {
-                self.active_snapshot_rev = Some(
-                    self.active_snapshot_rev
-                        .map(|current| current.max(snapshot.snapshot_rev))
-                        .unwrap_or(snapshot.snapshot_rev),
-                );
-                self.refresh_active_snapshot(cx);
-                self.prefetch_archived_head_window(cx);
-            }
-            StreamUpdate::ResetRequired { latest_rev } => {
-                self.active_snapshot_rev = Some(
-                    self.active_snapshot_rev
-                        .map(|current| current.max(latest_rev))
-                        .unwrap_or(latest_rev),
-                );
-                self.refresh_active_snapshot(cx);
-                self.prefetch_archived_head_window(cx);
-            }
         }
     }
 
@@ -290,11 +258,6 @@ impl ShellView {
         }
         if let Some(snapshot_rev) = snapshot_rev {
             self.handle_snapshot_rev(snapshot_rev, is_ready, cx);
-            self.active_snapshot_rev = Some(
-                self.active_snapshot_rev
-                    .map(|current| current.max(snapshot_rev))
-                    .unwrap_or(snapshot_rev),
-            );
         }
         if let Some(archived_rev) = archived_rev {
             self.handle_archived_rev(archived_rev, is_ready, cx);
@@ -394,10 +357,12 @@ impl ShellView {
         let session_id = delta.session_id;
         self.update_session_last_event_seq(session_id, delta.last_event_seq);
         if !self.is_session_selected(session_id) {
-            if let Some(cache) = self.session_thread_cache.get_mut(&session_id) {
-                apply_delta_to_cache(cache, delta);
-                self.persist_cached_session_head(session_id, cx);
-            }
+            let cache = self
+                .session_thread_cache
+                .entry(session_id)
+                .or_insert_with(SessionThreadCache::default);
+            apply_delta_to_cache(cache, delta);
+            self.persist_cached_session_head(session_id, cx);
             return;
         }
 
@@ -434,7 +399,7 @@ impl ShellView {
         if let Some(message) = message {
             self.push_message(message_item_from_model(&message), cx);
         } else {
-            self.schedule_thread_render_model(session_id, ThreadRenderUpdateKind::Default, cx);
+            self.rebuild_thread_items();
         }
 
         self.cache_session_thread_state(session_id);
@@ -447,7 +412,36 @@ impl ShellView {
         if self.is_session_selected(session_id) {
             self.resyncing_session = Some(session_id);
             self.load_session_details(session_id, cx);
+            return;
         }
+        let task = Tokio::spawn_result(cx, async move {
+            let config = ctx_client::resolve_daemon_config()?;
+            let client = ctx_client::Client::new(config)?;
+            let head = client
+                .get_session_head(session_id, Some(40), Some(false))
+                .await
+                .ok();
+            Ok((session_id, head))
+        });
+
+        cx.spawn(move |this: WeakEntity<ShellView>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = task.await;
+                this.update(&mut cx, |view, cx| {
+                    let Ok((session_id, Some(head))) = result else {
+                        return;
+                    };
+                    let summary = view.session_summary_map.get(&session_id).cloned();
+                    if let Some(summary) = summary {
+                        view.cache_session_snapshot(&summary, &head, cx);
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     fn push_session_event(&mut self, event: SessionEvent) {
@@ -459,8 +453,6 @@ impl ShellView {
     }
 }
 
-// Runs on a Tokio runtime (spawned via Tokio::spawn_result).
-#[allow(clippy::disallowed_methods)]
 async fn run_workspace_stream(
     ws_url: String,
     mut stop_rx: watch::Receiver<bool>,
@@ -504,8 +496,8 @@ async fn run_workspace_stream(
             msg = read.next() => msg,
         };
         if let Some(Ok(msg)) = ready {
-            if let Some(update) = parse_workspace_stream_update(msg) {
-                let _ = update_tx.send(update);
+            if let Some(event) = parse_workspace_stream_event(msg) {
+                let _ = update_tx.send(StreamUpdate::Event(event));
             }
         } else {
             let _ = update_tx.send(StreamUpdate::Status(StreamStatus::Reconnecting {
@@ -548,8 +540,8 @@ async fn run_workspace_stream(
                 msg = read.next() => {
                     match msg {
                         Some(Ok(frame)) => {
-                            if let Some(update) = parse_workspace_stream_update(frame) {
-                                if update_tx.send(update).is_err() {
+                            if let Some(event) = parse_workspace_stream_event(frame) {
+                                if update_tx.send(StreamUpdate::Event(event)).is_err() {
                                     return Ok(());
                                 }
                             }
@@ -568,27 +560,13 @@ async fn run_workspace_stream(
     }
 }
 
-fn parse_workspace_stream_update(message: WsMessage) -> Option<StreamUpdate> {
+fn parse_workspace_stream_event(message: WsMessage) -> Option<WorkspaceActiveSnapshotEvent> {
     let text = match message {
         WsMessage::Text(text) => text.to_string(),
         WsMessage::Binary(bytes) => String::from_utf8(bytes.to_vec()).ok()?,
         _ => return None,
     };
-    if let Ok(message) = serde_json::from_str::<WorkspaceActiveSnapshotStreamMessage>(&text) {
-        let update = match message {
-            WorkspaceActiveSnapshotStreamMessage::Snapshot { active_snapshot } => {
-                StreamUpdate::Snapshot(active_snapshot)
-            }
-            WorkspaceActiveSnapshotStreamMessage::Event { event } => StreamUpdate::Event(event),
-            WorkspaceActiveSnapshotStreamMessage::ResetRequired { latest_rev } => {
-                StreamUpdate::ResetRequired { latest_rev }
-            }
-        };
-        return Some(update);
-    }
-    serde_json::from_str::<WorkspaceActiveSnapshotEvent>(&text)
-        .ok()
-        .map(StreamUpdate::Event)
+    serde_json::from_str::<WorkspaceActiveSnapshotEvent>(&text).ok()
 }
 
 async fn send_workspace_subscribe<S>(

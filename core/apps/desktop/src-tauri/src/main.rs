@@ -13,15 +13,6 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use url::Url;
 
-mod docker_passthrough;
-
-#[cfg(target_os = "linux")]
-use std::collections::HashSet;
-#[cfg(target_os = "linux")]
-use ctx_store::Store;
-
-use crate::docker_passthrough::DockerProxyHandle;
-
 fn main() {
     tauri::Builder::default()
         .manage(ConnectionManager::default())
@@ -42,9 +33,6 @@ fn main() {
             desktop_save_text_file,
             desktop_get_editor_settings,
             desktop_update_editor_settings,
-            desktop_get_daemon_settings,
-            desktop_update_daemon_settings,
-            desktop_set_last_workspace,
             desktop_open_file,
             desktop_open_path,
             desktop_read_file,
@@ -59,7 +47,6 @@ fn main() {
         .setup(|app| {
             open_main_window(&app.handle())?;
             setup_deep_link_listener(&app.handle());
-            start_auto_connect(&app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -177,58 +164,10 @@ impl Default for DesktopEditorSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum DesktopLastConnection {
-    Local,
-    Ssh {
-        host: String,
-        #[serde(default)]
-        user: Option<String>,
-        remote_port: u16,
-        #[serde(default)]
-        start_remote: bool,
-        #[serde(default)]
-        remote_data_dir: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DesktopDaemonSettings {
-    #[serde(default = "default_daemon_auto_start")]
-    auto_start: bool,
-    #[serde(default)]
-    launch_mode: Option<DaemonLaunchMode>,
-    #[serde(default)]
-    docker_passthrough: bool,
-    #[serde(default)]
-    last_connection: Option<DesktopLastConnection>,
-    #[serde(default)]
-    last_workspace_id: Option<String>,
-}
-
-impl Default for DesktopDaemonSettings {
-    fn default() -> Self {
-        Self {
-            auto_start: default_daemon_auto_start(),
-            launch_mode: None,
-            docker_passthrough: false,
-            last_connection: None,
-            last_workspace_id: None,
-        }
-    }
-}
-
-fn default_daemon_auto_start() -> bool {
-    true
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct DesktopSettings {
     #[serde(default)]
     editor: DesktopEditorSettings,
-    #[serde(default)]
-    daemon: DesktopDaemonSettings,
 }
 
 #[derive(Debug, Deserialize)]
@@ -248,14 +187,6 @@ struct DesktopOpenPathReq {
     line: Option<u32>,
     #[serde(default)]
     col: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DesktopConnectLocalReq {
-    #[serde(default)]
-    launch_mode: Option<String>,
-    #[serde(default)]
-    workspace_roots: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -433,44 +364,6 @@ fn desktop_update_editor_settings(
     current.editor = settings;
     save_desktop_settings(&app, &current).map_err(to_err)?;
     Ok(current.editor)
-}
-
-#[tauri::command]
-fn desktop_get_daemon_settings(app: tauri::AppHandle) -> Result<DesktopDaemonSettings, String> {
-    Ok(load_desktop_settings(&app).daemon)
-}
-
-#[tauri::command]
-fn desktop_update_daemon_settings(
-    app: tauri::AppHandle,
-    settings: DesktopDaemonSettings,
-) -> Result<DesktopDaemonSettings, String> {
-    validate_daemon_launch_mode_option(settings.launch_mode).map_err(to_err)?;
-    let mut current = load_desktop_settings(&app);
-    current.daemon = settings;
-    save_desktop_settings(&app, &current).map_err(to_err)?;
-    Ok(current.daemon)
-}
-
-#[tauri::command]
-fn desktop_set_last_workspace(
-    app: tauri::AppHandle,
-    workspace_id: Option<String>,
-) -> Result<(), String> {
-    let workspace_id = workspace_id
-        .and_then(|raw| {
-            let trimmed = raw.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        });
-    update_desktop_settings(&app, |settings| {
-        settings.daemon.last_workspace_id = workspace_id;
-    })
-    .map_err(to_err)?;
-    Ok(())
 }
 
 #[tauri::command]
@@ -656,61 +549,18 @@ fn desktop_git_clone(repo_url: String, dest_parent: String) -> Result<String, St
 fn desktop_connect_local(
     app: tauri::AppHandle,
     state: tauri::State<ConnectionManager>,
-    req: Option<DesktopConnectLocalReq>,
 ) -> Result<DesktopConnectionInfo, String> {
     state.disconnect();
-    let (override_mode, workspace_roots) = if let Some(req) = req {
-        let override_mode = if let Some(raw) = req.launch_mode {
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(parse_daemon_launch_mode(trimmed).ok_or_else(|| {
-                    format!(
-                        "invalid launch_mode '{raw}'; expected \"host\" or \"container\""
-                    )
-                })?)
-            }
-        } else {
-            None
-        };
-        (override_mode, req.workspace_roots)
-    } else {
-        (None, None)
-    };
     let data_dir = daemon_data_dir(&app).map_err(to_err)?;
-    let launch_mode = resolve_daemon_launch_mode(&app, override_mode).map_err(to_err)?;
-    let settings = load_desktop_settings(&app);
-    let docker_passthrough =
-        settings.daemon.docker_passthrough && matches!(launch_mode, DaemonLaunchMode::Container);
-    let workspace_roots = if matches!(launch_mode, DaemonLaunchMode::Container) {
-        parse_workspace_roots(workspace_roots).map_err(to_err)?
-    } else {
-        None
-    };
-    let (url, child, cleanup, docker_proxy) = spawn_daemon(
-        &app,
-        &data_dir,
-        launch_mode,
-        docker_passthrough,
-        workspace_roots,
-    )
-    .map_err(to_err)?;
+    let (url, child, systemd_scope) = spawn_daemon(&app, &data_dir).map_err(to_err)?;
     let auth = read_daemon_auth_with_retry(&data_dir).map_err(to_err)?;
-    state.set_local(
-        url.clone(),
-        auth.token.clone(),
-        child,
-        cleanup,
-        docker_proxy,
-    );
-    record_last_connection(&app, DesktopLastConnection::Local, Some(launch_mode)).map_err(to_err)?;
+    state.set_local(url.clone(), auth.token.clone(), child, systemd_scope);
     Ok(state.info())
 }
 
 #[tauri::command]
 async fn desktop_connect_ssh(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: tauri::State<'_, ConnectionManager>,
     req: SshConnectReq,
 ) -> Result<DesktopConnectionInfo, String> {
@@ -721,102 +571,45 @@ async fn desktop_connect_ssh(
         return Err("host is required".to_string());
     }
     let remote_port = req.remote_port.unwrap_or(4399);
-    let user = req
-        .user
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    let remote_data_dir = req
-        .remote_data_dir
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
+
+    let user = req.user.clone();
+    let remote_data_dir = req.remote_data_dir.clone();
     let start_remote = req.start_remote;
-    let last_connection = DesktopLastConnection::Ssh {
-        host: host.clone(),
-        user: user.clone(),
-        remote_port,
-        start_remote,
-        remote_data_dir: remote_data_dir.clone(),
-    };
-    let req = SshConnectReq {
-        host,
-        user,
-        remote_port: Some(remote_port),
-        start_remote,
-        remote_data_dir,
-    };
     let (base_url, token, tunnel) =
-        tauri::async_runtime::spawn_blocking(move || connect_ssh_blocking(req))
+        tauri::async_runtime::spawn_blocking(move || -> Result<(String, String, Child)> {
+        if start_remote {
+            start_remote_daemon_over_ssh(
+                &host,
+                user.as_deref(),
+                remote_port,
+                remote_data_dir.as_deref(),
+            )?;
+        }
+
+        let local_port = pick_unused_local_port()?;
+        let (mut tunnel, tunnel_stderr) =
+            start_ssh_tunnel(&host, user.as_deref(), local_port, remote_port)?;
+        let base_url = format!("http://127.0.0.1:{local_port}");
+
+        let health =
+            probe_daemon_health_with_retry(&base_url, local_port, &mut tunnel, &tunnel_stderr);
+        if let Err(e) = health {
+            let _ = try_kill_child(tunnel);
+            return Err(e);
+        }
+        let auth = read_remote_daemon_auth_with_retry(
+            &host,
+            user.as_deref(),
+            remote_data_dir.as_deref(),
+        )?;
+        Ok((base_url, auth.token, tunnel))
+    })
     .await
     .map_err(|e| format!("failed to reach remote daemon: {e}"))?
     .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?;
 
     state.set_ssh(base_url, Some(token), tunnel);
-    record_last_connection(&app, last_connection, None).map_err(to_err)?;
     Ok(state.info())
-}
-
-fn connect_ssh_blocking(req: SshConnectReq) -> Result<(String, String, Child)> {
-    let host = req.host.trim().to_string();
-    if host.is_empty() {
-        anyhow::bail!("host is required");
-    }
-    let remote_port = req.remote_port.unwrap_or(4399);
-    let user = req
-        .user
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    let remote_data_dir = req
-        .remote_data_dir
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    let start_remote = req.start_remote;
-
-    let start_error = if start_remote {
-        start_remote_daemon_over_ssh(
-            &host,
-            user.as_deref(),
-            remote_port,
-            remote_data_dir.as_deref(),
-        )
-        .err()
-        .map(|err| format!("{err:#}"))
-    } else {
-        None
-    };
-
-    let local_port = pick_unused_local_port()?;
-    let (mut tunnel, tunnel_stderr) =
-        start_ssh_tunnel(&host, user.as_deref(), local_port, remote_port)?;
-    let base_url = format!("http://127.0.0.1:{local_port}");
-
-    let health = probe_daemon_health_with_retry(&base_url, local_port, &mut tunnel, &tunnel_stderr);
-    if let Err(err) = health {
-        let _ = try_kill_child(tunnel);
-        let err = match start_error.as_deref() {
-            Some(start_err) => err.context(format!("remote daemon start failed: {start_err}")),
-            None => err,
-        };
-        return Err(err);
-    }
-
-    let auth = read_remote_daemon_auth_with_retry(
-        &host,
-        user.as_deref(),
-        remote_data_dir.as_deref(),
-    )
-    .map_err(|err| match start_error.as_deref() {
-        Some(start_err) => err.context(format!("remote daemon start failed: {start_err}")),
-        None => err,
-    })?;
-    Ok((base_url, auth.token, tunnel))
 }
 
 fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) -> Result<()> {
@@ -824,14 +617,9 @@ fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) ->
         return Ok(());
     }
     let data_dir = daemon_data_dir(app)?;
-    let launch_mode = resolve_daemon_launch_mode(app, None)?;
-    let settings = load_desktop_settings(app);
-    let docker_passthrough =
-        settings.daemon.docker_passthrough && matches!(launch_mode, DaemonLaunchMode::Container);
-    let (url, child, cleanup, docker_proxy) =
-        spawn_daemon(app, &data_dir, launch_mode, docker_passthrough, None)?;
+    let (url, child, systemd_scope) = spawn_daemon(app, &data_dir)?;
     let auth = read_daemon_auth_with_retry(&data_dir)?;
-    state.set_local(url, auth.token, child, cleanup, docker_proxy);
+    state.set_local(url, auth.token, child, systemd_scope);
     Ok(())
 }
 
@@ -919,95 +707,6 @@ fn setup_deep_link_listener(app: &tauri::AppHandle) {
     if let Err(err) = app.deep_link().register_all() {
         eprintln!("deep link register skipped: {err}");
     }
-}
-
-fn start_auto_connect(app: &tauri::AppHandle) {
-    let handle = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Err(err) = auto_connect_last_daemon(&handle) {
-            eprintln!("auto-connect failed: {err:#}");
-        }
-    });
-}
-
-fn auto_connect_last_daemon(app: &tauri::AppHandle) -> Result<()> {
-    let state = app.state::<ConnectionManager>();
-    if !matches!(state.info().kind, DesktopConnectionKind::None) {
-        return Ok(());
-    }
-
-    let settings = load_desktop_settings(app);
-    let Some(last_connection) = settings.daemon.last_connection.clone() else {
-        return Ok(());
-    };
-
-    match last_connection {
-        DesktopLastConnection::Local => {
-            let attached = match try_attach_local_daemon(app, &state) {
-                Ok(attached) => attached,
-                Err(err) => {
-                    eprintln!("auto-attach failed: {err:#}");
-                    false
-                }
-            };
-            if attached || !settings.daemon.auto_start {
-                return Ok(());
-            }
-            let data_dir = daemon_data_dir(app)?;
-            let launch_mode = resolve_daemon_launch_mode(app, None)?;
-            let docker_passthrough = settings.daemon.docker_passthrough
-                && matches!(launch_mode, DaemonLaunchMode::Container);
-            let (url, child, cleanup, docker_proxy) =
-                spawn_daemon(app, &data_dir, launch_mode, docker_passthrough, None)?;
-            let auth = read_daemon_auth_with_retry(&data_dir)?;
-            state.set_local(url, auth.token, child, cleanup, docker_proxy);
-        }
-        DesktopLastConnection::Ssh {
-            host,
-            user,
-            remote_port,
-            start_remote,
-            remote_data_dir,
-        } => {
-            let req = SshConnectReq {
-                host,
-                user,
-                remote_port: Some(remote_port),
-                start_remote,
-                remote_data_dir,
-            };
-            match connect_ssh_blocking(req) {
-                Ok((base_url, token, tunnel)) => {
-                    state.set_ssh(base_url, Some(token), tunnel);
-                }
-                Err(err) => {
-                    eprintln!("auto-connect ssh failed: {err:#}");
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn try_attach_local_daemon(app: &tauri::AppHandle, state: &ConnectionManager) -> Result<bool> {
-    let data_dir = daemon_data_dir(app)?;
-    let auth = match read_daemon_auth(&data_dir)? {
-        Some(auth) => auth,
-        None => return Ok(false),
-    };
-    let Some(url) = auth.daemon_url.as_deref() else {
-        return Ok(false);
-    };
-    let base_url = url.trim();
-    if base_url.is_empty() {
-        return Ok(false);
-    }
-    if probe_daemon_health(base_url).is_err() {
-        return Ok(false);
-    }
-    state.set_local_attached(base_url.to_string(), auth.token);
-    Ok(true)
 }
 
 fn handle_deep_link(app: tauri::AppHandle, url: Url) {
@@ -1515,7 +1214,7 @@ fn resolve_worktree_info(state: &ConnectionManager, worktree_id: &str) -> Result
         .and_then(parse_id_value)
         .ok_or_else(|| anyhow!("worktree workspace_id missing"))?;
     Ok(WorktreeInfo {
-        root: host_visible_worktree_root(PathBuf::from(root)),
+        root: PathBuf::from(root),
         workspace_id,
     })
 }
@@ -1655,18 +1354,11 @@ enum ActiveConnection {
     Ssh(SshConnection),
 }
 
-enum DaemonCleanup {
-    None,
-    SystemdScope,
-    Container { name: String },
-}
-
 struct LocalConnection {
     base_url: String,
     token: String,
-    child: Option<Child>,
-    cleanup: DaemonCleanup,
-    docker_proxy: Option<DockerProxyHandle>,
+    child: Child,
+    systemd_scope: bool,
 }
 
 struct SshConnection {
@@ -1709,21 +1401,10 @@ impl ConnectionManager {
         if let Some(active) = guard.active.take() {
             match active {
                 ActiveConnection::Local(c) => {
-                    if let Some(proxy) = c.docker_proxy {
-                        proxy.stop();
+                    if c.systemd_scope {
+                        stop_systemd_scope();
                     }
-                    if let Some(child) = c.child {
-                        match c.cleanup {
-                            DaemonCleanup::SystemdScope => {
-                                stop_systemd_scope();
-                            }
-                            DaemonCleanup::Container { ref name } => {
-                                stop_daemon_container(name);
-                            }
-                            DaemonCleanup::None => {}
-                        }
-                        let _ = try_kill_child(child);
-                    }
+                    let _ = try_kill_child(c.child);
                 }
                 ActiveConnection::Ssh(c) => {
                     let _ = try_kill_child(c.tunnel);
@@ -1732,32 +1413,13 @@ impl ConnectionManager {
         }
     }
 
-    fn set_local(
-        &self,
-        base_url: String,
-        token: String,
-        child: Child,
-        cleanup: DaemonCleanup,
-        docker_proxy: Option<DockerProxyHandle>,
-    ) {
+    fn set_local(&self, base_url: String, token: String, child: Child, systemd_scope: bool) {
         let mut guard = self.0.lock().expect("connection manager lock");
         guard.active = Some(ActiveConnection::Local(LocalConnection {
             base_url,
             token,
-            child: Some(child),
-            cleanup,
-            docker_proxy,
-        }));
-    }
-
-    fn set_local_attached(&self, base_url: String, token: String) {
-        let mut guard = self.0.lock().expect("connection manager lock");
-        guard.active = Some(ActiveConnection::Local(LocalConnection {
-            base_url,
-            token,
-            child: None,
-            cleanup: DaemonCleanup::None,
-            docker_proxy: None,
+            child,
+            systemd_scope,
         }));
     }
 
@@ -1912,29 +1574,6 @@ fn save_desktop_settings(app: &tauri::AppHandle, settings: &DesktopSettings) -> 
     Ok(())
 }
 
-fn update_desktop_settings(
-    app: &tauri::AppHandle,
-    update: impl FnOnce(&mut DesktopSettings),
-) -> Result<()> {
-    let mut settings = load_desktop_settings(app);
-    update(&mut settings);
-    save_desktop_settings(app, &settings)?;
-    Ok(())
-}
-
-fn record_last_connection(
-    app: &tauri::AppHandle,
-    connection: DesktopLastConnection,
-    launch_mode: Option<DaemonLaunchMode>,
-) -> Result<()> {
-    update_desktop_settings(app, |settings| {
-        settings.daemon.last_connection = Some(connection);
-        if let Some(mode) = launch_mode {
-            settings.daemon.launch_mode = Some(mode);
-        }
-    })
-}
-
 fn resolve_worktree_root(state: &ConnectionManager, worktree_id: &str) -> Result<PathBuf> {
     let resp = state.daemon_request(DesktopDaemonRequest {
         method: "GET".to_string(),
@@ -1955,53 +1594,7 @@ fn resolve_worktree_root(state: &ConnectionManager, worktree_id: &str) -> Result
         .get("root_path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("worktree root_path missing"))?;
-    Ok(host_visible_worktree_root(PathBuf::from(root)))
-}
-
-fn host_visible_worktree_root(root: PathBuf) -> PathBuf {
-    let host_root = match std::env::var("CTX_HOST_DATA_DIR") {
-        Ok(raw) => {
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
-                return root;
-            }
-            PathBuf::from(trimmed)
-        }
-        Err(_) => return root,
-    };
-
-    if !host_root.is_absolute() || root.starts_with(&host_root) {
-        return root;
-    }
-
-    let mut parts: Vec<String> = root
-        .components()
-        .filter_map(|c| match c {
-            std::path::Component::Normal(value) => Some(value.to_string_lossy().to_string()),
-            _ => None,
-        })
-        .collect();
-
-    if parts.len() < 3 {
-        return root;
-    }
-
-    let worktree_id = parts.pop().unwrap();
-    let workspace_id = parts.pop().unwrap();
-    let parent = parts.pop().unwrap();
-    if parent != "worktrees" {
-        return root;
-    }
-    if uuid::Uuid::parse_str(&workspace_id).is_err()
-        || uuid::Uuid::parse_str(&worktree_id).is_err()
-    {
-        return root;
-    }
-
-    host_root
-        .join("worktrees")
-        .join(workspace_id)
-        .join(worktree_id)
+    Ok(PathBuf::from(root))
 }
 
 
@@ -2296,7 +1889,6 @@ fn pick_unused_local_port() -> Result<u16> {
 const SSH_TUNNEL_LOG_BYTES: usize = 4096;
 const SSH_TUNNEL_HEALTH_RETRIES: usize = 12;
 const SSH_TUNNEL_HEALTH_BASE_DELAY_MS: u64 = 150;
-const SSH_TUNNEL_CONNECT_TIMEOUT_SECS: u64 = 10;
 
 fn start_ssh_tunnel(
     host: &str,
@@ -2315,8 +1907,6 @@ fn start_ssh_tunnel(
         .arg("BatchMode=yes")
         .arg("-o")
         .arg("ExitOnForwardFailure=yes")
-        .arg("-o")
-        .arg(format!("ConnectTimeout={SSH_TUNNEL_CONNECT_TIMEOUT_SECS}"))
         .arg("-o")
         .arg("ServerAliveInterval=30")
         .arg("-o")
@@ -2442,15 +2032,6 @@ fn parse_daemon_auth(bytes: &[u8], path: &Path) -> Result<DaemonAuthFile> {
         anyhow::bail!("daemon auth file {} contains empty token", path.display());
     }
     Ok(auth)
-}
-
-fn read_daemon_auth(data_dir: &Path) -> Result<Option<DaemonAuthFile>> {
-    let path = data_dir.join(DAEMON_AUTH_FILENAME);
-    match std::fs::read(&path) {
-        Ok(bytes) => Ok(Some(parse_daemon_auth(&bytes, &path)?)),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err).context(format!("reading daemon auth file {}", path.display())),
-    }
 }
 
 fn read_daemon_auth_with_retry(data_dir: &Path) -> Result<DaemonAuthFile> {
@@ -2682,419 +2263,6 @@ fn dev_web_dist() -> Option<PathBuf> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum DaemonLaunchMode {
-    Host,
-    Container,
-}
-
-fn parse_daemon_launch_mode(raw: &str) -> Option<DaemonLaunchMode> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    match trimmed.to_ascii_lowercase().as_str() {
-        "host" => Some(DaemonLaunchMode::Host),
-        "container" => Some(DaemonLaunchMode::Container),
-        _ => None,
-    }
-}
-
-fn daemon_launch_mode_from_env() -> Result<Option<DaemonLaunchMode>> {
-    let raw = match std::env::var("CTX_DAEMON_LAUNCH_MODE") {
-        Ok(v) => v,
-        Err(std::env::VarError::NotPresent) => return Ok(None),
-        Err(err) => {
-            return Err(anyhow!(
-                "failed to read CTX_DAEMON_LAUNCH_MODE: {err}"
-            ))
-        }
-    };
-    if raw.trim().is_empty() {
-        return Ok(None);
-    }
-    parse_daemon_launch_mode(&raw).ok_or_else(|| {
-        anyhow!(
-            "invalid CTX_DAEMON_LAUNCH_MODE={raw}; expected \"host\" or \"container\""
-        )
-    }).map(Some)
-}
-
-fn daemon_launch_mode() -> Result<DaemonLaunchMode> {
-    if let Some(mode) = daemon_launch_mode_from_env()? {
-        if matches!(mode, DaemonLaunchMode::Container) && !cfg!(target_os = "linux") {
-            anyhow::bail!(
-                "container launch mode is only supported on Linux; set CTX_DAEMON_LAUNCH_MODE=host"
-            );
-        }
-        return Ok(mode);
-    }
-    Ok(default_daemon_launch_mode())
-}
-
-fn validate_daemon_launch_mode(mode: DaemonLaunchMode) -> Result<DaemonLaunchMode> {
-    if matches!(mode, DaemonLaunchMode::Container) && !cfg!(target_os = "linux") {
-        anyhow::bail!(
-            "container launch mode is only supported on Linux; switch to host mode"
-        );
-    }
-    Ok(mode)
-}
-
-fn validate_daemon_launch_mode_option(mode: Option<DaemonLaunchMode>) -> Result<()> {
-    if let Some(mode) = mode {
-        validate_daemon_launch_mode(mode)?;
-    }
-    Ok(())
-}
-
-fn default_daemon_launch_mode() -> DaemonLaunchMode {
-    if cfg!(target_os = "linux") {
-        DaemonLaunchMode::Container
-    } else {
-        DaemonLaunchMode::Host
-    }
-}
-
-fn resolve_daemon_launch_mode(
-    app: &tauri::AppHandle,
-    override_mode: Option<DaemonLaunchMode>,
-) -> Result<DaemonLaunchMode> {
-    if let Some(mode) = override_mode {
-        return validate_daemon_launch_mode(mode);
-    }
-    if let Some(mode) = daemon_launch_mode_from_env()? {
-        return validate_daemon_launch_mode(mode);
-    }
-    let settings = load_desktop_settings(app);
-    if let Some(mode) = settings.daemon.launch_mode {
-        return validate_daemon_launch_mode(mode);
-    }
-    Ok(default_daemon_launch_mode())
-}
-
-#[cfg(target_os = "linux")]
-const DEFAULT_DAEMON_CONTAINER_IMAGE: &str = "ubuntu:24.04";
-
-#[cfg(target_os = "linux")]
-const DAEMON_CONTAINER_NAME: &str = "ctx-daemon";
-
-#[cfg(target_os = "linux")]
-fn daemon_container_image() -> String {
-    std::env::var("CTX_DAEMON_CONTAINER_IMAGE")
-        .ok()
-        .map(|raw| raw.trim().to_string())
-        .filter(|raw| !raw.is_empty())
-        .unwrap_or_else(|| DEFAULT_DAEMON_CONTAINER_IMAGE.to_string())
-}
-
-#[cfg(target_os = "linux")]
-fn ensure_container_runtime() -> Result<()> {
-    let output = Command::new("docker")
-        .arg("info")
-        .arg("--format")
-        .arg("{{.ServerVersion}}")
-        .output();
-    match output {
-        Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let detail = if stderr.trim().is_empty() {
-                "Docker engine is not available.".to_string()
-            } else {
-                format!("Docker engine is not available: {}", stderr.trim())
-            };
-            Err(anyhow!(
-                "{detail} Install/start Docker or set CTX_DAEMON_LAUNCH_MODE=host."
-            ))
-        }
-        Err(err) if err.kind() == ErrorKind::NotFound => Err(anyhow!(
-            "Docker runtime not found. Install Docker or set CTX_DAEMON_LAUNCH_MODE=host."
-        )),
-        Err(err) => Err(anyhow!(
-            "failed to check Docker runtime: {err}"
-        )),
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn stop_daemon_container(name: &str) {
-    let _ = Command::new("docker")
-        .arg("rm")
-        .arg("-f")
-        .arg(name)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-#[cfg(not(target_os = "linux"))]
-fn stop_daemon_container(_name: &str) {}
-
-#[cfg(target_os = "linux")]
-fn current_user_ids() -> (u32, u32) {
-    unsafe { (libc::geteuid(), libc::getegid()) }
-}
-
-#[cfg(target_os = "linux")]
-#[derive(Debug, Clone)]
-struct BindMount {
-    source: PathBuf,
-    target: PathBuf,
-    readonly: bool,
-}
-
-fn parse_workspace_roots(raw: Option<Vec<String>>) -> Result<Option<Vec<PathBuf>>> {
-    let Some(items) = raw else {
-        return Ok(None);
-    };
-    if items.is_empty() {
-        return Ok(None);
-    }
-    let mut roots = Vec::new();
-    let mut errors = Vec::new();
-    for (idx, item) in items.into_iter().enumerate() {
-        let trimmed = item.trim();
-        if trimmed.is_empty() {
-            errors.push(format!("workspace_roots[{idx}] is empty"));
-            continue;
-        }
-        let root = PathBuf::from(trimmed);
-        if !root.is_absolute() {
-            errors.push(format!(
-                "workspace_roots[{idx}] is not absolute: {trimmed}"
-            ));
-            continue;
-        }
-        if root == Path::new("/") {
-            errors.push(format!("workspace_roots[{idx}] is invalid: {trimmed}"));
-            continue;
-        }
-        if !root.exists() {
-            errors.push(format!("workspace_roots[{idx}] is missing: {trimmed}"));
-            continue;
-        }
-        if !root.is_dir() {
-            errors.push(format!(
-                "workspace_roots[{idx}] is not a directory: {trimmed}"
-            ));
-            continue;
-        }
-        roots.push(root);
-    }
-
-    if !errors.is_empty() {
-        anyhow::bail!(
-            "container launch blocked; workspace_roots must be readable/writable:\n{}",
-            errors.join("\n")
-        );
-    }
-
-    Ok(Some(roots))
-}
-
-#[cfg(target_os = "linux")]
-fn container_mounts(
-    data_dir: &Path,
-    workspace_roots: Option<Vec<PathBuf>>,
-) -> Result<Vec<BindMount>> {
-    if !data_dir.is_absolute() {
-        anyhow::bail!(
-            "container launch requires an absolute data dir: {}",
-            data_dir.display()
-        );
-    }
-    if data_dir == Path::new("/") {
-        anyhow::bail!("container launch requires a non-root data dir");
-    }
-
-    let mut mounts = Vec::new();
-    let mount_host_root = match std::env::var("CTX_DAEMON_CONTAINER_MOUNT_HOST_ROOT_RO") {
-        Ok(value) => value == "1" || value.eq_ignore_ascii_case("true"),
-        Err(_) => false,
-    };
-    if mount_host_root {
-        mounts.push(BindMount {
-            source: PathBuf::from("/"),
-            target: PathBuf::from("/"),
-            readonly: true,
-        });
-    }
-
-    let mut rw_roots = Vec::new();
-    rw_roots.push(data_dir.to_path_buf());
-    if let Some(roots) = workspace_roots {
-        rw_roots.extend(roots);
-    } else {
-        rw_roots.extend(load_workspace_roots(data_dir)?);
-    }
-
-    let mut seen = HashSet::new();
-    for root in rw_roots {
-        if root == Path::new("/") {
-            anyhow::bail!("container launch refused to mount '/' as read-write");
-        }
-        if seen.insert(root.clone()) {
-            mounts.push(BindMount {
-                source: root.clone(),
-                target: root,
-                readonly: false,
-            });
-        }
-    }
-
-    Ok(mounts)
-}
-
-#[cfg(target_os = "linux")]
-fn docker_proxy_allow_roots(
-    data_dir: &Path,
-    workspace_roots: Option<Vec<PathBuf>>,
-) -> Result<Vec<PathBuf>> {
-    let mut roots = Vec::new();
-    roots.push(data_dir.to_path_buf());
-    if let Some(roots_input) = workspace_roots {
-        roots.extend(roots_input);
-    } else {
-        roots.extend(load_workspace_roots(data_dir)?);
-    }
-
-    let mut seen = HashSet::new();
-    let mut filtered = Vec::new();
-    for root in roots {
-        if root == Path::new("/") {
-            anyhow::bail!("docker passthrough refused to allow '/'");
-        }
-        if seen.insert(root.clone()) {
-            filtered.push(root);
-        }
-    }
-    Ok(filtered)
-}
-
-#[cfg(target_os = "linux")]
-fn load_workspace_roots(data_dir: &Path) -> Result<Vec<PathBuf>> {
-    let Some(db_path) = locate_workspace_db_path(data_dir) else {
-        return Ok(Vec::new());
-    };
-
-    let workspaces = tauri::async_runtime::block_on(async {
-        let store = Store::open(&db_path).await?;
-        let workspaces = store.list_workspaces().await?;
-        store.close().await;
-        Ok::<_, anyhow::Error>(workspaces)
-    })?;
-
-    let mut roots = Vec::new();
-    let mut errors = Vec::new();
-    for workspace in workspaces {
-        let raw = workspace.root_path.trim();
-        if raw.is_empty() {
-            continue;
-        }
-        let root = PathBuf::from(raw);
-        if !root.is_absolute() {
-            errors.push(format!(
-                "workspace \"{}\" root is not absolute: {}",
-                workspace.name, raw
-            ));
-            continue;
-        }
-        if root == Path::new("/") {
-            errors.push(format!(
-                "workspace \"{}\" root is invalid: {}",
-                workspace.name, raw
-            ));
-            continue;
-        }
-        if !root.exists() {
-            errors.push(format!(
-                "workspace \"{}\" root is missing: {}",
-                workspace.name, raw
-            ));
-            continue;
-        }
-        if !root.is_dir() {
-            errors.push(format!(
-                "workspace \"{}\" root is not a directory: {}",
-                workspace.name, raw
-            ));
-            continue;
-        }
-        roots.push(root);
-    }
-
-    if !errors.is_empty() {
-        anyhow::bail!(
-            "container launch blocked; workspace roots must be readable/writable:\n{}",
-            errors.join("\n")
-        );
-    }
-
-    Ok(roots)
-}
-
-#[cfg(target_os = "linux")]
-fn locate_workspace_db_path(data_dir: &Path) -> Option<PathBuf> {
-    let db_path = data_dir.join("db").join("db.sqlite");
-    if db_path.exists() {
-        return Some(db_path);
-    }
-    let legacy = data_dir.join("db.sqlite");
-    if legacy.exists() {
-        return Some(legacy);
-    }
-    None
-}
-
-#[cfg(target_os = "linux")]
-fn bind_mount_arg(mount: &BindMount) -> Result<String> {
-    let src = mount.source.to_string_lossy();
-    let dst = mount.target.to_string_lossy();
-    if src.contains(',') || dst.contains(',') {
-        anyhow::bail!(
-            "container mount path contains ',': src={} dst={}",
-            src,
-            dst
-        );
-    }
-    let mut arg = format!("type=bind,src={src},dst={dst}");
-    if mount.readonly {
-        arg.push_str(",readonly");
-    }
-    arg.push_str(",bind-propagation=rshared");
-    Ok(arg)
-}
-
-fn daemon_env_vars(
-    mcp_bin: Option<&Path>,
-    web_dist: Option<&Path>,
-    docker_passthrough: bool,
-) -> Vec<(String, String)> {
-    let mut envs = Vec::new();
-    if let Some(dist) = web_dist {
-        envs.push((
-            "CTX_WEB_DIST".to_string(),
-            dist.to_string_lossy().to_string(),
-        ));
-    }
-    if let Some(mcp) = mcp_bin {
-        envs.push((
-            "CTX_MCP_COMMAND".to_string(),
-            mcp.to_string_lossy().to_string(),
-        ));
-    }
-    if let Ok(appimage) = std::env::var("APPIMAGE") {
-        envs.push(("CTX_APPIMAGE_PATH".to_string(), appimage));
-    }
-    if docker_passthrough {
-        envs.push(("CTX_DOCKER_PROXY_ENABLED".to_string(), "1".to_string()));
-    }
-    envs
-}
-
 #[cfg(target_os = "linux")]
 fn systemd_run_available() -> bool {
     match Command::new("systemd-run").arg("--version").status() {
@@ -3136,15 +2304,10 @@ fn stop_systemd_scope() {
     }
 }
 
-fn spawn_daemon(
-    app: &tauri::AppHandle,
-    data_dir: &Path,
-    launch_mode: DaemonLaunchMode,
-    docker_passthrough: bool,
-    workspace_roots: Option<Vec<PathBuf>>,
-) -> Result<(String, Child, DaemonCleanup, Option<DockerProxyHandle>)> {
+fn spawn_daemon(app: &tauri::AppHandle, data_dir: &Path) -> Result<(String, Child, bool)> {
     let ctx_bin = resource_bin(app, "ctx")
-        .or_else(|| dev_bin("ctx"));
+        .or_else(|| dev_bin("ctx"))
+        .unwrap_or_else(|| PathBuf::from("ctx"));
 
     let mcp_bin = resource_bin(app, "ctx-mcp")
         .or_else(|| dev_bin("ctx-mcp"));
@@ -3159,51 +2322,6 @@ fn spawn_daemon(
         })
         .or_else(dev_web_dist);
 
-    let launch_mode = validate_daemon_launch_mode(launch_mode)?;
-
-    #[cfg(target_os = "linux")]
-    {
-        if matches!(launch_mode, DaemonLaunchMode::Container) {
-            let ctx_bin = ctx_bin.as_ref().ok_or_else(|| {
-                anyhow!(
-                    "ctx binary not found in the desktop bundle; container launch requires the bundled daemon"
-                )
-            })?;
-            if !ctx_bin.is_absolute() {
-                anyhow::bail!("container launch requires an absolute path to the ctx binary");
-            }
-            let web_dist = web_dist.as_ref().ok_or_else(|| {
-                anyhow!(
-                    "web assets not found in the desktop bundle; container launch requires bundled assets"
-                )
-            })?;
-            if !web_dist.is_dir() {
-                anyhow::bail!("web assets path is not a directory: {}", web_dist.display());
-            }
-            let envs = daemon_env_vars(mcp_bin.as_deref(), Some(web_dist), docker_passthrough);
-            return spawn_daemon_container(
-                ctx_bin,
-                &envs,
-                data_dir,
-                workspace_roots,
-                docker_passthrough,
-            );
-        }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    let _ = workspace_roots;
-
-    let ctx_bin = ctx_bin.unwrap_or_else(|| PathBuf::from("ctx"));
-    let envs = daemon_env_vars(mcp_bin.as_deref(), web_dist.as_deref(), docker_passthrough);
-    spawn_daemon_host(&ctx_bin, &envs, data_dir)
-}
-
-fn spawn_daemon_host(
-    ctx_bin: &Path,
-    envs: &[(String, String)],
-    data_dir: &Path,
-) -> Result<(String, Child, DaemonCleanup, Option<DockerProxyHandle>)> {
     let use_systemd_scope = should_use_systemd_scope();
     if use_systemd_scope {
         stop_systemd_scope();
@@ -3215,15 +2333,30 @@ fn spawn_daemon_host(
             .arg("--unit")
             .arg("ctx-daemon")
             .arg("--same-dir");
-        for (key, value) in envs {
-            cmd.arg("--setenv").arg(format!("{key}={value}"));
+        if let Some(dist) = web_dist.as_ref() {
+            cmd.arg("--setenv")
+                .arg(format!("CTX_WEB_DIST={}", dist.to_string_lossy()));
         }
-        cmd.arg(ctx_bin);
+        if let Some(mcp) = mcp_bin.as_ref() {
+            cmd.arg("--setenv")
+                .arg(format!("CTX_MCP_COMMAND={}", mcp.to_string_lossy()));
+        }
+        if let Ok(appimage) = std::env::var("APPIMAGE") {
+            cmd.arg("--setenv")
+                .arg(format!("CTX_APPIMAGE_PATH={appimage}"));
+        }
+        cmd.arg(&ctx_bin);
         cmd
     } else {
-        let mut cmd = Command::new(ctx_bin);
-        for (key, value) in envs {
-            cmd.env(key, value);
+        let mut cmd = Command::new(&ctx_bin);
+        if let Some(dist) = web_dist.as_ref() {
+            cmd.env("CTX_WEB_DIST", dist.to_string_lossy().to_string());
+        }
+        if let Some(mcp) = mcp_bin.as_ref() {
+            cmd.env("CTX_MCP_COMMAND", mcp.to_string_lossy().to_string());
+        }
+        if let Ok(appimage) = std::env::var("APPIMAGE") {
+            cmd.env("CTX_APPIMAGE_PATH", appimage.clone());
         }
         cmd
     };
@@ -3239,120 +2372,8 @@ fn spawn_daemon_host(
 
     let mut child = cmd.spawn().context("spawning ctx daemon")?;
     let stdout = child.stdout.take().context("capturing daemon stdout")?;
-    let url = wait_for_daemon_listening(stdout)?;
-    let cleanup = if use_systemd_scope {
-        DaemonCleanup::SystemdScope
-    } else {
-        DaemonCleanup::None
-    };
-    Ok((url, child, cleanup, None))
-}
-
-#[cfg(target_os = "linux")]
-fn spawn_daemon_container(
-    ctx_bin: &Path,
-    envs: &[(String, String)],
-    data_dir: &Path,
-    workspace_roots: Option<Vec<PathBuf>>,
-    docker_passthrough: bool,
-) -> Result<(String, Child, DaemonCleanup, Option<DockerProxyHandle>)> {
-    ensure_container_runtime()?;
-    stop_daemon_container(DAEMON_CONTAINER_NAME);
-    std::fs::create_dir_all(data_dir).context("creating daemon data dir")?;
-    let mut docker_proxy = None;
-    let docker_proxy_socket = if docker_passthrough {
-        let socket_path = data_dir.join("docker-proxy.sock");
-        let allow_roots = docker_proxy_allow_roots(data_dir, workspace_roots.clone())?;
-        docker_proxy = Some(docker_passthrough::start_docker_proxy(
-            docker_passthrough::DockerProxyConfig {
-                socket_path: socket_path.clone(),
-                allow_roots,
-            },
-        )?);
-        Some(socket_path)
-    } else {
-        None
-    };
-    let mounts = container_mounts(data_dir, workspace_roots)?;
-    let (uid, gid) = current_user_ids();
-    let port = pick_unused_local_port()?;
-    let bind = format!("0.0.0.0:{port}");
-
-    let mut cmd = Command::new("docker");
-    cmd.arg("run")
-        .arg("--rm")
-        .arg("--name")
-        .arg(DAEMON_CONTAINER_NAME)
-        .arg("--publish")
-        .arg(format!("127.0.0.1:{port}:{port}"))
-        .arg("--user")
-        .arg(format!("{uid}:{gid}"))
-        .arg("--workdir")
-        .arg("/")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
-
-    // Bind mount explicit paths; optional host root RO mount for debugging.
-    for mount in &mounts {
-        cmd.arg("--mount").arg(bind_mount_arg(mount)?);
-    }
-
-    cmd.arg("--tmpfs").arg("/tmp");
-
-    for (key, value) in envs {
-        cmd.arg("--env").arg(format!("{key}={value}"));
-    }
-    if let Some(socket_path) = docker_proxy_socket.as_ref() {
-        cmd.arg("--env")
-            .arg(format!("CTX_DOCKER_PROXY_SOCKET={}", socket_path.display()));
-        cmd.arg("--env").arg(format!(
-            "CTX_DOCKER_PROXY_UPSTREAM=unix://{}",
-            socket_path.display()
-        ));
-    }
-    cmd.arg("--env").arg("CTX_DAEMON_CONTAINER=1");
-
-    cmd.arg(daemon_container_image())
-        .arg(ctx_bin.to_string_lossy().to_string())
-        .arg("serve")
-        .arg("--bind")
-        .arg(bind)
-        .arg("--data-dir")
-        .arg(data_dir.to_string_lossy().to_string());
-
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(err) => {
-            if let Some(proxy) = docker_proxy {
-                proxy.stop();
-            }
-            return Err(err).context("spawning ctx daemon container");
-        }
-    };
-    let stdout = child.stdout.take().context("capturing daemon stdout")?;
-    let url = match wait_for_daemon_listening(stdout) {
-        Ok(url) => url,
-        Err(err) => {
-            if let Some(proxy) = docker_proxy {
-                proxy.stop();
-            }
-            stop_daemon_container(DAEMON_CONTAINER_NAME);
-            return Err(err);
-        }
-    };
-    Ok((
-        url,
-        child,
-        DaemonCleanup::Container {
-            name: DAEMON_CONTAINER_NAME.to_string(),
-        },
-        docker_proxy,
-    ))
-}
-
-fn wait_for_daemon_listening(stdout: impl std::io::Read) -> Result<String> {
     let mut reader = BufReader::new(stdout).lines();
+
     let mut url: Option<String> = None;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
     while std::time::Instant::now() < deadline {
@@ -3371,7 +2392,8 @@ fn wait_for_daemon_listening(stdout: impl std::io::Read) -> Result<String> {
         }
     }
 
-    url.context("daemon did not emit listening URL")
+    let url = url.context("daemon did not emit listening URL")?;
+    Ok((url, child, use_systemd_scope))
 }
 
 #[allow(dead_code)]
@@ -3383,50 +2405,4 @@ fn try_kill_child(mut child: Child) -> Result<()> {
     let _ = child.kill();
     let _ = child.wait();
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_daemon_launch_mode_values() {
-        assert_eq!(parse_daemon_launch_mode("host"), Some(DaemonLaunchMode::Host));
-        assert_eq!(
-            parse_daemon_launch_mode("container"),
-            Some(DaemonLaunchMode::Container)
-        );
-        assert_eq!(
-            parse_daemon_launch_mode("  HOST "),
-            Some(DaemonLaunchMode::Host)
-        );
-        assert_eq!(parse_daemon_launch_mode(""), None);
-        assert_eq!(parse_daemon_launch_mode("unknown"), None);
-    }
-
-    #[test]
-    fn daemon_launch_mode_from_env_validates() {
-        let key = "CTX_DAEMON_LAUNCH_MODE";
-        let original = std::env::var(key).ok();
-
-        std::env::set_var(key, "host");
-        assert_eq!(
-            daemon_launch_mode_from_env().unwrap(),
-            Some(DaemonLaunchMode::Host)
-        );
-
-        std::env::set_var(key, "container");
-        assert_eq!(
-            daemon_launch_mode_from_env().unwrap(),
-            Some(DaemonLaunchMode::Container)
-        );
-
-        std::env::set_var(key, "invalid");
-        assert!(daemon_launch_mode_from_env().is_err());
-
-        match original {
-            Some(value) => std::env::set_var(key, value),
-            None => std::env::remove_var(key),
-        }
-    }
 }

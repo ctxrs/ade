@@ -1,15 +1,15 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type {
+  Message,
   Session,
+  SessionEvent,
   SessionHeadSnapshot,
   SessionSummary,
   SessionSnapshotSummary,
+  SessionTurn,
   Task,
-  WorkspaceActiveHeadBatch,
-  WorkspaceActiveSnapshot,
   WorkspaceActiveSnapshotEvent,
   WorkspaceActiveSnapshotSessionSubscription,
-  WorkspaceActiveSnapshotStreamMessage,
   WorkspaceActiveTaskSummary,
   WorkspaceIndexCursor,
   WorkspaceTaskSummary,
@@ -17,6 +17,8 @@ import type {
 import {
   getDaemonBaseUrl,
   getHealth,
+  getSessionHead,
+  getWorkspaceActiveHeads,
   getWorkspaceActiveSnapshot,
   idToString,
   listWorkspaceArchivedTaskSummaries,
@@ -44,7 +46,6 @@ export type WorkspaceActiveSnapshotItem = {
 
 export type WorkspaceActiveSnapshotState = {
   workspaceId: string;
-  snapshotRev: number;
   initialized: boolean;
   connection: "idle" | "connecting" | "connected" | "disconnected";
   tasksById: Record<string, WorkspaceActiveSnapshotItem>;
@@ -113,38 +114,131 @@ const normalizeSubscriptions = (
   return out;
 };
 
-const isWorkspaceActiveSnapshotStreamMessage = (
-  payload: unknown,
-): payload is WorkspaceActiveSnapshotStreamMessage => {
-  if (!payload || typeof payload !== "object") return false;
-  const type = (payload as { type?: string }).type;
-  return type === "snapshot" || type === "event" || type === "reset_required";
-};
-
 const sortSessionSummaries = (summaries: SessionSnapshotSummary[]): SessionSnapshotSummary[] => {
   return summaries
     .slice()
     .sort((a, b) => String(a.session.created_at ?? "").localeCompare(String(b.session.created_at ?? "")));
 };
 
-const mergeSessionSummaries = (
-  existing: SessionSnapshotSummary[],
-  incoming: SessionSnapshotSummary[],
-): SessionSnapshotSummary[] => {
-  if (existing.length === 0) return incoming;
-  if (incoming.length === 0) return existing;
-  const byId = new Map<string, SessionSnapshotSummary>();
-  for (const summary of existing) {
-    const id = idToString(summary.session.id);
-    if (!id) continue;
-    byId.set(id, summary);
+const hasOwnProperty = (value: unknown, key: string): boolean => {
+  if (!value || typeof value !== "object") return false;
+  return Object.prototype.hasOwnProperty.call(value, key);
+};
+
+const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk", "thought_chunk"]);
+const HEAD_EVENT_BUFFER_LIMIT = 800;
+
+const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
+  if (!event) return false;
+  return PARTIAL_EVENT_TYPES.has(String(event.event_type ?? ""));
+};
+
+const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] => {
+  return turns.map((turn) => ({
+    ...turn,
+    assistant_partial: null,
+    thought_partial: null,
+  }));
+};
+
+const stripPartialEvents = (events: SessionEvent[]): SessionEvent[] => {
+  return events.filter((event) => !isPartialEvent(event));
+};
+
+const sanitizeHeadSnapshot = (head: SessionHeadSnapshot): SessionHeadSnapshot => {
+  const turns = Array.isArray(head.turns) ? stripTurnPartials(head.turns) : head.turns ?? [];
+  const events = Array.isArray(head.events) ? stripPartialEvents(head.events) : head.events ?? [];
+  return {
+    ...head,
+    turns,
+    events,
+  };
+};
+
+const mergePartial = (p: string, n: string): string => {
+  if (!p) return n;
+  if (!n) return p;
+  if (n.startsWith(p)) return n;
+  if (p.startsWith(n)) return p;
+  return n.length >= p.length ? n : p;
+};
+
+const mergeTurn = (prev: SessionTurn, next: SessionTurn): SessionTurn => {
+  const assistant_partial = mergePartial(prev.assistant_partial ?? "", next.assistant_partial ?? "");
+  const thought_partial = mergePartial(prev.thought_partial ?? "", next.thought_partial ?? "");
+  return {
+    ...prev,
+    ...next,
+    assistant_partial,
+    thought_partial,
+    tool_total: Math.max(prev.tool_total ?? 0, next.tool_total ?? 0),
+    tool_pending: Math.max(prev.tool_pending ?? 0, next.tool_pending ?? 0),
+    tool_running: Math.max(prev.tool_running ?? 0, next.tool_running ?? 0),
+    tool_completed: Math.max(prev.tool_completed ?? 0, next.tool_completed ?? 0),
+    tool_failed: Math.max(prev.tool_failed ?? 0, next.tool_failed ?? 0),
+  };
+};
+
+const compareTurnOrder = (a: SessionTurn, b: SessionTurn): number => {
+  const sa = Number(a.start_seq ?? Number.NaN);
+  const sb = Number(b.start_seq ?? Number.NaN);
+  if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) {
+    return sa - sb;
   }
-  for (const summary of incoming) {
-    const id = idToString(summary.session.id);
-    if (!id) continue;
-    byId.set(id, summary);
+  return String(a.started_at).localeCompare(String(b.started_at));
+};
+
+const mergeTurns = (prev: SessionTurn[], incoming: SessionTurn[]): SessionTurn[] => {
+  if (incoming.length === 0) return prev;
+  const byId = new Map<string, SessionTurn>();
+  for (const t of prev) {
+    const id = idToString(t.turn_id);
+    if (id) byId.set(id, t);
   }
-  return sortSessionSummaries(Array.from(byId.values()));
+  for (const t of incoming) {
+    const id = idToString(t.turn_id);
+    if (!id) continue;
+    const existing = byId.get(id);
+    byId.set(id, existing ? mergeTurn(existing, t) : t);
+  }
+  return Array.from(byId.values()).sort(compareTurnOrder);
+};
+
+const mergeMessages = (prev: Message[], incoming: Message[]): Message[] => {
+  if (incoming.length === 0) return prev;
+  const byId = new Map<string, Message>();
+  for (const msg of prev) {
+    const id = idToString(msg.id);
+    if (id) byId.set(id, msg);
+  }
+  for (const msg of incoming) {
+    const id = idToString(msg.id);
+    if (!id) continue;
+    byId.set(id, msg);
+  }
+  return Array.from(byId.values()).sort((a, b) => {
+    const c = String(a.created_at).localeCompare(String(b.created_at));
+    if (c !== 0) return c;
+    const sa = Number(a.turn_sequence ?? Number.NaN);
+    const sb = Number(b.turn_sequence ?? Number.NaN);
+    if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
+    if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
+    if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
+    return String(idToString(a.id)).localeCompare(String(idToString(b.id)));
+  });
+};
+
+const mergeEvents = (prev: SessionEvent[], incoming: SessionEvent[]): SessionEvent[] => {
+  if (incoming.length === 0) return prev;
+  const bySeq = new Map<number, SessionEvent>();
+  for (const ev of prev) {
+    if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
+  }
+  for (const ev of incoming) {
+    if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
+  }
+  const next = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+  return next.length > HEAD_EVENT_BUFFER_LIMIT ? next.slice(-HEAD_EVENT_BUFFER_LIMIT) : next;
 };
 
 class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSource {
@@ -172,6 +266,12 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   private sessionLastEventSeq = new Map<string, number>();
   private subscriptionKey = "";
   private cacheHydrated = false;
+  private activeHeadsQueued = false;
+  private activeHeadsQueuedForce = false;
+  private activeHeadsInFlight = false;
+  private activeHeadsLastSnapshotRev = -1;
+  private activeHeadsFetchToken = 0;
+  private sessionHeadFetches = new Map<string, Promise<void>>();
   private liveSnapshotApplied = false;
   private cachePersistTimer: number | null = null;
   private destroyed = false;
@@ -179,7 +279,6 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   constructor(private workspaceId: string) {
     this.snapshot = {
       workspaceId,
-      snapshotRev: 0,
       initialized: false,
       connection: "idle",
       tasksById: {},
@@ -280,7 +379,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     if (!existing) return;
     const prevArchived = Boolean(existing.task.archived_at);
     const nextArchived = Boolean(task.archived_at);
-    const stableSortAt = task.archived_at ?? task.created_at ?? existing.sort_at;
+    const stableSortAt = this.taskSortAt(task, existing.sort_at);
     const stableSortAtMs = Date.parse(stableSortAt ?? "") || existing.sortAtMs || Date.now();
     const updated: WorkspaceActiveSnapshotItem = {
       ...existing,
@@ -333,7 +432,8 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       const task = summary?.task;
       if (!task || typeof task !== "object") continue;
       if (task.archived_at) continue;
-      const normalized = this.normalizeActiveSummary(summary);
+      const existing = this.tasks.get(idToString(task.id));
+      const normalized = this.normalizeActiveSummary(summary, existing);
       nextActiveIds.add(normalized.id);
       this.tasks.set(normalized.id, normalized);
       this.placeInOrders(normalized);
@@ -345,6 +445,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     this.rebuildSessionLastEventSeq();
     this.snapshot.initialized = true;
     this.publish();
+    this.queueActiveHeadHydration({ force: true });
     if (this.needsCacheMigration(cached)) {
       this.schedulePersistCache();
     }
@@ -390,6 +491,156 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     }
   }
 
+  private queueActiveHeadHydration(opts?: { force?: boolean }) {
+    if (this.destroyed) return;
+    if (opts?.force) {
+      this.activeHeadsQueuedForce = true;
+    }
+    if (this.activeHeadsQueued) return;
+    this.activeHeadsQueued = true;
+    window.setTimeout(() => {
+      const force = this.activeHeadsQueuedForce;
+      this.activeHeadsQueuedForce = false;
+      this.activeHeadsQueued = false;
+      this.hydrateActiveHeads({ force }).catch(() => {});
+    }, 0);
+  }
+
+  private hasMissingActiveHeads(): boolean {
+    for (const taskId of this.activeOrder) {
+      const item = this.tasks.get(taskId);
+      if (!item || item.task.archived_at) continue;
+      const sessionId = this.pickPrimarySessionId(item);
+      if (!sessionId) continue;
+      if (item.primarySessionHead && idToString(item.primarySessionHead.session?.id ?? "") === sessionId) {
+        continue;
+      }
+      if (this.sessionHeadsById.has(sessionId)) continue;
+      return true;
+    }
+    return false;
+  }
+
+  private pickPrimarySessionId(item: WorkspaceActiveSnapshotItem): string | null {
+    const direct = item.primarySessionId || idToString(item.task.primary_session_id ?? "");
+    if (direct) return direct;
+    const headId = idToString(item.primarySessionHead?.session?.id ?? "");
+    if (headId) return headId;
+    const summary = item.sessions?.[0];
+    const sessionId = idToString(summary?.session?.id ?? "");
+    return sessionId || null;
+  }
+
+  private async hydrateActiveHeads(opts?: { force?: boolean }) {
+    if (this.destroyed || this.activeHeadsInFlight) return;
+    if (this.activeOrder.length === 0) return;
+    const missing = this.hasMissingActiveHeads();
+    if (!opts?.force && !missing) return;
+    if (opts?.force && !missing && this.activeHeadsLastSnapshotRev === this.snapshotRev) {
+      return;
+    }
+    this.activeHeadsInFlight = true;
+    const fetchToken = (this.activeHeadsFetchToken += 1);
+    const fetchRev = this.snapshotRev;
+    try {
+      const heads = await getWorkspaceActiveHeads(this.workspaceId);
+      if (this.destroyed || fetchToken !== this.activeHeadsFetchToken) return;
+      const changed = this.applyActiveHeads(heads);
+      if (changed) {
+        this.publish();
+        this.schedulePersistCache();
+      }
+      this.activeHeadsLastSnapshotRev = fetchRev;
+    } catch {
+      // ignore active head hydration errors
+    } finally {
+      if (fetchToken === this.activeHeadsFetchToken) {
+        this.activeHeadsInFlight = false;
+      }
+    }
+  }
+
+  private shouldReplaceHead(prev: SessionHeadSnapshot | null | undefined, next: SessionHeadSnapshot): boolean {
+    if (!prev) return true;
+    const prevSeq = typeof prev.last_event_seq === "number" ? prev.last_event_seq : -1;
+    const nextSeq = typeof next.last_event_seq === "number" ? next.last_event_seq : -1;
+    if (prevSeq >= 0 && nextSeq >= 0 && nextSeq < prevSeq) return false;
+    return true;
+  }
+
+  private applyActiveHeads(heads: SessionHeadSnapshot[]): boolean {
+    if (!Array.isArray(heads) || heads.length === 0) return false;
+    let changed = false;
+    const bySession = new Map<string, SessionHeadSnapshot>();
+    const byTask = new Map<string, SessionHeadSnapshot>();
+    for (const head of heads) {
+      if (!head || typeof head !== "object") continue;
+      const sessionId = idToString(head.session?.id ?? "");
+      if (!sessionId) continue;
+      const sanitized = sanitizeHeadSnapshot(head);
+      bySession.set(sessionId, sanitized);
+      const taskId = idToString(head.session?.task_id ?? "");
+      if (taskId && !byTask.has(taskId)) {
+        byTask.set(taskId, sanitized);
+      }
+      const prev = this.sessionHeadsById.get(sessionId);
+      if (this.shouldReplaceHead(prev, sanitized)) {
+        this.sessionHeadsById.set(sessionId, sanitized);
+        changed = true;
+        if (typeof sanitized.last_event_seq === "number") {
+          this.sessionLastEventSeq.set(sessionId, sanitized.last_event_seq);
+        }
+      }
+    }
+
+    for (const taskId of this.activeOrder) {
+      const item = this.tasks.get(taskId);
+      if (!item || item.task.archived_at) continue;
+      const primarySessionId = this.pickPrimarySessionId(item);
+      const head = (primarySessionId && bySession.get(primarySessionId)) ?? byTask.get(taskId);
+      if (!head) continue;
+      const headSessionId = idToString(head.session?.id ?? "");
+      if (primarySessionId && headSessionId && primarySessionId !== headSessionId) {
+        continue;
+      }
+      const existingHeadId = idToString(item.primarySessionHead?.session?.id ?? "");
+      if (!primarySessionId && existingHeadId && headSessionId && existingHeadId !== headSessionId) {
+        continue;
+      }
+      const nextPrimarySessionId = primarySessionId || headSessionId;
+      const nextItem: WorkspaceActiveSnapshotItem = {
+        ...item,
+        primarySessionId: nextPrimarySessionId || null,
+        primarySessionHead: head,
+      };
+      this.tasks.set(taskId, nextItem);
+      changed = true;
+    }
+    return changed;
+  }
+
+  private async refreshSessionHead(sessionId: string) {
+    const id = idToString(sessionId);
+    if (!id || this.destroyed) return;
+    if (this.sessionHeadFetches.has(id)) return;
+    const request = getSessionHead(id, undefined, true)
+      .then((head) => {
+        if (!head || this.destroyed) return;
+        const changed = this.applyActiveHeads([head]);
+        if (changed) {
+          this.publish();
+          this.schedulePersistCache();
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (this.sessionHeadFetches.get(id) === request) {
+          this.sessionHeadFetches.delete(id);
+        }
+      });
+    this.sessionHeadFetches.set(id, request);
+  }
+
   private buildPersistedSummary(
     item: WorkspaceActiveSnapshotItem,
   ): PersistedWorkspaceActiveTaskSummaryV1 | null {
@@ -410,16 +661,11 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     const head =
       item.primarySessionHead ||
       (primaryId ? this.sessionHeadsById.get(primaryId) ?? null : null);
-    const sortAt =
-      item.sort_at ||
-      this.taskSortAt(item.task) ||
-      item.task.updated_at ||
-      item.task.created_at ||
-      "";
+    const sortAt = this.taskSortAt(item.task, item.sort_at);
     return {
       task: item.task,
       primary_session: primary ?? null,
-      primary_session_head: head ?? null,
+      primary_session_head: head ? sanitizeHeadSnapshot(head) : null,
       sessions,
       sort_at: sortAt,
     };
@@ -435,9 +681,59 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     };
     try {
       const snapshot = await getWorkspaceActiveSnapshot(this.workspaceId, params);
-      const nextTotalActive = snapshot.active?.total_count ?? this.totalActive;
-      const dropMissing = this.activeLimit >= nextTotalActive;
-      this.applyActiveSnapshot(snapshot, { reset, dropMissing });
+      this.snapshotRev = Math.max(this.snapshotRev, snapshot.snapshot_rev ?? 0);
+      if (typeof snapshot.archived_rev === "number" && snapshot.archived_rev > this.archivedRev) {
+        this.archivedRev = snapshot.archived_rev;
+        this.archivedLoaded = false;
+        this.archivedCursor = null;
+      }
+      const nextTotalActive = snapshot.active.total_count ?? this.totalActive;
+      this.totalActive = nextTotalActive;
+      const shouldClearActive = reset;
+      const archivedHeads = shouldClearActive ? this.collectArchivedHeads() : null;
+      if (shouldClearActive) {
+        for (const [id, item] of this.tasks.entries()) {
+          if (!item.task.archived_at) {
+            this.tasks.delete(id);
+          }
+        }
+        this.activeOrder = [];
+        this.sessionHeadsById.clear();
+        if (archivedHeads) {
+          for (const [sessionId, head] of archivedHeads) {
+            this.sessionHeadsById.set(sessionId, head);
+          }
+        }
+      }
+
+      const activeTasks = snapshot.active.tasks ?? [];
+      const nextActiveIds = new Set<string>();
+      for (const summary of activeTasks) {
+        const existing = this.tasks.get(idToString(summary.task.id));
+        const normalized = this.normalizeActiveSummary(summary, existing);
+        nextActiveIds.add(normalized.id);
+        this.tasks.set(normalized.id, normalized);
+        this.placeInOrders(normalized);
+      }
+
+      if (this.activeLimit >= this.totalActive) {
+        const prevActive = [...this.activeOrder];
+        for (const id of prevActive) {
+          if (nextActiveIds.has(id)) continue;
+          const existing = this.tasks.get(id);
+          if (!existing) continue;
+          if (!existing.task.archived_at) {
+            this.removeTask(id, { adjustCounts: false });
+          }
+        }
+      }
+
+      this.rebuildSessionLastEventSeq();
+      this.snapshot.initialized = true;
+      this.liveSnapshotApplied = true;
+      this.publish();
+      this.schedulePersistCache();
+      this.queueActiveHeadHydration({ force: true });
     } catch {
       this.setFetchState("active", "error");
       return;
@@ -481,89 +777,6 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       return;
     }
     this.setFetchState("archived", "idle");
-  }
-
-  private applyActiveSnapshot(
-    snapshot: WorkspaceActiveSnapshot,
-    opts?: {
-      reset?: boolean;
-      dropMissing?: boolean;
-      activeHeads?: SessionHeadSnapshot[] | null;
-    },
-  ) {
-    const nextSnapshotRev = typeof snapshot.snapshot_rev === "number" ? snapshot.snapshot_rev : 0;
-    this.snapshotRev = Math.max(this.snapshotRev, nextSnapshotRev);
-    if (typeof snapshot.archived_rev === "number" && snapshot.archived_rev > this.archivedRev) {
-      this.archivedRev = snapshot.archived_rev;
-      this.archivedLoaded = false;
-      this.archivedCursor = null;
-    }
-
-    const active = snapshot.active;
-    const nextTotalActive = Number.isFinite(active?.total_count) ? active.total_count : this.totalActive;
-    this.totalActive = nextTotalActive;
-
-    const reset = opts?.reset ?? false;
-    const previousTasks = reset ? new Map(this.tasks) : null;
-    const archivedHeads = reset ? this.collectArchivedHeads() : null;
-    if (reset) {
-      for (const [id, item] of this.tasks.entries()) {
-        if (!item.task.archived_at) {
-          this.tasks.delete(id);
-        }
-      }
-      this.activeOrder = [];
-      this.sessionHeadsById.clear();
-      if (archivedHeads) {
-        for (const [sessionId, head] of archivedHeads) {
-          this.sessionHeadsById.set(sessionId, head);
-        }
-      }
-    }
-
-    this.applyActiveHeads(opts?.activeHeads);
-
-    const activeTasks = Array.isArray(active?.tasks) ? active.tasks : [];
-    const nextActiveIds = new Set<string>();
-    for (const summary of activeTasks) {
-      const id = idToString(summary.task.id);
-      const existing = (previousTasks ?? this.tasks).get(id);
-      const normalized = this.normalizeActiveSummary(summary, existing);
-      nextActiveIds.add(normalized.id);
-      this.tasks.set(normalized.id, normalized);
-      this.placeInOrders(normalized);
-    }
-
-    const dropMissing = opts?.dropMissing ?? this.activeLimit >= nextTotalActive;
-    if (dropMissing) {
-      const prevActive = [...this.activeOrder];
-      for (const id of prevActive) {
-        if (nextActiveIds.has(id)) continue;
-        const existing = this.tasks.get(id);
-        if (!existing) continue;
-        if (!existing.task.archived_at) {
-          this.removeTask(id, { adjustCounts: false });
-        }
-      }
-    }
-
-    this.rebuildSessionLastEventSeq();
-    this.snapshot.initialized = true;
-    this.liveSnapshotApplied = true;
-    this.publish();
-    this.schedulePersistCache();
-  }
-
-  private applyActiveHeads(heads?: SessionHeadSnapshot[] | null) {
-    if (!Array.isArray(heads)) return;
-    for (const head of heads) {
-      this.rememberSessionHead(head);
-    }
-  }
-
-  private readActiveHeads(batch?: WorkspaceActiveHeadBatch | null): SessionHeadSnapshot[] {
-    if (!batch || !Array.isArray(batch.heads)) return [];
-    return batch.heads;
   }
 
   private async connectStream() {
@@ -672,44 +885,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   private async handleStreamMessage(data: unknown) {
     const parsed = await parseWsJson(data);
     if (!parsed || typeof parsed !== "object") return;
-    if (isWorkspaceActiveSnapshotStreamMessage(parsed)) {
-      this.handleStreamEnvelope(parsed);
-      return;
-    }
-    this.applyWorkspaceEvent(parsed as WorkspaceActiveSnapshotEvent);
-  }
-
-  private handleStreamEnvelope(message: WorkspaceActiveSnapshotStreamMessage) {
-    switch (message.type) {
-      case "snapshot": {
-        const snapshot = message.active_snapshot;
-        if (!snapshot || typeof snapshot !== "object") return;
-        if (typeof snapshot.snapshot_rev === "number" && snapshot.snapshot_rev < this.snapshotRev) {
-          this.ensureActiveSnapshot(true).catch(() => {});
-          return;
-        }
-        const activeHeads = this.readActiveHeads(message.active_heads);
-        const totalCount = snapshot.active?.total_count ?? 0;
-        const taskCount = Array.isArray(snapshot.active?.tasks) ? snapshot.active.tasks.length : 0;
-        const snapshotComplete = taskCount >= totalCount;
-        const reset = !this.snapshot.initialized || snapshotComplete;
-        this.applyActiveSnapshot(snapshot, { reset, dropMissing: snapshotComplete, activeHeads });
-        break;
-      }
-      case "event":
-        if (message.event) {
-          this.applyWorkspaceEvent(message.event);
-        }
-        break;
-      case "reset_required":
-        this.ensureActiveSnapshot(true).catch(() => {});
-        break;
-      default:
-        break;
-    }
-  }
-
-  private applyWorkspaceEvent(evt: WorkspaceActiveSnapshotEvent) {
+    const evt = parsed as WorkspaceActiveSnapshotEvent;
     if (typeof evt.snapshot_rev === "number") {
       if (evt.snapshot_rev < this.snapshotRev) {
         this.snapshotRev = evt.snapshot_rev;
@@ -761,8 +937,18 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
         this.publish();
         break;
       case "session_head_delta":
-      case "session_gap":
+        if (this.applySessionHeadDelta(evt.delta)) {
+          this.publish();
+          this.schedulePersistCache();
+        }
         break;
+      case "session_gap": {
+        const sessionId = idToString(evt.session_id ?? "");
+        if (sessionId) {
+          this.refreshSessionHead(sessionId);
+        }
+        break;
+      }
       case "worktree_bootstrap": {
         const worktreeId = idToString(evt.notice.worktree_id);
         const root = String(evt.notice.worktree_root ?? "").trim();
@@ -835,10 +1021,8 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   }
 
   private upsertActiveSummary(summary: WorkspaceActiveTaskSummary) {
-    const id = idToString(summary.task.id);
-    const prior = id ? this.tasks.get(id) : undefined;
-    const normalized = this.normalizeActiveSummary(summary, prior);
-    const existing = this.tasks.get(normalized.id);
+    const existing = this.tasks.get(idToString(summary.task.id));
+    const normalized = this.normalizeActiveSummary(summary, existing);
     if (existing?.primarySessionId && existing.primarySessionId !== normalized.primarySessionId) {
       this.sessionHeadsById.delete(existing.primarySessionId);
     }
@@ -851,6 +1035,10 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     this.placeInOrders(normalized);
     this.rebuildSessionLastEventSeq();
     this.schedulePersistCache();
+    const primaryId = this.pickPrimarySessionId(normalized);
+    if (primaryId && !normalized.primarySessionHead && !this.sessionHeadsById.has(primaryId)) {
+      this.queueActiveHeadHydration();
+    }
   }
 
   private upsertArchivedItem(item: WorkspaceActiveSnapshotItem, opts?: { adjustCounts?: boolean }) {
@@ -900,19 +1088,78 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     this.schedulePersistCache();
   }
 
+  private applySessionHeadDelta(delta: any): boolean {
+    const sessionId = idToString(delta?.session_id ?? "");
+    if (!sessionId) return false;
+    const existing = this.sessionHeadsById.get(sessionId);
+    if (!existing) return false;
+    let changed = false;
+    let turns = existing.turns ?? [];
+    let messages = existing.messages ?? [];
+    let events = existing.events ?? [];
+    if (delta.turn) {
+      turns = mergeTurns(turns, [delta.turn]);
+      changed = true;
+    }
+    if (delta.message) {
+      messages = mergeMessages(messages, [delta.message]);
+      changed = true;
+    }
+    if (delta.event && !isPartialEvent(delta.event)) {
+      events = mergeEvents(events, [delta.event]);
+      changed = true;
+    }
+    const next: SessionHeadSnapshot = sanitizeHeadSnapshot({
+      ...existing,
+      turns,
+      messages,
+      events,
+      ...(typeof delta.last_event_seq === "number" ? { last_event_seq: delta.last_event_seq } : {}),
+      ...(typeof delta.state_rev === "number" ? { state_rev: delta.state_rev } : {}),
+    });
+
+    if (!changed && next.last_event_seq === existing.last_event_seq) {
+      return false;
+    }
+    if (!this.shouldReplaceHead(existing, next)) return false;
+    this.sessionHeadsById.set(sessionId, next);
+    changed = true;
+    if (typeof delta.last_event_seq === "number") {
+      this.sessionLastEventSeq.set(sessionId, delta.last_event_seq);
+    }
+
+    const headTaskId = idToString(next.session?.task_id ?? "");
+    const headSessionId = idToString(next.session?.id ?? "");
+    for (const [taskId, item] of this.tasks.entries()) {
+      const primaryId =
+        item.primarySessionId ||
+        idToString(item.task.primary_session_id ?? "");
+      const matchesSession = primaryId ? primaryId === headSessionId : false;
+      const matchesTask = headTaskId ? headTaskId === taskId : false;
+      if (!matchesSession && !matchesTask) continue;
+      if (primaryId && !matchesSession) continue;
+      const nextItem: WorkspaceActiveSnapshotItem = {
+        ...item,
+        primarySessionId: primaryId || headSessionId || null,
+        primarySessionHead: next,
+      };
+      this.tasks.set(taskId, nextItem);
+      changed = true;
+    }
+    return changed;
+  }
+
   private readPrimarySessionHead(summary: unknown): SessionHeadSnapshot | null {
     if (!summary || typeof summary !== "object") return null;
     const rec = summary as Record<string, unknown>;
     const head = (rec as any).primary_session_head ?? (rec as any).primarySessionHead ?? null;
     if (!head || typeof head !== "object") return null;
-    return head as SessionHeadSnapshot;
+    return sanitizeHeadSnapshot(head as SessionHeadSnapshot);
   }
 
   private readPrimarySessionId(summary: unknown): string | null {
     if (!summary || typeof summary !== "object") return null;
     const rec = summary as Record<string, any>;
-    const fromTask = idToString(rec?.task?.primary_session_id ?? "");
-    if (fromTask) return fromTask;
     const fromPrimary = idToString(rec?.primary_session?.session?.id ?? "");
     if (fromPrimary) return fromPrimary;
     const fromHead = idToString(rec?.primary_session_head?.session?.id ?? rec?.primarySessionHead?.session?.id ?? "");
@@ -924,7 +1171,10 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     if (!head) return;
     const sessionId = idToString((head as any)?.session?.id ?? "");
     if (!sessionId) return;
-    this.sessionHeadsById.set(sessionId, head);
+    const sanitized = sanitizeHeadSnapshot(head);
+    const prev = this.sessionHeadsById.get(sessionId);
+    if (!this.shouldReplaceHead(prev, sanitized)) return;
+    this.sessionHeadsById.set(sessionId, sanitized);
   }
 
   private collectArchivedHeads(): Map<string, SessionHeadSnapshot> {
@@ -942,23 +1192,48 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
 
   private normalizeActiveSummary(
     summary: WorkspaceActiveTaskSummary | PersistedWorkspaceActiveTaskSummaryV1,
-    existing?: WorkspaceActiveSnapshotItem | null,
+    existing?: WorkspaceActiveSnapshotItem,
   ): WorkspaceActiveSnapshotItem {
     const id = idToString(summary.task.id);
-    const sortAt = summary.sort_at ?? this.taskSortAt(summary.task) ?? "";
-    const sortAtMs = Date.parse(sortAt) || Date.now();
-    let primarySessionId = this.readPrimarySessionId(summary) || idToString(summary.primary_session?.session?.id ?? "");
-    let primaryHead = this.readPrimarySessionHead(summary);
+    const summaryHasPrimary = hasOwnProperty(summary, "primary_session") || hasOwnProperty(summary, "primarySession");
+    const summaryHasSessions = hasOwnProperty(summary, "sessions");
+    const summaryHasHead =
+      hasOwnProperty(summary, "primary_session_head") || hasOwnProperty(summary, "primarySessionHead");
+    const summaryHasSortAt = hasOwnProperty(summary, "sort_at") || hasOwnProperty(summary, "sortAt");
+
+    const fallbackSortAt = summaryHasSortAt
+      ? (summary as PersistedWorkspaceActiveTaskSummaryV1).sort_at ?? null
+      : existing?.sort_at ?? null;
+    const sortAt = this.taskSortAt(summary.task, fallbackSortAt);
+    const sortAtMs = Date.parse(sortAt) || existing?.sortAtMs || Date.now();
+    const primarySessionId =
+      this.readPrimarySessionId(summary) ||
+      existing?.primarySessionId ||
+      idToString((summary as PersistedWorkspaceActiveTaskSummaryV1).primary_session?.session?.id ?? "");
+
+    let primaryHead = summaryHasHead ? this.readPrimarySessionHead(summary) : existing?.primarySessionHead ?? null;
     if (!primaryHead && primarySessionId) {
       primaryHead = this.sessionHeadsById.get(primarySessionId) ?? null;
     }
-    if (!primaryHead && existing?.primarySessionHead) {
-      primaryHead = existing.primarySessionHead;
-    }
     this.rememberSessionHead(primaryHead);
-    const primary = summary.primary_session ? [this.normalizeSessionSummary(summary.primary_session)] : [];
-    const sessionsRaw = Array.isArray(summary.sessions) ? summary.sessions : [];
+
+    const existingSessions = existing?.sessions ?? [];
+    const primaryFromSummary = summaryHasPrimary
+      ? (summary as PersistedWorkspaceActiveTaskSummaryV1).primary_session
+      : null;
+    let primarySummary = primaryFromSummary ? this.normalizeSessionSummary(primaryFromSummary) : null;
+    if (!primarySummary && primarySessionId) {
+      primarySummary =
+        existingSessions.find((item) => idToString(item.session.id) === primarySessionId) ?? null;
+    }
+
+    const sessionsRaw = summaryHasSessions
+      ? Array.isArray((summary as PersistedWorkspaceActiveTaskSummaryV1).sessions)
+        ? (summary as PersistedWorkspaceActiveTaskSummaryV1).sessions
+        : []
+      : existingSessions;
     const sessions = sessionsRaw.map((s) => this.normalizeSessionSummary(s));
+
     const merged: SessionSnapshotSummary[] = [];
     const seen = new Set<string>();
     const addSummary = (item: SessionSnapshotSummary) => {
@@ -967,18 +1242,15 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       seen.add(sid);
       merged.push(item);
     };
-    primary.forEach(addSummary);
-    sessions.forEach(addSummary);
-    const existingSessions = existing?.sessions ?? [];
-    const combined = mergeSessionSummaries(existingSessions, merged);
-    if (!primarySessionId && existing?.primarySessionId) {
-      primarySessionId = existing.primarySessionId;
+    if (primarySummary) {
+      addSummary(primarySummary);
     }
+    sessions.forEach(addSummary);
 
     return {
       id,
       task: { ...summary.task },
-      sessions: sortSessionSummaries(combined),
+      sessions: sortSessionSummaries(merged),
       primarySessionHead: primaryHead ?? null,
       primarySessionId: primarySessionId || null,
       sortAtMs,
@@ -986,14 +1258,18 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     };
   }
 
-  private taskSortAt(task: Task): string {
-    return task.archived_at ?? task.created_at ?? task.updated_at ?? "";
+  private taskSortAt(task: Task, fallback?: string | null): string {
+    if (task.archived_at) return task.archived_at;
+    if (task.created_at) return task.created_at;
+    if (fallback) return fallback;
+    return task.updated_at ?? "";
   }
 
   private buildArchivedItem(
     summary: WorkspaceTaskSummary,
     primaryHead?: SessionHeadSnapshot | null,
   ): WorkspaceActiveSnapshotItem | null {
+    void primaryHead;
     const task = summary.task;
     const id = idToString(task.id);
     if (!id) return null;
@@ -1002,10 +1278,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
     const summaries = existing?.sessions ?? [];
     const sessionList = summaries.map((item) => item.session).filter(Boolean);
     const summarySessions = Array.isArray(summary.sessions) ? summary.sessions : [];
-    const summaryHead = primaryHead ?? this.readPrimarySessionHead(summary);
-    if (summaryHead) {
-      this.rememberSessionHead(summaryHead);
-    } else if (existing?.primarySessionHead) {
+    if (existing?.primarySessionHead) {
       this.rememberSessionHead(existing.primarySessionHead);
     }
     const summaryPrimaryId = this.readPrimarySessionId(summary);
@@ -1013,7 +1286,7 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       summaryPrimaryId ||
       this.pickArchivedSessionIdFromSummaries(task, summarySessions) ||
       this.pickArchivedSessionId(task, sessionList);
-    let primarySessionHead = summaryHead ?? null;
+    let primarySessionHead = null;
     if (!primarySessionHead && primarySessionId) {
       primarySessionHead = this.sessionHeadsById.get(primarySessionId) ?? null;
     }
@@ -1036,12 +1309,24 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
 
   private pickArchivedSessionId(task: Task, sessions: Session[]): string | null {
     const primaryId = idToString(task.primary_session_id ?? "");
-    return primaryId || null;
+    if (primaryId && (sessions.length === 0 || sessions.some((s) => idToString(s.id) === primaryId))) {
+      return primaryId;
+    }
+    const nonSubagents = sessions.filter((session) => session.relationship !== "sub_agent");
+    const pool = nonSubagents.length ? nonSubagents : sessions;
+    const selected = pool[0];
+    return selected ? idToString(selected.id) : null;
   }
 
   private pickArchivedSessionIdFromSummaries(task: Task, sessions: SessionSummary[]): string | null {
     const primaryId = idToString(task.primary_session_id ?? "");
-    return primaryId || null;
+    if (primaryId && (sessions.length === 0 || sessions.some((s) => idToString(s.id) === primaryId))) {
+      return primaryId;
+    }
+    const nonSubagents = sessions.filter((session) => session.relationship !== "sub_agent");
+    const pool = nonSubagents.length ? nonSubagents : sessions;
+    const selected = pool[0];
+    return selected ? idToString(selected.id) : null;
   }
 
   private normalizeSessionSummary(summary: SessionSnapshotSummary): SessionSnapshotSummary {
@@ -1119,7 +1404,6 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
       hasMoreActive: this.hasMoreActive,
       hasMoreArchived: this.hasMoreArchived,
       archivedLoaded: this.archivedLoaded,
-      snapshotRev: this.snapshotRev,
     };
     for (const l of this.listeners) l();
   }

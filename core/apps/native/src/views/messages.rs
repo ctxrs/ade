@@ -10,8 +10,8 @@ use ctx_core::models::{MessageDelivery, MessageRole, SessionTurnStatus};
 use gpui::{
     Animation, AnimationExt, Transformation, div, img, linear_color_stop, linear_gradient, list,
     percentage, prelude::*, px, AnyElement, App, ClickEvent, Context, Edges, ElementId, Element,
-    FontWeight, Image, ImageFormat, InteractiveElement, ListState, ObjectFit, Pixels, Rgba,
-    SharedString, Stateful, StatefulInteractiveElement, StyleRefinement, WeakEntity, Window,
+    Image, ImageFormat, InteractiveElement, ListState, ObjectFit, Pixels, Rgba, SharedString,
+    Stateful, StatefulInteractiveElement, StyleRefinement, WeakEntity, Window,
 };
 use gpui_component::{Icon, IconName, StyledExt};
 use gpui_component::text::{InlineCodeStyle, TextView, TextViewStyle};
@@ -29,10 +29,6 @@ const COLLAPSED_MESSAGE_MAX_LINES: usize = 8;
 const COLLAPSED_MESSAGE_MAX_CHARS: usize = 1000;
 const SPINNER_DURATION: Duration = Duration::from_millis(800);
 
-const THREAD_MAX_WIDTH: f32 = 820.0;
-const THREAD_PADDING_X: f32 = 12.0;
-const BUBBLE_MAX_WIDTH: f32 = THREAD_MAX_WIDTH * 0.92;
-
 static SPINNER_ANCHOR: OnceLock<Instant> = OnceLock::new();
 
 fn markdown_view(
@@ -49,7 +45,6 @@ fn markdown_view(
     let weak_for_actions = weak.clone();
     TextView::markdown(id, text)
         .style(style)
-        .text_color(colors.text)
         .code_block_actions(move |block, _window, cx| {
             let code = block.code();
             let span_key = block
@@ -214,23 +209,52 @@ impl<'a> ThreadListView<'a> {
         let attachment_images = self.shell.composer_attachment_images.clone();
         let attachment_loading = self.shell.composer_attachment_loading.clone();
         let attachment_failed = self.shell.attachment_fetch_failed.clone();
+        let list_attachment_images = attachment_images.clone();
+        let list_attachment_loading = attachment_loading.clone();
+        let list_attachment_failed = attachment_failed.clone();
+        let list = list(self.list_state.clone(), move |index, _window, cx| {
+            let Some(item) = items.get(index) else {
+                return div().into_any_element();
+            };
+            render_thread_item(
+                item.clone(),
+                colors,
+                &expanded_turn_headers,
+                &expanded_messages,
+                &expanded_turn_details,
+                &expanded_tools,
+                is_dark,
+                copied_flags.clone(),
+                list_attachment_images.clone(),
+                list_attachment_loading.clone(),
+                list_attachment_failed.clone(),
+                list_weak.clone(),
+                cx,
+            )
+        })
+        .w_full()
+        .h_full()
+        .pb(px(metrics.spacing.md))
+        .overflow_hidden()
+        .bg(colors.bg);
+
         let sticky = if let Some(header) = &self.shell.sticky_turn_header {
             if self.shell.sticky_turn_header_at_top {
                 div().into_any_element()
             } else {
                 div()
                     .absolute()
-                    .top(px(0.0))
-                    .left(px(THREAD_PADDING_X))
-                    .right(px(THREAD_PADDING_X))
+                    .top(px(metrics.spacing.sm))
+                    .left(px(metrics.spacing.sm))
+                    .right(px(metrics.spacing.sm))
                     .child(
                         div()
-                            .px(px(metrics.spacing.lg))
-                            .py(px(metrics.spacing.md))
-                            .bg(colors.bg)
+                            .px(px(metrics.spacing.md))
+                            .py(px(metrics.spacing.sm))
+                            .bg(colors.panel)
                             .border_1()
                             .border_color(colors.border)
-                            .rounded(px(metrics.radii.xl))
+                            .rounded_md()
                             .child(
                                 markdown_view(
                                     "sticky-turn-header",
@@ -264,39 +288,6 @@ impl<'a> ThreadListView<'a> {
         } else {
             div().into_any_element()
         };
-
-        let list_attachment_images = attachment_images;
-        let list_attachment_loading = attachment_loading;
-        let list_attachment_failed = attachment_failed;
-        let list = list(self.list_state.clone(), move |index, _window, cx| {
-            let Some(item) = items.get(index) else {
-                return div().into_any_element();
-            };
-            render_thread_item(
-                item,
-                colors,
-                &expanded_turn_headers,
-                &expanded_messages,
-                &expanded_turn_details,
-                &expanded_tools,
-                is_dark,
-                &copied_flags,
-                &list_attachment_images,
-                &list_attachment_loading,
-                &list_attachment_failed,
-                list_weak.clone(),
-                cx,
-            )
-        })
-        .w_full()
-        .h_full()
-        .px(px(THREAD_PADDING_X))
-        .max_w(px(THREAD_MAX_WIDTH + THREAD_PADDING_X * 2.0))
-        .ml_auto()
-        .mr_auto()
-        .pb(px(metrics.spacing.md))
-        .overflow_hidden()
-        .bg(colors.bg);
 
         let overlay = if self.new_item_count > 0 {
             let label = if self.new_item_count == 1 {
@@ -358,31 +349,32 @@ impl<'a> ThreadListView<'a> {
 }
 
 fn render_thread_item(
-    item: &ThreadListItem,
+    item: ThreadListItem,
     colors: ThemeColors,
     expanded_turn_headers: &std::collections::HashMap<String, bool>,
     expanded_messages: &std::collections::HashMap<String, bool>,
     expanded_turn_details: &std::collections::HashMap<String, bool>,
     expanded_tools: &std::collections::HashMap<String, bool>,
     is_dark: bool,
-    copied_flags: &std::collections::HashMap<String, Instant>,
-    attachment_images: &HashMap<String, Arc<Image>>,
-    attachment_loading: &HashSet<String>,
-    attachment_failed: &HashSet<String>,
+    copied_flags: std::collections::HashMap<String, Instant>,
+    attachment_images: HashMap<String, Arc<Image>>,
+    attachment_loading: HashSet<String>,
+    attachment_failed: HashSet<String>,
     weak_view: WeakEntity<ShellView>,
     cx: &mut App,
 ) -> AnyElement {
     let metrics = ThemeMetrics::default();
-    // Match the web workbench thread item padding (2px inline, 4px bottom).
-    let item_pad_x = 2.0;
-    let item_pad_y = 4.0;
-    let thread_indent_x = 4.0;
     match item {
         ThreadListItem::TurnHeader { id, header } => {
             let is_long =
                 header.plain_text.split('\n').count() > 4 || header.plain_text.len() > 280;
-            let expanded = expanded_turn_headers.get(id).copied().unwrap_or(!is_long);
+            let expanded = expanded_turn_headers.get(&id).copied().unwrap_or(!is_long);
             let has_copy_button = !header.content.trim().is_empty();
+            let copy_inset = if has_copy_button {
+                metrics.spacing.xxl
+            } else {
+                0.0
+            };
             let header_max_height = 1.45 * 3.5 * 16.0;
             let header_bg = Rgba {
                 r: 1.0,
@@ -402,12 +394,16 @@ fn render_thread_item(
             )
             .selectable(true);
             let content = if expanded {
-                div().child(content).into_any_element()
+                div()
+                    .when(copy_inset > 0.0, |this| this.pr(px(copy_inset)))
+                    .child(content)
+                    .into_any_element()
             } else {
                 div()
                     .relative()
                     .max_h(px(header_max_height))
                     .overflow_hidden()
+                    .when(copy_inset > 0.0, |this| this.pr(px(copy_inset)))
                     .child(content)
                     .child(fade_overlay(px(header_max_height * 0.25), header_bg))
                     .into_any_element()
@@ -415,9 +411,9 @@ fn render_thread_item(
             let attachments = render_attachments(
                 &header.attachments,
                 colors,
-                attachment_images,
-                attachment_loading,
-                attachment_failed,
+                &attachment_images,
+                &attachment_loading,
+                &attachment_failed,
                 AttachmentVariant::Header,
             );
             let delivery_indicator = render_delivery_indicator(
@@ -439,9 +435,11 @@ fn render_thread_item(
                         r: 1.0,
                         g: 1.0,
                         b: 1.0,
-                        a: 0.05,
+                        a: 0.06,
                     })
-                    .opacity(if copied { 0.95 } else { 0.0 })
+                    .border_1()
+                    .border_color(colors.border)
+                    .opacity(if copied { 0.95 } else { 0.4 })
                     .hover(|style| {
                         style.opacity(1.0).bg(Rgba {
                             r: 1.0,
@@ -477,7 +475,6 @@ fn render_thread_item(
                     })
                     .bg(header_bg)
                     .rounded(px(10.0))
-                    .hover(|style| style.border_color(colors.border_strong))
                     .px(px(metrics.spacing.lg))
                     .py(px(metrics.spacing.md))
                     .cursor_pointer()
@@ -494,8 +491,8 @@ fn render_thread_item(
                 ),
             );
             div()
-                .id(id.clone())
-                .px(px(0.0))
+                .id(id)
+                .px(px(metrics.spacing.sm))
                 .pt(px(metrics.spacing.sm))
                 .pb(px(metrics.spacing.md))
                 .overflow_hidden()
@@ -510,7 +507,7 @@ fn render_thread_item(
             ..
         }) => {
             let is_long = content.split('\n').count() > 20 || content.len() > 1500;
-            let expanded = expanded_messages.get(id).copied().unwrap_or(!is_long);
+            let expanded = expanded_messages.get(&id).copied().unwrap_or(!is_long);
             let (bubble_bg, bubble_border) = match role {
                 MessageRole::User => (
                     Rgba {
@@ -612,33 +609,26 @@ fn render_thread_item(
                 div().into_any_element()
             };
             let attachments = render_attachments(
-                attachments,
+                &attachments,
                 colors,
-                attachment_images,
-                attachment_loading,
-                attachment_failed,
+                &attachment_images,
+                &attachment_loading,
+                &attachment_failed,
                 AttachmentVariant::Message,
             );
-            let role_label = format!("{:?}", role).to_uppercase();
-            let role_font_size = px(metrics.type_scale.md * 0.75);
+            let role_label = format!("{:?}", role).to_lowercase();
             let mut bubble = div()
                 .bg(bubble_bg)
                 .border_1()
                 .border_color(bubble_border)
                 .rounded(px(6.0))
-                .hover(|style| style.border_color(colors.border_strong))
                 .px(px(metrics.spacing.xl))
                 .py(px(metrics.spacing.lg))
-                .max_w(px(BUBBLE_MAX_WIDTH))
+                .max_w(px(1200.0))
                 .flex()
                 .flex_col()
                 .gap(px(metrics.spacing.xs))
-                .child(
-                    div()
-                        .text_size(role_font_size)
-                        .text_color(colors.muted)
-                        .child(role_label),
-                )
+                .child(div().text_sm().text_color(colors.muted).child(role_label))
                 .child(body)
                 .child(attachments)
                 .child(toggle);
@@ -649,7 +639,7 @@ fn render_thread_item(
             };
             div()
                 .id(id.clone())
-                .px(px(0.0))
+                .px(px(metrics.spacing.md))
                 .py(px(metrics.spacing.sm))
                 .overflow_hidden()
                 .child(bubble)
@@ -657,10 +647,8 @@ fn render_thread_item(
         }
         ThreadListItem::Item(ThreadItem::Assistant { id, content, .. }) => div()
             .id(id.clone())
-            .pl(px(thread_indent_x + item_pad_x))
-            .pr(px(item_pad_x))
-            .pt(px(0.0))
-            .pb(px(item_pad_y))
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .overflow_hidden()
             .child(
                 markdown_view(
@@ -676,13 +664,13 @@ fn render_thread_item(
             .into_any_element(),
         ThreadListItem::Item(ThreadItem::Thought { id, content, .. }) => div()
             .id(id.clone())
-            .pl(px(thread_indent_x + metrics.spacing.xs))
-            .pr(px(metrics.spacing.xs))
-            .pt(px(metrics.spacing.xxs))
-            .pb(px(metrics.spacing.sm))
+            .px(px(metrics.spacing.md))
+            .py(px(metrics.spacing.sm))
             .overflow_hidden()
             .child(
                 div()
+                    .px(px(metrics.spacing.xs))
+                    .pb(px(metrics.spacing.sm))
                     .text_sm()
                     .text_color(colors.muted)
                     .italic()
@@ -723,12 +711,9 @@ fn render_thread_item(
             assistant_messages_content,
             ..
         }) => {
-            let label = custom_status
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| format!("{:?}", status));
+            let label = custom_status.unwrap_or_else(|| format!("{:?}", status));
             let is_completed = matches!(status, SessionTurnStatus::Completed);
-            let elapsed_ms = (updated_at.clone() - started_at.clone()).num_milliseconds();
+            let elapsed_ms = (updated_at - started_at).num_milliseconds();
             let elapsed_label = format_elapsed(elapsed_ms);
             let has_content = assistant_messages_content
                 .as_ref()
@@ -737,11 +722,10 @@ fn render_thread_item(
             let copy_key = format!("turn-status:{id}");
             let copied = copied_flags.contains_key(&copy_key);
             let copy_button = if is_completed && has_content {
-                let text = assistant_messages_content.clone().unwrap_or_default();
+                let text = assistant_messages_content.unwrap_or_default();
                 let button = div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
+                    .p(px(2.0))
+                    .rounded(px(4.0))
                     .opacity(if copied { 0.95 } else { 0.6 })
                     .hover(|style| style.opacity(1.0))
                     .cursor_pointer()
@@ -762,56 +746,42 @@ fn render_thread_item(
             } else {
                 div().into_any_element()
             };
-            let copy_dot = if is_completed && has_content {
-                div().text_color(colors.muted).child("·").into_any_element()
-            } else {
-                div().into_any_element()
-            };
             div()
-                .id(id.clone())
-                .pl(px(thread_indent_x + item_pad_x))
-                .pr(px(item_pad_x))
-                .pt(px(0.0))
-                .pb(px(item_pad_y))
+                .id(id)
+                .px(px(metrics.spacing.md))
+                .py(px(metrics.spacing.xs))
                 .overflow_hidden()
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(6.0))
+                        .gap(px(metrics.spacing.xs))
+                        .px(px(metrics.spacing.xs))
+                        .pb(px(metrics.spacing.sm))
+                        .pt(px(metrics.spacing.xxs))
                         .text_sm()
                         .text_color(colors.muted)
-                        .italic()
-                        .child(div().child(label))
+                        .child(div().text_color(colors.text).child(label))
                         .child(div().text_color(colors.muted).child("·"))
-                        .child(
-                            div()
-                                .font_family(metrics.type_scale.mono.clone())
-                                .italic()
-                                .child(elapsed_label),
-                        )
-                        .child(copy_dot)
+                        .child(div().child(elapsed_label))
                         .child(copy_button),
                 )
                 .into_any_element()
         }
         ThreadListItem::Item(ThreadItem::Tool(tool)) => {
-            let expanded = expanded_tools
-                .get(tool.id.as_str())
-                .copied()
-                .unwrap_or(false);
+            let expanded = expanded_tools.get(&tool.id).copied().unwrap_or(false);
             render_tool_item(
                 tool,
                 colors,
                 is_dark,
                 expanded,
-                copied_flags,
+                &copied_flags,
                 weak_view.clone(),
                 cx,
             )
         }
         ThreadListItem::Item(ThreadItem::ToolGroup { id, tools, .. }) => {
-            let expanded = expanded_turn_details.get(id).copied().unwrap_or(false);
+            let expanded = expanded_turn_details.get(&id).copied().unwrap_or(false);
             let label = if tools.is_empty() {
                 "Activity".to_string()
             } else {
@@ -822,18 +792,15 @@ fn render_thread_item(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(metrics.spacing.lg))
+                    .gap(px(metrics.spacing.sm))
                     .children(tools.into_iter().map(|tool| {
-                        let expanded_tool = expanded_tools
-                            .get(tool.id.as_str())
-                            .copied()
-                            .unwrap_or(false);
+                        let expanded_tool = expanded_tools.get(&tool.id).copied().unwrap_or(false);
                         render_tool_item(
                             tool,
                             colors,
                             is_dark,
                             expanded_tool,
-                            copied_flags,
+                            &copied_flags,
                             weak_view.clone(),
                             cx,
                         )
@@ -842,26 +809,23 @@ fn render_thread_item(
             } else {
                 div().into_any_element()
             };
-            let toggle_id = id.clone();
             div()
                 .id(id.clone())
-                .pl(px(thread_indent_x))
-                .pr(px(0.0))
-                .pt(px(0.0))
-                .pb(px(item_pad_y))
+                .px(px(metrics.spacing.md))
+                .py(px(metrics.spacing.xs))
                 .overflow_hidden()
                 .flex()
                 .flex_col()
-                .gap(px(metrics.spacing.sm))
+                .gap(px(metrics.spacing.xs))
                 .child(
                     with_click(
                         div()
                             .w_full()
                             .flex()
                             .items_center()
-                            .gap(px(metrics.spacing.md))
+                            .gap(px(metrics.spacing.xs))
                             .px(px(metrics.spacing.xxs))
-                            .py(px(1.0))
+                            .py(px(metrics.spacing.xxs))
                             .text_sm()
                             .text_color(colors.muted)
                             .italic()
@@ -882,7 +846,7 @@ fn render_thread_item(
                         click_handler(
                             weak_view.clone(),
                             move |view, _ev, _window, cx| {
-                                view.on_toggle_turn_details(toggle_id.clone(), cx);
+                                view.on_toggle_turn_details(id.clone(), cx);
                             },
                         ),
                     ),
@@ -899,15 +863,14 @@ fn render_thread_item(
                                     b: 1.0,
                                     a: 0.02,
                                 })
-                                .px(px(metrics.spacing.lg))
-                                .py(px(metrics.spacing.md))
+                                .p(px(8.0))
                         })
                         .child(tools_list),
                 )
                 .into_any_element()
         }
         ThreadListItem::Item(ThreadItem::Spacer { id, .. }) => {
-            div().id(id.clone()).overflow_hidden().into_any_element()
+            div().id(id).overflow_hidden().into_any_element()
         }
     }
 }
@@ -940,7 +903,7 @@ fn format_elapsed(ms: i64) -> String {
 }
 
 fn render_tool_item(
-    tool: &ThreadToolItem,
+    tool: ThreadToolItem,
     colors: ThemeColors,
     is_dark: bool,
     expanded: bool,
@@ -954,47 +917,42 @@ fn render_tool_item(
     let mut title_iter = title.splitn(2, ' ');
     let verb = title_iter.next().unwrap_or_default().to_string();
     let rest = title_iter.next().unwrap_or("").trim().to_string();
-    let has_details = !tool.output_text.trim().is_empty() || tool.input.is_some();
-    let mut tool_text = div()
-        .flex()
-        .items_center()
-        .min_w(px(0.0))
-        .child(
-            div()
-                .text_color(colors.text)
-                .font_weight(FontWeight(500.0))
-                .child(verb)
-                .overflow_hidden()
-                .text_ellipsis(),
-        );
-    if !rest.is_empty() {
-        tool_text = tool_text
-            .child(
-                div()
-                    .px(px(4.0))
-                    .text_color(colors.muted)
-                    .opacity(0.65)
-                    .child("·"),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .text_color(colors.muted)
-                    .child(rest),
-            );
-    }
     let header = div()
         .flex()
         .items_center()
-        .min_w(px(0.0))
-        .child(tool_text)
-        .when(has_details, |this| {
-            this.child(div().ml_auto().child(if expanded { "▴" } else { "▾" }))
-        });
+        .gap(px(metrics.spacing.xs))
+        .text_sm()
+        .text_color(colors.muted)
+        .italic()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(metrics.spacing.xxs))
+                .min_w(px(0.0))
+                .child(
+                    div()
+                        .text_color(colors.text)
+                        .child(verb)
+                        .overflow_hidden()
+                        .text_ellipsis(),
+                )
+                .child(
+                    div()
+                        .text_color(colors.muted)
+                        .child(if rest.is_empty() { "".to_string() } else { format!(" · {}", rest) }),
+                )
+                .child(
+                    div()
+                        .text_color(colors.muted)
+                        .child(if tool.status.is_empty() {
+                            "".to_string()
+                        } else {
+                            format!(" · {}", tool.status)
+                        }),
+                ),
+        )
+        .child(div().ml_auto().child(if expanded { "▴" } else { "▾" }));
     let body = if expanded {
         let output = if tool.output_text.is_empty() {
             div().into_any_element()
@@ -1073,7 +1031,7 @@ fn render_tool_item(
         div()
             .flex()
             .flex_col()
-            .gap(px(metrics.spacing.lg))
+            .gap(px(metrics.spacing.xs))
             .child(copy_row)
             .child(input_row)
             .child(output)
@@ -1081,49 +1039,41 @@ fn render_tool_item(
     } else {
         div().into_any_element()
     };
-    let header_row = div()
-        .flex()
-        .items_center()
-        .gap(px(8.0))
-        .px(px(2.0))
-        .py(px(1.0))
-        .id(format!("tool-header-{}", tool.id))
-        .text_sm()
-        .text_color(colors.muted)
-        .italic()
-        .when(has_details, |this| {
-            with_click(
-                this.cursor_pointer().hover(|style| {
-                    style
-                        .bg(Rgba {
-                            r: 1.0,
-                            g: 1.0,
-                            b: 1.0,
-                            a: 0.02,
-                        })
-                        .rounded(px(8.0))
-                }),
-                click_handler(
-                    weak_view.clone(),
-                    move |view, _ev, _window, cx| {
-                        view.on_toggle_tool(tool_id.clone(), cx);
-                    },
-                ),
-            )
-        })
-        .child(header);
+    let header_row = with_click(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(metrics.spacing.xs))
+            .cursor_pointer()
+            .id(format!("tool-header-{}", tool.id))
+            .text_sm()
+            .text_color(colors.muted)
+            .hover(|style| {
+                style
+                    .bg(Rgba {
+                        r: 1.0,
+                        g: 1.0,
+                        b: 1.0,
+                        a: 0.02,
+                    })
+                    .rounded(px(8.0))
+            })
+            .child(header),
+        click_handler(
+            weak_view.clone(),
+            move |view, _ev, _window, cx| {
+                view.on_toggle_tool(tool_id.clone(), cx);
+            },
+        ),
+    );
     div()
         .id(tool.id.clone())
-        // Match web tool row padding (handled inside header row).
-        .px(px(0.0))
-        .pl(px(4.0))
-        .pr(px(0.0))
-        .pt(px(0.0))
-        .pb(px(4.0))
+        .px(px(metrics.spacing.sm))
+        .py(px(metrics.spacing.sm))
         .overflow_hidden()
         .flex()
         .flex_col()
-        .gap(px(metrics.spacing.xs))
+        .gap(px(metrics.spacing.xxs))
         .child(header_row)
         .child(
             div()

@@ -171,26 +171,38 @@ final class WorkbenchSelectionStore: ObservableObject {
     func resolveSessionSelection(
         taskId: String,
         sessions: [SessionSummary],
-        preferredSessionId: String? = nil,
-        primarySessionId: String? = nil
+        preferredSessionId: String? = nil
     ) -> Bool {
         guard let normalizedTaskId = SelectionDefaults.normalizedId(taskId) else { return false }
         let currentTaskId = self.taskId
         let currentSessionId = self.sessionId
-        let normalizedPrimarySessionId = SelectionDefaults.normalizedId(primarySessionId)
+        let normalizedPreferredSessionId = SelectionDefaults.normalizedId(preferredSessionId)
+        let persistedPreferredSessionId = currentTaskId == normalizedTaskId ? currentSessionId : nil
+        let sessionIds = Set(sessions.compactMap { SelectionDefaults.normalizedId($0.id) })
+        let persistedValidSessionId = persistedPreferredSessionId.flatMap { sessionIds.contains($0) ? $0 : nil }
         let resolvedSessionId = pickPreferredSessionId(
             from: sessions,
-            primarySessionId: normalizedPrimarySessionId
+            preferredSessionId: persistedValidSessionId ?? normalizedPreferredSessionId
         )
         guard currentTaskId != normalizedTaskId || resolvedSessionId != currentSessionId else { return false }
         setSelection(taskId: normalizedTaskId, sessionId: resolvedSessionId)
         return true
     }
 
-    private func pickPreferredSessionId(
-        from sessions: [SessionSummary],
-        primarySessionId: String?
-    ) -> String? {
-        return primarySessionId
+    private func pickPreferredSessionId(from sessions: [SessionSummary], preferredSessionId: String?) -> String? {
+        let normalizedSessions: [(id: String, session: SessionSummary)] = sessions.compactMap { session in
+            guard let id = SelectionDefaults.normalizedId(session.id) else { return nil }
+            return (id: id, session: session)
+        }
+        if normalizedSessions.isEmpty { return nil }
+        let nonSubagents = normalizedSessions.filter { $0.session.relationship != "sub_agent" }
+        let candidates = nonSubagents.isEmpty ? normalizedSessions : nonSubagents
+        if let preferredSessionId, candidates.contains(where: { $0.id == preferredSessionId }) {
+            return preferredSessionId
+        }
+        if let running = candidates.first(where: { $0.session.status == "active" || $0.session.status == "running" }) {
+            return running.id
+        }
+        return candidates.last?.id
     }
 }

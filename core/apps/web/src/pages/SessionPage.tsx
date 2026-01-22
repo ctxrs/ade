@@ -52,7 +52,6 @@ import {
   AssistantEntry,
   ThreadItemView,
   WorkbenchThreadStack,
-  WorkbenchCompactionRow,
   WorkbenchThoughtRow,
   WorkbenchToolGroupRow,
   WorkbenchToolRow,
@@ -357,7 +356,6 @@ function formatMemoryMb(value?: number | null): string {
 
 export function SessionView({
   sessionId,
-  snapshotRev,
   isActive = true,
   autoOpenSession = true,
   draft,
@@ -369,7 +367,6 @@ export function SessionView({
   onScrollStateChange,
 }: {
   sessionId: string;
-  snapshotRev?: number;
   isActive?: boolean;
   draft?: { text: string; modeId: WorkbenchModeId } | null;
   onDraftChange?: ((text: string) => void) | null;
@@ -393,7 +390,6 @@ export function SessionView({
   autoOpenSession?: boolean;
 }) {
   const id = sessionId;
-  const snapshotRevValue = Number.isFinite(snapshotRev) ? (snapshotRev as number) : 0;
   const supervisor = useSessionSupervisor();
   const workbenchStore = useWorkbenchStore();
   const showDebug = useMemo(() => {
@@ -846,18 +842,11 @@ export function SessionView({
   const toolSummariesReady = entry?.toolSummariesReady ?? false;
   const hasMoreTurns = entry?.hasMoreTurns ?? false;
   const events: SessionEvent[] = entry?.events ?? [];
-  const baseMessages: Message[] = entry?.messages ?? [];
-  const localMessages: Message[] = entry?.localMessages ?? [];
-  const messages = useMemo(
-    () => mergeLocalMessages(baseMessages, localMessages),
-    [deriveMessagesKey(baseMessages), deriveMessagesKey(localMessages)],
-  );
+  const messages: Message[] = entry?.messages ?? [];
   const queue: Message[] = entry?.queue ?? [];
-  const showQueuePanel = queue.length > 0 && session?.status !== "starting";
   const subagentInvocations: SubagentInvocation[] = entry?.subagentInvocations ?? [];
   const subagentInvocationsLoading = entry?.subagentInvocationsLoading ?? false;
-  const lastEventSeq = entry?.lastEventSeq ?? 0;
-  const eventsKey = `${lastEventSeq}:${events.length}`;
+  const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
   useEffect(() => {
@@ -913,8 +902,7 @@ export function SessionView({
     [eventsKey],
   );
   const providerGuardCountdownTarget = providerGuardNotice?.killAtMs ?? null;
-  const needsNowMs =
-    isActive && (hasActiveTurn || (providerGuardCountdownTarget != null && providerGuardCountdownTarget > Date.now()));
+  const needsNowMs = hasActiveTurn || (providerGuardCountdownTarget != null && providerGuardCountdownTarget > Date.now());
 
   useEffect(() => {
     if (!needsNowMs) return;
@@ -1243,37 +1231,27 @@ export function SessionView({
     perfStartRef.current = 0;
   }, [perfEnabled, entry?.loading, entry?.events.length, entry?.diff]);
 
-  const turnToolsKey = useMemo(
-    () => (toolSummariesReady ? deriveTurnToolsKey(turnToolsByTurnId) : "pending"),
-    [toolSummariesReady, turnToolsByTurnId],
-  );
-  const askUserAnswersKey = useMemo(
-    () => deriveAskUserAnswersKey(askUserQuestionAnswers),
-    [askUserQuestionAnswers],
-  );
-  const threadCacheKey = useMemo(
-    () => `${id}:${snapshotRevValue}:${lastEventSeq}`,
-    [id, snapshotRevValue, lastEventSeq],
-  );
-  const threadBuildKey = useMemo(
-    () => `${eventsKey}:${displayMessagesKey}:${displayTurnsKey}:${turnToolsKey}:${askUserAnswersKey}`,
-    [eventsKey, displayMessagesKey, displayTurnsKey, turnToolsKey, askUserAnswersKey],
-  );
-  const hasDisplayTurns = displayTurnsKey !== "0";
-  const workbenchThreadView = useCachedWorkbenchThreadView({
-    cacheKey: threadCacheKey,
-    buildKey: threadBuildKey,
-    enabled: hasDisplayTurns,
-    buildEnabled: isActive,
-    build: () =>
-      buildWorkbenchThreadViewModelFromTurns(
-        displayTurns,
-        displayMessages,
-        toolSummariesReady ? turnToolsByTurnId : {},
-        events,
-        askUserQuestionAnswers,
-      ),
-  });
+  const workbenchThreadView = useMemo(() => {
+    if (displayTurns.length === 0) {
+      return { groups: [], debugEvents: [] };
+    }
+    return buildWorkbenchThreadViewModelFromTurns(
+      displayTurns,
+      displayMessages,
+      toolSummariesReady ? turnToolsByTurnId : {},
+      events,
+      askUserQuestionAnswers,
+    );
+    // messages are canonical for turn headers; include in memo key
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    displayTurnsKey,
+    displayMessagesKey,
+    toolSummariesReady ? turnToolsByTurnId : null,
+    eventsKey,
+    displayTurns.length,
+    askUserQuestionAnswers,
+  ]);
 
   const debugEvents = workbenchThreadView.debugEvents;
   const wbGroups = useMemo(
@@ -1543,11 +1521,6 @@ export function SessionView({
       .reverse()
       .find((e) => e.event_type === "init" && (e.payload_json?.models || e.payload_json?.modes));
   }, [eventsKey]);
-
-  const harnessInfo = useMemo(
-    () => HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? "")),
-    [session?.provider_id],
-  );
 
   const acpModels = entry?.acpModels ?? acpSessionInfo?.payload_json?.models;
   const acpCurrentModelId =
@@ -1857,9 +1830,6 @@ export function SessionView({
     }
     if (item.kind === "turn_status") {
       return <WorkbenchTurnStatusRow item={item} nowMs={nowMs} />;
-    }
-    if (item.kind === "compaction") {
-      return <WorkbenchCompactionRow item={item} />;
     }
     if (item.kind === "assistant") {
       return (
@@ -2335,7 +2305,7 @@ export function SessionView({
           </div>
         )}
 
-        {showQueuePanel && (
+        {queue.length > 0 && (
           <div className="queue-panel card">
             <div className="row">
               <strong>Pending messages ({queue.length})</strong>
@@ -2411,9 +2381,12 @@ export function SessionView({
             if (dictationRecording) stopDictation().catch(() => { });
             else startDictation().catch(() => { });
           }}
-          harnessLabel={harnessInfo?.label ?? (session?.provider_id ?? "Provider")}
-          harnessLogoSrc={harnessInfo?.logoSrc}
-          harnessLogoInvert={harnessInfo?.invertInDark}
+          harnessLabel={
+            HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.label ??
+            (session?.provider_id ?? "Provider")
+          }
+          harnessLogoSrc={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.logoSrc}
+          harnessLogoInvert={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInDark}
           availableModels={modelOptions}
           currentModelId={currentModelId}
           onSetModelId={async (next) => {
@@ -2494,135 +2467,6 @@ function hashString(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
-type ThreadViewCacheEntry = {
-  value: WorkbenchThreadView;
-  buildKey: string;
-};
-
-const THREAD_VIEW_CACHE_LIMIT = 8;
-const threadViewCache = new Map<string, ThreadViewCacheEntry>();
-const EMPTY_THREAD_VIEW: WorkbenchThreadView = { groups: [], debugEvents: [] };
-
-function getThreadViewCacheEntry(key: string): ThreadViewCacheEntry | null {
-  const cached = threadViewCache.get(key);
-  if (!cached) return null;
-  threadViewCache.delete(key);
-  threadViewCache.set(key, cached);
-  return cached;
-}
-
-function setThreadViewCacheEntry(key: string, buildKey: string, value: WorkbenchThreadView) {
-  threadViewCache.set(key, { value, buildKey });
-  if (threadViewCache.size > THREAD_VIEW_CACHE_LIMIT) {
-    const oldestKey = threadViewCache.keys().next().value;
-    if (oldestKey) {
-      threadViewCache.delete(oldestKey);
-    }
-  }
-}
-
-function scheduleThreadViewBuild(build: () => void): () => void {
-  if (typeof window === "undefined") {
-    build();
-    return () => {};
-  }
-  const requestIdleCallback = (window as any).requestIdleCallback as
-    | ((cb: () => void, opts?: { timeout?: number }) => number)
-    | undefined;
-  const cancelIdleCallback = (window as any).cancelIdleCallback as ((id: number) => void) | undefined;
-  if (typeof requestIdleCallback === "function") {
-    const handle = requestIdleCallback(build, { timeout: 120 });
-    return () => {
-      if (typeof cancelIdleCallback === "function") {
-        cancelIdleCallback(handle);
-      }
-    };
-  }
-  const timer = window.setTimeout(build, 0);
-  return () => window.clearTimeout(timer);
-}
-
-function useCachedWorkbenchThreadView(opts: {
-  cacheKey: string;
-  buildKey: string;
-  enabled: boolean;
-  buildEnabled?: boolean;
-  build: () => WorkbenchThreadView;
-}): WorkbenchThreadView {
-  const { cacheKey, buildKey, enabled, buildEnabled = enabled, build } = opts;
-  const buildRef = useRef(build);
-  buildRef.current = build;
-  const buildSeqRef = useRef(0);
-
-  const [view, setView] = useState<WorkbenchThreadView>(() => {
-    if (!enabled || !cacheKey) return EMPTY_THREAD_VIEW;
-    return getThreadViewCacheEntry(cacheKey)?.value ?? EMPTY_THREAD_VIEW;
-  });
-
-  useEffect(() => {
-    if (!enabled || !cacheKey) {
-      setView(EMPTY_THREAD_VIEW);
-      return;
-    }
-    const cached = getThreadViewCacheEntry(cacheKey);
-    if (cached) {
-      setView((prev) => (prev === cached.value ? prev : cached.value));
-    }
-    if (!buildEnabled) {
-      return;
-    }
-    if (cached && cached.buildKey === buildKey) {
-      return;
-    }
-
-    buildSeqRef.current += 1;
-    const seq = buildSeqRef.current;
-    let cancelled = false;
-    const cancel = scheduleThreadViewBuild(() => {
-      if (cancelled || buildSeqRef.current !== seq) return;
-      const next = buildRef.current();
-      setThreadViewCacheEntry(cacheKey, buildKey, next);
-      if (cancelled || buildSeqRef.current !== seq) return;
-      setView(next);
-    });
-    return () => {
-      cancelled = true;
-      cancel();
-    };
-  }, [cacheKey, buildKey, enabled, buildEnabled]);
-
-  return view;
-}
-
-function deriveTurnToolsKey(turnToolsByTurnId: Record<string, SessionTurnTool[]>): string {
-  const turnIds = Object.keys(turnToolsByTurnId);
-  if (turnIds.length === 0) return "0";
-  let toolCount = 0;
-  let latestUpdated = "";
-  for (const turnId of turnIds) {
-    const tools = turnToolsByTurnId[turnId] ?? [];
-    toolCount += tools.length;
-    const lastUpdated = tools[tools.length - 1]?.updated_at ?? "";
-    if (lastUpdated > latestUpdated) latestUpdated = lastUpdated;
-  }
-  return `${turnIds.length}:${toolCount}:${latestUpdated}`;
-}
-
-function deriveAskUserAnswersKey(answers: Map<string, AskUserQuestionAnswerState>): string {
-  if (answers.size === 0) return "0";
-  const entries = Array.from(answers.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  let buffer = "";
-  for (const [toolCallId, state] of entries) {
-    buffer += `${toolCallId}:${state.outcome ?? ""}:`;
-    const answerKeys = Object.keys(state.answers ?? {}).sort();
-    for (const key of answerKeys) {
-      buffer += `${key}=${state.answers?.[key] ?? ""};`;
-    }
-    buffer += "|";
-  }
-  return `${answers.size}:${hashString(buffer)}`;
-}
-
 function deriveTurnsKey(turns: SessionTurn[]): string {
   if (turns.length === 0) return "0";
   const first = turns[0];
@@ -2640,21 +2484,6 @@ const compareMessageOrder = (a: Message, b: Message): number => {
   if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
   return String(idToString(a.id)).localeCompare(String(idToString(b.id)));
 };
-
-function mergeLocalMessages(messages: Message[], local: Message[]): Message[] {
-  if (local.length === 0) return messages;
-  const byId = new Map<string, Message>();
-  for (const m of messages) {
-    const id = idToString(m.id);
-    if (id) byId.set(id, m);
-  }
-  for (const m of local) {
-    const id = idToString(m.id);
-    if (!id || byId.has(id)) continue;
-    byId.set(id, m);
-  }
-  return Array.from(byId.values()).sort(compareMessageOrder);
-}
 
 function mergeMessagesForView(messages: Message[], pending: PendingMessageEntry[]): Message[] {
   if (pending.length === 0) return messages;
@@ -2805,7 +2634,7 @@ function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
 type ActivityEntry = {
   item: ThreadItem;
   created_at: string;
-  kind: "tool" | "thought" | "ask_user_question" | "compaction";
+  kind: "tool" | "thought" | "ask_user_question";
   order_seq?: number;
 };
 
@@ -2895,48 +2724,6 @@ function buildAskUserQuestionItem(
   };
 }
 
-function buildCompactionItem(
-  ev: SessionEvent,
-): Extract<ThreadItem, { kind: "compaction" }> | null {
-  if (ev.event_type !== "notice") return null;
-  const payload = ev.payload_json ?? {};
-  if (payload.kind !== "custom_compaction") return null;
-  const phaseValue = String(payload.phase ?? "").trim().toLowerCase();
-  if (phaseValue !== "started" && phaseValue !== "completed" && phaseValue !== "failed") return null;
-  const triggerValue = String(payload.trigger ?? "").trim().toLowerCase();
-  const trigger = triggerValue === "auto" ? "auto" : "manual";
-  const compactionId = String(payload.compaction_id ?? payload.compactionId ?? "").trim();
-  const id = compactionId || idToString(ev.id) || `compaction-${ev.seq ?? ev.created_at}`;
-  const error = payload.error ? String(payload.error) : null;
-  return {
-    kind: "compaction",
-    id,
-    created_at: ev.created_at,
-    phase: phaseValue as "started" | "completed" | "failed",
-    trigger,
-    output: payload.output ?? null,
-    error,
-  };
-}
-
-function upsertCompactionItem(
-  items: Array<Extract<ThreadItem, { kind: "compaction" }>>,
-  indexById: Map<string, number>,
-  next: Extract<ThreadItem, { kind: "compaction" }>,
-) {
-  const existingIndex = indexById.get(next.id);
-  if (existingIndex == null) {
-    indexById.set(next.id, items.length);
-    items.push(next);
-    return;
-  }
-  const existing = items[existingIndex];
-  if (existing && existing.phase !== "started" && next.phase === "started") {
-    return;
-  }
-  items[existingIndex] = { ...next, created_at: existing?.created_at ?? next.created_at };
-}
-
 function buildTurnActivityTimeline(opts: {
   turnId: string;
   turn: SessionTurn;
@@ -2952,43 +2739,9 @@ function buildTurnActivityTimeline(opts: {
   const activity: ActivityEntry[] = [];
   const toolInserted = new Set<string>();
   const askInserted = new Set<string>();
-  const compactionIndexById = new Map<string, number>();
 
   for (const ev of opts.events) {
     if (ev.event_type === "notice") {
-      const compactionItem = buildCompactionItem(ev);
-      if (compactionItem) {
-        const existingIndex = compactionIndexById.get(compactionItem.id);
-        if (existingIndex == null) {
-          activity.push({
-            item: compactionItem,
-            created_at: ev.created_at,
-            kind: "compaction",
-            order_seq: typeof ev.seq === "number" ? ev.seq : undefined,
-          });
-          compactionIndexById.set(compactionItem.id, activity.length - 1);
-        } else {
-          const existing = activity[existingIndex];
-          if (existing && existing.kind === "compaction") {
-            if (!(existing.item.phase !== "started" && compactionItem.phase === "started")) {
-              const prevSeq = existing.order_seq;
-              const nextSeq = typeof ev.seq === "number" ? ev.seq : prevSeq;
-              const mergedSeq =
-                Number.isFinite(prevSeq) && Number.isFinite(nextSeq)
-                  ? Math.min(prevSeq ?? 0, nextSeq ?? 0)
-                  : prevSeq ?? nextSeq;
-              const createdAt = existing.created_at;
-              activity[existingIndex] = {
-                ...existing,
-                item: { ...compactionItem, created_at: createdAt },
-                created_at: createdAt,
-                order_seq: mergedSeq,
-              };
-            }
-          }
-        }
-        continue;
-      }
       const askItem = buildAskUserQuestionItem(ev, opts.turnId, opts.askUserQuestionAnswers);
       if (askItem && !askInserted.has(askItem.tool_call_id)) {
         activity.push({
@@ -3381,14 +3134,8 @@ function buildWorkbenchThreadViewModelFromEvents(
       let thoughtAt: string | null = null;
       const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
       const askInserted = new Set<string>();
-      const compactionItems: Array<Extract<ThreadItem, { kind: "compaction" }>> = [];
-      const compactionIndexById = new Map<string, number>();
       for (const ev of events) {
         if (ev.event_type === "notice") {
-          const compactionItem = buildCompactionItem(ev);
-          if (compactionItem) {
-            upsertCompactionItem(compactionItems, compactionIndexById, compactionItem);
-          }
           const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
           if (askItem && !askInserted.has(askItem.tool_call_id)) {
             askItems.push(askItem);
@@ -3418,7 +3165,7 @@ function buildWorkbenchThreadViewModelFromEvents(
           content: thought,
         });
       }
-      const activityItems = [...g.toolItems, ...askItems, ...compactionItems];
+      const activityItems = [...g.toolItems, ...askItems];
       activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
       items.push(...activityItems);
       if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
@@ -3459,8 +3206,6 @@ function buildWorkbenchThreadViewModelFromEvents(
       const evs = eventsInRangeExclusive(u.created_at, nextUser?.created_at ?? null);
       const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
       const askInserted = new Set<string>();
-      const compactionItems: Array<Extract<ThreadItem, { kind: "compaction" }>> = [];
-      const compactionIndexById = new Map<string, number>();
 
       for (const ev of evs) {
         const eventId = idToString(ev.id) || `${ev.created_at}`;
@@ -3468,10 +3213,6 @@ function buildWorkbenchThreadViewModelFromEvents(
 
         switch (ev.event_type) {
           case "notice": {
-            const compactionItem = buildCompactionItem(ev);
-            if (compactionItem) {
-              upsertCompactionItem(compactionItems, compactionIndexById, compactionItem);
-            }
             const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
             if (askItem && !askInserted.has(askItem.tool_call_id)) {
               askItems.push(askItem);
@@ -3601,7 +3342,7 @@ function buildWorkbenchThreadViewModelFromEvents(
       }
 
       const items: ThreadItem[] = [];
-      const activityItems = [...g.toolItems, ...askItems, ...compactionItems];
+      const activityItems = [...g.toolItems, ...askItems];
       activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
       items.push(...activityItems);
       if (g.assistant?.thought.trim()) {
@@ -3685,8 +3426,6 @@ function buildWorkbenchThreadViewModelFromEvents(
     const evs = eventsInRange(u.created_at, endAt);
     const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
     const askInserted = new Set<string>();
-    const compactionItems: Array<Extract<ThreadItem, { kind: "compaction" }>> = [];
-    const compactionIndexById = new Map<string, number>();
 
     for (const ev of evs) {
       const eventId = idToString(ev.id) || `${ev.created_at}`;
@@ -3694,10 +3433,6 @@ function buildWorkbenchThreadViewModelFromEvents(
 
       switch (ev.event_type) {
         case "notice": {
-          const compactionItem = buildCompactionItem(ev);
-          if (compactionItem) {
-            upsertCompactionItem(compactionItems, compactionIndexById, compactionItem);
-          }
           const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
           if (askItem && !askInserted.has(askItem.tool_call_id)) {
             askItems.push(askItem);
@@ -3844,7 +3579,7 @@ function buildWorkbenchThreadViewModelFromEvents(
     }
 
     const items: ThreadItem[] = [];
-    const activityItems = [...g.toolItems, ...askItems, ...compactionItems];
+    const activityItems = [...g.toolItems, ...askItems];
     activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
     items.push(...activityItems);
     if (g.assistant?.thought.trim()) {
@@ -3893,14 +3628,8 @@ function buildWorkbenchThreadViewModelFromEvents(
     };
     const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
     const askInserted = new Set<string>();
-    const compactionItems: Array<Extract<ThreadItem, { kind: "compaction" }>> = [];
-    const compactionIndexById = new Map<string, number>();
     for (const ev of events) {
       if (ev.event_type === "notice") {
-        const compactionItem = buildCompactionItem(ev);
-        if (compactionItem) {
-          upsertCompactionItem(compactionItems, compactionIndexById, compactionItem);
-        }
         const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
         if (askItem && !askInserted.has(askItem.tool_call_id)) {
           askItems.push(askItem);
@@ -3913,7 +3642,7 @@ function buildWorkbenchThreadViewModelFromEvents(
       if (!toolCallId) continue;
       ensureTool(g, toolCallId, ev.created_at);
     }
-    const activityItems = [...g.toolItems, ...askItems, ...compactionItems];
+    const activityItems = [...g.toolItems, ...askItems];
     activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
     const items: ThreadItem[] = [...activityItems];
     if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });

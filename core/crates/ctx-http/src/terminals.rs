@@ -19,7 +19,6 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, connect_async_tls_with_config, Connector};
 
-use crate::ports::{PortObservationContext, PortRegistry};
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::{TerminalSession, TerminalStatus};
 
@@ -196,20 +195,12 @@ impl TerminalSessionHandle {
     }
 }
 
+#[derive(Default)]
 pub struct TerminalManager {
     sessions: tokio::sync::Mutex<HashMap<TerminalId, Arc<TerminalSessionHandle>>>,
-    ports: Arc<PortRegistry>,
 }
 
 impl TerminalManager {
-    pub fn ports(&self) -> Arc<PortRegistry> {
-        self.ports.clone()
-    }
-
-    pub fn set_auto_forward(&self, enabled: bool) {
-        self.ports.set_auto_forward(enabled);
-    }
-
     pub async fn list(&self, workspace_id: WorkspaceId) -> Vec<TerminalSession> {
         let sessions = self.sessions.lock().await;
         sessions
@@ -232,14 +223,6 @@ impl TerminalManager {
     }
 
     pub async fn create(&self, req: TerminalCreateRequest) -> Result<Arc<TerminalSessionHandle>> {
-        let id = TerminalId::new();
-        let port_ctx = PortObservationContext {
-            workspace_id: req.workspace_id,
-            task_id: req.task_id,
-            session_id: req.session_id,
-            worktree_id: req.worktree_id,
-            terminal_id: id,
-        };
         let pty_system = NativePtySystem::default();
         let pair = pty_system
             .openpty(PtySize {
@@ -267,8 +250,6 @@ impl TerminalManager {
 
         let output_buffer_clone = output_buffer.clone();
         let output_tx_clone = output_tx.clone();
-        let port_registry = self.ports.clone();
-        let port_ctx_clone = port_ctx.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 8192];
             loop {
@@ -288,7 +269,6 @@ impl TerminalManager {
                             }
                         }
                         let _ = output_tx_clone.send(bytes.to_vec());
-                        port_registry.observe_output(&port_ctx_clone, bytes);
                     }
                     Err(_) => break,
                 }
@@ -334,6 +314,7 @@ impl TerminalManager {
             std::thread::sleep(Duration::from_millis(250));
         });
 
+        let id = TerminalId::new();
         let title = PathBuf::from(&req.shell)
             .file_name()
             .and_then(|s| s.to_str())
@@ -379,13 +360,6 @@ impl TerminalManager {
         remote: RemoteTerminalRequest,
     ) -> Result<Arc<TerminalSessionHandle>> {
         let id = remote.terminal_id;
-        let port_ctx = PortObservationContext {
-            workspace_id: req.workspace_id,
-            task_id: req.task_id,
-            session_id: req.session_id,
-            worktree_id: req.worktree_id,
-            terminal_id: id,
-        };
         let title = PathBuf::from(&req.shell)
             .file_name()
             .and_then(|s| s.to_str())
@@ -453,8 +427,6 @@ impl TerminalManager {
         let output_tx_clone = output_tx.clone();
         let status_tx_clone = status_tx.clone();
         let runtime_clone = runtime.clone();
-        let port_registry = self.ports.clone();
-        let port_ctx_clone = port_ctx.clone();
         tokio::spawn(async move {
             while let Some(msg) = ws_read.next().await {
                 let msg = match msg {
@@ -464,7 +436,6 @@ impl TerminalManager {
                 match msg {
                     Message::Binary(data) => {
                         push_output(&output_buffer_clone, &output_tx_clone, &data);
-                        port_registry.observe_output(&port_ctx_clone, &data);
                     }
                     Message::Text(text) => {
                         if let Ok(parsed) =
@@ -483,7 +454,6 @@ impl TerminalManager {
                             }
                         } else {
                             push_output(&output_buffer_clone, &output_tx_clone, text.as_bytes());
-                            port_registry.observe_output(&port_ctx_clone, text.as_bytes());
                         }
                     }
                     Message::Close(_) => break,
@@ -500,15 +470,6 @@ impl TerminalManager {
     pub async fn remove(&self, id: TerminalId) -> Option<Arc<TerminalSessionHandle>> {
         let mut sessions = self.sessions.lock().await;
         sessions.remove(&id)
-    }
-}
-
-impl Default for TerminalManager {
-    fn default() -> Self {
-        Self {
-            sessions: tokio::sync::Mutex::new(HashMap::new()),
-            ports: Arc::new(PortRegistry::new()),
-        }
     }
 }
 

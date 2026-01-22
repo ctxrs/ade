@@ -200,35 +200,6 @@ export type SandboxingSettings = {
   provider_control_mode: ProviderControlMode;
 };
 
-export type AutoCompactionSettings = {
-  enabled: boolean;
-  remaining_fraction_threshold?: number | null;
-  max_context_tokens?: number | null;
-};
-
-export type CompactionSettings = {
-  enabled: boolean;
-  script_path?: string | null;
-  script_timeout_ms?: number | null;
-  retain_full_transcript_tokens?: number | null;
-  retain_tail_messages?: number | null;
-  retain_tail_chars_per_message?: number | null;
-  include_attachments: boolean;
-  transcript_only: boolean;
-  auto_compact?: AutoCompactionSettings | null;
-};
-
-export type NetworkProfile = "none" | "deps_only" | "mcp_only" | "deps_plus_mcp" | "full";
-
-export type NetworkSettings = {
-  profile: NetworkProfile;
-  mcp_bypass: boolean;
-};
-
-export type PortForwardingSettings = {
-  auto_forward: boolean;
-};
-
 export type ResourceGovernanceStatusState = "disabled" | "applied" | "pending" | "unsupported" | "error";
 
 export type ResourceGovernanceStatus = {
@@ -282,37 +253,6 @@ export type Settings = {
   provider_guard?: ProviderGuardSettings | null;
   subagents?: SubagentSettings | null;
   sandboxing?: SandboxingSettings | null;
-  compaction?: CompactionSettings | null;
-  network?: NetworkSettings | null;
-  port_forwarding?: PortForwardingSettings | null;
-};
-
-export type UpdateSettingsPatch = {
-  dictation?: DictationSettings | null;
-  telemetry?: TelemetrySettings | null;
-  title_generation?: TitleGenerationSettings | null;
-  resource_governance?: ResourceGovernanceSettings | null;
-  provider_guard?: ProviderGuardSettings | null;
-  subagents?: SubagentSettings | null;
-  sandboxing?: SandboxingSettings | null;
-  compaction?: CompactionSettings | null;
-  network?: NetworkSettings | null;
-  port_forwarding?: PortForwardingSettings | null;
-};
-
-export type PortPreviewEntry = {
-  id: string;
-  workspace_id: { 0: string } | string;
-  task_id?: { 0: string } | string | null;
-  session_id?: { 0: string } | string | null;
-  worktree_id?: { 0: string } | string | null;
-  terminal_id?: { 0: string } | string | null;
-  host: string;
-  port: number;
-  scheme: string;
-  source: string;
-  first_seen_at: string;
-  last_seen_at: string;
 };
 
 export type WebSessionViewport = {
@@ -864,7 +804,7 @@ export const listWorkspaces = () =>
 export const getSettings = () =>
   apiAny<Settings>("/api/settings");
 
-export const updateSettings = (settings: UpdateSettingsPatch) =>
+export const updateSettings = (settings: Settings) =>
   apiAny<Settings>("/api/settings", {
     method: "POST",
     body: JSON.stringify(settings),
@@ -961,9 +901,6 @@ export type CreateTerminalRequest = {
 export const listWorkspaceTerminals = (workspaceId: string) =>
   apiAny<TerminalSession[]>(`/api/workspaces/${workspaceId}/terminals`);
 
-export const listWorkspacePorts = (workspaceId: string) =>
-  apiAny<PortPreviewEntry[]>(`/api/workspaces/${workspaceId}/ports`);
-
 export const createWorkspaceTerminal = (workspaceId: string, req: CreateTerminalRequest) =>
   apiAny<TerminalSession>(`/api/workspaces/${workspaceId}/terminals`, {
     method: "POST",
@@ -983,6 +920,10 @@ export const getWorkspaceActiveSnapshot = (workspaceId: string, params?: Workspa
   const qs = search.toString();
   const suffix = qs ? `?${qs}` : "";
   return apiAny<WorkspaceActiveSnapshot>(`/api/workspaces/${workspaceId}/active_snapshot${suffix}`);
+};
+
+export const getWorkspaceActiveHeads = (workspaceId: string) => {
+  return apiAny<SessionHeadSnapshot[]>(`/api/workspaces/${workspaceId}/active_heads`);
 };
 
 export const listWorkspaceTasks = (workspaceId: string) =>
@@ -1166,6 +1107,14 @@ export const getSessionSnapshot = (sessionId: string, limit?: number, includeEve
   if (includeEvents !== undefined) qs.set("include_events", includeEvents ? "1" : "0");
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return apiAny<SessionSnapshot>(`/api/sessions/${sessionId}/snapshot${suffix}`);
+};
+
+export const getSessionHead = (sessionId: string, limit?: number, includeEvents?: boolean) => {
+  const qs = new URLSearchParams();
+  if (limit) qs.set("limit", String(limit));
+  if (includeEvents !== undefined) qs.set("include_events", includeEvents ? "1" : "0");
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiAny<SessionHeadSnapshot>(`/api/sessions/${sessionId}/head${suffix}`);
 };
 
 export const getSessionState = (sessionId: string) =>
@@ -1463,12 +1412,6 @@ export const startCodexLogin = (label?: string) =>
     body: JSON.stringify(label ? { label } : {}),
   });
 
-export const completeCodexLogin = (accountId: string, callback_url: string) =>
-  apiAny<CodexLoginStatus>(`/api/providers/codex/accounts/login/${accountId}/callback`, {
-    method: "POST",
-    body: JSON.stringify({ callback_url }),
-  });
-
 export const getCodexLogin = (accountId: string) =>
   apiAny<CodexLoginStatus>(`/api/providers/codex/accounts/login/${accountId}`);
 
@@ -1557,14 +1500,6 @@ export const artifactUrl = (artifactId: string): string => {
   const token = authToken();
   const prefix = base ? base.replace(/\/+$/, "") : "";
   const url = `${prefix}/api/artifacts/${encodeURIComponent(String(artifactId || ""))}`;
-  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
-};
-
-export const portPreviewUrl = (portId: string): string => {
-  const base = resolveDaemonBaseUrl();
-  const token = authToken();
-  const prefix = base ? base.replace(/\/+$/, "") : "";
-  const url = `${prefix}/api/ports/${encodeURIComponent(String(portId || ""))}/preview`;
   return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 };
 

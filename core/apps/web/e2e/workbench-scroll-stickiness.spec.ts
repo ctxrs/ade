@@ -1,4 +1,4 @@
-import { test, expect } from "./utils/fixtures";
+import { test, expect } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 const scrollSelector = ".wb-session-slot[aria-hidden=\"false\"] .wb-thread-scroller";
@@ -31,20 +31,23 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
 
-  const newComposer = page.locator(".wb-new-composer-stack");
-  await expect(newComposer).toBeVisible({ timeout: 20000 });
-
-  await newComposer.getByTitle("Harness").click();
+  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
   await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
   await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
   await expect(
-    newComposer.locator(".wb-switcher-wrap button[title=\"Harness\"] .wb-switcher-label"),
+    page.locator(".wb-new-composer-stack button[title=\"Harness\"] .wb-switcher-label"),
   ).toHaveText(/fake/i, { timeout: 20000 });
 
+  await page.locator(".wb-new-composer-stack").getByTitle("Isolation").click();
+  await page.locator(".wb-exec-menu").getByRole("button", { name: "Local" }).click();
+  await expect(
+    page.locator(".wb-new-composer-stack button[title=\"Isolation\"] .wb-switcher-label"),
+  ).toHaveText(/local/i, { timeout: 20000 });
+
   const initPrompt = `stick-bottom-init-${Date.now()}`;
-  await newComposer.locator("textarea.wb-composer-textarea").fill(initPrompt);
-  await expect(newComposer.locator("button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
-  await newComposer.locator("button[aria-label=\"Send\"]").click();
+  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(initPrompt);
+  await expect(page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
+  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
 
   let sessionId = "";
   await expect
@@ -65,8 +68,7 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
   await expect(rows).toHaveCount(1, { timeout: 20000 });
   await rows.first().click();
 
-  const activeSession = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
-  const composer = activeSession.locator("textarea.wb-active-textarea");
+  const composer = page.locator(".wb-session textarea.wb-active-textarea");
   await expect(composer).toBeVisible({ timeout: 20000 });
 
   await addLongMessages(request, sessionId);
@@ -88,7 +90,7 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
 
   const prompt = `stick-bottom-${Date.now()}`;
   await composer.fill(prompt);
-  await activeSession.locator("button[aria-label=\"Send\"]").click();
+  await page.locator(".wb-session button[aria-label=\"Send\"]").click();
 
   const header = page.locator(".wb-turn-header-content").filter({ hasText: prompt });
   await expect(header).toBeVisible({ timeout: 20000 });
@@ -110,15 +112,6 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
       scrollBefore = top;
       break;
     }
-  }
-  if (scrollBefore === null) {
-    await scroller.evaluate((el) => {
-      el.scrollTop = Math.max(0, el.scrollTop - 240);
-    });
-    await expect
-      .poll(async () => scroller.evaluate((el) => el.scrollTop), { timeout: 5000 })
-      .toBeLessThan(maxTop - 4);
-    scrollBefore = await scroller.evaluate((el) => el.scrollTop);
   }
   expect(scrollBefore).not.toBeNull();
 

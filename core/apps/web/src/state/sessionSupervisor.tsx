@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import {
   getProviderOptions,
+  getSessionHead,
   getSessionHistory,
   getSessionSnapshot,
   getSessionState,
@@ -67,7 +68,6 @@ export type SessionCacheEntry = {
   hasMoreTurns: boolean;
   events: SessionEvent[];
   messages: Message[];
-  localMessages: Message[];
   artifacts: Artifact[];
   artifactsLoading: boolean;
   subagentInvocations: SubagentInvocation[];
@@ -329,26 +329,11 @@ export class SessionSupervisor {
     this.publish();
   };
 
-  setLocalMessages = (sessionId: string, messages: Message[], opts?: { replace?: boolean }) => {
-    const id = String(sessionId || "").trim();
-    if (!id) return;
-    const entry = this.ensureEntry(id);
-    if (opts?.replace) {
-      entry.localMessages = [];
-    }
-    this.mergeLocalMessages(entry, messages);
-    entry.updatedAtMs = Date.now();
-    this.publish();
-  };
-
   replaceMessage = (sessionId: string, localId: string, message: Message) => {
     const id = String(sessionId || "").trim();
     if (!id) return;
     const entry = this.ensureEntry(id);
     const local = idToString(localId);
-    if (local) {
-      entry.localMessages = entry.localMessages.filter((m) => idToString(m.id) !== local);
-    }
     const next = entry.messages.filter((m) => idToString(m.id) !== local);
     next.push(message);
     entry.messages = [];
@@ -384,9 +369,6 @@ export class SessionSupervisor {
     entry.messages = entry.messages.map((msg) =>
       idToString(msg.session_id) === from ? { ...msg, session_id: to } : msg,
     );
-    entry.localMessages = entry.localMessages.map((msg) =>
-      idToString(msg.session_id) === from ? { ...msg, session_id: to } : msg,
-    );
     entry.queue = entry.queue.map((msg) =>
       idToString(msg.session_id) === from ? { ...msg, session_id: to } : msg,
     );
@@ -408,7 +390,6 @@ export class SessionSupervisor {
       entry.session = { ...entry.session, task_id: nextTaskId };
     }
     entry.messages = entry.messages.map((msg) => ({ ...msg, task_id: nextTaskId }));
-    entry.localMessages = entry.localMessages.map((msg) => ({ ...msg, task_id: nextTaskId }));
     entry.queue = entry.queue.map((msg) => ({ ...msg, task_id: nextTaskId }));
     entry.updatedAtMs = Date.now();
     this.publish();
@@ -538,7 +519,6 @@ export class SessionSupervisor {
         hasMoreTurns: e.hasMoreTurns,
         events: e.events,
         messages: e.messages,
-        localMessages: e.localMessages,
         artifacts: e.artifacts,
         artifactsLoading: e.artifactsLoading,
         subagentInvocations: e.subagentInvocations,
@@ -591,7 +571,6 @@ export class SessionSupervisor {
       hasMoreTurns: true,
       events: [],
       messages: [],
-      localMessages: [],
       artifacts: [],
       artifactsLoading: false,
       subagentInvocations: [],
@@ -768,9 +747,12 @@ export class SessionSupervisor {
       this.publish();
     }
     try {
-      const snapshot = await getSessionSnapshot(sessionId, HEAD_LIMIT, true);
-      this.applyHead(entry, snapshot.head);
-      this.applyState(entry, snapshot.state ?? null, snapshot.head?.state_rev ?? snapshot.summary?.state_rev);
+      const [snapshot, head] = await Promise.all([
+        getSessionSnapshot(sessionId, HEAD_LIMIT, true),
+        getSessionHead(sessionId, HEAD_LIMIT, true),
+      ]);
+      this.applyHead(entry, head as SessionHead);
+      this.applyState(entry, snapshot.state ?? null, head.state_rev ?? snapshot.summary?.state_rev);
       await this.persistHead(entry);
       void this.ensureArtifacts(entry);
       void this.ensureSubagentInvocations(entry);
@@ -1011,10 +993,12 @@ export class SessionSupervisor {
   private async persistHead(entry: InternalEntry) {
     if (!entry.session) return;
     const tool_summaries = buildToolSummaries(entry.turnToolsByTurnId);
+    const turns = stripTurnPartials(entry.turns);
+    const events = stripPartialEvents(entry.events);
     const head = {
       session: entry.session,
-      turns: entry.turns,
-      events: entry.events,
+      turns,
+      events,
       messages: entry.messages,
       tool_summaries,
       last_event_seq: entry.lastEventSeq ?? 0,
@@ -1098,40 +1082,18 @@ export class SessionSupervisor {
       if (!id) continue;
       byId.set(id, m);
     }
-    const next = Array.from(byId.values()).sort(this.compareMessageOrder);
+    const next = Array.from(byId.values()).sort((a, b) => {
+      const c = String(a.created_at).localeCompare(String(b.created_at));
+      if (c !== 0) return c;
+      const sa = Number(a.turn_sequence ?? Number.NaN);
+      const sb = Number(b.turn_sequence ?? Number.NaN);
+      if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
+      if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
+      if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
+      return String(idToString(a.id)).localeCompare(String(idToString(b.id)));
+    });
     entry.messages = next;
     entry.queue = next.filter((m) => m.delivery === "queued");
-  }
-
-
-  private mergeLocalMessages(entry: InternalEntry, incoming: Message[]) {
-    entry.localMessages = this.mergeMessageList(entry.localMessages, incoming);
-  }
-
-  private mergeMessageList(existing: Message[], incoming: Message[]): Message[] {
-    if (incoming.length === 0) return existing;
-    const byId = new Map<string, Message>();
-    for (const m of existing) {
-      const id = idToString(m.id);
-      if (id) byId.set(id, m);
-    }
-    for (const m of incoming) {
-      const id = idToString(m.id);
-      if (!id) continue;
-      byId.set(id, m);
-    }
-    return Array.from(byId.values()).sort(this.compareMessageOrder);
-  }
-
-  private compareMessageOrder(a: Message, b: Message): number {
-    const c = String(a.created_at).localeCompare(String(b.created_at));
-    if (c !== 0) return c;
-    const sa = Number(a.turn_sequence ?? Number.NaN);
-    const sb = Number(b.turn_sequence ?? Number.NaN);
-    if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
-    if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
-    if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
-    return String(idToString(a.id)).localeCompare(String(idToString(b.id)));
   }
 
   private mergeEvents(entry: InternalEntry, incoming: SessionEvent[]) {
@@ -1377,6 +1339,9 @@ export class SessionSupervisor {
     const entry = this.entries.get(sid);
     if (!entry) return;
 
+    const isPartial = isPartialEvent(delta.event);
+    const allowPartial = entry.refCount > 0;
+
     let changed = false;
     if (typeof delta.last_event_seq === "number") {
       if (!entry.lastEventSeq || delta.last_event_seq > entry.lastEventSeq) {
@@ -1403,38 +1368,50 @@ export class SessionSupervisor {
     }
 
     if (delta.event) {
-      if (!entry.seqSet.has(delta.event.seq)) {
-        entry.seqSet.add(delta.event.seq);
-        entry.events.push(delta.event);
-        if (entry.events.length > EVENT_BUFFER_LIMIT) {
-          const overflow = entry.events.length - EVENT_BUFFER_LIMIT;
-          const removed = entry.events.splice(0, overflow);
-          removed.forEach((e) => entry.seqSet.delete(e.seq));
+      if (isPartial) {
+        if (allowPartial) {
+          this.ensureTurnFromEvent(entry, delta.event);
+          if (this.applyEventToTurns(entry, delta.event)) {
+            changed = true;
+          }
         }
-        changed = true;
-      }
-      const meta = extractAcpMetaFromEvent(delta.event);
-      if (meta && this.applyAcpMeta(entry, meta)) {
-        changed = true;
-      }
-      this.ensureTurnFromEvent(entry, delta.event);
-      if (this.applyEventToTurns(entry, delta.event)) {
-        changed = true;
-      }
-      if (this.applyArtifactsEvent(entry, delta.event)) {
-        changed = true;
-      }
-      if (this.applyGitStatusSnapshotNotice(entry, delta.event)) {
-        changed = true;
-      }
-      if (this.applySubagentInvocationNotice(entry, delta.event)) {
-        changed = true;
+      } else {
+        if (!entry.seqSet.has(delta.event.seq)) {
+          entry.seqSet.add(delta.event.seq);
+          entry.events.push(delta.event);
+          if (entry.events.length > EVENT_BUFFER_LIMIT) {
+            const overflow = entry.events.length - EVENT_BUFFER_LIMIT;
+            const removed = entry.events.splice(0, overflow);
+            removed.forEach((e) => entry.seqSet.delete(e.seq));
+          }
+          changed = true;
+        }
+        const meta = extractAcpMetaFromEvent(delta.event);
+        if (meta && this.applyAcpMeta(entry, meta)) {
+          changed = true;
+        }
+        this.ensureTurnFromEvent(entry, delta.event);
+        if (this.applyEventToTurns(entry, delta.event)) {
+          changed = true;
+        }
+        if (this.applyArtifactsEvent(entry, delta.event)) {
+          changed = true;
+        }
+        if (this.applyGitStatusSnapshotNotice(entry, delta.event)) {
+          changed = true;
+        }
+        if (this.applySubagentInvocationNotice(entry, delta.event)) {
+          changed = true;
+        }
       }
     }
 
     if (changed) {
       entry.updatedAtMs = Date.now();
       this.publish();
+      if (delta.turn || delta.message || (delta.event && !isPartial)) {
+        void this.persistHead(entry);
+      }
     }
   }
 
@@ -1574,6 +1551,25 @@ const mergePartial = (p: string, n: string): string => {
   if (n.startsWith(p)) return n;
   if (p.startsWith(n)) return p;
   return n.length >= p.length ? n : p;
+};
+
+const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk", "thought_chunk"]);
+
+const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
+  if (!event) return false;
+  return PARTIAL_EVENT_TYPES.has(String(event.event_type ?? ""));
+};
+
+const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] => {
+  return turns.map((turn) => ({
+    ...turn,
+    assistant_partial: null,
+    thought_partial: null,
+  }));
+};
+
+const stripPartialEvents = (events: SessionEvent[]): SessionEvent[] => {
+  return events.filter((event) => !isPartialEvent(event));
 };
 
 const appendFragment = (p: string | null | undefined, f: string | null | undefined): string => {
@@ -1796,6 +1792,10 @@ const summarizeToolPayload = (
   ...tool,
   input_json: toolInputPreview(tool.input_json) ?? null,
   output_text: null,
+  input_truncated: tool.input_truncated ?? null,
+  input_original_bytes: tool.input_original_bytes ?? null,
+  output_truncated: tool.output_truncated ?? null,
+  output_original_bytes: tool.output_original_bytes ?? null,
   summary_only: true,
 });
 
@@ -1811,6 +1811,11 @@ const buildToolSummaries = (byTurn: Record<string, SessionTurnTool[]>): SessionT
         title: tool.title ?? null,
         status: tool.status ?? null,
         input_preview: toolInputPreview(tool.input_json) ?? undefined,
+        output_preview: tool.output_text ?? undefined,
+        input_truncated: tool.input_truncated ?? undefined,
+        input_original_bytes: tool.input_original_bytes ?? undefined,
+        output_truncated: tool.output_truncated ?? undefined,
+        output_original_bytes: tool.output_original_bytes ?? undefined,
         created_at: tool.created_at,
         updated_at: tool.updated_at,
       });

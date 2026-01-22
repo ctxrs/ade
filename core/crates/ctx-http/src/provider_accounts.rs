@@ -33,10 +33,6 @@ pub struct CodexLoginStatus {
     pub status: String,
     #[serde(default)]
     pub error: Option<String>,
-    #[serde(skip_serializing, skip_deserializing, default)]
-    pub state: Option<String>,
-    #[serde(skip_serializing, skip_deserializing, default)]
-    pub redirect_port: Option<u16>,
 }
 
 pub fn codex_accounts_root(data_root: &Path) -> PathBuf {

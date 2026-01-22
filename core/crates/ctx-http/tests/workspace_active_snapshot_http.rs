@@ -5,51 +5,12 @@ use futures::{SinkExt, StreamExt};
 use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use ctx_core::models::SessionEventType;
+use chrono::Utc;
+use ctx_core::ids::TurnId;
+use ctx_core::models::{SessionEventType, SessionTurn, SessionTurnStatus};
 use ctx_http::daemon::AppState;
 
 mod common;
-
-fn parse_workspace_event(txt: &str) -> Option<ctx_core::models::WorkspaceActiveSnapshotEvent> {
-    let payload: serde_json::Value = serde_json::from_str(txt).ok()?;
-    serde_json::from_value::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(
-        payload.clone(),
-    )
-    .ok()
-    .and_then(|message| match message {
-        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => Some(event),
-        _ => None,
-    })
-    .or_else(|| {
-        serde_json::from_value::<ctx_core::models::WorkspaceActiveSnapshotEvent>(payload).ok()
-    })
-}
-
-fn is_ready_message(txt: &str) -> bool {
-    if let Ok(message) =
-        serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(txt)
-    {
-        match message {
-            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot { .. } => true,
-            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
-                matches!(
-                    event,
-                    ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. }
-                )
-            }
-            _ => false,
-        }
-    } else if let Ok(event) =
-        serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(txt)
-    {
-        matches!(
-            event,
-            ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. }
-        )
-    } else {
-        false
-    }
-}
 
 async fn setup() -> (
     tempfile::TempDir,
@@ -101,7 +62,7 @@ async fn workspace_active_snapshot_includes_sessions() {
 
     let session: ctx_core::models::Session = client
         .post(format!("{base}/api/tasks/{}/sessions", task_active.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model","initial_prompt":"hello"}))
         .send()
         .await
         .unwrap()
@@ -124,11 +85,92 @@ async fn workspace_active_snapshot_includes_sessions() {
     let summary = &snapshot.active.tasks[0];
     assert_eq!(summary.task.id, task_active.id);
     assert_eq!(summary.primary_session.session.id, session.id);
+    assert!(summary.primary_session_head.is_none());
     assert_eq!(snapshot.active.total_count, 1);
 }
 
 #[tokio::test]
-async fn session_snapshot_returns_summary_and_head() {
+async fn workspace_active_heads_batch_strips_partials() {
+    let (repo, _data_dir, state, server) = setup().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
+        .json(&json!({"title":"active-heads"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let session: ctx_core::models::Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let store = state.store_for_session(session.id).await.unwrap();
+    let now = Utc::now();
+    store
+        .insert_session_turn(SessionTurn {
+            turn_id: TurnId::new(),
+            session_id: session.id,
+            run_id: None,
+            user_message_id: None,
+            status: SessionTurnStatus::Completed,
+            start_seq: Some(1),
+            end_seq: Some(2),
+            started_at: now,
+            updated_at: now,
+            assistant_partial: Some("partial".to_string()),
+            thought_partial: Some("thinking".to_string()),
+            metrics_json: None,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+        })
+        .await
+        .unwrap();
+
+    let batch: ctx_core::models::WorkspaceActiveHeadBatch = client
+        .get(format!("{base}/api/workspaces/{}/active_heads", ws.id.0))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let head = batch
+        .heads
+        .iter()
+        .find(|head| head.session.id == session.id)
+        .expect("missing session head");
+    assert_eq!(head.turns.len(), 1);
+    assert!(head.turns[0].assistant_partial.is_none());
+    assert!(head.turns[0].thought_partial.is_none());
+}
+
+#[tokio::test]
+async fn session_snapshot_returns_summary_only() {
     let (repo, _data_dir, _state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
@@ -176,7 +218,58 @@ async fn session_snapshot_returns_summary_and_head() {
         .unwrap();
 
     assert_eq!(snapshot.summary.session.id, session.id);
-    assert_eq!(snapshot.head.session.id, session.id);
+    assert!(snapshot.head.is_none());
+}
+
+#[tokio::test]
+async fn session_head_returns_head() {
+    let (repo, _data_dir, _state, server) = setup().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
+        .json(&json!({"title":"head"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let session: ctx_core::models::Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let head: ctx_core::models::SessionHeadSnapshot = client
+        .get(format!(
+            "{base}/api/sessions/{}/head?limit=10",
+            session.id.0
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(head.session.id, session.id);
 }
 
 #[tokio::test]
@@ -249,6 +342,11 @@ async fn workspace_stream_replays_from_after_seq() {
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 
     let subscribe = json!({
         "type": "subscribe",
@@ -274,10 +372,10 @@ async fn workspace_stream_replays_from_after_seq() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Some(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
                 delta,
                 ..
-            }) = parse_workspace_event(&txt)
+            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
             {
                 if delta.session_id != session.id {
                     continue;
@@ -373,6 +471,11 @@ async fn workspace_stream_replays_tool_events() {
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 
     let subscribe = json!({
         "type": "subscribe",
@@ -398,10 +501,10 @@ async fn workspace_stream_replays_tool_events() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Some(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
                 delta,
                 ..
-            }) = parse_workspace_event(&txt)
+            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
             {
                 if delta.session_id != session.id {
                     continue;
@@ -482,6 +585,11 @@ async fn workspace_stream_emits_gap_on_large_replay() {
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 
     let subscribe = json!({
         "type": "subscribe",
@@ -506,10 +614,10 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Some(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap {
+            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap {
                 session_id,
                 ..
-            }) = parse_workspace_event(&txt)
+            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
             {
                 if session_id == session.id {
                     seen_gap = true;
@@ -540,24 +648,17 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
-    let subscribe = json!({
-        "type": "subscribe",
-        "sessions": [],
-    })
-    .to_string();
-    socket
-        .send(WsMessage::Text(subscribe.into()))
-        .await
-        .unwrap();
-
     let ready_msg = tokio::time::timeout(Duration::from_secs(2), socket.next())
         .await
         .unwrap()
         .unwrap()
         .unwrap();
     if let WsMessage::Text(txt) = ready_msg {
-        if !is_ready_message(&txt) {
-            panic!("expected ready or snapshot, got {txt:?}");
+        let evt: ctx_core::models::WorkspaceActiveSnapshotEvent =
+            serde_json::from_str(&txt).unwrap();
+        match evt {
+            ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. } => {}
+            other => panic!("expected ready, got {other:?}"),
         }
     } else {
         panic!("expected ready text frame");
@@ -593,10 +694,11 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Some(ctx_core::models::WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+            if let ctx_core::models::WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
                 task: summary,
                 ..
-            }) = parse_workspace_event(&txt)
+            } = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
+                .unwrap()
             {
                 if summary.task.id == task.id {
                     saw_upsert = true;
@@ -665,6 +767,11 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 
     let subscribe = json!({
         "type": "subscribe",
@@ -703,10 +810,10 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Some(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
                 delta,
                 ..
-            }) = parse_workspace_event(&txt)
+            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
             {
                 if delta.session_id == session_a.id {
                     seen_a = true;

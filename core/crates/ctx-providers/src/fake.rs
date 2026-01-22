@@ -68,16 +68,6 @@ fn parse_fixture_tools(content: &str) -> Option<Vec<FixtureToolCall>> {
     }
 }
 
-fn build_env_dump(content: &str, env: &HashMap<String, String>) -> Option<String> {
-    if !content.contains("[[dump_env]]") {
-        return None;
-    }
-    let payload = json!({
-        "DOCKER_HOST": env.get("DOCKER_HOST"),
-    });
-    Some(format!("[[env]]{}[[/env]]", payload))
-}
-
 #[derive(Default)]
 pub struct FakeProviderAdapter;
 
@@ -132,11 +122,6 @@ impl ProviderAdapter for FakeProviderAdapter {
         let join = tokio::spawn(async move {
             let sink = event_sink;
             let fixture_tools = parse_fixture_tools(&input.content);
-            let env_dump = build_env_dump(&input.content, &_env);
-            let mut final_content = format!("done: {}", input.content);
-            if let Some(env_dump) = env_dump.as_ref() {
-                final_content = format!("{env_dump}\n{final_content}");
-            }
 
             let send = |event_type, payload| async {
                 let _ = sink
@@ -156,10 +141,6 @@ impl ProviderAdapter for FakeProviderAdapter {
 
             tokio::select! {
                 _ = async {
-                    if let Some(env_dump) = env_dump {
-                        send(SessionEventType::AssistantChunk, json!({"content": env_dump})).await;
-                        sleep(delay).await;
-                    }
                     send(SessionEventType::AssistantChunk, json!({"content": format!("echo: {}", input.content)})).await;
                     sleep(delay).await;
                     if let Some(tools) = fixture_tools {
@@ -187,7 +168,7 @@ impl ProviderAdapter for FakeProviderAdapter {
                         send(SessionEventType::ToolResult, json!({"tool_call_id": tool_call_id, "result": "ok"})).await;
                         sleep(delay).await;
                     }
-                    send(SessionEventType::AssistantComplete, json!({"content": final_content})).await;
+                    send(SessionEventType::AssistantComplete, json!({"content": format!("done: {}", input.content)})).await;
                     sleep(delay).await;
                     send(SessionEventType::Done, json!({})).await;
                 } => {}

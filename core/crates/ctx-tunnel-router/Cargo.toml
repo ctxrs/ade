@@ -17,7 +17,7 @@ tracing-subscriber.workspace = true
 url = "2"
 
 redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
-sqlx = { workspace = true, features = ["postgres"] }
+sqlx = { workspace = true, features = ["sqlite"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 
 [dev-dependencies]

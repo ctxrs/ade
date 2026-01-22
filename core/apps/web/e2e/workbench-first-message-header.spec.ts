@@ -1,4 +1,4 @@
-import { test, expect } from "./utils/fixtures";
+import { test, expect } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 test("workbench: first user message renders from stream when head is stale", async ({ page, request }) => {
@@ -63,30 +63,24 @@ test("workbench: first user message renders from stream when head is stale", asy
     });
   });
 
-  try {
-    await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
-    const rows = page.locator(".wb-task-row");
-    await expect(rows).toHaveCount(1);
-    await rows.first().click();
-    await page.waitForTimeout(400);
+  await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
+  const rows = page.locator(".wb-task-row");
+  await expect(rows).toHaveCount(1);
+  await rows.first().click();
+  await page.waitForTimeout(400);
 
-    const activeSession = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
-    const composer = activeSession.locator("textarea.wb-active-textarea");
-    await expect(composer).toBeVisible({ timeout: 20000 });
+  const composer = page.locator(".wb-session textarea.wb-active-textarea");
+  await expect(composer).toBeVisible({ timeout: 20000 });
 
-    await page.waitForFunction(() => (window as any).__contextStreamOpenCount > 0, null, {
-      timeout: 10000,
-    });
+  await page.waitForFunction(() => (window as any).__contextStreamOpenCount > 0, null, {
+    timeout: 10000,
+  });
 
-    await composer.fill(prompt);
-    await activeSession.locator("button[aria-label=\"Send\"]").click();
+  await composer.fill(prompt);
+  await page.locator(".wb-session button[aria-label=\"Send\"]").click();
 
-    const header = page.locator(".wb-turn-header-content").filter({ hasText: prompt });
-    await expect(header).toBeVisible({ timeout: 20000 });
+  const header = page.locator(".wb-turn-header-content").filter({ hasText: prompt });
+  await expect(header).toBeVisible({ timeout: 20000 });
 
-    forceStaleHead = false;
-  } finally {
-    forceStaleHead = false;
-    await page.unrouteAll({ behavior: "ignoreErrors" });
-  }
+  forceStaleHead = false;
 });

@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { unstable_batchedUpdates } from "react-dom";
 import { Virtuoso } from "react-virtuoso";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -88,7 +87,6 @@ import {
   desktopListen,
   desktopOpenWorkspaceInNewWindow,
   desktopSaveTextFile,
-  desktopSetLastWorkspace,
   desktopSetOpenWorkspaces,
   isDesktopApp,
   isDesktopUi,
@@ -96,11 +94,13 @@ import {
 import { parseWsJson } from "../utils/wsJson";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { copyTextToClipboard } from "../utils/clipboard";
+import { pickPreferredSessionId } from "../utils/workbenchSelection";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { parseModelId } from "../utils/modelEffort";
 import { formatRelativeAgeShort } from "../utils/relativeTime";
 import { shouldSendOnEnter } from "../utils/keyboard";
 import { useRelativeNowMs } from "../utils/useRelativeNowMs";
+import { getLoadTestTelemetry } from "../utils/loadTestTelemetry";
 import {
   NEW_TASK_DRAFT_KEY,
   WorkbenchStoreProvider,
@@ -366,6 +366,7 @@ type TaskRowProps = {
   archivePendingAction: "archive" | "unarchive" | null;
   statusKind: "archive" | "error" | "working" | "unread" | "idle";
   selected: boolean;
+  hovered: boolean;
   isRenaming: boolean;
   ageIso: string | null | undefined;
   providerCount: number;
@@ -379,6 +380,8 @@ type TaskRowProps = {
   onDismiss?: (taskId: string) => void;
   dismissLabel?: string;
   onToggleArchive: (taskId: string, nextArchived: boolean, anchor?: AnchorRect | null) => Promise<void>;
+  onHoverEnter: (taskId: string) => void;
+  onHoverLeave: (taskId: string) => void;
   onCancelRename: () => void;
   onCommitRename: (taskId: string, nextValue: string) => void;
 };
@@ -480,42 +483,6 @@ const TASK_LIST_COMPONENTS = {
   Header: TaskListHeader,
 };
 
-const areHarnessesEqual = (a: TaskRowProps["harnesses"], b: TaskRowProps["harnesses"]): boolean => {
-  if (a === b) return true;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i]?.id !== b[i]?.id) return false;
-  }
-  return true;
-};
-
-const areTaskRowPropsEqual = (prev: TaskRowProps, next: TaskRowProps): boolean => {
-  return (
-    prev.taskId === next.taskId &&
-    prev.title === next.title &&
-    prev.archived === next.archived &&
-    prev.archivePending === next.archivePending &&
-    prev.archivePendingAction === next.archivePendingAction &&
-    prev.statusKind === next.statusKind &&
-    prev.selected === next.selected &&
-    prev.isRenaming === next.isRenaming &&
-    prev.ageIso === next.ageIso &&
-    prev.providerCount === next.providerCount &&
-    prev.menuEnabled === next.menuEnabled &&
-    prev.archiveEnabled === next.archiveEnabled &&
-    prev.dismissLabel === next.dismissLabel &&
-    prev.getRenameDraft === next.getRenameDraft &&
-    prev.setRenameDraft === next.setRenameDraft &&
-    prev.onFocusTask === next.onFocusTask &&
-    prev.onOpenMenu === next.onOpenMenu &&
-    prev.onDismiss === next.onDismiss &&
-    prev.onToggleArchive === next.onToggleArchive &&
-    prev.onCancelRename === next.onCancelRename &&
-    prev.onCommitRename === next.onCommitRename &&
-    areHarnessesEqual(prev.harnesses, next.harnesses)
-  );
-};
-
 export const TaskRow = React.memo(function TaskRow({
   taskId,
   title,
@@ -524,6 +491,7 @@ export const TaskRow = React.memo(function TaskRow({
   archivePendingAction,
   statusKind,
   selected,
+  hovered,
   isRenaming,
   ageIso,
   providerCount,
@@ -537,6 +505,8 @@ export const TaskRow = React.memo(function TaskRow({
   onDismiss,
   dismissLabel,
   onToggleArchive,
+  onHoverEnter,
+  onHoverLeave,
   onCancelRename,
   onCommitRename,
 }: TaskRowProps) {
@@ -595,9 +565,13 @@ export const TaskRow = React.memo(function TaskRow({
 
   return (
     <div
-      className={`wb-task-row ${archived ? "wb-task-row-archived" : ""} ${selected ? "wb-task-row-active" : ""}`}
+      className={`wb-task-row ${archived ? "wb-task-row-archived" : ""} ${selected ? "wb-task-row-active" : ""} ${
+        hovered ? "wb-task-row-hovered" : ""
+      }`}
       role="listitem"
       onClick={() => onFocusTask(taskId)}
+      onPointerEnter={() => onHoverEnter(taskId)}
+      onPointerLeave={() => onHoverLeave(taskId)}
       onContextMenu={(e) => {
         if (!showMenu) return;
         e.preventDefault();
@@ -738,7 +712,7 @@ export const TaskRow = React.memo(function TaskRow({
       </div>
     </div>
   );
-}, areTaskRowPropsEqual);
+});
 
 const isOptimisticTask = (summary: WorkspaceActiveSnapshotItem): summary is OptimisticTaskSummary => {
   return typeof (summary as OptimisticTaskSummary).localStatus === "string";
@@ -761,16 +735,14 @@ type WorkbenchSessionSlotProps = {
   scrollState: WorkbenchScrollState | null;
   preserveScrollOnFocus?: boolean;
   optimisticFailure?: { prompt: string; error: string | null } | null;
-  snapshotRev: number;
 };
 
-const WorkbenchSessionSlot = React.memo(function WorkbenchSessionSlot({
+function WorkbenchSessionSlot({
   sessionId,
   active,
   scrollState,
   preserveScrollOnFocus,
   optimisticFailure,
-  snapshotRev,
 }: WorkbenchSessionSlotProps) {
   const workbenchStore = useWorkbenchStore();
   const draft = useWorkbenchDraft(sessionDraftKey(sessionId), { text: "", modeId: "default" });
@@ -809,8 +781,8 @@ const WorkbenchSessionSlot = React.memo(function WorkbenchSessionSlot({
         </div>
       ) : null}
       <SessionView
+        key={sessionId}
         sessionId={sessionId}
-        snapshotRev={snapshotRev}
         isActive={active}
         autoOpenSession={false}
         preserveScrollOnFocus={preserveScrollOnFocus}
@@ -818,12 +790,21 @@ const WorkbenchSessionSlot = React.memo(function WorkbenchSessionSlot({
         onDraftChange={(text) => draft.setValue({ text, modeId: draft.value.modeId })}
         onDraftPersistNow={() => workbenchStore.flushDraft(sessionDraftKey(sessionId))}
         onModeChange={(modeId) => draft.setValue({ text: draft.value.text, modeId })}
-        scrollState={scrollState ?? null}
+        scrollState={
+          scrollState
+            ? {
+                stickToBottom: scrollState.stickToBottom,
+                anchorItemId: scrollState.anchorItemId,
+                scrollTop: scrollState.scrollTop ?? null,
+                virtuosoState: scrollState.virtuosoState ?? null,
+              }
+            : null
+        }
         onScrollStateChange={onScrollStateChange}
       />
     </div>
   );
-});
+}
 
 function sanitizeFileName(name: string): string {
   const raw = String(name ?? "").trim() || "conversation";
@@ -866,11 +847,6 @@ async function saveMarkdownExport(suggestedName: string, contents: string): Prom
 
 export default function WorkbenchPage() {
   const { id: workspaceId } = useParams<{ id: string }>();
-  useEffect(() => {
-    if (!workspaceId) return;
-    if (!isDesktopApp()) return;
-    desktopSetLastWorkspace(workspaceId).catch(() => {});
-  }, [workspaceId]);
   if (!workspaceId) return null;
   return (
     <WorkspaceActiveSnapshotProvider workspaceId={workspaceId}>
@@ -882,7 +858,6 @@ export default function WorkbenchPage() {
 }
 
 function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
-  const desktopUi = isDesktopUi();
   const navigate = useNavigate();
   const supervisor = useSessionSupervisor();
   const sessionSnap = useSessionCacheSnapshot();
@@ -1101,6 +1076,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const archiveConfirmRef = useRef<HTMLDivElement | null>(null);
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
+  const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
   const renameDraftsRef = useRef<Map<string, string>>(new Map());
   const [convoMenu, setConvoMenu] = useState<{ style: React.CSSProperties } | null>(null);
@@ -1139,6 +1115,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [startBusy, setStartBusy] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [installAllBusy, setInstallAllBusy] = useState(false);
+  const [useMultipleAgents, setUseMultipleAgents] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
   const [dropActive, setDropActive] = useState(false);
   const dropHideTimerRef = useRef<number | null>(null);
@@ -1361,9 +1338,28 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [focusNewTask]);
 
   useEffect(() => {
+    if (useMultipleAgents) return;
     if (draftTracks.length <= 1) return;
     setDraftTracks((prev) => (prev.length > 0 ? [prev[0]] : prev));
-  }, [draftTracks.length]);
+  }, [useMultipleAgents, draftTracks.length]);
+
+
+  const ensureActiveSessionSelection = useCallback(
+    (taskId: string, sessions: Array<{ session: any }>, preferredSessionId?: string | null) => {
+      const activeTab = workbenchStore.getActiveTab();
+      const prevSessionId =
+        activeTab?.kind === "task" && activeTab.ref.taskId === taskId ? (activeTab.ref.sessionId ?? null) : null;
+      const sessionList = sessions.map((s) => s.session).filter(Boolean);
+      const nextSessionId = preferredSessionId
+        ? preferredSessionId
+        : pickPreferredSessionId(sessionList, prevSessionId ?? null);
+      if (activeTab?.kind === "task" && activeTab.ref.taskId === taskId && nextSessionId !== prevSessionId) {
+        workbenchStore.setActiveSessionForActiveTask(nextSessionId, { source: "system" });
+      }
+    },
+    [workbenchStore],
+  );
+
   useEffect(() => {
     if (!workspaceId) return;
     let cancelled = false;
@@ -1641,35 +1637,23 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const activeTaskSummary = useMemo(() => {
     if (!activeTaskId) return null;
     const optimistic = optimisticTasksById[activeTaskId];
-    const canonical = tasksById[activeTaskId] ?? null;
-    if (!optimistic) return canonical;
-    if (optimistic.localStatus !== "synced") return optimistic;
-    if (!canonical) return optimistic;
-    const canonicalPrimary = idToString(canonical.task.primary_session_id ?? "");
-    const canonicalHasPrimary = Boolean(canonicalPrimary);
-    // Hold the optimistic summary until the canonical task has primary_session_id; this is about the non-atomic task+session creation noted in .ctx/docs/workbench_catchup_and_cache.md, not multi-session fallback.
-    return canonicalHasPrimary ? canonical : optimistic;
+    if (optimistic && optimistic.localStatus !== "synced") return optimistic;
+    return tasksById[activeTaskId] ?? optimistic ?? null;
   }, [activeTaskId, optimisticTasksById, tasksById]);
   const sessionSummaries = useMemo(() => activeTaskSummary?.sessions ?? [], [activeTaskSummary]);
+  const sessions = useMemo(() => sessionSummaries.map((s) => s.session), [sessionSummaries]);
+  const sessionIds = useMemo(
+    () => sessions.map((session) => idToString(session.id)).filter(Boolean),
+    [sessions],
+  );
   const primarySessionId = useMemo(
     () => idToString(activeTaskSummary?.task.primary_session_id ?? ""),
     [activeTaskSummary?.task.primary_session_id],
   );
-  const subagentSessionIds = useMemo(() => {
-    return sessionSummaries
-      .map((s) => s.session)
-      .filter((session) => session?.relationship === "sub_agent")
-      .map((session) => idToString(session.id))
-      .filter(Boolean);
-  }, [sessionSummaries]);
   const activeTaskSessionIds = useMemo(() => {
-    const ids: string[] = [];
-    if (primarySessionId) ids.push(primarySessionId);
-    for (const id of subagentSessionIds) {
-      if (!ids.includes(id)) ids.push(id);
-    }
-    return ids;
-  }, [primarySessionId, subagentSessionIds]);
+    if (primarySessionId) return [primarySessionId];
+    return sessionIds;
+  }, [primarySessionId, sessionIds]);
 
   const warmSessionIds = useMemo(() => {
     const ids: { id: string; updatedAt: number; running: boolean }[] = [];
@@ -1693,29 +1677,31 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeTaskSessionIds, tasksById, workspaceSnapshot.activeIds]);
 
   useEffect(() => {
-    if (!activeTaskId) return;
+    if (!activeTaskId) {
+      return;
+    }
     const snapshotReady = workspaceSnapshot.initialized && workspaceSnapshot.fetchState.active === "idle";
     if (!activeTaskSummary) {
       if (!snapshotReady) return;
       workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
       return;
     }
-    if (!primarySessionId) {
+    if (sessionIds.length === 0 && !primarySessionId) {
       if (!snapshotReady) return;
       workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
       return;
     }
-    if (activeSessionIdFromTabResolved !== primarySessionId) {
-      workbenchStore.setActiveSessionForActiveTask(primarySessionId, { source: "system" });
-    }
+    ensureActiveSessionSelection(activeTaskId, sessionSummaries, primarySessionId || null);
   }, [
-    activeSessionIdFromTabResolved,
     activeTaskId,
     activeTaskSummary,
+    ensureActiveSessionSelection,
     primarySessionId,
+    sessionIds.length,
+    sessionSummaries,
     workbenchStore,
-    workspaceSnapshot.fetchState.active,
     workspaceSnapshot.initialized,
+    workspaceSnapshot.fetchState.active,
   ]);
 
   useEffect(() => {
@@ -1798,12 +1784,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     for (const summary of Object.values(tasksForLiveInfo)) {
       if (!summary) continue;
       const taskId = summary.id;
-      const topSessionId = summary.primarySessionId ?? idToString(summary.task.primary_session_id ?? "");
       for (const sessionSummary of summary.sessions) {
         const sessionId = idToString(sessionSummary.session.id);
         const entry = sessionId ? entryBySessionId.get(sessionId) : undefined;
-        const isTopSession = Boolean(topSessionId) && sessionId === topSessionId;
-        const isWorking = isTopSession && (entry ? isEntryWorking(entry) : sessionSummary.activity?.is_working === true);
+        const isWorking = entry ? isEntryWorking(entry) : sessionSummary.activity?.is_working === true;
         if (isWorking) workingByTask.add(taskId);
 
         const status = entry?.session?.status ?? sessionSummary.session.status;
@@ -1833,32 +1817,28 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     if (optimisticTasks.length === 0) return;
-    const activeId = activeTaskId ?? "";
     const shouldTrim = optimisticTasks.some((item) => {
       if (item.localStatus !== "synced") return false;
-      if (activeId && item.id === activeId) return false;
       const serverItem = tasksById[item.id];
       if (!serverItem) return false;
-      const hasPrimary = Boolean(serverItem.task.primary_session_id);
-      return hasPrimary;
+      const hasSession =
+        (serverItem.sessions?.length ?? 0) > 0 || Boolean(serverItem.task.primary_session_id);
+      return hasSession;
     });
     if (!shouldTrim) return;
     setOptimisticTasks((prev) => {
-      let changed = false;
       const next = prev.filter((item) => {
         if (item.localStatus === "failed") return true;
-        if (activeId && item.id === activeId) return true;
         const serverItem = tasksById[item.id];
         if (!serverItem) return true;
-        const hasPrimary = Boolean(serverItem.task.primary_session_id);
-        if (!hasPrimary) return true;
-        const keep = item.localStatus !== "synced";
-        if (!keep) changed = true;
-        return keep;
+        const hasSession =
+          (serverItem.sessions?.length ?? 0) > 0 || Boolean(serverItem.task.primary_session_id);
+        if (!hasSession) return true;
+        return item.localStatus !== "synced";
       });
-      return changed ? next : prev;
+      return next.length === prev.length ? prev : next;
     });
-  }, [activeTaskId, optimisticTasks, tasksById]);
+  }, [optimisticTasks, tasksById]);
 
   const providerIdsByTaskFromSessions = useMemo(() => {
     const byTask: Record<string, Array<{ providerId: string; updatedAt: number }>> = {};
@@ -2033,12 +2013,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       "triggerEl" in opts
         ? opts.triggerEl.getBoundingClientRect().bottom + 6
         : Math.max(8, Math.min(opts.y, window.innerHeight - 8));
-    const desktopUi = isDesktopUi();
-    // WebKit popover anchoring tends to land slightly higher than Chromium for
-    // the same DOM rect; apply a small offset in desktop UI mode to match.
-    const topOffset = desktopUi ? 6 : 0;
     const left = Math.min(baseLeft, window.innerWidth - 240);
-    const top = Math.min(baseTop + topOffset, window.innerHeight - 260);
+    const top = Math.min(baseTop, window.innerHeight - 260);
     setTaskMenu((prev) => (prev?.taskId === taskId ? null : { taskId, style: { left, top } }));
   }, []);
 
@@ -2107,6 +2083,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const optimistic = isOptimisticTask(summary) ? summary : null;
       const localStatus = optimistic?.localStatus ?? null;
       const selected = tid === activeTaskId;
+      const hovered = tid === hoveredTaskId;
       const archived = !!opts?.archived;
       const pendingAction = archivePendingById[tid];
       const archivePending = typeof pendingAction !== "undefined";
@@ -2148,8 +2125,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         .filter(Boolean)
         .slice(0, 3) as Array<(typeof HARNESS_CATALOG)[number]>;
       const allowActions = !optimistic;
-      const showDismiss = localStatus === "failed";
-      const dismissText = showDismiss ? "Dismiss failed start" : undefined;
+      const dismissHandler = localStatus === "failed" ? () => dismissOptimisticTask(tid) : undefined;
+      const dismissText = localStatus === "failed" ? "Dismiss failed start" : undefined;
 
       return (
         <TaskRow
@@ -2161,6 +2138,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           archivePendingAction={pendingAction ?? null}
           statusKind={statusKind}
           selected={selected}
+          hovered={hovered}
           isRenaming={renamingTaskId === tid}
           ageIso={ageIso}
           providerCount={providerCount}
@@ -2171,9 +2149,11 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           onOpenMenu={openTaskMenu}
           menuEnabled={allowActions}
           archiveEnabled={allowActions}
-          onDismiss={showDismiss ? dismissOptimisticTask : undefined}
+          onDismiss={dismissHandler}
           dismissLabel={dismissText}
           onToggleArchive={onToggleArchive}
+          onHoverEnter={(id) => setHoveredTaskId(id)}
+          onHoverLeave={(id) => setHoveredTaskId((current) => (current === id ? null : current))}
           onCancelRename={cancelRenameTask}
           onCommitRename={commitRenameTask}
         />
@@ -2187,11 +2167,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       dismissOptimisticTask,
       focusTask,
       getRenameDraft,
+      hoveredTaskId,
       onToggleArchive,
       openTaskMenu,
       providerIdsByTaskFromSessions,
       renamingTaskId,
       setRenameDraft,
+      setHoveredTaskId,
       taskLiveInfo.errorByTask,
       taskLiveInfo.lastAssistantMsByTask,
       taskLiveInfo.workingByTask,
@@ -2564,24 +2546,13 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const activeSessionId = useMemo(() => {
     if (primarySessionId) return primarySessionId;
-    return null;
-  }, [primarySessionId]);
+    if (activeSessionIdFromTabResolved) return activeSessionIdFromTabResolved;
+    return pickPreferredSessionId(sessions, null);
+  }, [activeSessionIdFromTabResolved, primarySessionId, sessions]);
 
-  const [sessionViewPool, setSessionViewPool] = useState<string[]>([]);
-  useEffect(() => {
-    if (!activeSessionId) return;
-    setSessionViewPool((prev) => {
-      const next = [activeSessionId, ...prev.filter((id) => id !== activeSessionId)];
-      return next.slice(0, SESSION_VIEW_POOL_LIMIT);
-    });
-  }, [activeSessionId]);
   const sessionIdsToRender = useMemo(() => {
-    if (!activeSessionId) return sessionViewPool;
-    const next = sessionViewPool.includes(activeSessionId)
-      ? sessionViewPool
-      : [activeSessionId, ...sessionViewPool];
-    return next.slice(0, SESSION_VIEW_POOL_LIMIT);
-  }, [activeSessionId, sessionViewPool]);
+    return activeSessionId ? [activeSessionId] : [];
+  }, [activeSessionId]);
   const preserveScrollOnFocus = true;
   const openSessionId = activeSessionId && !optimisticSessionIdSet.has(activeSessionId) ? activeSessionId : "";
   useOpenSession(openSessionId, { watchDiff: diffOpen });
@@ -2615,31 +2586,28 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
   const gitStatusSummary = activeEntry?.gitStatusSummary ?? null;
   const activeTaskArchived = Boolean(activeTaskSummary?.task?.archived_at);
-  const runningSubagentSessionIds = useMemo(() => {
-    if (!activeSessionId || sessionSummaries.length === 0) return [];
-    const out: string[] = [];
-    for (const summary of sessionSummaries) {
-      const session = summary.session;
-      if (session?.relationship !== "sub_agent") continue;
-      const sessionId = idToString(session.id);
-      if (!sessionId) continue;
-      const entry = sessionCache.sessions[sessionId];
-      const isWorking = entry ? isEntryWorking(entry) : summary.activity?.is_working === true;
-      if (isWorking) out.push(sessionId);
-    }
-    return out;
-  }, [activeSessionId, isEntryWorking, sessionCache.sessions, sessionSummaries]);
-
-  const interruptAllSubagents = useCallback(async () => {
-    if (runningSubagentSessionIds.length === 0) return;
-    await Promise.allSettled(runningSubagentSessionIds.map((sessionId) => interruptSession(sessionId)));
-  }, [runningSubagentSessionIds]);
   const [webSessions, setWebSessions] = useState<WebSessionInfo[]>([]);
   const [webSessionsLoading, setWebSessionsLoading] = useState(false);
   const [activeWebSessionId, setActiveWebSessionId] = useState<string | null>(null);
   const [activeSessionKind, setActiveSessionKind] = useState("web");
   // TODO: Re-enable web sessions once the feature is ready to ship again.
   const webSessionsEnabled = false;
+  const lastSessionSwitchRef = useRef<string | null>(null);
+  const loadTestTelemetry = getLoadTestTelemetry();
+
+  useEffect(() => {
+    if (!loadTestTelemetry?.enabled) return;
+    const nextId = activeSessionId ?? null;
+    if (lastSessionSwitchRef.current === nextId) return;
+    loadTestTelemetry.startSessionSwitch(lastSessionSwitchRef.current, nextId);
+    lastSessionSwitchRef.current = nextId;
+  }, [activeSessionId, loadTestTelemetry]);
+
+  useEffect(() => {
+    if (!loadTestTelemetry?.enabled) return;
+    if (!activeSessionId || !activeEntry || activeEntry.loading) return;
+    loadTestTelemetry.finishSessionSwitch(activeSessionId);
+  }, [activeEntry?.loading, activeEntry?.updatedAtMs, activeSessionId, loadTestTelemetry]);
 
   useEffect(() => {
     if (!activeWorktreeId) {
@@ -3373,9 +3341,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const nowIso = new Date().toISOString();
     const title = deriveTaskTitle(prompt);
     const attachmentsToSend = draftAttachments.slice();
-    const primaryTrack =
-      draftTracks[0] ?? { key: "t1", label: "", providerId: defaultProviderId || "codex", modelId: "" };
-    const toStart = [primaryTrack];
+    const toStart =
+      draftTracks.length > 0 ? draftTracks : [{ key: "t1", label: "", providerId: "codex", modelId: "" }];
+    const primaryTrack = toStart[0];
     const optimisticTaskId = `optimistic-task-${randomUuid()}`;
     const optimisticSessionId = `optimistic-session-${randomUuid()}`;
     const optimisticMessageId = `optimistic-message-${randomUuid()}`;
@@ -3415,7 +3383,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       session: optimisticSession,
       last_message_at: nowIso,
       last_message_preview: prompt.slice(0, 160),
-      activity: { is_working: true, last_turn_status: "running" },
+      activity: { is_working: true, last_turn_status: "queued" },
       unread: false,
     };
 
@@ -3449,12 +3417,12 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       role: "user",
       content: prompt,
       attachments: attachmentsToSend,
-      delivery: "immediate",
+      delivery: "queued",
       created_at: nowIso,
     };
 
     supervisor.setSession(optimisticSession);
-    supervisor.setLocalMessages(optimisticSessionId, [optimisticMessage], { replace: true });
+    supervisor.setMessages(optimisticSessionId, [optimisticMessage], { replace: true });
 
     setNewTaskDraft({ text: "", modeId: "default" });
     await workbenchStore.flushDraft(NEW_TASK_DRAFT_KEY);
@@ -3472,32 +3440,26 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       if (taskId !== currentTaskId) {
         const prevTaskId = currentTaskId;
         currentTaskId = taskId;
-        unstable_batchedUpdates(() => {
-          workbenchStore.replaceTaskId(prevTaskId, taskId);
-          supervisor.replaceSessionTaskId(currentSessionId, taskId);
-          setOptimisticTasks((prev) =>
-            prev.map((item) => {
-              if (item.id !== prevTaskId) return item;
-              const nextTask: Task = { ...task, primary_session_id: item.primarySessionId ?? null };
-              const nextSessions = item.sessions.map((summary) => ({
-                ...summary,
-                session: {
-                  ...summary.session,
-                  task_id: taskId,
-                  workspace_id: task.workspace_id ?? summary.session.workspace_id,
-                },
-              }));
-              return {
-                ...item,
-                id: taskId,
-                task: nextTask,
-                sessions: nextSessions,
-                sort_at: task.created_at ?? item.sort_at,
-                sortAtMs: Date.parse(task.created_at ?? item.sort_at ?? "") || item.sortAtMs,
-              };
-            }),
-          );
-        });
+        workbenchStore.replaceTaskId(prevTaskId, taskId);
+        supervisor.replaceSessionTaskId(currentSessionId, taskId);
+        setOptimisticTasks((prev) =>
+          prev.map((item) => {
+            if (item.id !== prevTaskId) return item;
+            const nextTask: Task = { ...task, primary_session_id: item.primarySessionId ?? null };
+            const nextSessions = item.sessions.map((summary) => ({
+              ...summary,
+              session: { ...summary.session, task_id: taskId, workspace_id: task.workspace_id ?? summary.session.workspace_id },
+            }));
+            return {
+              ...item,
+              id: taskId,
+              task: nextTask,
+              sessions: nextSessions,
+              sort_at: task.created_at ?? item.sort_at,
+              sortAtMs: Date.parse(task.created_at ?? item.sort_at ?? "") || item.sortAtMs,
+            };
+          }),
+        );
       }
 
       for (let i = 0; i < toStart.length; i++) {
@@ -3522,33 +3484,31 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           if (!primaryMessagePosted) {
             const prevSessionId = currentSessionId;
             currentSessionId = sessionId;
-            unstable_batchedUpdates(() => {
-              workbenchStore.replaceSessionId(prevSessionId, sessionId);
-              supervisor.replaceSessionId(prevSessionId, sessionId);
-              supervisor.setSession(session);
-              setOptimisticTasks((prev) =>
-                prev.map((item) => {
-                  if (item.id !== currentTaskId) return item;
-                  const nextSessions = item.sessions.map((summary) => {
-                    if (idToString(summary.session.id) !== prevSessionId) return summary;
-                    const nextSummary: SessionSnapshotSummary = {
-                      ...summary,
-                      session,
-                      last_message_at: nowIso,
-                      last_message_preview: summary.last_message_preview ?? prompt.slice(0, 160),
-                      activity: { is_working: true, last_turn_status: "running" },
-                    };
-                    return nextSummary;
-                  });
-                  return {
-                    ...item,
-                    sessions: nextSessions,
-                    primarySessionId: sessionId,
-                    task: { ...item.task, primary_session_id: sessionId },
+            workbenchStore.replaceSessionId(prevSessionId, sessionId);
+            supervisor.replaceSessionId(prevSessionId, sessionId);
+            supervisor.setSession(session);
+            setOptimisticTasks((prev) =>
+              prev.map((item) => {
+                if (item.id !== currentTaskId) return item;
+                const nextSessions = item.sessions.map((summary) => {
+                  if (idToString(summary.session.id) !== prevSessionId) return summary;
+                  const nextSummary: SessionSnapshotSummary = {
+                    ...summary,
+                    session,
+                    last_message_at: nowIso,
+                    last_message_preview: summary.last_message_preview ?? prompt.slice(0, 160),
+                    activity: { is_working: true, last_turn_status: "queued" },
                   };
-                }),
-              );
-            });
+                  return nextSummary;
+                });
+                return {
+                  ...item,
+                  sessions: nextSessions,
+                  primarySessionId: sessionId,
+                  task: { ...item.task, primary_session_id: sessionId },
+                };
+              }),
+            );
           } else {
             supervisor.setSession(session);
           }
@@ -3573,6 +3533,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           setStartError(message);
         }
       }
+
       if (!primaryMessagePosted) {
         throw new Error("Failed to start the first session.");
       }
@@ -4277,11 +4238,10 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       )}
     </div>
   );
-
   if (!workbenchSnap.hydrated) {
     return (
       <div
-        className={`wb-root ${desktopUi ? "wb-root-no-topbar" : ""} ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
+        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
         style={rootStyle}
       >
         <WorktreeBootstrapSnackbar />
@@ -4299,7 +4259,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div
-      className={`wb-root ${desktopUi ? "wb-root-no-topbar" : ""} ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
+      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
       style={rootStyle}
     >
       <WorktreeBootstrapSnackbar />
@@ -4354,13 +4314,9 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           </div>
         </div>
 
-        <div
-          className="wb-sidebar-section wb-sidebar-grow wb-task-list-shell"
-          style={{ minHeight: 0 }}
-          onMouseLeave={handleTaskScrollbarMouseLeave}
-        >
+        <div className="wb-sidebar-section wb-sidebar-grow" style={{ minHeight: 0, display: "flex" }}>
           <Virtuoso
-            style={{ flex: 1, minHeight: 0 }}
+            style={{ height: "100%" }}
             data={taskListItems}
             overscan={8}
             computeItemKey={computeTaskListItemKey}
@@ -4369,31 +4325,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             rangeChanged={onTaskListRangeChanged}
             components={TASK_LIST_COMPONENTS}
           />
-          <div
-            className={`wb-scrollbar wb-task-scrollbar${taskScrollbarActive ? " is-active" : ""}${taskScrollbarDragging ? " is-dragging" : ""}${taskScrollbarNeeded ? "" : " is-hidden"}`}
-            aria-hidden="true"
-          >
-            <div
-              className="wb-scrollbar-track"
-              ref={(node) => {
-                taskScrollbarTrackRef.current = node;
-                if (node) scheduleTaskScrollbarUpdate();
-              }}
-              onPointerDown={handleTaskScrollbarTrackPointerDown}
-            >
-              <div
-                className="wb-scrollbar-thumb"
-                ref={(node) => {
-                  taskScrollbarThumbRef.current = node;
-                  if (node) scheduleTaskScrollbarUpdate();
-                }}
-                onPointerDown={handleTaskScrollbarThumbPointerDown}
-                onPointerMove={handleTaskScrollbarThumbPointerMove}
-                onPointerUp={handleTaskScrollbarThumbPointerUp}
-                onPointerCancel={handleTaskScrollbarThumbPointerUp}
-              />
-            </div>
-          </div>
         </div>
 
       </div>
@@ -4451,6 +4382,8 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 draftTracks={draftTracks}
                 setDraftTracks={setDraftTracks}
                 defaultProviderId={defaultProviderId}
+                useMultipleAgents={useMultipleAgents}
+                setUseMultipleAgents={setUseMultipleAgents}
               />
 
               {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
@@ -4464,7 +4397,7 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           <div className="wb-body">
             <div className="wb-convo">
               {showSingleSessionHeader ? (
-                <div className="wb-single-track-header" aria-busy={sessionSummaries.length === 0 ? "true" : undefined}>
+                <div className="wb-single-track-header" aria-busy={sessions.length === 0 ? "true" : undefined}>
                   <div className="wb-single-track-row">
                     <div className="wb-single-track-title-row">
                       <div className="wb-single-track-title">{singleSessionHeaderForRender?.title ?? "Conversation"}</div>
@@ -4578,7 +4511,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                       scrollState={scrollState}
                       preserveScrollOnFocus={preserveScrollOnFocus}
                       optimisticFailure={optimisticFailureBySessionId[sessionId] ?? null}
-                      snapshotRev={workspaceSnapshot.snapshotRev}
                     />
                   );
                 })}
@@ -4882,18 +4814,6 @@ function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             role="menuitem"
           >
             Copy Session Log
-          </button>
-          <button
-            type="button"
-            className="wb-menu-item"
-            disabled={runningSubagentSessionIds.length === 0}
-            onClick={() => {
-              setConvoMenu(null);
-              void interruptAllSubagents();
-            }}
-            role="menuitem"
-          >
-            Interrupt All Subagents
           </button>
           <button
             type="button"

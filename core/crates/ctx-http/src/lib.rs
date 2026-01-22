@@ -1,13 +1,10 @@
 pub mod api;
 pub mod attachments;
 pub mod buffers;
-pub mod compaction;
 pub mod completions;
 pub mod daemon;
 pub mod dictation_livekit;
-pub mod docker_proxy;
 pub mod edit_plans;
-pub mod egress_proxy;
 pub mod git_status;
 pub mod installer;
 pub mod installs;
@@ -20,7 +17,6 @@ pub mod mobile_tunnel;
 pub mod ops_events;
 pub mod oracle;
 pub mod perf_telemetry;
-pub mod ports;
 pub mod provider_accounts;
 pub mod provider_guard;
 pub mod provider_matrix;
@@ -330,36 +326,22 @@ mod tests {
         let mut seen_done = false;
         while let Some(Ok(frame)) = ws_stream.next().await {
             if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
-                let payload: serde_json::Value = serde_json::from_str(&txt).unwrap();
-                let event = serde_json::from_value::<
-                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
-                >(payload.clone())
-                .ok()
-                .and_then(|message| match message {
-                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                        event, ..
-                    } => Some(event),
-                    _ => None,
-                })
-                .or_else(|| {
-                    serde_json::from_value::<ctx_core::models::WorkspaceActiveSnapshotEvent>(
-                        payload,
-                    )
-                    .ok()
-                });
-                if let Some(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                let ev: ctx_core::models::WorkspaceActiveSnapshotEvent =
+                    serde_json::from_str(&txt).unwrap();
+                if let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
                     delta,
                     ..
-                }) = event
+                } = ev
                 {
-                    let is_done = delta
-                        .event
-                        .as_ref()
-                        .map(|event| {
-                            matches!(event.event_type, ctx_core::models::SessionEventType::Done)
-                        })
-                        .unwrap_or(false);
-                    if delta.session_id == session.id && is_done {
+                    if delta.session_id == session.id
+                        && delta
+                            .event
+                            .as_ref()
+                            .map(|event| {
+                                matches!(event.event_type, ctx_core::models::SessionEventType::Done)
+                            })
+                            .unwrap_or(false)
+                    {
                         seen_done = true;
                         break;
                     }

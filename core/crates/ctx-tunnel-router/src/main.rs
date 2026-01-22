@@ -15,7 +15,7 @@ use clap::Parser;
 use futures::{SinkExt, StreamExt};
 use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
-use sqlx::{postgres::PgPoolOptions, Pool, Postgres, Row};
+use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
@@ -49,7 +49,7 @@ struct CachedTarget {
 }
 
 struct TunnelStore {
-    db: Pool<Postgres>,
+    db: Pool<Sqlite>,
     redis: Option<ConnectionManager>,
     cache: RwLock<HashMap<String, CachedTarget>>,
     cache_ttl: Duration,
@@ -66,11 +66,11 @@ async fn main() -> Result<()> {
         .context("missing CONTROL_PLANE_DATABASE_URL")?;
     let redis_url = std::env::var("CONTROL_PLANE_REDIS_URL").ok();
 
-    let db = PgPoolOptions::new()
+    let db = SqlitePoolOptions::new()
         .max_connections(10)
         .connect(&database_url)
         .await
-        .context("connecting to postgres")?;
+        .context("connecting to database")?;
 
     let redis = match redis_url {
         Some(url) if !url.trim().is_empty() => {
@@ -369,7 +369,7 @@ impl TunnelStore {
         let row = sqlx::query(
             r#"SELECT relay_base_url, public_base_url, disabled_at IS NOT NULL AS disabled
                FROM mobile_tunnels
-               WHERE tunnel_id = $1"#,
+               WHERE tunnel_id = ?"#,
         )
         .bind(tunnel_id)
         .fetch_optional(&self.db)

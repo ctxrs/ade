@@ -10,16 +10,29 @@ use ctx_core::models::Workspace;
 
 use crate::Store;
 
+#[derive(Clone, Debug, Default)]
+pub struct StoreManagerConfig {
+    pub max_connections: Option<u32>,
+}
+
 #[derive(Clone)]
 pub struct StoreManager {
     global: Store,
     data_root: PathBuf,
     global_db_path: PathBuf,
     workspace_stores: Arc<Mutex<HashMap<WorkspaceId, Store>>>,
+    config: StoreManagerConfig,
 }
 
 impl StoreManager {
     pub async fn open(data_root: impl AsRef<Path>) -> Result<Self> {
+        Self::open_with_config(data_root, StoreManagerConfig::default()).await
+    }
+
+    pub async fn open_with_config(
+        data_root: impl AsRef<Path>,
+        config: StoreManagerConfig,
+    ) -> Result<Self> {
         let data_root = data_root.as_ref().to_path_buf();
         let db_dir = data_root.join("db");
         tokio::fs::create_dir_all(&db_dir).await?;
@@ -38,12 +51,15 @@ impl StoreManager {
                 tokio::fs::rename(&legacy_shm, &global_shm).await?;
             }
         }
-        let global = Store::open(&global_db_path).await?;
+
+        let global = Store::open_sqlite(&global_db_path, config.max_connections).await?;
+
         let manager = Self {
             global,
             data_root,
             global_db_path,
             workspace_stores: Arc::new(Mutex::new(HashMap::new())),
+            config,
         };
         manager.bootstrap_workspace_dbs().await?;
         Ok(manager)
@@ -136,7 +152,7 @@ impl StoreManager {
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        let store = Store::open(&path).await?;
+        let store = Store::open_sqlite(&path, self.config.max_connections).await?;
         store.upsert_workspace(workspace).await?;
         if migrate_if_missing && needs_migration {
             if let Err(err) = store

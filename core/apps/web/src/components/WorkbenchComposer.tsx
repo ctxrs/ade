@@ -27,8 +27,8 @@ export type ContextWindowInfo = {
 };
 
 const MENU_DESCRIPTIONS = {
-  harness: `Agent harnesses are the low-level wrappers around models that provide the basic plumbing to allow the model to interact with the workspace. This normally includes features like filesystem access, shell access, configurations to set up MCP servers, and more. Despite similarities between them, different harnesses will have varying tools, capabilities, and performance - even if used with the same underlying models. From here, you can install agent harnesses you haven't used before and pick which harness will start the task.`,
-  model: `You can switch between different models here. Model selection offers a tradeoff between cost, latency, and intelligence. If you want a different model for a new task, choose it here and it will apply to the next session you start.`,
+  harness: `Agent harnesses are the low-level wrappers around models that provide the basic plumbing to allow the model to interact with the workspace. This normally includes features like filesystem access, shell access, configurations to set up MCP servers, and more. Despite similiarities between them, different harnesses will have varying tools, capabilities, and performance - even if used with the same underlying models. From here, you can install agent harnesses you haven't used before, switch between them for new tasks, and even run multiple agent harnesses in parallel on the same task. This can be useful to compare performance or to survey multiple different approaches to the same problem.`,
+  model: `You can switch between different models here. Model selection offers a tradeoff between cost, latency, and intelligence - but it also offers an opportunity to leverage the differences in their weights for collaboration. Even if two different models score similarly on popular coding benchmarks, they might have different "habits" - or biases. This means that if you are working on a pernicious bug fix, you might want multiple different models to both look at the problem from a different angle.`,
   effort: `Some models have a "thinking effort" or "reasoning effort" setting, while others do not. The effort level simply corresponds to how many tokens a model spends on thinking while solving a problem. Models that offer high or extra high can sometimes be very powerful, at the expense of latency and cost. However, you can also experience an unintended negative consequence from extra high thinking: if the model is emitting lots of thinking tokens that don't add much value, this will cause the context window to fill up faster (not just from thinking tokens alone, but also from more excessive tool calls like reading files). Performance on coding tasks declines as context increases beyond the minimum context needed to solve the problem, so effort level is a key lever in tuning your agent for optimal performance.`,
   mode: `Modes are basically just prompts, sometimes combined with access limitations. For example, the review mode is nothing more than prompting the agent to tell it to review the code and putting it in a read-only access level. That sounds fairly simple, but there is a hidden benefit: developers who build agent harnesses and models in conjunction will often train their custom model to use their bespoke harness, including its different modes. So in a way, this prompt can be more than just a regular prompt. It is a special prompt than has been trained on via reinforcement learning to achieve certain outcomes. For example, OpenAI trained their codex model to use their codex harness in review mode, so as to output only high value review comments with priority details. If you give the exact same prompt to a model that has not undergone the same RL, it will emit much less useful review comments. We recommend using RPIR (Research, Plan, Implement, Review) pattern for most changes except for small and easy ones.`,
   verbosity: `Verbosity controls how much activity is shown during a turn. Terse hides tools and thoughts, default shows summaries and thoughts, and verbose will eventually expand full tool details.`,
@@ -266,6 +266,8 @@ type NewSessionProps = SharedProps & {
   draftTracks: DraftTrack[];
   setDraftTracks: React.Dispatch<React.SetStateAction<DraftTrack[]>>;
   defaultProviderId: string;
+  useMultipleAgents: boolean;
+  setUseMultipleAgents: (next: boolean) => void;
 };
 
 type ActiveSessionProps = SharedProps & {
@@ -348,6 +350,7 @@ const FALLBACK_MODELS_BY_PROVIDER: Record<string, Array<{ id: string; name?: str
   ],
 };
 
+const MAX_TRACKS_PER_PROVIDER = 4;
 
 function buildModelsForProvider(providerId: string, opts?: ProviderOptions): Array<{ id: string; name?: string }> {
   const models = buildModelsFromProviderOptions(opts);
@@ -691,8 +694,11 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
   const providerIdsToEnsure = useMemo(() => {
     if (!newSession) return [];
+    if (newSession.useMultipleAgents) {
+      return [...new Set(newSession.draftTracks.map((t) => t.providerId).filter(Boolean))];
+    }
     return [newSession.draftTracks[0]?.providerId ?? newSession.defaultProviderId].filter(Boolean);
-  }, [newSession?.defaultProviderId, newSession?.draftTracks]);
+  }, [newSession?.defaultProviderId, newSession?.draftTracks, newSession?.useMultipleAgents]);
 
   // Proactively probe provider options so the model list (and effort variants) populate
   // without requiring the user to manually focus/expand a config panel.
@@ -712,6 +718,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     if (!newSession) return;
     const primary = newSession.draftTracks[0] ?? null;
     if (!primary) return;
+    if (newSession.draftTracks.length !== 1) return;
     if (primary.modelId.trim().length > 0) return;
     const opts = newSession.providerOptions[primary.providerId];
     const next = modelIdFromProviderOptions(opts);
@@ -719,7 +726,12 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     newSession.setDraftTracks((prev) => prev.map((t, idx) => (idx === 0 ? { ...t, modelId: next } : t)));
   }, [newSession?.draftTracks, newSession?.providerOptions, newSession?.setDraftTracks]);
 
-  const showModelEffort = true;
+  const showModelEffort = useMemo(() => {
+    if (variant === "newSession") {
+      return (newSession?.draftTracks.length ?? 0) === 1;
+    }
+    return true;
+  }, [newSession?.draftTracks.length, variant]);
 
   const currentBase = activeModelData.parsed.base || activeModelData.catalog.baseIds[0] || "";
   const currentEffort = activeModelData.parsed.effort;
@@ -818,22 +830,75 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     const primary = ns.draftTracks[0] ?? null;
     const providerId = primary?.providerId ?? ns.defaultProviderId;
     const info = ns.harnessCatalog.find((h) => h.id === providerId);
-    const label = info?.label ?? providerId;
+    const label = ns.draftTracks.length === 1 ? (info?.label ?? providerId) : `${ns.draftTracks.length} tracks`;
     return { label, logoSrc: info?.logoSrc, invert: info?.invertInDark, locked: false };
   }, [props, variant]);
 
   const [harnessSearch, setHarnessSearch] = useState("");
+  const [expandedHarnessId, setExpandedHarnessId] = useState<string | null>(null);
   const [providerAuthBusy, setProviderAuthBusy] = useState<Record<string, boolean>>({});
   const [providerVerifyBusy, setProviderVerifyBusy] = useState<Record<string, boolean>>({});
   const [providerActionNotice, setProviderActionNotice] = useState<string | null>(null);
   const [providerActionError, setProviderActionError] = useState<string | null>(null);
+  const [countMenu, setCountMenu] = useState<{ providerId: string; anchor: DOMRect; style: React.CSSProperties } | null>(null);
+  const countMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (openMenu !== "harness") {
+      setCountMenu(null);
       setProviderActionNotice(null);
       setProviderActionError(null);
     }
   }, [openMenu]);
+
+  useLayoutEffect(() => {
+    if (!countMenu) return;
+    const menu = countMenuRef.current;
+    if (!menu) return;
+
+    const rect = countMenu.anchor;
+    const menuRect = menu.getBoundingClientRect();
+    const margin = 10;
+    const gap = 6;
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+
+    let left = Number(countMenu.style.left ?? 0);
+    let top = Number(countMenu.style.top ?? 0);
+
+    left = clamp(left, margin, viewportW - margin - menuRect.width);
+
+    if (top + menuRect.height > viewportH - margin) {
+      top = rect.top - menuRect.height - gap;
+    }
+    if (top < margin) {
+      top = rect.bottom + gap;
+    }
+    top = clamp(top, margin, viewportH - margin - menuRect.height);
+
+    if (left !== countMenu.style.left || top !== countMenu.style.top) {
+      setCountMenu((prev) => (prev ? { ...prev, style: { left, top } } : prev));
+    }
+  }, [countMenu]);
+
+  useEffect(() => {
+    if (!countMenu) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = e.target as Element | null;
+      if (el && (el.closest(".wb-harness-count-menu") || el.closest(".wb-harness-count-trigger"))) return;
+      setCountMenu(null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCountMenu(null);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [countMenu]);
+
   const toggleHarness = useCallback(
     (providerId: string) => {
       if (variant !== "newSession") return;
@@ -841,17 +906,99 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       const st = ns.providersById[providerId];
       const installed = st?.installed === true && st.health === "ok";
       if (!installed) return;
-      const current = ns.draftTracks[0]?.providerId ?? ns.defaultProviderId;
-      if (current === providerId) {
-        setOpenMenu(null);
-        return;
-      }
-      ns.setDraftTracks([{ key: `t${Date.now()}`, label: "", providerId, modelId: "" }]);
+      ns.setDraftTracks((prev) => {
+        const has = prev.some((t) => t.providerId === providerId);
+        if (!ns.useMultipleAgents) {
+          if (has) return prev;
+          return [{ key: `t${Date.now()}`, label: "", providerId, modelId: "" }];
+        }
+        if (has) {
+          const next = prev.filter((t) => t.providerId !== providerId);
+          return next.length > 0
+            ? next
+            : [{ key: `t${Date.now()}`, label: "", providerId: ns.defaultProviderId, modelId: "" }];
+        }
+        return [...prev, { key: `t${Date.now()}`, label: "", providerId, modelId: "" }];
+      });
       ns.ensureProviderOptions(providerId).catch(() => {});
-      setOpenMenu(null);
+      if (!ns.useMultipleAgents) {
+        setOpenMenu(null);
+        setExpandedHarnessId(null);
+      }
     },
     [props, variant],
   );
+
+  const updateTrackModel = useCallback(
+    (key: string, nextFull: string) => {
+      if (variant !== "newSession") return;
+      const ns = props as NewSessionProps;
+      ns.setDraftTracks((prev) => prev.map((t) => (t.key === key ? { ...t, modelId: nextFull } : t)));
+    },
+    [props, variant],
+  );
+
+  const addTrackForProvider = useCallback(
+    (providerId: string) => {
+      if (variant !== "newSession") return;
+      const ns = props as NewSessionProps;
+      ns.setDraftTracks((prev) => {
+        const existing = prev.filter((t) => t.providerId === providerId).length;
+        if (existing >= MAX_TRACKS_PER_PROVIDER) return prev;
+        return [...prev, { key: `t${Date.now()}`, label: "", providerId, modelId: "" }];
+      });
+    },
+    [props, variant],
+  );
+
+  const setTrackCountForProvider = useCallback(
+    (providerId: string, nextCount: number) => {
+      if (variant !== "newSession") return;
+      const ns = props as NewSessionProps;
+      if (!ns.useMultipleAgents) return;
+      const clamped = Math.max(1, Math.min(MAX_TRACKS_PER_PROVIDER, Math.round(nextCount)));
+      ns.setDraftTracks((prev) => {
+        const existing = prev.filter((t) => t.providerId === providerId);
+        const firstIdx = prev.findIndex((t) => t.providerId === providerId);
+        const keep = existing.slice(0, clamped);
+        while (keep.length < clamped) {
+          keep.push({ key: `t${Date.now()}_${keep.length}`, label: "", providerId, modelId: "" });
+        }
+
+        if (firstIdx === -1) {
+          return [...prev, ...keep];
+        }
+
+        const next: DraftTrack[] = [];
+        let inserted = false;
+        for (const t of prev) {
+          if (t.providerId !== providerId) {
+            next.push(t);
+            continue;
+          }
+          if (!inserted) {
+            next.push(...keep);
+            inserted = true;
+          }
+        }
+        return next.length > 0 ? next : prev;
+      });
+    },
+    [props, variant],
+  );
+
+  const removeTrackByKey = useCallback(
+    (key: string) => {
+      if (variant !== "newSession") return;
+      const ns = props as NewSessionProps;
+      ns.setDraftTracks((prev) => {
+        const next = prev.filter((t) => t.key !== key);
+        return next.length > 0 ? next : prev;
+      });
+    },
+    [props, variant],
+  );
+
   const harnessMenu =
     variant === "newSession" ? (
       <div className="wb-menu wb-harness-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
@@ -865,6 +1012,19 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             aria-label="Search agents"
             autoFocus
           />
+          <label className="wb-menu-toggle">
+            <span>Use Multiple Agents</span>
+            <input
+              type="checkbox"
+              checked={(props as NewSessionProps).useMultipleAgents}
+              onChange={(e) => {
+                setExpandedHarnessId(null);
+                (props as NewSessionProps).setUseMultipleAgents(e.target.checked);
+              }}
+            />
+            <span className="wb-toggle" aria-hidden="true" />
+          </label>
+
           {(() => {
             const ns = props as NewSessionProps;
             const hasSupportedMissing = Object.values(ns.providersById).some(
@@ -906,7 +1066,9 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               : all;
             if (filtered.length === 0) return <div className="wb-menu-empty">No matching agents.</div>;
 
-            const currentProviderId = ns.draftTracks[0]?.providerId ?? ns.defaultProviderId;
+            const counts: Record<string, number> = {};
+            for (const t of ns.draftTracks) counts[t.providerId] = (counts[t.providerId] ?? 0) + 1;
+
             return filtered.map((h: any) => {
               const id = String(h.id);
               const label = String(h.label ?? id);
@@ -924,9 +1086,15 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                   : typeof installUi?.pct === "number"
                     ? installUi.pct
                     : null;
-              const checked = id === currentProviderId;
+              const count = counts[id] ?? 0;
+              const checked = count > 0;
+              const expanded = expandedHarnessId === id;
+              const canConfigureModels = ns.useMultipleAgents && ns.draftTracks.length > 1 && checked;
+              const rows = ns.draftTracks.filter((t) => t.providerId === id);
 
               const opts = ns.providerOptions[id];
+              const models = buildModelsForProvider(id, opts);
+              const catalog = buildModelCatalog(models);
               const verifyStatus = String((opts as any)?.verify?.status ?? "");
 
               const statusUi = (() => {
@@ -1076,9 +1244,161 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                             {providerVerifyBusy[id] ? "Verifying…" : "Verify"}
                           </button>
                         )}
+
+                        {checked && (
+                          <button
+                            type="button"
+                            className="wb-harness-expand wb-menu-trigger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!canConfigureModels) return;
+                              setExpandedHarnessId((prev) => (prev === id ? null : id));
+                              ns.ensureProviderOptions(id).catch(() => {});
+                            }}
+                            disabled={!canConfigureModels}
+                            title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
+                          >
+                            <ChevronDown size={14} />
+                          </button>
+                        )}
+
+                        {checked && ns.useMultipleAgents && (
+                          <button
+                            type="button"
+                            className="wb-harness-count-trigger wb-menu-trigger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                              const menuW = 140;
+                              const margin = 10;
+                              const approxH = 160;
+                              const left = clamp(rect.right - menuW, margin, window.innerWidth - margin - menuW);
+                              const openDown = rect.bottom + 6 + approxH <= window.innerHeight - margin;
+                              const top = openDown
+                                ? rect.bottom + 6
+                                : clamp(rect.top - approxH - 6, margin, window.innerHeight - margin - approxH);
+                              setCountMenu((prev) =>
+                                prev && prev.providerId === id ? null : { providerId: id, anchor: rect, style: { left, top } },
+                              );
+                            }}
+                            title="Set track count"
+                          >
+                            {Math.max(1, Math.min(MAX_TRACKS_PER_PROVIDER, count || 1))}x <ChevronDown size={12} />
+                          </button>
+                        )}
                       </>
                     )}
                   </div>
+
+                  {countMenu?.providerId === id && checked && ns.useMultipleAgents && (
+                    <div ref={countMenuRef} className="wb-menu wb-harness-count-menu" role="menu" style={countMenu.style}>
+                      {Array.from({ length: MAX_TRACKS_PER_PROVIDER }, (_, i) => i + 1).map((n) => (
+                        <button
+                          key={n}
+                          type="button"
+                          className={`wb-menu-item ${count === n ? "wb-menu-item-active" : ""}`}
+                          onClick={() => {
+                            setTrackCountForProvider(id, n);
+                            setCountMenu(null);
+                          }}
+                          role="menuitemradio"
+                          aria-checked={count === n}
+                        >
+                          <span className="wb-harness-count-item">
+                            <span>{n}x</span>
+                            <span aria-hidden="true">{count === n ? "✓" : ""}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {expanded && canConfigureModels && (
+                    <div className="wb-harness-config">
+                      {rows.map((t) => {
+                        const parsed = parseModelId(t.modelId, catalog);
+                        const base = parsed.base || catalog.baseIds[0] || "";
+                        const efforts = catalog.effortsByBase[base] ?? [];
+                        const eff = parsed.effort;
+                        return (
+                          <div key={t.key} className="wb-harness-track">
+                            <div className="wb-harness-track-left">
+                              <div className="wb-harness-track-title">Track</div>
+                              {catalog.baseIds.length > 0 ? (
+                                <>
+                                  <select
+                                    className="wb-harness-model-select"
+                                    value={base}
+                                    onFocus={() => ns.ensureProviderOptions(id).catch(() => {})}
+                                    onChange={(e) => {
+                                      const nextBase = e.target.value;
+                                      const next = deriveFullModelIdForBase(catalog, nextBase, eff);
+                                      updateTrackModel(t.key, next);
+                                    }}
+                                  >
+                                    {catalog.baseIds.map((b) => (
+                                      <option key={b} value={b}>
+                                        {catalog.displayNameByBase[b] ?? b}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {efforts.length > 0 && (
+                                    <select
+                                      className="wb-harness-model-select"
+                                      value={eff ?? pickDefaultEffort(efforts) ?? ""}
+                                      onChange={(e) => {
+                                        const nextEff = e.target.value || "";
+                                        const next = deriveFullModelIdForBase(catalog, base, nextEff || null);
+                                        updateTrackModel(t.key, next);
+                                      }}
+                                    >
+                                      {efforts.map((x) => (
+                                        <option key={x} value={x}>
+                                          {formatEffortLabel(x)}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </>
+                              ) : (
+                                <input
+                                  className="wb-harness-model-input"
+                                  value={t.modelId}
+                                  placeholder={opts ? "model_id" : "Loading models…"}
+                                  onFocus={() => ns.ensureProviderOptions(id).catch(() => {})}
+                                  onChange={(e) => updateTrackModel(t.key, e.target.value)}
+                                />
+                              )}
+                            </div>
+                            <div className="wb-harness-track-right">
+                              <button
+                                type="button"
+                                className="wb-harness-mini"
+                                onClick={() => addTrackForProvider(id)}
+                                title={
+                                  rows.length >= MAX_TRACKS_PER_PROVIDER
+                                    ? `Max ${MAX_TRACKS_PER_PROVIDER} tracks`
+                                    : "Add another track"
+                                }
+                                disabled={rows.length >= MAX_TRACKS_PER_PROVIDER}
+                              >
+                                +
+                              </button>
+                              <button
+                                type="button"
+                                className="wb-harness-mini"
+                                onClick={() => removeTrackByKey(t.key)}
+                                title="Remove track"
+                                disabled={rows.length <= 1}
+                              >
+                                −
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             });
@@ -1179,6 +1499,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                   if (variant !== "newSession") return;
                   setOpenMenu((v) => (v === "harness" ? null : "harness"));
                   setHarnessSearch("");
+                  setExpandedHarnessId(null);
                 }}
                 aria-haspopup={variant === "newSession" ? "menu" : undefined}
                 aria-expanded={openMenu === "harness"}

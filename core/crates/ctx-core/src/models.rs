@@ -340,7 +340,7 @@ pub struct TerminalSession {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageRole {
     User,
@@ -455,6 +455,14 @@ pub struct SessionTurnTool {
     pub status: Option<String>,
     pub input_json: Option<serde_json::Value>,
     pub output_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_truncated: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_original_bytes: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_truncated: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_original_bytes: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -469,6 +477,16 @@ pub struct SessionTurnToolSummary {
     pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_preview: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_truncated: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_original_bytes: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_truncated: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_original_bytes: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -551,7 +569,8 @@ pub enum WorkspaceIndexEvent {
 pub struct WorkspaceActiveTaskSummary {
     pub task: Task,
     pub primary_session: SessionSnapshotSummary,
-    pub primary_session_head: SessionHeadSnapshot,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_session_head: Option<SessionHeadSnapshot>,
     #[serde(default)]
     pub sessions: Vec<SessionSnapshotSummary>,
     pub sort_at: DateTime<Utc>,
@@ -576,6 +595,7 @@ pub struct WorkspaceActiveSnapshot {
 pub struct WorkspaceActiveHeadBatch {
     pub workspace_id: WorkspaceId,
     pub snapshot_rev: i64,
+    #[serde(default)]
     pub heads: Vec<SessionHeadSnapshot>,
 }
 
@@ -693,7 +713,8 @@ pub struct SessionState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSnapshot {
     pub summary: SessionSnapshotSummary,
-    pub head: SessionHeadSnapshot,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<SessionHeadSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<SessionState>,
 }

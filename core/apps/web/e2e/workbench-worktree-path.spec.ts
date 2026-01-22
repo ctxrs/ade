@@ -1,4 +1,4 @@
-import { test, expect } from "./utils/fixtures";
+import { test, expect } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 const readId = (value: any): string => {
@@ -46,7 +46,7 @@ test("workbench: worktree slug is visible for the active session", async ({ page
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   const rows = page.locator(".wb-task-row");
-  await expect(rows).toHaveCount(1, { timeout: 20000 });
+  await expect(rows).toHaveCount(1);
   await rows.first().click();
 
   const worktreeChip = page.locator(".wb-worktree-chip").first();
@@ -81,10 +81,10 @@ test("workbench: worktree slug stays visible in single-track view", async ({ pag
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   const rows = page.locator(".wb-task-row");
-  await expect(rows).toHaveCount(1, { timeout: 20000 });
+  await expect(rows).toHaveCount(1);
   await rows.first().click();
 
-  const worktreeChip = page.locator(".wb-single-track-header .wb-worktree-chip");
+  const worktreeChip = page.locator(".wb-single-track-meta-left .wb-worktree-chip");
   await expect(worktreeChip).toBeVisible({ timeout: 20000 });
   await expect(worktreeChip).toContainText(worktreeSlugFromPath(worktreePath));
 });

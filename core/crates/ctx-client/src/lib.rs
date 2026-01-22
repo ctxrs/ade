@@ -14,9 +14,10 @@ use url::{form_urlencoded, Url};
 use ctx_core::ids::{ArtifactId, SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Artifact, AttachmentMode, AttachmentUpdatePolicy, Message, MessageAttachment, MessageDelivery,
-    Session, SessionEventsPage, SessionHistoryPage, SessionSnapshot, SessionState, SessionTurnTool,
-    Task, TerminalSession, Workspace, WorkspaceActiveSnapshot, WorkspaceArchivedPage,
-    WorkspaceAttachment, WorkspaceAttachmentKind, WorkspaceIndexCursor,
+    Session, SessionEventsPage, SessionHeadSnapshot, SessionHistoryPage, SessionSnapshot,
+    SessionState, SessionTurnTool, Task, TerminalSession, Workspace, WorkspaceActiveHeadBatch,
+    WorkspaceActiveSnapshot, WorkspaceArchivedPage, WorkspaceAttachment, WorkspaceAttachmentKind,
+    WorkspaceIndexCursor,
 };
 use ctx_providers::adapters::ProviderStatus;
 
@@ -70,6 +71,14 @@ pub struct ClientTelemetryBatch {
     pub events: Vec<ClientTelemetryMetric>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct TelemetrySummaryParams {
+    pub metric: Option<String>,
+    pub run_id: Option<String>,
+    pub window_ms: Option<u64>,
+    pub limit: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvTarget {
@@ -86,13 +95,6 @@ pub struct CreateTaskRequest {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub create_default_session: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CreateWorkspaceRequest {
-    pub root_path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -128,26 +130,6 @@ pub struct CreateTerminalRequest {
     pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct PortPreviewEntry {
-    pub id: String,
-    pub workspace_id: WorkspaceId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_id: Option<TaskId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<SessionId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub worktree_id: Option<WorktreeId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal_id: Option<TerminalId>,
-    pub host: String,
-    pub port: u16,
-    pub scheme: String,
-    pub source: String,
-    pub first_seen_at: String,
-    pub last_seen_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -316,12 +298,6 @@ pub struct PublicSettings {
     pub resource_governance: Option<PublicResourceGovernanceSettings>,
     #[serde(default)]
     pub subagents: Option<PublicSubagentSettings>,
-    #[serde(default)]
-    pub compaction: Option<PublicCompactionSettings>,
-    #[serde(default)]
-    pub network: Option<PublicNetworkSettings>,
-    #[serde(default)]
-    pub port_forwarding: Option<PublicPortForwardingSettings>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -361,63 +337,12 @@ pub struct PublicSubagentSettings {
     pub max_per_call: Option<u32>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct PublicCompactionSettings {
-    pub enabled: bool,
-    #[serde(default)]
-    pub script_path: Option<String>,
-    #[serde(default)]
-    pub script_timeout_ms: Option<u64>,
-    #[serde(default)]
-    pub retain_full_transcript_tokens: Option<u32>,
-    #[serde(default)]
-    pub retain_tail_messages: Option<u32>,
-    #[serde(default)]
-    pub retain_tail_chars_per_message: Option<u32>,
-    #[serde(default)]
-    pub include_attachments: bool,
-    #[serde(default)]
-    pub transcript_only: bool,
-    #[serde(default)]
-    pub auto_compact: Option<PublicAutoCompactionSettings>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct PublicAutoCompactionSettings {
-    pub enabled: bool,
-    #[serde(default)]
-    pub remaining_fraction_threshold: Option<f64>,
-    #[serde(default)]
-    pub max_context_tokens: Option<u32>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct PublicNetworkSettings {
-    pub profile: NetworkProfile,
-    pub mcp_bypass: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct PublicPortForwardingSettings {
-    pub auto_forward: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DictationProvider {
     Disabled,
     #[serde(rename = "livekit_inference")]
     LiveKitInference,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum NetworkProfile {
-    None,
-    DepsOnly,
-    McpOnly,
-    DepsPlusMcp,
-    Full,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -483,11 +408,6 @@ pub struct UpdateSettingsRequest {
     pub provider_guard: Option<UpdateProviderGuardSettingsRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subagents: Option<UpdateSubagentSettingsRequest>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub compaction: Option<UpdateCompactionSettingsRequest>,
-    pub network: Option<UpdateNetworkSettingsRequest>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub port_forwarding: Option<UpdatePortForwardingSettingsRequest>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -556,42 +476,10 @@ pub struct UpdateSubagentSettingsRequest {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct UpdateCompactionSettingsRequest {
-    pub enabled: bool,
+pub struct CreateWorkspaceRequest {
+    pub root_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub script_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub script_timeout_ms: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub retain_full_transcript_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub retain_tail_messages: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub retain_tail_chars_per_message: Option<u32>,
-    pub include_attachments: bool,
-    pub transcript_only: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auto_compact: Option<UpdateAutoCompactionSettingsRequest>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct UpdateAutoCompactionSettingsRequest {
-    pub enabled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub remaining_fraction_threshold: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_context_tokens: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct UpdateNetworkSettingsRequest {
-    pub profile: NetworkProfile,
-    pub mcp_bypass: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct UpdatePortForwardingSettingsRequest {
-    pub auto_forward: bool,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1001,8 +889,13 @@ impl Client {
             .await
     }
 
-    pub async fn create_workspace(&self, req: &CreateWorkspaceRequest) -> Result<Workspace> {
-        self.request_json(Method::POST, "/api/workspaces", Some(req))
+    pub async fn create_workspace(
+        &self,
+        root_path: String,
+        name: Option<String>,
+    ) -> Result<Workspace> {
+        let req = CreateWorkspaceRequest { root_path, name };
+        self.request_json(Method::POST, "/api/workspaces", Some(&req))
             .await
     }
 
@@ -1075,6 +968,14 @@ impl Client {
             path.push('?');
             path.push_str(&search.join("&"));
         }
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn get_workspace_active_heads(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<WorkspaceActiveHeadBatch> {
+        let path = format!("/api/workspaces/{}/active_heads", workspace_id.0);
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 
@@ -1151,36 +1052,11 @@ impl Client {
         Ok(url.to_string())
     }
 
-    pub fn port_preview_url(&self, port_id: &str) -> Result<String> {
-        let mut url = Url::parse(&self.base_url)
-            .with_context(|| format!("invalid base url: {}", self.base_url))?;
-        let prefix = url.path().trim_end_matches('/');
-        let path = if prefix.is_empty() {
-            format!("/api/ports/{port_id}/preview")
-        } else {
-            format!("{prefix}/api/ports/{port_id}/preview")
-        };
-        url.set_path(&path);
-        url.set_query(None);
-        if let Some(token) = &self.auth_token {
-            url.query_pairs_mut().append_pair("token", token);
-        }
-        Ok(url.to_string())
-    }
-
     pub async fn list_workspace_terminals(
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<Vec<TerminalSession>> {
         let path = format!("/api/workspaces/{}/terminals", workspace_id.0);
-        self.request_json(Method::GET, &path, None::<&()>).await
-    }
-
-    pub async fn list_workspace_ports(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Vec<PortPreviewEntry>> {
-        let path = format!("/api/workspaces/{}/ports", workspace_id.0);
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 
@@ -1228,6 +1104,30 @@ impl Client {
         include_events: Option<bool>,
     ) -> Result<SessionSnapshot> {
         let mut path = format!("/api/sessions/{}/snapshot", session_id.0);
+        let mut params = Vec::new();
+        if let Some(limit) = limit {
+            params.push(format!("limit={}", limit));
+        }
+        if let Some(include_events) = include_events {
+            params.push(format!(
+                "include_events={}",
+                if include_events { "1" } else { "0" }
+            ));
+        }
+        if !params.is_empty() {
+            path.push('?');
+            path.push_str(&params.join("&"));
+        }
+        self.request_json(Method::GET, &path, None::<&()>).await
+    }
+
+    pub async fn get_session_head(
+        &self,
+        session_id: SessionId,
+        limit: Option<u32>,
+        include_events: Option<bool>,
+    ) -> Result<SessionHeadSnapshot> {
+        let mut path = format!("/api/sessions/{}/head", session_id.0);
         let mut params = Vec::new();
         if let Some(limit) = limit {
             params.push(format!("limit={}", limit));
@@ -1702,6 +1602,30 @@ impl Client {
     pub async fn post_client_telemetry(&self, batch: &ClientTelemetryBatch) -> Result<()> {
         self.request_empty(Method::POST, "/api/telemetry/client", Some(batch))
             .await
+    }
+
+    pub async fn get_telemetry_summary(&self, params: &TelemetrySummaryParams) -> Result<Value> {
+        let mut path = "/api/telemetry/summary".to_string();
+        let mut search = Vec::new();
+        if let Some(metric) = &params.metric {
+            let metric = form_urlencoded::byte_serialize(metric.as_bytes()).collect::<String>();
+            search.push(format!("metric={metric}"));
+        }
+        if let Some(run_id) = &params.run_id {
+            let run_id = form_urlencoded::byte_serialize(run_id.as_bytes()).collect::<String>();
+            search.push(format!("run_id={run_id}"));
+        }
+        if let Some(window_ms) = params.window_ms {
+            search.push(format!("window_ms={window_ms}"));
+        }
+        if let Some(limit) = params.limit {
+            search.push(format!("limit={limit}"));
+        }
+        if !search.is_empty() {
+            path.push('?');
+            path.push_str(&search.join("&"));
+        }
+        self.request_json(Method::GET, &path, None::<&()>).await
     }
 }
 

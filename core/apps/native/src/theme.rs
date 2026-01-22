@@ -299,10 +299,8 @@ pub fn apply_gpui_component_theme(
     set_color(&mut colors.secondary_foreground, &tokens.text, "text");
 
     set_color(&mut colors.muted, &tokens.panel_2, "panel-2");
-    // Match web placeholder contrast (rgba(255, 255, 255, 0.35)).
-    colors.muted_foreground = Some(
-        if is_dark { "#FFFFFF59" } else { "#00000059" }.into(),
-    );
+    // Match web placeholder text (#d4d4d4) and handle alpha in component theme.
+    colors.muted_foreground = Some("#D4D4D4".into());
 
     set_color(&mut colors.popover, &tokens.panel, "panel");
     set_color(&mut colors.popover_foreground, &tokens.text, "text");

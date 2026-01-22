@@ -1,38 +1,30 @@
-use std::collections::HashMap;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::time::Duration;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ctx_core::ids::*;
 use ctx_core::models::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{sqlite::SqlitePoolOptions, Pool, QueryBuilder, Row, Sqlite};
+use sqlx::sqlite::{SqliteArguments, SqlitePoolOptions, SqliteRow};
+use sqlx::{Pool, Row, Sqlite};
+use tokio::sync::{mpsc, oneshot};
+use tracing::info;
 
 #[derive(Clone)]
 pub struct Store {
     pool: Pool<Sqlite>,
-}
-
-#[derive(Debug, Clone)]
-pub struct EventLogStats {
-    pub published_seq: i64,
-    pub durable_seq: i64,
-    pub queue_depth: u64,
+    event_log: Arc<EventLogRuntime>,
 }
 
 pub struct SessionRetentionPruneStats {
     pub tool_summaries_deleted: u64,
     pub turn_thoughts_cleared: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct SessionCompactionSeed {
-    pub session_id: SessionId,
-    pub seed_text: String,
-    pub reason: String,
-    pub created_at: DateTime<Utc>,
 }
 
 const SESSION_HEAD_MAX_TURNS: u32 = 200;
@@ -41,6 +33,462 @@ const SESSION_HEAD_EVENT_LIMIT: usize = 200;
 const SESSION_HEAD_BYTE_LIMIT: usize = 1_500_000;
 const ACTIVE_SNAPSHOT_HEAD_LIMIT: u32 = 60;
 const SESSION_HEAD_ARCHIVED_TURN_LIMIT: u32 = 50;
+static STREAM_ONLY_EVENT_SEQ: AtomicI64 = AtomicI64::new(-1);
+
+fn next_stream_only_event_seq() -> i64 {
+    STREAM_ONLY_EVENT_SEQ.fetch_sub(1, Ordering::Relaxed)
+}
+
+const DEFAULT_EVENT_LOG_FLUSH_MS: u64 = 250;
+const DEFAULT_EVENT_LOG_BATCH_SIZE: usize = 256;
+const DEFAULT_EVENT_LOG_CHECKPOINT_MS: u64 = 5_000;
+const EVENT_LOG_QUEUE_CAPACITY: usize = 4096;
+
+#[derive(Clone, Copy, Debug)]
+struct EventLogConfig {
+    flush_interval: Duration,
+    batch_size: usize,
+    checkpoint_interval: Duration,
+}
+
+impl EventLogConfig {
+    fn from_env() -> Self {
+        let flush_ms = env_u64("CTX_EVENT_LOG_FLUSH_MS").unwrap_or(DEFAULT_EVENT_LOG_FLUSH_MS);
+        let batch_size =
+            env_usize("CTX_EVENT_LOG_BATCH_SIZE").unwrap_or(DEFAULT_EVENT_LOG_BATCH_SIZE);
+        let checkpoint_ms =
+            env_u64("CTX_EVENT_LOG_CHECKPOINT_MS").unwrap_or(DEFAULT_EVENT_LOG_CHECKPOINT_MS);
+        Self {
+            flush_interval: Duration::from_millis(flush_ms.max(1)),
+            batch_size: batch_size.max(1),
+            checkpoint_interval: Duration::from_millis(checkpoint_ms.max(1)),
+        }
+    }
+}
+
+struct EventLogRuntime {
+    next_seq: AtomicI64,
+    config: EventLogConfig,
+    persister: OnceLock<EventLogPersister>,
+}
+
+impl EventLogRuntime {
+    async fn load(pool: &Pool<Sqlite>) -> Result<Self> {
+        let last_seq: Option<i64> = sqlx::query_scalar("SELECT MAX(seq) FROM session_events")
+            .fetch_one(pool)
+            .await?;
+        let checkpoint_seq: Option<i64> =
+            sqlx::query_scalar("SELECT checkpoint_seq FROM event_log_checkpoints WHERE id = 1")
+                .fetch_optional(pool)
+                .await?
+                .flatten();
+        let max_seq = last_seq.unwrap_or(0).max(checkpoint_seq.unwrap_or(0));
+        Ok(Self {
+            next_seq: AtomicI64::new(max_seq.saturating_add(1)),
+            config: EventLogConfig::from_env(),
+            persister: OnceLock::new(),
+        })
+    }
+
+    fn start_persister(&self, store: Store) {
+        let _ = self.persister.get_or_init(|| {
+            let initial_seq = self.next_seq.load(Ordering::Relaxed).saturating_sub(1);
+            EventLogPersister::spawn(store, self.config, initial_seq)
+        });
+    }
+
+    fn next_seq(&self) -> i64 {
+        self.next_seq.fetch_add(1, Ordering::Relaxed)
+    }
+
+    async fn enqueue(&self, event: SessionEvent) -> Result<()> {
+        match self.persister.get() {
+            Some(persister) => persister.enqueue(event).await,
+            None => Err(anyhow::anyhow!("event log persister unavailable")),
+        }
+    }
+
+    async fn flush(&self) -> Result<()> {
+        match self.persister.get() {
+            Some(persister) => persister.flush().await,
+            None => Ok(()),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct EventLogPersister {
+    tx: mpsc::Sender<EventLogCommand>,
+}
+
+enum EventLogCommand {
+    Event(SessionEvent),
+    Flush(oneshot::Sender<Result<()>>),
+}
+
+impl EventLogPersister {
+    fn spawn(store: Store, config: EventLogConfig, initial_seq: i64) -> Self {
+        let (tx, mut rx) = mpsc::channel(EVENT_LOG_QUEUE_CAPACITY);
+        tokio::spawn(async move {
+            let mut buffer: Vec<SessionEvent> = Vec::new();
+            let mut flush_waiters: Vec<oneshot::Sender<Result<()>>> = Vec::new();
+            let mut last_applied_seq = initial_seq;
+            let mut last_checkpoint_seq = initial_seq;
+            let mut flush_interval = tokio::time::interval(config.flush_interval);
+            let mut checkpoint_interval = tokio::time::interval(config.checkpoint_interval);
+
+            loop {
+                tokio::select! {
+                    cmd = rx.recv() => {
+                        match cmd {
+                            Some(EventLogCommand::Event(event)) => {
+                                last_applied_seq = last_applied_seq.max(event.seq);
+                                buffer.push(event);
+                                if buffer.len() >= config.batch_size {
+                                    if let Err(err) = flush_event_batch(&store, &mut buffer).await {
+                                        tracing::warn!("event log flush failed: {err:#}");
+                                    }
+                                }
+                            }
+                            Some(EventLogCommand::Flush(tx)) => {
+                                flush_waiters.push(tx);
+                                let result = if buffer.is_empty() {
+                                    Ok(())
+                                } else {
+                                    flush_event_batch(&store, &mut buffer).await
+                                };
+                                for waiter in flush_waiters.drain(..) {
+                                    let send_result = match &result {
+                                        Ok(()) => Ok(()),
+                                        Err(err) => Err(anyhow::anyhow!("{err:#}")),
+                                    };
+                                    let _ = waiter.send(send_result);
+                                }
+                            }
+                            None => {
+                                let _ = flush_event_batch(&store, &mut buffer).await;
+                                return;
+                            }
+                        }
+                    }
+                    _ = flush_interval.tick() => {
+                        if !buffer.is_empty() {
+                            if let Err(err) = flush_event_batch(&store, &mut buffer).await {
+                                tracing::warn!("event log flush failed: {err:#}");
+                            }
+                        }
+                    }
+                    _ = checkpoint_interval.tick() => {
+                        if last_applied_seq > last_checkpoint_seq {
+                            let result = store
+                                .upsert_event_log_checkpoint(last_applied_seq, None)
+                                .await;
+                            if let Err(err) = result {
+                                tracing::warn!("event log checkpoint failed: {err:#}");
+                            } else {
+                                last_checkpoint_seq = last_applied_seq;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        Self { tx }
+    }
+
+    async fn enqueue(&self, event: SessionEvent) -> Result<()> {
+        self.tx
+            .send(EventLogCommand::Event(event))
+            .await
+            .context("enqueueing session event for persistence")
+    }
+
+    async fn flush(&self) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EventLogCommand::Flush(tx))
+            .await
+            .context("requesting event log flush")?;
+        rx.await.context("waiting for event log flush")?
+    }
+}
+
+async fn flush_event_batch(store: &Store, buffer: &mut Vec<SessionEvent>) -> Result<()> {
+    if buffer.is_empty() {
+        return Ok(());
+    }
+    let batch = std::mem::take(buffer);
+    if let Err(err) = store.persist_session_events_batch(&batch).await {
+        buffer.extend(batch);
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn snapshot_timing_enabled() -> bool {
+    match std::env::var("CTX_SNAPSHOT_TIMING") {
+        Ok(value) => {
+            let value = value.trim();
+            value == "1" || value.eq_ignore_ascii_case("true")
+        }
+        Err(_) => false,
+    }
+}
+
+const WRITE_METRICS_INTERVAL_SECS: u64 = 10;
+const WRITE_METRICS_TABLE_COUNT: usize = 8;
+const I64_BYTES: u64 = 8;
+const BOOL_BYTES: u64 = 1;
+
+#[derive(Clone, Copy, Debug)]
+enum WriteMetricTable {
+    SessionEvents,
+    SessionTurns,
+    SessionTurnTools,
+    Messages,
+    SessionHeadMaterializations,
+    SessionActiveSnapshotHeads,
+    WorkspaceActiveTaskSummaries,
+    SessionSnapshotSummaries,
+}
+
+impl WriteMetricTable {
+    const ALL: [WriteMetricTable; WRITE_METRICS_TABLE_COUNT] = [
+        WriteMetricTable::SessionEvents,
+        WriteMetricTable::SessionTurns,
+        WriteMetricTable::SessionTurnTools,
+        WriteMetricTable::Messages,
+        WriteMetricTable::SessionHeadMaterializations,
+        WriteMetricTable::SessionActiveSnapshotHeads,
+        WriteMetricTable::WorkspaceActiveTaskSummaries,
+        WriteMetricTable::SessionSnapshotSummaries,
+    ];
+
+    fn index(self) -> usize {
+        match self {
+            WriteMetricTable::SessionEvents => 0,
+            WriteMetricTable::SessionTurns => 1,
+            WriteMetricTable::SessionTurnTools => 2,
+            WriteMetricTable::Messages => 3,
+            WriteMetricTable::SessionHeadMaterializations => 4,
+            WriteMetricTable::SessionActiveSnapshotHeads => 5,
+            WriteMetricTable::WorkspaceActiveTaskSummaries => 6,
+            WriteMetricTable::SessionSnapshotSummaries => 7,
+        }
+    }
+
+    fn is_base(self) -> bool {
+        matches!(
+            self,
+            WriteMetricTable::SessionEvents
+                | WriteMetricTable::SessionTurns
+                | WriteMetricTable::SessionTurnTools
+                | WriteMetricTable::Messages
+        )
+    }
+}
+
+struct WriteMetrics {
+    bytes: [AtomicU64; WRITE_METRICS_TABLE_COUNT],
+    writes: [AtomicU64; WRITE_METRICS_TABLE_COUNT],
+}
+
+impl WriteMetrics {
+    fn new() -> Self {
+        Self {
+            bytes: std::array::from_fn(|_| AtomicU64::new(0)),
+            writes: std::array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
+
+    fn record(&self, table: WriteMetricTable, rows: u64, bytes: u64) {
+        let index = table.index();
+        self.bytes[index].fetch_add(bytes, Ordering::Relaxed);
+        self.writes[index].fetch_add(rows, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> WriteMetricsSnapshot {
+        WriteMetricsSnapshot {
+            bytes: std::array::from_fn(|i| self.bytes[i].load(Ordering::Relaxed)),
+            writes: std::array::from_fn(|i| self.writes[i].load(Ordering::Relaxed)),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct WriteMetricsSnapshot {
+    bytes: [u64; WRITE_METRICS_TABLE_COUNT],
+    writes: [u64; WRITE_METRICS_TABLE_COUNT],
+}
+
+impl WriteMetricsSnapshot {
+    fn delta(&self, previous: &WriteMetricsSnapshot) -> WriteMetricsSnapshot {
+        WriteMetricsSnapshot {
+            bytes: std::array::from_fn(|i| self.bytes[i].saturating_sub(previous.bytes[i])),
+            writes: std::array::from_fn(|i| self.writes[i].saturating_sub(previous.writes[i])),
+        }
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.bytes.iter().sum()
+    }
+
+    fn total_writes(&self) -> u64 {
+        self.writes.iter().sum()
+    }
+
+    fn base_bytes(&self) -> u64 {
+        WriteMetricTable::ALL
+            .iter()
+            .filter(|table| table.is_base())
+            .map(|table| self.bytes[table.index()])
+            .sum()
+    }
+}
+
+fn write_metrics_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| match std::env::var("CTX_WRITE_METRICS") {
+        Ok(value) => {
+            let value = value.trim();
+            value == "1" || value.eq_ignore_ascii_case("true")
+        }
+        Err(_) => false,
+    })
+}
+
+fn write_metrics() -> Option<&'static WriteMetrics> {
+    if !write_metrics_enabled() {
+        return None;
+    }
+    static METRICS: OnceLock<WriteMetrics> = OnceLock::new();
+    static LOGGER: OnceLock<()> = OnceLock::new();
+    let metrics = METRICS.get_or_init(WriteMetrics::new);
+    LOGGER.get_or_init(|| {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let mut interval =
+                    tokio::time::interval(Duration::from_secs(WRITE_METRICS_INTERVAL_SECS));
+                let mut previous = metrics.snapshot();
+                loop {
+                    interval.tick().await;
+                    let current = metrics.snapshot();
+                    let delta = current.delta(&previous);
+                    previous = current;
+                    let total_bytes = delta.total_bytes();
+                    let total_writes = delta.total_writes();
+                    if total_bytes == 0 && total_writes == 0 {
+                        continue;
+                    }
+                    let base_bytes = delta.base_bytes();
+                    let derived_bytes = total_bytes.saturating_sub(base_bytes);
+                    let write_amplification =
+                        (base_bytes > 0).then(|| total_bytes as f64 / base_bytes as f64);
+
+                    info!(
+                        target: "ctx_store.write_metrics",
+                        interval_s = WRITE_METRICS_INTERVAL_SECS,
+                        total_writes,
+                        total_bytes,
+                        base_bytes,
+                        derived_bytes,
+                        write_amplification,
+                        session_events_writes =
+                            delta.writes[WriteMetricTable::SessionEvents.index()],
+                        session_events_bytes =
+                            delta.bytes[WriteMetricTable::SessionEvents.index()],
+                        session_turns_writes = delta.writes[WriteMetricTable::SessionTurns.index()],
+                        session_turns_bytes = delta.bytes[WriteMetricTable::SessionTurns.index()],
+                        session_turn_tools_writes =
+                            delta.writes[WriteMetricTable::SessionTurnTools.index()],
+                        session_turn_tools_bytes =
+                            delta.bytes[WriteMetricTable::SessionTurnTools.index()],
+                        messages_writes = delta.writes[WriteMetricTable::Messages.index()],
+                        messages_bytes = delta.bytes[WriteMetricTable::Messages.index()],
+                        session_head_materializations_writes = delta.writes
+                            [WriteMetricTable::SessionHeadMaterializations.index()],
+                        session_head_materializations_bytes = delta.bytes
+                            [WriteMetricTable::SessionHeadMaterializations.index()],
+                        session_active_snapshot_heads_writes = delta.writes
+                            [WriteMetricTable::SessionActiveSnapshotHeads.index()],
+                        session_active_snapshot_heads_bytes = delta.bytes
+                            [WriteMetricTable::SessionActiveSnapshotHeads.index()],
+                        workspace_active_task_summaries_writes = delta.writes
+                            [WriteMetricTable::WorkspaceActiveTaskSummaries.index()],
+                        workspace_active_task_summaries_bytes = delta.bytes
+                            [WriteMetricTable::WorkspaceActiveTaskSummaries.index()],
+                        session_snapshot_summaries_writes = delta.writes
+                            [WriteMetricTable::SessionSnapshotSummaries.index()],
+                        session_snapshot_summaries_bytes = delta.bytes
+                            [WriteMetricTable::SessionSnapshotSummaries.index()],
+                    );
+                }
+            });
+        } else {
+            info!(
+                target: "ctx_store.write_metrics",
+                "CTX_WRITE_METRICS enabled without a tokio runtime; write metrics logging disabled",
+            );
+        }
+    });
+    Some(metrics)
+}
+
+fn record_write(table: WriteMetricTable, rows: u64, bytes_per_row: u64) {
+    if rows == 0 {
+        return;
+    }
+    if let Some(metrics) = write_metrics() {
+        let bytes = bytes_per_row.saturating_mul(rows);
+        metrics.record(table, rows, bytes);
+    }
+}
+
+fn bytes_str(value: &str) -> u64 {
+    value.len() as u64
+}
+
+fn bytes_opt_str(value: Option<&str>) -> u64 {
+    value.map(bytes_str).unwrap_or(0)
+}
+
+fn bytes_opt_i64(value: Option<i64>) -> u64 {
+    value.map(|_| I64_BYTES).unwrap_or(0)
+}
+
+fn env_u64(name: &str) -> Option<u64> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+}
+
+fn env_usize(name: &str) -> Option<usize> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(value) => {
+            let value = value.trim();
+            value == "1" || value.eq_ignore_ascii_case("true")
+        }
+        Err(_) => false,
+    }
+}
+
+fn disable_head_materialization_writes() -> bool {
+    env_flag_enabled("CTX_DISABLE_HEAD_MATERIALIZATION")
+}
+
+fn disable_tool_summary_persistence() -> bool {
+    env_flag_enabled("CTX_DISABLE_TOOL_SUMMARY_PERSISTENCE")
+}
+
+fn disable_workspace_active_task_summary_updates() -> bool {
+    env_flag_enabled("CTX_DISABLE_WORKSPACE_ACTIVE_TASK_SUMMARIES")
+}
 
 #[derive(Clone, Copy, Debug)]
 enum SessionHeadKind {
@@ -106,6 +554,51 @@ impl SessionHeadMaterialization {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ActiveSnapshotHeadProjection {
+    last_event_seq: i64,
+    turns: Vec<SessionTurn>,
+    tool_summaries: Vec<SessionTurnToolSummary>,
+    messages: Vec<Message>,
+    has_more_turns: bool,
+    head_window: SessionHeadWindow,
+    summary_checkpoint: Option<SessionSummaryCheckpoint>,
+}
+
+impl ActiveSnapshotHeadProjection {
+    fn from_head(head: &SessionHead) -> Self {
+        Self {
+            last_event_seq: head.last_event_seq,
+            turns: head.turns.clone(),
+            tool_summaries: head.tool_summaries.clone(),
+            messages: head.messages.clone(),
+            has_more_turns: head.has_more_turns,
+            head_window: head.head_window.clone(),
+            summary_checkpoint: head.summary_checkpoint.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WorkspaceActiveTaskSummaryReadModel {
+    task: Task,
+    primary_session: SessionSnapshotSummary,
+    #[serde(default)]
+    sessions: Vec<SessionSnapshotSummary>,
+    sort_at: DateTime<Utc>,
+}
+
+impl WorkspaceActiveTaskSummaryReadModel {
+    fn from_summary(summary: &WorkspaceActiveTaskSummary) -> Self {
+        Self {
+            task: summary.task.clone(),
+            primary_session: summary.primary_session.clone(),
+            sessions: summary.sessions.clone(),
+            sort_at: summary.sort_at,
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct SessionHeadWindowPayload<'a> {
     turns: &'a [SessionTurn],
@@ -159,6 +652,17 @@ fn retain_tool_summaries_for_turns(
         allowed.insert(turn.turn_id);
     }
     tool_summaries.retain(|tool| allowed.contains(&tool.turn_id));
+}
+
+fn strip_snapshot_partials(turns: &mut [SessionTurn], events: &mut Vec<SessionEvent>) {
+    for turn in turns.iter_mut() {
+        turn.assistant_partial = None;
+        turn.thought_partial = None;
+    }
+    if events.is_empty() {
+        return;
+    }
+    events.retain(|event| !matches!(event.event_type, SessionEventType::AssistantChunk));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -261,6 +765,7 @@ fn apply_session_head_limits(
     if !include_events {
         head.events.clear();
     }
+    strip_snapshot_partials(&mut head.turns, &mut head.events);
     let mut has_more_turns = head.has_more_turns;
     let head_window = trim_session_head_window(
         &mut head.turns,
@@ -349,35 +854,88 @@ pub struct MobileAccessConfig {
 
 impl Store {
     pub async fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let options = sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(path.as_ref())
-            .create_if_missing(true)
-            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
-            .busy_timeout(Duration::from_secs(5))
-            .foreign_keys(true);
+        Self::open_sqlite(path, None).await
+    }
+
+    pub async fn open_sqlite(path: impl AsRef<Path>, max_connections: Option<u32>) -> Result<Self> {
+        let path = path.as_ref();
+        let path_str = path.to_string_lossy();
+        if path_str != ":memory:" {
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            if !path.exists() {
+                let _ = tokio::fs::File::create(path).await?;
+            }
+        }
+        let sqlite_url = format!("sqlite://{}", path.to_string_lossy());
         let pool = SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect_with(options)
+            .max_connections(max_connections.unwrap_or(5))
+            .after_connect(|conn, _meta| {
+                Box::pin(async move {
+                    sqlx::query("PRAGMA journal_mode = WAL")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA synchronous = NORMAL")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA busy_timeout = 5000")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA foreign_keys = ON")
+                        .execute(&mut *conn)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect(&sqlite_url)
             .await?;
-        sqlx::migrate!("./migrations").run(&pool).await?;
-        Ok(Self { pool })
+        let migrator =
+            sqlx::migrate::Migrator::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"))
+                .await?;
+        migrator.run(&pool).await?;
+        let event_log = Arc::new(EventLogRuntime::load(&pool).await?);
+        let store = Self { pool, event_log };
+        store.event_log.start_persister(store.clone());
+        Ok(store)
     }
 
     pub fn pool(&self) -> &Pool<Sqlite> {
         &self.pool
     }
 
-    pub fn event_log_stats(&self) -> EventLogStats {
-        EventLogStats {
-            published_seq: 0,
-            durable_seq: 0,
-            queue_depth: 0,
+    pub async fn close(&self) {
+        if let Err(err) = self.event_log.flush().await {
+            tracing::warn!("event log flush failed during close: {err:#}");
         }
+        self.pool.close().await;
     }
 
-    pub async fn close(&self) {
-        self.pool.close().await;
+    fn sql(&self, sql: &'static str) -> &'static str {
+        sql
+    }
+
+    fn query<'q>(
+        &'q self,
+        sql: &'static str,
+    ) -> sqlx::query::Query<'q, Sqlite, SqliteArguments<'q>> {
+        let sql: &'q str = self.sql(sql);
+        sqlx::query(sql)
+    }
+
+    fn query_scalar<'q, T>(
+        &'q self,
+        sql: &'static str,
+    ) -> sqlx::query::QueryScalar<'q, Sqlite, T, SqliteArguments<'q>>
+    where
+        for<'r> T: sqlx::Decode<'r, Sqlite> + sqlx::Type<Sqlite> + Send,
+    {
+        let sql: &'q str = self.sql(sql);
+        sqlx::query_scalar(sql)
+    }
+
+    fn rewrite_sql<'a>(&self, sql: &'a str) -> Cow<'a, str> {
+        Cow::Borrowed(sql)
     }
 
     pub async fn migrate_workspace_from_path(
@@ -388,26 +946,30 @@ impl Store {
         let workspace_id = workspace_id.0.to_string();
         let legacy_path = legacy_path.to_string_lossy().to_string();
         let mut conn = self.pool.acquire().await?;
-        sqlx::query("PRAGMA foreign_keys = OFF")
+        self.query("PRAGMA foreign_keys = OFF")
             .execute(&mut *conn)
             .await?;
-        sqlx::query("ATTACH DATABASE ? AS legacy")
+        self.query("ATTACH DATABASE ? AS legacy")
             .bind(&legacy_path)
             .execute(&mut *conn)
             .await?;
 
         let migrate = async {
-            sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+            self.query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
 
-            sqlx::query(
-                r#"INSERT OR REPLACE INTO workspaces
-                   SELECT * FROM legacy.workspaces WHERE id = ?"#,
+            self.query(
+                r#"INSERT INTO workspaces
+                   SELECT * FROM legacy.workspaces WHERE id = ?
+                   ON CONFLICT(id) DO UPDATE SET
+                       name = excluded.name,
+                       root_path = excluded.root_path,
+                       created_at = excluded.created_at"#,
             )
             .bind(&workspace_id)
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO tasks
                    SELECT * FROM legacy.tasks WHERE workspace_id = ?"#,
             )
@@ -415,7 +977,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO worktrees
                    SELECT * FROM legacy.worktrees WHERE workspace_id = ?"#,
             )
@@ -423,7 +985,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO sessions
                    SELECT * FROM legacy.sessions WHERE workspace_id = ?"#,
             )
@@ -431,7 +993,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO messages
                    SELECT * FROM legacy.messages
                    WHERE session_id IN (
@@ -442,7 +1004,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO session_events
                    SELECT * FROM legacy.session_events
                    WHERE session_id IN (
@@ -453,7 +1015,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO session_turns
                    SELECT * FROM legacy.session_turns
                    WHERE session_id IN (
@@ -464,7 +1026,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO session_turn_tools
                    SELECT * FROM legacy.session_turn_tools
                    WHERE session_id IN (
@@ -475,7 +1037,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO artifacts
                    SELECT * FROM legacy.artifacts WHERE workspace_id = ?"#,
             )
@@ -483,7 +1045,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO workspace_attachments
                    SELECT * FROM legacy.workspace_attachments WHERE workspace_id = ?"#,
             )
@@ -491,7 +1053,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO worktree_attachment_mounts
                    SELECT * FROM legacy.worktree_attachment_mounts
                    WHERE worktree_id IN (
@@ -502,7 +1064,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO subagent_invocations
                    SELECT * FROM legacy.subagent_invocations
                    WHERE parent_session_id IN (
@@ -513,7 +1075,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO subagent_invocation_children
                    SELECT * FROM legacy.subagent_invocation_children
                    WHERE child_session_id IN (
@@ -524,7 +1086,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO merge_queue_entries
                    SELECT * FROM legacy.merge_queue_entries WHERE workspace_id = ?"#,
             )
@@ -532,7 +1094,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO merge_queue_runs
                    SELECT * FROM legacy.merge_queue_runs
                    WHERE entry_id IN (
@@ -543,7 +1105,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO session_summary_checkpoints
                    SELECT * FROM legacy.session_summary_checkpoints
                    WHERE session_id IN (
@@ -554,7 +1116,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO session_head_materializations
                    SELECT * FROM legacy.session_head_materializations
                    WHERE session_id IN (
@@ -565,7 +1127,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO session_snapshot_summaries
                    SELECT * FROM legacy.session_snapshot_summaries
                    WHERE session_id IN (
@@ -576,7 +1138,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO session_git_status_snapshots
                    SELECT * FROM legacy.session_git_status_snapshots
                    WHERE session_id IN (
@@ -587,26 +1149,28 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-            sqlx::query("COMMIT").execute(&mut *conn).await?;
+            self.query("COMMIT").execute(&mut *conn).await?;
             Ok::<(), anyhow::Error>(())
         }
         .await;
 
         if let Err(err) = migrate {
-            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-            let _ = sqlx::query("DETACH DATABASE legacy")
+            let _ = self.query("ROLLBACK").execute(&mut *conn).await;
+            let _ = self
+                .query("DETACH DATABASE legacy")
                 .execute(&mut *conn)
                 .await;
-            let _ = sqlx::query("PRAGMA foreign_keys = ON")
+            let _ = self
+                .query("PRAGMA foreign_keys = ON")
                 .execute(&mut *conn)
                 .await;
             return Err(err);
         }
 
-        sqlx::query("DETACH DATABASE legacy")
+        self.query("DETACH DATABASE legacy")
             .execute(&mut *conn)
             .await?;
-        sqlx::query("PRAGMA foreign_keys = ON")
+        self.query("PRAGMA foreign_keys = ON")
             .execute(&mut *conn)
             .await?;
         Ok(())
@@ -625,26 +1189,32 @@ impl Store {
         let cutoff = Utc::now() - chrono::Duration::days(retention_days as i64);
         let cutoff_str = cutoff.to_rfc3339();
 
-        let tool_summaries_deleted = sqlx::query(
-            r#"DELETE FROM session_turn_tools
+        let tool_summaries_deleted = if disable_tool_summary_persistence() {
+            0
+        } else {
+            self.query(
+                r#"DELETE FROM session_turn_tools
                WHERE updated_at < ?"#,
-        )
-        .bind(&cutoff_str)
-        .execute(&self.pool)
-        .await?
-        .rows_affected();
+            )
+            .bind(&cutoff_str)
+            .execute(&self.pool)
+            .await?
+            .rows_affected()
+        };
 
         // Keep the row (turn metadata is still useful), but remove old final thoughts.
-        let turn_thoughts_cleared = sqlx::query(
-            r#"UPDATE session_turns
+        let turn_thoughts_cleared = self
+            .query(
+                r#"UPDATE session_turns
                SET thought_partial = NULL
                WHERE updated_at < ?
                  AND thought_partial IS NOT NULL"#,
-        )
-        .bind(&cutoff_str)
-        .execute(&self.pool)
-        .await?
-        .rows_affected();
+            )
+            .bind(&cutoff_str)
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
+        record_write(WriteMetricTable::SessionTurns, turn_thoughts_cleared, 0);
 
         Ok(SessionRetentionPruneStats {
             tool_summaries_deleted,
@@ -654,11 +1224,12 @@ impl Store {
 
     // Workspace APIs
     pub async fn list_workspaces(&self) -> Result<Vec<Workspace>> {
-        let rows = sqlx::query(
-            r#"SELECT id, name, root_path, created_at FROM workspaces ORDER BY created_at ASC"#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = self
+            .query(
+                r#"SELECT id, name, root_path, created_at FROM workspaces ORDER BY created_at ASC"#,
+            )
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
@@ -677,11 +1248,11 @@ impl Store {
     }
 
     pub async fn get_workspace(&self, id: WorkspaceId) -> Result<Option<Workspace>> {
-        let row =
-            sqlx::query(r#"SELECT id, name, root_path, created_at FROM workspaces WHERE id = ?"#)
-                .bind(id.0.to_string())
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = self
+            .query(r#"SELECT id, name, root_path, created_at FROM workspaces WHERE id = ?"#)
+            .bind(id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.and_then(|r| {
             let id: String = r.try_get("id").ok()?;
@@ -701,7 +1272,7 @@ impl Store {
             root_path,
             created_at: Utc::now(),
         };
-        sqlx::query(
+        self.query(
             r#"INSERT INTO workspaces (id, name, root_path, created_at) VALUES (?, ?, ?, ?)"#,
         )
         .bind(workspace.id.0.to_string())
@@ -714,7 +1285,7 @@ impl Store {
     }
 
     pub async fn delete_workspace(&self, id: WorkspaceId) -> Result<()> {
-        sqlx::query(r#"DELETE FROM workspaces WHERE id = ?"#)
+        self.query(r#"DELETE FROM workspaces WHERE id = ?"#)
             .bind(id.0.to_string())
             .execute(&self.pool)
             .await?;
@@ -722,7 +1293,7 @@ impl Store {
     }
 
     pub async fn upsert_workspace(&self, workspace: &Workspace) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO workspaces (id, name, root_path, created_at)
                VALUES (?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
@@ -743,7 +1314,7 @@ impl Store {
         task_id: TaskId,
         workspace_id: WorkspaceId,
     ) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO workspace_task_index (task_id, workspace_id)
                VALUES (?, ?)
                ON CONFLICT(task_id) DO UPDATE SET workspace_id = excluded.workspace_id"#,
@@ -760,7 +1331,7 @@ impl Store {
         session_id: SessionId,
         workspace_id: WorkspaceId,
     ) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO workspace_session_index (session_id, workspace_id)
                VALUES (?, ?)
                ON CONFLICT(session_id) DO UPDATE SET workspace_id = excluded.workspace_id"#,
@@ -777,7 +1348,7 @@ impl Store {
         worktree_id: WorktreeId,
         workspace_id: WorkspaceId,
     ) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO workspace_worktree_index (worktree_id, workspace_id)
                VALUES (?, ?)
                ON CONFLICT(worktree_id) DO UPDATE SET workspace_id = excluded.workspace_id"#,
@@ -790,7 +1361,7 @@ impl Store {
     }
 
     pub async fn delete_workspace_task_index(&self, task_id: TaskId) -> Result<()> {
-        sqlx::query(r#"DELETE FROM workspace_task_index WHERE task_id = ?"#)
+        self.query(r#"DELETE FROM workspace_task_index WHERE task_id = ?"#)
             .bind(task_id.0.to_string())
             .execute(&self.pool)
             .await?;
@@ -798,7 +1369,7 @@ impl Store {
     }
 
     pub async fn delete_workspace_session_index(&self, session_id: SessionId) -> Result<()> {
-        sqlx::query(r#"DELETE FROM workspace_session_index WHERE session_id = ?"#)
+        self.query(r#"DELETE FROM workspace_session_index WHERE session_id = ?"#)
             .bind(session_id.0.to_string())
             .execute(&self.pool)
             .await?;
@@ -806,7 +1377,7 @@ impl Store {
     }
 
     pub async fn delete_workspace_worktree_index(&self, worktree_id: WorktreeId) -> Result<()> {
-        sqlx::query(r#"DELETE FROM workspace_worktree_index WHERE worktree_id = ?"#)
+        self.query(r#"DELETE FROM workspace_worktree_index WHERE worktree_id = ?"#)
             .bind(worktree_id.0.to_string())
             .execute(&self.pool)
             .await?;
@@ -814,7 +1385,8 @@ impl Store {
     }
 
     pub async fn get_workspace_id_for_task(&self, task_id: TaskId) -> Result<Option<WorkspaceId>> {
-        let row = sqlx::query(r#"SELECT workspace_id FROM workspace_task_index WHERE task_id = ?"#)
+        let row = self
+            .query(r#"SELECT workspace_id FROM workspace_task_index WHERE task_id = ?"#)
             .bind(task_id.0.to_string())
             .fetch_optional(&self.pool)
             .await?;
@@ -828,11 +1400,11 @@ impl Store {
         &self,
         session_id: SessionId,
     ) -> Result<Option<WorkspaceId>> {
-        let row =
-            sqlx::query(r#"SELECT workspace_id FROM workspace_session_index WHERE session_id = ?"#)
-                .bind(session_id.0.to_string())
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = self
+            .query(r#"SELECT workspace_id FROM workspace_session_index WHERE session_id = ?"#)
+            .bind(session_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(row.and_then(|r| {
             let value: String = r.try_get("workspace_id").ok()?;
             uuid::Uuid::parse_str(&value).ok().map(WorkspaceId)
@@ -843,12 +1415,11 @@ impl Store {
         &self,
         worktree_id: WorktreeId,
     ) -> Result<Option<WorkspaceId>> {
-        let row = sqlx::query(
-            r#"SELECT workspace_id FROM workspace_worktree_index WHERE worktree_id = ?"#,
-        )
-        .bind(worktree_id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+        let row = self
+            .query(r#"SELECT workspace_id FROM workspace_worktree_index WHERE worktree_id = ?"#)
+            .bind(worktree_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(row.and_then(|r| {
             let value: String = r.try_get("workspace_id").ok()?;
             uuid::Uuid::parse_str(&value).ok().map(WorkspaceId)
@@ -857,25 +1428,31 @@ impl Store {
 
     pub async fn refresh_workspace_indexes(&self, workspace_id: WorkspaceId) -> Result<()> {
         let workspace_id = workspace_id.0.to_string();
-        sqlx::query(
-            r#"INSERT OR REPLACE INTO workspace_task_index (task_id, workspace_id)
-               SELECT id, workspace_id FROM tasks WHERE workspace_id = ?"#,
+        self.query(
+            r#"INSERT INTO workspace_task_index (task_id, workspace_id)
+               SELECT id, workspace_id FROM tasks WHERE workspace_id = ?
+               ON CONFLICT(task_id) DO UPDATE SET
+                   workspace_id = excluded.workspace_id"#,
         )
         .bind(&workspace_id)
         .execute(&self.pool)
         .await?;
 
-        sqlx::query(
-            r#"INSERT OR REPLACE INTO workspace_session_index (session_id, workspace_id)
-               SELECT id, workspace_id FROM sessions WHERE workspace_id = ?"#,
+        self.query(
+            r#"INSERT INTO workspace_session_index (session_id, workspace_id)
+               SELECT id, workspace_id FROM sessions WHERE workspace_id = ?
+               ON CONFLICT(session_id) DO UPDATE SET
+                   workspace_id = excluded.workspace_id"#,
         )
         .bind(&workspace_id)
         .execute(&self.pool)
         .await?;
 
-        sqlx::query(
-            r#"INSERT OR REPLACE INTO workspace_worktree_index (worktree_id, workspace_id)
-               SELECT id, workspace_id FROM worktrees WHERE workspace_id = ?"#,
+        self.query(
+            r#"INSERT INTO workspace_worktree_index (worktree_id, workspace_id)
+               SELECT id, workspace_id FROM worktrees WHERE workspace_id = ?
+               ON CONFLICT(worktree_id) DO UPDATE SET
+                   workspace_id = excluded.workspace_id"#,
         )
         .bind(&workspace_id)
         .execute(&self.pool)
@@ -885,15 +1462,15 @@ impl Store {
 
     pub async fn delete_workspace_indexes(&self, workspace_id: WorkspaceId) -> Result<()> {
         let workspace_id = workspace_id.0.to_string();
-        sqlx::query(r#"DELETE FROM workspace_task_index WHERE workspace_id = ?"#)
+        self.query(r#"DELETE FROM workspace_task_index WHERE workspace_id = ?"#)
             .bind(&workspace_id)
             .execute(&self.pool)
             .await?;
-        sqlx::query(r#"DELETE FROM workspace_session_index WHERE workspace_id = ?"#)
+        self.query(r#"DELETE FROM workspace_session_index WHERE workspace_id = ?"#)
             .bind(&workspace_id)
             .execute(&self.pool)
             .await?;
-        sqlx::query(r#"DELETE FROM workspace_worktree_index WHERE workspace_id = ?"#)
+        self.query(r#"DELETE FROM workspace_worktree_index WHERE workspace_id = ?"#)
             .bind(&workspace_id)
             .execute(&self.pool)
             .await?;
@@ -902,8 +1479,9 @@ impl Store {
 
     // Task APIs
     pub async fn list_tasks(&self, workspace_id: WorkspaceId) -> Result<Vec<Task>> {
-        let rows = sqlx::query(
-            r#"
+        let rows = self
+            .query(
+                r#"
             SELECT
               t.id, t.workspace_id, t.title, t.description, t.status, t.exec_plan_id,
               t.primary_session_id, t.primary_worktree_id,
@@ -919,10 +1497,10 @@ impl Store {
             WHERE t.workspace_id = ?
             ORDER BY COALESCE(last_activity_at, t.updated_at, t.created_at) DESC
             "#,
-        )
-        .bind(workspace_id.0.to_string())
-        .fetch_all(&self.pool)
-        .await?;
+            )
+            .bind(workspace_id.0.to_string())
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
@@ -992,7 +1570,7 @@ impl Store {
             last_assistant_message_at: None,
             has_active_session: false,
         };
-        sqlx::query(
+        self.query(
             r#"INSERT INTO tasks (id, workspace_id, title, description, status, exec_plan_id, primary_session_id, primary_worktree_id, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
@@ -1012,16 +1590,17 @@ impl Store {
     }
 
     pub async fn get_task(&self, id: TaskId) -> Result<Option<Task>> {
-        let row = sqlx::query(
-            r#"SELECT id, workspace_id, title, description, status, exec_plan_id,
+        let row = self
+            .query(
+                r#"SELECT id, workspace_id, title, description, status, exec_plan_id,
                       primary_session_id, primary_worktree_id,
                       created_at, updated_at, archived_at, assistant_seen_at,
                       last_activity_at, last_assistant_message_at
                FROM tasks WHERE id = ?"#,
-        )
-        .bind(id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.and_then(|r| {
             let id: String = r.try_get("id").ok()?;
@@ -1071,54 +1650,59 @@ impl Store {
 
     pub async fn archive_task(&self, id: TaskId) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
-        let res = sqlx::query(
-            r#"UPDATE tasks
+        let res = self
+            .query(
+                r#"UPDATE tasks
                SET archived_at = ?, updated_at = ?
                WHERE id = ?"#,
-        )
-        .bind(&now)
-        .bind(&now)
-        .bind(id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(&now)
+            .bind(&now)
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await?;
         if res.rows_affected() > 0 {
             self.materialize_archived_heads_for_task(id).await?;
             self.delete_session_head_materializations_for_task(id, SessionHeadKind::Active)
                 .await?;
+            self.delete_active_snapshot_heads_for_task(id).await?;
         }
         Ok(res.rows_affected() > 0)
     }
 
     pub async fn unarchive_task(&self, id: TaskId) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
-        let res = sqlx::query(
-            r#"UPDATE tasks
+        let res = self
+            .query(
+                r#"UPDATE tasks
                SET archived_at = NULL, updated_at = ?
                WHERE id = ?"#,
-        )
-        .bind(&now)
-        .bind(id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(&now)
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await?;
         if res.rows_affected() > 0 {
             self.delete_session_head_materializations_for_task(id, SessionHeadKind::Archived)
                 .await?;
+            self.refresh_active_snapshot_heads_for_task(id).await?;
         }
         Ok(res.rows_affected() > 0)
     }
 
     pub async fn update_task_title(&self, id: TaskId, title: String) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
-        let res = sqlx::query(
-            r#"UPDATE tasks
+        let res = self
+            .query(
+                r#"UPDATE tasks
                SET title = ?, updated_at = ?
                WHERE id = ?"#,
-        )
-        .bind(title)
-        .bind(&now)
-        .bind(id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(title)
+            .bind(&now)
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await?;
         Ok(res.rows_affected() > 0)
     }
 
@@ -1129,17 +1713,18 @@ impl Store {
         worktree_id: WorktreeId,
     ) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
-        let res = sqlx::query(
-            r#"UPDATE tasks
+        let res = self
+            .query(
+                r#"UPDATE tasks
                SET primary_session_id = ?, primary_worktree_id = ?, updated_at = ?
                WHERE id = ?"#,
-        )
-        .bind(session_id.0.to_string())
-        .bind(worktree_id.0.to_string())
-        .bind(&now)
-        .bind(id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(session_id.0.to_string())
+            .bind(worktree_id.0.to_string())
+            .bind(&now)
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await?;
         Ok(res.rows_affected() > 0)
     }
 
@@ -1149,47 +1734,51 @@ impl Store {
         worktree_id: WorktreeId,
     ) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
-        let res = sqlx::query(
-            r#"UPDATE tasks
+        let res = self
+            .query(
+                r#"UPDATE tasks
                SET primary_worktree_id = ?, updated_at = ?
                WHERE id = ?"#,
-        )
-        .bind(worktree_id.0.to_string())
-        .bind(&now)
-        .bind(id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(worktree_id.0.to_string())
+            .bind(&now)
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await?;
         Ok(res.rows_affected() > 0)
     }
 
     pub async fn mark_task_read(&self, id: TaskId) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
-        let res = sqlx::query(
-            r#"UPDATE tasks
+        let res = self
+            .query(
+                r#"UPDATE tasks
                SET assistant_seen_at = ?
                WHERE id = ?"#,
-        )
-        .bind(&now)
-        .bind(id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(&now)
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await?;
         Ok(res.rows_affected() > 0)
     }
 
     pub async fn mark_task_unread(&self, id: TaskId) -> Result<bool> {
-        let res = sqlx::query(
-            r#"UPDATE tasks
+        let res = self
+            .query(
+                r#"UPDATE tasks
                SET assistant_seen_at = NULL
                WHERE id = ?"#,
-        )
-        .bind(id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await?;
         Ok(res.rows_affected() > 0)
     }
 
     pub async fn delete_task(&self, id: TaskId) -> Result<bool> {
-        let res = sqlx::query(r#"DELETE FROM tasks WHERE id = ?"#)
+        let res = self
+            .query(r#"DELETE FROM tasks WHERE id = ?"#)
             .bind(id.0.to_string())
             .execute(&self.pool)
             .await?;
@@ -1197,8 +1786,9 @@ impl Store {
     }
 
     pub async fn get_task_with_activity(&self, id: TaskId) -> Result<Option<Task>> {
-        let row = sqlx::query(
-            r#"
+        let row = self
+            .query(
+                r#"
             SELECT
               t.id, t.workspace_id, t.title, t.description, t.status, t.exec_plan_id,
               t.primary_session_id, t.primary_worktree_id,
@@ -1213,10 +1803,10 @@ impl Store {
             FROM tasks t
             WHERE t.id = ?
             "#,
-        )
-        .bind(id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.and_then(|r| {
             let id: String = r.try_get("id").ok()?;
@@ -1267,7 +1857,7 @@ impl Store {
 
     // Worktree APIs
     pub async fn insert_worktree(&self, worktree: Worktree) -> Result<Worktree> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO worktrees (id, workspace_id, root_path, base_commit_sha, git_branch, created_at)
                VALUES (?, ?, ?, ?, ?, ?)"#,
         )
@@ -1309,7 +1899,7 @@ impl Store {
             bootstrap_command: None,
             bootstrap_script_path: None,
         };
-        sqlx::query(
+        self.query(
             r#"INSERT INTO worktrees (id, workspace_id, root_path, base_commit_sha, git_branch, created_at)
                VALUES (?, ?, ?, ?, ?, ?)"#,
         )
@@ -1325,7 +1915,7 @@ impl Store {
     }
 
     pub async fn get_worktree(&self, id: WorktreeId) -> Result<Option<Worktree>> {
-        let row = sqlx::query(
+        let row = self.query(
             r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at,
                       bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
                       bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
@@ -1388,7 +1978,7 @@ impl Store {
         workspace_id: WorkspaceId,
         root_path: &str,
     ) -> Result<Option<Worktree>> {
-        let row = sqlx::query(
+        let row = self.query(
             r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at,
                       bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
                       bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
@@ -1451,7 +2041,7 @@ impl Store {
     }
 
     pub async fn list_worktrees(&self, workspace_id: WorkspaceId) -> Result<Vec<Worktree>> {
-        let rows = sqlx::query(
+        let rows = self.query(
             r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at,
                       bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
                       bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
@@ -1511,15 +2101,16 @@ impl Store {
         worktree_id: WorktreeId,
         base_commit_sha: &str,
     ) -> Result<bool> {
-        let result = sqlx::query(
-            r#"UPDATE worktrees
+        let result = self
+            .query(
+                r#"UPDATE worktrees
                SET base_commit_sha = ?
                WHERE id = ?"#,
-        )
-        .bind(base_commit_sha)
-        .bind(worktree_id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(base_commit_sha)
+            .bind(worktree_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -1527,7 +2118,7 @@ impl Store {
         &self,
         update: WorktreeBootstrapResultUpdate,
     ) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"UPDATE worktrees
                SET bootstrap_status = ?,
                    bootstrap_started_at = ?,
@@ -1566,7 +2157,7 @@ impl Store {
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<Vec<WorkspaceAttachment>> {
-        let rows = sqlx::query(
+        let rows = self.query(
             r#"SELECT id, workspace_id, kind, name, source, revision, subpath, mount_relpath, mode,
                       update_policy, created_at, updated_at
                FROM workspace_attachments
@@ -1608,7 +2199,7 @@ impl Store {
         &self,
         attachment: &WorkspaceAttachment,
     ) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO workspace_attachments
                (id, workspace_id, kind, name, source, revision, subpath, mount_relpath, mode, update_policy, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1641,7 +2232,7 @@ impl Store {
     }
 
     pub async fn delete_workspace_attachment(&self, id: WorkspaceAttachmentId) -> Result<()> {
-        sqlx::query(r#"DELETE FROM workspace_attachments WHERE id = ?"#)
+        self.query(r#"DELETE FROM workspace_attachments WHERE id = ?"#)
             .bind(id.0.to_string())
             .execute(&self.pool)
             .await?;
@@ -1652,16 +2243,17 @@ impl Store {
         &self,
         worktree_id: WorktreeId,
     ) -> Result<Vec<WorktreeAttachmentMount>> {
-        let rows = sqlx::query(
-            r#"SELECT worktree_id, attachment_id, mount_abs_path, materialized_id, status,
+        let rows = self
+            .query(
+                r#"SELECT worktree_id, attachment_id, mount_abs_path, materialized_id, status,
                       last_sync_at, error_message, created_at, updated_at
                FROM worktree_attachment_mounts
                WHERE worktree_id = ?
                ORDER BY created_at ASC"#,
-        )
-        .bind(worktree_id.0.to_string())
-        .fetch_all(&self.pool)
-        .await?;
+            )
+            .bind(worktree_id.0.to_string())
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
@@ -1691,16 +2283,17 @@ impl Store {
         &self,
         attachment_id: WorkspaceAttachmentId,
     ) -> Result<Vec<WorktreeAttachmentMount>> {
-        let rows = sqlx::query(
-            r#"SELECT worktree_id, attachment_id, mount_abs_path, materialized_id, status,
+        let rows = self
+            .query(
+                r#"SELECT worktree_id, attachment_id, mount_abs_path, materialized_id, status,
                       last_sync_at, error_message, created_at, updated_at
                FROM worktree_attachment_mounts
                WHERE attachment_id = ?
                ORDER BY created_at ASC"#,
-        )
-        .bind(attachment_id.0.to_string())
-        .fetch_all(&self.pool)
-        .await?;
+            )
+            .bind(attachment_id.0.to_string())
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
@@ -1730,7 +2323,7 @@ impl Store {
         &self,
         mount: &WorktreeAttachmentMount,
     ) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO worktree_attachment_mounts
                (worktree_id, attachment_id, mount_abs_path, materialized_id, status, last_sync_at, error_message, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1760,7 +2353,7 @@ impl Store {
         &self,
         attachment_id: WorkspaceAttachmentId,
     ) -> Result<()> {
-        sqlx::query(r#"DELETE FROM worktree_attachment_mounts WHERE attachment_id = ?"#)
+        self.query(r#"DELETE FROM worktree_attachment_mounts WHERE attachment_id = ?"#)
             .bind(attachment_id.0.to_string())
             .execute(&self.pool)
             .await?;
@@ -1768,7 +2361,7 @@ impl Store {
     }
 
     pub async fn create_merge_queue_entry(&self, entry: &MergeQueueEntry) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO merge_queue_entries (
                    id, workspace_id, worktree_id, session_id, target_branch, message, patch_source,
                    base_commit_sha, head_commit_sha, patch_path, patch_size, status,
@@ -1798,7 +2391,7 @@ impl Store {
     }
 
     pub async fn update_merge_queue_entry(&self, entry: &MergeQueueEntry) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"UPDATE merge_queue_entries
                SET worktree_id = ?,
                    session_id = ?,
@@ -1838,15 +2431,16 @@ impl Store {
         &self,
         id: MergeQueueEntryId,
     ) -> Result<Option<MergeQueueEntry>> {
-        let row = sqlx::query(
-            r#"SELECT id, workspace_id, worktree_id, session_id, target_branch, message,
+        let row = self
+            .query(
+                r#"SELECT id, workspace_id, worktree_id, session_id, target_branch, message,
                       patch_source, base_commit_sha, head_commit_sha, patch_path, patch_size,
                       status, result_commit_sha, error_message, created_at, updated_at
                FROM merge_queue_entries WHERE id = ?"#,
-        )
-        .bind(id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(row.and_then(map_merge_queue_entry))
     }
 
@@ -1855,19 +2449,22 @@ impl Store {
         workspace_id: WorkspaceId,
         limit: Option<i64>,
     ) -> Result<Vec<MergeQueueEntry>> {
-        let mut builder = QueryBuilder::new(
+        let mut sql = String::from(
             r#"SELECT id, workspace_id, worktree_id, session_id, target_branch, message,
                       patch_source, base_commit_sha, head_commit_sha, patch_path, patch_size,
                       status, result_commit_sha, error_message, created_at, updated_at
-               FROM merge_queue_entries WHERE workspace_id = "#,
+               FROM merge_queue_entries WHERE workspace_id = ?"#,
         );
-        builder.push_bind(workspace_id.0.to_string());
-        builder.push(" ORDER BY created_at DESC");
-        if let Some(limit) = limit {
-            builder.push(" LIMIT ");
-            builder.push_bind(limit);
+        sql.push_str(" ORDER BY created_at DESC");
+        if limit.is_some() {
+            sql.push_str(" LIMIT ?");
         }
-        let rows = builder.build().fetch_all(&self.pool).await?;
+        let sql = self.rewrite_sql(&sql);
+        let mut query = sqlx::query(sql.as_ref()).bind(workspace_id.0.to_string());
+        if let Some(limit) = limit {
+            query = query.bind(limit);
+        }
+        let rows = query.fetch_all(&self.pool).await?;
         let mut out = Vec::new();
         for row in rows {
             if let Some(entry) = map_merge_queue_entry(row) {
@@ -1878,17 +2475,18 @@ impl Store {
     }
 
     pub async fn list_queued_merge_queue_entries(&self) -> Result<Vec<MergeQueueEntry>> {
-        let rows = sqlx::query(
-            r#"SELECT id, workspace_id, worktree_id, session_id, target_branch, message,
+        let rows = self
+            .query(
+                r#"SELECT id, workspace_id, worktree_id, session_id, target_branch, message,
                       patch_source, base_commit_sha, head_commit_sha, patch_path, patch_size,
                       status, result_commit_sha, error_message, created_at, updated_at
                FROM merge_queue_entries
                WHERE status = ?
                ORDER BY created_at ASC"#,
-        )
-        .bind("queued")
-        .fetch_all(&self.pool)
-        .await?;
+            )
+            .bind("queued")
+            .fetch_all(&self.pool)
+            .await?;
         let mut out = Vec::new();
         for row in rows {
             if let Some(entry) = map_merge_queue_entry(row) {
@@ -1903,17 +2501,18 @@ impl Store {
         entry_id: MergeQueueEntryId,
         updated_at: DateTime<Utc>,
     ) -> Result<bool> {
-        let result = sqlx::query(
-            r#"UPDATE merge_queue_entries
+        let result = self
+            .query(
+                r#"UPDATE merge_queue_entries
                SET status = ?, updated_at = ?
                WHERE id = ? AND status = ?"#,
-        )
-        .bind("running")
-        .bind(updated_at.to_rfc3339())
-        .bind(entry_id.0.to_string())
-        .bind("queued")
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind("running")
+            .bind(updated_at.to_rfc3339())
+            .bind(entry_id.0.to_string())
+            .bind("queued")
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected() == 1)
     }
 
@@ -1921,19 +2520,20 @@ impl Store {
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<bool> {
-        let row = sqlx::query(
-            r#"SELECT 1 FROM merge_queue_entries
+        let row = self
+            .query(
+                r#"SELECT 1 FROM merge_queue_entries
                WHERE workspace_id = ? AND status IN ("failed", "conflict")
                LIMIT 1"#,
-        )
-        .bind(workspace_id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(workspace_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(row.is_some())
     }
 
     pub async fn create_merge_queue_run(&self, run: &MergeQueueRun) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO merge_queue_runs (
                    id, entry_id, status, started_at, finished_at, exit_code,
                    log_path, error_message, result_commit_sha
@@ -1955,7 +2555,7 @@ impl Store {
     }
 
     pub async fn update_merge_queue_run(&self, run: &MergeQueueRun) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"UPDATE merge_queue_runs
                SET status = ?,
                    finished_at = ?,
@@ -1981,15 +2581,16 @@ impl Store {
         &self,
         entry_id: MergeQueueEntryId,
     ) -> Result<Vec<MergeQueueRun>> {
-        let rows = sqlx::query(
-            r#"SELECT id, entry_id, status, started_at, finished_at, exit_code,
+        let rows = self
+            .query(
+                r#"SELECT id, entry_id, status, started_at, finished_at, exit_code,
                       log_path, error_message, result_commit_sha
                FROM merge_queue_runs WHERE entry_id = ?
                ORDER BY started_at DESC"#,
-        )
-        .bind(entry_id.0.to_string())
-        .fetch_all(&self.pool)
-        .await?;
+            )
+            .bind(entry_id.0.to_string())
+            .fetch_all(&self.pool)
+            .await?;
         let mut out = Vec::new();
         for row in rows {
             if let Some(run) = map_merge_queue_run(row) {
@@ -2003,16 +2604,17 @@ impl Store {
         &self,
         entry_id: MergeQueueEntryId,
     ) -> Result<Option<MergeQueueRun>> {
-        let row = sqlx::query(
-            r#"SELECT id, entry_id, status, started_at, finished_at, exit_code,
+        let row = self
+            .query(
+                r#"SELECT id, entry_id, status, started_at, finished_at, exit_code,
                       log_path, error_message, result_commit_sha
                FROM merge_queue_runs WHERE entry_id = ?
                ORDER BY started_at DESC
                LIMIT 1"#,
-        )
-        .bind(entry_id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(entry_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(row.and_then(map_merge_queue_run))
     }
 
@@ -2061,7 +2663,7 @@ impl Store {
             created_at: now,
             updated_at: now,
         };
-        sqlx::query(
+        self.query(
             r#"INSERT INTO sessions (id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
                provider_id, model_id, title, agent_role, status, provider_session_ref, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
@@ -2083,11 +2685,12 @@ impl Store {
         .execute(&self.pool)
         .await?;
         self.ensure_session_snapshot_summary(session.id).await?;
+        self.refresh_active_snapshot_head(session.id, None).await?;
         Ok(session)
     }
 
     pub async fn get_session(&self, id: SessionId) -> Result<Option<Session>> {
-        let row = sqlx::query(
+        let row = self.query(
             r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
                provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE id = ?"#,
@@ -2124,7 +2727,7 @@ impl Store {
 
     pub async fn update_session_model(&self, id: SessionId, model_id: String) -> Result<()> {
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
+        self.query(
             r#"UPDATE sessions
                SET model_id = ?, updated_at = ?
                WHERE id = ?"#,
@@ -2139,16 +2742,17 @@ impl Store {
 
     pub async fn update_session_title(&self, id: SessionId, title: String) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
-        let res = sqlx::query(
-            r#"UPDATE sessions
+        let res = self
+            .query(
+                r#"UPDATE sessions
                SET title = ?, updated_at = ?
                WHERE id = ?"#,
-        )
-        .bind(title)
-        .bind(now)
-        .bind(id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(title)
+            .bind(now)
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await?;
         Ok(res.rows_affected() > 0)
     }
 
@@ -2158,7 +2762,7 @@ impl Store {
         provider_session_ref: Option<String>,
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
+        self.query(
             r#"UPDATE sessions
                SET provider_session_ref = ?, updated_at = ?
                WHERE id = ?"#,
@@ -2172,7 +2776,7 @@ impl Store {
     }
 
     pub async fn list_sessions_for_task(&self, task_id: TaskId) -> Result<Vec<Session>> {
-        let rows = sqlx::query(
+        let rows = self.query(
             r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
                provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE task_id = ? ORDER BY created_at ASC"#,
@@ -2213,7 +2817,7 @@ impl Store {
         &self,
         worktree_id: WorktreeId,
     ) -> Result<Vec<Session>> {
-        let rows = sqlx::query(
+        let rows = self.query(
             r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
                provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE worktree_id = ? ORDER BY created_at ASC"#,
@@ -2254,16 +2858,17 @@ impl Store {
         &self,
         parent_session_id: SessionId,
     ) -> Result<Vec<SessionSummary>> {
-        let rows = sqlx::query(
-            r#"SELECT id, task_id, workspace_id, parent_session_id, relationship,
+        let rows = self
+            .query(
+                r#"SELECT id, task_id, workspace_id, parent_session_id, relationship,
                provider_id, model_id, title, status, created_at, updated_at
                FROM sessions
                WHERE parent_session_id = ? AND relationship = 'sub_agent'
                ORDER BY created_at ASC"#,
-        )
-        .bind(parent_session_id.0.to_string())
-        .fetch_all(&self.pool)
-        .await?;
+            )
+            .bind(parent_session_id.0.to_string())
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
@@ -2296,7 +2901,7 @@ impl Store {
         &self,
         session_id: SessionId,
     ) -> Result<Option<SessionSummaryCheckpoint>> {
-        let row = sqlx::query(
+        let row = self.query(
             r#"SELECT session_id, checkpoint_id, summary, last_turn_id, last_event_seq, created_at, updated_at
                FROM session_summary_checkpoints
                WHERE session_id = ?"#,
@@ -2331,7 +2936,7 @@ impl Store {
         &self,
         checkpoint: SessionSummaryCheckpoint,
     ) -> Result<SessionSummaryCheckpoint> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO session_summary_checkpoints (
                    session_id, checkpoint_id, summary, last_turn_id, last_event_seq, created_at, updated_at
                )
@@ -2353,88 +2958,16 @@ impl Store {
         .execute(&self.pool)
         .await?;
 
-        Ok(checkpoint)
-    }
-
-    pub async fn upsert_session_compaction_seed(
-        &self,
-        session_id: SessionId,
-        seed_text: String,
-        reason: String,
-    ) -> Result<SessionCompactionSeed> {
-        let created_at = Utc::now();
-        sqlx::query(
-            r#"INSERT INTO session_compaction_seeds (
-                   session_id, seed_text, reason, created_at
-               )
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(session_id) DO UPDATE SET
-                   seed_text = excluded.seed_text,
-                   reason = excluded.reason,
-                   created_at = excluded.created_at"#,
-        )
-        .bind(session_id.0.to_string())
-        .bind(&seed_text)
-        .bind(&reason)
-        .bind(created_at.to_rfc3339())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(SessionCompactionSeed {
-            session_id,
-            seed_text,
-            reason,
-            created_at,
-        })
-    }
-
-    pub async fn take_session_compaction_seed(
-        &self,
-        session_id: SessionId,
-    ) -> Result<Option<SessionCompactionSeed>> {
-        let row = sqlx::query(
-            r#"SELECT seed_text, reason, created_at
-               FROM session_compaction_seeds
-               WHERE session_id = ?"#,
-        )
-        .bind(session_id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
-
-        let row = match row {
-            Some(row) => row,
-            None => return Ok(None),
-        };
-
-        sqlx::query(r#"DELETE FROM session_compaction_seeds WHERE session_id = ?"#)
-            .bind(session_id.0.to_string())
-            .execute(&self.pool)
+        self.refresh_active_snapshot_head(checkpoint.session_id, None)
             .await?;
-
-        let created_at: String = row.try_get("created_at")?;
-        Ok(Some(SessionCompactionSeed {
-            session_id,
-            seed_text: row.try_get("seed_text")?,
-            reason: row.try_get("reason")?,
-            created_at: parse_dt(&created_at)?,
-        }))
-    }
-
-    pub async fn has_session_compaction_seed(&self, session_id: SessionId) -> Result<bool> {
-        let row = sqlx::query_scalar::<_, Option<i64>>(
-            r#"SELECT 1 FROM session_compaction_seeds WHERE session_id = ?"#,
-        )
-        .bind(session_id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.is_some())
+        Ok(checkpoint)
     }
 
     pub async fn upsert_subagent_invocation(
         &self,
         invocation: SubagentInvocation,
     ) -> Result<SubagentInvocation> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO subagent_invocations (
                    id, tool_call_id, parent_session_id, parent_turn_id,
                    requested_count, request_json, status, created_at, updated_at
@@ -2469,7 +3002,7 @@ impl Store {
         status: &str,
         updated_at: DateTime<Utc>,
     ) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"UPDATE subagent_invocations
                SET status = ?, updated_at = ?
                WHERE id = ?"#,
@@ -2486,7 +3019,7 @@ impl Store {
         &self,
         child: SubagentInvocationChild,
     ) -> Result<SubagentInvocationChild> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO subagent_invocation_children (
                    invocation_id, child_session_id, run_id, position, status,
                    label, harness, model, reasoning_effort, prompt_length,
@@ -2522,32 +3055,34 @@ impl Store {
     }
 
     pub async fn get_subagent_invocation(&self, id: &str) -> Result<Option<SubagentInvocation>> {
-        let row = sqlx::query(
-            r#"SELECT id, tool_call_id, parent_session_id, parent_turn_id,
+        let row = self
+            .query(
+                r#"SELECT id, tool_call_id, parent_session_id, parent_turn_id,
                       requested_count, request_json, status, created_at, updated_at
                FROM subagent_invocations
                WHERE id = ?"#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
 
         let Some(row) = row else {
             return Ok(None);
         };
 
         let mut invocation = build_subagent_invocation_from_row(row)?;
-        let rows = sqlx::query(
-            r#"SELECT invocation_id, child_session_id, run_id, position, status,
+        let rows = self
+            .query(
+                r#"SELECT invocation_id, child_session_id, run_id, position, status,
                       label, harness, model, reasoning_effort, prompt_length,
                       created_at, updated_at
                FROM subagent_invocation_children
                WHERE invocation_id = ?
                ORDER BY position ASC"#,
-        )
-        .bind(&invocation.id)
-        .fetch_all(&self.pool)
-        .await?;
+            )
+            .bind(&invocation.id)
+            .fetch_all(&self.pool)
+            .await?;
 
         invocation.children = rows
             .into_iter()
@@ -2561,19 +3096,22 @@ impl Store {
         parent_session_id: SessionId,
         parent_turn_id: Option<TurnId>,
     ) -> Result<Vec<SubagentInvocation>> {
-        let mut qb = QueryBuilder::new(
+        let mut sql = String::from(
             r#"SELECT id, tool_call_id, parent_session_id, parent_turn_id,
                       requested_count, request_json, status, created_at, updated_at
                FROM subagent_invocations
-               WHERE parent_session_id = "#,
+               WHERE parent_session_id = ?"#,
         );
-        qb.push_bind(parent_session_id.0.to_string());
-        if let Some(turn_id) = parent_turn_id {
-            qb.push(" AND parent_turn_id = ");
-            qb.push_bind(turn_id.0.to_string());
+        if parent_turn_id.is_some() {
+            sql.push_str(" AND parent_turn_id = ?");
         }
-        qb.push(" ORDER BY created_at ASC");
-        let rows = qb.build().fetch_all(&self.pool).await?;
+        sql.push_str(" ORDER BY created_at ASC");
+        let sql = self.rewrite_sql(&sql);
+        let mut query = sqlx::query(sql.as_ref()).bind(parent_session_id.0.to_string());
+        if let Some(turn_id) = parent_turn_id {
+            query = query.bind(turn_id.0.to_string());
+        }
+        let rows = query.fetch_all(&self.pool).await?;
 
         let mut invocations = Vec::with_capacity(rows.len());
         for r in rows {
@@ -2585,19 +3123,26 @@ impl Store {
             return Ok(invocations);
         }
 
-        let mut child_qb = QueryBuilder::new(
+        let mut child_sql = String::from(
             r#"SELECT invocation_id, child_session_id, run_id, position, status,
                       label, harness, model, reasoning_effort, prompt_length,
                       created_at, updated_at
                FROM subagent_invocation_children
                WHERE invocation_id IN ("#,
         );
-        let mut separated = child_qb.separated(", ");
-        for invocation in &invocations {
-            separated.push_bind(invocation.id.clone());
+        for i in 0..invocations.len() {
+            if i > 0 {
+                child_sql.push_str(", ");
+            }
+            child_sql.push('?');
         }
-        child_qb.push(") ORDER BY position ASC");
-        let child_rows = child_qb.build().fetch_all(&self.pool).await?;
+        child_sql.push_str(") ORDER BY position ASC");
+        let child_sql = self.rewrite_sql(&child_sql);
+        let mut child_query = sqlx::query(child_sql.as_ref());
+        for invocation in &invocations {
+            child_query = child_query.bind(invocation.id.clone());
+        }
+        let child_rows = child_query.fetch_all(&self.pool).await?;
 
         let mut children_by_id: HashMap<String, Vec<SubagentInvocationChild>> = HashMap::new();
         for r in child_rows {
@@ -2631,52 +3176,88 @@ impl Store {
                     .context("serializing message attachments")?,
             )
         };
-        sqlx::query(
+        let id = message.id.0.to_string();
+        let session_id = message.session_id.0.to_string();
+        let task_id = message.task_id.0.to_string();
+        let run_id = message.run_id.map(|r| r.0.to_string());
+        let turn_id = message.turn_id.map(|t| t.0.to_string());
+        let role = message_role_to_str(&message.role);
+        let delivery = message_delivery_to_str(&message.delivery);
+        let delivered_at = message.delivered_at.map(|d| d.to_rfc3339());
+        let created_at = message.created_at.to_rfc3339();
+        let write_bytes = bytes_str(&id)
+            + bytes_str(&session_id)
+            + bytes_str(&task_id)
+            + bytes_opt_str(run_id.as_deref())
+            + bytes_opt_str(turn_id.as_deref())
+            + bytes_opt_i64(message.turn_sequence)
+            + bytes_str(role)
+            + bytes_str(&message.content)
+            + bytes_opt_str(attachments_json.as_deref())
+            + bytes_str(delivery)
+            + bytes_opt_str(delivered_at.as_deref())
+            + bytes_str(&created_at);
+        let result = self.query(
             r#"INSERT INTO messages (id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
-        .bind(message.id.0.to_string())
-        .bind(message.session_id.0.to_string())
-        .bind(message.task_id.0.to_string())
-        .bind(message.run_id.map(|r| r.0.to_string()))
-        .bind(message.turn_id.map(|t| t.0.to_string()))
+        .bind(&id)
+        .bind(&session_id)
+        .bind(&task_id)
+        .bind(run_id)
+        .bind(turn_id)
         .bind(message.turn_sequence)
-        .bind(message_role_to_str(&message.role))
+        .bind(role)
         .bind(&message.content)
         .bind(attachments_json)
-        .bind(message_delivery_to_str(&message.delivery))
-        .bind(message.delivered_at.map(|d| d.to_rfc3339()))
-        .bind(message.created_at.to_rfc3339())
+        .bind(delivery)
+        .bind(delivered_at)
+        .bind(&created_at)
         .execute(&self.pool)
         .await?;
+        record_write(
+            WriteMetricTable::Messages,
+            result.rows_affected(),
+            write_bytes,
+        );
         self.update_task_activity_from_message(&message).await?;
-        if matches!(message.role, MessageRole::Assistant) {
+        if matches!(message.role, MessageRole::Assistant | MessageRole::User) {
             self.update_session_snapshot_last_message(&message).await?;
         }
+        self.refresh_active_snapshot_head(message.session_id, None)
+            .await?;
         Ok(message)
     }
 
     async fn ensure_session_snapshot_summary(&self, session_id: SessionId) -> Result<()> {
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            r#"INSERT INTO session_snapshot_summaries (
+        let session_id = session_id.0.to_string();
+        let write_bytes = bytes_str(&session_id) + I64_BYTES + (bytes_str(&now) * 2);
+        let result = self
+            .query(
+                r#"INSERT INTO session_snapshot_summaries (
                     session_id, running_turn_count, created_at, updated_at
                )
                VALUES (?, 0, ?, ?)
                ON CONFLICT(session_id) DO NOTHING"#,
-        )
-        .bind(session_id.0.to_string())
-        .bind(&now)
-        .bind(&now)
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(&session_id)
+            .bind(&now)
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        record_write(
+            WriteMetricTable::SessionSnapshotSummaries,
+            result.rows_affected(),
+            write_bytes,
+        );
         Ok(())
     }
 
     async fn update_task_activity_from_message(&self, message: &Message) -> Result<()> {
         let created_at = message.created_at.to_rfc3339();
         let is_assistant = matches!(message.role, MessageRole::Assistant);
-        sqlx::query(
+        self.query(
             r#"UPDATE tasks
                SET last_activity_at = CASE
                      WHEN last_activity_at IS NULL OR last_activity_at < ? THEN ?
@@ -2705,8 +3286,11 @@ impl Store {
             .await?;
         let created_at = message.created_at.to_rfc3339();
         let content = message.content.clone();
-        sqlx::query(
-            r#"UPDATE session_snapshot_summaries
+        let session_id = message.session_id.0.to_string();
+        let write_bytes = bytes_str(&created_at) * 2 + bytes_str(&content);
+        let result = self
+            .query(
+                r#"UPDATE session_snapshot_summaries
                SET last_message_at = CASE
                      WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
                      ELSE last_message_at
@@ -2717,15 +3301,20 @@ impl Store {
                    END,
                    updated_at = ?
                WHERE session_id = ?"#,
-        )
-        .bind(&created_at)
-        .bind(&created_at)
-        .bind(&created_at)
-        .bind(&content)
-        .bind(&created_at)
-        .bind(message.session_id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(&created_at)
+            .bind(&created_at)
+            .bind(&created_at)
+            .bind(&content)
+            .bind(&created_at)
+            .bind(&session_id)
+            .execute(&self.pool)
+            .await?;
+        record_write(
+            WriteMetricTable::SessionSnapshotSummaries,
+            result.rows_affected(),
+            write_bytes,
+        );
         Ok(())
     }
 
@@ -2736,32 +3325,41 @@ impl Store {
     ) -> Result<()> {
         self.ensure_session_snapshot_summary(session_id).await?;
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            r#"UPDATE session_snapshot_summaries
+        let session_id = session_id.0.to_string();
+        let write_bytes = I64_BYTES + bytes_str(&now);
+        let result = self
+            .query(
+                r#"UPDATE session_snapshot_summaries
                SET last_event_seq = ?,
                    updated_at = ?
                WHERE session_id = ?"#,
-        )
-        .bind(seq)
-        .bind(&now)
-        .bind(session_id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(seq)
+            .bind(&now)
+            .bind(&session_id)
+            .execute(&self.pool)
+            .await?;
+        record_write(
+            WriteMetricTable::SessionSnapshotSummaries,
+            result.rows_affected(),
+            write_bytes,
+        );
         Ok(())
     }
 
     async fn refresh_session_turn_summary(&self, session_id: SessionId) -> Result<()> {
         self.ensure_session_snapshot_summary(session_id).await?;
-        let last_row = sqlx::query(
-            r#"SELECT status, start_seq
+        let last_row = self
+            .query(
+                r#"SELECT status, start_seq
                FROM session_turns
                WHERE session_id = ?
                ORDER BY COALESCE(start_seq, -1) DESC, started_at DESC, turn_id DESC
                LIMIT 1"#,
-        )
-        .bind(session_id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(session_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
         let (last_status, last_seq) = if let Some(row) = last_row {
             let status: String = row.try_get("status")?;
             let start_seq: Option<i64> = row.try_get("start_seq")?;
@@ -2769,47 +3367,61 @@ impl Store {
         } else {
             (None, None)
         };
-        let running_count = sqlx::query_scalar::<_, i64>(
-            r#"SELECT COUNT(*)
+        let running_count: i64 = self
+            .query_scalar(
+                r#"SELECT COUNT(*)
                FROM session_turns
                WHERE session_id = ? AND status = 'running'"#,
-        )
-        .bind(session_id.0.to_string())
-        .fetch_one(&self.pool)
-        .await?;
+            )
+            .bind(session_id.0.to_string())
+            .fetch_one(&self.pool)
+            .await?;
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            r#"UPDATE session_snapshot_summaries
+        let session_id = session_id.0.to_string();
+        let write_bytes = bytes_opt_str(last_status.as_deref())
+            + bytes_opt_i64(last_seq)
+            + I64_BYTES
+            + bytes_str(&now);
+        let result = self
+            .query(
+                r#"UPDATE session_snapshot_summaries
                SET last_turn_status = ?,
                    last_turn_seq = ?,
                    running_turn_count = ?,
                    updated_at = ?
                WHERE session_id = ?"#,
-        )
-        .bind(last_status)
-        .bind(last_seq)
-        .bind(running_count)
-        .bind(&now)
-        .bind(session_id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(last_status)
+            .bind(last_seq)
+            .bind(running_count)
+            .bind(&now)
+            .bind(&session_id)
+            .execute(&self.pool)
+            .await?;
+        record_write(
+            WriteMetricTable::SessionSnapshotSummaries,
+            result.rows_affected(),
+            write_bytes,
+        );
         Ok(())
     }
 
     pub async fn workspace_task_counts(&self, workspace_id: WorkspaceId) -> Result<(i64, i64)> {
-        let active = sqlx::query_scalar::<_, i64>(
-            r#"SELECT COUNT(*) FROM tasks WHERE workspace_id = ? AND archived_at IS NULL"#,
-        )
-        .bind(workspace_id.0.to_string())
-        .fetch_one(&self.pool)
-        .await?;
+        let active: i64 = self
+            .query_scalar(
+                r#"SELECT COUNT(*) FROM tasks WHERE workspace_id = ? AND archived_at IS NULL"#,
+            )
+            .bind(workspace_id.0.to_string())
+            .fetch_one(&self.pool)
+            .await?;
 
-        let archived = sqlx::query_scalar::<_, i64>(
-            r#"SELECT COUNT(*) FROM tasks WHERE workspace_id = ? AND archived_at IS NOT NULL"#,
-        )
-        .bind(workspace_id.0.to_string())
-        .fetch_one(&self.pool)
-        .await?;
+        let archived: i64 = self
+            .query_scalar(
+                r#"SELECT COUNT(*) FROM tasks WHERE workspace_id = ? AND archived_at IS NOT NULL"#,
+            )
+            .bind(workspace_id.0.to_string())
+            .fetch_one(&self.pool)
+            .await?;
 
         Ok((active, archived))
     }
@@ -2896,7 +3508,8 @@ impl Store {
 
         sql.push_str(" ORDER BY sort_at DESC, t.id DESC LIMIT ?");
 
-        let mut query = sqlx::query(&sql).bind(workspace_id.0.to_string());
+        let sql = self.rewrite_sql(&sql);
+        let mut query = sqlx::query(sql.as_ref()).bind(workspace_id.0.to_string());
 
         if let Some(cursor) = &cursor {
             let cursor_ts = cursor.sort_at.to_rfc3339();
@@ -2986,16 +3599,17 @@ impl Store {
 
         const ACTIVITY_EXPR: &str = "COALESCE(t.last_activity_at, t.updated_at, t.created_at)";
 
-        let total_count = sqlx::query_scalar::<_, i64>(
-            r#"SELECT COUNT(*)
+        let total_count: i64 = self
+            .query_scalar(
+                r#"SELECT COUNT(*)
                FROM tasks t
                WHERE t.workspace_id = ?
                  AND t.archived_at IS NULL
                  AND EXISTS (SELECT 1 FROM sessions s WHERE s.task_id = t.id)"#,
-        )
-        .bind(workspace_id.0.to_string())
-        .fetch_one(&self.pool)
-        .await?;
+            )
+            .bind(workspace_id.0.to_string())
+            .fetch_one(&self.pool)
+            .await?;
 
         let sql = format!(
             r#"
@@ -3029,7 +3643,8 @@ impl Store {
             activity_expr = ACTIVITY_EXPR,
         );
 
-        let rows = sqlx::query(&sql)
+        let sql = self.rewrite_sql(&sql);
+        let rows = sqlx::query(sql.as_ref())
             .bind(workspace_id.0.to_string())
             .bind(limit)
             .fetch_all(&self.pool)
@@ -3091,6 +3706,390 @@ impl Store {
         Ok((summaries, total_count))
     }
 
+    pub async fn get_workspace_active_snapshot_state(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<(i64, i64)> {
+        let row = self
+            .query(
+                r#"SELECT snapshot_rev, archived_rev
+               FROM workspace_active_snapshot_state
+               WHERE workspace_id = ?"#,
+            )
+            .bind(workspace_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row
+            .map(|r| {
+                (
+                    r.try_get("snapshot_rev").unwrap_or(0),
+                    r.try_get("archived_rev").unwrap_or(0),
+                )
+            })
+            .unwrap_or((0, 0)))
+    }
+
+    pub async fn bump_workspace_active_snapshot_rev(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<i64> {
+        let now = Utc::now().to_rfc3339();
+        let snapshot_rev: i64 = self
+            .query_scalar(
+                r#"INSERT INTO workspace_active_snapshot_state (
+                    workspace_id, snapshot_rev, archived_rev, updated_at
+               )
+               VALUES (?, 1, 0, ?)
+               ON CONFLICT(workspace_id) DO UPDATE SET
+                   snapshot_rev = workspace_active_snapshot_state.snapshot_rev + 1,
+                   updated_at = excluded.updated_at
+               RETURNING snapshot_rev"#,
+            )
+            .bind(workspace_id.0.to_string())
+            .bind(&now)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(snapshot_rev)
+    }
+
+    pub async fn bump_workspace_archived_snapshot_rev(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<i64> {
+        let now = Utc::now().to_rfc3339();
+        let archived_rev: i64 = self
+            .query_scalar(
+                r#"INSERT INTO workspace_active_snapshot_state (
+                    workspace_id, snapshot_rev, archived_rev, updated_at
+               )
+               VALUES (?, 0, 1, ?)
+               ON CONFLICT(workspace_id) DO UPDATE SET
+                   archived_rev = workspace_active_snapshot_state.archived_rev + 1,
+                   updated_at = excluded.updated_at
+               RETURNING archived_rev"#,
+            )
+            .bind(workspace_id.0.to_string())
+            .bind(&now)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(archived_rev)
+    }
+
+    pub async fn upsert_workspace_active_task_summary_read_model(
+        &self,
+        summary: &WorkspaceActiveTaskSummary,
+    ) -> Result<i64> {
+        if disable_workspace_active_task_summary_updates() {
+            let (snapshot_rev, _) = self
+                .get_workspace_active_snapshot_state(summary.task.workspace_id)
+                .await?;
+            return Ok(snapshot_rev);
+        }
+        let now = Utc::now().to_rfc3339();
+        let workspace_id = summary.task.workspace_id;
+        let task_id = summary.task.id;
+        let workspace_id_str = workspace_id.0.to_string();
+        let task_id_str = task_id.0.to_string();
+        let sort_at = summary.sort_at.to_rfc3339();
+        let read_model = WorkspaceActiveTaskSummaryReadModel::from_summary(summary);
+        let summary_json = serde_json::to_string(&read_model)
+            .context("serializing workspace active task summary read model")?;
+        let write_bytes = bytes_str(&task_id_str)
+            + bytes_str(&workspace_id_str)
+            + bytes_str(&sort_at)
+            + bytes_str(&summary_json)
+            + bytes_str(&now);
+
+        let mut tx = self.pool.begin().await?;
+        let snapshot_rev: i64 = self
+            .query_scalar(
+                r#"INSERT INTO workspace_active_snapshot_state (
+                    workspace_id, snapshot_rev, archived_rev, updated_at
+               )
+               VALUES (?, 1, 0, ?)
+               ON CONFLICT(workspace_id) DO UPDATE SET
+                   snapshot_rev = workspace_active_snapshot_state.snapshot_rev + 1,
+                   updated_at = excluded.updated_at
+               RETURNING snapshot_rev"#,
+            )
+            .bind(&workspace_id_str)
+            .bind(&now)
+            .fetch_one(&mut *tx)
+            .await?;
+
+        let result = self
+            .query(
+                r#"INSERT INTO workspace_active_task_summaries (
+                    task_id, workspace_id, sort_at, summary_json, updated_at
+               )
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(task_id) DO UPDATE SET
+                   workspace_id = excluded.workspace_id,
+                   sort_at = excluded.sort_at,
+                   summary_json = excluded.summary_json,
+                   updated_at = excluded.updated_at"#,
+            )
+            .bind(&task_id_str)
+            .bind(&workspace_id_str)
+            .bind(&sort_at)
+            .bind(&summary_json)
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+        record_write(
+            WriteMetricTable::WorkspaceActiveTaskSummaries,
+            result.rows_affected(),
+            write_bytes,
+        );
+
+        tx.commit().await?;
+        Ok(snapshot_rev)
+    }
+
+    pub async fn delete_workspace_active_task_summary_read_model(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+    ) -> Result<i64> {
+        if disable_workspace_active_task_summary_updates() {
+            let (snapshot_rev, _) = self
+                .get_workspace_active_snapshot_state(workspace_id)
+                .await?;
+            return Ok(snapshot_rev);
+        }
+        let now = Utc::now().to_rfc3339();
+        let mut tx = self.pool.begin().await?;
+        let snapshot_rev: i64 = self
+            .query_scalar(
+                r#"INSERT INTO workspace_active_snapshot_state (
+                    workspace_id, snapshot_rev, archived_rev, updated_at
+               )
+               VALUES (?, 1, 0, ?)
+               ON CONFLICT(workspace_id) DO UPDATE SET
+                   snapshot_rev = workspace_active_snapshot_state.snapshot_rev + 1,
+                   updated_at = excluded.updated_at
+               RETURNING snapshot_rev"#,
+            )
+            .bind(workspace_id.0.to_string())
+            .bind(&now)
+            .fetch_one(&mut *tx)
+            .await?;
+
+        let result = self
+            .query(
+                r#"DELETE FROM workspace_active_task_summaries
+               WHERE task_id = ?"#,
+            )
+            .bind(task_id.0.to_string())
+            .execute(&mut *tx)
+            .await?;
+        record_write(
+            WriteMetricTable::WorkspaceActiveTaskSummaries,
+            result.rows_affected(),
+            0,
+        );
+
+        tx.commit().await?;
+        Ok(snapshot_rev)
+    }
+
+    pub async fn list_workspace_active_page_read_model(
+        &self,
+        workspace_id: WorkspaceId,
+        limit: i64,
+    ) -> Result<(Vec<WorkspaceActiveTaskSummary>, i64)> {
+        const MAX_LIMIT: i64 = 200;
+        let limit = limit.clamp(1, MAX_LIMIT);
+
+        let timing_enabled = snapshot_timing_enabled();
+        let acquire_start = timing_enabled.then(Instant::now);
+        let mut conn = self.pool.acquire().await?;
+        let acquire_ms = acquire_start
+            .map(|start| start.elapsed())
+            .unwrap_or_default();
+
+        let query_start = timing_enabled.then(Instant::now);
+        let total_count: i64 = self
+            .query_scalar(
+                r#"SELECT COUNT(*)
+               FROM workspace_active_task_summaries
+               WHERE workspace_id = ?"#,
+            )
+            .bind(workspace_id.0.to_string())
+            .fetch_one(&mut *conn)
+            .await?;
+
+        let rows = self
+            .query(
+                r#"SELECT summary_json
+               FROM workspace_active_task_summaries
+               WHERE workspace_id = ?
+               ORDER BY sort_at DESC, task_id DESC
+               LIMIT ?"#,
+            )
+            .bind(workspace_id.0.to_string())
+            .bind(limit)
+            .fetch_all(&mut *conn)
+            .await?;
+        let query_ms = query_start.map(|start| start.elapsed()).unwrap_or_default();
+
+        let row_count = rows.len();
+        let parse_start = timing_enabled.then(Instant::now);
+        let mut read_models = Vec::with_capacity(rows.len());
+        for row in rows {
+            let summary_json: String = row.try_get("summary_json")?;
+            let summary: WorkspaceActiveTaskSummaryReadModel = serde_json::from_str(&summary_json)
+                .context("deserializing workspace active task summary read model")?;
+            read_models.push(summary);
+        }
+        let parse_ms = parse_start.map(|start| start.elapsed()).unwrap_or_default();
+
+        let mut summaries = Vec::with_capacity(read_models.len());
+        for summary in read_models {
+            let primary_session = summary.primary_session;
+            summaries.push(WorkspaceActiveTaskSummary {
+                task: summary.task,
+                primary_session,
+                primary_session_head: None,
+                sessions: summary.sessions,
+                sort_at: summary.sort_at,
+            });
+        }
+
+        if timing_enabled {
+            info!(
+                target: "ctx_store.snapshot_timing",
+                snapshot = "active_snapshot",
+                workspace_id = %workspace_id.0,
+                limit,
+                total_count,
+                rows = row_count,
+                acquire_ms = acquire_ms.as_millis(),
+                query_ms = query_ms.as_millis(),
+                parse_ms = parse_ms.as_millis(),
+            );
+        }
+
+        Ok((summaries, total_count))
+    }
+
+    pub async fn list_workspace_active_head_snapshots(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Vec<SessionHeadSnapshot>> {
+        let rows = self
+            .query(
+                r#"SELECT s.id AS session_id,
+                          s.task_id,
+                          s.workspace_id,
+                          s.worktree_id,
+                          s.parent_session_id,
+                          s.relationship,
+                          s.provider_id,
+                          s.model_id,
+                          s.agent_role,
+                          s.title,
+                          s.status,
+                          s.provider_session_ref,
+                          s.created_at,
+                          s.updated_at,
+                          h.last_event_seq,
+                          h.turns_json,
+                          h.tool_summaries_json,
+                          h.messages_json,
+                          h.has_more_turns,
+                          h.head_window_json,
+                          h.summary_checkpoint_json
+                   FROM session_active_snapshot_heads h
+                   JOIN sessions s ON s.id = h.session_id
+                   JOIN tasks t ON t.id = s.task_id
+                   WHERE s.workspace_id = ?
+                     AND t.archived_at IS NULL
+                   ORDER BY s.created_at ASC, s.id ASC"#,
+            )
+            .bind(workspace_id.0.to_string())
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let session_id: String = row.try_get("session_id")?;
+            let task_id: String = row.try_get("task_id")?;
+            let workspace_id_value: String = row.try_get("workspace_id")?;
+            let worktree_id: String = row.try_get("worktree_id")?;
+            let created_at: String = row.try_get("created_at")?;
+            let updated_at: String = row.try_get("updated_at")?;
+            let status: String = row.try_get("status")?;
+
+            let session = Session {
+                id: SessionId(uuid::Uuid::parse_str(&session_id)?),
+                task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&workspace_id_value)?),
+                worktree_id: WorktreeId(uuid::Uuid::parse_str(&worktree_id)?),
+                parent_session_id: parse_optional_session_id(row.try_get("parent_session_id")?),
+                relationship: row.try_get("relationship")?,
+                provider_id: row.try_get("provider_id")?,
+                model_id: row.try_get("model_id")?,
+                title: row.try_get("title")?,
+                agent_role: row.try_get("agent_role")?,
+                status: parse_session_status(&status),
+                provider_session_ref: row.try_get("provider_session_ref")?,
+                created_at: parse_dt(&created_at)?,
+                updated_at: parse_dt(&updated_at)?,
+            };
+
+            let turns_json: String = row.try_get("turns_json")?;
+            let tool_summaries_json: String = row.try_get("tool_summaries_json")?;
+            let messages_json: String = row.try_get("messages_json")?;
+            let head_window_json: String = row.try_get("head_window_json")?;
+            let summary_checkpoint_json: Option<String> = row.try_get("summary_checkpoint_json")?;
+
+            let mut turns: Vec<SessionTurn> =
+                serde_json::from_str(&turns_json).context("deserializing active head turns")?;
+            let tool_summaries: Vec<SessionTurnToolSummary> =
+                serde_json::from_str(&tool_summaries_json)
+                    .context("deserializing active head tool summaries")?;
+            let messages: Vec<Message> = serde_json::from_str(&messages_json)
+                .context("deserializing active head messages")?;
+            let head_window: SessionHeadWindow = serde_json::from_str(&head_window_json)
+                .context("deserializing active head window")?;
+            let summary_checkpoint: Option<SessionSummaryCheckpoint> = summary_checkpoint_json
+                .map(|json| {
+                    serde_json::from_str(&json)
+                        .context("deserializing active head summary checkpoint")
+                })
+                .transpose()?;
+
+            let mut events = Vec::new();
+            strip_snapshot_partials(&mut turns, &mut events);
+
+            let last_status = turns.last().map(|t| t.status.clone());
+            let has_running_turn = turns
+                .iter()
+                .any(|turn| matches!(turn.status, SessionTurnStatus::Running));
+            let activity = derive_activity_from_status(last_status, has_running_turn);
+            let has_more_turns: i64 = row.try_get("has_more_turns")?;
+            let last_event_seq: i64 = row.try_get("last_event_seq")?;
+
+            out.push(SessionHeadSnapshot {
+                session: session_metadata_from_session(&session),
+                turns,
+                tool_summaries,
+                events,
+                messages,
+                last_event_seq,
+                state_rev: last_event_seq,
+                activity,
+                has_more_turns: has_more_turns != 0,
+                history_cursor: None,
+                has_more_history: false,
+                summary_checkpoint,
+                head_window,
+            });
+        }
+        Ok(out)
+    }
+
     pub async fn get_workspace_task_summary(
         &self,
         task_id: TaskId,
@@ -3128,7 +4127,8 @@ impl Store {
             sort_expr = SORT_EXPR,
         );
 
-        if let Some(r) = sqlx::query(&sql)
+        let sql = self.rewrite_sql(&sql);
+        if let Some(r) = sqlx::query(sql.as_ref())
             .bind(task_id.0.to_string())
             .fetch_optional(&self.pool)
             .await?
@@ -3189,8 +4189,9 @@ impl Store {
         &self,
         task_id: TaskId,
     ) -> Result<Option<WorkspaceActiveTaskSummary>> {
-        let row = sqlx::query(
-            r#"SELECT id, workspace_id, title, description, status, exec_plan_id,
+        let row = self
+            .query(
+                r#"SELECT id, workspace_id, title, description, status, exec_plan_id,
                       primary_session_id, primary_worktree_id,
                       created_at, updated_at, archived_at, assistant_seen_at,
                       t.last_assistant_message_at AS last_assistant_message_at,
@@ -3204,10 +4205,10 @@ impl Store {
                WHERE id = ?
                  AND archived_at IS NULL
                  AND EXISTS (SELECT 1 FROM sessions s WHERE s.task_id = t.id)"#,
-        )
-        .bind(task_id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(task_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
 
         if let Some(r) = row {
             let id: String = r.try_get("id")?;
@@ -3333,19 +4334,10 @@ impl Store {
                 }
             }
 
-            let head = match self
-                .get_session_head(primary_id, ACTIVE_SNAPSHOT_HEAD_LIMIT, false)
-                .await?
-            {
-                Some(head) => head,
-                None => continue,
-            };
-            let primary_session_head = session_head_to_snapshot(head);
-
             summaries.push(WorkspaceActiveTaskSummary {
                 task,
                 primary_session: primary_summary,
-                primary_session_head,
+                primary_session_head: None,
                 sessions,
                 sort_at,
             });
@@ -3355,7 +4347,7 @@ impl Store {
     }
 
     pub async fn list_messages_for_session(&self, session_id: SessionId) -> Result<Vec<Message>> {
-        let rows = sqlx::query(
+        let rows = self.query(
             r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages
                WHERE session_id = ?
@@ -3409,7 +4401,7 @@ impl Store {
         session_id: SessionId,
         run_id: RunId,
     ) -> Result<Option<Message>> {
-        let row = sqlx::query(
+        let row = self.query(
             r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages
                WHERE session_id = ? AND run_id = ? AND role = 'assistant'
@@ -3459,12 +4451,11 @@ impl Store {
     }
 
     pub async fn count_user_messages_for_session(&self, session_id: SessionId) -> Result<i64> {
-        let count = sqlx::query_scalar::<_, i64>(
-            r#"SELECT COUNT(*) FROM messages WHERE session_id = ? AND role = 'user'"#,
-        )
-        .bind(session_id.0.to_string())
-        .fetch_one(&self.pool)
-        .await?;
+        let count: i64 = self
+            .query_scalar(r#"SELECT COUNT(*) FROM messages WHERE session_id = ? AND role = 'user'"#)
+            .bind(session_id.0.to_string())
+            .fetch_one(&self.pool)
+            .await?;
         Ok(count)
     }
 
@@ -3472,16 +4463,17 @@ impl Store {
         &self,
         session_id: SessionId,
     ) -> Result<Option<String>> {
-        let row = sqlx::query(
-            r#"SELECT content
+        let row = self
+            .query(
+                r#"SELECT content
                FROM messages
                WHERE session_id = ? AND role = 'user'
                ORDER BY created_at ASC, id ASC
                LIMIT 1"#,
-        )
-        .bind(session_id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(session_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.and_then(|r| r.try_get("content").ok()))
     }
@@ -3491,29 +4483,33 @@ impl Store {
         session_id: SessionId,
         turn_ids: &[TurnId],
     ) -> Result<Vec<Message>> {
-        let mut query = QueryBuilder::new(
+        let mut sql = String::from(
             "SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
              FROM messages
-             WHERE session_id = ",
+             WHERE session_id = ?",
         );
-        query.push_bind(session_id.0.to_string());
         if turn_ids.is_empty() {
-            query.push(" AND delivery = 'queued' AND delivered_at IS NULL");
+            sql.push_str(" AND delivery = 'queued' AND delivered_at IS NULL");
         } else {
-            query.push(" AND (turn_id IN (");
-            let mut first = true;
-            for turn_id in turn_ids {
-                if !first {
-                    query.push(", ");
+            sql.push_str(" AND (turn_id IN (");
+            for i in 0..turn_ids.len() {
+                if i > 0 {
+                    sql.push_str(", ");
                 }
-                first = false;
-                query.push_bind(turn_id.0.to_string());
+                sql.push('?');
             }
-            query.push(") OR (delivery = 'queued' AND delivered_at IS NULL))");
+            sql.push_str(") OR (delivery = 'queued' AND delivered_at IS NULL))");
         }
-        query.push(" ORDER BY created_at ASC, turn_sequence ASC");
+        sql.push_str(" ORDER BY created_at ASC, turn_sequence ASC");
 
-        let rows = query.build().fetch_all(&self.pool).await?;
+        let sql = self.rewrite_sql(&sql);
+        let mut query = sqlx::query(sql.as_ref()).bind(session_id.0.to_string());
+        if !turn_ids.is_empty() {
+            for turn_id in turn_ids {
+                query = query.bind(turn_id.0.to_string());
+            }
+        }
+        let rows = query.fetch_all(&self.pool).await?;
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             let id: String = r.try_get("id")?;
@@ -3576,7 +4572,7 @@ impl Store {
         let task_ids: Vec<TaskId> = summaries.iter().map(|s| s.task.id).collect();
 
         if !task_ids.is_empty() {
-            let mut session_query = QueryBuilder::new(
+            let mut session_sql = String::from(
                 "
                 SELECT id, task_id, workspace_id, parent_session_id, relationship,
                        provider_id, model_id, title, status, created_at, updated_at
@@ -3599,19 +4595,21 @@ impl Store {
                     FROM sessions s
                     WHERE s.task_id IN (",
             );
-            let mut first = true;
-            for task_id in &task_ids {
-                if !first {
-                    session_query.push(", ");
+            for i in 0..task_ids.len() {
+                if i > 0 {
+                    session_sql.push_str(", ");
                 }
-                first = false;
-                session_query.push_bind(task_id.0.to_string());
+                session_sql.push('?');
             }
-            session_query.push(")) WHERE rn <= ");
-            session_query.push_bind(SESSION_LIMIT);
-            session_query.push(" ORDER BY task_id, rn");
+            session_sql.push_str(")) WHERE rn <= ? ORDER BY task_id, rn");
 
-            let session_rows = session_query.build().fetch_all(&self.pool).await?;
+            let session_sql = self.rewrite_sql(&session_sql);
+            let mut session_query = sqlx::query(session_sql.as_ref());
+            for task_id in &task_ids {
+                session_query = session_query.bind(task_id.0.to_string());
+            }
+            session_query = session_query.bind(SESSION_LIMIT);
+            let session_rows = session_query.fetch_all(&self.pool).await?;
 
             for r in session_rows {
                 let id: String = r.try_get("id")?;
@@ -3657,7 +4655,7 @@ impl Store {
             return Ok(Vec::new());
         }
 
-        let mut session_query = QueryBuilder::new(
+        let mut session_sql = String::from(
             r#"
             SELECT
                 s.id,
@@ -3686,18 +4684,20 @@ impl Store {
               ON ss.session_id = s.id
             WHERE s.task_id IN ("#,
         );
-
-        let mut first = true;
-        for task_id in task_ids {
-            if !first {
-                session_query.push(", ");
+        for i in 0..task_ids.len() {
+            if i > 0 {
+                session_sql.push_str(", ");
             }
-            first = false;
-            session_query.push_bind(task_id.0.to_string());
+            session_sql.push('?');
         }
-        session_query.push(") ORDER BY s.created_at ASC");
+        session_sql.push_str(") ORDER BY s.created_at ASC");
 
-        let session_rows = session_query.build().fetch_all(&self.pool).await?;
+        let session_sql = self.rewrite_sql(&session_sql);
+        let mut session_query = sqlx::query(session_sql.as_ref());
+        for task_id in task_ids {
+            session_query = session_query.bind(task_id.0.to_string());
+        }
+        let session_rows = session_query.fetch_all(&self.pool).await?;
         let mut out = Vec::with_capacity(session_rows.len());
 
         for r in session_rows {
@@ -3761,8 +4761,9 @@ impl Store {
         &self,
         session_id: SessionId,
     ) -> Result<Option<SessionSnapshotSummary>> {
-        let row = sqlx::query(
-            r#"
+        let row = self
+            .query(
+                r#"
             SELECT
                 s.id,
                 s.task_id,
@@ -3789,10 +4790,10 @@ impl Store {
             LEFT JOIN session_snapshot_summaries ss
               ON ss.session_id = s.id
             WHERE s.id = ?"#,
-        )
-        .bind(session_id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(session_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
 
         let Some(r) = row else {
             return Ok(None);
@@ -3856,7 +4857,7 @@ impl Store {
         &self,
         session_id: SessionId,
     ) -> Result<Vec<Message>> {
-        let rows = sqlx::query(
+        let rows = self.query(
             r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages
                WHERE session_id = ? AND delivery = 'queued' AND delivered_at IS NULL
@@ -3905,7 +4906,7 @@ impl Store {
     }
 
     pub async fn get_message(&self, id: MessageId) -> Result<Option<Message>> {
-        let row = sqlx::query(
+        let row = self.query(
             r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages WHERE id = ?"#,
         )
@@ -3951,7 +4952,7 @@ impl Store {
     }
 
     pub async fn delete_message(&self, id: MessageId) -> Result<()> {
-        sqlx::query(r#"DELETE FROM messages WHERE id = ?"#)
+        self.query(r#"DELETE FROM messages WHERE id = ?"#)
             .bind(id.0.to_string())
             .execute(&self.pool)
             .await?;
@@ -3960,15 +4961,23 @@ impl Store {
 
     pub async fn mark_message_delivered(&self, id: MessageId) -> Result<()> {
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            r#"UPDATE messages
+        let delivery = "immediate";
+        let write_bytes = bytes_str(delivery) + bytes_str(&now);
+        let result = self
+            .query(
+                r#"UPDATE messages
                SET delivery = 'immediate', delivered_at = ?
                WHERE id = ?"#,
-        )
-        .bind(now)
-        .bind(id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(now)
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        record_write(
+            WriteMetricTable::Messages,
+            result.rows_affected(),
+            write_bytes,
+        );
         Ok(())
     }
 
@@ -3980,8 +4989,29 @@ impl Store {
             .map(serde_json::to_string)
             .transpose()
             .context("serializing turn metrics")?;
-        sqlx::query(
-            r#"INSERT INTO session_turns (
+        let turn_id = turn.turn_id.0.to_string();
+        let session_id = turn.session_id.0.to_string();
+        let run_id = turn.run_id.map(|r| r.0.to_string());
+        let user_message_id = turn.user_message_id.map(|m| m.0.to_string());
+        let status = session_turn_status_to_str(&turn.status);
+        let started_at = turn.started_at.to_rfc3339();
+        let updated_at = turn.updated_at.to_rfc3339();
+        let write_bytes = bytes_str(&turn_id)
+            + bytes_str(&session_id)
+            + bytes_opt_str(run_id.as_deref())
+            + bytes_opt_str(user_message_id.as_deref())
+            + bytes_str(status)
+            + bytes_opt_i64(turn.start_seq)
+            + bytes_opt_i64(turn.end_seq)
+            + bytes_str(&started_at)
+            + bytes_str(&updated_at)
+            + bytes_opt_str(turn.assistant_partial.as_deref())
+            + bytes_opt_str(turn.thought_partial.as_deref())
+            + bytes_opt_str(metrics_json.as_deref())
+            + (I64_BYTES * 5);
+        let result = self
+            .query(
+                r#"INSERT INTO session_turns (
                     turn_id,
                     session_id,
                     run_id,
@@ -4001,27 +5031,34 @@ impl Store {
                     tool_failed
                )
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
-        )
-        .bind(turn.turn_id.0.to_string())
-        .bind(turn.session_id.0.to_string())
-        .bind(turn.run_id.map(|r| r.0.to_string()))
-        .bind(turn.user_message_id.map(|m| m.0.to_string()))
-        .bind(session_turn_status_to_str(&turn.status))
-        .bind(turn.start_seq)
-        .bind(turn.end_seq)
-        .bind(turn.started_at.to_rfc3339())
-        .bind(turn.updated_at.to_rfc3339())
-        .bind(turn.assistant_partial.as_deref())
-        .bind(turn.thought_partial.as_deref())
-        .bind(metrics_json)
-        .bind(turn.tool_total)
-        .bind(turn.tool_pending)
-        .bind(turn.tool_running)
-        .bind(turn.tool_completed)
-        .bind(turn.tool_failed)
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(&turn_id)
+            .bind(&session_id)
+            .bind(run_id)
+            .bind(user_message_id)
+            .bind(status)
+            .bind(turn.start_seq)
+            .bind(turn.end_seq)
+            .bind(&started_at)
+            .bind(&updated_at)
+            .bind(turn.assistant_partial.as_deref())
+            .bind(turn.thought_partial.as_deref())
+            .bind(metrics_json)
+            .bind(turn.tool_total)
+            .bind(turn.tool_pending)
+            .bind(turn.tool_running)
+            .bind(turn.tool_completed)
+            .bind(turn.tool_failed)
+            .execute(&self.pool)
+            .await?;
+        record_write(
+            WriteMetricTable::SessionTurns,
+            result.rows_affected(),
+            write_bytes,
+        );
         self.refresh_session_turn_summary(turn.session_id).await?;
+        self.refresh_active_snapshot_head(turn.session_id, None)
+            .await?;
         Ok(turn)
     }
 
@@ -4030,7 +5067,7 @@ impl Store {
         session_id: SessionId,
         turn_id: TurnId,
     ) -> Result<Option<SessionTurn>> {
-        let row = sqlx::query(
+        let row = self.query(
             r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                       start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
                       metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
@@ -4046,12 +5083,13 @@ impl Store {
     }
 
     pub async fn delete_session_turn(&self, session_id: SessionId, turn_id: TurnId) -> Result<()> {
-        sqlx::query(r#"DELETE FROM session_turns WHERE session_id = ? AND turn_id = ?"#)
+        self.query(r#"DELETE FROM session_turns WHERE session_id = ? AND turn_id = ?"#)
             .bind(session_id.0.to_string())
             .bind(turn_id.0.to_string())
             .execute(&self.pool)
             .await?;
         self.refresh_session_turn_summary(session_id).await?;
+        self.refresh_active_snapshot_head(session_id, None).await?;
         Ok(())
     }
 
@@ -4066,21 +5104,32 @@ impl Store {
         if assistant_partial.is_none() && thought_partial.is_none() {
             return Ok(());
         }
-        sqlx::query(
-            r#"UPDATE session_turns
+        let updated_at = updated_at.to_rfc3339();
+        let write_bytes = bytes_opt_str(assistant_partial)
+            + bytes_opt_str(thought_partial)
+            + bytes_str(&updated_at);
+        let result = self
+            .query(
+                r#"UPDATE session_turns
                SET assistant_partial = COALESCE(?, assistant_partial),
                    thought_partial = COALESCE(?, thought_partial),
                    updated_at = ?
                WHERE session_id = ? AND turn_id = ?"#,
-        )
-        .bind(assistant_partial.map(|s| s.to_string()))
-        .bind(thought_partial.map(|s| s.to_string()))
-        .bind(updated_at.to_rfc3339())
-        .bind(session_id.0.to_string())
-        .bind(turn_id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(assistant_partial.map(|s| s.to_string()))
+            .bind(thought_partial.map(|s| s.to_string()))
+            .bind(&updated_at)
+            .bind(session_id.0.to_string())
+            .bind(turn_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        record_write(
+            WriteMetricTable::SessionTurns,
+            result.rows_affected(),
+            write_bytes,
+        );
         self.refresh_session_turn_summary(session_id).await?;
+        self.refresh_active_snapshot_head(session_id, None).await?;
         Ok(())
     }
 
@@ -4097,23 +5146,36 @@ impl Store {
             .map(serde_json::to_string)
             .transpose()
             .context("serializing turn metrics")?;
-        sqlx::query(
-            r#"UPDATE session_turns
+        let status = session_turn_status_to_str(&status);
+        let updated_at = updated_at.to_rfc3339();
+        let write_bytes = bytes_str(status)
+            + bytes_opt_i64(end_seq)
+            + bytes_opt_str(metrics_json.as_deref())
+            + bytes_str(&updated_at);
+        let result = self
+            .query(
+                r#"UPDATE session_turns
                SET status = ?,
                    end_seq = COALESCE(?, end_seq),
                    metrics_json = COALESCE(?, metrics_json),
                    updated_at = ?
                WHERE session_id = ? AND turn_id = ?"#,
-        )
-        .bind(session_turn_status_to_str(&status))
-        .bind(end_seq)
-        .bind(metrics_json)
-        .bind(updated_at.to_rfc3339())
-        .bind(session_id.0.to_string())
-        .bind(turn_id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(status)
+            .bind(end_seq)
+            .bind(metrics_json)
+            .bind(&updated_at)
+            .bind(session_id.0.to_string())
+            .bind(turn_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        record_write(
+            WriteMetricTable::SessionTurns,
+            result.rows_affected(),
+            write_bytes,
+        );
         self.refresh_session_turn_summary(session_id).await?;
+        self.refresh_active_snapshot_head(session_id, None).await?;
         Ok(())
     }
 
@@ -4124,8 +5186,11 @@ impl Store {
         deltas: SessionTurnToolCountDeltas,
         updated_at: DateTime<Utc>,
     ) -> Result<()> {
-        sqlx::query(
-            r#"UPDATE session_turns
+        let updated_at = updated_at.to_rfc3339();
+        let write_bytes = (I64_BYTES * 5) + bytes_str(&updated_at);
+        let result = self
+            .query(
+                r#"UPDATE session_turns
                SET tool_total = tool_total + ?,
                    tool_pending = tool_pending + ?,
                    tool_running = tool_running + ?,
@@ -4133,17 +5198,23 @@ impl Store {
                    tool_failed = tool_failed + ?,
                    updated_at = ?
                WHERE session_id = ? AND turn_id = ?"#,
-        )
-        .bind(deltas.total)
-        .bind(deltas.pending)
-        .bind(deltas.running)
-        .bind(deltas.completed)
-        .bind(deltas.failed)
-        .bind(updated_at.to_rfc3339())
-        .bind(session_id.0.to_string())
-        .bind(turn_id.0.to_string())
-        .execute(&self.pool)
-        .await?;
+            )
+            .bind(deltas.total)
+            .bind(deltas.pending)
+            .bind(deltas.running)
+            .bind(deltas.completed)
+            .bind(deltas.failed)
+            .bind(&updated_at)
+            .bind(session_id.0.to_string())
+            .bind(turn_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        record_write(
+            WriteMetricTable::SessionTurns,
+            result.rows_affected(),
+            write_bytes,
+        );
+        self.refresh_active_snapshot_head(session_id, None).await?;
         Ok(())
     }
 
@@ -4155,7 +5226,7 @@ impl Store {
     ) -> Result<Vec<SessionTurn>> {
         let limit = limit.unwrap_or(50).clamp(1, 500) as i64;
         let rows = if let Some(before_seq) = before_seq {
-            sqlx::query(
+            self.query(
                 r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
                           metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
@@ -4170,7 +5241,7 @@ impl Store {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query(
+            self.query(
                 r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
                           metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
@@ -4202,19 +5273,26 @@ impl Store {
         if statuses.is_empty() {
             return Ok(Vec::new());
         }
-        let mut qb = QueryBuilder::new(
+        let mut sql = String::from(
             r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                       start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
                       metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                FROM session_turns
                WHERE status IN ("#,
         );
-        let mut separated = qb.separated(", ");
-        for status in statuses {
-            separated.push_bind(session_turn_status_to_str(status));
+        for i in 0..statuses.len() {
+            if i > 0 {
+                sql.push_str(", ");
+            }
+            sql.push('?');
         }
-        qb.push(") ORDER BY updated_at ASC");
-        let rows = qb.build().fetch_all(&self.pool).await?;
+        sql.push_str(") ORDER BY updated_at ASC");
+        let sql = self.rewrite_sql(&sql);
+        let mut query = sqlx::query(sql.as_ref());
+        for status in statuses {
+            query = query.bind(session_turn_status_to_str(status));
+        }
+        let rows = query.fetch_all(&self.pool).await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
@@ -4230,18 +5308,39 @@ impl Store {
         session_id: SessionId,
         kind: SessionHeadKind,
     ) -> Result<Option<SessionHeadMaterialization>> {
-        let row = sqlx::query(
-            r#"SELECT last_event_seq, turns_json, tool_summaries_json, events_json,
+        let timing_enabled = snapshot_timing_enabled();
+        let acquire_start = timing_enabled.then(Instant::now);
+        let mut conn = self.pool.acquire().await?;
+        let acquire_ms = acquire_start
+            .map(|start| start.elapsed())
+            .unwrap_or_default();
+        let query_start = timing_enabled.then(Instant::now);
+        let row = self
+            .query(
+                r#"SELECT last_event_seq, turns_json, tool_summaries_json, events_json,
                       messages_json, has_more_turns, head_window_json
                FROM session_head_materializations
                WHERE session_id = ? AND head_kind = ?"#,
-        )
-        .bind(session_id.0.to_string())
-        .bind(session_head_kind_to_str(kind))
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(session_id.0.to_string())
+            .bind(session_head_kind_to_str(kind))
+            .fetch_optional(&mut *conn)
+            .await?;
+        let query_ms = query_start.map(|start| start.elapsed()).unwrap_or_default();
 
         let Some(row) = row else {
+            if timing_enabled {
+                info!(
+                    target: "ctx_store.snapshot_timing",
+                    snapshot = "session_snapshot",
+                    session_id = %session_id.0,
+                    head_kind = session_head_kind_to_str(kind),
+                    hit = false,
+                    acquire_ms = acquire_ms.as_millis(),
+                    query_ms = query_ms.as_millis(),
+                    parse_ms = 0,
+                );
+            }
             return Ok(None);
         };
 
@@ -4251,6 +5350,7 @@ impl Store {
         let messages_json: String = row.try_get("messages_json")?;
         let head_window_json: String = row.try_get("head_window_json")?;
 
+        let parse_start = timing_enabled.then(Instant::now);
         let turns: Vec<SessionTurn> = match serde_json::from_str(&turns_json) {
             Ok(value) => value,
             Err(_) => return Ok(None),
@@ -4272,8 +5372,26 @@ impl Store {
             Ok(value) => value,
             Err(_) => return Ok(None),
         };
+        let parse_ms = parse_start.map(|start| start.elapsed()).unwrap_or_default();
 
         let has_more_turns: i64 = row.try_get("has_more_turns")?;
+
+        if timing_enabled {
+            info!(
+                target: "ctx_store.snapshot_timing",
+                snapshot = "session_snapshot",
+                session_id = %session_id.0,
+                head_kind = session_head_kind_to_str(kind),
+                hit = true,
+                turns = turns.len(),
+                tool_summaries = tool_summaries.len(),
+                events = events.len(),
+                messages = messages.len(),
+                acquire_ms = acquire_ms.as_millis(),
+                query_ms = query_ms.as_millis(),
+                parse_ms = parse_ms.as_millis(),
+            );
+        }
 
         Ok(Some(SessionHeadMaterialization {
             last_event_seq: row.try_get("last_event_seq")?,
@@ -4286,12 +5404,183 @@ impl Store {
         }))
     }
 
+    async fn upsert_active_snapshot_head_projection(
+        &self,
+        session_id: SessionId,
+        head: &ActiveSnapshotHeadProjection,
+    ) -> Result<()> {
+        if disable_head_materialization_writes() {
+            return Ok(());
+        }
+        let turns_json =
+            serde_json::to_string(&head.turns).context("serializing active head turns")?;
+        let tool_summaries_json = serde_json::to_string(&head.tool_summaries)
+            .context("serializing active head tool summaries")?;
+        let messages_json =
+            serde_json::to_string(&head.messages).context("serializing active head messages")?;
+        let head_window_json =
+            serde_json::to_string(&head.head_window).context("serializing active head window")?;
+        let summary_checkpoint_json = head
+            .summary_checkpoint
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serializing session summary checkpoint")?;
+        let now = Utc::now().to_rfc3339();
+        let session_id = session_id.0.to_string();
+        let write_bytes = bytes_str(&session_id)
+            + I64_BYTES
+            + bytes_str(&turns_json)
+            + bytes_str(&tool_summaries_json)
+            + bytes_str(&messages_json)
+            + BOOL_BYTES
+            + bytes_str(&head_window_json)
+            + bytes_opt_str(summary_checkpoint_json.as_deref())
+            + bytes_str(&now)
+            + bytes_str(&now);
+
+        let result = self
+            .query(
+                r#"INSERT INTO session_active_snapshot_heads (
+                    session_id, last_event_seq, turns_json, tool_summaries_json,
+                    messages_json, has_more_turns, head_window_json, summary_checkpoint_json,
+                    created_at, updated_at
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(session_id) DO UPDATE SET
+                   last_event_seq = excluded.last_event_seq,
+                   turns_json = excluded.turns_json,
+                   tool_summaries_json = excluded.tool_summaries_json,
+                   messages_json = excluded.messages_json,
+                   has_more_turns = excluded.has_more_turns,
+                   head_window_json = excluded.head_window_json,
+                   summary_checkpoint_json = excluded.summary_checkpoint_json,
+                   updated_at = excluded.updated_at"#,
+            )
+            .bind(&session_id)
+            .bind(head.last_event_seq)
+            .bind(turns_json)
+            .bind(tool_summaries_json)
+            .bind(messages_json)
+            .bind(if head.has_more_turns { 1 } else { 0 })
+            .bind(head_window_json)
+            .bind(summary_checkpoint_json)
+            .bind(&now)
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        record_write(
+            WriteMetricTable::SessionActiveSnapshotHeads,
+            result.rows_affected(),
+            write_bytes,
+        );
+        Ok(())
+    }
+
+    async fn update_active_snapshot_head_last_event_seq(
+        &self,
+        session_id: SessionId,
+        last_event_seq: i64,
+    ) -> Result<()> {
+        if disable_head_materialization_writes() {
+            return Ok(());
+        }
+        let now = Utc::now().to_rfc3339();
+        let write_bytes = I64_BYTES + bytes_str(&now);
+        let res = self
+            .query(
+                r#"UPDATE session_active_snapshot_heads
+               SET last_event_seq = ?,
+                   updated_at = ?
+               WHERE session_id = ?"#,
+            )
+            .bind(last_event_seq)
+            .bind(&now)
+            .bind(session_id.0.to_string())
+            .execute(&self.pool)
+            .await?;
+        record_write(
+            WriteMetricTable::SessionActiveSnapshotHeads,
+            res.rows_affected(),
+            write_bytes,
+        );
+        if res.rows_affected() == 0 {
+            self.refresh_active_snapshot_head(session_id, Some(last_event_seq))
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn refresh_active_snapshot_head(
+        &self,
+        session_id: SessionId,
+        last_event_seq: Option<i64>,
+    ) -> Result<()> {
+        if disable_head_materialization_writes() {
+            return Ok(());
+        }
+        let Some(session) = self.get_session(session_id).await? else {
+            return Ok(());
+        };
+        if !matches!(
+            self.session_head_kind_for_task(session.task_id).await?,
+            SessionHeadKind::Active
+        ) {
+            self.query(r#"DELETE FROM session_active_snapshot_heads WHERE session_id = ?"#)
+                .bind(session_id.0.to_string())
+                .execute(&self.pool)
+                .await?;
+            return Ok(());
+        }
+
+        let last_event_seq = match last_event_seq {
+            Some(seq) => seq,
+            None => self.session_last_event_seq(session_id).await?,
+        };
+        let limits = session_head_limits(SessionHeadKind::Active, ACTIVE_SNAPSHOT_HEAD_LIMIT);
+        let head = self
+            .build_session_head(&session, limits, false, last_event_seq)
+            .await?;
+        let projection = ActiveSnapshotHeadProjection::from_head(&head);
+        self.upsert_active_snapshot_head_projection(session_id, &projection)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_active_snapshot_heads_for_task(&self, task_id: TaskId) -> Result<()> {
+        if disable_head_materialization_writes() {
+            return Ok(());
+        }
+        self.query(
+            r#"DELETE FROM session_active_snapshot_heads
+               WHERE session_id IN (SELECT id FROM sessions WHERE task_id = ?)"#,
+        )
+        .bind(task_id.0.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn refresh_active_snapshot_heads_for_task(&self, task_id: TaskId) -> Result<()> {
+        if disable_head_materialization_writes() {
+            return Ok(());
+        }
+        let sessions = self.list_sessions_for_task(task_id).await?;
+        for session in sessions {
+            self.refresh_active_snapshot_head(session.id, None).await?;
+        }
+        Ok(())
+    }
+
     async fn upsert_session_head_materialization(
         &self,
         session_id: SessionId,
         kind: SessionHeadKind,
         head: &SessionHeadMaterialization,
     ) -> Result<i64> {
+        if disable_head_materialization_writes() {
+            return Ok(0);
+        }
         let turns_json =
             serde_json::to_string(&head.turns).context("serializing session head turns")?;
         let tool_summaries_json = serde_json::to_string(&head.tool_summaries)
@@ -4303,9 +5592,23 @@ impl Store {
         let head_window_json =
             serde_json::to_string(&head.head_window).context("serializing session head window")?;
         let now = Utc::now().to_rfc3339();
+        let session_id = session_id.0.to_string();
+        let head_kind = session_head_kind_to_str(kind);
+        let write_bytes = bytes_str(&session_id)
+            + bytes_str(head_kind)
+            + I64_BYTES
+            + bytes_str(&turns_json)
+            + bytes_str(&tool_summaries_json)
+            + bytes_str(&events_json)
+            + bytes_str(&messages_json)
+            + BOOL_BYTES
+            + bytes_str(&head_window_json)
+            + bytes_str(&now)
+            + bytes_str(&now);
 
-        let head_rev: i64 = sqlx::query_scalar(
-            r#"INSERT INTO session_head_materializations (
+        let head_rev: i64 = self
+            .query_scalar(
+                r#"INSERT INTO session_head_materializations (
                     session_id, head_kind, head_rev, last_event_seq,
                     turns_json, tool_summaries_json, events_json, messages_json,
                     has_more_turns, head_window_json, created_at, updated_at
@@ -4322,30 +5625,35 @@ impl Store {
                    head_window_json = excluded.head_window_json,
                    updated_at = excluded.updated_at
                RETURNING head_rev"#,
-        )
-        .bind(session_id.0.to_string())
-        .bind(session_head_kind_to_str(kind))
-        .bind(head.last_event_seq)
-        .bind(turns_json)
-        .bind(tool_summaries_json)
-        .bind(events_json)
-        .bind(messages_json)
-        .bind(if head.has_more_turns { 1 } else { 0 })
-        .bind(head_window_json)
-        .bind(&now)
-        .bind(&now)
-        .fetch_one(&self.pool)
-        .await?;
+            )
+            .bind(&session_id)
+            .bind(head_kind)
+            .bind(head.last_event_seq)
+            .bind(turns_json)
+            .bind(tool_summaries_json)
+            .bind(events_json)
+            .bind(messages_json)
+            .bind(if head.has_more_turns { 1 } else { 0 })
+            .bind(head_window_json)
+            .bind(&now)
+            .bind(&now)
+            .fetch_one(&self.pool)
+            .await?;
+        record_write(
+            WriteMetricTable::SessionHeadMaterializations,
+            1,
+            write_bytes,
+        );
 
         Ok(head_rev)
     }
 
     async fn session_head_kind_for_task(&self, task_id: TaskId) -> Result<SessionHeadKind> {
-        let archived_at: Option<Option<String>> =
-            sqlx::query_scalar(r#"SELECT archived_at FROM tasks WHERE id = ?"#)
-                .bind(task_id.0.to_string())
-                .fetch_optional(&self.pool)
-                .await?;
+        let archived_at: Option<Option<String>> = self
+            .query_scalar(r#"SELECT archived_at FROM tasks WHERE id = ?"#)
+            .bind(task_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(if archived_at.flatten().is_some() {
             SessionHeadKind::Archived
         } else {
@@ -4378,7 +5686,10 @@ impl Store {
         task_id: TaskId,
         kind: SessionHeadKind,
     ) -> Result<()> {
-        sqlx::query(
+        if disable_head_materialization_writes() {
+            return Ok(());
+        }
+        self.query(
             r#"DELETE FROM session_head_materializations
                WHERE head_kind = ?
                  AND session_id IN (SELECT id FROM sessions WHERE task_id = ?)"#,
@@ -4411,7 +5722,7 @@ impl Store {
         last_event_seq: i64,
     ) -> Result<SessionHead> {
         let limit = limits.turn_limit as i64;
-        let rows = sqlx::query(
+        let rows = self.query(
             r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                       start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
                       metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
@@ -4484,6 +5795,7 @@ impl Store {
             Vec::new()
         };
 
+        strip_snapshot_partials(&mut out, &mut events);
         let summary_checkpoint = self.get_session_summary_checkpoint(session.id).await?;
         let head_window = trim_session_head_window(
             &mut out,
@@ -4527,10 +5839,10 @@ impl Store {
         limit: u32,
         include_events: bool,
     ) -> Result<Option<SessionHeadSnapshot>> {
-        Ok(self
+        let head = self
             .get_session_head(session_id, limit, include_events)
-            .await?
-            .map(session_head_to_snapshot))
+            .await?;
+        Ok(head.map(session_head_to_snapshot))
     }
 
     async fn get_session_head_with_kind(
@@ -4577,27 +5889,49 @@ impl Store {
         )))
     }
 
+    pub async fn refresh_active_session_head_projection(
+        &self,
+        session_id: SessionId,
+    ) -> Result<bool> {
+        let session = match self.get_session(session_id).await? {
+            Some(session) => session,
+            None => return Ok(false),
+        };
+        if !matches!(
+            self.session_head_kind_for_task(session.task_id).await?,
+            SessionHeadKind::Active
+        ) {
+            return Ok(false);
+        }
+        let last_event_seq = self.session_last_event_seq(session_id).await?;
+        if let Some(materialized) = self
+            .load_session_head_materialization(session_id, SessionHeadKind::Active)
+            .await?
+        {
+            if materialized.last_event_seq == last_event_seq {
+                return Ok(false);
+            }
+        }
+        let _ = self
+            .materialize_session_head(&session, SessionHeadKind::Active, last_event_seq)
+            .await?;
+        Ok(true)
+    }
+
     pub async fn get_session_snapshot(
         &self,
         session_id: SessionId,
-        limit: u32,
-        include_events: bool,
+        _limit: u32,
+        _include_events: bool,
     ) -> Result<Option<SessionSnapshot>> {
         let summary = match self.get_session_snapshot_summary(session_id).await? {
             Some(summary) => summary,
             None => return Ok(None),
         };
-        let head = match self
-            .get_session_head_with_kind(session_id, limit, include_events, None)
-            .await?
-        {
-            Some(head) => head,
-            None => return Ok(None),
-        };
         let state = self.get_session_state(session_id).await?;
         Ok(Some(SessionSnapshot {
             summary,
-            head: session_head_to_snapshot(head),
+            head: None,
             state: Some(state),
         }))
     }
@@ -4613,7 +5947,7 @@ impl Store {
         }
         let limit = limit.clamp(1, 200) as i64;
         let rows = if let Some(before_seq) = before_seq {
-            sqlx::query(
+            self.query(
                 r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
                           metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
@@ -4628,7 +5962,7 @@ impl Store {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query(
+            self.query(
                 r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
                           metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
@@ -4679,17 +6013,19 @@ impl Store {
         session_id: SessionId,
         turn_id: TurnId,
     ) -> Result<Vec<SessionTurnTool>> {
-        let rows = sqlx::query(
-            r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
-                      output_text, created_at, updated_at
+        let rows = self
+            .query(
+                r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
+                      output_text, input_truncated, input_original_bytes, output_truncated,
+                      output_original_bytes, created_at, updated_at
                FROM session_turn_tools
                WHERE session_id = ? AND turn_id = ?
                ORDER BY created_at ASC"#,
-        )
-        .bind(session_id.0.to_string())
-        .bind(turn_id.0.to_string())
-        .fetch_all(&self.pool)
-        .await?;
+            )
+            .bind(session_id.0.to_string())
+            .bind(turn_id.0.to_string())
+            .fetch_all(&self.pool)
+            .await?;
         if !rows.is_empty() {
             let mut out = Vec::with_capacity(rows.len());
             for r in rows {
@@ -4718,20 +6054,26 @@ impl Store {
         if turn_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let mut qb = QueryBuilder::new(
+        let mut sql = String::from(
             r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
-                      created_at, updated_at
+                      output_text, input_truncated, input_original_bytes, output_truncated,
+                      output_original_bytes, created_at, updated_at
                FROM session_turn_tools
-               WHERE session_id = "#,
+               WHERE session_id = ? AND turn_id IN ("#,
         );
-        qb.push_bind(session_id.0.to_string());
-        qb.push(" AND turn_id IN (");
-        let mut separated = qb.separated(", ");
-        for turn_id in turn_ids {
-            separated.push_bind(turn_id.0.to_string());
+        for i in 0..turn_ids.len() {
+            if i > 0 {
+                sql.push_str(", ");
+            }
+            sql.push('?');
         }
-        qb.push(") ORDER BY created_at ASC");
-        let rows = qb.build().fetch_all(&self.pool).await?;
+        sql.push_str(") ORDER BY created_at ASC");
+        let sql = self.rewrite_sql(&sql);
+        let mut query = sqlx::query(sql.as_ref()).bind(session_id.0.to_string());
+        for turn_id in turn_ids {
+            query = query.bind(turn_id.0.to_string());
+        }
+        let rows = query.fetch_all(&self.pool).await?;
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             if let Ok(tool) = build_session_turn_tool_summary_from_row(r) {
@@ -4746,32 +6088,66 @@ impl Store {
         session_id: SessionId,
         tool_call_id: &str,
     ) -> Result<Option<SessionTurnTool>> {
-        let row = sqlx::query(
-            r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
-                      output_text, created_at, updated_at
+        let row = self
+            .query(
+                r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
+                      output_text, input_truncated, input_original_bytes, output_truncated,
+                      output_original_bytes, created_at, updated_at
                FROM session_turn_tools
                WHERE session_id = ? AND tool_call_id = ?"#,
-        )
-        .bind(session_id.0.to_string())
-        .bind(tool_call_id)
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(session_id.0.to_string())
+            .bind(tool_call_id)
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(row.and_then(|r| build_session_turn_tool_from_row(r).ok()))
     }
 
     pub async fn upsert_session_turn_tool(&self, tool: SessionTurnTool) -> Result<SessionTurnTool> {
+        if disable_tool_summary_persistence() {
+            return Ok(tool);
+        }
         let input_json = tool
             .input_json
             .as_ref()
             .map(serde_json::to_string)
             .transpose()
             .context("serializing tool input")?;
-        sqlx::query(
+        let input_truncated = tool.input_truncated.map(|value| if value { 1 } else { 0 });
+        let output_truncated = tool.output_truncated.map(|value| if value { 1 } else { 0 });
+        let session_id = tool.session_id.0.to_string();
+        let turn_id = tool.turn_id.0.to_string();
+        let created_at = tool.created_at.to_rfc3339();
+        let updated_at = tool.updated_at.to_rfc3339();
+        let write_bytes = bytes_str(&session_id)
+            + bytes_str(&tool.tool_call_id)
+            + bytes_str(&turn_id)
+            + bytes_opt_str(tool.tool_kind.as_deref())
+            + bytes_opt_str(tool.title.as_deref())
+            + bytes_opt_str(tool.status.as_deref())
+            + bytes_opt_str(input_json.as_deref())
+            + bytes_opt_str(tool.output_text.as_deref())
+            + if input_truncated.is_some() {
+                BOOL_BYTES
+            } else {
+                0
+            }
+            + bytes_opt_i64(tool.input_original_bytes)
+            + if output_truncated.is_some() {
+                BOOL_BYTES
+            } else {
+                0
+            }
+            + bytes_opt_i64(tool.output_original_bytes)
+            + bytes_str(&created_at)
+            + bytes_str(&updated_at);
+        let result = self.query(
             r#"INSERT INTO session_turn_tools (
                     session_id, tool_call_id, turn_id, tool_kind, title, status,
-                    input_json, output_text, created_at, updated_at
+                    input_json, output_text, input_truncated, input_original_bytes,
+                    output_truncated, output_original_bytes, created_at, updated_at
                )
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(session_id, tool_call_id) DO UPDATE SET
                    turn_id = excluded.turn_id,
                    tool_kind = COALESCE(excluded.tool_kind, session_turn_tools.tool_kind),
@@ -4779,20 +6155,33 @@ impl Store {
                    status = COALESCE(excluded.status, session_turn_tools.status),
                    input_json = COALESCE(excluded.input_json, session_turn_tools.input_json),
                    output_text = COALESCE(excluded.output_text, session_turn_tools.output_text),
+                   input_truncated = COALESCE(excluded.input_truncated, session_turn_tools.input_truncated),
+                   input_original_bytes = COALESCE(excluded.input_original_bytes, session_turn_tools.input_original_bytes),
+                   output_truncated = COALESCE(excluded.output_truncated, session_turn_tools.output_truncated),
+                   output_original_bytes = COALESCE(excluded.output_original_bytes, session_turn_tools.output_original_bytes),
                    updated_at = excluded.updated_at"#,
         )
-        .bind(tool.session_id.0.to_string())
+        .bind(&session_id)
         .bind(&tool.tool_call_id)
-        .bind(tool.turn_id.0.to_string())
+        .bind(&turn_id)
         .bind(tool.tool_kind.as_deref())
         .bind(tool.title.as_deref())
         .bind(tool.status.as_deref())
         .bind(input_json)
         .bind(tool.output_text.as_deref())
-        .bind(tool.created_at.to_rfc3339())
-        .bind(tool.updated_at.to_rfc3339())
+        .bind(input_truncated)
+        .bind(tool.input_original_bytes)
+        .bind(output_truncated)
+        .bind(tool.output_original_bytes)
+        .bind(&created_at)
+        .bind(&updated_at)
         .execute(&self.pool)
         .await?;
+        record_write(
+            WriteMetricTable::SessionTurnTools,
+            result.rows_affected(),
+            write_bytes,
+        );
         Ok(tool)
     }
 
@@ -4806,7 +6195,7 @@ impl Store {
         name: Option<&str>,
         created_at: DateTime<Utc>,
     ) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO blobs (id, sha256, bytes, mime_type, name, created_at)
                VALUES (?, ?, ?, ?, ?, ?)"#,
         )
@@ -4825,13 +6214,14 @@ impl Store {
         &self,
         id: &str,
     ) -> Result<Option<(String, String, i64, Option<String>, DateTime<Utc>)>> {
-        let row = sqlx::query(
-            r#"SELECT sha256, mime_type, bytes, name, created_at
+        let row = self
+            .query(
+                r#"SELECT sha256, mime_type, bytes, name, created_at
                FROM blobs WHERE id = ?"#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.map(|r| {
             let sha256: String = r.try_get("sha256").unwrap_or_default();
@@ -4846,16 +6236,17 @@ impl Store {
 
     // Artifact APIs
     pub async fn list_session_artifacts(&self, session_id: SessionId) -> Result<Vec<Artifact>> {
-        let rows = sqlx::query(
-            r#"SELECT id, session_id, task_id, workspace_id, worktree_id,
+        let rows = self
+            .query(
+                r#"SELECT id, session_id, task_id, workspace_id, worktree_id,
                       name, absolute_path, mime_type, bytes, created_at
                FROM artifacts
                WHERE session_id = ?
                ORDER BY position ASC"#,
-        )
-        .bind(session_id.0.to_string())
-        .fetch_all(&self.pool)
-        .await?;
+            )
+            .bind(session_id.0.to_string())
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
@@ -4875,7 +6266,7 @@ impl Store {
         let summary_json =
             serde_json::to_string(summary).context("serializing git status summary")?;
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
+        self.query(
             r#"INSERT INTO session_git_status_snapshots (
                     session_id, worktree_id, summary_json, created_at, updated_at
                )
@@ -4899,14 +6290,15 @@ impl Store {
         &self,
         session_id: SessionId,
     ) -> Result<Option<SessionGitStatusSummary>> {
-        let row = sqlx::query(
-            r#"SELECT summary_json
+        let row = self
+            .query(
+                r#"SELECT summary_json
                FROM session_git_status_snapshots
                WHERE session_id = ?"#,
-        )
-        .bind(session_id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(session_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
         let Some(row) = row else {
             return Ok(None);
         };
@@ -4924,15 +6316,16 @@ impl Store {
     }
 
     pub async fn get_artifact(&self, id: ArtifactId) -> Result<Option<Artifact>> {
-        let row = sqlx::query(
-            r#"SELECT id, session_id, task_id, workspace_id, worktree_id,
+        let row = self
+            .query(
+                r#"SELECT id, session_id, task_id, workspace_id, worktree_id,
                       name, absolute_path, mime_type, bytes, created_at
                FROM artifacts
                WHERE id = ?"#,
-        )
-        .bind(id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.and_then(|r| build_artifact_from_row(r).ok()))
     }
@@ -4943,13 +6336,13 @@ impl Store {
         artifacts: &[Artifact],
     ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query(r#"DELETE FROM artifacts WHERE session_id = ?"#)
+        self.query(r#"DELETE FROM artifacts WHERE session_id = ?"#)
             .bind(session_id.0.to_string())
             .execute(&mut *tx)
             .await?;
 
         for (idx, artifact) in artifacts.iter().enumerate() {
-            sqlx::query(
+            self.query(
                 r#"INSERT INTO artifacts (
                         id, session_id, task_id, workspace_id, worktree_id,
                         position, name, absolute_path, mime_type, bytes, created_at
@@ -4976,6 +6369,31 @@ impl Store {
     }
 
     // Session event APIs
+    async fn upsert_event_log_checkpoint(
+        &self,
+        checkpoint_seq: i64,
+        payload: Option<Value>,
+    ) -> Result<()> {
+        let payload_json = payload.map(|value| value.to_string());
+        let now = Utc::now().to_rfc3339();
+        self.query(
+            r#"INSERT INTO event_log_checkpoints
+               (id, checkpoint_seq, payload_json, created_at, updated_at)
+               VALUES (1, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   checkpoint_seq = excluded.checkpoint_seq,
+                   payload_json = COALESCE(excluded.payload_json, event_log_checkpoints.payload_json),
+                   updated_at = excluded.updated_at"#,
+        )
+        .bind(checkpoint_seq)
+        .bind(payload_json.as_deref())
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn append_session_event(
         &self,
         session_id: SessionId,
@@ -4985,6 +6403,16 @@ impl Store {
         payload_json: serde_json::Value,
     ) -> Result<SessionEvent> {
         crate::fault_injection::maybe_fail("ctx_store.append_session_event")?;
+        let payload_json = if matches!(
+            event_type,
+            SessionEventType::ToolCall
+                | SessionEventType::ToolCallUpdate
+                | SessionEventType::ToolResult
+        ) {
+            sanitize_tool_event_payload(&event_type, &payload_json)
+        } else {
+            payload_json
+        };
         let transient = is_transient_session_event(&event_type, &payload_json);
         let mut event = SessionEvent {
             seq: 0,
@@ -4997,30 +6425,149 @@ impl Store {
             transient,
             created_at: Utc::now(),
         };
-        let seq: i64 = sqlx::query_scalar(
-            r#"INSERT INTO session_events (id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-               RETURNING seq"#,
-        )
-        .bind(event.id.0.to_string())
-        .bind(event.session_id.0.to_string())
-        .bind(event.run_id.map(|r| r.0.to_string()))
-        .bind(event.turn_id.map(|t| t.0.to_string()))
-        .bind(session_event_type_to_str(&event.event_type))
-        .bind(payload_json.to_string())
-        .bind(if transient { 1 } else { 0 })
-        .bind(event.created_at.to_rfc3339())
-        .fetch_one(&self.pool)
-        .await?;
-        event.seq = seq;
-        self.update_session_snapshot_last_event_seq(event.session_id, event.seq)
-            .await?;
-        if let Some(turn_id) = event.turn_id {
-            if let Some(tool) = build_turn_tool_from_event(&event, turn_id) {
-                let _ = self.upsert_session_turn_tool(tool).await;
-            }
+        if matches!(event.event_type, SessionEventType::AssistantChunk) {
+            event.seq = next_stream_only_event_seq();
+            event.transient = true;
+            return Ok(event);
+        }
+        event.seq = self.event_log.next_seq();
+        if let Err(err) = self.event_log.enqueue(event.clone()).await {
+            tracing::warn!("event log enqueue failed, falling back to sync persist: {err:#}");
+            self.persist_session_events_batch(std::slice::from_ref(&event))
+                .await?;
         }
         Ok(event)
+    }
+
+    async fn flush_event_log_for_reads(&self) {
+        if let Err(err) = self.event_log.flush().await {
+            tracing::warn!("event log flush failed before read: {err:#}");
+        }
+    }
+
+    async fn persist_session_events_batch(&self, events: &[SessionEvent]) -> Result<()> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        struct EventInsertRow {
+            seq: i64,
+            id: String,
+            session_id: String,
+            run_id: Option<String>,
+            turn_id: Option<String>,
+            event_type: &'static str,
+            payload_text: String,
+            transient: i64,
+            created_at: String,
+            write_bytes: u64,
+        }
+
+        let mut rows = Vec::with_capacity(events.len());
+        let mut max_seq_by_session: HashMap<SessionId, i64> = HashMap::new();
+        let mut refresh_sessions: HashSet<SessionId> = HashSet::new();
+
+        for event in events {
+            let id = event.id.0.to_string();
+            let session_id = event.session_id.0.to_string();
+            let run_id = event.run_id.map(|r| r.0.to_string());
+            let turn_id = event.turn_id.map(|t| t.0.to_string());
+            let event_type = session_event_type_to_str(&event.event_type);
+            let payload_text = event.payload_json.to_string();
+            let created_at = event.created_at.to_rfc3339();
+            let write_bytes = bytes_str(&id)
+                + bytes_str(&session_id)
+                + bytes_opt_str(run_id.as_deref())
+                + bytes_opt_str(turn_id.as_deref())
+                + bytes_str(event_type)
+                + bytes_str(&payload_text)
+                + bytes_str(&created_at)
+                + BOOL_BYTES;
+            rows.push(EventInsertRow {
+                seq: event.seq,
+                id,
+                session_id,
+                run_id,
+                turn_id,
+                event_type,
+                payload_text,
+                transient: if event.transient { 1 } else { 0 },
+                created_at,
+                write_bytes,
+            });
+
+            max_seq_by_session
+                .entry(event.session_id)
+                .and_modify(|current| {
+                    *current = (*current).max(event.seq);
+                })
+                .or_insert(event.seq);
+
+            if let Some(turn_id) = event.turn_id {
+                if let Some(tool) = build_turn_tool_from_event(event, turn_id) {
+                    let _ = self.upsert_session_turn_tool(tool).await;
+                    refresh_sessions.insert(event.session_id);
+                }
+            }
+        }
+
+        let mut tx = self.pool.begin().await?;
+        let mut builder = sqlx::QueryBuilder::<Sqlite>::new(
+            "INSERT INTO session_events (seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at) ",
+        );
+        builder.push_values(rows.iter(), |mut b, row| {
+            b.push_bind(row.seq)
+                .push_bind(&row.id)
+                .push_bind(&row.session_id)
+                .push_bind(row.run_id.as_deref())
+                .push_bind(row.turn_id.as_deref())
+                .push_bind(row.event_type)
+                .push_bind(&row.payload_text)
+                .push_bind(row.transient)
+                .push_bind(&row.created_at);
+        });
+        builder.build().execute(&mut *tx).await?;
+        tx.commit().await?;
+
+        for row in rows {
+            record_write(WriteMetricTable::SessionEvents, 1, row.write_bytes);
+        }
+
+        for (session_id, seq) in &max_seq_by_session {
+            if let Err(err) = self
+                .update_session_snapshot_last_event_seq(*session_id, *seq)
+                .await
+            {
+                tracing::warn!(
+                    "failed to update session snapshot last_event_seq for {}: {err:#}",
+                    session_id.0
+                );
+            }
+            if let Err(err) = self
+                .update_active_snapshot_head_last_event_seq(*session_id, *seq)
+                .await
+            {
+                tracing::warn!(
+                    "failed to update active snapshot head last_event_seq for {}: {err:#}",
+                    session_id.0
+                );
+            }
+        }
+
+        for session_id in refresh_sessions {
+            let last_seq = max_seq_by_session.get(&session_id).copied();
+            if let Err(err) = self
+                .refresh_active_snapshot_head(session_id, last_seq)
+                .await
+            {
+                tracing::warn!(
+                    "failed to refresh active snapshot head for {}: {err:#}",
+                    session_id.0
+                );
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn list_session_events(&self, session_id: SessionId) -> Result<Vec<SessionEvent>> {
@@ -5029,12 +6576,13 @@ impl Store {
     }
 
     async fn session_last_event_seq(&self, session_id: SessionId) -> Result<i64> {
-        let seq = sqlx::query_scalar::<_, Option<i64>>(
-            r#"SELECT MAX(seq) FROM session_events WHERE session_id = ?"#,
-        )
-        .bind(session_id.0.to_string())
-        .fetch_one(&self.pool)
-        .await?;
+        let seq = self
+            .query_scalar::<Option<i64>>(
+                r#"SELECT MAX(seq) FROM session_events WHERE session_id = ?"#,
+            )
+            .bind(session_id.0.to_string())
+            .fetch_one(&self.pool)
+            .await?;
         Ok(seq.unwrap_or(0))
     }
 
@@ -5050,12 +6598,13 @@ impl Store {
         include_transient: bool,
     ) -> Result<Vec<SessionEvent>> {
         crate::fault_injection::maybe_fail("ctx_store.list_session_events_page_by_seq")?;
+        self.flush_event_log_for_reads().await;
         let session_id_str = session_id.0.to_string();
         let limit_i64 = limit.map(|n| n as i64);
         let include_transient = if include_transient { 1 } else { 0 };
         let rows = if let Some(after_seq) = after_seq {
             if let Some(limit) = limit_i64 {
-                sqlx::query(
+                self.query(
                     r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                        FROM session_events
                        WHERE session_id = ?
@@ -5071,7 +6620,7 @@ impl Store {
                 .fetch_all(&self.pool)
                 .await?
             } else {
-                sqlx::query(
+                self.query(
                     r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                        FROM session_events
                        WHERE session_id = ?
@@ -5086,7 +6635,7 @@ impl Store {
                 .await?
             }
         } else if let Some(limit) = limit_i64 {
-            sqlx::query(
+            self.query(
                 r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                    FROM session_events
                    WHERE session_id = ?
@@ -5100,7 +6649,7 @@ impl Store {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query(
+            self.query(
                 r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                    FROM session_events
                    WHERE session_id = ?
@@ -5153,8 +6702,9 @@ impl Store {
         turn_id: TurnId,
         include_transient: bool,
     ) -> Result<Vec<SessionEvent>> {
+        self.flush_event_log_for_reads().await;
         let include_transient = if include_transient { 1 } else { 0 };
-        let rows = sqlx::query(
+        let rows = self.query(
             r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                FROM session_events
                WHERE session_id = ? AND turn_id = ? AND (? = 1 OR transient = 0)
@@ -5204,7 +6754,7 @@ impl Store {
         session_id: SessionId,
         run_id: RunId,
     ) -> Result<Option<SessionEvent>> {
-        let row = sqlx::query(
+        let row = self.query(
             r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                FROM session_events
                WHERE session_id = ? AND run_id = ? AND event_type IN ('done', 'error', 'turn_interrupted')
@@ -5265,7 +6815,8 @@ impl Store {
             sql.push('?');
         }
         sql.push(')');
-        let mut q = sqlx::query(&sql)
+        let sql = self.rewrite_sql(&sql);
+        let mut q = sqlx::query(sql.as_ref())
             .bind(session_id.0.to_string())
             .bind(turn_id.0.to_string());
         for t in event_types {
@@ -5281,9 +6832,10 @@ impl Store {
         limit: u32,
         include_transient: bool,
     ) -> Result<Vec<SessionEvent>> {
+        self.flush_event_log_for_reads().await;
         let session_id_str = session_id.0.to_string();
         let include_transient = if include_transient { 1 } else { 0 };
-        let rows = sqlx::query(
+        let rows = self.query(
             r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                FROM session_events
                WHERE session_id = ?
@@ -5352,7 +6904,7 @@ impl Store {
             last_used_at: None,
         };
         let scopes_json = serde_json::to_string(&profile.scopes)?;
-        sqlx::query(
+        self.query(
             r#"INSERT INTO mobile_connection_profiles
                (id, label, base_url, token_hash, token_prefix, scopes_json, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)"#,
@@ -5370,13 +6922,14 @@ impl Store {
     }
 
     pub async fn list_mobile_connection_profiles(&self) -> Result<Vec<MobileConnectionProfile>> {
-        let rows = sqlx::query(
-            r#"SELECT id, label, base_url, token_prefix, scopes_json, created_at, last_used_at
+        let rows = self
+            .query(
+                r#"SELECT id, label, base_url, token_prefix, scopes_json, created_at, last_used_at
                FROM mobile_connection_profiles
                ORDER BY created_at DESC"#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
+            )
+            .fetch_all(&self.pool)
+            .await?;
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             out.push(build_mobile_connection_profile_from_row(row)?);
@@ -5388,13 +6941,14 @@ impl Store {
         &self,
         id: ConnectionProfileId,
     ) -> Result<Option<MobileConnectionProfile>> {
-        let row = sqlx::query(
-            r#"SELECT id, label, base_url, token_prefix, scopes_json, created_at, last_used_at
+        let row = self
+            .query(
+                r#"SELECT id, label, base_url, token_prefix, scopes_json, created_at, last_used_at
                FROM mobile_connection_profiles WHERE id = ?"#,
-        )
-        .bind(id.0.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
         row.map(build_mobile_connection_profile_from_row)
             .transpose()
     }
@@ -5403,19 +6957,20 @@ impl Store {
         &self,
         token_hash: &str,
     ) -> Result<Option<MobileConnectionProfile>> {
-        let row = sqlx::query(
-            r#"SELECT id, label, base_url, token_prefix, scopes_json, created_at, last_used_at
+        let row = self
+            .query(
+                r#"SELECT id, label, base_url, token_prefix, scopes_json, created_at, last_used_at
                FROM mobile_connection_profiles WHERE token_hash = ?"#,
-        )
-        .bind(token_hash)
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind(token_hash)
+            .fetch_optional(&self.pool)
+            .await?;
         row.map(build_mobile_connection_profile_from_row)
             .transpose()
     }
 
     pub async fn mark_mobile_connection_profile_used(&self, id: ConnectionProfileId) -> Result<()> {
-        sqlx::query(r#"UPDATE mobile_connection_profiles SET last_used_at = ? WHERE id = ?"#)
+        self.query(r#"UPDATE mobile_connection_profiles SET last_used_at = ? WHERE id = ?"#)
             .bind(Utc::now().to_rfc3339())
             .bind(id.0.to_string())
             .execute(&self.pool)
@@ -5424,7 +6979,7 @@ impl Store {
     }
 
     pub async fn delete_mobile_connection_profile(&self, id: ConnectionProfileId) -> Result<()> {
-        sqlx::query(r#"DELETE FROM mobile_connection_profiles WHERE id = ?"#)
+        self.query(r#"DELETE FROM mobile_connection_profiles WHERE id = ?"#)
             .bind(id.0.to_string())
             .execute(&self.pool)
             .await?;
@@ -5432,15 +6987,16 @@ impl Store {
     }
 
     pub async fn get_mobile_access_config(&self) -> Result<Option<MobileAccessConfig>> {
-        let row = sqlx::query(
-            r#"SELECT id, profile_id, tunnel_id, public_base_url, relay_base_url, tunnel_secret,
+        let row = self
+            .query(
+                r#"SELECT id, profile_id, tunnel_id, public_base_url, relay_base_url, tunnel_secret,
                       daemon_public_key, daemon_private_key, enabled, created_at, updated_at
                FROM mobile_access_config
                WHERE id = ?"#,
-        )
-        .bind("default")
-        .fetch_optional(&self.pool)
-        .await?;
+            )
+            .bind("default")
+            .fetch_optional(&self.pool)
+            .await?;
 
         let Some(row) = row else {
             return Ok(None);
@@ -5468,7 +7024,7 @@ impl Store {
     ) -> Result<MobileAccessConfig> {
         let created_at = config.created_at.to_rfc3339();
         let updated_at = Utc::now().to_rfc3339();
-        sqlx::query(
+        self.query(
             r#"INSERT INTO mobile_access_config
                 (id, profile_id, tunnel_id, public_base_url, relay_base_url, tunnel_secret, daemon_public_key, daemon_private_key, enabled, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -5503,7 +7059,7 @@ impl Store {
     }
 
     pub async fn set_mobile_access_enabled(&self, enabled: bool) -> Result<()> {
-        sqlx::query(r#"UPDATE mobile_access_config SET enabled = ?, updated_at = ? WHERE id = ?"#)
+        self.query(r#"UPDATE mobile_access_config SET enabled = ?, updated_at = ? WHERE id = ?"#)
             .bind(if enabled { 1 } else { 0 })
             .bind(Utc::now().to_rfc3339())
             .bind("default")
@@ -5518,7 +7074,7 @@ impl Store {
         token_hash: &str,
         expires_at: DateTime<Utc>,
     ) -> Result<()> {
-        sqlx::query(
+        self.query(
             r#"INSERT INTO mobile_pairing_tokens
                 (id, token_hash, created_at, expires_at)
                VALUES (?, ?, ?, ?)"#,
@@ -5533,11 +7089,11 @@ impl Store {
     }
 
     pub async fn consume_mobile_pairing_token(&self, token_hash: &str) -> Result<bool> {
-        let row =
-            sqlx::query(r#"SELECT id, expires_at FROM mobile_pairing_tokens WHERE token_hash = ?"#)
-                .bind(token_hash)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = self
+            .query(r#"SELECT id, expires_at FROM mobile_pairing_tokens WHERE token_hash = ?"#)
+            .bind(token_hash)
+            .fetch_optional(&self.pool)
+            .await?;
 
         let Some(row) = row else {
             return Ok(false);
@@ -5545,14 +7101,15 @@ impl Store {
         let expires_at: String = row.try_get("expires_at")?;
         let expires_at = parse_dt(&expires_at)?;
         if expires_at < Utc::now() {
-            let _ = sqlx::query(r#"DELETE FROM mobile_pairing_tokens WHERE token_hash = ?"#)
+            let _ = self
+                .query(r#"DELETE FROM mobile_pairing_tokens WHERE token_hash = ?"#)
                 .bind(token_hash)
                 .execute(&self.pool)
                 .await;
             return Ok(false);
         }
 
-        sqlx::query(r#"DELETE FROM mobile_pairing_tokens WHERE token_hash = ?"#)
+        self.query(r#"DELETE FROM mobile_pairing_tokens WHERE token_hash = ?"#)
             .bind(token_hash)
             .execute(&self.pool)
             .await?;
@@ -5564,13 +7121,14 @@ impl Store {
         id: MobileDeviceId,
         seq: i64,
     ) -> Result<Option<i64>> {
-        let row = sqlx::query(r#"SELECT last_seen_seq FROM mobile_devices WHERE id = ?"#)
+        let row = self
+            .query(r#"SELECT last_seen_seq FROM mobile_devices WHERE id = ?"#)
             .bind(id.0.to_string())
             .fetch_optional(&self.pool)
             .await?;
 
         let last_seen: Option<i64> = row.and_then(|r| r.try_get("last_seen_seq").ok());
-        sqlx::query(
+        self.query(
             r#"UPDATE mobile_devices
                SET last_seen_seq = ?, last_seen_at = ?
                WHERE id = ?"#,
@@ -5598,7 +7156,7 @@ impl Store {
             app_version,
         } = update;
         let now = Utc::now();
-        sqlx::query(
+        self.query(
             r#"INSERT INTO mobile_devices
                 (id, profile_id, device_label, platform, push_token, push_provider, public_key, app_version, created_at, last_seen_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -5633,7 +7191,7 @@ impl Store {
         &self,
         id: MobileDeviceId,
     ) -> Result<Option<MobileDeviceRegistration>> {
-        let row = sqlx::query(
+        let row = self.query(
             r#"SELECT id, profile_id, device_label, platform, push_token, push_provider, public_key, app_version, created_at, last_seen_at
                FROM mobile_devices WHERE id = ?"#,
         )
@@ -5647,7 +7205,7 @@ impl Store {
         &self,
         profile_id: ConnectionProfileId,
     ) -> Result<Vec<MobileDeviceRegistration>> {
-        let rows = sqlx::query(
+        let rows = self.query(
             r#"SELECT id, profile_id, device_label, platform, push_token, push_provider, public_key, app_version, created_at, last_seen_at
                FROM mobile_devices WHERE profile_id = ? ORDER BY created_at DESC"#,
         )
@@ -5662,9 +7220,7 @@ impl Store {
     }
 }
 
-fn build_mobile_connection_profile_from_row(
-    row: sqlx::sqlite::SqliteRow,
-) -> Result<MobileConnectionProfile> {
+fn build_mobile_connection_profile_from_row(row: SqliteRow) -> Result<MobileConnectionProfile> {
     let id: String = row.try_get("id")?;
     let scopes_json: String = row.try_get("scopes_json")?;
     let created_at: String = row.try_get("created_at")?;
@@ -5681,7 +7237,7 @@ fn build_mobile_connection_profile_from_row(
     })
 }
 
-fn build_mobile_device_from_row(row: sqlx::sqlite::SqliteRow) -> Result<MobileDeviceRegistration> {
+fn build_mobile_device_from_row(row: SqliteRow) -> Result<MobileDeviceRegistration> {
     let id: String = row.try_get("id")?;
     let profile_id: String = row.try_get("profile_id")?;
     let created_at: String = row.try_get("created_at")?;
@@ -5700,7 +7256,7 @@ fn build_mobile_device_from_row(row: sqlx::sqlite::SqliteRow) -> Result<MobileDe
     })
 }
 
-fn map_merge_queue_entry(row: sqlx::sqlite::SqliteRow) -> Option<MergeQueueEntry> {
+fn map_merge_queue_entry(row: SqliteRow) -> Option<MergeQueueEntry> {
     let id: String = row.try_get("id").ok()?;
     let workspace_id: String = row.try_get("workspace_id").ok()?;
     let worktree_id: Option<String> = row.try_get("worktree_id").ok()?;
@@ -5732,7 +7288,7 @@ fn map_merge_queue_entry(row: sqlx::sqlite::SqliteRow) -> Option<MergeQueueEntry
     })
 }
 
-fn map_merge_queue_run(row: sqlx::sqlite::SqliteRow) -> Option<MergeQueueRun> {
+fn map_merge_queue_run(row: SqliteRow) -> Option<MergeQueueRun> {
     let id: String = row.try_get("id").ok()?;
     let entry_id: String = row.try_get("entry_id").ok()?;
     let status: String = row.try_get("status").ok()?;
@@ -6130,7 +7686,7 @@ fn is_transient_session_event(
     false
 }
 
-fn build_subagent_invocation_from_row(r: sqlx::sqlite::SqliteRow) -> Result<SubagentInvocation> {
+fn build_subagent_invocation_from_row(r: SqliteRow) -> Result<SubagentInvocation> {
     let id: String = r.try_get("id")?;
     let tool_call_id: String = r.try_get("tool_call_id")?;
     let parent_session_id: String = r.try_get("parent_session_id")?;
@@ -6157,9 +7713,7 @@ fn build_subagent_invocation_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Suba
     })
 }
 
-fn build_subagent_invocation_child_from_row(
-    r: sqlx::sqlite::SqliteRow,
-) -> Result<SubagentInvocationChild> {
+fn build_subagent_invocation_child_from_row(r: SqliteRow) -> Result<SubagentInvocationChild> {
     let invocation_id: String = r.try_get("invocation_id")?;
     let child_session_id: String = r.try_get("child_session_id")?;
     let run_id: Option<String> = r.try_get("run_id")?;
@@ -6184,7 +7738,7 @@ fn build_subagent_invocation_child_from_row(
     })
 }
 
-fn build_artifact_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Artifact> {
+fn build_artifact_from_row(r: SqliteRow) -> Result<Artifact> {
     let id: String = r.try_get("id")?;
     let session_id: String = r.try_get("session_id")?;
     let task_id: String = r.try_get("task_id")?;
@@ -6207,7 +7761,7 @@ fn build_artifact_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Artifact> {
     })
 }
 
-fn build_session_turn_from_row(r: sqlx::sqlite::SqliteRow) -> Result<SessionTurn> {
+fn build_session_turn_from_row(r: SqliteRow) -> Result<SessionTurn> {
     let turn_id: String = r.try_get("turn_id")?;
     let session_id: String = r.try_get("session_id")?;
     let run_id: Option<String> = r.try_get("run_id")?;
@@ -6247,7 +7801,7 @@ fn build_session_turn_from_row(r: sqlx::sqlite::SqliteRow) -> Result<SessionTurn
     })
 }
 
-fn build_session_turn_tool_from_row(r: sqlx::sqlite::SqliteRow) -> Result<SessionTurnTool> {
+fn build_session_turn_tool_from_row(r: SqliteRow) -> Result<SessionTurnTool> {
     let session_id: String = r.try_get("session_id")?;
     let tool_call_id: String = r.try_get("tool_call_id")?;
     let turn_id: String = r.try_get("turn_id")?;
@@ -6257,6 +7811,10 @@ fn build_session_turn_tool_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Sessio
     let input_json = input_json
         .as_deref()
         .and_then(|s| serde_json::from_str::<Value>(s).ok());
+    let input_truncated: Option<i64> = r.try_get("input_truncated")?;
+    let input_original_bytes: Option<i64> = r.try_get("input_original_bytes")?;
+    let output_truncated: Option<i64> = r.try_get("output_truncated")?;
+    let output_original_bytes: Option<i64> = r.try_get("output_original_bytes")?;
 
     Ok(SessionTurnTool {
         session_id: SessionId(uuid::Uuid::parse_str(&session_id)?),
@@ -6267,14 +7825,16 @@ fn build_session_turn_tool_from_row(r: sqlx::sqlite::SqliteRow) -> Result<Sessio
         status: r.try_get("status")?,
         input_json,
         output_text: r.try_get("output_text")?,
+        input_truncated: input_truncated.map(|value| value != 0),
+        input_original_bytes,
+        output_truncated: output_truncated.map(|value| value != 0),
+        output_original_bytes,
         created_at: parse_dt(&created_at)?,
         updated_at: parse_dt(&updated_at)?,
     })
 }
 
-fn build_session_turn_tool_summary_from_row(
-    r: sqlx::sqlite::SqliteRow,
-) -> Result<SessionTurnToolSummary> {
+fn build_session_turn_tool_summary_from_row(r: SqliteRow) -> Result<SessionTurnToolSummary> {
     let session_id: String = r.try_get("session_id")?;
     let tool_call_id: String = r.try_get("tool_call_id")?;
     let turn_id: String = r.try_get("turn_id")?;
@@ -6284,6 +7844,11 @@ fn build_session_turn_tool_summary_from_row(
     let input_json = input_json
         .as_deref()
         .and_then(|s| serde_json::from_str::<Value>(s).ok());
+    let output_text: Option<String> = r.try_get("output_text")?;
+    let input_truncated: Option<i64> = r.try_get("input_truncated")?;
+    let input_original_bytes: Option<i64> = r.try_get("input_original_bytes")?;
+    let output_truncated: Option<i64> = r.try_get("output_truncated")?;
+    let output_original_bytes: Option<i64> = r.try_get("output_original_bytes")?;
     let input_preview = tool_input_preview_from_value(input_json.as_ref());
 
     Ok(SessionTurnToolSummary {
@@ -6294,6 +7859,11 @@ fn build_session_turn_tool_summary_from_row(
         title: r.try_get("title")?,
         status: r.try_get("status")?,
         input_preview,
+        output_preview: output_text,
+        input_truncated: input_truncated.map(|value| value != 0),
+        input_original_bytes,
+        output_truncated: output_truncated.map(|value| value != 0),
+        output_original_bytes,
         created_at: parse_dt(&created_at)?,
         updated_at: parse_dt(&updated_at)?,
     })
@@ -6308,9 +7878,29 @@ fn summarize_session_turn_tool(tool: &SessionTurnTool) -> SessionTurnToolSummary
         title: tool.title.clone(),
         status: tool.status.clone(),
         input_preview: tool_input_preview_from_value(tool.input_json.as_ref()),
+        output_preview: tool.output_text.clone(),
+        input_truncated: tool.input_truncated,
+        input_original_bytes: tool.input_original_bytes,
+        output_truncated: tool.output_truncated,
+        output_original_bytes: tool.output_original_bytes,
         created_at: tool.created_at,
         updated_at: tool.updated_at,
     }
+}
+
+const TOOL_PREVIEW_MAX_LINES: usize = 5;
+const TOOL_PREVIEW_MAX_LINE_CHARS: usize = 80;
+
+struct ToolTextPreview {
+    preview: String,
+    truncated: bool,
+    original_bytes: usize,
+}
+
+struct ToolJsonPreview {
+    preview: Option<Value>,
+    truncated: Option<bool>,
+    original_bytes: Option<i64>,
 }
 
 fn tool_input_preview_from_value(input: Option<&Value>) -> Option<Value> {
@@ -6354,8 +7944,112 @@ fn tool_input_preview_from_value(input: Option<&Value>) -> Option<Value> {
     if out.is_empty() {
         None
     } else {
-        Some(Value::Object(out))
+        let value = Value::Object(out);
+        let mut truncated = false;
+        Some(truncate_preview_value(&value, &mut truncated))
     }
+}
+
+fn truncate_preview_value(value: &Value, truncated: &mut bool) -> Value {
+    match value {
+        Value::String(value) => {
+            let preview = build_text_preview(value);
+            if preview.truncated {
+                *truncated = true;
+            }
+            Value::String(preview.preview)
+        }
+        Value::Array(values) => Value::Array(
+            values
+                .iter()
+                .map(|value| truncate_preview_value(value, truncated))
+                .collect(),
+        ),
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (key, value) in map {
+                out.insert(key.clone(), truncate_preview_value(value, truncated));
+            }
+            Value::Object(out)
+        }
+        _ => value.clone(),
+    }
+}
+
+fn push_text_preview_line(out: &mut Vec<String>, truncated: &mut bool, line: &str) {
+    if line.chars().count() > TOOL_PREVIEW_MAX_LINE_CHARS {
+        *truncated = true;
+        out.push(line.chars().take(TOOL_PREVIEW_MAX_LINE_CHARS).collect());
+    } else {
+        out.push(line.to_string());
+    }
+}
+
+fn build_text_preview(text: &str) -> ToolTextPreview {
+    let original_bytes = text.len();
+    let mut truncated = false;
+    let lines: Vec<&str> = text.lines().collect();
+    let total_lines = lines.len();
+
+    let mut out = Vec::new();
+
+    if total_lines <= TOOL_PREVIEW_MAX_LINES {
+        for line in lines {
+            push_text_preview_line(&mut out, &mut truncated, line);
+        }
+    } else {
+        truncated = true;
+        let head_count = TOOL_PREVIEW_MAX_LINES / 2;
+        let tail_count = TOOL_PREVIEW_MAX_LINES.saturating_sub(head_count + 1);
+        for line in lines.iter().take(head_count) {
+            push_text_preview_line(&mut out, &mut truncated, line);
+        }
+        let omitted = total_lines.saturating_sub(head_count + tail_count);
+        out.push(format!("... +{omitted} lines"));
+        for line in lines.iter().skip(total_lines - tail_count) {
+            push_text_preview_line(&mut out, &mut truncated, line);
+        }
+    }
+
+    ToolTextPreview {
+        preview: out.join("\n"),
+        truncated,
+        original_bytes,
+    }
+}
+
+fn build_json_preview(input: Option<&Value>, preview: Option<Value>) -> ToolJsonPreview {
+    let original_bytes = input
+        .and_then(|value| serde_json::to_string(value).ok())
+        .map(|value| value.len() as i64);
+    let mut preview_truncated = false;
+    let preview = preview.map(|value| truncate_preview_value(&value, &mut preview_truncated));
+    let preview_bytes = preview
+        .as_ref()
+        .and_then(|value| serde_json::to_string(value).ok())
+        .map(|value| value.len() as i64);
+    let mut truncated = preview_truncated;
+    if let (Some(original), Some(preview_bytes)) = (original_bytes, preview_bytes) {
+        if original > preview_bytes {
+            truncated = true;
+        }
+    } else if original_bytes.is_some() && preview.is_none() {
+        truncated = true;
+    }
+    let truncated = if original_bytes.is_some() || preview.is_some() {
+        Some(truncated)
+    } else {
+        None
+    };
+    ToolJsonPreview {
+        preview,
+        truncated,
+        original_bytes,
+    }
+}
+
+fn build_output_preview(text: &str) -> ToolTextPreview {
+    build_text_preview(text)
 }
 
 fn normalize_tool_status(status: &str, event_type: SessionEventType) -> String {
@@ -6383,6 +8077,120 @@ fn normalize_tool_status(status: &str, event_type: SessionEventType) -> String {
 
 fn extract_tool_update(payload: &Value) -> &Value {
     payload.get("acp_update").unwrap_or(payload)
+}
+
+fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Value) -> Value {
+    let update = extract_tool_update(raw_payload);
+    let tool_call_id = tool_call_id_from_payload(raw_payload).unwrap_or_default();
+
+    let tool_kind = update
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
+        .map(|v| v.to_string());
+
+    let title = update
+        .get("title")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
+        .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
+        .map(|v| v.to_string());
+
+    let raw_status = update
+        .get("status")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.pointer("/toolCall/status").and_then(|v| v.as_str()));
+    let status = if let Some(raw_status) = raw_status {
+        normalize_tool_status(raw_status, event_type.clone())
+    } else if matches!(event_type, SessionEventType::ToolResult) {
+        "completed".to_string()
+    } else {
+        "pending".to_string()
+    };
+
+    let input = update
+        .pointer("/rawInput")
+        .or_else(|| update.pointer("/toolCall/rawInput"))
+        .or_else(|| update.pointer("/toolCall/input"))
+        .or_else(|| update.pointer("/input"))
+        .or_else(|| update.pointer("/args"));
+    let input_preview = tool_input_preview_from_value(input);
+    let input_preview = input_preview.or_else(|| update.get("input_preview").cloned());
+    let input_meta = build_json_preview(input, input_preview);
+
+    let output_meta = extract_tool_output_text(update)
+        .map(|output| build_output_preview(&output))
+        .filter(|preview| !preview.preview.trim().is_empty());
+    let output_spool_path = update
+        .get("output_spool_path")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            raw_payload
+                .get("output_spool_path")
+                .and_then(|v| v.as_str())
+        })
+        .map(|v| v.to_string());
+
+    let mut obj = serde_json::Map::new();
+    if !tool_call_id.trim().is_empty() {
+        obj.insert("tool_call_id".to_string(), Value::String(tool_call_id));
+    }
+    if let Some(v) = tool_kind {
+        obj.insert("kind".to_string(), Value::String(v));
+    }
+    if let Some(v) = title {
+        obj.insert("title".to_string(), Value::String(v));
+    }
+    obj.insert("status".to_string(), Value::String(status));
+
+    if let Some(v) = input_meta.preview {
+        obj.insert("input_preview".to_string(), v);
+    }
+    let input_truncated = update
+        .get("input_truncated")
+        .and_then(|v| v.as_bool())
+        .or(input_meta.truncated);
+    let input_original_bytes = update
+        .get("input_original_bytes")
+        .and_then(|v| v.as_i64())
+        .or(input_meta.original_bytes);
+    if let Some(truncated) = input_truncated {
+        obj.insert("input_truncated".to_string(), Value::Bool(truncated));
+    }
+    if let Some(bytes) = input_original_bytes {
+        obj.insert(
+            "input_original_bytes".to_string(),
+            Value::Number(serde_json::Number::from(bytes)),
+        );
+    }
+
+    if let Some(output_meta) = output_meta {
+        obj.insert(
+            "output_preview".to_string(),
+            Value::String(output_meta.preview),
+        );
+        let output_truncated = update
+            .get("output_truncated")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(output_meta.truncated);
+        let output_original_bytes = update
+            .get("output_original_bytes")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(output_meta.original_bytes as i64);
+        obj.insert(
+            "output_truncated".to_string(),
+            Value::Bool(output_truncated),
+        );
+        obj.insert(
+            "output_original_bytes".to_string(),
+            Value::Number(serde_json::Number::from(output_original_bytes)),
+        );
+    }
+    if let Some(path) = output_spool_path {
+        obj.insert("output_spool_path".to_string(), Value::String(path));
+    }
+
+    Value::Object(obj)
 }
 
 fn build_turn_tool_from_event(event: &SessionEvent, turn_id: TurnId) -> Option<SessionTurnTool> {
@@ -6430,11 +8238,31 @@ fn build_turn_tool_from_event(event: &SessionEvent, turn_id: TurnId) -> Option<S
         .or_else(|| update.pointer("/toolCall/input"))
         .or_else(|| update.pointer("/input"))
         .or_else(|| update.pointer("/args"));
-    let input_json = input
-        .cloned()
-        .or_else(|| update.get("input_preview").cloned());
+    let input_preview = tool_input_preview_from_value(input);
+    let input_preview = input_preview.or_else(|| update.get("input_preview").cloned());
+    let input_meta = build_json_preview(input, input_preview);
+    let input_truncated = update
+        .get("input_truncated")
+        .and_then(|v| v.as_bool())
+        .or(input_meta.truncated);
+    let input_original_bytes = update
+        .get("input_original_bytes")
+        .and_then(|v| v.as_i64())
+        .or(input_meta.original_bytes);
 
-    let output_text = extract_tool_output_text(update);
+    let output_meta = extract_tool_output_text(update)
+        .map(|output| build_output_preview(&output))
+        .filter(|preview| !preview.preview.trim().is_empty());
+    let output_truncated = update
+        .get("output_truncated")
+        .and_then(|v| v.as_bool())
+        .or(output_meta.as_ref().map(|preview| preview.truncated));
+    let output_original_bytes = update
+        .get("output_original_bytes")
+        .and_then(|v| v.as_i64())
+        .or(output_meta
+            .as_ref()
+            .map(|preview| preview.original_bytes as i64));
 
     Some(SessionTurnTool {
         session_id: event.session_id,
@@ -6443,8 +8271,12 @@ fn build_turn_tool_from_event(event: &SessionEvent, turn_id: TurnId) -> Option<S
         tool_kind,
         title,
         status,
-        input_json,
-        output_text,
+        input_json: input_meta.preview,
+        output_text: output_meta.as_ref().map(|preview| preview.preview.clone()),
+        input_truncated,
+        input_original_bytes,
+        output_truncated,
+        output_original_bytes,
         created_at: event.created_at,
         updated_at: event.created_at,
     })
@@ -6557,6 +8389,10 @@ fn build_turn_tools_from_events(
         status: Option<String>,
         input_json: Option<Value>,
         output_text: Option<String>,
+        input_truncated: Option<bool>,
+        input_original_bytes: Option<i64>,
+        output_truncated: Option<bool>,
+        output_original_bytes: Option<i64>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
         initialized: bool,
@@ -6621,14 +8457,66 @@ fn build_turn_tools_from_events(
             .or_else(|| update.pointer("/input"))
             .or_else(|| update.pointer("/args"));
         if let Some(value) = input {
-            entry.input_json = Some(value.clone());
+            let input_preview = tool_input_preview_from_value(Some(value));
+            let input_meta = build_json_preview(Some(value), input_preview);
+            entry.input_json = input_meta.preview.or_else(|| entry.input_json.clone());
+            let input_truncated = update
+                .get("input_truncated")
+                .and_then(|v| v.as_bool())
+                .or(input_meta.truncated);
+            let input_original_bytes = update
+                .get("input_original_bytes")
+                .and_then(|v| v.as_i64())
+                .or(input_meta.original_bytes);
+            if let Some(next) = input_truncated {
+                entry.input_truncated = Some(entry.input_truncated.unwrap_or(false) || next);
+            }
+            if let Some(next) = input_original_bytes {
+                entry.input_original_bytes =
+                    Some(entry.input_original_bytes.unwrap_or(0).max(next));
+            }
         } else if let Some(preview) = update.get("input_preview") {
-            entry.input_json = Some(preview.clone());
+            let input_meta = build_json_preview(None, Some(preview.clone()));
+            entry.input_json = input_meta.preview.or_else(|| entry.input_json.clone());
+            let input_truncated = update
+                .get("input_truncated")
+                .and_then(|v| v.as_bool())
+                .or(input_meta.truncated);
+            let input_original_bytes = update
+                .get("input_original_bytes")
+                .and_then(|v| v.as_i64())
+                .or(input_meta.original_bytes);
+            if let Some(next) = input_truncated {
+                entry.input_truncated = Some(entry.input_truncated.unwrap_or(false) || next);
+            }
+            if let Some(next) = input_original_bytes {
+                entry.input_original_bytes =
+                    Some(entry.input_original_bytes.unwrap_or(0).max(next));
+            }
         }
 
         if let Some(output) = extract_tool_output_text(update) {
-            let merged = merge_streaming_text(entry.output_text.as_deref(), &output);
-            entry.output_text = Some(merged);
+            let preview = build_output_preview(&output);
+            if !preview.preview.trim().is_empty() {
+                let merged = merge_streaming_text(entry.output_text.as_deref(), &preview.preview);
+                entry.output_text = Some(merged);
+                let output_truncated = update
+                    .get("output_truncated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(preview.truncated);
+                let output_original_bytes = update
+                    .get("output_original_bytes")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(preview.original_bytes as i64);
+                entry.output_truncated =
+                    Some(entry.output_truncated.unwrap_or(false) || output_truncated);
+                entry.output_original_bytes = Some(
+                    entry
+                        .output_original_bytes
+                        .unwrap_or(0)
+                        .max(output_original_bytes),
+                );
+            }
         }
     }
 
@@ -6643,6 +8531,10 @@ fn build_turn_tools_from_events(
             status: agg.status,
             input_json: agg.input_json,
             output_text: agg.output_text,
+            input_truncated: agg.input_truncated,
+            input_original_bytes: agg.input_original_bytes,
+            output_truncated: agg.output_truncated,
+            output_original_bytes: agg.output_original_bytes,
             created_at: agg.created_at,
             updated_at: agg.updated_at,
         })
@@ -6650,4 +8542,145 @@ fn build_turn_tools_from_events(
 
     out.sort_by_key(|t| t.created_at);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use serde_json::json;
+    use sqlx::Row;
+
+    async fn setup_store() -> (tempfile::TempDir, Store) {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("db.sqlite");
+        let store = Store::open(&db_path).await.unwrap();
+        (dir, store)
+    }
+
+    async fn create_session_with_turn(
+        store: &Store,
+        assistant_partial: Option<String>,
+    ) -> (Session, TurnId) {
+        let ws = store
+            .create_workspace("test".into(), "/tmp/test".into())
+            .await
+            .unwrap();
+        let task = store.create_task(ws.id, "task".into(), None).await.unwrap();
+        let worktree = store
+            .create_worktree(ws.id, "/tmp/ws".into(), "abc123".into(), None)
+            .await
+            .unwrap();
+        let session = store
+            .create_session(
+                task.id,
+                ws.id,
+                worktree.id,
+                "fake".into(),
+                "fake".into(),
+                "implementer".into(),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let turn_id = TurnId::new();
+        let now = Utc::now();
+        let turn = SessionTurn {
+            turn_id,
+            session_id: session.id,
+            run_id: None,
+            user_message_id: None,
+            status: SessionTurnStatus::Running,
+            start_seq: Some(1),
+            end_seq: None,
+            started_at: now,
+            updated_at: now,
+            assistant_partial,
+            thought_partial: None,
+            metrics_json: None,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+        };
+        store.insert_session_turn(turn).await.unwrap();
+
+        (session, turn_id)
+    }
+
+    #[tokio::test]
+    async fn session_head_snapshot_excludes_assistant_partials() {
+        let (_dir, store) = setup_store().await;
+        let (session, turn_id) =
+            create_session_with_turn(&store, Some("partial".to_string())).await;
+
+        let _ = store
+            .append_session_event(
+                session.id,
+                None,
+                Some(turn_id),
+                SessionEventType::AssistantChunk,
+                json!({"content_fragment":"hi"}),
+            )
+            .await
+            .unwrap();
+        let _ = store
+            .append_session_event(
+                session.id,
+                None,
+                Some(turn_id),
+                SessionEventType::Notice,
+                json!({"msg":"done"}),
+            )
+            .await
+            .unwrap();
+
+        let events = store.list_session_events(session.id).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(events
+            .iter()
+            .all(|event| !matches!(event.event_type, SessionEventType::AssistantChunk)));
+
+        let head = store
+            .get_session_head_snapshot(session.id, 10, true)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(head.turns.len(), 1);
+        assert!(head.turns[0].assistant_partial.is_none());
+        assert!(head
+            .events
+            .iter()
+            .all(|event| !matches!(event.event_type, SessionEventType::AssistantChunk)));
+        assert!(head
+            .events
+            .iter()
+            .any(|event| matches!(event.event_type, SessionEventType::Notice)));
+    }
+
+    #[tokio::test]
+    async fn active_snapshot_head_strips_assistant_partials() {
+        let (_dir, store) = setup_store().await;
+        let (session, _turn_id) =
+            create_session_with_turn(&store, Some("partial".to_string())).await;
+
+        let row = sqlx::query(
+            r#"SELECT turns_json
+               FROM session_active_snapshot_heads
+               WHERE session_id = ?"#,
+        )
+        .bind(session.id.0.to_string())
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        let turns_json: String = row.try_get("turns_json").unwrap();
+        let turns: Vec<SessionTurn> = serde_json::from_str(&turns_json).unwrap();
+        assert_eq!(turns.len(), 1);
+        assert!(turns[0].assistant_partial.is_none());
+    }
 }

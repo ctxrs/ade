@@ -27,13 +27,10 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::timeout;
-use uuid::Uuid;
 
 use crate::app::{ComposerMenuId, ShellView};
 use crate::app::state::RightPaneMode;
-use crate::app::state::ShellRoute;
 use crate::automation_tree;
-use ctx_core::ids::TaskId;
 
 #[derive(Clone, Debug, Default)]
 pub struct AutomationConfig {
@@ -279,16 +276,14 @@ async fn run_http_server(addr: SocketAddr, state: Arc<AutomationState>) {
         }
     };
 
-	let app = Router::new()
-	    .route("/ready", get(ready_handler))
-	    .route("/focus", post(focus_handler))
-	    .route("/route", post(route_handler))
-	    .route("/select_workspace", post(select_workspace_handler))
-	    .route("/screenshot", post(screenshot_handler))
-	    .route("/wait", post(wait_handler))
-	    .route("/exit", post(exit_handler))
-	    .route("/ws", get(ws_handler))
-	    .with_state(state);
+    let app = Router::new()
+        .route("/ready", get(ready_handler))
+        .route("/focus", post(focus_handler))
+        .route("/screenshot", post(screenshot_handler))
+        .route("/wait", post(wait_handler))
+        .route("/exit", post(exit_handler))
+        .route("/ws", get(ws_handler))
+        .with_state(state);
 
     if let Err(err) = axum::serve(listener, app).await {
         eprintln!("ctx-native: automation server error: {err}");
@@ -346,14 +341,11 @@ enum FocusTarget {
     NewTask,
     Main,
     ArchivedTasks,
-    ArchivedTasksClose,
     TaskSearch,
-    SettingsSearch,
     Composer,
     ComposerAttachments,
     ComposerProviderMenu,
     ComposerModelMenu,
-    DismissMenus,
     SessionsPane,
     DiffPane,
     ArtifactsPane,
@@ -366,14 +358,11 @@ impl FocusTarget {
             FocusTarget::NewTask => "new_task",
             FocusTarget::Main => "main",
             FocusTarget::ArchivedTasks => "archived_tasks",
-            FocusTarget::ArchivedTasksClose => "archived_tasks_close",
             FocusTarget::TaskSearch => "task_search",
-            FocusTarget::SettingsSearch => "settings_search",
             FocusTarget::Composer => "composer",
             FocusTarget::ComposerAttachments => "composer_attachments",
             FocusTarget::ComposerProviderMenu => "composer_provider_menu",
             FocusTarget::ComposerModelMenu => "composer_model_menu",
-            FocusTarget::DismissMenus => "dismiss_menus",
             FocusTarget::SessionsPane => "sessions_pane",
             FocusTarget::DiffPane => "diff_pane",
             FocusTarget::ArtifactsPane => "artifacts_pane",
@@ -398,75 +387,6 @@ async fn focus_handler(
         },
     )
     .await;
-    match response {
-        Ok(result) => ok(result),
-        Err(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
-    }
-}
-
-#[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-enum RouteTarget {
-    Workbench,
-    Workspaces,
-    Settings,
-    Providers,
-    Diagnostics,
-    AppSettings,
-}
-
-impl RouteTarget {
-    fn as_str(&self) -> &'static str {
-        match self {
-            RouteTarget::Workbench => "workbench",
-            RouteTarget::Workspaces => "workspaces",
-            RouteTarget::Settings => "settings",
-            RouteTarget::Providers => "providers",
-            RouteTarget::Diagnostics => "diagnostics",
-            RouteTarget::AppSettings => "app_settings",
-        }
-    }
-
-    fn to_shell_route(&self) -> ShellRoute {
-        match self {
-            RouteTarget::Workbench => ShellRoute::Workbench,
-            RouteTarget::Workspaces => ShellRoute::Workspaces,
-            RouteTarget::Settings => ShellRoute::Settings,
-            RouteTarget::Providers => ShellRoute::Providers,
-            RouteTarget::Diagnostics => ShellRoute::Diagnostics,
-            RouteTarget::AppSettings => ShellRoute::AppSettings,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct RouteRequest {
-    route: RouteTarget,
-}
-
-async fn route_handler(
-    State(state): State<Arc<AutomationState>>,
-    Json(request): Json<RouteRequest>,
-) -> (StatusCode, Json<ApiResponse<Value>>) {
-    let route = request.route.to_shell_route();
-    let response = dispatch_command(&state, AutomationCommand::SetRoute { route }).await;
-    match response {
-        Ok(_result) => ok(json!({ "route": request.route.as_str() })),
-        Err(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
-    }
-}
-
-#[derive(Deserialize)]
-struct SelectWorkspaceRequest {
-    index: usize,
-}
-
-async fn select_workspace_handler(
-    State(state): State<Arc<AutomationState>>,
-    Json(request): Json<SelectWorkspaceRequest>,
-) -> (StatusCode, Json<ApiResponse<Value>>) {
-    let response =
-        dispatch_command(&state, AutomationCommand::SelectWorkspace { index: request.index }).await;
     match response {
         Ok(result) => ok(result),
         Err(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
@@ -601,14 +521,9 @@ enum AutomationCommand {
         precise: bool,
     },
     ComposerStatus,
-    ThreadStatus,
-    ThreadDebug,
     SelectSession { index: usize },
-    SelectTask { task_id: TaskId },
-    SelectWorkspace { index: usize },
     Type { text: String },
     KeyPress { keystroke: Keystroke },
-    SetRoute { route: ShellRoute },
     Exit,
 }
 
@@ -646,24 +561,6 @@ async fn run_command_loop(
                     .map_err(|err| err.to_string())
                     .and_then(|result| result)
             }
-            AutomationCommand::SetRoute { route } => {
-                let mut cx = cx.clone();
-                window
-                    .update(&mut cx, |root, window, cx| {
-                        with_shell_view(root, cx, |view, cx| {
-                            view.set_route(route, cx);
-                        })?;
-                        window.refresh();
-                        if matches!(route, ShellRoute::Workbench) {
-                            mark_input_paint_needed(&state);
-                        }
-                        mark_input(&state);
-                        Ok(json!({ "route": format!("{:?}", route) }))
-                    })
-                    .map_err(|err| err.to_string())
-                    .and_then(|result| result)
-            }
-
             AutomationCommand::RenderFrame => {
                 render_frame(&cx, &window, &state).await
             }
@@ -681,30 +578,6 @@ async fn run_command_loop(
                                 "text": text,
                                 "paint_epoch": paint_epoch,
                             })
-                        })?;
-                        Ok(status)
-                    })
-                    .map_err(|err| err.to_string())
-                    .and_then(|result| result)
-            }
-            AutomationCommand::ThreadStatus => {
-                let mut cx = cx.clone();
-                window
-                    .update(&mut cx, |root, _window, cx| {
-                        let status = with_shell_view(root, cx, |view, _cx| {
-                            view.thread_render_status()
-                        })?;
-                        Ok(status)
-                    })
-                    .map_err(|err| err.to_string())
-                    .and_then(|result| result)
-            }
-            AutomationCommand::ThreadDebug => {
-                let mut cx = cx.clone();
-                window
-                    .update(&mut cx, |root, _window, cx| {
-                        let status = with_shell_view(root, cx, |view, _cx| {
-                            view.thread_render_debug()
                         })?;
                         Ok(status)
                     })
@@ -773,35 +646,6 @@ async fn run_command_loop(
                         with_shell_view(root, cx, |view, cx| {
                             view.select_session(index, window, cx);
                         })?;
-                        mark_input(&state);
-                        Ok(json!({ "index": index }))
-                    })
-                    .map_err(|err| err.to_string())
-                    .and_then(|result| result)
-            }
-            AutomationCommand::SelectTask { task_id } => {
-                let mut cx = cx.clone();
-                window
-                    .update(&mut cx, |root, window, cx| {
-                        with_shell_view(root, cx, |view, cx| {
-                            view.focus_task(task_id, window, cx);
-                        })?;
-                        mark_input(&state);
-                        Ok(json!({ "task_id": task_id.0.to_string() }))
-                    })
-                    .map_err(|err| err.to_string())
-                    .and_then(|result| result)
-            }
-            AutomationCommand::SelectWorkspace { index } => {
-                let mut cx = cx.clone();
-                window
-                    .update(&mut cx, |root, window, cx| {
-                        with_shell_view(root, cx, |view, cx| {
-                            view.select_workspace(index, cx);
-                            view.set_route(ShellRoute::Workbench, cx);
-                        })?;
-                        window.refresh();
-                        mark_input_paint_needed(&state);
                         mark_input(&state);
                         Ok(json!({ "index": index }))
                     })
@@ -954,19 +798,10 @@ fn apply_focus_target(
             view.task_list_scroll_handle
                 .scroll_to_item(0, ScrollStrategy::Top);
         }
-        FocusTarget::ArchivedTasksClose => {
-            view.set_archived_collapsed(true, cx);
-        }
         FocusTarget::TaskSearch => {
             view.composer_has_focus = false;
             view.task_search_input
                 .update(cx, |state, cx| state.focus(window, cx));
-        }
-        FocusTarget::SettingsSearch => {
-            view.set_route(ShellRoute::Settings, cx);
-            cx.update_entity(&view.settings_state, |state, cx| {
-                state.focus_search(window, cx);
-            });
         }
         FocusTarget::Composer => {
             view.focus_composer(&ClickEvent::default(), window, cx);
@@ -985,9 +820,6 @@ fn apply_focus_target(
                 view.toggle_menu(ComposerMenuId::Model, window, cx);
             }
             view.focus_composer(&ClickEvent::default(), window, cx);
-        }
-        FocusTarget::DismissMenus => {
-            view.close_menu(cx);
         }
         FocusTarget::SessionsPane => {
             view.right_pane = Some(RightPaneMode::Sessions);
@@ -1320,16 +1152,6 @@ async fn handle_rpc_method(
                 .await
                 .map_err(RpcError::server_error)
         }
-        "automation.thread.status" => {
-            dispatch_command(state, AutomationCommand::ThreadStatus)
-                .await
-                .map_err(RpcError::server_error)
-        }
-        "automation.thread.debug" => {
-            dispatch_command(state, AutomationCommand::ThreadDebug)
-                .await
-                .map_err(RpcError::server_error)
-        }
         "automation.ready" => {
             let params: ReadyQuery = parse_params(params)?;
             let ready = wait_ready(state, params.timeout_ms.unwrap_or(30_000))
@@ -1489,15 +1311,6 @@ async fn handle_rpc_method(
                 .await
                 .map_err(RpcError::server_error)
         }
-        "ctx.tasks.select" => {
-            let params: SelectTaskParams = parse_params(params)?;
-            let task_id = Uuid::parse_str(params.task_id.trim())
-                .map(TaskId)
-                .map_err(|_| RpcError::invalid_params("task_id must be a UUID"))?;
-            dispatch_command(state, AutomationCommand::SelectTask { task_id })
-                .await
-                .map_err(RpcError::server_error)
-        }
         "ctx.input.type" => {
             let params: TypeParams = parse_params(params)?;
             dispatch_command(
@@ -1580,7 +1393,6 @@ fn focus_target_for_selector(selector: &Selector) -> Option<FocusTarget> {
         "app-shell" => Some(FocusTarget::Main),
         "sidebar-new-task" => Some(FocusTarget::NewTask),
         "task-search-input" => Some(FocusTarget::TaskSearch),
-        "settings-search-input" => Some(FocusTarget::SettingsSearch),
         "composer-input" | "composer-send" => Some(FocusTarget::Composer),
         "sessions-list" => Some(FocusTarget::SessionsPane),
         "diff-pane" => Some(FocusTarget::DiffPane),
@@ -1624,11 +1436,6 @@ struct ScrollParams {
 #[derive(Debug, Deserialize)]
 struct SelectSessionParams {
     index: usize,
-}
-
-#[derive(Debug, Deserialize)]
-struct SelectTaskParams {
-    task_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1777,8 +1584,6 @@ async fn wait_for_draw(
     }
 }
 
-// Runs on a Tokio runtime for automation RPC.
-#[allow(clippy::disallowed_methods)]
 async fn wait_for_idle(state: &AutomationState, params: WaitIdleParams) -> Result<Value, RpcError> {
     let frames = params.frames.map(|frames| frames.max(1));
     let timeout_ms = params.timeout_ms.unwrap_or(3_000);

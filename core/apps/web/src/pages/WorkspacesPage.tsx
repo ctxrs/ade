@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { createWorkspace, idToString, listProviders, listWorkspaces, ProviderStatus, Workspace } from "../api/client";
-import { isDesktopUi } from "../utils/desktop";
 
 export default function WorkspacesPage() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -9,7 +8,6 @@ export default function WorkspacesPage() {
   const [rootPath, setRootPath] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const desktopUi = isDesktopUi();
 
   const refresh = () =>
     listWorkspaces()
@@ -38,13 +36,9 @@ export default function WorkspacesPage() {
     <div className="page">
       <div className="row">
         <h1 style={{ marginRight: "auto" }}>Workspaces</h1>
-        {!desktopUi && (
-          <>
-            <Link to="/">Launcher</Link>
-            <Link to="/app-settings" style={{ marginLeft: 12 }}>Settings</Link>
-            <Link to="/settings#agent_harnesses" style={{ marginLeft: 12 }}>Agent Harnesses</Link>
-          </>
-        )}
+        <Link to="/">Launcher</Link>
+        <Link to="/app-settings" style={{ marginLeft: 12 }}>Settings</Link>
+        <Link to="/settings#agent_harnesses" style={{ marginLeft: 12 }}>Agent Harnesses</Link>
       </div>
 
       {providers.some(

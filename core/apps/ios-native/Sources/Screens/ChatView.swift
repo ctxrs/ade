@@ -3253,41 +3253,24 @@ private actor ChatThreadPipeline {
         events: [SessionEvent],
         optimistic: [String: AskUserAnswerState]
     ) -> [String: AskUserAnswerState] {
-        var map: [String: AskUserAnswerState] = [:]
+        var map = optimistic
         for event in events {
-            guard let parsed = extractAskUserQuestionAnswer(event) else { continue }
-            map[parsed.toolCallId] = parsed.state
-        }
-        for (toolCallId, state) in optimistic {
-            if map[toolCallId] == nil {
-                map[toolCallId] = state
-            } else if (map[toolCallId]?.answers.isEmpty ?? true) && !state.answers.isEmpty {
-                map[toolCallId] = state
+            guard event.eventType == "notice" else { continue }
+            guard let payload = objectValue(from: event.payloadJson) else { continue }
+            guard stringValue(from: payload["kind"]) == "ask_user_answer" else { continue }
+            guard let toolCallId = stringValue(from: payload["tool_call_id"]), !toolCallId.isEmpty else { continue }
+            guard let answers = objectValue(from: payload["answers"]) else { continue }
+            var answerMap: [String: String] = [:]
+            for (key, value) in answers {
+                if let str = stringValue(from: value) {
+                    answerMap[key] = str
+                }
             }
+            if answerMap.isEmpty { continue }
+            let outcome = stringValue(from: payload["outcome"]) ?? "submitted"
+            map[toolCallId] = AskUserAnswerState(outcome: outcome, answers: answerMap)
         }
         return map
-    }
-
-    private func extractAskUserQuestionAnswer(_ event: SessionEvent) -> (toolCallId: String, state: AskUserAnswerState)? {
-        guard event.eventType == "notice" else { return nil }
-        guard let payload = objectValue(from: event.payloadJson) else { return nil }
-        guard stringValue(from: payload["kind"]) == "ask_user_question_answered" else { return nil }
-        guard let toolCallId = stringValue(from: payload["tool_call_id"]), !toolCallId.isEmpty else { return nil }
-        let outcome = stringValue(from: payload["outcome"]) ?? "submitted"
-        let answers = normalizeAskUserAnswerMap(payload["answers"] ?? payload["answer"])
-        let normalizedOutcome = outcome == "cancelled" ? "cancelled" : "submitted"
-        return (toolCallId, AskUserAnswerState(outcome: normalizedOutcome, answers: answers))
-    }
-
-    private func normalizeAskUserAnswerMap(_ value: JSONValue?) -> [String: String] {
-        guard let object = objectValue(from: value) else { return [:] }
-        var out: [String: String] = [:]
-        for (key, val) in object {
-            let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, let text = stringValue(from: val) else { continue }
-            out[trimmed] = text
-        }
-        return out
     }
 }
 
@@ -3416,7 +3399,6 @@ final class ChatViewModel: ObservableObject {
             threadItemsRevision = 0
             lastThreadBuildKey = nil
             threadBuildToken += 1
-            sessionStateRev = nil
             lastSetModelId = nil
             lastSetModeId = nil
             historyCursor = nil
@@ -3436,6 +3418,7 @@ final class ChatViewModel: ObservableObject {
             turnStatus = sampleTurnStatus()
             contextWindowInfo = nil
             lastEventSeq = nil
+            sessionStateRev = nil
             refreshAssetContext()
             _Concurrency.Task { @MainActor in
                 secureContext = await client?.secureConnectionContext()
@@ -3454,6 +3437,7 @@ final class ChatViewModel: ObservableObject {
             sessionId = nil
             workspaceId = nil
             lastEventSeq = nil
+            sessionStateRev = nil
             messages = Self.sampleMessages
             latestTurns = []
             latestEvents = []
@@ -3467,7 +3451,6 @@ final class ChatViewModel: ObservableObject {
             activeAskToolCallId = nil
             lastThreadBuildKey = nil
             threadBuildToken += 1
-            sessionStateRev = nil
             lastSetModelId = nil
             lastSetModeId = nil
             setPendingAssistantResponse(false)
@@ -3545,6 +3528,7 @@ final class ChatViewModel: ObservableObject {
             await ArtifactContentCache.shared.setActiveScope(sessionId)
         }
         lastEventSeq = nil
+        sessionStateRev = nil
         setPendingAssistantResponse(false)
         streamingAssistantState = nil
         refreshInFlight = false
@@ -3562,7 +3546,6 @@ final class ChatViewModel: ObservableObject {
         threadItemsRevision = 0
         lastThreadBuildKey = nil
         threadBuildToken += 1
-        sessionStateRev = nil
         lastSetModelId = nil
         lastSetModeId = nil
         historyCursor = nil
@@ -3596,7 +3579,6 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func hydrateFromCacheIfNeeded(sessionId: String?, generation: Int) async {
-        guard !isArchivedSession else { return }
         guard messages.isEmpty && latestTurns.isEmpty else { return }
         guard let sessionId else { return }
         guard let cached = await ATSHeadCache.shared.load(sessionId: sessionId) else { return }
@@ -3620,7 +3602,7 @@ final class ChatViewModel: ObservableObject {
         latestEvents = cached.events ?? []
         latestToolSummaries = cached.toolSummaries ?? []
         lastEventSeq = cached.lastEventSeq
-        updateSessionStateRev(cached.stateRev)
+        sessionStateRev = cached.stateRev
         workspaceId = workspaceId ?? cached.session.workspaceId.stringValue
         if let turn = mostRecentTurn(in: cached.turns) {
             updateTurnStatus(from: turn)
@@ -3733,7 +3715,11 @@ final class ChatViewModel: ObservableObject {
             }
             latestEvents = head.events ?? []
             latestToolSummaries = head.toolSummaries ?? []
-            updateSessionStateRev(head.stateRev)
+            if let state = snapshot.state {
+                applyArtifactsFromStream(state.artifacts)
+            }
+            sessionStateRev = head.stateRev
+            _Concurrency.Task { await ATSHeadCache.shared.store(head: head) }
             if let turn = mostRecentTurn(in: head.turns) {
                 updateTurnStatus(from: turn)
                 updateContextWindow(from: turn)
@@ -3849,7 +3835,8 @@ final class ChatViewModel: ObservableObject {
         let resolved = await resolveSessionId()
         guard let resolved, generation == sessionGeneration else { return }
         do {
-            artifacts = try await client.listSessionArtifacts(sessionId: resolved)
+            let state = try await client.getSessionState(sessionId: resolved)
+            artifacts = state.artifacts
             artifactsError = nil
             prefetchArtifactsIfNeeded()
             if artifactsRefreshPending, generation == sessionGeneration {
@@ -3857,12 +3844,22 @@ final class ChatViewModel: ObservableObject {
                 _Concurrency.Task { await refreshArtifacts() }
             }
         } catch {
-            if generation == sessionGeneration {
-                artifactsError = "Failed to load artifacts."
-            }
-            if artifactsRefreshPending, generation == sessionGeneration {
-                artifactsRefreshPending = false
-                _Concurrency.Task { await refreshArtifacts() }
+            do {
+                artifacts = try await client.listSessionArtifacts(sessionId: resolved)
+                artifactsError = nil
+                prefetchArtifactsIfNeeded()
+                if artifactsRefreshPending, generation == sessionGeneration {
+                    artifactsRefreshPending = false
+                    _Concurrency.Task { await refreshArtifacts() }
+                }
+            } catch {
+                if generation == sessionGeneration {
+                    artifactsError = "Failed to load artifacts."
+                }
+                if artifactsRefreshPending, generation == sessionGeneration {
+                    artifactsRefreshPending = false
+                    _Concurrency.Task { await refreshArtifacts() }
+                }
             }
         }
     }
@@ -3922,10 +3919,11 @@ final class ChatViewModel: ObservableObject {
                 rebuildThreadItems()
             }
             return
+        } else {
+            var next = messages
+            next.append(message)
+            messages = next
         }
-        var next = messages
-        next.append(message)
-        messages = next
         rebuildThreadItems()
     }
 
@@ -4188,15 +4186,6 @@ final class ChatViewModel: ObservableObject {
         contextWindowInfo = info
     }
 
-    private func updateSessionStateRev(_ nextRev: Int?) {
-        guard let nextRev else { return }
-        if let current = sessionStateRev {
-            sessionStateRev = max(current, nextRev)
-        } else {
-            sessionStateRev = nextRev
-        }
-    }
-
     private func assistantMessageContent(for turn: SessionTurn) -> String {
         if let partial = turn.assistantPartial?.trimmingCharacters(in: .whitespacesAndNewlines),
            !partial.isEmpty {
@@ -4226,14 +4215,21 @@ final class ChatViewModel: ObservableObject {
             workspaceId = workspace.id
             let params = DaemonAPIClient.WorkspaceActiveSnapshotParams(limit: 50)
             let snapshot = try await client.getWorkspaceActiveSnapshot(workspaceId: workspace.id, params: params)
-            await ATSHeadCache.shared.store(heads: snapshot.active.tasks.map { $0.primarySessionHead })
+            do {
+                let batch = try await client.getWorkspaceActiveHeads(workspaceId: workspace.id)
+                if !batch.heads.isEmpty {
+                    await ATSHeadCache.shared.store(heads: batch.heads)
+                }
+            } catch {
+                // Best effort: fall back to on-demand fetch.
+            }
             var tasks = snapshot.active.tasks.map(WorkspaceTaskSummary.init)
             if tasks.isEmpty {
                 let workspaceTasks = try await client.listWorkspaceTasks(workspaceId: workspace.id)
                 if let task = workspaceTasks.first {
                     let sessions = try await client.listTaskSessions(taskId: task.id.stringValue)
                     let summaries = sessions.map(SessionSnapshotSummary.init)
-                    let sortAt = task.lastActivityAt ?? task.updatedAt ?? task.createdAt
+                    let sortAt = task.createdAt
                     tasks = [WorkspaceTaskSummary(task: task, sessions: summaries, sortAt: sortAt)]
                 }
             }
@@ -4247,8 +4243,29 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func resolvePrimarySessionId(for task: WorkspaceTaskSummary) -> String? {
-        guard let primaryId = task.task.primarySessionId else { return nil }
-        return primaryId.stringValue
+        let sessions = task.sessions
+        guard !sessions.isEmpty else { return nil }
+        let nonSubagents = sessions.filter { $0.session.relationship != "sub_agent" }
+        let pool = nonSubagents.isEmpty ? sessions : nonSubagents
+
+        if let primaryId = task.task.primarySessionId,
+           let match = pool.first(where: { $0.session.id == primaryId }) {
+            return match.session.id.stringValue
+        }
+
+        if let running = pool.first(where: { $0.session.status == "active" || $0.session.status == "running" }) {
+            return running.session.id.stringValue
+        }
+
+        if let recent = pool.max(by: { left, right in
+            let leftDate = parseIso(left.lastMessageAt ?? left.session.updatedAt ?? left.session.createdAt) ?? .distantPast
+            let rightDate = parseIso(right.lastMessageAt ?? right.session.updatedAt ?? right.session.createdAt) ?? .distantPast
+            return leftDate < rightDate
+        }) {
+            return recent.session.id.stringValue
+        }
+
+        return pool.first?.session.id.stringValue
     }
 
     private func resolveWorkspaceId() async -> String? {
@@ -4260,7 +4277,7 @@ final class ChatViewModel: ObservableObject {
                 let resolved = head.session.workspaceId.stringValue
                 workspaceId = resolved
                 lastEventSeq = head.lastEventSeq
-                updateSessionStateRev(head.stateRev)
+                sessionStateRev = head.stateRev
                 return resolved
             }
         }
@@ -4279,7 +4296,7 @@ final class ChatViewModel: ObservableObject {
         if let snapshot = try? await client.getSessionSnapshot(sessionId: sessionId, limit: 1, includeEvents: false) {
             let head = snapshot.head
             lastEventSeq = head.lastEventSeq
-            updateSessionStateRev(head.stateRev)
+            sessionStateRev = head.stateRev
             workspaceId = workspaceId ?? head.session.workspaceId.stringValue
             if let turn = mostRecentTurn(in: head.turns) {
                 updateTurnStatus(from: turn)
@@ -4409,6 +4426,9 @@ final class ChatViewModel: ObservableObject {
         )
         let message = WorkspaceActiveSnapshotClientMessage(
             type: "subscribe",
+            workspaceId: nil,
+            fromRev: nil,
+            includeActiveHeads: nil,
             sessionIds: [],
             sessions: [subscription]
         )
@@ -4446,12 +4466,35 @@ final class ChatViewModel: ObservableObject {
             guard let envelope = try? streamDecoder.decode(SecureEnvelope.self, from: data) else { return }
             guard envelope.deviceId == secureContext.deviceId else { return }
             guard let decrypted = try? MobileE2EE.decryptEnvelope(envelope, key: secureContext.key) else { return }
+            if let message = try? streamDecoder.decode(WorkspaceStreamServerMessage.self, from: decrypted) {
+                handleStreamServerMessage(message)
+                return
+            }
             guard let event = try? streamDecoder.decode(WorkspaceActiveSnapshotEvent.self, from: decrypted) else { return }
             handleStreamEvent(event)
             return
         }
+        if let message = try? streamDecoder.decode(WorkspaceStreamServerMessage.self, from: data) {
+            handleStreamServerMessage(message)
+            return
+        }
         guard let event = try? streamDecoder.decode(WorkspaceActiveSnapshotEvent.self, from: data) else { return }
         handleStreamEvent(event)
+    }
+
+    private func handleStreamServerMessage(_ message: WorkspaceStreamServerMessage) {
+        switch message {
+        case .snapshot:
+            break
+        case .event(_, let event):
+            handleStreamEvent(event)
+        case .resetRequired:
+            _Concurrency.Task {
+                _ = await refreshMessages()
+                await refreshQueue()
+                await refreshArtifacts()
+            }
+        }
     }
 
     private func handleStreamEvent(_ event: WorkspaceActiveSnapshotEvent) {
@@ -4469,7 +4512,7 @@ final class ChatViewModel: ObservableObject {
                             await refreshArtifacts()
                         }
                     }
-                    updateSessionStateRev(nextRev)
+                    sessionStateRev = max(sessionStateRev ?? 0, nextRev)
                 }
                 if let turn = delta.turn {
                     applyTurnDelta(turn)
@@ -4505,7 +4548,7 @@ final class ChatViewModel: ObservableObject {
                 }
                 if let stateRev = summary.stateRev {
                     if let current = sessionStateRev, stateRev != current {
-                        updateSessionStateRev(stateRev)
+                        sessionStateRev = stateRev
                         _Concurrency.Task {
                             _ = await refreshMessages()
                             await refreshQueue()
@@ -4513,7 +4556,7 @@ final class ChatViewModel: ObservableObject {
                         }
                         return
                     }
-                    updateSessionStateRev(stateRev)
+                    sessionStateRev = stateRev
                 }
                 _Concurrency.Task {
                     _ = await refreshMessages()
@@ -4612,6 +4655,197 @@ private func uniqueTrimmed(_ values: [String]) -> [String] {
         out.append(trimmed)
     }
     return out
+}
+
+private let preferredEffortOrder: [String] = ["none", "minimal", "low", "medium", "high", "xhigh"]
+
+private struct ParsedModelId {
+    let full: String
+    let base: String
+    let effort: String?
+}
+
+private struct ModelCatalog {
+    let baseIds: [String]
+    let displayNameByBase: [String: String]
+    let effortsByBase: [String: [String]]
+    let fullIdByBaseEffort: [String: [String: String]]
+}
+
+private func splitOnLastSlash(_ fullModelId: String) -> (full: String, base: String, suffix: String?) {
+    let full = fullModelId.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !full.isEmpty else { return ("", "", nil) }
+    guard let idx = full.lastIndex(of: "/"), idx != full.startIndex else {
+        return (full, full, nil)
+    }
+    let base = String(full[..<idx])
+    let suffix = String(full[full.index(after: idx)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    return (full, base, suffix.isEmpty ? nil : suffix)
+}
+
+private func normalizeEffortIdForCompare(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+}
+
+private func isPreferredEffortId(_ value: String) -> Bool {
+    let normalized = normalizeEffortIdForCompare(value)
+    return preferredEffortOrder.contains(normalized)
+}
+
+private func hasTrailingParenSuffix(name: String, suffix: String) -> Bool {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasSuffix(")") else { return false }
+    guard let openIdx = trimmed.lastIndex(of: "("),
+          openIdx < trimmed.index(before: trimmed.endIndex) else {
+        return false
+    }
+    let inner = String(trimmed[trimmed.index(after: openIdx)..<trimmed.index(before: trimmed.endIndex)])
+    return normalizeEffortIdForCompare(inner) == normalizeEffortIdForCompare(suffix)
+}
+
+private func stripTrailingParenIfEffort(_ name: String, effortIds: [String]) -> String {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasSuffix(")") else { return trimmed }
+    guard let openIdx = trimmed.lastIndex(of: "("),
+          openIdx < trimmed.index(before: trimmed.endIndex) else {
+        return trimmed
+    }
+    let inner = String(trimmed[trimmed.index(after: openIdx)..<trimmed.index(before: trimmed.endIndex)])
+    let normalizedInner = normalizeEffortIdForCompare(inner)
+    let isEffort = effortIds.contains { normalizeEffortIdForCompare($0) == normalizedInner }
+    return isEffort ? String(trimmed[..<openIdx]).trimmingCharacters(in: .whitespacesAndNewlines) : trimmed
+}
+
+private func orderEffortIds(_ efforts: Set<String>) -> [String] {
+    let list = efforts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    let orderIndex: (String) -> Int = { value in
+        let normalized = normalizeEffortIdForCompare(value)
+        return preferredEffortOrder.firstIndex(of: normalized) ?? Int.max
+    }
+    return list.sorted { left, right in
+        let leftIndex = orderIndex(left)
+        let rightIndex = orderIndex(right)
+        if leftIndex != rightIndex {
+            return leftIndex < rightIndex
+        }
+        return left.localizedCaseInsensitiveCompare(right) == .orderedAscending
+    }
+}
+
+private func buildModelCatalog(_ modelIds: [String]) -> ModelCatalog {
+    var baseIdsSet = Set<String>()
+    var rawEffortsByBase: [String: Set<String>] = [:]
+    var rawNamesByBase: [String: [String]] = [:]
+    var displayNameByBase: [String: String] = [:]
+    var fullIdByBaseEffort: [String: [String: String]] = [:]
+
+    for id in modelIds {
+        let trimmedId = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedId.isEmpty else { continue }
+        let name = trimmedId
+        let parts = splitOnLastSlash(trimmedId)
+        guard !parts.base.isEmpty else { continue }
+
+        let effort = parts.suffix.flatMap { suffix in
+            (isPreferredEffortId(suffix) || hasTrailingParenSuffix(name: name, suffix: suffix)) ? suffix : nil
+        }
+        let base = effort == nil ? trimmedId : parts.base
+
+        baseIdsSet.insert(base)
+        rawNamesByBase[base, default: []].append(name)
+        if let effort {
+            rawEffortsByBase[base, default: []].insert(effort)
+            var map = fullIdByBaseEffort[base] ?? [:]
+            map[effort] = trimmedId
+            fullIdByBaseEffort[base] = map
+        }
+    }
+
+    let baseIds = baseIdsSet.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    var effortsByBase: [String: [String]] = [:]
+    for base in baseIds {
+        let ordered = rawEffortsByBase[base].map(orderEffortIds) ?? []
+        let efforts = ordered.count >= 2 ? ordered : []
+        effortsByBase[base] = efforts
+
+        if !efforts.isEmpty {
+            displayNameByBase[base] = base
+            continue
+        }
+
+        let names = rawNamesByBase[base] ?? []
+        let stripped = names.map { stripTrailingParenIfEffort($0, effortIds: efforts) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        displayNameByBase[base] = stripped.first ?? base
+    }
+
+    return ModelCatalog(
+        baseIds: baseIds,
+        displayNameByBase: displayNameByBase,
+        effortsByBase: effortsByBase,
+        fullIdByBaseEffort: fullIdByBaseEffort
+    )
+}
+
+private func parseModelId(_ fullModelId: String, catalog: ModelCatalog?) -> ParsedModelId {
+    let parts = splitOnLastSlash(fullModelId)
+    guard !parts.full.isEmpty else { return ParsedModelId(full: "", base: "", effort: nil) }
+    guard let suffix = parts.suffix else {
+        return ParsedModelId(full: parts.full, base: parts.full, effort: nil)
+    }
+
+    if let catalog {
+        let options = catalog.effortsByBase[parts.base] ?? []
+        if options.contains(suffix) {
+            return ParsedModelId(full: parts.full, base: parts.base, effort: suffix)
+        }
+        if catalog.baseIds.contains(parts.full) {
+            return ParsedModelId(full: parts.full, base: parts.full, effort: nil)
+        }
+    }
+
+    if isPreferredEffortId(suffix) {
+        return ParsedModelId(full: parts.full, base: parts.base, effort: suffix)
+    }
+    return ParsedModelId(full: parts.full, base: parts.full, effort: nil)
+}
+
+private func composeModelId(base: String, effort: String?) -> String {
+    let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return "" }
+    guard let effort, !effort.isEmpty else { return trimmed }
+    return "\(trimmed)/\(effort)"
+}
+
+private func formatEffortLabel(_ effort: String?) -> String {
+    let raw = effort?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard !raw.isEmpty else { return "" }
+    let normalized = raw.lowercased()
+    if normalized == "xhigh" || normalized == "extra_high" || normalized == "extra-high" {
+        return "Extra High"
+    }
+    return normalized.prefix(1).uppercased() + normalized.dropFirst()
+}
+
+private func pickDefaultEffort(_ efforts: [String]) -> String? {
+    if let medium = efforts.first(where: { normalizeEffortIdForCompare($0) == "medium" }) {
+        return medium
+    }
+    return efforts.first
+}
+
+private func deriveFullModelIdForBase(catalog: ModelCatalog, baseId: String, preferredEffort: String?) -> String {
+    let efforts = catalog.effortsByBase[baseId] ?? []
+    guard !efforts.isEmpty else { return baseId }
+    let resolvedEffort = preferredEffort.flatMap { pref in
+        efforts.first(where: { normalizeEffortIdForCompare($0) == normalizeEffortIdForCompare(pref) })
+    } ?? pickDefaultEffort(efforts)
+    guard let effort = resolvedEffort else { return baseId }
+    if let fullId = catalog.fullIdByBaseEffort[baseId]?[effort] {
+        return fullId
+    }
+    return composeModelId(base: baseId, effort: effort)
 }
 
 private func contextWindowSummary(from info: ContextWindowInfo?) -> ContextWindowSummary? {

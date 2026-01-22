@@ -1,4 +1,0 @@
-# Disallow tokio::time::sleep in native UI code; AsyncApp isn't a Tokio runtime.
-disallowed-methods = [
-  { path = "tokio::time::sleep", reason = "Use cx.background_executor().timer(...) unless running on a Tokio runtime." },
-]

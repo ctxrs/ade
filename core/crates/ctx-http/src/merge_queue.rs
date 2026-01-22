@@ -419,84 +419,19 @@ async fn run_entry_inner(
             run_verify_command(&worktree_path, entry, cmd, log_file).await?;
         }
 
-        let target_checkout = find_checked_out_worktree_for_branch(
-            &workspace.root_path,
-            &entry.target_branch,
-        )
-        .await
-        .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
-        if let Some(path) = target_checkout.as_ref() {
-            let dirty = git_status_porcelain(path)
-                .await
-                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
-            if !dirty.is_empty() {
-                return Err(QueueError::fail(
-                    format!(
-                        "target branch {} is checked out at {} with uncommitted changes",
-                        entry.target_branch, path
-                    ),
-                    None,
-                    Some(commit_sha.clone()),
-                ));
-            }
-        }
-
         write_log_line(
             log_file,
             &format!("advance target branch {}\n", entry.target_branch),
         )
         .await
         .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-        if let Some(path) = target_checkout.as_ref() {
-            let previous_head = rev_parse_ref(path, "HEAD")
-                .await
-                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
-            if previous_head != target_head {
-                return Err(QueueError::fail(
-                    format!(
-                        "failed to update target branch: expected {target_head}, found {previous_head}"
-                    ),
-                    None,
-                    Some(commit_sha.clone()),
-                ));
-            }
-            reset_worktree_to_commit(path, &commit_sha)
-                .await
-                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
-            let store = state
-                .store_for_workspace(workspace.id)
-                .await
-                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
-            let worktrees = store
-                .list_worktrees(workspace.id)
-                .await
-                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
-            let checkout_path = fs::canonicalize(path)
-                .await
-                .unwrap_or_else(|_| PathBuf::from(path));
-            for worktree in worktrees {
-                let root_path = fs::canonicalize(&worktree.root_path)
-                    .await
-                    .unwrap_or_else(|_| PathBuf::from(&worktree.root_path));
-                if root_path == checkout_path {
-                    store
-                        .update_worktree_base_commit(worktree.id, &commit_sha)
-                        .await
-                        .map_err(|e| {
-                            QueueError::fail(e.to_string(), None, Some(commit_sha.clone()))
-                        })?;
-                    break;
-                }
-            }
-        } else {
-            update_target_branch(
-                &workspace.root_path,
-                &entry.target_branch,
-                &commit_sha,
-                &target_head,
-            )
-            .await?;
-        }
+        update_target_branch(
+            &workspace.root_path,
+            &entry.target_branch,
+            &commit_sha,
+            &target_head,
+        )
+        .await?;
 
         if cfg.push_on_success {
             write_log_line(
@@ -857,48 +792,6 @@ async fn reset_worktree_to_commit(worktree_path: &str, commit_sha: &str) -> Resu
         );
     }
     Ok(())
-}
-
-async fn find_checked_out_worktree_for_branch(
-    workspace_root: &str,
-    target_branch: &str,
-) -> Result<Option<String>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(workspace_root)
-        .args(["worktree", "list", "--porcelain"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .context("running git worktree list --porcelain")?;
-    if !output.status.success() {
-        bail!(
-            "git worktree list failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut current_path: Option<String> = None;
-    for line in stdout.lines() {
-        if let Some(path) = line.strip_prefix("worktree ") {
-            current_path = Some(path.trim().to_string());
-            continue;
-        }
-        if let Some(branch) = line.strip_prefix("branch ") {
-            let branch = branch.trim();
-            if branch == format!("refs/heads/{target_branch}") {
-                if let Some(path) = current_path.clone() {
-                    return Ok(Some(path));
-                }
-            }
-            continue;
-        }
-        if line.trim().is_empty() {
-            current_path = None;
-        }
-    }
-    Ok(None)
 }
 
 fn command_for_shell(command: &str) -> Command {

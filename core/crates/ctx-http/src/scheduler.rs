@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde_json::{json, Value};
+use tokio::fs;
 use tokio::sync::mpsc;
-use uuid::Uuid;
 
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{
@@ -20,10 +20,7 @@ use ctx_providers::adapters::{ProviderAdapter, RunHandle, TurnInput};
 use ctx_providers::events::NormalizedEvent;
 use ctx_store::store::SessionTurnToolCountDeltas;
 
-use crate::compaction::{self, CompactionOutcome, CompactionRequest};
 use crate::daemon::AppState;
-use crate::docker_proxy;
-use crate::egress_proxy;
 use crate::installer;
 use crate::ops_events::OpsEvent;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
@@ -44,7 +41,6 @@ pub struct QueuedMessage {
 pub enum SchedulerCommand {
     Enqueue(QueuedMessage),
     RemoveQueued(MessageId),
-    Compact(CompactionRequest),
     Cancel,
     Interrupt,
 }
@@ -93,7 +89,6 @@ pub async fn session_worker(
     }
     let mut running: Option<RunningTurn> = None;
     let mut suspend_queue = false;
-    let mut pending_compact: Option<CompactionRequest> = None;
 
     let worktree = match store.get_worktree(session.worktree_id).await {
         Ok(Some(wt)) => wt,
@@ -116,53 +111,26 @@ pub async fn session_worker(
     state.ops_events.emit(worktree_event);
 
     loop {
-        if running.is_none() {
-            if let Some(request) = pending_compact.take() {
-                let session_for_compaction = match store.get_session(session.id).await {
+        if running.is_none() && !suspend_queue {
+            if let Some(msg) = queue.pop_front() {
+                let session_for_turn = match store.get_session(session.id).await {
                     Ok(Some(fresh)) => {
                         session = fresh.clone();
                         fresh
                     }
                     _ => session.clone(),
                 };
-                if let Err(err) =
-                    handle_compaction_request(&state, &session_for_compaction, &workdir, request)
-                        .await
-                {
-                    tracing::warn!(session_id = %session.id.0, "auto compaction failed: {err:#}");
+                match start_turn(&state, &session_for_turn, &workdir, &env_target, msg).await {
+                    Ok(turn) => {
+                        state.set_running(session.id, true).await;
+                        running = Some(turn);
+                    }
+                    Err(_) => {
+                        state.set_running(session.id, false).await;
+                        running = None;
+                    }
                 }
-                suspend_queue = false;
                 continue;
-            }
-            if !suspend_queue {
-                if let Some(msg) = queue.pop_front() {
-                    let session_for_turn = match store.get_session(session.id).await {
-                        Ok(Some(fresh)) => {
-                            session = fresh.clone();
-                            fresh
-                        }
-                        _ => session.clone(),
-                    };
-                    if compaction::is_compact_command(&msg.message.content) {
-                        if let Err(err) =
-                            handle_compact_command(&state, &session_for_turn, &workdir, msg).await
-                        {
-                            tracing::warn!(session_id = %session.id.0, "compaction command failed: {err:#}");
-                        }
-                        continue;
-                    }
-                    match start_turn(&state, &session_for_turn, &workdir, &env_target, msg).await {
-                        Ok(turn) => {
-                            state.set_running(session.id, true).await;
-                            running = Some(turn);
-                        }
-                        Err(_) => {
-                            state.set_running(session.id, false).await;
-                            running = None;
-                        }
-                    }
-                    continue;
-                }
             }
         }
 
@@ -187,10 +155,6 @@ pub async fn session_worker(
                             }
                         }
                         queue = next;
-                    }
-                    Some(SchedulerCommand::Compact(request)) => {
-                        pending_compact = Some(request);
-                        suspend_queue = true;
                     }
                     Some(SchedulerCommand::Cancel) => {
                         if let Some(turn) = running.take() {
@@ -258,219 +222,6 @@ pub async fn session_worker(
             }
         }
     }
-}
-
-async fn handle_compaction_request(
-    state: &Arc<AppState>,
-    session: &Session,
-    workdir: &Path,
-    request: CompactionRequest,
-) -> Result<()> {
-    let store = state.store_for_session(session.id).await?;
-    if matches!(request.kind, compaction::CompactionTriggerKind::Auto) {
-        let pending = store
-            .has_session_compaction_seed(session.id)
-            .await
-            .unwrap_or(false);
-        if pending {
-            return Ok(());
-        }
-    }
-    let _ = emit_event(
-        state,
-        session.id,
-        request.origin_run_id,
-        request.origin_turn_id,
-        SessionEventType::Notice,
-        compaction_notice_payload("started", &request, None, None),
-    )
-    .await?;
-
-    match compaction::run_compaction(state, session, workdir, &request).await {
-        Ok(outcome) => {
-            let _ = emit_event(
-                state,
-                session.id,
-                request.origin_run_id,
-                request.origin_turn_id,
-                SessionEventType::Notice,
-                compaction_notice_payload("completed", &request, Some(&outcome), None),
-            )
-            .await?;
-            Ok(())
-        }
-        Err(err) => {
-            let message = err.to_string();
-            let _ = emit_event(
-                state,
-                session.id,
-                request.origin_run_id,
-                request.origin_turn_id,
-                SessionEventType::Notice,
-                compaction_notice_payload("failed", &request, None, Some(&message)),
-            )
-            .await?;
-            Err(err)
-        }
-    }?;
-    Ok(())
-}
-
-async fn handle_compact_command(
-    state: &Arc<AppState>,
-    session: &Session,
-    workdir: &Path,
-    queued: QueuedMessage,
-) -> Result<()> {
-    let store = state.store_for_session(session.id).await?;
-    let mut message = queued.message;
-    if message.delivered_at.is_none() {
-        store.mark_message_delivered(message.id).await?;
-        message.delivery = MessageDelivery::Immediate;
-        message.delivered_at = Some(Utc::now());
-    }
-
-    let run_id = message
-        .run_id
-        .context("compaction message missing run_id")?;
-    let turn_id = message
-        .turn_id
-        .context("compaction message missing turn_id")?;
-    let request = CompactionRequest {
-        compaction_id: Uuid::new_v4(),
-        kind: compaction::CompactionTriggerKind::Manual,
-        reason: "manual_compact".to_string(),
-        context_window: None,
-        exclude_message_id: Some(message.id),
-        origin_run_id: Some(run_id),
-        origin_turn_id: Some(turn_id),
-    };
-
-    let _ = emit_event(
-        state,
-        session.id,
-        Some(run_id),
-        Some(turn_id),
-        SessionEventType::Notice,
-        compaction_notice_payload("started", &request, None, None),
-    )
-    .await?;
-
-    match compaction::run_compaction(state, session, workdir, &request).await {
-        Ok(outcome) => {
-            let _ = emit_event(
-                state,
-                session.id,
-                Some(run_id),
-                Some(turn_id),
-                SessionEventType::Notice,
-                compaction_notice_payload("completed", &request, Some(&outcome), None),
-            )
-            .await?;
-            let done_event = emit_event(
-                state,
-                session.id,
-                Some(run_id),
-                Some(turn_id),
-                SessionEventType::Done,
-                json!({"status": "compacted"}),
-            )
-            .await?;
-            let _ = store
-                .update_session_turn_status(
-                    session.id,
-                    turn_id,
-                    SessionTurnStatus::Completed,
-                    Some(done_event.seq),
-                    None,
-                    done_event.created_at,
-                )
-                .await;
-            if let Ok(saved) = persist_assistant_message(
-                &store,
-                session.id,
-                session.task_id,
-                run_id,
-                turn_id,
-                "Compaction complete.".to_string(),
-                1,
-                Utc::now(),
-            )
-            .await
-            {
-                let _ = emit_event(
-                    state,
-                    session.id,
-                    Some(run_id),
-                    Some(turn_id),
-                    SessionEventType::AssistantMessageInserted,
-                    json!({
-                        "message_id": saved.id.0,
-                        "turn_sequence": saved.turn_sequence.unwrap_or(1),
-                    }),
-                )
-                .await;
-            }
-        }
-        Err(err) => {
-            let message = err.to_string();
-            let _ = emit_event(
-                state,
-                session.id,
-                Some(run_id),
-                Some(turn_id),
-                SessionEventType::Notice,
-                compaction_notice_payload("failed", &request, None, Some(&message)),
-            )
-            .await?;
-            let error_event = emit_event(
-                state,
-                session.id,
-                Some(run_id),
-                Some(turn_id),
-                SessionEventType::Error,
-                json!({"message": err.to_string(), "source": "compaction"}),
-            )
-            .await?;
-            let _ = store
-                .update_session_turn_status(
-                    session.id,
-                    turn_id,
-                    SessionTurnStatus::Failed,
-                    Some(error_event.seq),
-                    None,
-                    error_event.created_at,
-                )
-                .await;
-            if let Ok(saved) = persist_assistant_message(
-                &store,
-                session.id,
-                session.task_id,
-                run_id,
-                turn_id,
-                format!("Compaction failed: {}", err),
-                1,
-                Utc::now(),
-            )
-            .await
-            {
-                let _ = emit_event(
-                    state,
-                    session.id,
-                    Some(run_id),
-                    Some(turn_id),
-                    SessionEventType::AssistantMessageInserted,
-                    json!({
-                        "message_id": saved.id.0,
-                        "turn_sequence": saved.turn_sequence.unwrap_or(1),
-                    }),
-                )
-                .await;
-            }
-        }
-    }
-
-    Ok(())
 }
 
 async fn start_turn(
@@ -575,48 +326,14 @@ async fn start_turn(
     provider_env.insert("CTX_MODEL_ID".to_string(), session.model_id.clone());
     let mcp_token = uuid::Uuid::new_v4().to_string();
     provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
-    let daemon_settings = settings::load_settings(&state.data_root).await;
-    let provider_control_mode = daemon_settings
+    let provider_control_mode = settings::load_settings(&state.data_root)
+        .await
         .sandboxing
         .as_ref()
         .map(|s| s.provider_control_mode.clone())
         .unwrap_or_default();
-    let network_settings = daemon_settings.network.unwrap_or_default();
     if let Some(mode_id) = provider_mode_id_for(&session.provider_id, &provider_control_mode) {
         provider_env.insert("CTX_PROVIDER_MODE".to_string(), mode_id.to_string());
-    }
-    provider_env.insert(
-        "CTX_NETWORK_PROFILE".to_string(),
-        network_settings.profile.as_str().to_string(),
-    );
-    provider_env.insert(
-        "CTX_MCP_BYPASS_PROXY".to_string(),
-        if network_settings.mcp_bypass {
-            "1".to_string()
-        } else {
-            "0".to_string()
-        },
-    );
-    if network_settings.profile != settings::NetworkProfile::Full {
-        let proxy_token = state.proxy_token_for_session(session.id).await;
-        if let Some(proxy_url) = egress_proxy::proxy_url_for_daemon(&state.daemon_url, &proxy_token)
-        {
-            provider_env.insert("HTTP_PROXY".to_string(), proxy_url.clone());
-            provider_env.insert("HTTPS_PROXY".to_string(), proxy_url.clone());
-            provider_env.insert("ALL_PROXY".to_string(), proxy_url);
-            provider_env.insert(
-                "NO_PROXY".to_string(),
-                egress_proxy::build_no_proxy(&state.daemon_url),
-            );
-        }
-    }
-    let mut docker_host_override = docker_proxy::docker_passthrough_host();
-    if docker_host_override.is_none() && std::env::var_os("DOCKER_HOST").is_none() {
-        docker_host_override =
-            docker_proxy::docker_host_for_session(state.as_ref(), session.id).await;
-    }
-    if let Some(docker_host) = docker_host_override {
-        provider_env.insert("DOCKER_HOST".to_string(), docker_host);
     }
     if let Ok(v) = std::env::var("CTX_MCP_COMMAND") {
         provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
@@ -676,9 +393,6 @@ async fn start_turn(
         }
     }
     let mut context_blocks = Vec::new();
-    if let Ok(Some(seed)) = store.take_session_compaction_seed(session.id).await {
-        context_blocks.push(json!({"type":"text","text": seed.seed_text}));
-    }
     if let Some(append) = system_prompt_append.as_deref() {
         if !provider_supports_system_prompt_append(&session.provider_id) {
             context_blocks.push(json!({"type":"text","text": append}));
@@ -895,7 +609,22 @@ async fn start_turn(
                     | SessionEventType::ToolCallUpdate
                     | SessionEventType::ToolResult
             ) {
-                payload = sanitize_tool_event_payload(&event_type, &raw_payload);
+                let output_spool_path = if matches!(event_type, SessionEventType::ToolResult) {
+                    maybe_spool_tool_output(
+                        state_for_events.as_ref(),
+                        &raw_payload,
+                        session_id,
+                        turn_id,
+                    )
+                    .await
+                } else {
+                    None
+                };
+                payload = sanitize_tool_event_payload(
+                    &event_type,
+                    &raw_payload,
+                    output_spool_path.as_deref(),
+                );
             }
             let appended = store
                 .append_session_event(
@@ -915,15 +644,6 @@ async fn start_turn(
                             raw_payload.get("content_fragment").and_then(Value::as_str)
                         {
                             assistant_partial.push_str(fragment);
-                            let _ = store
-                                .update_session_turn_partial(
-                                    session_id,
-                                    turn_id,
-                                    Some(&assistant_partial),
-                                    None,
-                                    event.created_at,
-                                )
-                                .await;
                         }
                     }
                     SessionEventType::ThoughtChunk => {
@@ -963,15 +683,6 @@ async fn start_turn(
                                 assistant_sequence += 1;
                                 assistant_emitted.push_str(&saved.content);
                                 assistant_partial.clear();
-                                let _ = store
-                                    .update_session_turn_partial(
-                                        session_id,
-                                        turn_id,
-                                        Some(""),
-                                        None,
-                                        event.created_at,
-                                    )
-                                    .await;
                                 let _ = emit_event(
                                     &state_for_events,
                                     session_id,
@@ -1072,15 +783,6 @@ async fn start_turn(
                                     assistant_sequence += 1;
                                     assistant_emitted.push_str(&saved.content);
                                     assistant_partial.clear();
-                                    let _ = store
-                                        .update_session_turn_partial(
-                                            session_id,
-                                            turn_id,
-                                            Some(""),
-                                            None,
-                                            event.created_at,
-                                        )
-                                        .await;
                                     let _ = emit_event(
                                         &state_for_events,
                                         session_id,
@@ -1096,15 +798,6 @@ async fn start_turn(
                                 }
                             } else {
                                 assistant_partial.clear();
-                                let _ = store
-                                    .update_session_turn_partial(
-                                        session_id,
-                                        turn_id,
-                                        Some(""),
-                                        None,
-                                        event.created_at,
-                                    )
-                                    .await;
                             }
                         }
                         if terminal_status.is_none() {
@@ -1171,7 +864,7 @@ async fn start_turn(
                                 ))
                                 .await;
                         }
-                        let metrics = event.payload_json.get("context_window").cloned();
+                        let metrics = event.payload_json.get("context_window");
                         if terminal_status.is_none() {
                             let _ = store
                                 .update_session_turn_status(
@@ -1179,7 +872,7 @@ async fn start_turn(
                                     turn_id,
                                     SessionTurnStatus::Completed,
                                     Some(event.seq),
-                                    metrics.as_ref(),
+                                    metrics,
                                     event.created_at,
                                 )
                                 .await;
@@ -1191,39 +884,6 @@ async fn start_turn(
                                 &[SessionEventType::ThoughtChunk],
                             )
                             .await;
-                        if let Some(metrics) = metrics.as_ref() {
-                            let settings =
-                                settings::load_settings(&state_for_events.data_root).await;
-                            if let Some(compaction_settings) = settings.compaction.as_ref() {
-                                if compaction::should_auto_compact(metrics, compaction_settings) {
-                                    let pending = store
-                                        .has_session_compaction_seed(session_id)
-                                        .await
-                                        .unwrap_or(false);
-                                    if !pending {
-                                        if let Some(tx) =
-                                            state_for_events.scheduler_sender(session_id).await
-                                        {
-                                            let _ = tx
-                                                .send(SchedulerCommand::Compact(
-                                                    CompactionRequest {
-                                                        compaction_id: Uuid::new_v4(),
-                                                        kind:
-                                                            compaction::CompactionTriggerKind::Auto,
-                                                        reason: "auto_compaction_threshold"
-                                                            .to_string(),
-                                                        context_window: Some(metrics.clone()),
-                                                        exclude_message_id: None,
-                                                        origin_run_id: Some(run_id),
-                                                        origin_turn_id: Some(turn_id),
-                                                    },
-                                                ))
-                                                .await;
-                                        }
-                                    }
-                                }
-                            }
-                        }
                     }
                     SessionEventType::TurnInterrupted => {
                         if !telemetry_emitted {
@@ -1630,44 +1290,6 @@ fn strip_emitted_prefix(full_content: &str, emitted: &str) -> Option<String> {
     }
 }
 
-fn compaction_notice_payload(
-    phase: &str,
-    request: &CompactionRequest,
-    outcome: Option<&CompactionOutcome>,
-    error: Option<&str>,
-) -> Value {
-    let trigger = match request.kind {
-        compaction::CompactionTriggerKind::Manual => "manual",
-        compaction::CompactionTriggerKind::Auto => "auto",
-    };
-    let mut payload = json!({
-        "kind": "custom_compaction",
-        "compaction_id": request.compaction_id.to_string(),
-        "phase": phase,
-        "trigger": trigger,
-        "reason": request.reason.clone(),
-    });
-
-    if let Some(outcome) = outcome {
-        let output = json!({
-            "compaction_id": request.compaction_id.to_string(),
-            "summary": outcome.summary.clone(),
-            "seed_text": outcome.seed_text.clone(),
-            "trigger": trigger,
-            "reason": request.reason.clone(),
-        });
-        payload["summary"] = json!(outcome.summary.clone());
-        payload["seed_text"] = json!(outcome.seed_text.clone());
-        payload["output"] = output;
-    }
-
-    if let Some(error) = error {
-        payload["error"] = json!(error);
-    }
-
-    payload
-}
-
 #[cfg(test)]
 mod strip_emitted_prefix_tests {
     use super::strip_emitted_prefix;
@@ -1697,6 +1319,57 @@ mod strip_emitted_prefix_tests {
         assert_eq!(
             strip_emitted_prefix("Hello", "Nope"),
             Some("Hello".to_string())
+        );
+    }
+}
+
+#[cfg(test)]
+mod tool_preview_tests {
+    use super::{
+        build_text_preview, sanitize_tool_event_payload, TOOL_PREVIEW_MAX_LINES,
+        TOOL_PREVIEW_MAX_LINE_CHARS,
+    };
+    use ctx_core::models::SessionEventType;
+    use serde_json::json;
+
+    #[test]
+    fn preview_truncates_lines_and_counts() {
+        let lines: Vec<String> = (1..=10).map(|i| format!("line-{i}")).collect();
+        let text = lines.join("\n");
+        let preview = build_text_preview(&text);
+        assert!(preview.truncated);
+        assert_eq!(preview.preview.lines().count(), TOOL_PREVIEW_MAX_LINES);
+        assert!(preview.preview.contains("... +6 lines"));
+    }
+
+    #[test]
+    fn preview_truncates_long_lines() {
+        let text = "x".repeat(TOOL_PREVIEW_MAX_LINE_CHARS + 20);
+        let preview = build_text_preview(&text);
+        assert!(preview.truncated);
+        assert_eq!(preview.preview.chars().count(), TOOL_PREVIEW_MAX_LINE_CHARS);
+    }
+
+    #[test]
+    fn sanitize_tool_payload_keeps_spool_path() {
+        let raw = json!({
+            "tool_call_id": "call-1",
+            "output_text": "line1\nline2\nline3\nline4\nline5\nline6"
+        });
+        let sanitized = sanitize_tool_event_payload(
+            &SessionEventType::ToolResult,
+            &raw,
+            Some("tool-output-spool/call-1.txt"),
+        );
+        assert!(sanitized.get("output_text").is_none());
+        assert_eq!(
+            sanitized.get("output_spool_path").and_then(|v| v.as_str()),
+            Some("tool-output-spool/call-1.txt")
+        );
+        assert!(sanitized.get("output_preview").is_some());
+        assert_eq!(
+            sanitized.get("output_truncated").and_then(|v| v.as_bool()),
+            Some(true)
         );
     }
 }
@@ -1870,6 +1543,29 @@ struct DiffStats {
 }
 
 const MAX_PREVIEW_PATHS: usize = 5;
+const TOOL_PREVIEW_MAX_LINES: usize = 5;
+const TOOL_PREVIEW_MAX_LINE_CHARS: usize = 80;
+
+struct ToolTextPreview {
+    preview: String,
+    truncated: bool,
+    original_bytes: usize,
+}
+
+struct ToolJsonPreview {
+    preview: Option<Value>,
+    truncated: Option<bool>,
+    original_bytes: Option<i64>,
+}
+
+fn push_preview_line(out: &mut Vec<String>, truncated: &mut bool, line: &str) {
+    if line.chars().count() > TOOL_PREVIEW_MAX_LINE_CHARS {
+        *truncated = true;
+        out.push(line.chars().take(TOOL_PREVIEW_MAX_LINE_CHARS).collect());
+    } else {
+        out.push(line.to_string());
+    }
+}
 
 fn count_lines(text: &str) -> usize {
     if text.is_empty() {
@@ -2350,7 +2046,9 @@ fn tool_input_preview(
     if out.is_empty() {
         None
     } else {
-        Some(Value::Object(out))
+        let value = Value::Object(out);
+        let mut truncated = false;
+        Some(truncate_preview_value(&value, &mut truncated))
     }
 }
 
@@ -2402,8 +2100,103 @@ fn tool_input_ops_preview(input: Option<&Value>) -> Option<Value> {
     if out.is_empty() {
         None
     } else {
-        Some(Value::Object(out))
+        let value = Value::Object(out);
+        let mut truncated = false;
+        Some(truncate_preview_value(&value, &mut truncated))
     }
+}
+
+fn truncate_preview_value(value: &Value, truncated: &mut bool) -> Value {
+    match value {
+        Value::String(value) => {
+            let preview = build_text_preview(value);
+            if preview.truncated {
+                *truncated = true;
+            }
+            Value::String(preview.preview)
+        }
+        Value::Array(values) => Value::Array(
+            values
+                .iter()
+                .map(|value| truncate_preview_value(value, truncated))
+                .collect(),
+        ),
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (key, value) in map {
+                out.insert(key.clone(), truncate_preview_value(value, truncated));
+            }
+            Value::Object(out)
+        }
+        _ => value.clone(),
+    }
+}
+
+fn build_text_preview(text: &str) -> ToolTextPreview {
+    let original_bytes = text.len();
+    let mut truncated = false;
+    let lines: Vec<&str> = text.lines().collect();
+    let total_lines = lines.len();
+
+    let mut out = Vec::new();
+
+    if total_lines <= TOOL_PREVIEW_MAX_LINES {
+        for line in lines {
+            push_preview_line(&mut out, &mut truncated, line);
+        }
+    } else {
+        truncated = true;
+        let head_count = TOOL_PREVIEW_MAX_LINES / 2;
+        let tail_count = TOOL_PREVIEW_MAX_LINES.saturating_sub(head_count + 1);
+        for line in lines.iter().take(head_count) {
+            push_preview_line(&mut out, &mut truncated, line);
+        }
+        let omitted = total_lines.saturating_sub(head_count + tail_count);
+        out.push(format!("... +{omitted} lines"));
+        for line in lines.iter().skip(total_lines - tail_count) {
+            push_preview_line(&mut out, &mut truncated, line);
+        }
+    }
+
+    ToolTextPreview {
+        preview: out.join("\n"),
+        truncated,
+        original_bytes,
+    }
+}
+
+fn build_json_preview(input: Option<&Value>, preview: Option<Value>) -> ToolJsonPreview {
+    let original_bytes = input
+        .and_then(|value| serde_json::to_string(value).ok())
+        .map(|value| value.len() as i64);
+    let mut preview_truncated = false;
+    let preview = preview.map(|value| truncate_preview_value(&value, &mut preview_truncated));
+    let preview_bytes = preview
+        .as_ref()
+        .and_then(|value| serde_json::to_string(value).ok())
+        .map(|value| value.len() as i64);
+    let mut truncated = preview_truncated;
+    if let (Some(original), Some(preview_bytes)) = (original_bytes, preview_bytes) {
+        if original > preview_bytes {
+            truncated = true;
+        }
+    } else if original_bytes.is_some() && preview.is_none() {
+        truncated = true;
+    }
+    let truncated = if original_bytes.is_some() || preview.is_some() {
+        Some(truncated)
+    } else {
+        None
+    };
+    ToolJsonPreview {
+        preview,
+        truncated,
+        original_bytes,
+    }
+}
+
+fn build_output_preview(text: &str) -> ToolTextPreview {
+    build_text_preview(text)
 }
 
 fn extract_patch_text_owned(input: Option<&Value>, update: &Value) -> Option<String> {
@@ -2426,75 +2219,11 @@ fn extract_patch_text_owned(input: Option<&Value>, update: &Value) -> Option<Str
     None
 }
 
-fn is_shell_like_tool(tool_kind: Option<&str>, title: Option<&str>) -> bool {
-    let kind = tool_kind.unwrap_or("").trim().to_lowercase();
-    if matches!(
-        kind.as_str(),
-        "shell" | "bash" | "sh" | "command" | "terminal"
-    ) {
-        return true;
-    }
-    let title = title.unwrap_or("").trim().to_lowercase();
-    title.contains("shell") || title.contains("bash") || title.contains("terminal")
-}
-
-fn build_output_preview(text: &str, head_tail_lines: usize, max_chars: usize) -> (String, bool) {
-    if head_tail_lines == 0 {
-        return (String::new(), !text.trim().is_empty());
-    }
-
-    let mut total_lines: usize = 0;
-    let mut first: Vec<String> = Vec::with_capacity(head_tail_lines);
-    let mut last: VecDeque<String> = VecDeque::with_capacity(head_tail_lines);
-    let mut first_2n_plus_1: Vec<String> = Vec::with_capacity(head_tail_lines * 2 + 1);
-
-    for line in text.lines() {
-        total_lines += 1;
-        if first.len() < head_tail_lines {
-            first.push(line.to_string());
-        }
-        if first_2n_plus_1.len() < head_tail_lines * 2 + 1 {
-            first_2n_plus_1.push(line.to_string());
-        }
-        last.push_back(line.to_string());
-        if last.len() > head_tail_lines {
-            let _ = last.pop_front();
-        }
-    }
-
-    if total_lines == 0 {
-        return (String::new(), false);
-    }
-
-    let mut out = if total_lines <= head_tail_lines * 2 {
-        first_2n_plus_1.join(
-            "
-",
-        )
-    } else {
-        let omitted = total_lines.saturating_sub(head_tail_lines * 2);
-        let mut parts: Vec<String> = Vec::with_capacity(head_tail_lines * 2 + 1);
-        parts.extend(first);
-        parts.push(format!("... +{omitted} lines"));
-        parts.extend(last);
-        parts.join(
-            "
-",
-        )
-    };
-
-    let truncated = out.chars().count() > max_chars;
-    if truncated {
-        out = out.chars().take(max_chars).collect::<String>();
-        out.push_str(
-            "
-... [preview truncated]",
-        );
-    }
-    (out, truncated)
-}
-
-fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Value) -> Value {
+fn sanitize_tool_event_payload(
+    event_type: &SessionEventType,
+    raw_payload: &Value,
+    output_spool_path: Option<&str>,
+) -> Value {
     let update = extract_tool_update(raw_payload);
     let tool_call_id = tool_call_id_from_payload(raw_payload).unwrap_or_default();
 
@@ -2524,32 +2253,18 @@ fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Valu
 
     let input = extract_tool_input(update);
     let input_preview = tool_input_ops_preview(input);
+    let input_meta = build_json_preview(input, input_preview);
 
     let patch_preview = if is_edit_tool(tool_kind.as_deref(), title.as_deref()) {
-        extract_patch_text_owned(input, update).and_then(|t| {
-            let (preview, _truncated) = build_output_preview(&t, 5, 16_384);
-            if preview.trim().is_empty() {
-                None
-            } else {
-                Some(preview)
-            }
-        })
+        extract_patch_text_owned(input, update).map(|t| build_output_preview(&t))
     } else {
         None
     };
 
     let output_preview = extract_tool_output_text(update)
-        .and_then(|t| {
-            let shell_like = is_shell_like_tool(tool_kind.as_deref(), title.as_deref());
-            let lines = if shell_like { 50 } else { 5 };
-            let (preview, _truncated) = build_output_preview(&t, lines, 16_384);
-            if preview.trim().is_empty() {
-                None
-            } else {
-                Some(preview)
-            }
-        })
-        .or(patch_preview);
+        .map(|t| build_output_preview(&t))
+        .or(patch_preview)
+        .filter(|preview| !preview.preview.trim().is_empty());
 
     let mut obj = serde_json::Map::new();
     if !tool_call_id.trim().is_empty() {
@@ -2562,11 +2277,34 @@ fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Valu
         obj.insert("title".to_string(), Value::String(v));
     }
     obj.insert("status".to_string(), Value::String(status));
-    if let Some(v) = input_preview {
+    if let Some(v) = input_meta.preview {
         obj.insert("input_preview".to_string(), v);
     }
-    if let Some(v) = output_preview {
-        obj.insert("output_preview".to_string(), Value::String(v));
+    if let Some(truncated) = input_meta.truncated {
+        obj.insert("input_truncated".to_string(), Value::Bool(truncated));
+    }
+    if let Some(bytes) = input_meta.original_bytes {
+        obj.insert(
+            "input_original_bytes".to_string(),
+            Value::Number(serde_json::Number::from(bytes)),
+        );
+    }
+    if let Some(preview) = output_preview {
+        obj.insert("output_preview".to_string(), Value::String(preview.preview));
+        obj.insert(
+            "output_truncated".to_string(),
+            Value::Bool(preview.truncated),
+        );
+        obj.insert(
+            "output_original_bytes".to_string(),
+            Value::Number(serde_json::Number::from(preview.original_bytes as i64)),
+        );
+    }
+    if let Some(path) = output_spool_path {
+        obj.insert(
+            "output_spool_path".to_string(),
+            Value::String(path.to_string()),
+        );
     }
     Value::Object(obj)
 }
@@ -2654,6 +2392,10 @@ struct TurnToolUpdate {
     status: Option<String>,
     input_json: Option<Value>,
     output_text: Option<String>,
+    input_truncated: Option<bool>,
+    input_original_bytes: Option<i64>,
+    output_truncated: Option<bool>,
+    output_original_bytes: Option<i64>,
 }
 
 fn build_turn_tool_update_from_payload(
@@ -2689,40 +2431,34 @@ fn build_turn_tool_update_from_payload(
 
     let input = extract_tool_input(update);
     let input_json = tool_input_preview(input, update, tool_kind.as_deref(), title.as_deref());
+    let input_meta = build_json_preview(input, input_json);
 
     let patch_preview = if is_edit_tool(tool_kind.as_deref(), title.as_deref()) {
-        extract_patch_text_owned(input, update).and_then(|t| {
-            let (preview, _truncated) = build_output_preview(&t, 5, 16_384);
-            if preview.trim().is_empty() {
-                None
-            } else {
-                Some(preview)
-            }
-        })
+        extract_patch_text_owned(input, update).map(|t| build_output_preview(&t))
     } else {
         None
     };
 
-    let output_text = extract_tool_output_text(update)
-        .and_then(|t| {
-            let shell_like = is_shell_like_tool(tool_kind.as_deref(), title.as_deref());
-            let lines = if shell_like { 50 } else { 5 };
-            let (preview, _truncated) = build_output_preview(&t, lines, 16_384);
-            if preview.trim().is_empty() {
-                None
-            } else {
-                Some(preview)
-            }
-        })
-        .or(patch_preview);
+    let output_preview = extract_tool_output_text(update)
+        .map(|t| build_output_preview(&t))
+        .or(patch_preview)
+        .filter(|preview| !preview.preview.trim().is_empty());
 
     Some(TurnToolUpdate {
         tool_call_id,
         tool_kind,
         title,
         status,
-        input_json,
-        output_text,
+        input_json: input_meta.preview,
+        output_text: output_preview
+            .as_ref()
+            .map(|preview| preview.preview.clone()),
+        input_truncated: input_meta.truncated,
+        input_original_bytes: input_meta.original_bytes,
+        output_truncated: output_preview.as_ref().map(|preview| preview.truncated),
+        output_original_bytes: output_preview
+            .as_ref()
+            .map(|preview| preview.original_bytes as i64),
     })
 }
 
@@ -2744,12 +2480,36 @@ fn merge_tool_update(
     let input_json = update
         .input_json
         .or_else(|| prev.and_then(|t| t.input_json.clone()));
+    let input_truncated = update
+        .input_truncated
+        .or_else(|| prev.and_then(|t| t.input_truncated));
+    let input_original_bytes = update
+        .input_original_bytes
+        .or_else(|| prev.and_then(|t| t.input_original_bytes));
     let output_text = match update.output_text {
         Some(next) => Some(merge_streaming_text(
             prev.and_then(|t| t.output_text.as_deref()),
             &next,
         )),
         None => prev.and_then(|t| t.output_text.clone()),
+    };
+    let output_truncated = match (
+        update.output_truncated,
+        prev.and_then(|t| t.output_truncated),
+    ) {
+        (Some(next), Some(prev)) => Some(prev || next),
+        (Some(next), None) => Some(next),
+        (None, Some(prev)) => Some(prev),
+        (None, None) => None,
+    };
+    let output_original_bytes = match (
+        update.output_original_bytes,
+        prev.and_then(|t| t.output_original_bytes),
+    ) {
+        (Some(next), Some(prev)) => Some(prev.max(next)),
+        (Some(next), None) => Some(next),
+        (None, Some(prev)) => Some(prev),
+        (None, None) => None,
     };
     SessionTurnTool {
         session_id,
@@ -2760,6 +2520,10 @@ fn merge_tool_update(
         status,
         input_json,
         output_text,
+        input_truncated,
+        input_original_bytes,
+        output_truncated,
+        output_original_bytes,
         created_at,
         updated_at: now,
     }
@@ -2873,6 +2637,74 @@ fn tool_call_id_from_payload(payload: &Value) -> Option<String> {
     from_raw.map(|v| v.to_string())
 }
 
+fn sanitize_spool_segment(raw: &str) -> String {
+    let mut out: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if out.is_empty() {
+        out.push_str("tool_output");
+    }
+    if out.len() > 80 {
+        out.truncate(80);
+    }
+    out
+}
+
+fn extract_tool_output_raw_text(update: &Value) -> Option<String> {
+    let direct = update
+        .get("outputText")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.get("output_text").and_then(|v| v.as_str()))
+        .or_else(|| {
+            update
+                .pointer("/toolCall/outputText")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            update
+                .pointer("/toolCall/output_text")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| update.get("result").and_then(|v| v.as_str()))
+        .or_else(|| {
+            update
+                .pointer("/rawOutput/aggregated_output")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| update.pointer("/rawOutput/output").and_then(|v| v.as_str()));
+    if let Some(v) = direct {
+        if !v.trim().is_empty() {
+            return Some(v.to_string());
+        }
+    }
+
+    let blocks = update.get("content").and_then(|v| v.as_array())?;
+    let mut out = String::new();
+    for b in blocks {
+        if let Some(t) = b
+            .get("content")
+            .and_then(|c| c.get("text"))
+            .and_then(|v| v.as_str())
+        {
+            out.push_str(t);
+        } else if let Some(t) = b.get("text").and_then(|v| v.as_str()) {
+            out.push_str(t);
+        }
+    }
+    if out.trim().is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
 fn extract_tool_output_text(update: &Value) -> Option<String> {
     let direct = update
         .get("outputText")
@@ -2920,6 +2752,42 @@ fn extract_tool_output_text(update: &Value) -> Option<String> {
     } else {
         Some(out.trim().to_string())
     }
+}
+
+async fn maybe_spool_tool_output(
+    state: &AppState,
+    raw_payload: &Value,
+    session_id: ctx_core::ids::SessionId,
+    turn_id: ctx_core::ids::TurnId,
+) -> Option<String> {
+    if !state.tool_output_spool_enabled {
+        return None;
+    }
+    let tool_call_id = tool_call_id_from_payload(raw_payload)?;
+    let update = extract_tool_update(raw_payload);
+    let output = extract_tool_output_raw_text(update)?;
+    if output.trim().is_empty() {
+        return None;
+    }
+    let mut dir = state.tool_output_spool_dir.join(session_id.0.to_string());
+    dir = dir.join(turn_id.0.to_string());
+    if let Err(err) = fs::create_dir_all(&dir).await {
+        tracing::warn!(
+            "failed to create tool output spool dir {}: {err}",
+            dir.to_string_lossy()
+        );
+        return None;
+    }
+    let file_name = format!("{}.txt", sanitize_spool_segment(&tool_call_id));
+    let path = dir.join(file_name);
+    if let Err(err) = fs::write(&path, output.as_bytes()).await {
+        tracing::warn!(
+            "failed to write tool output spool {}: {err}",
+            path.to_string_lossy()
+        );
+        return None;
+    }
+    Some(path.to_string_lossy().to_string())
 }
 
 fn merge_streaming_text(prev: Option<&str>, next: &str) -> String {

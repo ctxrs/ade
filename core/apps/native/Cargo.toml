@@ -27,9 +27,10 @@ gpui-component-assets = { git = "https://github.com/ctxrs/gpui-component", rev =
 image = { version = "0.25", default-features = false, features = ["png"] }
 qrcode = "0.14"
 regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -58,11 +59,7 @@ perf = { git = "https://github.com/ctxrs/zed", rev = "610b3d0ed59eae582d14a0857c
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "=0.10.0"
-core-text = "=21.0.0"
 core-video = { version = "0.4.3", features = ["metal"] }
 objc = "0.2"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2"
 
 [workspace]

@@ -4,7 +4,6 @@ import type { User } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import {
   DictationSettings,
-  CompactionSettings,
   InstallInfo,
   MobileAccessStatus,
   EnableMobileAccessResponse,
@@ -15,8 +14,6 @@ import {
   ResourceGovernanceSettings,
   ResourceGovernanceStatus,
   ResourceUtilization,
-  NetworkSettings,
-  UpdateSettingsPatch,
   SandboxingSettings,
   Settings,
   AgentSystemPromptConfig,
@@ -38,7 +35,6 @@ import {
   getMergeQueueEntryLogs,
   getMobileAccessStatus,
   getCodexAccountUsage,
-  completeCodexLogin,
   Workspace,
   authenticateProviderForWorkspace,
   getInstall,
@@ -65,12 +61,9 @@ import {
   verifyProviderForWorkspace,
 } from "../api/client";
 import {
-  type DesktopDaemonSettings,
   type DesktopEditorSettings,
-  desktopGetDaemonSettings,
   desktopGetEditorSettings,
   desktopSaveTextFile,
-  desktopUpdateDaemonSettings,
   desktopUpdateEditorSettings,
   isDesktopApp,
 } from "../utils/desktop";
@@ -148,7 +141,6 @@ type SectionId =
   | "resource_governance"
   | "mobile_access"
   | "resource_utilization"
-  | "compaction"
   | "dictation"
   | "title_generation"
   | "billing"
@@ -181,7 +173,6 @@ const SECTIONS: Array<{
   { id: "resource_governance", label: "Resource Limits", group: "main" },
   { id: "mobile_access", label: "Mobile Access", group: "main" },
   { id: "resource_utilization", label: "Resource Utilization", group: "main" },
-  { id: "compaction", label: "Compaction", group: "advanced" },
   { id: "dictation", label: "Dictation", group: "advanced" },
   { id: "title_generation", label: "Title Generation", group: "advanced" },
   { id: "billing", label: "Billing", group: "advanced" },
@@ -512,7 +503,6 @@ export default function SettingsPage() {
   const telemetryHydrated = useRef(false);
   const dictationHydrated = useRef(false);
   const titleGenerationHydrated = useRef(false);
-  const compactionHydrated = useRef(false);
 
   const [telemetryEnabled, setTelemetryEnabled] = useState(true);
   const [telemetryEndpoint, setTelemetryEndpoint] = useState("");
@@ -529,25 +519,10 @@ export default function SettingsPage() {
   const [titleGenApiKey, setTitleGenApiKey] = useState("");
   const [titleGenModel, setTitleGenModel] = useState("google/gemini-3-flash-preview");
   const [titleGenUseJson, setTitleGenUseJson] = useState(true);
-
-  const [compactionEnabled, setCompactionEnabled] = useState(false);
-  const [compactionScriptPath, setCompactionScriptPath] = useState("");
-  const [compactionScriptTimeoutMs, setCompactionScriptTimeoutMs] = useState("");
-  const [compactionRetainTokens, setCompactionRetainTokens] = useState("");
-  const [compactionTailMessages, setCompactionTailMessages] = useState("");
-  const [compactionTailChars, setCompactionTailChars] = useState("");
-  const [compactionIncludeAttachments, setCompactionIncludeAttachments] = useState(false);
-  const [compactionTranscriptOnly, setCompactionTranscriptOnly] = useState(false);
-  const [compactionAutoEnabled, setCompactionAutoEnabled] = useState(false);
-  const [compactionRemainingFraction, setCompactionRemainingFraction] = useState("");
-  const [compactionMaxContextTokens, setCompactionMaxContextTokens] = useState("");
   const resourceGovernanceHydrated = useRef(false);
   const sandboxingHydrated = useRef(false);
-  const networkHydrated = useRef(false);
   const [resourceGovernanceEnabled, setResourceGovernanceEnabled] = useState(true);
   const [providerControlMode, setProviderControlMode] = useState<SandboxingSettings["provider_control_mode"]>("full");
-  const [networkProfile, setNetworkProfile] = useState<NetworkSettings["profile"]>("full");
-  const [mcpBypassProxy, setMcpBypassProxy] = useState(true);
   const [resourceGovernanceMode, setResourceGovernanceMode] =
     useState<ResourceGovernanceSettings["mode"]>("auto");
   const [resourceCpuQuotaPct, setResourceCpuQuotaPct] = useState("");
@@ -565,18 +540,6 @@ export default function SettingsPage() {
   const [editorSaving, setEditorSaving] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
   const editorHydrated = useRef(false);
-
-  const [daemonSettings, setDaemonSettings] = useState<DesktopDaemonSettings>({
-    auto_start: true,
-    launch_mode: null,
-    docker_passthrough: false,
-    last_connection: null,
-    last_workspace_id: null,
-  });
-  const [daemonLoaded, setDaemonLoaded] = useState(false);
-  const [daemonSaving, setDaemonSaving] = useState(false);
-  const [daemonError, setDaemonError] = useState<string | null>(null);
-  const daemonHydrated = useRef(false);
 
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -613,7 +576,6 @@ export default function SettingsPage() {
   const [codexUsageBusy, setCodexUsageBusy] = useState(false);
   const [codexUsageError, setCodexUsageError] = useState<string | null>(null);
   const [codexNewLabel, setCodexNewLabel] = useState("");
-  const [codexCallbackUrls, setCodexCallbackUrls] = useState<Record<string, string>>({});
 
   const [agentPromptConfig, setAgentPromptConfig] = useState<AgentSystemPromptConfig | null>(null);
   const [agentPromptLoading, setAgentPromptLoading] = useState(false);
@@ -865,38 +827,6 @@ export default function SettingsPage() {
           setTitleGenUseJson(Boolean(tg.use_json));
         }
 
-        const comp = s.compaction ?? null;
-        if (comp) {
-          const auto = comp.auto_compact ?? null;
-          setCompactionEnabled(comp.enabled);
-          setCompactionScriptPath(comp.script_path ?? "");
-          setCompactionScriptTimeoutMs(comp.script_timeout_ms ? String(comp.script_timeout_ms) : "");
-          setCompactionRetainTokens(comp.retain_full_transcript_tokens ? String(comp.retain_full_transcript_tokens) : "");
-          setCompactionTailMessages(comp.retain_tail_messages ? String(comp.retain_tail_messages) : "");
-          setCompactionTailChars(comp.retain_tail_chars_per_message ? String(comp.retain_tail_chars_per_message) : "");
-          setCompactionIncludeAttachments(Boolean(comp.include_attachments));
-          setCompactionTranscriptOnly(Boolean(comp.transcript_only));
-          setCompactionAutoEnabled(Boolean(auto && auto.enabled));
-          setCompactionRemainingFraction(
-            auto && auto.remaining_fraction_threshold !== undefined
-              ? String(auto.remaining_fraction_threshold)
-              : "",
-          );
-          setCompactionMaxContextTokens(auto && auto.max_context_tokens ? String(auto.max_context_tokens) : "");
-        } else {
-          setCompactionEnabled(false);
-          setCompactionScriptPath("");
-          setCompactionScriptTimeoutMs("");
-          setCompactionRetainTokens("");
-          setCompactionTailMessages("");
-          setCompactionTailChars("");
-          setCompactionIncludeAttachments(false);
-          setCompactionTranscriptOnly(false);
-          setCompactionAutoEnabled(false);
-          setCompactionRemainingFraction("");
-          setCompactionMaxContextTokens("");
-        }
-
         const rg = s.resource_governance ?? null;
         if (rg) {
           setResourceGovernanceEnabled(rg.enabled);
@@ -905,15 +835,6 @@ export default function SettingsPage() {
         const sb = s.sandboxing ?? null;
         if (sb?.provider_control_mode) {
           setProviderControlMode(sb.provider_control_mode);
-        }
-
-        const nw = s.network ?? null;
-        if (nw) {
-          setNetworkProfile(nw.profile ?? "full");
-          setMcpBypassProxy(Boolean(nw.mcp_bypass));
-        } else {
-          setNetworkProfile("full");
-          setMcpBypassProxy(true);
         }
 
         if (rg) {
@@ -956,31 +877,12 @@ export default function SettingsPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!isDesktopApp()) return;
-    let cancelled = false;
-    desktopGetDaemonSettings()
-      .then((settings) => {
-        if (cancelled) return;
-        setDaemonSettings(settings);
-        setDaemonLoaded(true);
-      })
-      .catch((e: any) => {
-        if (cancelled) return;
-        setDaemonError(e?.message ?? String(e));
-        setDaemonLoaded(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const savePatch = async (patch: UpdateSettingsPatch) => {
+  const savePatch = async (patch: Partial<Settings>) => {
     setSaveError(null);
     setSaving(true);
     const seq = ++saveSeq.current;
     try {
-      const next = await updateSettings(patch);
+      const next = await updateSettings(patch as Settings);
       if (seq !== saveSeq.current) return;
       if (next.dictation?.livekit?.api_secret_set) {
         setApiSecret("");
@@ -999,10 +901,6 @@ export default function SettingsPage() {
       }
       if (next.sandboxing?.provider_control_mode) {
         setProviderControlMode(next.sandboxing.provider_control_mode);
-      }
-      if (next.network) {
-        setNetworkProfile(next.network.profile ?? "full");
-        setMcpBypassProxy(Boolean(next.network.mcp_bypass));
       }
     } catch (e: any) {
       if (seq !== saveSeq.current) return;
@@ -1035,62 +933,11 @@ export default function SettingsPage() {
     };
   }, [titleGenApiKey, titleGenBaseUrl, titleGenModel, titleGenUseJson]);
 
-  const compactionPayload = useMemo((): CompactionSettings => {
-    const parseNumber = (value: string): number | null => {
-      const trimmed = value.trim();
-      if (!trimmed) return null;
-      const parsed = Number(trimmed);
-      if (!Number.isFinite(parsed) || parsed <= 0) return null;
-      return parsed;
-    };
-    const parseFraction = (value: string): number | null => {
-      const trimmed = value.trim();
-      if (!trimmed) return null;
-      const parsed = Number(trimmed);
-      if (!Number.isFinite(parsed)) return null;
-      return parsed;
-    };
-    return {
-      enabled: compactionEnabled,
-      script_path: compactionScriptPath.trim() ? compactionScriptPath.trim() : null,
-      script_timeout_ms: parseNumber(compactionScriptTimeoutMs),
-      retain_full_transcript_tokens: parseNumber(compactionRetainTokens),
-      retain_tail_messages: parseNumber(compactionTailMessages),
-      retain_tail_chars_per_message: parseNumber(compactionTailChars),
-      include_attachments: compactionIncludeAttachments,
-      transcript_only: compactionTranscriptOnly,
-      auto_compact: {
-        enabled: compactionAutoEnabled,
-        remaining_fraction_threshold: parseFraction(compactionRemainingFraction),
-        max_context_tokens: parseNumber(compactionMaxContextTokens),
-      },
-    };
-  }, [
-    compactionAutoEnabled,
-    compactionEnabled,
-    compactionIncludeAttachments,
-    compactionMaxContextTokens,
-    compactionRemainingFraction,
-    compactionRetainTokens,
-    compactionScriptPath,
-    compactionScriptTimeoutMs,
-    compactionTailChars,
-    compactionTailMessages,
-    compactionTranscriptOnly,
-  ]);
-
   const sandboxingPayload = useMemo((): SandboxingSettings => {
     return {
       provider_control_mode: providerControlMode,
     };
   }, [providerControlMode]);
-
-  const networkPayload = useMemo((): NetworkSettings => {
-    return {
-      profile: networkProfile,
-      mcp_bypass: mcpBypassProxy,
-    };
-  }, [networkProfile, mcpBypassProxy]);
 
   const resourceGovernancePayload = useMemo((): ResourceGovernanceSettings => {
     const cpuQuota = Number(resourceCpuQuotaPct);
@@ -1174,19 +1021,6 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!loaded) return;
-    if (!compactionHydrated.current) {
-      compactionHydrated.current = true;
-      return;
-    }
-    const t = window.setTimeout(() => {
-      savePatch({ compaction: compactionPayload });
-    }, 450);
-    return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, compactionPayload]);
-
-  useEffect(() => {
-    if (!loaded) return;
     if (!sandboxingHydrated.current) {
       sandboxingHydrated.current = true;
       return;
@@ -1197,19 +1031,6 @@ export default function SettingsPage() {
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, sandboxingPayload]);
-
-  useEffect(() => {
-    if (!loaded) return;
-    if (!networkHydrated.current) {
-      networkHydrated.current = true;
-      return;
-    }
-    const t = window.setTimeout(() => {
-      savePatch({ network: networkPayload });
-    }, 450);
-    return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, networkPayload]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -1250,32 +1071,6 @@ export default function SettingsPage() {
     }, 350);
     return () => window.clearTimeout(t);
   }, [editorSettings, editorLoaded]);
-
-  useEffect(() => {
-    if (!isDesktopApp()) return;
-    if (!daemonLoaded) return;
-    if (daemonError) return;
-    if (!daemonHydrated.current) {
-      daemonHydrated.current = true;
-      return;
-    }
-    const t = window.setTimeout(() => {
-      setDaemonSaving(true);
-      setDaemonError(null);
-      const next: DesktopDaemonSettings = {
-        auto_start: Boolean(daemonSettings.auto_start),
-        launch_mode: daemonSettings.launch_mode ?? null,
-        docker_passthrough: Boolean(daemonSettings.docker_passthrough),
-        last_connection: daemonSettings.last_connection ?? null,
-        last_workspace_id: daemonSettings.last_workspace_id ?? null,
-      };
-      desktopUpdateDaemonSettings(next)
-        .then((next) => setDaemonSettings(next))
-        .catch((e: any) => setDaemonError(e?.message ?? String(e)))
-        .finally(() => setDaemonSaving(false));
-    }, 350);
-    return () => window.clearTimeout(t);
-  }, [daemonSettings, daemonLoaded, daemonError]);
 
   const refreshProviders = () =>
     listProviders()
@@ -1878,26 +1673,6 @@ export default function SettingsPage() {
     }
   };
 
-  const onCodexCompleteLogin = async (accountId: string) => {
-    const callbackUrl = (codexCallbackUrls[accountId] ?? "").trim();
-    if (!callbackUrl) {
-      setCodexAccountsError("Paste the callback URL to finish login.");
-      return;
-    }
-    setCodexAccountsBusy(true);
-    setCodexAccountsError(null);
-    try {
-      await completeCodexLogin(accountId, callbackUrl);
-      setCodexCallbackUrls((prev) => ({ ...prev, [accountId]: "" }));
-      await refreshCodexAccounts();
-      refreshCodexUsage({ refresh: true, silent: true }).catch(() => {});
-    } catch (e: any) {
-      setCodexAccountsError(e?.message ?? String(e));
-    } finally {
-      setCodexAccountsBusy(false);
-    }
-  };
-
   const onCodexSetActive = async (accountId: string | null) => {
     setCodexAccountsBusy(true);
     setCodexAccountsError(null);
@@ -2074,7 +1849,7 @@ export default function SettingsPage() {
     }
   }, [workspaceFromQuery, workspaceId]);
 
-  const anySaving = saving || editorSaving || daemonSaving || agentPromptSaving || subagentPromptSaving;
+  const anySaving = saving || editorSaving || agentPromptSaving || subagentPromptSaving;
 
   const vscodeRemoteTargets: DesktopEditorSettings["target"][] = [
     "vscode",
@@ -2084,9 +1859,6 @@ export default function SettingsPage() {
     "antigravity",
   ];
   const showRemoteAuthority = vscodeRemoteTargets.includes(editorSettings.target);
-  const supportsContainer = isDesktopApp() && isLinuxPlatform();
-  const defaultLaunchModeLabel = supportsContainer ? "Container (host-mounted)" : "Host";
-  const launchModeValue = daemonSettings.launch_mode ?? "";
 
   const renderMain = () => {
     if (!loaded) return <div className="settings-empty">Loading…</div>;
@@ -2101,57 +1873,6 @@ export default function SettingsPage() {
               description="Share anonymous usage metrics (no code, prompts, or file paths)."
               control={
                 <Toggle checked={telemetryEnabled} disabled={!loaded} onChange={setTelemetryEnabled} ariaLabel="Telemetry" />
-              }
-            />
-            <Row
-              title="Auto-start local daemon"
-              description={isDesktopApp() ? "Reconnect to the last daemon on launch; restart it if missing." : "Available in the desktop app."}
-              control={
-                <Toggle
-                  checked={daemonSettings.auto_start}
-                  disabled={!isDesktopApp() || !daemonLoaded || Boolean(daemonError)}
-                  onChange={(value) => setDaemonSettings((prev) => ({ ...prev, auto_start: value }))}
-                  ariaLabel="Auto-start local daemon"
-                />
-              }
-            />
-            <Row
-              title="Local runtime"
-              description={isDesktopApp() ? "Choose how the local daemon runs." : "Available in the desktop app."}
-              control={
-                <select
-                  className="settings-control settings-select"
-                  value={launchModeValue}
-                  onChange={(e) =>
-                    setDaemonSettings((prev) => ({
-                      ...prev,
-                      launch_mode: (e.target.value || null) as DesktopDaemonSettings["launch_mode"],
-                    }))
-                  }
-                  disabled={!isDesktopApp() || !daemonLoaded || Boolean(daemonError)}
-                >
-                  <option value="">{`Default (${defaultLaunchModeLabel})`}</option>
-                  <option value="container" disabled={!supportsContainer}>
-                    Container (host-mounted)
-                  </option>
-                  <option value="host">Host</option>
-                </select>
-              }
-            />
-            <Row
-              title="Enable Docker passthrough (unsafe)"
-              description={
-                supportsContainer
-                  ? "Allow the daemon container to access the host Docker socket."
-                  : "Available on Linux desktop."
-              }
-              control={
-                <Toggle
-                  checked={Boolean(daemonSettings.docker_passthrough)}
-                  disabled={!supportsContainer || !daemonLoaded || Boolean(daemonError)}
-                  onChange={(value) => setDaemonSettings((prev) => ({ ...prev, docker_passthrough: value }))}
-                  ariaLabel="Enable Docker passthrough"
-                />
               }
             />
             <Row
@@ -2208,7 +1929,6 @@ export default function SettingsPage() {
               />
             ) : null}
           </Card>
-          {daemonError ? <div className="settings-banner settings-banner-error">{daemonError}</div> : null}
           {editorError ? <div className="settings-banner settings-banner-error">{editorError}</div> : null}
         </>
       );
@@ -3158,160 +2878,6 @@ export default function SettingsPage() {
       );
     }
 
-    if (active === "compaction") {
-      return (
-        <>
-          <Card>
-            <Row
-              title="Enable custom compaction"
-              description="Runs ctx-managed compaction and resets the harness session."
-              control={
-                <Toggle
-                  checked={compactionEnabled}
-                  disabled={!loaded}
-                  onChange={setCompactionEnabled}
-                  ariaLabel="Enable custom compaction"
-                />
-              }
-            />
-            <Row
-              title="Compaction script path"
-              description="Optional executable path for custom compaction; receives JSON input via stdin."
-              control={
-                <input
-                  className="settings-control settings-control-wide"
-                  value={compactionScriptPath}
-                  onChange={(e) => setCompactionScriptPath(e.target.value)}
-                  disabled={!compactionEnabled}
-                  placeholder="(optional) .ctx/scripts/compact.sh"
-                />
-              }
-            />
-            <Row
-              title="Script timeout (ms)"
-              description="Hard timeout for your compaction script."
-              control={
-                <input
-                  className="settings-control"
-                  value={compactionScriptTimeoutMs}
-                  onChange={(e) => setCompactionScriptTimeoutMs(e.target.value)}
-                  disabled={!compactionEnabled}
-                  placeholder="15000"
-                />
-              }
-            />
-            <Row
-              title="Transcript-only compaction"
-              description="Skip the LLM summary and seed with transcript only (applies when no script path is set)."
-              control={
-                <Toggle
-                  checked={compactionTranscriptOnly}
-                  disabled={!compactionEnabled}
-                  onChange={setCompactionTranscriptOnly}
-                  ariaLabel="Transcript-only compaction"
-                />
-              }
-            />
-          </Card>
-
-          <Card title="Retention rules">
-            <Row
-              title="Full transcript token limit"
-              description="Keep the entire transcript until this approximate token count."
-              control={
-                <input
-                  className="settings-control"
-                  value={compactionRetainTokens}
-                  onChange={(e) => setCompactionRetainTokens(e.target.value)}
-                  disabled={!compactionEnabled}
-                  placeholder="12000"
-                />
-              }
-            />
-            <Row
-              title="Tail message count"
-              description="Number of most recent messages to keep when trimming."
-              control={
-                <input
-                  className="settings-control"
-                  value={compactionTailMessages}
-                  onChange={(e) => setCompactionTailMessages(e.target.value)}
-                  disabled={!compactionEnabled}
-                  placeholder="40"
-                />
-              }
-            />
-            <Row
-              title="Tail max chars per message"
-              description="Trims long messages before sending to your script."
-              control={
-                <input
-                  className="settings-control"
-                  value={compactionTailChars}
-                  onChange={(e) => setCompactionTailChars(e.target.value)}
-                  disabled={!compactionEnabled}
-                  placeholder="4000"
-                />
-              }
-            />
-            <Row
-              title="Include attachment references"
-              description="Add attachment metadata to the seed text."
-              control={
-                <Toggle
-                  checked={compactionIncludeAttachments}
-                  disabled={!compactionEnabled}
-                  onChange={setCompactionIncludeAttachments}
-                  ariaLabel="Include attachment references"
-                />
-              }
-            />
-          </Card>
-
-          <Card title="Auto compaction">
-            <Row
-              title="Enable auto compaction"
-              description="Triggers after turns when the context window is tight."
-              control={
-                <Toggle
-                  checked={compactionAutoEnabled}
-                  disabled={!compactionEnabled}
-                  onChange={setCompactionAutoEnabled}
-                  ariaLabel="Enable auto compaction"
-                />
-              }
-            />
-            <Row
-              title="Remaining fraction threshold"
-              description="Auto-compact when remaining context fraction is below this value."
-              control={
-                <input
-                  className="settings-control"
-                  value={compactionRemainingFraction}
-                  onChange={(e) => setCompactionRemainingFraction(e.target.value)}
-                  disabled={!compactionEnabled || !compactionAutoEnabled}
-                  placeholder="0.2"
-                />
-              }
-            />
-            <Row
-              title="Max context tokens"
-              description="Auto-compact when estimated tokens exceed this value."
-              control={
-                <input
-                  className="settings-control"
-                  value={compactionMaxContextTokens}
-                  onChange={(e) => setCompactionMaxContextTokens(e.target.value)}
-                  disabled={!compactionEnabled || !compactionAutoEnabled}
-                  placeholder=""
-                />
-              }
-            />
-          </Card>
-        </>
-      );
-    }
-
     if (active === "dictation") {
       return (
         <>
@@ -3824,7 +3390,6 @@ export default function SettingsPage() {
 
     if (active === "harness_subscriptions") {
       const codexProvider = providers.find((p) => p.provider_id === "codex");
-      const isDesktop = isDesktopApp();
       const codexAccountsList = codexAccounts?.accounts ?? [];
       const codexActiveId = codexAccounts?.active_account_id ?? null;
       const codexLogins = codexAccounts?.logins ?? [];
@@ -3999,57 +3564,22 @@ export default function SettingsPage() {
                       <div>Pending logins</div>
                       <div />
                     </div>
-                    {codexPendingLogins.map((login) => {
-                      const callbackValue = codexCallbackUrls[login.account_id] ?? "";
-                      return (
-                        <div key={login.account_id} className="settings-table-row">
-                          <div>
-                            <div className="settings-table-sub">Login in progress for {login.account_id}</div>
-                            {!isDesktop ? (
-                              <>
-                                <div className="settings-table-sub" style={{ marginTop: 6 }}>
-                                  Paste the /auth/callback URL from the login flow to finish on this daemon.
-                                </div>
-                                <input
-                                  className="settings-control"
-                                  style={{ width: "100%", marginTop: 6 }}
-                                  value={callbackValue}
-                                  onChange={(e) =>
-                                    setCodexCallbackUrls((prev) => ({
-                                      ...prev,
-                                      [login.account_id]: e.target.value,
-                                    }))
-                                  }
-                                  placeholder="http://localhost:1455/auth/callback?code=..."
-                                  disabled={codexAccountsBusy}
-                                />
-                              </>
-                            ) : null}
-                          </div>
-                          <div
-                            style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}
-                          >
-                            <button
-                              type="button"
-                              className="settings-btn settings-btn-secondary settings-btn-compact"
-                              onClick={() => openCodexAuthUrl(login.auth_url)}
-                            >
-                              Open login
-                            </button>
-                            {!isDesktop ? (
-                              <button
-                                type="button"
-                                className="settings-btn settings-btn-secondary settings-btn-compact"
-                                onClick={() => onCodexCompleteLogin(login.account_id)}
-                                disabled={codexAccountsBusy}
-                              >
-                                {codexAccountsBusy ? "Submitting..." : "Complete login"}
-                              </button>
-                            ) : null}
-                          </div>
+                    {codexPendingLogins.map((login) => (
+                      <div key={login.account_id} className="settings-table-row">
+                        <div className="settings-table-sub">
+                          Login in progress for {login.account_id}
                         </div>
-                      );
-                    })}
+                        <div>
+                          <button
+                            type="button"
+                            className="settings-btn settings-btn-secondary settings-btn-compact"
+                            onClick={() => openCodexAuthUrl(login.auth_url)}
+                          >
+                            Open login
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : null}
                 {codexFailedLogins.length ? (
@@ -4106,36 +3636,6 @@ export default function SettingsPage() {
                   <option value="harness_native">Harness-native permissions</option>
                   <option value="ctx_enforced">ctx-enforced (coming soon)</option>
                 </select>
-              }
-            />
-            <Row
-              title="Network profile"
-              description="Controls outbound network access for agent sessions."
-              control={
-                <select
-                  className="settings-control settings-select"
-                  value={networkProfile}
-                  onChange={(e) => setNetworkProfile(e.target.value as NetworkSettings["profile"])}
-                  disabled={!loaded}
-                >
-                  <option value="full">Full outbound</option>
-                  <option value="deps_plus_mcp">Dependencies + MCP</option>
-                  <option value="deps_only">Dependencies only</option>
-                  <option value="mcp_only">MCP only</option>
-                  <option value="none">No outbound</option>
-                </select>
-              }
-            />
-            <Row
-              title="MCP proxy bypass"
-              description="Allow MCP tool traffic to bypass the egress proxy."
-              control={
-                <Toggle
-                  checked={mcpBypassProxy}
-                  disabled={!loaded}
-                  onChange={setMcpBypassProxy}
-                  ariaLabel="MCP proxy bypass"
-                />
               }
             />
           </Card>

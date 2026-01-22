@@ -35,10 +35,6 @@ pub(crate) struct NativeUiState {
     pub(crate) archive_confirm_dismissed: bool,
     #[serde(default)]
     pub(crate) recent_workspaces: Vec<RecentWorkspaceEntry>,
-    #[serde(default)]
-    pub(crate) launcher_execution_mode: Option<String>,
-    #[serde(default)]
-    pub(crate) launcher_workspace_path: Option<String>,
 }
 
 pub(crate) struct UiStateStore {
@@ -193,33 +189,6 @@ impl UiStateStore {
 
     pub(crate) fn recent_workspaces(&self) -> Vec<RecentWorkspaceEntry> {
         self.state.recent_workspaces.clone()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn launcher_execution_mode(&self) -> Option<String> {
-        self.state.launcher_execution_mode.clone()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn set_launcher_execution_mode(&mut self, mode: &str) {
-        let trimmed = mode.trim();
-        if trimmed.is_empty() {
-            return;
-        }
-        self.state.launcher_execution_mode = Some(trimmed.to_string());
-        self.save();
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn launcher_workspace_path(&self) -> Option<String> {
-        self.state.launcher_workspace_path.clone()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn set_launcher_workspace_path(&mut self, path: Option<&str>) {
-        let trimmed = path.map(str::trim).filter(|value| !value.is_empty());
-        self.state.launcher_workspace_path = trimmed.map(str::to_string);
-        self.save();
     }
 
     pub(crate) fn record_recent_workspace(&mut self, name: &str, root_path: &str) {

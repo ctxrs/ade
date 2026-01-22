@@ -19,7 +19,7 @@ pub struct TaskSummaryItem {
 
 impl TaskSummaryItem {
     pub fn from_active(summary: &WorkspaceActiveTaskSummary) -> Self {
-        let sort_at_ms = summary.sort_at.timestamp_millis();
+        let sort_at_ms = summary.task.created_at.timestamp_millis();
         Self {
             id: summary.task.id,
             task: summary.task.clone(),
@@ -218,23 +218,6 @@ mod tests {
                                 "created_at": "2024-01-01T00:00:00Z",
                                 "updated_at": "2024-01-01T01:00:00Z"
                             }
-                        },
-                        "primary_session_head": {
-                            "session": {
-                                "id": "00000000-0000-0000-0000-000000000040",
-                                "task_id": "00000000-0000-0000-0000-000000000010",
-                                "workspace_id": "00000000-0000-0000-0000-000000000001",
-                                "worktree_id": "00000000-0000-0000-0000-000000000030",
-                                "provider_id": "codex",
-                                "model_id": "gpt-5",
-                                "title": "Primary",
-                                "agent_role": "implementer",
-                                "status": "active",
-                                "created_at": "2024-01-01T00:00:00Z",
-                                "updated_at": "2024-01-01T01:00:00Z"
-                            },
-                            "last_event_seq": 12,
-                            "has_more_turns": false
                         },
                         "sessions": [],
                         "sort_at": "2024-01-01T01:00:00Z"

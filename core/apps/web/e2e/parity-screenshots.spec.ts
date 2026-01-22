@@ -513,17 +513,9 @@ test.describe("parity screenshots (web vs GPUI native)", () => {
 
       console.log("[parity] web: open active session");
       await rows.first().click();
-      const activeSession = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
-      await expect(activeSession.locator("textarea.wb-active-textarea")).toBeVisible({
+      await expect(page.locator(".wb-session textarea.wb-active-textarea").first()).toBeVisible({
         timeout: 20_000,
       });
-      await expect(activeSession.locator(".wb-assistant-entry")).toHaveCount(1, {
-        timeout: 20_000,
-      });
-      const assistantEntry = activeSession.locator(".wb-assistant-entry").first();
-      await assistantEntry.scrollIntoViewIfNeeded();
-      await expect(assistantEntry).toBeVisible({ timeout: 20_000 });
-      await expect(assistantEntry).toContainText(/\S+/, { timeout: 20_000 });
       await expect(page.locator(".wb-thread-list").first()).toBeVisible({ timeout: 20_000 });
       await setTranscriptScroll(page);
 

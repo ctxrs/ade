@@ -417,7 +417,7 @@ impl TurnToolSnapshot {
             title: summary.title.clone(),
             status: summary.status.clone(),
             input_json: summary.input_preview.clone(),
-            output_text: None,
+            output_text: summary.output_preview.clone(),
             created_at: summary.created_at,
             updated_at: summary.updated_at,
             summary_only: true,

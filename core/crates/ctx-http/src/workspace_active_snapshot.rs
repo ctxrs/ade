@@ -13,19 +13,13 @@ pub struct WorkspaceActiveSnapshotHub {
 }
 
 struct WorkspaceActiveSnapshotEntry {
-    rev: i64,
-    archived_rev: i64,
     tx: broadcast::Sender<WorkspaceActiveSnapshotEvent>,
 }
 
 impl WorkspaceActiveSnapshotEntry {
     fn new() -> Self {
         let (tx, _) = broadcast::channel(512);
-        Self {
-            rev: 0,
-            archived_rev: 0,
-            tx,
-        }
+        Self { tx }
     }
 }
 
@@ -48,19 +42,6 @@ impl WorkspaceActiveSnapshotHub {
             .clone()
     }
 
-    pub async fn current_rev(&self, workspace_id: WorkspaceId) -> i64 {
-        let guard = self.inner.lock().await;
-        guard.get(&workspace_id).map(|entry| entry.rev).unwrap_or(0)
-    }
-
-    pub async fn current_archived_rev(&self, workspace_id: WorkspaceId) -> i64 {
-        let guard = self.inner.lock().await;
-        guard
-            .get(&workspace_id)
-            .map(|entry| entry.archived_rev)
-            .unwrap_or(0)
-    }
-
     pub async fn subscribe(
         &self,
         workspace_id: WorkspaceId,
@@ -71,50 +52,41 @@ impl WorkspaceActiveSnapshotHub {
     pub async fn publish_active_task_upsert(
         &self,
         workspace_id: WorkspaceId,
+        snapshot_rev: i64,
         task: WorkspaceActiveTaskSummary,
     ) {
-        let mut guard = self.inner.lock().await;
-        let entry = guard
-            .entry(workspace_id)
-            .or_insert_with(WorkspaceActiveSnapshotEntry::new);
-        entry.rev += 1;
-        let _ = entry
-            .tx
-            .send(WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
-                workspace_id,
-                snapshot_rev: entry.rev,
-                task: Box::new(task),
-            });
+        let tx = self.ensure_entry(workspace_id).await;
+        let _ = tx.send(WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+            workspace_id,
+            snapshot_rev,
+            task: Box::new(task),
+        });
     }
 
-    pub async fn publish_active_task_delete(&self, workspace_id: WorkspaceId, task_id: TaskId) {
-        let mut guard = self.inner.lock().await;
-        let entry = guard
-            .entry(workspace_id)
-            .or_insert_with(WorkspaceActiveSnapshotEntry::new);
-        entry.rev += 1;
-        let _ = entry
-            .tx
-            .send(WorkspaceActiveSnapshotEvent::ActiveTaskDelete {
-                workspace_id,
-                snapshot_rev: entry.rev,
-                task_id,
-            });
+    pub async fn publish_active_task_delete(
+        &self,
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        task_id: TaskId,
+    ) {
+        let tx = self.ensure_entry(workspace_id).await;
+        let _ = tx.send(WorkspaceActiveSnapshotEvent::ActiveTaskDelete {
+            workspace_id,
+            snapshot_rev,
+            task_id,
+        });
     }
 
     pub async fn publish_session_summary(
         &self,
         workspace_id: WorkspaceId,
+        snapshot_rev: i64,
         summary: SessionSnapshotSummary,
     ) {
-        let mut guard = self.inner.lock().await;
-        let entry = guard
-            .entry(workspace_id)
-            .or_insert_with(WorkspaceActiveSnapshotEntry::new);
-        entry.rev += 1;
-        let _ = entry.tx.send(WorkspaceActiveSnapshotEvent::SessionSummary {
+        let tx = self.ensure_entry(workspace_id).await;
+        let _ = tx.send(WorkspaceActiveSnapshotEvent::SessionSummary {
             workspace_id,
-            snapshot_rev: entry.rev,
+            snapshot_rev,
             summary: Box::new(summary),
         });
     }
@@ -122,75 +94,59 @@ impl WorkspaceActiveSnapshotHub {
     pub async fn publish_session_head_delta(
         &self,
         workspace_id: WorkspaceId,
+        snapshot_rev: i64,
         delta: SessionHeadDelta,
     ) {
-        let mut guard = self.inner.lock().await;
-        let entry = guard
-            .entry(workspace_id)
-            .or_insert_with(WorkspaceActiveSnapshotEntry::new);
-        entry.rev += 1;
-        let _ = entry
-            .tx
-            .send(WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                workspace_id,
-                snapshot_rev: entry.rev,
-                delta: Box::new(delta),
-            });
+        let tx = self.ensure_entry(workspace_id).await;
+        let _ = tx.send(WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            workspace_id,
+            snapshot_rev,
+            delta: Box::new(delta),
+        });
     }
 
     pub async fn publish_worktree_bootstrap(
         &self,
         workspace_id: WorkspaceId,
+        snapshot_rev: i64,
         notice: WorktreeBootstrapNotice,
     ) {
-        let mut guard = self.inner.lock().await;
-        let entry = guard
-            .entry(workspace_id)
-            .or_insert_with(WorkspaceActiveSnapshotEntry::new);
-        entry.rev += 1;
-        let _ = entry
-            .tx
-            .send(WorkspaceActiveSnapshotEvent::WorktreeBootstrap {
-                workspace_id,
-                snapshot_rev: entry.rev,
-                notice,
-            });
+        let tx = self.ensure_entry(workspace_id).await;
+        let _ = tx.send(WorkspaceActiveSnapshotEvent::WorktreeBootstrap {
+            workspace_id,
+            snapshot_rev,
+            notice,
+        });
     }
 
     pub async fn publish_archived_task_upsert(
         &self,
         workspace_id: WorkspaceId,
+        archived_rev: i64,
         task: WorkspaceTaskSummary,
         snapshot: Option<SessionSnapshot>,
     ) {
-        let mut guard = self.inner.lock().await;
-        let entry = guard
-            .entry(workspace_id)
-            .or_insert_with(WorkspaceActiveSnapshotEntry::new);
-        entry.archived_rev += 1;
-        let _ = entry
-            .tx
-            .send(WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert {
-                workspace_id,
-                archived_rev: entry.archived_rev,
-                task: Box::new(task),
-                snapshot: snapshot.map(Box::new),
-            });
+        let tx = self.ensure_entry(workspace_id).await;
+        let _ = tx.send(WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert {
+            workspace_id,
+            archived_rev,
+            task: Box::new(task),
+            snapshot: snapshot.map(Box::new),
+        });
     }
 
-    pub async fn publish_archived_task_delete(&self, workspace_id: WorkspaceId, task_id: TaskId) {
-        let mut guard = self.inner.lock().await;
-        let entry = guard
-            .entry(workspace_id)
-            .or_insert_with(WorkspaceActiveSnapshotEntry::new);
-        entry.archived_rev += 1;
-        let _ = entry
-            .tx
-            .send(WorkspaceActiveSnapshotEvent::ArchivedTaskDelete {
-                workspace_id,
-                archived_rev: entry.archived_rev,
-                task_id,
-            });
+    pub async fn publish_archived_task_delete(
+        &self,
+        workspace_id: WorkspaceId,
+        archived_rev: i64,
+        task_id: TaskId,
+    ) {
+        let tx = self.ensure_entry(workspace_id).await;
+        let _ = tx.send(WorkspaceActiveSnapshotEvent::ArchivedTaskDelete {
+            workspace_id,
+            archived_rev,
+            task_id,
+        });
     }
 }
 

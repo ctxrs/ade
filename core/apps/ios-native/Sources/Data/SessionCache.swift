@@ -66,6 +66,15 @@ actor DiskCache<Value: Codable> {
         saveIndex()
     }
 
+    func clear() {
+        ensureLoaded()
+        let stored = Array(entries.values)
+        for entry in stored {
+            removeEntry(entry)
+        }
+        saveIndex()
+    }
+
     private func ensureLoaded() {
         guard !isLoaded else { return }
         isLoaded = true
@@ -132,7 +141,7 @@ struct CachedWorkspaceActiveTaskSummary: Codable, Sendable {
         task = activeSummary.task
         primarySession = activeSummary.primarySession
         sessions = activeSummary.sessions
-        sortAt = activeSummary.sortAt
+        sortAt = activeSummary.task.createdAt
     }
 }
 
@@ -181,6 +190,10 @@ actor WorkspaceActiveSnapshotCache {
         await cache.set(cached, for: makeKey(workspaceId: snapshot.workspaceId.stringValue))
     }
 
+    func clear(workspaceId: String) async {
+        await cache.remove(makeKey(workspaceId: workspaceId))
+    }
+
     func apply(event: WorkspaceActiveSnapshotEvent) async {
         switch event {
         case .activeTaskUpsert(let workspaceId, let snapshotRev, let task):
@@ -201,9 +214,15 @@ actor WorkspaceActiveSnapshotCache {
     private func update(workspaceId: String, snapshotRev: Int, archivedRev: Int?, mutate: (inout CachedWorkspaceActiveSnapshot) -> Void) async {
         let key = makeKey(workspaceId: workspaceId)
         guard var cached = await cache.get(key) else { return }
-        cached.snapshotRev = max(cached.snapshotRev, snapshotRev)
+        if snapshotRev < cached.snapshotRev {
+            cached.tasks = []
+            if archivedRev == nil {
+                cached.archivedRev = nil
+            }
+        }
+        cached.snapshotRev = snapshotRev
         if let archivedRev {
-            cached.archivedRev = max(cached.archivedRev ?? 0, archivedRev)
+            cached.archivedRev = archivedRev
         }
         cached.cachedAt = Date().timeIntervalSince1970
         mutate(&cached)
@@ -271,6 +290,10 @@ actor WorkspaceArchivedSnapshotCache {
         await cache.set(cached, for: makeKey(workspaceId: page.workspaceId.stringValue))
     }
     private let maxHeadTasks = 50
+
+    func clear(workspaceId: String) async {
+        await cache.remove(makeKey(workspaceId: workspaceId))
+    }
 
     func apply(event: WorkspaceActiveSnapshotEvent) async {
         switch event {
@@ -345,9 +368,9 @@ struct CachedSessionHead: Codable, Sendable {
 
     init(head: SessionHead) {
         session = head.session
-        turns = head.turns
+        turns = Self.stripPartials(from: head.turns)
         toolSummaries = head.toolSummaries
-        events = head.events
+        events = Self.stripPartialEvents(head.events)
         messages = head.messages
         lastEventSeq = head.lastEventSeq
         stateRev = head.stateRev
@@ -366,14 +389,15 @@ struct CachedSessionHead: Codable, Sendable {
             }
         }
         if let turn = delta.turn {
-            if let index = turns.firstIndex(where: { $0.turnId == turn.turnId }) {
-                turns[index] = turn
+            let nextTurn = Self.stripPartial(turn)
+            if let index = turns.firstIndex(where: { $0.turnId == nextTurn.turnId }) {
+                turns[index] = nextTurn
             } else {
-                turns.append(turn)
+                turns.append(nextTurn)
             }
             turns.sort { $0.startedAt < $1.startedAt }
         }
-        if let event = delta.event {
+        if let event = delta.event, !Self.isPartialEvent(event) {
             var next = events ?? []
             if !next.contains(where: { $0.seq == event.seq }) {
                 next.append(event)
@@ -408,6 +432,49 @@ struct CachedSessionHead: Codable, Sendable {
         static let maxHeadEvents = 200
         static let maxHeadMessages = 200
     }
+
+    private static func isPartialEvent(_ event: SessionEvent) -> Bool {
+        switch event.eventType {
+        case "assistant_chunk", "thought_chunk":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func stripPartialEvents(_ events: [SessionEvent]?) -> [SessionEvent]? {
+        guard let events else { return nil }
+        return events.filter { !isPartialEvent($0) }
+    }
+
+    private static func stripPartial(_ turn: SessionTurn) -> SessionTurn {
+        if turn.assistantPartial == nil && turn.thoughtPartial == nil {
+            return turn
+        }
+        return SessionTurn(
+            turnId: turn.turnId,
+            sessionId: turn.sessionId,
+            runId: turn.runId,
+            userMessageId: turn.userMessageId,
+            status: turn.status,
+            startSeq: turn.startSeq,
+            endSeq: turn.endSeq,
+            startedAt: turn.startedAt,
+            updatedAt: turn.updatedAt,
+            assistantPartial: nil,
+            thoughtPartial: nil,
+            metricsJson: turn.metricsJson,
+            toolTotal: turn.toolTotal,
+            toolPending: turn.toolPending,
+            toolRunning: turn.toolRunning,
+            toolCompleted: turn.toolCompleted,
+            toolFailed: turn.toolFailed
+        )
+    }
+
+    private static func stripPartials(from turns: [SessionTurn]) -> [SessionTurn] {
+        turns.map(stripPartial)
+    }
 }
 
 actor ATSHeadCache {
@@ -434,6 +501,10 @@ actor ATSHeadCache {
         cached.apply(delta: delta)
         await cache.set(cached, for: key)
     }
+
+    func clearAll() async {
+        await cache.clear()
+    }
 }
 
 extension WorkspaceTaskSummary {
@@ -446,7 +517,7 @@ extension WorkspaceTaskSummary {
             seen.insert(id)
             return true
         }
-        self.init(task: cachedActiveSummary.task, sessions: sessions, sortAt: cachedActiveSummary.sortAt)
+        self.init(task: cachedActiveSummary.task, sessions: sessions, sortAt: cachedActiveSummary.task.createdAt)
     }
 
     init(cachedArchivedSummary: CachedWorkspaceTaskSummary) {

@@ -16,6 +16,7 @@ members = [
   "crates/ctx-tunnel-relay",
   "crates/ctx-tunnel-router",
   "crates/ctx-tunnel-control-plane",
+  "tools/load-test",
 ]
 exclude = ["apps/desktop/src-tauri"]
 resolver = "2"
@@ -39,7 +40,7 @@ rcgen = "0.13.2"
 rustls = "0.23"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "uuid", "migrate"] }
 thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"

@@ -40,9 +40,9 @@ struct WorkbenchShellView: View {
     @State private var isStreamConnected = false
     @State private var streamSecureContext: SecureConnectionContext?
     @State private var lastStreamSnapshotRev: Int = 0
+    @State private var lastStreamWorkspaceRev: Int = 0
     @State private var lastArchivedRev: Int = 0
-    @State private var taskRowIndicatorCache = TaskRowIndicatorCache()
-    @State private var taskRowIndicators: [String: TaskRowIndicators] = [:]
+    @State private var streamSubscriptionKey: String = ""
 
     private let streamClient = DaemonStreamClient()
     private let streamEncoder: JSONEncoder = {
@@ -78,7 +78,6 @@ struct WorkbenchShellView: View {
             let drawerHiddenOffset = drawerWidth + 32
             let taskTitle = resolvedTaskTitle()
             let conversationMenuContext = resolvedConversationMenuContext()
-            let isArchived = selectedTask?.task.archivedAt != nil
 
             ZStack(alignment: .leading) {
                 CtxBackgroundView()
@@ -93,7 +92,6 @@ struct WorkbenchShellView: View {
                     activePanel: $activePanel,
                     artifactsCount: $artifactsCount,
                     hasTaskSelection: workbenchSelection.taskId != nil,
-                    isArchived: isArchived,
                     isPreparingSession: isPreparingSession,
                     onTaskCreated: { _Concurrency.Task { await loadTasks() } }
                 )
@@ -139,7 +137,6 @@ struct WorkbenchShellView: View {
                     isRefreshingTasks: isRefreshingTasks,
                     taskError: taskError,
                     activeTaskId: workbenchSelection.taskId,
-                    taskRowIndicators: taskRowIndicators,
                     taskQuery: $taskQuery,
                     drawerWidth: drawerWidth,
                     onRefresh: { _Concurrency.Task { await loadWorkspaces() } },
@@ -272,18 +269,11 @@ struct WorkbenchShellView: View {
         let hasSession = session != nil
         let canCopyWorktree = session?.worktreeId?.isEmpty == false && selectedWorkspace?.id != nil
         let isArchived = selectedTask.task.archivedAt != nil
-        let runningSubagentIds: [String] = selectedTask.sessions.compactMap { summary -> String? in
-            guard summary.session.relationship == "sub_agent" else { return nil }
-            guard summary.activity?.isWorking == true else { return nil }
-            return summary.session.id.stringValue
-        }
         return WorkbenchConversationMenuContext(
             hasSession: hasSession,
             canCopyWorktree: canCopyWorktree,
             isArchived: isArchived,
             isArchivePending: archiveInFlight.contains(taskId),
-            hasRunningSubagents: !runningSubagentIds.isEmpty,
-            onInterruptSubagents: { _Concurrency.Task { await interruptSubagentSessions(runningSubagentIds) } },
             onExportTranscript: { exportTranscript(sessionId: session?.id) },
             onCopyTranscript: { copyTranscript(sessionId: session?.id) },
             onExportSessionLog: { exportSessionLog(sessionId: session?.id) },
@@ -291,18 +281,6 @@ struct WorkbenchShellView: View {
             onCopyWorktreeLocation: { copyWorktreeLocation(session: session) },
             onArchiveConversation: { _Concurrency.Task { await archiveConversation(taskId: taskId) } }
         )
-    }
-
-    @MainActor
-    private func interruptSubagentSessions(_ sessionIds: [String]) async {
-        guard let client = connection.apiClient else { return }
-        for sessionId in sessionIds {
-            do {
-                try await client.interruptSession(sessionId: sessionId)
-            } catch {
-                continue
-            }
-        }
     }
 
     private func dismissKeyboard() {
@@ -564,10 +542,12 @@ struct WorkbenchShellView: View {
             taskError = nil
             isLoadingTasks = false
             isRefreshingTasks = false
-            refreshTaskRowIndicators()
             return
         }
         lastArchivedRev = 0
+        lastStreamSnapshotRev = 0
+        lastStreamWorkspaceRev = 0
+        streamSubscriptionKey = ""
         await hydrateTasksFromCache(workspaceId: workspaceId)
         let hasTasks = !(activeTasks.isEmpty && archivedTasks.isEmpty)
         let showBlocking = !hasTasks
@@ -586,11 +566,21 @@ struct WorkbenchShellView: View {
         do {
             let params = DaemonAPIClient.WorkspaceActiveSnapshotParams(limit: 50)
             let activeSnapshot = try await client.getWorkspaceActiveSnapshot(workspaceId: workspaceId, params: params)
-            _Concurrency.Task {
-                await ATSHeadCache.shared.store(heads: activeSnapshot.active.tasks.map { $0.primarySessionHead })
+            let primaryHeads = activeSnapshot.active.tasks.compactMap { $0.primarySessionHead }
+            if !primaryHeads.isEmpty {
+                _Concurrency.Task { await ATSHeadCache.shared.store(heads: primaryHeads) }
+            }
+            do {
+                let batch = try await client.getWorkspaceActiveHeads(workspaceId: workspaceId)
+                if !batch.heads.isEmpty {
+                    await ATSHeadCache.shared.store(heads: batch.heads)
+                }
+            } catch {
+                // Best effort: allow task list to load even if head hydration fails.
             }
             _Concurrency.Task { await WorkspaceActiveSnapshotCache.shared.store(snapshot: activeSnapshot) }
             lastStreamSnapshotRev = activeSnapshot.snapshotRev
+            lastStreamWorkspaceRev = max(lastStreamWorkspaceRev, activeSnapshot.snapshotRev)
             if let archivedRev = activeSnapshot.archivedRev {
                 lastArchivedRev = max(lastArchivedRev, archivedRev)
             }
@@ -607,23 +597,23 @@ struct WorkbenchShellView: View {
                 let activeIds = Set(activeSummaries.map { $0.task.id.stringValue })
                 for task in workspaceTasks where task.archivedAt == nil {
                     if activeIds.contains(task.id.stringValue) { continue }
-                    let sortAt = task.lastActivityAt ?? task.updatedAt ?? task.createdAt
+                    let sortAt = task.createdAt
                     extraActive.append(WorkspaceTaskSummary(task: task, sessions: [], sortAt: sortAt))
                 }
             }
             activeTasks = sortTasksBySortAt(activeSummaries + extraActive)
-            refreshTaskRowIndicators()
+
             await loadArchivedHeadWindow(
                 client: client,
                 workspaceId: workspaceId,
                 fallbackTasks: workspaceTasksLoaded ? workspaceTasks : nil
             )
             resolveSelectionForCurrentTask()
+            _Concurrency.Task { await sendWorkspaceSubscriptionIfNeeded() }
         } catch {
             if showBlocking {
                 activeTasks = []
                 archivedTasks = []
-                refreshTaskRowIndicators()
             }
             taskError = "Failed to load tasks."
         }
@@ -638,6 +628,7 @@ struct WorkbenchShellView: View {
             if !summaries.isEmpty {
                 activeTasks = sortTasksBySortAt(summaries)
                 lastStreamSnapshotRev = max(lastStreamSnapshotRev, cached.snapshotRev)
+                lastStreamWorkspaceRev = max(lastStreamWorkspaceRev, cached.snapshotRev)
                 if let archivedRev = cached.archivedRev {
                     lastArchivedRev = max(lastArchivedRev, archivedRev)
                 }
@@ -656,8 +647,8 @@ struct WorkbenchShellView: View {
         }
         if didHydrate {
             taskError = nil
-            refreshTaskRowIndicators()
             resolveSelectionForCurrentTask()
+            _Concurrency.Task { await sendWorkspaceSubscriptionIfNeeded() }
         }
     }
 
@@ -675,11 +666,6 @@ struct WorkbenchShellView: View {
             if let archivedRev = page.archivedRev {
                 lastArchivedRev = max(lastArchivedRev, archivedRev)
             }
-            refreshTaskRowIndicators()
-            let heads = page.tasks.compactMap { $0.primarySessionHead }
-            if !heads.isEmpty {
-                _Concurrency.Task { await ATSHeadCache.shared.store(heads: heads) }
-            }
             _Concurrency.Task { await WorkspaceArchivedSnapshotCache.shared.store(page: page) }
             return
         } catch {
@@ -689,7 +675,6 @@ struct WorkbenchShellView: View {
                 nextArchived.append(await buildArchivedTaskSummary(client: client, task: task))
             }
             archivedTasks = sortTasksBySortAt(nextArchived)
-            refreshTaskRowIndicators()
         }
     }
 
@@ -702,14 +687,6 @@ struct WorkbenchShellView: View {
     @MainActor
     private func upsertArchivedTaskSummary(_ summary: WorkspaceArchivedTaskSummaryPayload) {
         upsertTaskSummary(summary.toTaskSummary())
-    }
-
-    @MainActor
-    private func refreshTaskRowIndicators() {
-        taskRowIndicators = taskRowIndicatorCache.update(
-            tasks: activeTasks + archivedTasks,
-            snapshotRev: lastStreamSnapshotRev
-        )
     }
 
     private func resolveSelectionForCurrentTask() {
@@ -926,6 +903,7 @@ struct WorkbenchShellView: View {
         streamSocket = nil
         isStreamConnected = false
         streamReconnectDelay = 1
+        streamSubscriptionKey = ""
     }
 
     @MainActor
@@ -944,8 +922,10 @@ struct WorkbenchShellView: View {
                 }
                 streamSocket = nil
                 isStreamConnected = false
+                streamSubscriptionKey = ""
             } catch {
                 isStreamConnected = false
+                streamSubscriptionKey = ""
             }
             if _Concurrency.Task.isCancelled { break }
             let delay = min(streamReconnectDelay, 15)
@@ -996,7 +976,22 @@ struct WorkbenchShellView: View {
     @MainActor
     private func sendWorkspaceSubscriptionIfNeeded() async {
         guard let socket = streamSocket else { return }
-        let message = WorkspaceActiveSnapshotClientMessage(type: "subscribe", sessionIds: [], sessions: [])
+        let subscriptions = workspaceSessionSubscriptions()
+        let key = subscriptions
+            .map { "\($0.sessionId.stringValue):\($0.afterSeq ?? 0)" }
+            .joined(separator: "|")
+        let normalizedKey = key.isEmpty ? "none" : key
+        if normalizedKey == streamSubscriptionKey { return }
+        let includeActiveHeads = streamSubscriptionKey.isEmpty
+        streamSubscriptionKey = normalizedKey
+        let message = WorkspaceActiveSnapshotClientMessage(
+            type: "subscribe",
+            workspaceId: selectedWorkspace?.id,
+            fromRev: lastStreamWorkspaceRev > 0 ? lastStreamWorkspaceRev : nil,
+            includeActiveHeads: includeActiveHeads,
+            sessionIds: [],
+            sessions: subscriptions
+        )
         if let secureContext = streamSecureContext {
             let seq = await SecureSequenceStore.shared.next(for: secureContext.deviceId)
             guard let payload = try? streamEncoder.encode(message) else { return }
@@ -1017,6 +1012,28 @@ struct WorkbenchShellView: View {
     }
 
     @MainActor
+    private func workspaceSessionSubscriptions() -> [WorkspaceActiveSnapshotSessionSubscription] {
+        var seen = Set<String>()
+        var subscriptions: [WorkspaceActiveSnapshotSessionSubscription] = []
+        for task in activeTasks where task.task.archivedAt == nil {
+            for summary in task.sessions {
+                let sessionId = summary.session.id.stringValue
+                guard !sessionId.isEmpty, !seen.contains(sessionId) else { continue }
+                seen.insert(sessionId)
+                let afterSeq = summary.lastEventSeq ?? summary.stateRev
+                subscriptions.append(
+                    WorkspaceActiveSnapshotSessionSubscription(
+                        sessionId: summary.session.id,
+                        afterSeq: afterSeq
+                    )
+                )
+            }
+        }
+        subscriptions.sort { $0.sessionId.stringValue < $1.sessionId.stringValue }
+        return subscriptions
+    }
+
+    @MainActor
     private func handleWorkspaceStreamMessage(_ message: URLSessionWebSocketTask.Message) async {
         let data: Data?
         switch message {
@@ -1032,12 +1049,81 @@ struct WorkbenchShellView: View {
             guard let envelope = try? streamDecoder.decode(SecureEnvelope.self, from: data) else { return }
             guard envelope.deviceId == secureContext.deviceId else { return }
             guard let decrypted = try? MobileE2EE.decryptEnvelope(envelope, key: secureContext.key) else { return }
+            if let message = try? streamDecoder.decode(WorkspaceStreamServerMessage.self, from: decrypted) {
+                handleWorkspaceStreamServerMessage(message)
+                return
+            }
             guard let event = try? streamDecoder.decode(WorkspaceActiveSnapshotEvent.self, from: decrypted) else { return }
             handleWorkspaceStreamEvent(event)
             return
         }
+        if let message = try? streamDecoder.decode(WorkspaceStreamServerMessage.self, from: data) {
+            handleWorkspaceStreamServerMessage(message)
+            return
+        }
         guard let event = try? streamDecoder.decode(WorkspaceActiveSnapshotEvent.self, from: data) else { return }
         handleWorkspaceStreamEvent(event)
+    }
+
+    @MainActor
+    private func handleWorkspaceStreamServerMessage(_ message: WorkspaceStreamServerMessage) {
+        switch message {
+        case .snapshot(let snapshot):
+            applyWorkspaceStreamSnapshot(snapshot)
+        case .event(let rev, let event):
+            if let rev {
+                lastStreamWorkspaceRev = max(lastStreamWorkspaceRev, rev)
+            }
+            handleWorkspaceStreamEvent(event)
+        case .resetRequired(let latestRev):
+            if latestRev > 0 {
+                lastStreamWorkspaceRev = max(lastStreamWorkspaceRev, latestRev)
+            }
+            _Concurrency.Task { await rehydrateWorkspaceAfterReset() }
+        }
+    }
+
+    @MainActor
+    private func applyWorkspaceStreamSnapshot(_ snapshot: WorkspaceStreamSnapshot) {
+        let activeSnapshot = snapshot.activeSnapshot
+        lastStreamWorkspaceRev = max(lastStreamWorkspaceRev, snapshot.rev)
+        lastStreamSnapshotRev = activeSnapshot.snapshotRev
+        if let archivedRev = activeSnapshot.archivedRev {
+            lastArchivedRev = max(lastArchivedRev, archivedRev)
+        }
+        let newSummaries = activeSnapshot.active.tasks.map(WorkspaceTaskSummary.init)
+        if activeSnapshot.active.totalCount > newSummaries.count {
+            let current = activeTasks.filter { $0.task.archivedAt == nil }
+            let knownIds = Set(newSummaries.map { $0.task.id.stringValue })
+            let extras = current.filter { !knownIds.contains($0.task.id.stringValue) }
+            activeTasks = sortTasksBySortAt(newSummaries + extras)
+        } else {
+            activeTasks = sortTasksBySortAt(newSummaries)
+        }
+        resolveSelectionForCurrentTask()
+        _Concurrency.Task { await WorkspaceActiveSnapshotCache.shared.store(snapshot: activeSnapshot) }
+        if let heads = snapshot.activeHeads?.heads, !heads.isEmpty {
+            _Concurrency.Task { await ATSHeadCache.shared.store(heads: heads) }
+        } else {
+            let primaryHeads = activeSnapshot.active.tasks.compactMap { $0.primarySessionHead }
+            if !primaryHeads.isEmpty {
+                _Concurrency.Task { await ATSHeadCache.shared.store(heads: primaryHeads) }
+            }
+        }
+        _Concurrency.Task { await sendWorkspaceSubscriptionIfNeeded() }
+    }
+
+    @MainActor
+    private func rehydrateWorkspaceAfterReset() async {
+        guard let workspaceId = selectedWorkspace?.id else { return }
+        await WorkspaceActiveSnapshotCache.shared.clear(workspaceId: workspaceId)
+        await WorkspaceArchivedSnapshotCache.shared.clear(workspaceId: workspaceId)
+        await ATSHeadCache.shared.clearAll()
+        lastStreamSnapshotRev = 0
+        lastStreamWorkspaceRev = 0
+        lastArchivedRev = 0
+        streamSubscriptionKey = ""
+        await loadTasks()
     }
 
     @MainActor
@@ -1087,28 +1173,37 @@ struct WorkbenchShellView: View {
         }
 
         if let snapshotRev {
-            if snapshotRev > lastStreamSnapshotRev + 1 {
+            lastStreamWorkspaceRev = max(lastStreamWorkspaceRev, snapshotRev)
+            if lastStreamSnapshotRev > 0, snapshotRev < lastStreamSnapshotRev {
+                lastStreamSnapshotRev = snapshotRev
+                _Concurrency.Task { await loadTasks() }
+            } else if snapshotRev > lastStreamSnapshotRev + 1 {
                 _Concurrency.Task { await loadTasks() }
             }
             if isReady, snapshotRev != lastStreamSnapshotRev {
                 _Concurrency.Task { await loadTasks() }
             }
-            lastStreamSnapshotRev = max(lastStreamSnapshotRev, snapshotRev)
+            lastStreamSnapshotRev = snapshotRev
         }
         if let archivedRev {
-            if archivedRev > lastArchivedRev + 1 {
+            if lastArchivedRev > 0, archivedRev < lastArchivedRev {
+                lastArchivedRev = archivedRev
+                _Concurrency.Task { await refreshArchivedHeadWindow() }
+            } else if archivedRev > lastArchivedRev + 1 {
                 _Concurrency.Task { await refreshArchivedHeadWindow() }
             }
             if isReady, archivedRev != lastArchivedRev {
                 _Concurrency.Task { await refreshArchivedHeadWindow() }
             }
-            lastArchivedRev = max(lastArchivedRev, archivedRev)
+            lastArchivedRev = archivedRev
         }
 
         switch event {
         case .activeTaskUpsert(_, _, let task):
             upsertTaskSummary(WorkspaceTaskSummary(activeSummary: task))
-            _Concurrency.Task { await ATSHeadCache.shared.store(head: task.primarySessionHead) }
+            if let head = task.primarySessionHead {
+                _Concurrency.Task { await ATSHeadCache.shared.store(head: head) }
+            }
         case .activeTaskDelete(_, _, let taskId):
             removeTask(taskId: taskId.stringValue)
         case .sessionSummary(_, _, let summary):
@@ -1117,13 +1212,8 @@ struct WorkbenchShellView: View {
             _Concurrency.Task { await ATSHeadCache.shared.apply(delta: delta) }
         case .sessionGap:
             _Concurrency.Task { await loadTasks() }
-        case .archivedTaskUpsert(_, _, let task, let snapshot):
+        case .archivedTaskUpsert(_, _, let task, _):
             upsertArchivedTaskSummary(task)
-            if let snapshot {
-                _Concurrency.Task { await ATSHeadCache.shared.store(head: snapshot.head) }
-            } else if let head = task.primarySessionHead {
-                _Concurrency.Task { await ATSHeadCache.shared.store(head: head) }
-            }
         case .archivedTaskDelete(_, _, let taskId):
             removeTask(taskId: taskId.stringValue)
         default:
@@ -1141,8 +1231,8 @@ struct WorkbenchShellView: View {
         } else {
             archivedTasks = sortTasksBySortAt(archivedTasks + [summary])
         }
-        refreshTaskRowIndicators()
         resolveSelectionForCurrentTask()
+        _Concurrency.Task { await sendWorkspaceSubscriptionIfNeeded() }
     }
 
     @MainActor
@@ -1152,7 +1242,7 @@ struct WorkbenchShellView: View {
         if workbenchSelection.taskId == taskId {
             workbenchSelection.setSelection(taskId: nil, sessionId: nil)
         }
-        refreshTaskRowIndicators()
+        _Concurrency.Task { await sendWorkspaceSubscriptionIfNeeded() }
     }
 
     @MainActor
@@ -1178,8 +1268,8 @@ struct WorkbenchShellView: View {
         if !update(&activeTasks) {
             _ = update(&archivedTasks)
         }
-        refreshTaskRowIndicators()
         resolveSelectionForCurrentTask()
+        _Concurrency.Task { await sendWorkspaceSubscriptionIfNeeded() }
     }
 
     @MainActor
@@ -1192,7 +1282,7 @@ struct WorkbenchShellView: View {
             return WorkspaceTaskSummary(
                 task: task,
                 sessions: summary.sessions,
-                sortAt: summary.sortAt
+                sortAt: task.archivedAt ?? task.createdAt
             )
         }
 
@@ -1202,7 +1292,6 @@ struct WorkbenchShellView: View {
             } else {
                 archivedTasks = sortTasksBySortAt(archivedTasks + [updated])
             }
-            refreshTaskRowIndicators()
             return
         }
 
@@ -1212,7 +1301,6 @@ struct WorkbenchShellView: View {
             } else {
                 archivedTasks = sortTasksBySortAt(archivedTasks + [updated])
             }
-            refreshTaskRowIndicators()
         }
     }
 }
@@ -1254,7 +1342,6 @@ private struct WorkbenchHomeView: View {
     @Binding var activePanel: WorkbenchPanel?
     @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
-    let isArchived: Bool
     let isPreparingSession: Bool
     let onTaskCreated: () -> Void
 
@@ -1270,7 +1357,6 @@ private struct WorkbenchHomeView: View {
                 activePanel: $activePanel,
                 artifactsCount: $artifactsCount,
                 hasTaskSelection: hasTaskSelection,
-                isArchived: isArchived,
                 isPreparingSession: isPreparingSession,
                 onTaskCreated: onTaskCreated
             )
@@ -1292,8 +1378,6 @@ private struct WorkbenchConversationMenuContext {
     let canCopyWorktree: Bool
     let isArchived: Bool
     let isArchivePending: Bool
-    let hasRunningSubagents: Bool
-    let onInterruptSubagents: () -> Void
     let onExportTranscript: () -> Void
     let onCopyTranscript: () -> Void
     let onExportSessionLog: () -> Void
@@ -1380,8 +1464,6 @@ private struct WorkbenchTopBar: View {
                                 .disabled(!context.hasSession)
                             Button("Copy Session Log", action: context.onCopySessionLog)
                                 .disabled(!context.hasSession)
-                            Button("Interrupt All Subagents", action: context.onInterruptSubagents)
-                                .disabled(!context.hasRunningSubagents)
                             Button("Copy Worktree Location", action: context.onCopyWorktreeLocation)
                                 .disabled(!context.canCopyWorktree)
                             Button("Archive Conversation", action: context.onArchiveConversation)
@@ -1426,7 +1508,6 @@ private struct WorkbenchDrawerView: View {
     let isRefreshingTasks: Bool
     let taskError: String?
     let activeTaskId: String?
-    let taskRowIndicators: [String: TaskRowIndicators]
     @Binding var taskQuery: String
     let drawerWidth: CGFloat
     let onRefresh: () -> Void
@@ -1495,23 +1576,21 @@ private struct WorkbenchDrawerView: View {
                         } else {
                             LazyVStack(spacing: 2) {
                                 ForEach(filteredActive, id: \.task.id) { task in
-                                    let taskId = task.task.id.stringValue
-                                    let indicators = taskRowIndicators[taskId] ?? TaskRowIndicators(task: task)
                                     Button {
                                         onSelectTask(task)
                                     } label: {
                                         WorkbenchTaskRowView(
                                             task: task,
-                                            indicators: indicators,
-                                            isSelected: activeTaskId == taskId
+                                            isSelected: activeTaskId == task.task.id.stringValue
                                         )
                                     }
                                     .buttonStyle(.plain)
                                     .contextMenu {
+                                        let taskId = task.task.id.stringValue
                                         let archived = task.task.archivedAt != nil
                                         let hasAssistantMessages = task.task.lastAssistantMessageAt != nil
-                                        let isWorking = indicators.isWorking
-                                        let isUnread = indicators.isUnread
+                                        let isWorking = taskHasWorkingSession(task)
+                                        let isUnread = taskHasUnread(task, isWorking: isWorking)
 
                                         Button("Rename Task") { onRenameTask(task) }
                                         Button(archived ? "Unarchive" : "Archive") { onArchiveToggle(task) }
@@ -1534,22 +1613,20 @@ private struct WorkbenchDrawerView: View {
                             } else {
                                 LazyVStack(spacing: 2) {
                                     ForEach(filteredArchived, id: \.task.id) { task in
-                                        let taskId = task.task.id.stringValue
-                                        let indicators = taskRowIndicators[taskId] ?? TaskRowIndicators(task: task)
                                         Button {
                                             onSelectTask(task)
                                         } label: {
-                                        WorkbenchTaskRowView(
-                                            task: task,
-                                            indicators: indicators,
-                                            isSelected: activeTaskId == taskId
-                                        )
+                                            WorkbenchTaskRowView(
+                                                task: task,
+                                                isSelected: activeTaskId == task.task.id.stringValue
+                                            )
                                         }
                                         .buttonStyle(.plain)
                                         .contextMenu {
+                                            let taskId = task.task.id.stringValue
                                             let hasAssistantMessages = task.task.lastAssistantMessageAt != nil
-                                            let isWorking = indicators.isWorking
-                                            let isUnread = indicators.isUnread
+                                            let isWorking = taskHasWorkingSession(task)
+                                            let isUnread = taskHasUnread(task, isWorking: isWorking)
 
                                             Button("Rename Task") { onRenameTask(task) }
                                             Button("Unarchive") { onArchiveToggle(task) }
@@ -1685,7 +1762,6 @@ private struct WorkbenchNavigationFlowView: View {
     @Binding var activePanel: WorkbenchPanel?
     @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
-    let isArchived: Bool
     let isPreparingSession: Bool
     let onTaskCreated: () -> Void
 
@@ -1707,7 +1783,7 @@ private struct WorkbenchNavigationFlowView: View {
                 if let selectedSession {
                     ChatDetailView(
                         session: selectedSession,
-                        isArchived: isArchived,
+                        isArchived: selectedTask?.task.archivedAt != nil,
                         activePanel: $activePanel,
                         artifactCount: $artifactsCount
                     )
@@ -1732,6 +1808,7 @@ private struct WorkbenchNavigationFlowView: View {
                     )
                 }
             }
+            .id(workspace.id)
             .toolbar(.hidden, for: .navigationBar)
         } else {
             WorkbenchEmptyStateView(
@@ -1947,27 +2024,6 @@ private struct WorkbenchNewTaskView: View {
                 .stroke(Color.ctxLine, lineWidth: 1)
         )
     }
-
-    @ViewBuilder
-    private func newTaskMenuLabel(_ text: String) -> some View {
-        HStack(spacing: 6) {
-            Text(text)
-                .font(.footnote.weight(.semibold))
-                .foregroundColor(.ctxTextPrimary)
-                .lineLimit(1)
-            Image(systemName: "chevron.down")
-                .font(.caption2.weight(.semibold))
-                .foregroundColor(.ctxTextMuted)
-        }
-        .padding(.vertical, 7)
-        .padding(.horizontal, 10)
-        .background(Color.ctxSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.ctxLine, lineWidth: 1)
-        )
-    }
-
     private var promptTrimmed: String {
         prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -2671,12 +2727,46 @@ private func resolvePrimarySession(
     preferredSessionId: String?
 ) -> ResolvedPrimarySession {
     let sessions = task.sessions
-    guard let primaryId = task.task.primarySessionId?.stringValue else {
+    guard !sessions.isEmpty else {
         return ResolvedPrimarySession(sessionId: nil, session: nil)
     }
-    let match = sessions.first(where: { $0.session.id.stringValue == primaryId })
-    let summary = match.map { SessionSummary(session: $0.session) }
-    return ResolvedPrimarySession(sessionId: primaryId, session: summary)
+
+    let nonSubagents = sessions.filter { $0.session.relationship != "sub_agent" }
+    let candidates = nonSubagents.isEmpty ? sessions : nonSubagents
+
+    if let preferredSessionId,
+       let match = candidates.first(where: { $0.session.id.stringValue == preferredSessionId }) {
+        let summary = SessionSummary(session: match.session)
+        return ResolvedPrimarySession(sessionId: preferredSessionId, session: summary)
+    }
+
+    if let primaryId = task.task.primarySessionId?.stringValue,
+       let match = candidates.first(where: { $0.session.id.stringValue == primaryId }) {
+        let summary = SessionSummary(session: match.session)
+        return ResolvedPrimarySession(sessionId: primaryId, session: summary)
+    }
+
+    if let running = candidates.first(where: { $0.session.status == "active" || $0.session.status == "running" }) {
+        let summary = SessionSummary(session: running.session)
+        let sessionId = running.session.id.stringValue
+        return ResolvedPrimarySession(sessionId: sessionId, session: summary)
+    }
+
+    if let recent = mostRecentSession(in: candidates) {
+        let summary = SessionSummary(session: recent.session)
+        let sessionId = recent.session.id.stringValue
+        return ResolvedPrimarySession(sessionId: sessionId, session: summary)
+    }
+
+    return ResolvedPrimarySession(sessionId: nil, session: nil)
+}
+
+private func mostRecentSession(in sessions: [SessionSnapshotSummary]) -> SessionSnapshotSummary? {
+    sessions.max { left, right in
+        let leftKey = left.lastMessageAt ?? left.session.updatedAt ?? left.session.createdAt ?? ""
+        let rightKey = right.lastMessageAt ?? right.session.updatedAt ?? right.session.createdAt ?? ""
+        return leftKey < rightKey
+    }
 }
 
 private func extractModelIds(from models: JSONValue?) -> [String] {
@@ -2782,12 +2872,18 @@ private func buildArchivedTaskSummary(
         }
         _ = try? await client.getSessionHistory(sessionId: preferredSessionId, beforeSeq: nil, limit: 1)
     }
-    let sortAt = task.lastActivityAt ?? task.updatedAt ?? task.createdAt
+    let sortAt = task.archivedAt ?? task.createdAt
     return WorkspaceTaskSummary(task: task, sessions: summaries, sortAt: sortAt)
 }
 
 private func pickArchivedSessionId(task: Task, sessions: [Session]) -> String? {
-    return task.primarySessionId?.stringValue
+    if let primaryId = task.primarySessionId?.stringValue,
+       (sessions.isEmpty || sessions.contains(where: { $0.id.stringValue == primaryId })) {
+        return primaryId
+    }
+    let nonSubagents = sessions.filter { $0.relationship != "sub_agent" }
+    let pool = nonSubagents.isEmpty ? sessions : nonSubagents
+    return pool.first?.id.stringValue
 }
 
 // MARK: - Task list helpers (web parity)
@@ -2838,12 +2934,15 @@ private struct WorkbenchSectionHeaderView: View {
 
 private struct WorkbenchTaskRowView: View {
     let task: WorkspaceTaskSummary
-    let indicators: TaskRowIndicators
     let isSelected: Bool
 
     private var title: String {
         let trimmed = task.task.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "New task" : trimmed
+    }
+
+    private var indicators: TaskRowIndicators {
+        TaskRowIndicators(task: task)
     }
 
     var body: some View {
@@ -2860,7 +2959,7 @@ private struct WorkbenchTaskRowView: View {
                 Spacer()
 
                 HStack(spacing: 6) {
-                    Text(formatRelativeAgeShort(task.task.lastActivityAt ?? task.task.updatedAt ?? task.task.createdAt))
+                    Text(indicators.ageLabel)
                         .font(.system(size: 12))
                         .foregroundColor(.ctxTextMuted)
                         .frame(minWidth: 28, alignment: .trailing)
@@ -3054,92 +3153,24 @@ private func formatSessionLog(head: SessionHead) -> String {
 private struct TaskRowIndicators {
     let providerIds: [String]
     let isWorking: Bool
-    let isUnread: Bool
     let dotKind: TaskRowDotKind?
+    let ageLabel: String
     let previewText: String?
 
     init(task: WorkspaceTaskSummary) {
         providerIds = resolveProviderIds(for: task)
         isWorking = taskHasWorkingSession(task)
         let hasError = taskHasErrorSession(task)
-        isUnread = taskHasUnread(task, isWorking: isWorking)
+        let unread = taskHasUnread(task, isWorking: isWorking)
         if hasError {
             dotKind = .error
-        } else if isUnread {
+        } else if unread {
             dotKind = .unread
         } else {
             dotKind = nil
         }
+        ageLabel = formatRelativeAgeShort(task.task.lastActivityAt ?? task.task.updatedAt ?? task.task.createdAt)
         previewText = resolveTaskPreview(task)
-    }
-}
-
-private struct TaskRowSessionFingerprint: Hashable {
-    let sessionId: String
-    let lastEventSeq: Int?
-    let status: String
-    let providerId: String
-    let activityWorking: Bool
-    let lastMessagePreview: String?
-}
-
-private struct TaskRowFingerprint: Hashable {
-    let taskId: String
-    let snapshotRev: Int
-    let sortAt: String
-    let updatedAt: String
-    let lastActivityAt: String?
-    let assistantSeenAt: String?
-    let lastAssistantMessageAt: String?
-    let sessions: [TaskRowSessionFingerprint]
-
-    init(task: WorkspaceTaskSummary, snapshotRev: Int) {
-        taskId = task.task.id.stringValue
-        self.snapshotRev = snapshotRev
-        sortAt = task.sortAt
-        updatedAt = task.task.updatedAt
-        lastActivityAt = task.task.lastActivityAt
-        assistantSeenAt = task.task.assistantSeenAt
-        lastAssistantMessageAt = task.task.lastAssistantMessageAt
-        sessions = task.sessions.map { summary in
-            TaskRowSessionFingerprint(
-                sessionId: summary.session.id.stringValue,
-                lastEventSeq: summary.lastEventSeq,
-                status: summary.session.status,
-                providerId: summary.session.providerId,
-                activityWorking: summary.activity?.isWorking == true,
-                lastMessagePreview: summary.lastMessagePreview
-            )
-        }
-    }
-}
-
-private struct TaskRowIndicatorCacheEntry {
-    let fingerprint: TaskRowFingerprint
-    let indicators: TaskRowIndicators
-}
-
-private struct TaskRowIndicatorCache {
-    private var entries: [String: TaskRowIndicatorCacheEntry] = [:]
-
-    mutating func update(tasks: [WorkspaceTaskSummary], snapshotRev: Int) -> [String: TaskRowIndicators] {
-        var nextEntries: [String: TaskRowIndicatorCacheEntry] = [:]
-        var indicatorsById: [String: TaskRowIndicators] = [:]
-        for task in tasks {
-            let taskId = task.task.id.stringValue
-            let fingerprint = TaskRowFingerprint(task: task, snapshotRev: snapshotRev)
-            if let cached = entries[taskId], cached.fingerprint == fingerprint {
-                nextEntries[taskId] = cached
-                indicatorsById[taskId] = cached.indicators
-                continue
-            }
-            let indicators = TaskRowIndicators(task: task)
-            let entry = TaskRowIndicatorCacheEntry(fingerprint: fingerprint, indicators: indicators)
-            nextEntries[taskId] = entry
-            indicatorsById[taskId] = indicators
-        }
-        entries = nextEntries
-        return indicatorsById
     }
 }
 
@@ -3166,13 +3197,14 @@ private func resolveTaskPreview(_ task: WorkspaceTaskSummary) -> String? {
 
 
 private func taskHasWorkingSession(_ task: WorkspaceTaskSummary) -> Bool {
-    if let primaryId = task.task.primarySessionId?.stringValue,
-       let summary = task.sessions.first(where: { $0.session.id.stringValue == primaryId }) {
+    for summary in task.sessions {
         let status = summary.session.status.lowercased()
         if status == "failed" || status == "cancelled" || status == "completed" {
-            return false
+            continue
         }
-        return summary.activity?.isWorking == true
+        if summary.activity?.isWorking == true {
+            return true
+        }
     }
     return false
 }

@@ -339,50 +339,6 @@ export async function saveSettingsV1(settings: PersistedSettingsV1["settings"]):
   } satisfies PersistedSettingsV1);
 }
 
-export type LauncherPrefsV1 = {
-  executionMode?: "container" | "host";
-  hostKind?: "local" | "ssh";
-  workspacePath?: string | null;
-};
-
-type PersistedLauncherPrefsV1 = {
-  v: 1;
-  executionMode?: "container" | "host";
-  hostKind?: "local" | "ssh";
-  workspacePath?: string | null;
-  updatedAtMs: number;
-};
-
-export function launcherPrefsKeyV1() {
-  return "launcher.prefs.v1";
-}
-
-export async function loadLauncherPrefsV1(): Promise<LauncherPrefsV1 | null> {
-  const raw = await uiStateGet(launcherPrefsKeyV1());
-  if (!raw || typeof raw !== "object") return null;
-  const rec = raw as PersistedLauncherPrefsV1;
-  if (rec.v !== 1) return null;
-  const executionMode =
-    rec.executionMode === "container" || rec.executionMode === "host" ? rec.executionMode : undefined;
-  const hostKind = rec.hostKind === "local" || rec.hostKind === "ssh" ? rec.hostKind : undefined;
-  if (typeof rec.workspacePath !== "undefined" && !isStringOrNull(rec.workspacePath)) return null;
-  return {
-    executionMode,
-    hostKind,
-    workspacePath: rec.workspacePath ?? null,
-  };
-}
-
-export async function saveLauncherPrefsV1(prefs: LauncherPrefsV1): Promise<void> {
-  await uiStateSet(launcherPrefsKeyV1(), {
-    v: 1,
-    executionMode: prefs.executionMode,
-    hostKind: prefs.hostKind,
-    workspacePath: prefs.workspacePath ?? null,
-    updatedAtMs: Date.now(),
-  } satisfies PersistedLauncherPrefsV1);
-}
-
 export type SessionViewVerbosity = "terse" | "default" | "verbose";
 
 export type PersistedSessionViewPrefsV1 = {

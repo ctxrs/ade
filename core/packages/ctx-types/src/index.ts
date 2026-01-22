@@ -268,7 +268,7 @@ export type SessionHeadSnapshot = {
 
 export type SessionSnapshot = {
   summary: SessionSnapshotSummary;
-  head: SessionHeadSnapshot;
+  head?: SessionHeadSnapshot | null;
   state?: SessionState | null;
 };
 
@@ -292,7 +292,7 @@ export type SessionState = {
 export type WorkspaceActiveTaskSummary = {
   task: Task;
   primary_session: SessionSnapshotSummary;
-  primary_session_head: SessionHeadSnapshot;
+  primary_session_head?: SessionHeadSnapshot | null;
   sessions: SessionSnapshotSummary[];
   sort_at: string;
 };
@@ -452,23 +452,6 @@ export type WorkspaceActiveSnapshotEvent =
       task_id: { 0: string } | string;
     };
 
-export type WorkspaceActiveSnapshotStreamMessage =
-  | {
-      type: "snapshot";
-      rev: number;
-      active_snapshot: WorkspaceActiveSnapshot;
-      active_heads?: WorkspaceActiveHeadBatch | null;
-    }
-  | {
-      type: "event";
-      rev: number;
-      event: WorkspaceActiveSnapshotEvent;
-    }
-  | {
-      type: "reset_required";
-      latest_rev: number;
-    };
-
 export type WorkspaceActiveSnapshotSessionSubscription = {
   session_id: { 0: string } | string;
   after_seq?: number | null;
@@ -479,7 +462,6 @@ export type WorkspaceActiveSnapshotClientMessage =
       type: "subscribe";
       session_ids?: ({ 0: string } | string)[];
       sessions?: WorkspaceActiveSnapshotSessionSubscription[];
-      include_active_heads?: boolean;
     };
 
 export type Message = {
@@ -571,6 +553,10 @@ export type SessionTurnTool = {
   status?: string | null;
   input_json?: any;
   output_text?: string | null;
+  input_truncated?: boolean | null;
+  input_original_bytes?: number | null;
+  output_truncated?: boolean | null;
+  output_original_bytes?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -583,6 +569,11 @@ export type SessionTurnToolSummary = {
   title?: string | null;
   status?: string | null;
   input_preview?: any;
+  output_preview?: string | null;
+  input_truncated?: boolean | null;
+  input_original_bytes?: number | null;
+  output_truncated?: boolean | null;
+  output_original_bytes?: number | null;
   created_at: string;
   updated_at: string;
 };

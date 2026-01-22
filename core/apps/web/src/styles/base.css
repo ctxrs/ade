@@ -28,7 +28,6 @@ body {
   background: var(--bg);
   color: var(--text);
   font-size: 13px;
-  line-height: 1.4;
 }
 
 html,
@@ -118,14 +117,6 @@ select {
   color: var(--text);
 }
 
-.page input:focus-visible,
-.page textarea:focus-visible,
-.page select:focus-visible {
-  outline: 1px solid rgba(255, 255, 255, 0.88);
-  outline-offset: 0;
-  border-color: rgba(255, 255, 255, 0.88);
-}
-
 textarea {
   min-height: 60px;
 }
@@ -137,7 +128,6 @@ button {
   border-radius: 6px;
   cursor: pointer;
   color: var(--text);
-  font: inherit;
 }
 
 button.linklike {

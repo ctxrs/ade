@@ -59,12 +59,6 @@
   padding: 0 10px;
 }
 
-.settings-search-input:focus-visible {
-  outline: 1px solid rgba(255, 255, 255, 0.88);
-  outline-offset: 0;
-  border-color: rgba(255, 255, 255, 0.88);
-}
-
 .settings-search-input::placeholder {
   color: rgba(255, 255, 255, 0.35);
 }
