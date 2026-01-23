@@ -52,6 +52,7 @@ supabase/supabase/
 **/.ctx/ctx-pack/tmp/
 **/.ctx/tmp/
 **/.ctx/docker-target/
+**/.ctx/attachments/
 
 # Local git worktrees (agent/dev tooling)
 .worktrees/
