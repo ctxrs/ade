@@ -14,9 +14,9 @@ use crate::resource_utilization::{ResourceProcess, ResourceProcesses, SystemSnap
 use crate::settings::{ProviderGuardSettings, ResourceGovernanceMode, Settings};
 
 const DEFAULT_INTERVAL_MS: u64 = 5_000;
-const DEFAULT_GRACE_PERIOD_MS: u64 = 15_000;
+const DEFAULT_GRACE_PERIOD_MS: u64 = 300_000;
 const DEFAULT_MIN_MEMORY_MB: u64 = 1024;
-const DEFAULT_MEMORY_FRACTION: f64 = 0.25;
+const DEFAULT_MEMORY_FRACTION: f64 = 0.6;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderGuardLimits {

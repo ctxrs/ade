@@ -297,6 +297,10 @@ pub struct PublicSettings {
     #[serde(default)]
     pub resource_governance: Option<PublicResourceGovernanceSettings>,
     #[serde(default)]
+    pub tool_limits: Option<PublicToolLimitsSettings>,
+    #[serde(default)]
+    pub provider_restart: Option<PublicProviderRestartSettings>,
+    #[serde(default)]
     pub subagents: Option<PublicSubagentSettings>,
 }
 
@@ -394,6 +398,38 @@ pub struct PublicResourceGovernanceSettings {
     pub status: Option<PublicResourceGovernanceStatus>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicToolLimitsLimits {
+    pub memory_high_mb: u32,
+    pub memory_max_mb: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicToolLimitsSettings {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(default)]
+    pub memory_high_mb: Option<u32>,
+    #[serde(default)]
+    pub memory_max_mb: Option<u32>,
+    #[serde(default)]
+    pub effective: Option<PublicToolLimitsLimits>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicProviderRestartSettings {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(default)]
+    pub memory_high_mb: Option<u32>,
+    #[serde(default)]
+    pub memory_max_mb: Option<u32>,
+    #[serde(default)]
+    pub interval_ms: Option<u64>,
+    #[serde(default)]
+    pub grace_period_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateSettingsRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -406,6 +442,10 @@ pub struct UpdateSettingsRequest {
     pub resource_governance: Option<UpdateResourceGovernanceSettingsRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_guard: Option<UpdateProviderGuardSettingsRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_limits: Option<UpdateToolLimitsSettingsRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_restart: Option<UpdateProviderRestartSettingsRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subagents: Option<UpdateSubagentSettingsRequest>,
 }
@@ -457,6 +497,30 @@ pub struct UpdateResourceGovernanceSettingsRequest {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateProviderGuardSettingsRequest {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_high_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_max_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grace_period_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateToolLimitsSettingsRequest {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_high_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_max_mb: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateProviderRestartSettingsRequest {
     pub enabled: bool,
     pub mode: ResourceGovernanceMode,
     #[serde(skip_serializing_if = "Option::is_none")]

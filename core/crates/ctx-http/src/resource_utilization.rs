@@ -10,6 +10,9 @@ use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_providers::adapters::ProviderProcessInfo;
 
+#[cfg(target_os = "linux")]
+use crate::tool_cgroup::TOOL_SLICE_UNIT;
+
 const SYSTEM_CACHE_TTL: Duration = Duration::from_millis(750);
 const DISK_CACHE_TTL: Duration = Duration::from_secs(30);
 const MAX_CHILD_PROCESSES: usize = 2000;
@@ -59,6 +62,15 @@ pub struct ResourceProcess {
 pub struct ResourceProcesses {
     pub daemon: Option<ResourceProcess>,
     pub providers: Vec<ResourceProcess>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProviderMemorySample {
+    pub provider_id: String,
+    pub label: String,
+    pub pid: u32,
+    pub memory_bytes: u64,
+    pub tool_memory_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -152,28 +164,7 @@ impl ResourceSampler {
         daemon_pid: u32,
         providers: &[ProviderProcessInfo],
     ) -> ResourceProcesses {
-        let mut task_pids = HashSet::new();
-        for (pid, process) in self.system.processes() {
-            if let Some(tasks) = process.tasks() {
-                for task_pid in tasks {
-                    if task_pid != pid {
-                        task_pids.insert(*task_pid);
-                    }
-                }
-            }
-        }
-        let mut children: HashMap<Pid, Vec<Pid>> = HashMap::new();
-        for (pid, process) in self.system.processes() {
-            if task_pids.contains(pid) {
-                continue;
-            }
-            if let Some(parent) = process.parent() {
-                if task_pids.contains(&parent) {
-                    continue;
-                }
-                children.entry(parent).or_default().push(*pid);
-            }
-        }
+        let children = build_process_children(&self.system);
 
         let daemon = aggregate_process(&self.system, &children, daemon_pid, "ctx daemon");
         let providers = providers
@@ -185,6 +176,20 @@ impl ResourceSampler {
             .collect();
 
         ResourceProcesses { daemon, providers }
+    }
+
+    pub fn provider_memory_snapshot(
+        &self,
+        providers: &[ProviderProcessInfo],
+    ) -> Vec<ProviderMemorySample> {
+        let children = build_process_children(&self.system);
+        providers
+            .iter()
+            .filter_map(|p| {
+                let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
+                aggregate_provider_memory(&self.system, &children, p.pid, &p.provider_id, &label)
+            })
+            .collect()
     }
 
     pub fn disk_cache_entry(&self, workspace_id: WorkspaceId) -> Option<WorkspaceDiskCache> {
@@ -342,6 +347,83 @@ fn aggregate_process(
         children: child_processes,
         children_truncated,
     })
+}
+
+fn aggregate_provider_memory(
+    system: &System,
+    children: &HashMap<Pid, Vec<Pid>>,
+    pid: u32,
+    provider_id: &str,
+    label: &str,
+) -> Option<ProviderMemorySample> {
+    let root = Pid::from_u32(pid);
+    system.process(root)?;
+    let mut stack = vec![root];
+    let mut memory_bytes = 0u64;
+    let mut tool_memory_bytes = 0u64;
+    while let Some(next) = stack.pop() {
+        if let Some(proc) = system.process(next) {
+            let bytes = proc.memory();
+            if next != root && pid_in_tool_slice(next.as_u32()) {
+                tool_memory_bytes = tool_memory_bytes.saturating_add(bytes);
+            } else {
+                memory_bytes = memory_bytes.saturating_add(bytes);
+            }
+        }
+        if let Some(next_children) = children.get(&next) {
+            stack.extend(next_children.iter().copied());
+        }
+    }
+
+    Some(ProviderMemorySample {
+        provider_id: provider_id.to_string(),
+        label: label.to_string(),
+        pid,
+        memory_bytes,
+        tool_memory_bytes,
+    })
+}
+
+fn build_process_children(system: &System) -> HashMap<Pid, Vec<Pid>> {
+    let mut task_pids = HashSet::new();
+    for (pid, process) in system.processes() {
+        if let Some(tasks) = process.tasks() {
+            for task_pid in tasks {
+                if task_pid != pid {
+                    task_pids.insert(*task_pid);
+                }
+            }
+        }
+    }
+
+    let mut children: HashMap<Pid, Vec<Pid>> = HashMap::new();
+    for (pid, process) in system.processes() {
+        if task_pids.contains(pid) {
+            continue;
+        }
+        if let Some(parent) = process.parent() {
+            if task_pids.contains(&parent) {
+                continue;
+            }
+            children.entry(parent).or_default().push(*pid);
+        }
+    }
+
+    children
+}
+
+#[cfg(target_os = "linux")]
+fn pid_in_tool_slice(pid: u32) -> bool {
+    let path = format!("/proc/{pid}/cgroup");
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|contents| contents.lines().any(|line| line.contains(TOOL_SLICE_UNIT)))
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pid_in_tool_slice(_pid: u32) -> bool {
+    false
 }
 
 impl From<&Disk> for DiskSnapshot {

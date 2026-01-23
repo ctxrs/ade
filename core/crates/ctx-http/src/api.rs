@@ -63,6 +63,7 @@ use crate::oracle;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::provider_accounts;
 use crate::provider_guard;
+use crate::provider_restart;
 use crate::provider_usage;
 use crate::resource_governance;
 use crate::resource_utilization;
@@ -71,6 +72,7 @@ use crate::settings as user_settings;
 use crate::telemetry::{TelemetryConfig, TelemetryEvent};
 use crate::terminals::{TerminalClientMessage, TerminalCreateRequest, TerminalServerMessage};
 use crate::title_generation;
+use crate::tool_cgroup;
 use crate::updates;
 use crate::web_sessions::{
     render_web_session_view, WebSessionCreateRequest, WebSessionInfo, WebSessionRunRequest,
@@ -1143,6 +1145,7 @@ async fn get_settings(
     let mut public = user_settings::to_public(&settings);
     public.resource_governance =
         resource_governance::build_public_settings(&state, &settings).await;
+    public.tool_limits = tool_cgroup::build_public_settings(&state, &settings).await;
     Ok(Json(public))
 }
 
@@ -1174,8 +1177,15 @@ async fn update_settings(
     if let Err(err) = provider_guard::apply_settings(&state, &next).await {
         tracing::warn!("failed to apply provider guard settings: {err:#}");
     }
+    if let Err(err) = provider_restart::apply_settings(&state, &next).await {
+        tracing::warn!("failed to apply provider restart settings: {err:#}");
+    }
+    if let Err(err) = tool_cgroup::apply_settings(&state, &next).await {
+        tracing::warn!("failed to apply tool cgroup settings: {err:#}");
+    }
     let mut public = user_settings::to_public(&next);
     public.resource_governance = resource_governance::build_public_settings(&state, &next).await;
+    public.tool_limits = tool_cgroup::build_public_settings(&state, &next).await;
     Ok(Json(public))
 }
 

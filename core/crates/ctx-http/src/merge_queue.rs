@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -22,6 +24,8 @@ use ctx_fs::patch::build_worktree_patch;
 use ctx_fs::worktrees::{create_worktree, remove_worktree};
 
 use crate::daemon::AppState;
+use crate::ops_events::OpsEvent;
+use crate::tool_cgroup::TOOL_SLICE_UNIT;
 use crate::workspace_config::{load_merge_queue_config, MergeQueueConfig};
 
 #[derive(Debug, Clone)]
@@ -395,9 +399,9 @@ async fn run_entry_inner(
         write_log_line(log_file, "apply patch\n")
             .await
             .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-        apply_patch(&worktree_path, &patch).await?;
+        apply_patch(state, entry, &worktree_path, &patch).await?;
 
-        if !has_staged_changes(&worktree_path).await? {
+        if !has_staged_changes(state, entry, &worktree_path).await? {
             return Err(QueueError::fail(
                 "patch did not produce any changes".to_string(),
                 None,
@@ -410,13 +414,37 @@ async fn run_entry_inner(
             .as_deref()
             .filter(|m| !m.trim().is_empty())
             .unwrap_or("merge queue entry");
-        commit_changes(&worktree_path, message, log_file).await?;
+        commit_changes(state, entry, &worktree_path, message, log_file).await?;
         let commit_sha = rev_parse_ref(&worktree_path, "HEAD")
             .await
             .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
 
         for cmd in &cfg.verify_commands {
-            run_verify_command(&worktree_path, entry, cmd, log_file).await?;
+            run_verify_command(state, &worktree_path, entry, cmd, log_file).await?;
+        }
+
+        let target_checkout = find_checked_out_worktree_for_branch(
+            state,
+            entry,
+            &workspace.root_path,
+            &entry.target_branch,
+        )
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
+        if let Some(path) = target_checkout.as_ref() {
+            let dirty = git_status_porcelain(path)
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
+            if !dirty.is_empty() {
+                return Err(QueueError::fail(
+                    format!(
+                        "target branch {} is checked out at {} with uncommitted changes",
+                        entry.target_branch, path
+                    ),
+                    None,
+                    Some(commit_sha.clone()),
+                ));
+            }
         }
 
         write_log_line(
@@ -425,13 +453,58 @@ async fn run_entry_inner(
         )
         .await
         .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-        update_target_branch(
-            &workspace.root_path,
-            &entry.target_branch,
-            &commit_sha,
-            &target_head,
-        )
-        .await?;
+        if let Some(path) = target_checkout.as_ref() {
+            let previous_head = rev_parse_ref(path, "HEAD")
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
+            if previous_head != target_head {
+                return Err(QueueError::fail(
+                    format!(
+                        "failed to update target branch: expected {target_head}, found {previous_head}"
+                    ),
+                    None,
+                    Some(commit_sha.clone()),
+                ));
+            }
+            reset_worktree_to_commit(state, entry, path, &commit_sha)
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
+            let store = state
+                .store_for_workspace(workspace.id)
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
+            let worktrees = store
+                .list_worktrees(workspace.id)
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
+            let checkout_path = fs::canonicalize(path)
+                .await
+                .unwrap_or_else(|_| PathBuf::from(path));
+            for worktree in worktrees {
+                let root_path = fs::canonicalize(&worktree.root_path)
+                    .await
+                    .unwrap_or_else(|_| PathBuf::from(&worktree.root_path));
+                if root_path == checkout_path {
+                    store
+                        .update_worktree_base_commit(worktree.id, &commit_sha)
+                        .await
+                        .map_err(|e| {
+                            QueueError::fail(e.to_string(), None, Some(commit_sha.clone()))
+                        })?;
+                    break;
+                }
+            }
+        } else {
+            update_target_branch(
+                state,
+                entry,
+                &workspace.root_path,
+                &entry.target_branch,
+                &commit_sha,
+                &target_head,
+            )
+            .await?;
+        }
 
         if cfg.push_on_success {
             write_log_line(
@@ -444,6 +517,8 @@ async fn run_entry_inner(
             .await
             .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
             if let Err(err) = push_target_branch(
+                state,
+                entry,
                 &workspace.root_path,
                 &cfg.push_remote,
                 &entry.target_branch,
@@ -570,8 +645,14 @@ async fn write_log_line(file: &mut fs::File, line: &str) -> Result<()> {
     Ok(())
 }
 
-async fn apply_patch(worktree_path: &Path, patch: &str) -> std::result::Result<(), QueueError> {
-    let mut cmd = Command::new("git");
+async fn apply_patch(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    worktree_path: &Path,
+    patch: &str,
+) -> std::result::Result<(), QueueError> {
+    let mut cmd =
+        merge_queue_command(state, entry, "git apply", "git", Some(worktree_path), &[]).await;
     cmd.arg("-C")
         .arg(worktree_path)
         .arg("apply")
@@ -611,8 +692,21 @@ async fn apply_patch(worktree_path: &Path, patch: &str) -> std::result::Result<(
     Ok(())
 }
 
-async fn has_staged_changes(worktree_path: &Path) -> std::result::Result<bool, QueueError> {
-    let status = Command::new("git")
+async fn has_staged_changes(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    worktree_path: &Path,
+) -> std::result::Result<bool, QueueError> {
+    let mut cmd = merge_queue_command(
+        state,
+        entry,
+        "git diff --cached --quiet",
+        "git",
+        Some(worktree_path),
+        &[],
+    )
+    .await;
+    let status = cmd
         .arg("-C")
         .arg(worktree_path)
         .args(["diff", "--cached", "--quiet"])
@@ -623,11 +717,15 @@ async fn has_staged_changes(worktree_path: &Path) -> std::result::Result<bool, Q
 }
 
 async fn commit_changes(
+    state: &AppState,
+    entry: &MergeQueueEntry,
     worktree_path: &Path,
     message: &str,
     log_file: &mut fs::File,
 ) -> std::result::Result<(), QueueError> {
-    let output = Command::new("git")
+    let mut cmd =
+        merge_queue_command(state, entry, "git commit", "git", Some(worktree_path), &[]).await;
+    let output = cmd
         .arg("-C")
         .arg(worktree_path)
         .args([
@@ -661,6 +759,7 @@ async fn commit_changes(
 }
 
 async fn run_verify_command(
+    state: &AppState,
     worktree_path: &Path,
     entry: &MergeQueueEntry,
     command: &str,
@@ -669,12 +768,16 @@ async fn run_verify_command(
     write_log_line(log_file, &format!("verify: {command}\n"))
         .await
         .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-    let mut cmd = command_for_shell(command);
-    cmd.current_dir(worktree_path)
-        .stdin(Stdio::null())
-        .env("CTX_MERGE_QUEUE_ENTRY_ID", entry.id.0.to_string())
-        .env("CTX_WORKTREE_ROOT", worktree_path)
-        .env("CTX_TARGET_BRANCH", &entry.target_branch);
+    let envs = vec![
+        ("CTX_MERGE_QUEUE_ENTRY_ID", entry.id.0.to_string()),
+        (
+            "CTX_WORKTREE_ROOT",
+            worktree_path.to_string_lossy().to_string(),
+        ),
+        ("CTX_TARGET_BRANCH", entry.target_branch.clone()),
+    ];
+    let mut cmd = command_for_shell(state, entry, command, worktree_path, &envs).await;
+    cmd.stdin(Stdio::null());
     let output = cmd
         .output()
         .await
@@ -719,7 +822,7 @@ async fn maybe_sync_originating_worktree(
     let previous_head = rev_parse_ref(&worktree.root_path, "HEAD")
         .await
         .unwrap_or_else(|_| "unknown".to_string());
-    reset_worktree_to_commit(&worktree.root_path, commit_sha).await?;
+    reset_worktree_to_commit(state, entry, &worktree.root_path, commit_sha).await?;
     let updated = store
         .update_worktree_base_commit(worktree_id, commit_sha)
         .await?;
@@ -775,8 +878,22 @@ async fn emit_merge_queue_sync_notice(
     Ok(())
 }
 
-async fn reset_worktree_to_commit(worktree_path: &str, commit_sha: &str) -> Result<()> {
-    let output = Command::new("git")
+async fn reset_worktree_to_commit(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    worktree_path: &str,
+    commit_sha: &str,
+) -> Result<()> {
+    let mut cmd = merge_queue_command(
+        state,
+        entry,
+        "git reset --hard",
+        "git",
+        Some(Path::new(worktree_path)),
+        &[],
+    )
+    .await;
+    let output = cmd
         .arg("-C")
         .arg(worktree_path)
         .args(["reset", "--hard", commit_sha])
@@ -794,25 +911,95 @@ async fn reset_worktree_to_commit(worktree_path: &str, commit_sha: &str) -> Resu
     Ok(())
 }
 
-fn command_for_shell(command: &str) -> Command {
+async fn find_checked_out_worktree_for_branch(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    workspace_root: &str,
+    target_branch: &str,
+) -> Result<Option<String>> {
+    let mut cmd = merge_queue_command(
+        state,
+        entry,
+        "git worktree list --porcelain",
+        "git",
+        Some(Path::new(workspace_root)),
+        &[],
+    )
+    .await;
+    let output = cmd
+        .arg("-C")
+        .arg(workspace_root)
+        .args(["worktree", "list", "--porcelain"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git worktree list --porcelain")?;
+    if !output.status.success() {
+        bail!(
+            "git worktree list failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut current_path: Option<String> = None;
+    for line in stdout.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            current_path = Some(path.trim().to_string());
+            continue;
+        }
+        if let Some(branch) = line.strip_prefix("branch ") {
+            let branch = branch.trim();
+            if branch == format!("refs/heads/{target_branch}") {
+                if let Some(path) = current_path.clone() {
+                    return Ok(Some(path));
+                }
+            }
+            continue;
+        }
+        if line.trim().is_empty() {
+            current_path = None;
+        }
+    }
+    Ok(None)
+}
+
+async fn command_for_shell(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    command: &str,
+    workdir: &Path,
+    envs: &[(&str, String)],
+) -> Command {
     if cfg!(windows) {
-        let mut cmd = Command::new("cmd");
+        let mut cmd = merge_queue_command(state, entry, command, "cmd", Some(workdir), envs).await;
         cmd.args(["/C", command]);
         cmd
     } else {
-        let mut cmd = Command::new("bash");
+        let mut cmd = merge_queue_command(state, entry, command, "bash", Some(workdir), envs).await;
         cmd.args(["-lc", command]);
         cmd
     }
 }
 
 async fn update_target_branch(
+    state: &AppState,
+    entry: &MergeQueueEntry,
     workspace_root: &str,
     target_branch: &str,
     commit_sha: &str,
     expected_old: &str,
 ) -> std::result::Result<(), QueueError> {
-    let output = Command::new("git")
+    let mut cmd = merge_queue_command(
+        state,
+        entry,
+        "git update-ref",
+        "git",
+        Some(Path::new(workspace_root)),
+        &[],
+    )
+    .await;
+    let output = cmd
         .arg("-C")
         .arg(workspace_root)
         .args([
@@ -836,12 +1023,23 @@ async fn update_target_branch(
 }
 
 async fn push_target_branch(
+    state: &AppState,
+    entry: &MergeQueueEntry,
     workspace_root: &str,
     remote: &str,
     target_branch: &str,
     push_branch: &str,
 ) -> Result<()> {
-    let output = Command::new("git")
+    let mut cmd = merge_queue_command(
+        state,
+        entry,
+        "git push",
+        "git",
+        Some(Path::new(workspace_root)),
+        &[],
+    )
+    .await;
+    let output = cmd
         .arg("-C")
         .arg(workspace_root)
         .args(["push", remote, &format!("{target_branch}:{push_branch}")])
@@ -877,4 +1075,124 @@ impl QueueError {
             result_commit_sha,
         }
     }
+}
+
+fn emit_merge_queue_tool_event(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    command: &str,
+    workdir: Option<&Path>,
+    used_tool_slice: bool,
+) {
+    let mut event = OpsEvent::new("info", "merge_queue_tool_exec");
+    event.session_id = entry.session_id.map(|id| id.0.to_string());
+    event.worktree_id = entry.worktree_id.map(|id| id.0.to_string());
+    event.tool_kind = Some("merge_queue".to_string());
+    let workdir_str = workdir.map(|dir| dir.to_string_lossy().to_string());
+    event.cwd = workdir_str.clone();
+    event.worktree_root = workdir_str;
+    event.meta = Some(serde_json::json!({
+        "entry_id": entry.id.0.to_string(),
+        "command": command,
+        "tool_slice": used_tool_slice,
+        "slice": TOOL_SLICE_UNIT,
+    }));
+    state.ops_events.emit(event);
+}
+
+async fn merge_queue_command(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    command_label: &str,
+    program: &str,
+    workdir: Option<&Path>,
+    envs: &[(&str, String)],
+) -> Command {
+    let (cmd, used_tool_slice) = tool_slice_command(program, workdir, envs).await;
+    emit_merge_queue_tool_event(state, entry, command_label, workdir, used_tool_slice);
+    cmd
+}
+
+#[cfg(target_os = "linux")]
+async fn tool_slice_command(
+    program: &str,
+    workdir: Option<&Path>,
+    envs: &[(&str, String)],
+) -> (Command, bool) {
+    if systemd_run_available().await {
+        let mut cmd = Command::new("systemd-run");
+        cmd.arg("--user")
+            .arg("--scope")
+            .arg("--slice")
+            .arg(TOOL_SLICE_UNIT)
+            .arg("--quiet")
+            .arg("--pipe")
+            .arg("--wait");
+        if let Some(dir) = workdir {
+            cmd.arg("--working-directory").arg(dir);
+        }
+        for (key, value) in envs {
+            cmd.arg("--setenv").arg(format!("{key}={value}"));
+        }
+        cmd.arg("--").arg(program);
+        return (cmd, true);
+    }
+
+    let mut cmd = Command::new(program);
+    if let Some(dir) = workdir {
+        cmd.current_dir(dir);
+    }
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    (cmd, false)
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn tool_slice_command(
+    program: &str,
+    workdir: Option<&Path>,
+    envs: &[(&str, String)],
+) -> (Command, bool) {
+    let mut cmd = Command::new(program);
+    if let Some(dir) = workdir {
+        cmd.current_dir(dir);
+    }
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    (cmd, false)
+}
+
+#[cfg(target_os = "linux")]
+async fn systemd_run_available() -> bool {
+    static SYSTEMD_RUN_AVAILABLE: OnceLock<bool> = OnceLock::new();
+    if let Some(value) = SYSTEMD_RUN_AVAILABLE.get() {
+        return *value;
+    }
+
+    let available = {
+        let output = match Command::new("systemd-run").arg("--version").output().await {
+            Ok(output) => output,
+            Err(_) => return false,
+        };
+        if !output.status.success() {
+            false
+        } else {
+            let output = Command::new("systemctl")
+                .arg("--user")
+                .arg("show-environment")
+                .output()
+                .await;
+            output.map(|o| o.status.success()).unwrap_or(false)
+        }
+    };
+
+    let _ = SYSTEMD_RUN_AVAILABLE.set(available);
+    if !available {
+        tracing::warn!(
+            "systemd-run unavailable; merge queue commands will run without tool slice isolation"
+        );
+    }
+    available
 }

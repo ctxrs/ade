@@ -250,6 +250,24 @@ impl AcpSessionPool {
         Ok(())
     }
 
+    pub async fn restart(&self, reason: &str) {
+        let process = { self.process.lock().await.clone() };
+        if let Some(process) = process {
+            process
+                .router
+                .broadcast_shutdown(format!("provider restart: {reason}"))
+                .await;
+            process.shutdown().await;
+        }
+        let mut guard = self.process.lock().await;
+        *guard = None;
+        drop(guard);
+        self.sessions.lock().await.clear();
+        if let Ok(mut active) = self.active_prompts.lock() {
+            active.clear();
+        }
+    }
+
     pub async fn prompt(&self, request: AcpPromptRequest) -> Result<()> {
         let AcpPromptRequest {
             session_key,

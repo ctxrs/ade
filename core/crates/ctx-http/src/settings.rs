@@ -19,6 +19,10 @@ pub struct Settings {
     #[serde(default)]
     pub provider_guard: Option<ProviderGuardSettings>,
     #[serde(default)]
+    pub tool_limits: Option<ToolLimitsSettings>,
+    #[serde(default)]
+    pub provider_restart: Option<ProviderRestartSettings>,
+    #[serde(default)]
     pub subagents: Option<SubagentSettings>,
     #[serde(default)]
     pub sandboxing: Option<SandboxingSettings>,
@@ -157,6 +161,30 @@ pub struct ResourceGovernanceSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderGuardSettings {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(default)]
+    pub memory_high_mb: Option<u32>,
+    #[serde(default)]
+    pub memory_max_mb: Option<u32>,
+    #[serde(default)]
+    pub interval_ms: Option<u64>,
+    #[serde(default)]
+    pub grace_period_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolLimitsSettings {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(default)]
+    pub memory_high_mb: Option<u32>,
+    #[serde(default)]
+    pub memory_max_mb: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderRestartSettings {
     pub enabled: bool,
     pub mode: ResourceGovernanceMode,
     #[serde(default)]
@@ -318,6 +346,30 @@ impl Default for ProviderGuardSettings {
     }
 }
 
+impl Default for ToolLimitsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            mode: ResourceGovernanceMode::Auto,
+            memory_high_mb: None,
+            memory_max_mb: None,
+        }
+    }
+}
+
+impl Default for ProviderRestartSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            mode: ResourceGovernanceMode::Auto,
+            memory_high_mb: None,
+            memory_max_mb: None,
+            interval_ms: None,
+            grace_period_ms: None,
+        }
+    }
+}
+
 impl Default for TelemetrySettings {
     fn default() -> Self {
         Self {
@@ -353,6 +405,10 @@ pub struct PublicSettings {
     pub resource_governance: Option<PublicResourceGovernanceSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_guard: Option<PublicProviderGuardSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_limits: Option<PublicToolLimitsSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_restart: Option<PublicProviderRestartSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subagents: Option<PublicSubagentSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -466,6 +522,38 @@ pub struct PublicProviderGuardSettings {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct PublicToolLimitsLimits {
+    pub memory_high_mb: u32,
+    pub memory_max_mb: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicToolLimitsSettings {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_high_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_max_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective: Option<PublicToolLimitsLimits>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicProviderRestartSettings {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_high_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_max_mb: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grace_period_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct PublicSubagentSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_per_call: Option<u32>,
@@ -485,6 +573,10 @@ pub struct UpdateSettingsReq {
     pub resource_governance: Option<UpdateResourceGovernanceSettingsReq>,
     #[serde(default)]
     pub provider_guard: Option<UpdateProviderGuardSettingsReq>,
+    #[serde(default)]
+    pub tool_limits: Option<UpdateToolLimitsSettingsReq>,
+    #[serde(default)]
+    pub provider_restart: Option<UpdateProviderRestartSettingsReq>,
     #[serde(default)]
     pub subagents: Option<UpdateSubagentSettingsReq>,
     #[serde(default)]
@@ -565,6 +657,30 @@ pub struct UpdateProviderGuardSettingsReq {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct UpdateToolLimitsSettingsReq {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(default)]
+    pub memory_high_mb: Option<u32>,
+    #[serde(default)]
+    pub memory_max_mb: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateProviderRestartSettingsReq {
+    pub enabled: bool,
+    pub mode: ResourceGovernanceMode,
+    #[serde(default)]
+    pub memory_high_mb: Option<u32>,
+    #[serde(default)]
+    pub memory_max_mb: Option<u32>,
+    #[serde(default)]
+    pub interval_ms: Option<u64>,
+    #[serde(default)]
+    pub grace_period_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct UpdateSubagentSettingsReq {
     #[serde(default)]
     pub max_per_call: Option<u32>,
@@ -590,6 +706,12 @@ pub async fn load_settings(data_root: &Path) -> Settings {
     }
     if settings.provider_guard.is_none() {
         settings.provider_guard = Some(ProviderGuardSettings::default());
+    }
+    if settings.tool_limits.is_none() {
+        settings.tool_limits = Some(ToolLimitsSettings::default());
+    }
+    if settings.provider_restart.is_none() {
+        settings.provider_restart = Some(ProviderRestartSettings::default());
     }
     if settings.sandboxing.is_none() {
         settings.sandboxing = Some(SandboxingSettings::default());
@@ -677,6 +799,99 @@ pub async fn load_settings(data_root: &Path) -> Settings {
         }
     }
 
+    let parse_bool = |value: &str| match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    };
+    let parse_mode = |value: &str| match value.trim().to_ascii_lowercase().as_str() {
+        "auto" => Some(ResourceGovernanceMode::Auto),
+        "custom" => Some(ResourceGovernanceMode::Custom),
+        _ => None,
+    };
+
+    if let Ok(value) = std::env::var("CTX_TOOL_LIMITS_ENABLED") {
+        if let Some(enabled) = parse_bool(&value) {
+            let tool_limits = settings
+                .tool_limits
+                .get_or_insert_with(ToolLimitsSettings::default);
+            tool_limits.enabled = enabled;
+        }
+    }
+    if let Ok(value) = std::env::var("CTX_TOOL_LIMITS_MODE") {
+        if let Some(mode) = parse_mode(&value) {
+            let tool_limits = settings
+                .tool_limits
+                .get_or_insert_with(ToolLimitsSettings::default);
+            tool_limits.mode = mode;
+        }
+    }
+    if let Ok(value) = std::env::var("CTX_TOOL_LIMITS_MEMORY_HIGH_MB") {
+        if let Ok(parsed) = value.trim().parse::<u32>() {
+            let tool_limits = settings
+                .tool_limits
+                .get_or_insert_with(ToolLimitsSettings::default);
+            tool_limits.memory_high_mb = Some(parsed);
+        }
+    }
+    if let Ok(value) = std::env::var("CTX_TOOL_LIMITS_MEMORY_MAX_MB") {
+        if let Ok(parsed) = value.trim().parse::<u32>() {
+            let tool_limits = settings
+                .tool_limits
+                .get_or_insert_with(ToolLimitsSettings::default);
+            tool_limits.memory_max_mb = Some(parsed);
+        }
+    }
+
+    if let Ok(value) = std::env::var("CTX_PROVIDER_RESTART_ENABLED") {
+        if let Some(enabled) = parse_bool(&value) {
+            let restart = settings
+                .provider_restart
+                .get_or_insert_with(ProviderRestartSettings::default);
+            restart.enabled = enabled;
+        }
+    }
+    if let Ok(value) = std::env::var("CTX_PROVIDER_RESTART_MODE") {
+        if let Some(mode) = parse_mode(&value) {
+            let restart = settings
+                .provider_restart
+                .get_or_insert_with(ProviderRestartSettings::default);
+            restart.mode = mode;
+        }
+    }
+    if let Ok(value) = std::env::var("CTX_PROVIDER_RESTART_MEMORY_HIGH_MB") {
+        if let Ok(parsed) = value.trim().parse::<u32>() {
+            let restart = settings
+                .provider_restart
+                .get_or_insert_with(ProviderRestartSettings::default);
+            restart.memory_high_mb = Some(parsed);
+        }
+    }
+    if let Ok(value) = std::env::var("CTX_PROVIDER_RESTART_MEMORY_MAX_MB") {
+        if let Ok(parsed) = value.trim().parse::<u32>() {
+            let restart = settings
+                .provider_restart
+                .get_or_insert_with(ProviderRestartSettings::default);
+            restart.memory_max_mb = Some(parsed);
+        }
+    }
+    if let Ok(value) = std::env::var("CTX_PROVIDER_RESTART_INTERVAL_MS") {
+        if let Ok(parsed) = value.trim().parse::<u64>() {
+            let restart = settings
+                .provider_restart
+                .get_or_insert_with(ProviderRestartSettings::default);
+            restart.interval_ms = Some(parsed);
+        }
+    }
+    if let Ok(value) = std::env::var("CTX_PROVIDER_RESTART_GRACE_PERIOD_MS") {
+        if let Ok(parsed) = value.trim().parse::<u64>() {
+            let restart = settings
+                .provider_restart
+                .get_or_insert_with(ProviderRestartSettings::default);
+            restart.grace_period_ms = Some(parsed);
+        }
+    }
+
     settings
 }
 
@@ -757,6 +972,28 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
             interval_ms: g.interval_ms,
             grace_period_ms: g.grace_period_ms,
         });
+    let tool_limits = settings
+        .tool_limits
+        .as_ref()
+        .map(|t| PublicToolLimitsSettings {
+            enabled: t.enabled,
+            mode: t.mode.clone(),
+            memory_high_mb: t.memory_high_mb,
+            memory_max_mb: t.memory_max_mb,
+            effective: None,
+        });
+    let provider_restart =
+        settings
+            .provider_restart
+            .as_ref()
+            .map(|p| PublicProviderRestartSettings {
+                enabled: p.enabled,
+                mode: p.mode.clone(),
+                memory_high_mb: p.memory_high_mb,
+                memory_max_mb: p.memory_max_mb,
+                interval_ms: p.interval_ms,
+                grace_period_ms: p.grace_period_ms,
+            });
     let subagents = settings.subagents.as_ref().map(|s| PublicSubagentSettings {
         max_per_call: s.max_per_call,
     });
@@ -773,6 +1010,8 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
         oracle,
         resource_governance,
         provider_guard,
+        tool_limits,
+        provider_restart,
         subagents,
         sandboxing,
     }
@@ -850,6 +1089,24 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
         next.interval_ms = g.interval_ms;
         next.grace_period_ms = g.grace_period_ms;
         current.provider_guard = Some(next);
+    }
+    if let Some(t) = req.tool_limits {
+        let mut next = current.tool_limits.unwrap_or_default();
+        next.enabled = t.enabled;
+        next.mode = t.mode;
+        next.memory_high_mb = t.memory_high_mb;
+        next.memory_max_mb = t.memory_max_mb;
+        current.tool_limits = Some(next);
+    }
+    if let Some(r) = req.provider_restart {
+        let mut next = current.provider_restart.unwrap_or_default();
+        next.enabled = r.enabled;
+        next.mode = r.mode;
+        next.memory_high_mb = r.memory_high_mb;
+        next.memory_max_mb = r.memory_max_mb;
+        next.interval_ms = r.interval_ms;
+        next.grace_period_ms = r.grace_period_ms;
+        current.provider_restart = Some(next);
     }
     if let Some(s) = req.subagents {
         let mut next = current.subagents.unwrap_or_default();

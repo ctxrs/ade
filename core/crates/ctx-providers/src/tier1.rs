@@ -338,6 +338,11 @@ impl ProviderAdapter for Tier1AcpAdapter {
         .unwrap_or_default()
     }
 
+    async fn restart(&self, reason: &str) -> Result<()> {
+        self.pool.restart(reason).await;
+        Ok(())
+    }
+
     async fn set_session_model(&self, session_key: String, model_id: String) -> Result<()> {
         self.pool.set_model(session_key, model_id).await
     }

@@ -103,6 +103,11 @@ pub trait ProviderAdapter: Send + Sync {
         Vec::new()
     }
 
+    /// Best-effort provider restart (used for memory recovery).
+    async fn restart(&self, _reason: &str) -> Result<()> {
+        anyhow::bail!("provider does not support restart");
+    }
+
     /// Whether this adapter has an in-memory live provider session for the given key.
     async fn has_live_session(&self, _session_key: &str) -> bool {
         false
