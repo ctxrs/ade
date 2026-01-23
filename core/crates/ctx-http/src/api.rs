@@ -1,13 +1,10 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::future::Future;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path as StdPath, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
 use axum::body::{Body, Bytes};
-use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Extension, MatchedPath, Multipart, Path, Query, State};
 use axum::http::header;
 use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
@@ -18,22 +15,35 @@ use axum::response::Response;
 use axum::routing::{delete, get, post, put};
 use axum::Json;
 use base64::Engine;
-use futures::{Sink, SinkExt, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 use opentelemetry::trace::SpanKind;
 use opentelemetry::KeyValue;
-use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom};
 use tokio::process::Command;
-use tokio::sync::{mpsc, Mutex, Notify};
-use tokio::task::JoinSet;
-use tokio_tungstenite::{connect_async, tungstenite::Message as TungsteniteMessage};
+use tokio::sync::mpsc;
 use tokio_util::io::ReaderStream;
 use tower::util::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
+
+mod auth;
+mod errors;
+mod extractors;
+mod ws;
+
+use auth::{
+    auth_middleware, generate_mobile_api_token, generate_pairing_token, hash_api_token,
+    hash_pairing_token, MobileAuthContext,
+};
+use errors::ApiErrorResp;
+use extractors::{extract_model_entries, extract_workspace_edit_from_command};
+use ws::{
+    dictation_livekit_stream_ws, mobile_secure_workspace_stream_ws, terminal_stream_ws,
+    web_session_signal, workspace_active_snapshot_stream_ws,
+};
 
 use chrono::{DateTime, Utc};
 use ctx_core::ids::*;
@@ -52,7 +62,6 @@ use crate::buffers::{
 };
 use crate::completions;
 use crate::daemon::{AppState, GitStatusSnapshotCacheEntry};
-use crate::dictation_livekit;
 use crate::git_status::{load_git_status_snapshot, GitStatusEntry};
 use crate::installer;
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
@@ -70,7 +79,7 @@ use crate::resource_utilization;
 use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
 use crate::telemetry::{TelemetryConfig, TelemetryEvent};
-use crate::terminals::{TerminalClientMessage, TerminalCreateRequest, TerminalServerMessage};
+use crate::terminals::TerminalCreateRequest;
 use crate::title_generation;
 use crate::tool_cgroup;
 use crate::updates;
@@ -78,7 +87,6 @@ use crate::web_sessions::{
     render_web_session_view, WebSessionCreateRequest, WebSessionInfo, WebSessionRunRequest,
     WebSessionRunResponse, WebSessionViewport,
 };
-use crate::workspace_active_snapshot::SessionReplayResult;
 use crate::workspace_config;
 use crate::worktree_bootstrap;
 use ctx_providers::adapters::ProviderStatus;
@@ -761,11 +769,6 @@ struct HealthResp {
     auth_required: bool,
 }
 
-#[derive(Debug, Serialize)]
-struct ApiErrorResp {
-    error: String,
-}
-
 #[derive(Debug, Deserialize)]
 struct MergeQueueSubmitReq {
     #[serde(default)]
@@ -783,11 +786,6 @@ struct MergeQueueListParams {
     workspace_id: String,
     #[serde(default)]
     limit: Option<i64>,
-}
-
-#[derive(Clone, Copy)]
-struct MobileAuthContext {
-    profile_id: ConnectionProfileId,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3232,46 +3230,6 @@ async fn lsp_format_plan(
     Ok(Json(summary))
 }
 
-fn extract_workspace_edit_from_command(
-    cmd: &lsp_types::Command,
-) -> Option<lsp_types::WorkspaceEdit> {
-    let args = cmd.arguments.as_ref()?;
-    for arg in args {
-        if let Ok(edit) = serde_json::from_value::<lsp_types::WorkspaceEdit>(arg.clone()) {
-            let has_edits = edit
-                .changes
-                .as_ref()
-                .map(|m| !m.is_empty())
-                .unwrap_or(false)
-                || edit.document_changes.is_some();
-            if has_edits {
-                return Some(edit);
-            }
-        }
-        if let Some(obj) = arg.as_object() {
-            for key in ["edit", "workspaceEdit"] {
-                if let Some(val) = obj.get(key) {
-                    if let Ok(edit) =
-                        serde_json::from_value::<lsp_types::WorkspaceEdit>(val.clone())
-                    {
-                        let has_edits = edit
-                            .changes
-                            .as_ref()
-                            .map(|m| !m.is_empty())
-                            .unwrap_or(false)
-                            || edit.document_changes.is_some();
-                        if !has_edits {
-                            continue;
-                        }
-                        return Some(edit);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 async fn lsp_code_actions_plan(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LspCodeActionPlanReq>,
@@ -4104,75 +4062,6 @@ async fn perf_middleware(
     response
 }
 
-fn is_websocket_upgrade(headers: &HeaderMap) -> bool {
-    headers
-        .get(axum::http::header::UPGRADE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
-        || headers.contains_key("sec-websocket-key")
-}
-
-async fn auth_middleware(
-    State(state): State<Arc<AppState>>,
-    mut req: Request<axum::body::Body>,
-    next: Next,
-) -> Result<impl IntoResponse, StatusCode> {
-    let path = req.uri().path();
-    if !path.starts_with("/api/") || path == "/api/health" {
-        return Ok(next.run(req).await);
-    }
-    if path.starts_with("/api/mobile/secure") || path == "/api/mobile/pair" {
-        return Ok(next.run(req).await);
-    }
-    if state.auth_token.is_none() {
-        return Ok(next.run(req).await);
-    }
-    if req.extensions().get::<MobileAuthContext>().is_some() {
-        return Ok(next.run(req).await);
-    }
-
-    let is_terminal_stream = path.starts_with("/api/terminals/") && path.ends_with("/stream");
-    let is_ws = is_terminal_stream && is_websocket_upgrade(req.headers());
-    let header_token = req
-        .headers()
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|v| v.to_string());
-    let query_token = req.uri().query().and_then(|q| {
-        q.split('&').find_map(|kv| {
-            let (k, v) = kv.split_once('=')?;
-            if k == "token" {
-                Some(v.to_string())
-            } else {
-                None
-            }
-        })
-    });
-    let token = if is_ws {
-        if header_token.is_some() {
-            tracing::warn!(
-                "Authorization header is deprecated for terminal websocket auth; use ?token="
-            );
-        }
-        query_token.or(header_token)
-    } else {
-        header_token.or(query_token)
-    };
-
-    if token.as_deref() == state.auth_token.as_deref() {
-        return Ok(next.run(req).await);
-    }
-    if let Some(token_value) = token {
-        if let Some(profile_id) = verify_mobile_api_token(&state, &token_value).await? {
-            req.extensions_mut()
-                .insert(MobileAuthContext { profile_id });
-            return Ok(next.run(req).await);
-        }
-    }
-    Err(StatusCode::UNAUTHORIZED)
-}
-
 async fn list_mobile_connection_profiles(
     State(state): State<Arc<AppState>>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
@@ -4975,293 +4864,6 @@ async fn handle_mobile_secure(
         nonce: envelope.nonce_b64,
         ciphertext: envelope.ciphertext_b64,
     }))
-}
-
-async fn mobile_secure_workspace_stream_ws(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(query): Query<MobileSecureStreamQuery>,
-) -> impl IntoResponse {
-    let workspace_id = match uuid::Uuid::parse_str(&id) {
-        Ok(v) => WorkspaceId(v),
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
-    let device_id = query.device_id.trim().to_string();
-    ws.on_upgrade(move |socket| async move {
-        if let Err(err) = handle_mobile_secure_ws(socket, state, workspace_id, device_id).await {
-            tracing::warn!("secure mobile ws ended: {err:#}");
-        }
-    })
-}
-
-async fn handle_mobile_secure_ws(
-    socket: WebSocket,
-    state: Arc<AppState>,
-    workspace_id: WorkspaceId,
-    device_id: String,
-) -> Result<(), anyhow::Error> {
-    let (sender, mut receiver) = socket.split();
-    let device_uuid = uuid::Uuid::parse_str(&device_id)?;
-    let cfg = state.global_store().get_mobile_access_config().await?;
-    let cfg = cfg.ok_or_else(|| anyhow::anyhow!("mobile access not configured"))?;
-    let device = state
-        .global_store()
-        .get_mobile_device(MobileDeviceId(device_uuid))
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("device not registered"))?;
-    if device.profile_id != cfg.profile_id {
-        return Err(anyhow::anyhow!("device not authorized for tunnel"));
-    }
-    let device_public_key = device
-        .public_key
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("device missing public key"))?;
-    let key =
-        crate::mobile_e2ee::derive_key(&device_id, device_public_key, &cfg.daemon_private_key)?;
-
-    let mut rx = state
-        .workspace_active_snapshot
-        .subscribe(workspace_id)
-        .await;
-    let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
-    let pending = Arc::new(StreamQueue::new(
-        WORKSPACE_STREAM_QUEUE_LIMIT,
-        WORKSPACE_STREAM_QUEUE_MAX_AGE,
-    ));
-    let send_control = Arc::new(StreamSendControl::new());
-    let mut reset_queued = false;
-
-    let (snapshot_rev, archived_rev) =
-        load_workspace_active_snapshot_state(&state, workspace_id).await;
-    let ready = WorkspaceActiveSnapshotEvent::Ready {
-        workspace_id,
-        snapshot_rev,
-        archived_rev,
-    };
-    if pending
-        .push(WorkspaceActiveSnapshotWsPayload::Event(ready))
-        .await
-        .is_err()
-    {
-        return Ok(());
-    }
-
-    let send_task = {
-        let pending = pending.clone();
-        let send_control = send_control.clone();
-        let send_key = key.clone();
-        let send_device_id = device_id.clone();
-        tokio::spawn(async move {
-            let mut sender = sender;
-            let mut outbound_seq: i64 = 0;
-            loop {
-                let notified = pending.notify.notified();
-                if let Some(message) = pending.pop().await {
-                    outbound_seq += 1;
-                    if send_secure_ws(
-                        &mut sender,
-                        &send_key,
-                        &send_device_id,
-                        outbound_seq,
-                        &message,
-                    )
-                    .await
-                    .is_err()
-                    {
-                        break;
-                    }
-                    if send_control.should_disconnect_after_flush() && pending.is_empty().await {
-                        break;
-                    }
-                    continue;
-                }
-                if send_control.should_disconnect_after_flush() {
-                    break;
-                }
-                notified.await;
-            }
-        })
-    };
-    let recv_loop = async {
-        loop {
-            tokio::select! {
-                msg = receiver.next() => {
-                    match msg {
-                        Some(Ok(WsMessage::Text(text))) => {
-                            let frame: MobileSecureEnvelope = match serde_json::from_str(&text) {
-                                Ok(v) => v,
-                                Err(_) => continue,
-                            };
-                            let payload = crate::mobile_e2ee::decrypt(
-                                &key,
-                                &device_id,
-                                frame.seq,
-                                &frame.nonce,
-                                &frame.ciphertext,
-                            )?;
-                            let message: WorkspaceActiveSnapshotClientMessage = serde_json::from_slice(&payload)?;
-                            let (session_ids, sessions) = match message {
-                                WorkspaceActiveSnapshotClientMessage::Subscribe { session_ids, sessions, .. } => (session_ids, sessions),
-                            };
-                            let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = if !sessions.is_empty() {
-                                sessions
-                            } else {
-                                session_ids
-                                    .into_iter()
-                                    .map(|session_id| WorkspaceActiveSnapshotSessionSubscription { session_id, after_seq: None })
-                                    .collect()
-                            };
-                            next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
-
-                            pending.clear().await;
-                            reset_queued = false;
-                            send_control.clear_disconnect_after_flush();
-
-                            let mut next_map = HashMap::new();
-                            let mut replay_failed = false;
-                            for sub in next {
-                                let after_seq = sub.after_seq.unwrap_or(0);
-                                let replay = replay_session_events_secure(
-                                    &state,
-                                    workspace_id,
-                                    sub.session_id,
-                                    after_seq,
-                                    |event| pending.push(event),
-                                )
-                                .await;
-                                match replay {
-                                    Ok(ReplayOutcome::Replay { last_sent }) => {
-                                        next_map.insert(sub.session_id, SessionCursor { last_sent });
-                                    }
-                                    Ok(ReplayOutcome::ResetRequired) | Err(_) => {
-                                        replay_failed = true;
-                                        break;
-                                    }
-                                };
-                            }
-                            if replay_failed {
-                                pending.clear().await;
-                                if queue_reset_required(&pending, &state, workspace_id)
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                                reset_queued = true;
-                                send_control.set_disconnect_after_flush();
-                                continue;
-                            }
-                            subscriptions = next_map;
-                        }
-                        Some(Ok(WsMessage::Close(_))) => break,
-                        Some(Ok(_)) => {}
-                        Some(Err(_)) => break,
-                        None => break,
-                    }
-                }
-                event = rx.recv() => {
-                    let event = match event {
-                        Ok(event) => event,
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        if reset_queued {
-                            continue;
-                        }
-                        pending.clear().await;
-                        if queue_reset_required(&pending, &state, workspace_id)
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                        reset_queued = true;
-                        send_control.set_disconnect_after_flush();
-                        continue;
-                    }
-                        Err(_) => break,
-                    };
-
-                    if reset_queued {
-                        continue;
-                    }
-
-                    if let WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } = &event {
-                        let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
-                            continue;
-                        };
-                        if let Some(ev) = &delta.event {
-                            if ev.seq <= cursor.last_sent {
-                                continue;
-                            }
-                            cursor.last_sent = ev.seq;
-                        } else if delta.last_event_seq <= cursor.last_sent {
-                            continue;
-                        } else {
-                            cursor.last_sent = delta.last_event_seq;
-                        }
-                    }
-
-                    if pending
-                        .push(WorkspaceActiveSnapshotWsPayload::Event(event))
-                        .await
-                        .is_err()
-                    {
-                        if reset_queued {
-                            continue;
-                        }
-                        pending.clear().await;
-                        if queue_reset_required(&pending, &state, workspace_id)
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                        reset_queued = true;
-                        send_control.set_disconnect_after_flush();
-                    }
-                }
-            }
-        }
-        Ok(())
-    };
-
-    let (send_task, recv_result) = crate::async_util::race_join_handle(send_task, recv_loop).await;
-
-    send_control.set_disconnect_after_flush();
-    pending.notify.notify_one();
-    if let Some(send_task) = send_task {
-        let _ = send_task.await;
-    }
-
-    recv_result.unwrap_or(Ok(()))
-}
-
-struct SessionCursor {
-    last_sent: i64,
-}
-
-async fn send_secure_ws<S>(
-    sink: &mut S,
-    key: &crate::mobile_e2ee::E2eeKey,
-    device_id: &str,
-    seq: i64,
-    payload: &WorkspaceActiveSnapshotWsPayload,
-) -> Result<(), anyhow::Error>
-where
-    S: Sink<WsMessage> + Unpin,
-    S::Error: std::error::Error + Send + Sync + 'static,
-{
-    let plaintext = serde_json::to_vec(payload)?;
-    let envelope = crate::mobile_e2ee::encrypt(key, device_id, seq, &plaintext)?;
-    let frame = SecureEnvelope {
-        device_id: envelope.device_id,
-        seq: envelope.seq,
-        nonce: envelope.nonce_b64,
-        ciphertext: envelope.ciphertext_b64,
-    };
-    let text = serde_json::to_string(&frame)?;
-    sink.send(WsMessage::Text(text)).await?;
-    Ok(())
 }
 
 async fn proxy_secure_request(
@@ -6989,135 +6591,6 @@ async fn delete_terminal(
     Err(StatusCode::NOT_FOUND)
 }
 
-fn terminal_stream_tail_bytes(params: &HashMap<String, String>) -> usize {
-    params
-        .get("tail")
-        .and_then(|value| {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                trimmed.parse::<usize>().ok()
-            }
-        })
-        .unwrap_or(crate::terminals::DEFAULT_OUTPUT_TAIL_BYTES)
-}
-
-async fn terminal_stream_ws(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(params): Query<HashMap<String, String>>,
-    ws: WebSocketUpgrade,
-) -> Result<Response, StatusCode> {
-    let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-
-    let session = state
-        .terminals
-        .get(terminal_id)
-        .await
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    let tail_bytes = terminal_stream_tail_bytes(&params);
-    Ok(ws.on_upgrade(move |socket| async move {
-        handle_terminal_socket(socket, session, tail_bytes).await;
-    }))
-}
-
-async fn handle_terminal_socket(
-    mut socket: WebSocket,
-    session: Arc<crate::terminals::TerminalSessionHandle>,
-    snapshot_tail: usize,
-) {
-    let snapshot = session.snapshot();
-    let status_payload = serde_json::to_string(&TerminalServerMessage::Status {
-        status: snapshot.status.clone(),
-        exit_code: snapshot.exit_code,
-    })
-    .unwrap_or_else(|_| "{\"type\":\"status\",\"status\":\"running\"}".to_string());
-    let _ = socket.send(WsMessage::Text(status_payload)).await;
-
-    let buffer = session.output_snapshot_tail(snapshot_tail);
-    if !buffer.is_empty() {
-        let _ = socket.send(WsMessage::Binary(buffer)).await;
-    }
-
-    let mut output_rx = session.output_receiver();
-    let mut status_rx = session.status_receiver();
-
-    let (mut ws_tx, mut ws_rx) = socket.split();
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
-    let event_tx_output = event_tx.clone();
-    let event_tx_status = event_tx.clone();
-
-    let mut tasks = JoinSet::new();
-    tasks.spawn(async move {
-        while let Some(msg) = event_rx.recv().await {
-            if ws_tx.send(msg).await.is_err() {
-                break;
-            }
-        }
-    });
-
-    tasks.spawn(async move {
-        loop {
-            match output_rx.recv().await {
-                Ok(bytes) => {
-                    let _ = event_tx_output.send(WsMessage::Binary(bytes));
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
-
-    tasks.spawn(async move {
-        loop {
-            match status_rx.recv().await {
-                Ok(ev) => {
-                    let payload = serde_json::to_string(&TerminalServerMessage::Status {
-                        status: ev.status,
-                        exit_code: ev.exit_code,
-                    })
-                    .unwrap_or_else(|_| "{\"type\":\"status\",\"status\":\"exited\"}".to_string());
-                    let _ = event_tx_status.send(WsMessage::Text(payload));
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
-
-    tasks.spawn(async move {
-        while let Some(Ok(msg)) = ws_rx.next().await {
-            match msg {
-                WsMessage::Binary(data) => {
-                    session.send_input(data);
-                }
-                WsMessage::Text(text) => {
-                    if let Ok(parsed) = serde_json::from_str::<TerminalClientMessage>(&text) {
-                        match parsed {
-                            TerminalClientMessage::Resize { cols, rows } => {
-                                let _ = session.resize(cols, rows);
-                            }
-                            TerminalClientMessage::Input { data } => {
-                                session.send_input(data.into_bytes());
-                            }
-                        }
-                    } else {
-                        session.send_input(text.into_bytes());
-                    }
-                }
-                WsMessage::Close(_) => break,
-                WsMessage::Ping(_) | WsMessage::Pong(_) => {}
-            }
-        }
-    });
-
-    let _ = tasks.join_next().await;
-    tasks.abort_all();
-    while tasks.join_next().await.is_some() {}
-}
-
 #[derive(Debug, Deserialize)]
 struct WebSessionCreatePayload {
     session_id: Option<String>,
@@ -7292,3621 +6765,6 @@ async fn web_session_view(
     let info = handle.snapshot().await;
     let body = render_web_session_view(&info);
     Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], body).into_response())
-}
-
-async fn web_session_signal(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    ws: WebSocketUpgrade,
-) -> Result<Response, StatusCode> {
-    state
-        .web_sessions
-        .get(&id)
-        .await
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let manager = state.web_sessions.clone();
-    let session_id = id.clone();
-    Ok(ws.on_upgrade(move |socket| async move {
-        handle_web_session_socket(socket, manager, session_id).await;
-    }))
-}
-
-async fn handle_web_session_socket(
-    socket: WebSocket,
-    manager: Arc<crate::web_sessions::WebSessionManager>,
-    session_id: String,
-) {
-    let handle = match manager.get(&session_id).await {
-        Some(handle) => handle,
-        None => {
-            let _ = socket.close().await;
-            return;
-        }
-    };
-    let port = handle.worker_port().await;
-    let url = format!("ws://127.0.0.1:{}/signal", port);
-    let _ = manager.bump_viewers(&session_id, 1).await;
-
-    let connect = connect_async(url).await;
-    let upstream = match connect {
-        Ok((stream, _)) => stream,
-        Err(_) => {
-            let _ = manager.bump_viewers(&session_id, -1).await;
-            return;
-        }
-    };
-
-    let (mut client_tx, mut client_rx) = socket.split();
-    let (mut up_tx, mut up_rx) = upstream.split();
-
-    let client_to_up = tokio::spawn(async move {
-        while let Some(Ok(msg)) = client_rx.next().await {
-            let out = match msg {
-                WsMessage::Text(text) => TungsteniteMessage::Text(text.into()),
-                WsMessage::Binary(bytes) => TungsteniteMessage::Binary(bytes.into()),
-                WsMessage::Ping(bytes) => TungsteniteMessage::Ping(bytes.into()),
-                WsMessage::Pong(bytes) => TungsteniteMessage::Pong(bytes.into()),
-                WsMessage::Close(frame) => {
-                    let frame =
-                        frame.map(|f| tokio_tungstenite::tungstenite::protocol::CloseFrame {
-                            code: f.code.into(),
-                            reason: f.reason.to_string().into(),
-                        });
-                    TungsteniteMessage::Close(frame)
-                }
-            };
-            if up_tx.send(out).await.is_err() {
-                break;
-            }
-        }
-    });
-
-    let up_to_client = tokio::spawn(async move {
-        while let Some(Ok(msg)) = up_rx.next().await {
-            let out = match msg {
-                TungsteniteMessage::Text(text) => WsMessage::Text(text.to_string()),
-                TungsteniteMessage::Binary(bytes) => WsMessage::Binary(bytes.to_vec()),
-                TungsteniteMessage::Ping(bytes) => WsMessage::Ping(bytes.to_vec()),
-                TungsteniteMessage::Pong(bytes) => WsMessage::Pong(bytes.to_vec()),
-                TungsteniteMessage::Close(frame) => {
-                    let frame = frame.map(|f| axum::extract::ws::CloseFrame {
-                        code: f.code.into(),
-                        reason: f.reason.to_string().into(),
-                    });
-                    WsMessage::Close(frame)
-                }
-                TungsteniteMessage::Frame(_) => continue,
-            };
-            if client_tx.send(out).await.is_err() {
-                break;
-            }
-        }
-    });
-
-    tokio::select! {
-        _ = client_to_up => {},
-        _ = up_to_client => {},
-    };
-
-    let _ = manager.bump_viewers(&session_id, -1).await;
-}
-
-async fn resolve_web_session_work_dir(
-    state: &Arc<AppState>,
-    session_id: Option<String>,
-    worktree_id: Option<String>,
-) -> anyhow::Result<Option<PathBuf>> {
-    if let Some(worktree_id) = worktree_id {
-        let worktree_id =
-            WorktreeId(uuid::Uuid::parse_str(&worktree_id).context("invalid worktree id")?);
-        let store = state.store_for_worktree(worktree_id).await?;
-        let worktree = store
-            .get_worktree(worktree_id)
-            .await?
-            .context("worktree not found")?;
-        return Ok(Some(PathBuf::from(worktree.root_path)));
-    }
-    if let Some(session_id) = session_id {
-        let session_id =
-            SessionId(uuid::Uuid::parse_str(&session_id).context("invalid session id")?);
-        let store = state.store_for_session(session_id).await?;
-        let session = store
-            .get_session(session_id)
-            .await?
-            .context("session not found")?;
-        let worktree = store
-            .get_worktree(session.worktree_id)
-            .await?
-            .context("worktree not found")?;
-        return Ok(Some(PathBuf::from(worktree.root_path)));
-    }
-    Ok(None)
-}
-
-async fn create_workspace(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<CreateWorkspaceReq>,
-) -> Result<Json<Workspace>, (StatusCode, Json<ApiErrorResp>)> {
-    let raw = req.root_path.trim();
-    if raw.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "root_path is required".to_string(),
-            }),
-        ));
-    }
-
-    let expanded = if raw == "~" || raw.starts_with("~/") {
-        let base = directories::BaseDirs::new().ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "could not resolve home directory to expand '~'".to_string(),
-                }),
-            )
-        })?;
-        let home = base.home_dir();
-        if raw == "~" {
-            home.to_path_buf()
-        } else {
-            home.join(raw.trim_start_matches("~/"))
-        }
-    } else {
-        PathBuf::from(raw)
-    };
-
-    let root_path = tokio::fs::canonicalize(&expanded).await.map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: format!("invalid root_path '{}': {}", expanded.to_string_lossy(), e),
-            }),
-        )
-    })?;
-
-    assert_git_repo(&root_path).await.map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: e.to_string(),
-            }),
-        )
-    })?;
-
-    let root_path_str = root_path.to_string_lossy().to_string();
-
-    let name = req.name.unwrap_or_else(|| {
-        root_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("workspace")
-            .to_string()
-    });
-    let workspace = state
-        .global_store()
-        .create_workspace(name, root_path_str)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: e.to_string(),
-                }),
-            )
-        })?;
-    if let Err(e) = state.store_for_workspace(workspace.id).await {
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        ));
-    }
-    state
-        .telemetry
-        .emit(TelemetryEvent::workspace_registered())
-        .await;
-    Ok(Json(workspace))
-}
-
-async fn delete_workspace(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<StatusCode, StatusCode> {
-    let id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    state
-        .global_store()
-        .delete_workspace_indexes(id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    state
-        .global_store()
-        .delete_workspace(id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    state.stores.evict_workspace(id).await;
-    let workspace_db_dir = state
-        .data_root
-        .join("db")
-        .join("workspaces")
-        .join(id.0.to_string());
-    let _ = tokio::fs::remove_dir_all(workspace_db_dir).await;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-#[derive(Debug, Deserialize)]
-struct SyncWorkspaceAttachmentsReq {
-    #[serde(default)]
-    refresh: Option<bool>,
-}
-
-async fn list_workspace_attachments(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<WorkspaceAttachment>>, StatusCode> {
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_workspace(ws_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    store
-        .list_workspace_attachments(ws_id)
-        .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-}
-
-async fn sync_workspace_attachments(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<SyncWorkspaceAttachmentsReq>,
-) -> Result<Json<Vec<WorkspaceAttachment>>, (StatusCode, Json<ApiErrorResp>)> {
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-    let workspace = state
-        .global_store()
-        .get_workspace(ws_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ))?;
-
-    let refresh = req.refresh.unwrap_or(false);
-    let attachments = attachments::sync_workspace_attachments(&state, &workspace, refresh)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    let _ = attachments::ensure_workspace_attachments_for_worktrees_with_attachments(
-        &state,
-        &workspace,
-        &attachments,
-        false,
-        false,
-    )
-    .await;
-    Ok(Json(attachments))
-}
-
-#[derive(Debug, Serialize)]
-struct AgentSystemPromptConfigResponse {
-    config_path: String,
-    default_append: String,
-    configured_append: Option<String>,
-    effective_append: Option<String>,
-    source: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateAgentSystemPromptConfigReq {
-    #[serde(default)]
-    system_prompt_append: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct SubagentSystemPromptConfigResponse {
-    config_path: String,
-    default_append: String,
-    configured_append: Option<String>,
-    effective_append: Option<String>,
-    source: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateSubagentSystemPromptConfigReq {
-    #[serde(default)]
-    system_prompt_append: Option<String>,
-}
-
-async fn get_agent_system_prompt(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<AgentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-    let workspace = state
-        .global_store()
-        .get_workspace(ws_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ))?;
-
-    let cfg = workspace_config::load_agent_system_prompt_append(StdPath::new(&workspace.root_path))
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-
-    let configured_append = cfg
-        .configured_append
-        .as_ref()
-        .map(|value| value.trim().to_string());
-    let effective_append = cfg.effective_append();
-    let source = match cfg.source() {
-        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
-        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
-        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
-    };
-    let response = AgentSystemPromptConfigResponse {
-        config_path: cfg.config_path.to_string_lossy().to_string(),
-        default_append: cfg.default_append.clone(),
-        configured_append,
-        effective_append,
-        source,
-    };
-
-    Ok(Json(response))
-}
-
-async fn update_agent_system_prompt(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateAgentSystemPromptConfigReq>,
-) -> Result<Json<AgentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-    let workspace = state
-        .global_store()
-        .get_workspace(ws_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ))?;
-
-    workspace_config::update_agent_system_prompt_append(
-        StdPath::new(&workspace.root_path),
-        req.system_prompt_append,
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-
-    let cfg = workspace_config::load_agent_system_prompt_append(StdPath::new(&workspace.root_path))
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-
-    let configured_append = cfg
-        .configured_append
-        .as_ref()
-        .map(|value| value.trim().to_string());
-    let effective_append = cfg.effective_append();
-    let source = match cfg.source() {
-        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
-        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
-        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
-    };
-    let response = AgentSystemPromptConfigResponse {
-        config_path: cfg.config_path.to_string_lossy().to_string(),
-        default_append: cfg.default_append.clone(),
-        configured_append,
-        effective_append,
-        source,
-    };
-
-    Ok(Json(response))
-}
-
-async fn get_subagent_system_prompt(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<SubagentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-    let workspace = state
-        .global_store()
-        .get_workspace(ws_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ))?;
-
-    let cfg =
-        workspace_config::load_subagent_system_prompt_append(StdPath::new(&workspace.root_path))
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
-
-    let configured_append = cfg
-        .configured_append
-        .as_ref()
-        .map(|value| value.trim().to_string());
-    let effective_append = cfg.effective_append();
-    let source = match cfg.source() {
-        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
-        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
-        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
-    };
-    let response = SubagentSystemPromptConfigResponse {
-        config_path: cfg.config_path.to_string_lossy().to_string(),
-        default_append: cfg.default_append.clone(),
-        configured_append,
-        effective_append,
-        source,
-    };
-
-    Ok(Json(response))
-}
-
-async fn update_subagent_system_prompt(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateSubagentSystemPromptConfigReq>,
-) -> Result<Json<SubagentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-    let workspace = state
-        .global_store()
-        .get_workspace(ws_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ))?;
-
-    workspace_config::update_subagent_system_prompt_append(
-        StdPath::new(&workspace.root_path),
-        req.system_prompt_append,
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-
-    let cfg =
-        workspace_config::load_subagent_system_prompt_append(StdPath::new(&workspace.root_path))
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
-
-    let configured_append = cfg
-        .configured_append
-        .as_ref()
-        .map(|value| value.trim().to_string());
-    let effective_append = cfg.effective_append();
-    let source = match cfg.source() {
-        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
-        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
-        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
-    };
-    let response = SubagentSystemPromptConfigResponse {
-        config_path: cfg.config_path.to_string_lossy().to_string(),
-        default_append: cfg.default_append.clone(),
-        configured_append,
-        effective_append,
-        source,
-    };
-
-    Ok(Json(response))
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateWorkspaceAttachmentReq {
-    kind: WorkspaceAttachmentKind,
-    name: String,
-    source: String,
-    #[serde(default)]
-    revision: Option<String>,
-    #[serde(default)]
-    subpath: Option<String>,
-    #[serde(default)]
-    mount_relpath: Option<String>,
-    #[serde(default)]
-    mode: Option<AttachmentMode>,
-    #[serde(default)]
-    update_policy: Option<AttachmentUpdatePolicy>,
-}
-
-async fn create_workspace_attachment(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<CreateWorkspaceAttachmentReq>,
-) -> Result<Json<Vec<WorkspaceAttachment>>, (StatusCode, Json<ApiErrorResp>)> {
-    if req.name.trim().is_empty() || req.source.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "name and source are required".to_string(),
-            }),
-        ));
-    }
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-    let workspace = state
-        .global_store()
-        .get_workspace(ws_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ))?;
-
-    let cfg = attachments::AttachmentConfig {
-        kind: req.kind,
-        name: req.name,
-        source: req.source,
-        revision: req.revision,
-        subpath: req.subpath,
-        mount_relpath: req.mount_relpath,
-        mode: req.mode,
-        update_policy: req.update_policy,
-    };
-    attachments::upsert_attachment_config(StdPath::new(&workspace.root_path), cfg)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-
-    let attachments = attachments::sync_workspace_attachments(&state, &workspace, true)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    let _ = attachments::ensure_workspace_attachments_for_worktrees_with_attachments(
-        &state,
-        &workspace,
-        &attachments,
-        false,
-        false,
-    )
-    .await;
-    Ok(Json(attachments))
-}
-
-#[derive(Debug, Deserialize)]
-struct DeleteWorkspaceAttachmentReq {
-    kind: WorkspaceAttachmentKind,
-    name: String,
-}
-
-async fn delete_workspace_attachment(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<DeleteWorkspaceAttachmentReq>,
-) -> Result<Json<Vec<WorkspaceAttachment>>, (StatusCode, Json<ApiErrorResp>)> {
-    if req.name.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "name is required".to_string(),
-            }),
-        ));
-    }
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-    let workspace = state
-        .global_store()
-        .get_workspace(ws_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ))?;
-
-    let removed = attachments::remove_attachment_config(
-        StdPath::new(&workspace.root_path),
-        req.kind,
-        &req.name,
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    if !removed {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "attachment not found".to_string(),
-            }),
-        ));
-    }
-
-    let attachments = attachments::sync_workspace_attachments(&state, &workspace, false)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    Ok(Json(attachments))
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateTaskReq {
-    title: String,
-    description: Option<String>,
-    #[serde(default = "default_true")]
-    create_default_session: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-async fn update_task_title(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateTaskTitleReq>,
-) -> Result<Json<Task>, (StatusCode, Json<ApiErrorResp>)> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid task id".to_string(),
-            }),
-        )
-    })?);
-    let title = req.title.trim().to_string();
-    if title.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "title is required".to_string(),
-            }),
-        ));
-    }
-    if title.len() > 120 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "title is too long".to_string(),
-            }),
-        ));
-    }
-
-    let store = state.store_for_task(task_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    let updated = store.update_task_title(task_id, title).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    if !updated {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "task not found".to_string(),
-            }),
-        ));
-    }
-
-    let task = match store.get_task_with_activity(task_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })? {
-        Some(task) => task,
-        None => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "task not found".to_string(),
-                }),
-            ))
-        }
-    };
-
-    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
-        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
-    }
-    let sessions = match store.list_sessions_for_task(task_id).await {
-        Ok(sessions) => sessions,
-        Err(e) => {
-            tracing::warn!(task_id = %task_id.0, "failed to list sessions for archived task: {e:?}");
-            Vec::new()
-        }
-    };
-    let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
-    if let Some(primary_worktree_id) = task.primary_worktree_id {
-        worktree_ids.insert(primary_worktree_id);
-    }
-    let mut worktree_id_strings = HashSet::new();
-    for worktree_id in worktree_ids {
-        match store.get_worktree(worktree_id).await {
-            Ok(Some(worktree)) => {
-                worktree_id_strings.insert(worktree.id.0.to_string());
-            }
-            Ok(None) => {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree_id.0,
-                    "worktree missing for archived task"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree_id.0,
-                    "failed to load worktree for archived task: {e:?}"
-                );
-            }
-        }
-    }
-    let session_ids: HashSet<String> = sessions
-        .iter()
-        .map(|session| session.id.0.to_string())
-        .collect();
-    if let Err(e) = state
-        .web_sessions
-        .close_for_task(&session_ids, &worktree_id_strings)
-        .await
-    {
-        tracing::warn!(task_id = %task_id.0, "failed to close web sessions for archived task: {e:?}");
-    }
-    Ok(Json(task))
-}
-
-async fn delete_task(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<StatusCode, StatusCode> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let task = store
-        .get_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let sessions = store
-        .list_sessions_for_task(task_id)
-        .await
-        .unwrap_or_default();
-    let deleted = store
-        .delete_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !deleted {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    let _ = state
-        .global_store()
-        .delete_workspace_task_index(task_id)
-        .await;
-    for session in sessions {
-        let _ = state
-            .global_store()
-            .delete_workspace_session_index(session.id)
-            .await;
-    }
-    state
-        .emit_workspace_task_delete(task.workspace_id, task_id)
-        .await;
-    if task.archived_at.is_some() {
-        state
-            .emit_workspace_archived_task_delete(task.workspace_id, task_id)
-            .await;
-    }
-    Ok(StatusCode::NO_CONTENT)
-}
-
-fn managed_worktree_root(
-    state: &AppState,
-    workspace: &Workspace,
-    worktree: &Worktree,
-) -> Option<PathBuf> {
-    let root = PathBuf::from(&worktree.root_path);
-    let expected = managed_worktree_path(&state.data_root, workspace.id, worktree.id);
-    if root == expected {
-        Some(root)
-    } else {
-        None
-    }
-}
-
-async fn remove_worktree(
-    workspace_root: impl AsRef<StdPath>,
-    worktree_path: impl AsRef<StdPath>,
-) -> anyhow::Result<()> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(workspace_root.as_ref())
-        .arg("worktree")
-        .arg("remove")
-        .arg("--force")
-        .arg(worktree_path.as_ref())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .context("running git worktree remove")?;
-    if !output.status.success() {
-        bail!(
-            "git worktree remove failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    if tokio::fs::metadata(worktree_path.as_ref()).await.is_ok() {
-        tokio::fs::remove_dir_all(worktree_path.as_ref())
-            .await
-            .context("removing worktree dir")?;
-    }
-    Ok(())
-}
-
-async fn prune_worktrees(workspace_root: impl AsRef<StdPath>) -> anyhow::Result<()> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(workspace_root.as_ref())
-        .arg("worktree")
-        .arg("prune")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .context("running git worktree prune")?;
-    if !output.status.success() {
-        bail!(
-            "git worktree prune failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(())
-}
-
-async fn ensure_worktree_attached(
-    workspace_root: impl AsRef<StdPath>,
-    worktree_path: impl AsRef<StdPath>,
-    base_commit_sha: &str,
-    branch_name: &str,
-) -> anyhow::Result<()> {
-    let worktree_path = worktree_path.as_ref();
-    if let Some(parent) = worktree_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .context("creating worktree parent dir")?;
-    }
-
-    if tokio::fs::metadata(worktree_path).await.is_ok() {
-        if is_git_worktree(worktree_path).await.unwrap_or(false) {
-            return Ok(());
-        }
-        tokio::fs::remove_dir_all(worktree_path)
-            .await
-            .context("removing stale worktree dir")?;
-    }
-
-    let mut cmd = Command::new("git");
-    cmd.arg("-C")
-        .arg(workspace_root.as_ref())
-        .arg("worktree")
-        .arg("add")
-        .arg(worktree_path);
-    if branch_exists(workspace_root, branch_name).await? {
-        cmd.arg(branch_name);
-    } else {
-        cmd.arg("-b").arg(branch_name).arg(base_commit_sha);
-    }
-    let output = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .context("running git worktree add")?;
-    if !output.status.success() {
-        bail!(
-            "git worktree add failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(())
-}
-
-async fn branch_exists(
-    workspace_root: impl AsRef<StdPath>,
-    branch_name: &str,
-) -> anyhow::Result<bool> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(workspace_root.as_ref())
-        .arg("show-ref")
-        .arg("--verify")
-        .arg("--quiet")
-        .arg(format!("refs/heads/{branch_name}"))
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .context("running git show-ref --verify")?;
-    if output.status.success() {
-        return Ok(true);
-    }
-    if output.status.code() == Some(1) {
-        return Ok(false);
-    }
-    bail!(
-        "git show-ref failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    )
-}
-
-async fn is_git_worktree(worktree_path: impl AsRef<StdPath>) -> anyhow::Result<bool> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(worktree_path.as_ref())
-        .arg("rev-parse")
-        .arg("--is-inside-work-tree")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .context("running git rev-parse --is-inside-work-tree")?;
-    if !output.status.success() {
-        return Ok(false);
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
-}
-
-async fn archive_task(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Task>, StatusCode> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let task = store
-        .get_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let workspace = state
-        .global_store()
-        .get_workspace(task.workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let sessions = store
-        .list_sessions_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
-    if let Some(primary_worktree_id) = task.primary_worktree_id {
-        worktree_ids.insert(primary_worktree_id);
-    }
-    let mut seen = HashSet::new();
-    let mut worktrees = Vec::new();
-    for worktree_id in worktree_ids {
-        if !seen.insert(worktree_id) {
-            continue;
-        }
-        let worktree = store
-            .get_worktree(worktree_id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
-        worktrees.push(worktree);
-    }
-
-    let mut errors: Vec<anyhow::Error> = Vec::new();
-    let mut needs_prune = false;
-    for worktree in &worktrees {
-        let Some(root) = managed_worktree_root(&state, &workspace, worktree) else {
-            continue;
-        };
-        let branch = worktree
-            .git_branch
-            .as_deref()
-            .filter(|name| name.starts_with("ctx/"));
-        if tokio::fs::metadata(&root).await.is_err() {
-            if branch.is_some() {
-                needs_prune = true;
-            }
-            if let Some(branch) = branch {
-                if let Err(err) = delete_branch(&workspace.root_path, branch).await {
-                    tracing::warn!(
-                        task_id = %task_id.0,
-                        worktree_id = %worktree.id.0,
-                        branch,
-                        "failed to delete worktree branch: {err:#}"
-                    );
-                }
-            }
-            continue;
-        }
-        let is_git = is_git_worktree(&root).await.unwrap_or(false);
-        if is_git {
-            needs_prune = true;
-            if let Err(err) = remove_worktree(&workspace.root_path, &root).await {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree.id.0,
-                    "failed to remove worktree: {err:#}"
-                );
-                errors.push(err);
-                continue;
-            }
-            // Defensive: ensure the directory is actually gone even if `git worktree remove`
-            // succeeds but leaves the directory behind.
-            if tokio::fs::metadata(&root).await.is_ok() {
-                if let Err(err) = tokio::fs::remove_dir_all(&root)
-                    .await
-                    .with_context(|| format!("removing worktree dir at {}", root.display()))
-                {
-                    tracing::warn!(
-                        task_id = %task_id.0,
-                        worktree_id = %worktree.id.0,
-                        "failed to remove worktree dir: {err:#}"
-                    );
-                    errors.push(err);
-                }
-            }
-        } else if let Err(err) = tokio::fs::remove_dir_all(&root)
-            .await
-            .with_context(|| format!("removing non-git worktree dir at {}", root.display()))
-        {
-            tracing::warn!(
-                task_id = %task_id.0,
-                worktree_id = %worktree.id.0,
-                "failed to remove worktree dir: {err:#}"
-            );
-            errors.push(err);
-        }
-        if let Some(branch) = branch {
-            if let Err(err) = delete_branch(&workspace.root_path, branch).await {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree.id.0,
-                    branch,
-                    "failed to delete worktree branch: {err:#}"
-                );
-            }
-        }
-    }
-    if needs_prune {
-        if let Err(err) = prune_worktrees(&workspace.root_path).await {
-            tracing::warn!(
-                task_id = %task_id.0,
-                "failed to prune worktrees: {err:#}"
-            );
-            errors.push(err);
-        }
-    }
-    if !errors.is_empty() {
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    let updated = store
-        .archive_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !updated {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    let task = match store
-        .get_task_with_activity(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    {
-        Some(task) => task,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
-    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
-        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
-    }
-    Ok(Json(task))
-}
-
-async fn unarchive_task(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Task>, StatusCode> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let task = store
-        .get_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let workspace = state
-        .global_store()
-        .get_workspace(task.workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let mut seen = HashSet::new();
-    let mut managed_worktrees: Vec<(Worktree, PathBuf)> = Vec::new();
-    let mut worktrees: Vec<Worktree> = Vec::new();
-    let sessions = store
-        .list_sessions_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
-    if let Some(primary) = task.primary_worktree_id {
-        worktree_ids.insert(primary);
-    }
-    for worktree_id in worktree_ids {
-        let worktree = store
-            .get_worktree(worktree_id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
-        if let Some(root) = managed_worktree_root(&state, &workspace, &worktree) {
-            if seen.insert(worktree.id) {
-                managed_worktrees.push((worktree.clone(), root));
-            }
-        }
-        worktrees.push(worktree);
-    }
-
-    for (worktree, root) in &managed_worktrees {
-        let branch = worktree.git_branch.as_deref().unwrap_or_default();
-        if let Err(err) = ensure_worktree_attached(
-            &workspace.root_path,
-            root,
-            &worktree.base_commit_sha,
-            branch,
-        )
-        .await
-        {
-            tracing::warn!(
-                task_id = %task_id.0,
-                worktree_id = %worktree.id.0,
-                "failed to recreate worktree: {err:#}"
-            );
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    for worktree in &worktrees {
-        if let Err(e) =
-            attachments::ensure_worktree_attachment_mounts(&state, &workspace, worktree, false)
-                .await
-        {
-            tracing::warn!(task_id = %task_id.0, "attachment mounts failed: {e:?}");
-        }
-        if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
-            Arc::clone(&state),
-            workspace.clone(),
-            worktree.clone(),
-        )
-        .await
-        {
-            tracing::warn!(task_id = %task_id.0, "worktree bootstrap failed: {e:?}");
-        }
-    }
-
-    let updated = store
-        .unarchive_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !updated {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    let task = match store
-        .get_task_with_activity(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    {
-        Some(task) => task,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
-    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
-        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
-    }
-    state
-        .emit_workspace_archived_task_delete(task.workspace_id, task_id)
-        .await;
-    Ok(Json(task))
-}
-
-async fn mark_task_read(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Task>, StatusCode> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let updated = store
-        .mark_task_read(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !updated {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    let task = match store
-        .get_task_with_activity(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    {
-        Some(task) => task,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
-    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
-        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
-    }
-    Ok(Json(task))
-}
-
-async fn mark_task_unread(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Task>, StatusCode> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let updated = store
-        .mark_task_unread(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !updated {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    let task = match store
-        .get_task_with_activity(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    {
-        Some(task) => task,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
-    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
-        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
-    }
-    Ok(Json(task))
-}
-
-async fn list_workspace_tasks(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<Task>>, StatusCode> {
-    let workspace_id =
-        WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_workspace(workspace_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let tasks = store
-        .list_tasks(workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(tasks))
-}
-
-#[derive(Debug, Deserialize)]
-struct WorkspaceArchivedQuery {
-    limit: Option<u32>,
-    cursor_sort_at: Option<String>,
-    cursor_task_id: Option<String>,
-}
-
-async fn list_workspace_archived_task_summaries(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(query): Query<WorkspaceArchivedQuery>,
-) -> Result<Json<WorkspaceArchivedPage>, StatusCode> {
-    let workspace_id =
-        WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let limit = query.limit.unwrap_or(50) as i64;
-    let cursor = match (
-        query.cursor_sort_at.as_deref(),
-        query.cursor_task_id.as_deref(),
-    ) {
-        (None, None) => None,
-        (Some(sort_at), Some(task_id)) => {
-            let sort_at = DateTime::parse_from_rfc3339(sort_at)
-                .map_err(|_| StatusCode::BAD_REQUEST)?
-                .with_timezone(&Utc);
-            let task_id =
-                TaskId(uuid::Uuid::parse_str(task_id).map_err(|_| StatusCode::BAD_REQUEST)?);
-            Some(WorkspaceIndexCursor { sort_at, task_id })
-        }
-        _ => return Err(StatusCode::BAD_REQUEST),
-    };
-
-    let store = state
-        .store_for_workspace(workspace_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let (tasks, next_cursor) = store
-        .list_workspace_archived_page(workspace_id, cursor, limit)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let (_, total_archived) = store
-        .workspace_task_counts(workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let (_, archived_rev) = load_workspace_active_snapshot_state(&state, workspace_id).await;
-
-    Ok(Json(WorkspaceArchivedPage {
-        workspace_id,
-        archived_rev,
-        tasks,
-        next_cursor,
-        total_archived,
-    }))
-}
-
-async fn list_task_sessions(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<Session>>, StatusCode> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let sessions = store
-        .list_sessions_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(sessions))
-}
-
-async fn create_task(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<CreateTaskReq>,
-) -> Result<Json<Task>, (StatusCode, Json<ApiErrorResp>)> {
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-    let ws = state
-        .global_store()
-        .get_workspace(ws_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ))?;
-
-    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-
-    let want_default_session = req.create_default_session;
-    if want_default_session {
-        assert_git_repo(&ws.root_path).await.map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    }
-
-    let task = store
-        .create_task(ws_id, req.title, req.description)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    if let Err(e) = state
-        .global_store()
-        .upsert_workspace_task_index(task.id, ws_id)
-        .await
-    {
-        tracing::warn!(task_id = %task.id.0, "failed to update task index: {e:?}");
-    }
-
-    if !req.create_default_session {
-        if let Err(e) = state.emit_workspace_task_upsert(task.id).await {
-            tracing::warn!(task_id = %task.id.0, "workspace active snapshot refresh failed: {e:?}");
-        }
-        return Ok(Json(task));
-    }
-
-    let base_commit_sha = rev_parse_head(&ws.root_path).await.map_err(|e| {
-        let msg = e.to_string().to_lowercase();
-        if msg.contains("ambiguous argument 'head'")
-            || msg.contains("unknown revision or path not in the working tree")
-        {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "git repo has no commits; create an initial commit before creating a worktree".to_string(),
-                }),
-            );
-        }
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-
-    let worktree_id = WorktreeId::new();
-    let wt_path = managed_worktree_path(&state.data_root, ws_id, worktree_id);
-    if let Some(parent) = wt_path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    }
-    let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
-    create_worktree(&ws.root_path, &wt_path, &base_commit_sha, &branch_name)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-
-    let worktree = Worktree {
-        id: worktree_id,
-        workspace_id: ws_id,
-        root_path: wt_path.to_string_lossy().to_string(),
-        base_commit_sha,
-        git_branch: Some(branch_name),
-        created_at: chrono::Utc::now(),
-        bootstrap_status: None,
-        bootstrap_started_at: None,
-        bootstrap_finished_at: None,
-        bootstrap_exit_code: None,
-        bootstrap_timeout_sec: None,
-        bootstrap_error: None,
-        bootstrap_log_path: None,
-        bootstrap_log_truncated: None,
-        bootstrap_config_path: None,
-        bootstrap_config_key: None,
-        bootstrap_command: None,
-        bootstrap_script_path: None,
-    };
-    store.insert_worktree(worktree.clone()).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    if let Err(e) = state
-        .global_store()
-        .upsert_workspace_worktree_index(worktree_id, ws_id)
-        .await
-    {
-        tracing::warn!(worktree_id = %worktree_id.0, "failed to update worktree index: {e:?}");
-    }
-
-    if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
-        Arc::clone(&state),
-        ws.clone(),
-        worktree.clone(),
-    )
-    .await
-    {
-        tracing::warn!(task_id = %task.id.0, "worktree bootstrap failed: {e:?}");
-    }
-
-    if let Err(e) = store.set_task_primary_worktree(task.id, worktree_id).await {
-        tracing::warn!(task_id = %task.id.0, "failed to set primary worktree: {e:?}");
-    }
-
-    if let Err(e) = attachments::sync_workspace_attachments(&state, &ws, false).await {
-        tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
-    }
-
-    if let Err(e) =
-        attachments::ensure_worktree_attachment_mounts(&state, &ws, &worktree, false).await
-    {
-        tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
-    }
-
-    let task = match store.get_task_with_activity(task.id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })? {
-        Some(task) => task,
-        None => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "task not found".to_string(),
-                }),
-            ))
-        }
-    };
-
-    if let Err(e) = state.emit_workspace_task_upsert(task.id).await {
-        tracing::warn!(task_id = %task.id.0, "workspace active snapshot refresh failed: {e:?}");
-    }
-    Ok(Json(task))
-}
-
-#[derive(Debug, Serialize)]
-struct SessionWithEnv {
-    #[serde(flatten)]
-    session: Session,
-    env_target: String, // "worktree" | "local"
-}
-
-fn env_target_for_worktree(wt: Option<&Worktree>) -> String {
-    match wt.and_then(|w| w.git_branch.as_ref()) {
-        Some(_) => "worktree".to_string(),
-        None => "local".to_string(),
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateSessionReq {
-    provider_id: String,
-    model_id: String,
-    parent_session_id: Option<String>,
-    relationship: Option<String>,
-    initial_prompt: Option<String>,
-    #[serde(default)]
-    worktree_id: Option<String>,
-    #[serde(default)]
-    env_target: Option<String>, // "worktree" | "local"
-}
-
-async fn create_session_for_task(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    headers: axum::http::HeaderMap,
-    Json(req): Json<CreateSessionReq>,
-) -> Result<Json<SessionWithEnv>, StatusCode> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let task = store
-        .get_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let workspace = state
-        .global_store()
-        .get_workspace(task.workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let run_id_header = headers
-        .get("x-ctx-run-id")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.to_string());
-
-    let parent_session_id = match req.parent_session_id {
-        Some(id) => Some(SessionId(
-            uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?,
-        )),
-        None => None,
-    };
-    let relationship = req
-        .relationship
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string());
-    if parent_session_id.is_some() != relationship.is_some() {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    let worktree_id = if let Some(worktree_id) = req.worktree_id.as_deref() {
-        WorktreeId(uuid::Uuid::parse_str(worktree_id).map_err(|_| StatusCode::BAD_REQUEST)?)
-    } else if let Some(primary) = task.primary_worktree_id {
-        primary
-    } else {
-        let env_target = req
-            .env_target
-            .as_deref()
-            .unwrap_or("worktree")
-            .trim()
-            .to_lowercase();
-        let base_commit_sha = rev_parse_head(&workspace.root_path).await.map_err(|e| {
-            let msg = e.to_string().to_lowercase();
-            if msg.contains("ambiguous argument 'head'")
-                || msg.contains("unknown revision or path not in the working tree")
-            {
-                return StatusCode::BAD_REQUEST;
-            }
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-        match env_target.as_str() {
-            "worktree" | "cloud" => {
-                let worktree_id = WorktreeId::new();
-                let wt_path =
-                    managed_worktree_path(&state.data_root, task.workspace_id, worktree_id);
-                if let Some(parent) = wt_path.parent() {
-                    tokio::fs::create_dir_all(parent)
-                        .await
-                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                }
-                let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
-                create_worktree(
-                    &workspace.root_path,
-                    &wt_path,
-                    &base_commit_sha,
-                    &branch_name,
-                )
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-                let worktree = Worktree {
-                    id: worktree_id,
-                    workspace_id: task.workspace_id,
-                    root_path: wt_path.to_string_lossy().to_string(),
-                    base_commit_sha,
-                    git_branch: Some(branch_name),
-                    created_at: chrono::Utc::now(),
-                    bootstrap_status: None,
-                    bootstrap_started_at: None,
-                    bootstrap_finished_at: None,
-                    bootstrap_exit_code: None,
-                    bootstrap_timeout_sec: None,
-                    bootstrap_error: None,
-                    bootstrap_log_path: None,
-                    bootstrap_log_truncated: None,
-                    bootstrap_config_path: None,
-                    bootstrap_config_key: None,
-                    bootstrap_command: None,
-                    bootstrap_script_path: None,
-                };
-                store
-                    .insert_worktree(worktree.clone())
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                if let Err(e) = state
-                    .global_store()
-                    .upsert_workspace_worktree_index(worktree_id, task.workspace_id)
-                    .await
-                {
-                    tracing::warn!(
-                        worktree_id = %worktree_id.0,
-                        "failed to update worktree index: {e:?}"
-                    );
-                }
-                if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
-                    Arc::clone(&state),
-                    workspace.clone(),
-                    worktree.clone(),
-                )
-                .await
-                {
-                    tracing::warn!(task_id = %task.id.0, "worktree bootstrap failed: {e:?}");
-                }
-                if let Err(e) =
-                    attachments::sync_workspace_attachments(&state, &workspace, false).await
-                {
-                    tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
-                }
-                if let Err(e) = attachments::ensure_worktree_attachment_mounts(
-                    &state, &workspace, &worktree, false,
-                )
-                .await
-                {
-                    tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
-                }
-                worktree_id
-            }
-            "local" => {
-                if let Some(existing) = store
-                    .get_local_worktree_for_root(task.workspace_id, &workspace.root_path)
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                {
-                    existing.id
-                } else {
-                    let worktree_id = WorktreeId::new();
-                    let worktree = Worktree {
-                        id: worktree_id,
-                        workspace_id: task.workspace_id,
-                        root_path: workspace.root_path.clone(),
-                        base_commit_sha,
-                        git_branch: None,
-                        created_at: chrono::Utc::now(),
-                        bootstrap_status: None,
-                        bootstrap_started_at: None,
-                        bootstrap_finished_at: None,
-                        bootstrap_exit_code: None,
-                        bootstrap_timeout_sec: None,
-                        bootstrap_error: None,
-                        bootstrap_log_path: None,
-                        bootstrap_log_truncated: None,
-                        bootstrap_config_path: None,
-                        bootstrap_config_key: None,
-                        bootstrap_command: None,
-                        bootstrap_script_path: None,
-                    };
-                    store
-                        .insert_worktree(worktree.clone())
-                        .await
-                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                    if let Err(e) = state
-                        .global_store()
-                        .upsert_workspace_worktree_index(worktree_id, task.workspace_id)
-                        .await
-                    {
-                        tracing::warn!(
-                            worktree_id = %worktree_id.0,
-                            "failed to update worktree index: {e:?}"
-                        );
-                    }
-                    if let Err(e) =
-                        attachments::sync_workspace_attachments(&state, &workspace, false).await
-                    {
-                        tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
-                    }
-                    if let Err(e) = attachments::ensure_worktree_attachment_mounts(
-                        &state, &workspace, &worktree, false,
-                    )
-                    .await
-                    {
-                        tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
-                    }
-                    worktree_id
-                }
-            }
-            _ => return Err(StatusCode::BAD_REQUEST),
-        }
-    };
-
-    let worktree = store
-        .get_worktree(worktree_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let worktree_root = std::path::Path::new(&worktree.root_path);
-    if tokio::fs::metadata(worktree_root).await.is_err() {
-        return Err(StatusCode::NOT_FOUND);
-    }
-
-    let session = store
-        .create_session(
-            task.id,
-            task.workspace_id,
-            worktree_id,
-            req.provider_id,
-            req.model_id,
-            "implementer".into(),
-            parent_session_id,
-            relationship,
-            None,
-        )
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    state.remember_session_meta(&session).await;
-    if let Err(e) = state
-        .global_store()
-        .upsert_workspace_session_index(session.id, task.workspace_id)
-        .await
-    {
-        tracing::warn!(session_id = %session.id.0, "failed to update session index: {e:?}");
-    }
-
-    if session.parent_session_id.is_none() && session.relationship.is_none() {
-        let _ = store
-            .set_task_primary_session(task.id, session.id, worktree_id)
-            .await;
-    }
-
-    if let Some(prompt) = req.initial_prompt {
-        let run_id = RunId::new();
-        let turn_id = TurnId::new();
-        let msg = Message {
-            id: MessageId::new(),
-            session_id: session.id,
-            task_id: session.task_id,
-            run_id: Some(run_id),
-            turn_id: Some(turn_id),
-            turn_sequence: Some(0),
-            role: MessageRole::User,
-            content: prompt,
-            attachments: vec![],
-            delivery: MessageDelivery::Immediate,
-            delivered_at: None,
-            created_at: chrono::Utc::now(),
-        };
-        let saved = store
-            .insert_message(msg)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let event = store
-            .append_session_event(
-                session.id,
-                Some(run_id),
-                Some(turn_id),
-                SessionEventType::UserMessage,
-                serde_json::json!({
-                    "message_id": saved.id.0,
-                    "content": saved.content.clone(),
-                    "delivery": saved.delivery.clone(),
-                    "attachments": saved.attachments,
-                }),
-            )
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let start_seq = event.seq;
-
-        let turn = SessionTurn {
-            turn_id,
-            session_id: session.id,
-            run_id: Some(run_id),
-            user_message_id: Some(saved.id),
-            status: SessionTurnStatus::Running,
-            start_seq: Some(start_seq),
-            end_seq: None,
-            started_at: saved.created_at,
-            updated_at: saved.created_at,
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        };
-        let _ = store.insert_session_turn(turn).await;
-        state.publish_event(event).await;
-
-        let prompt = saved.content.clone();
-        let tx = state.ensure_scheduler(session.clone()).await;
-        let queued = crate::scheduler::QueuedMessage {
-            message: saved,
-            enqueued_at: Instant::now(),
-            run_id: run_id_header.clone(),
-        };
-        let _ = tx.send(SchedulerCommand::Enqueue(queued)).await;
-
-        let _ =
-            schedule_session_title_generation(state.clone(), session.clone(), prompt, false).await;
-    }
-
-    let worktree = match state.store_for_session(session.id).await {
-        Ok(store) => store.get_worktree(session.worktree_id).await.ok().flatten(),
-        Err(_) => None,
-    };
-    let env_target = env_target_for_worktree(worktree.as_ref());
-    state
-        .telemetry
-        .emit(TelemetryEvent::session_started(
-            session.provider_id.clone(),
-            session.model_id.clone(),
-            Some(env_target.clone()),
-        ))
-        .await;
-    let mut ops_event = OpsEvent::new("info", "session_started");
-    ops_event.session_id = Some(session.id.0.to_string());
-    ops_event.worktree_id = Some(session.worktree_id.0.to_string());
-    ops_event.provider_id = Some(session.provider_id.clone());
-    ops_event.meta = Some(serde_json::json!({
-        "model_id": session.model_id.clone(),
-        "env_target": env_target.clone(),
-        "parent_session_id": session.parent_session_id.map(|id| id.0.to_string()),
-        "relationship": session.relationship.clone(),
-    }));
-    state.ops_events.emit(ops_event);
-    state.remember_session_meta(&session).await;
-    state.refresh_session_head_cache(session.id).await;
-    if let Err(e) = state.emit_workspace_task_upsert(session.task_id).await {
-        tracing::warn!(task_id = %session.task_id.0, "workspace active snapshot refresh failed: {e:?}");
-    }
-    Ok(Json(SessionWithEnv {
-        env_target,
-        session,
-    }))
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct SessionSnapshotQuery {
-    limit: Option<u32>,
-    include_events: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct SessionHeadQuery {
-    limit: Option<u32>,
-    include_events: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SessionDiffApplyReq {
-    action: String, // "accept" | "reject"
-    patch: String,
-}
-
-#[derive(Debug, Serialize)]
-struct SessionDiffResponse {
-    diff: String,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct SessionDiffQuery {
-    base_commit_sha: Option<String>,
-    target_branch: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct SessionDiffSummaryResponse {
-    base_commit_sha: String,
-    head_commit_sha: String,
-    file_count: i64,
-    line_additions: i64,
-    line_deletions: i64,
-}
-
-#[derive(Debug, Serialize)]
-struct SessionGitStatusResponse {
-    raw: String,
-    summary_line: String,
-    branch: Option<String>,
-    upstream: Option<String>,
-    ahead: i64,
-    behind: i64,
-    detached: bool,
-    staged: i64,
-    unstaged: i64,
-    untracked: i64,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    entries: Vec<GitStatusEntry>,
-}
-
-async fn get_session_snapshot(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(q): Query<SessionSnapshotQuery>,
-) -> Result<Json<SessionSnapshot>, StatusCode> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let limit = q.limit.unwrap_or(60);
-    let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    match store
-        .get_session_snapshot(session_id, limit, include_events)
-        .await
-    {
-        Ok(Some(snapshot)) => Ok(Json(snapshot)),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
-}
-
-fn apply_session_head_limit(
-    mut head: SessionHeadSnapshot,
-    limit: u32,
-    include_events: bool,
-) -> SessionHeadSnapshot {
-    let limit = limit.max(1) as usize;
-    if !include_events {
-        head.events.clear();
-    }
-    if head.turns.len() <= limit {
-        return head;
-    }
-    let start = head.turns.len() - limit;
-    let turns = head.turns[start..].to_vec();
-    let mut allowed = std::collections::HashSet::new();
-    for turn in &turns {
-        allowed.insert(turn.turn_id);
-    }
-    head.turns = turns;
-    head.messages.retain(|msg| {
-        msg.turn_id
-            .map(|turn_id| allowed.contains(&turn_id))
-            .unwrap_or(true)
-    });
-    head.tool_summaries
-        .retain(|tool| allowed.contains(&tool.turn_id));
-    if include_events {
-        head.events.retain(|event| {
-            event
-                .turn_id
-                .map(|turn_id| allowed.contains(&turn_id))
-                .unwrap_or(true)
-        });
-    } else {
-        head.events.clear();
-    }
-    head.has_more_turns = true;
-    head.head_window.turn_limit = limit as i64;
-    head.head_window.turn_count = head.turns.len() as i64;
-    head.head_window.message_count = head.messages.len() as i64;
-    head.head_window.event_count = head.events.len() as i64;
-    head.head_window.truncated = true;
-    head
-}
-
-async fn get_session_head(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(q): Query<SessionHeadQuery>,
-) -> Result<Json<SessionHeadSnapshot>, StatusCode> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let limit = q.limit.unwrap_or(60);
-    let mut head = state
-        .workspace_active_snapshot
-        .get_session_head(session_id)
-        .await
-        .ok_or(StatusCode::NOT_FOUND)?;
-    head = apply_session_head_limit(head, limit, include_events);
-    Ok(Json(head))
-}
-
-async fn get_session_state(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<SessionState>, StatusCode> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let session = store
-        .get_session(session_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if session.is_none() {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    let mut state = store
-        .get_session_state(session_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    for artifact in state.artifacts.iter_mut() {
-        if tokio::fs::metadata(&artifact.absolute_path).await.is_err() {
-            artifact.missing = Some(true);
-        }
-    }
-    Ok(Json(state))
-}
-
-async fn get_session_diff(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(q): Query<SessionDiffQuery>,
-) -> Result<Json<SessionDiffResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid session id".to_string(),
-            }),
-        )
-    })?);
-    let store = state.store_for_session(session_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    let session = store
-        .get_session(session_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "session not found".to_string(),
-                }),
-            )
-        })?;
-    let worktree = store
-        .get_worktree(session.worktree_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "worktree not found".to_string(),
-                }),
-            )
-        })?;
-    let workspace = state
-        .global_store()
-        .get_workspace(session.workspace_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "workspace not found".to_string(),
-                }),
-            )
-        })?;
-    let base_commit_sha = resolve_session_diff_base(&workspace, &worktree, &q).await?;
-    let diff = ctx_fs::worktrees::diff_worktree(&worktree.root_path, &base_commit_sha)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    Ok(Json(SessionDiffResponse { diff }))
-}
-
-async fn get_session_diff_summary(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(q): Query<SessionDiffQuery>,
-) -> Result<Json<SessionDiffSummaryResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid session id".to_string(),
-            }),
-        )
-    })?);
-    let store = state.store_for_session(session_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    let session = store
-        .get_session(session_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "session not found".to_string(),
-                }),
-            )
-        })?;
-    let worktree = store
-        .get_worktree(session.worktree_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "worktree not found".to_string(),
-                }),
-            )
-        })?;
-    let workspace = state
-        .global_store()
-        .get_workspace(session.workspace_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "workspace not found".to_string(),
-                }),
-            )
-        })?;
-    let base_commit_sha = resolve_session_diff_base(&workspace, &worktree, &q).await?;
-    let (file_count, line_additions, line_deletions) =
-        ctx_fs::worktrees::diff_worktree_summary(&worktree.root_path, &base_commit_sha)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
-    let head_commit_sha = match rev_parse_head(&worktree.root_path).await {
-        Ok(value) => value,
-        Err(_) => base_commit_sha.clone(),
-    };
-    Ok(Json(SessionDiffSummaryResponse {
-        base_commit_sha,
-        head_commit_sha,
-        file_count,
-        line_additions,
-        line_deletions,
-    }))
-}
-
-async fn get_session_git_status(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<SessionGitStatusResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid session id".to_string(),
-            }),
-        )
-    })?);
-    let store = state.store_for_session(session_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    let session = store
-        .get_session(session_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "session not found".to_string(),
-                }),
-            )
-        })?;
-    let worktree = store
-        .get_worktree(session.worktree_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "worktree not found".to_string(),
-                }),
-            )
-        })?;
-    let snapshot = load_git_status_snapshot(StdPath::new(&worktree.root_path))
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    let resp = SessionGitStatusResponse {
-        raw: snapshot.raw,
-        summary_line: snapshot.summary_line,
-        branch: snapshot.branch,
-        upstream: snapshot.upstream,
-        ahead: snapshot.ahead,
-        behind: snapshot.behind,
-        detached: snapshot.detached,
-        staged: snapshot.staged,
-        unstaged: snapshot.unstaged,
-        untracked: snapshot.untracked,
-        entries: snapshot.entries,
-    };
-    let summary = SessionGitStatusSummary {
-        summary_line: resp.summary_line.clone(),
-        branch: resp.branch.clone(),
-        upstream: resp.upstream.clone(),
-        ahead: resp.ahead,
-        behind: resp.behind,
-        detached: resp.detached,
-        staged: resp.staged,
-        unstaged: resp.unstaged,
-        untracked: resp.untracked,
-    };
-    if let Err(err) = store
-        .upsert_session_git_status_summary(session_id, worktree.id, &summary)
-        .await
-    {
-        tracing::warn!(session_id = %session_id.0, "git status summary persist failed: {err:?}");
-    }
-    maybe_emit_git_status_snapshot(&state, session_id, worktree.id, &resp).await;
-    Ok(Json(resp))
-}
-
-async fn resolve_session_diff_base(
-    workspace: &Workspace,
-    worktree: &Worktree,
-    query: &SessionDiffQuery,
-) -> Result<String, (StatusCode, Json<ApiErrorResp>)> {
-    if let Some(base) = query.base_commit_sha.as_deref() {
-        let trimmed = base.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
-        }
-    }
-    let explicit_target = query
-        .target_branch
-        .as_deref()
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
-    let target_branch = match query.target_branch.as_deref() {
-        Some(target) if !target.trim().is_empty() => Some(target.trim().to_string()),
-        _ => match workspace_config::load_merge_queue_config(StdPath::new(&workspace.root_path))
-            .await
-        {
-            Ok(cfg) => Some(cfg.target_branch),
-            Err(err) => {
-                tracing::warn!(
-                    workspace_id = %workspace.id.0,
-                    "failed to load merge queue config: {err:#}"
-                );
-                None
-            }
-        },
-    };
-    if let Some(target_branch) = target_branch {
-        match git_merge_base(&worktree.root_path, &target_branch, "HEAD").await {
-            Ok(base) => return Ok(base),
-            Err(err) => {
-                if explicit_target {
-                    return Err((
-                        StatusCode::BAD_REQUEST,
-                        Json(ApiErrorResp {
-                            error: logs::redact_sensitive(&err.to_string()),
-                        }),
-                    ));
-                }
-                tracing::warn!(
-                    worktree_id = %worktree.id.0,
-                    "merge-base failed for target {target_branch}: {err:#}"
-                );
-            }
-        }
-    }
-    Ok(worktree.base_commit_sha.clone())
-}
-
-async fn maybe_emit_git_status_snapshot(
-    state: &Arc<AppState>,
-    session_id: SessionId,
-    worktree_id: WorktreeId,
-    snapshot: &SessionGitStatusResponse,
-) {
-    const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
-    const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
-    let summary = serde_json::json!({
-        "summary_line": snapshot.summary_line,
-        "branch": snapshot.branch,
-        "upstream": snapshot.upstream,
-        "ahead": snapshot.ahead,
-        "behind": snapshot.behind,
-        "detached": snapshot.detached,
-        "staged": snapshot.staged,
-        "unstaged": snapshot.unstaged,
-        "untracked": snapshot.untracked,
-    });
-    let payload = serde_json::json!({
-        "kind": "git_status_snapshot",
-        "worktree_id": worktree_id.0.to_string(),
-        "summary": summary,
-        "entries": snapshot.entries,
-    });
-    let payload_raw = match serde_json::to_string(&payload) {
-        Ok(value) => value,
-        Err(_) => return,
-    };
-    let now = Instant::now();
-    {
-        let mut cache = state.git_status_snapshots.lock().await;
-        let entry = cache
-            .entry(worktree_id)
-            .or_insert_with(|| GitStatusSnapshotCacheEntry {
-                payload: String::new(),
-                emitted_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
-                last_change_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
-            });
-        let is_first = entry.payload.is_empty();
-        if entry.payload == payload_raw {
-            return;
-        }
-        let since_change = now.duration_since(entry.last_change_at);
-        entry.payload = payload_raw;
-        entry.last_change_at = now;
-        let since_emit = now.duration_since(entry.emitted_at);
-        if !is_first
-            && since_emit < Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS)
-            && since_change < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS)
-        {
-            return;
-        }
-        entry.emitted_at = now;
-    }
-    let notice = match state.store_for_session(session_id).await {
-        Ok(store) => {
-            store
-                .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
-                .await
-        }
-        Err(_) => return,
-    };
-    if let Ok(event) = notice {
-        state.publish_event(event).await;
-    }
-}
-
-async fn apply_session_diff_patch(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<SessionDiffApplyReq>,
-) -> Result<Json<SessionDiffResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid session id".to_string(),
-            }),
-        )
-    })?);
-    if req.patch.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "patch is empty".to_string(),
-            }),
-        ));
-    }
-
-    let action = req.action.trim().to_lowercase();
-    let reverse = match action.as_str() {
-        "accept" => false,
-        "reject" => true,
-        _ => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "action must be accept or reject".to_string(),
-                }),
-            ));
-        }
-    };
-
-    let store = state.store_for_session(session_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    let session = store
-        .get_session(session_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "session not found".to_string(),
-                }),
-            )
-        })?;
-    let worktree = store
-        .get_worktree(session.worktree_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "worktree not found".to_string(),
-                }),
-            )
-        })?;
-    let workspace = state
-        .global_store()
-        .get_workspace(session.workspace_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "workspace not found".to_string(),
-                }),
-            )
-        })?;
-
-    ctx_fs::git::git_apply_patch(
-        &worktree.root_path,
-        &req.patch,
-        ctx_fs::git::ApplyPatchTarget::Worktree,
-        reverse,
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-
-    let base_commit_sha =
-        resolve_session_diff_base(&workspace, &worktree, &SessionDiffQuery::default()).await?;
-    let diff = ctx_fs::worktrees::diff_worktree(&worktree.root_path, &base_commit_sha)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    Ok(Json(SessionDiffResponse { diff }))
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct SessionEventsQuery {
-    after_seq: Option<i64>,
-    limit: Option<u32>,
-    tail: Option<u32>,
-    include_transient: Option<String>,
-}
-
-async fn get_session_events(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(q): Query<SessionEventsQuery>,
-) -> Result<Json<ctx_core::models::SessionEventsPage>, StatusCode> {
-    const DEFAULT_LIMIT: u32 = 200;
-    const MAX_LIMIT: u32 = 1000;
-
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let include_transient = parse_boolish_flag(q.include_transient.as_deref(), "include_transient")
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-
-    let (events, has_more, next_cursor) = if let Some(tail) = q.tail {
-        let tail = tail.clamp(1, MAX_LIMIT);
-        let mut rows = store
-            .list_session_events_tail_by_seq(session_id, tail + 1, include_transient)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let has_more = rows.len() as u32 > tail;
-        if has_more {
-            rows = rows.split_off(rows.len().saturating_sub(tail as usize));
-        }
-        let next_cursor = rows.last().map(|ev| ev.seq);
-        (rows, has_more, next_cursor)
-    } else {
-        let mut rows = store
-            .list_session_events_page_by_seq(
-                session_id,
-                q.after_seq,
-                Some(limit + 1),
-                include_transient,
-            )
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let has_more = rows.len() as u32 > limit;
-        if has_more {
-            rows.truncate(limit as usize);
-        }
-        let next_cursor = rows.last().map(|ev| ev.seq);
-        (rows, has_more, next_cursor)
-    };
-
-    Ok(Json(ctx_core::models::SessionEventsPage {
-        session_id,
-        events,
-        next_cursor,
-        has_more,
-    }))
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct SessionHistoryQuery {
-    before_seq: Option<i64>,
-    limit: Option<u32>,
-}
-
-async fn get_session_history(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(q): Query<SessionHistoryQuery>,
-) -> Result<Json<SessionHistoryPage>, StatusCode> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let limit = q.limit.unwrap_or(60);
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    match store
-        .get_session_history_page(session_id, q.before_seq, limit)
-        .await
-    {
-        Ok(Some(page)) => Ok(Json(page)),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
-}
-
-async fn list_session_turn_tools(
-    State(state): State<Arc<AppState>>,
-    Path((id, turn_id)): Path<(String, String)>,
-) -> Result<Json<Vec<SessionTurnTool>>, StatusCode> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let turn_id = TurnId(uuid::Uuid::parse_str(&turn_id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    store
-        .list_turn_tools(session_id, turn_id)
-        .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct FileCompletionsQuery {
-    query: Option<String>,
-    limit: Option<u32>,
-}
-
-async fn session_file_completions(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(q): Query<FileCompletionsQuery>,
-) -> Result<Json<Vec<String>>, StatusCode> {
-    const DEFAULT_LIMIT: u32 = 20;
-    const MAX_LIMIT: u32 = 200;
-    const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
-
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let session = store
-        .get_session(session_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    state.remember_session_meta(&session).await;
-    let worktree = store
-        .get_worktree(session.worktree_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    let query = q.query.unwrap_or_default();
-    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT) as usize;
-
-    let files = {
-        let now = Instant::now();
-        let cache = state.file_completions_cache.lock().await;
-        if let Some(entry) = cache.get(&worktree.id) {
-            if now.duration_since(entry.cached_at) <= CACHE_TTL {
-                entry.files.clone()
-            } else {
-                drop(cache);
-                load_and_cache_worktree_files(&state, &worktree, now).await?
-            }
-        } else {
-            drop(cache);
-            load_and_cache_worktree_files(&state, &worktree, now).await?
-        }
-    };
-
-    Ok(Json(completions::filter_and_rank_paths(
-        &files, &query, limit,
-    )))
-}
-
-async fn workspace_file_completions(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(q): Query<FileCompletionsQuery>,
-) -> Result<Json<Vec<String>>, StatusCode> {
-    const DEFAULT_LIMIT: u32 = 20;
-    const MAX_LIMIT: u32 = 200;
-    const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
-
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let ws = state
-        .global_store()
-        .get_workspace(ws_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    let root = PathBuf::from(&ws.root_path);
-    if assert_git_repo(&root).await.is_err() {
-        return Ok(Json(Vec::new()));
-    }
-
-    let query = q.query.unwrap_or_default();
-    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT) as usize;
-
-    let files = {
-        let now = Instant::now();
-        let cache = state.workspace_file_completions_cache.lock().await;
-        if let Some(entry) = cache.get(&ws_id) {
-            if now.duration_since(entry.cached_at) <= CACHE_TTL {
-                entry.files.clone()
-            } else {
-                drop(cache);
-                load_and_cache_workspace_files(&state, ws_id, &root, now).await?
-            }
-        } else {
-            drop(cache);
-            load_and_cache_workspace_files(&state, ws_id, &root, now).await?
-        }
-    };
-
-    Ok(Json(completions::filter_and_rank_paths(
-        &files, &query, limit,
-    )))
-}
-
-#[derive(Debug, Deserialize)]
-struct WorkspaceActiveSnapshotQuery {
-    limit: Option<u32>,
-}
-
-fn parse_boolish_flag(raw: Option<&str>, label: &str) -> Result<bool, String> {
-    match raw {
-        Some(value) => {
-            let normalized = value.trim();
-            if normalized.eq_ignore_ascii_case("true") || normalized == "1" {
-                Ok(true)
-            } else if normalized.is_empty()
-                || normalized.eq_ignore_ascii_case("false")
-                || normalized == "0"
-            {
-                Ok(false)
-            } else {
-                Err(format!("{label} must be true/false or 1/0"))
-            }
-        }
-        None => Ok(false),
-    }
-}
-
-async fn load_workspace_active_snapshot_state(
-    state: &Arc<AppState>,
-    workspace_id: WorkspaceId,
-) -> (i64, i64) {
-    state
-        .workspace_active_snapshot
-        .snapshot_state(workspace_id)
-        .await
-}
-
-async fn get_workspace_active_snapshot(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(query): Query<WorkspaceActiveSnapshotQuery>,
-) -> Result<Json<WorkspaceActiveSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
-    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-
-    let limit = query.limit.unwrap_or(50) as i64;
-    let snapshot = state
-        .workspace_active_snapshot
-        .active_snapshot(workspace_id, limit)
-        .await;
-    Ok(Json(snapshot))
-}
-
-async fn get_workspace_active_heads(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<WorkspaceActiveHeadBatch>, (StatusCode, Json<ApiErrorResp>)> {
-    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-
-    let batch = state
-        .workspace_active_snapshot
-        .active_heads(workspace_id)
-        .await;
-    Ok(Json(batch))
-}
-
-async fn workspace_active_snapshot_stream_ws(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    let workspace_id = match uuid::Uuid::parse_str(&id) {
-        Ok(v) => WorkspaceId(v),
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
-    ws.on_upgrade(move |socket| handle_workspace_active_snapshot_ws(socket, state, workspace_id))
-}
-
-const SESSION_REPLAY_MAX_EVENTS: usize = 2000;
-const WORKSPACE_STREAM_QUEUE_LIMIT: usize = 256;
-const WORKSPACE_STREAM_QUEUE_MAX_AGE: Duration = Duration::from_secs(10);
-
-struct StreamQueueEntry<T> {
-    enqueued_at: Instant,
-    message: T,
-}
-
-struct StreamQueue<T> {
-    pending: Mutex<VecDeque<StreamQueueEntry<T>>>,
-    notify: Notify,
-    limit: usize,
-    max_age: Duration,
-}
-
-impl<T> StreamQueue<T> {
-    fn new(limit: usize, max_age: Duration) -> Self {
-        Self {
-            pending: Mutex::new(VecDeque::new()),
-            notify: Notify::new(),
-            limit,
-            max_age,
-        }
-    }
-
-    async fn push(&self, message: T) -> Result<(), ()> {
-        let now = Instant::now();
-        let mut guard = self.pending.lock().await;
-        if guard.len() >= self.limit {
-            return Err(());
-        }
-        if let Some(front) = guard.front() {
-            if now.duration_since(front.enqueued_at) >= self.max_age {
-                return Err(());
-            }
-        }
-        guard.push_back(StreamQueueEntry {
-            enqueued_at: now,
-            message,
-        });
-        self.notify.notify_one();
-        Ok(())
-    }
-
-    async fn clear(&self) {
-        let mut guard = self.pending.lock().await;
-        guard.clear();
-    }
-
-    async fn pop(&self) -> Option<T> {
-        let mut guard = self.pending.lock().await;
-        guard.pop_front().map(|entry| entry.message)
-    }
-
-    async fn is_empty(&self) -> bool {
-        self.pending.lock().await.is_empty()
-    }
-}
-
-struct StreamSendControl {
-    disconnect_after_flush: AtomicBool,
-}
-
-impl StreamSendControl {
-    fn new() -> Self {
-        Self {
-            disconnect_after_flush: AtomicBool::new(false),
-        }
-    }
-
-    fn set_disconnect_after_flush(&self) {
-        self.disconnect_after_flush.store(true, Ordering::Relaxed);
-    }
-
-    fn clear_disconnect_after_flush(&self) {
-        self.disconnect_after_flush.store(false, Ordering::Relaxed);
-    }
-
-    fn should_disconnect_after_flush(&self) -> bool {
-        self.disconnect_after_flush.load(Ordering::Relaxed)
-    }
-}
-
-#[derive(Debug, Serialize)]
-#[serde(untagged)]
-enum WorkspaceActiveSnapshotWsPayload {
-    Event(WorkspaceActiveSnapshotEvent),
-    ResetRequired(WorkspaceActiveSnapshotStreamMessage),
-}
-
-enum ReplayOutcome {
-    Replay { last_sent: i64 },
-    ResetRequired,
-}
-
-async fn queue_reset_required(
-    pending: &StreamQueue<WorkspaceActiveSnapshotWsPayload>,
-    state: &Arc<AppState>,
-    workspace_id: WorkspaceId,
-) -> Result<(), ()> {
-    let (snapshot_rev, _) = load_workspace_active_snapshot_state(state, workspace_id).await;
-    if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_reset").is_err() {
-        return Err(());
-    }
-    pending
-        .push(WorkspaceActiveSnapshotWsPayload::ResetRequired(
-            WorkspaceActiveSnapshotStreamMessage::ResetRequired {
-                latest_rev: snapshot_rev,
-            },
-        ))
-        .await
-}
-
-async fn replay_session_events_active<F, Fut>(
-    state: &Arc<AppState>,
-    workspace_id: WorkspaceId,
-    session_id: SessionId,
-    after_seq: i64,
-    mut emit: F,
-) -> Result<ReplayOutcome, ()>
-where
-    F: FnMut(WorkspaceActiveSnapshotWsPayload) -> Fut,
-    Fut: Future<Output = Result<(), ()>>,
-{
-    let (snapshot_rev, _) = load_workspace_active_snapshot_state(state, workspace_id).await;
-    if crate::fault_injection::maybe_fail("ctx_http.replay_session_events_active.list").is_err() {
-        return Ok(ReplayOutcome::ResetRequired);
-    }
-    let replay = state
-        .workspace_active_snapshot
-        .replay_session_head_deltas(
-            workspace_id,
-            session_id,
-            after_seq,
-            SESSION_REPLAY_MAX_EVENTS,
-        )
-        .await;
-    match replay {
-        SessionReplayResult::Replay { deltas, last_sent } => {
-            for delta in deltas {
-                let wrapped = WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                    workspace_id,
-                    snapshot_rev,
-                    delta: Box::new(delta),
-                };
-                crate::fault_injection::maybe_fail("ctx_http.replay_session_events_active.send")
-                    .map_err(|_| ())?;
-                emit(WorkspaceActiveSnapshotWsPayload::Event(wrapped)).await?;
-            }
-            Ok(ReplayOutcome::Replay { last_sent })
-        }
-        SessionReplayResult::ResetRequired => Ok(ReplayOutcome::ResetRequired),
-    }
-}
-
-async fn handle_workspace_active_snapshot_ws(
-    socket: WebSocket,
-    state: Arc<AppState>,
-    workspace_id: WorkspaceId,
-) {
-    let (sender, mut receiver) = socket.split();
-    let pending = Arc::new(StreamQueue::new(
-        WORKSPACE_STREAM_QUEUE_LIMIT,
-        WORKSPACE_STREAM_QUEUE_MAX_AGE,
-    ));
-    let send_control = Arc::new(StreamSendControl::new());
-    let mut rx = state
-        .workspace_active_snapshot
-        .subscribe(workspace_id)
-        .await;
-    let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
-    let mut reset_queued = false;
-
-    let (snapshot_rev, archived_rev) =
-        load_workspace_active_snapshot_state(&state, workspace_id).await;
-    let ready = WorkspaceActiveSnapshotEvent::Ready {
-        workspace_id,
-        snapshot_rev,
-        archived_rev,
-    };
-    if pending
-        .push(WorkspaceActiveSnapshotWsPayload::Event(ready))
-        .await
-        .is_err()
-    {
-        return;
-    }
-
-    let send_task = {
-        let pending = pending.clone();
-        let send_control = send_control.clone();
-        tokio::spawn(async move {
-            let mut sender = sender;
-            loop {
-                let notified = pending.notify.notified();
-                if let Some(message) = pending.pop().await {
-                    let Ok(text) = serde_json::to_string(&message) else {
-                        break;
-                    };
-                    if sender.send(WsMessage::Text(text)).await.is_err() {
-                        break;
-                    }
-                    if send_control.should_disconnect_after_flush() && pending.is_empty().await {
-                        break;
-                    }
-                    continue;
-                }
-                if send_control.should_disconnect_after_flush() {
-                    break;
-                }
-                notified.await;
-            }
-        })
-    };
-    let recv_loop = async {
-        loop {
-            tokio::select! {
-                msg = receiver.next() => {
-                    match msg {
-                        Some(Ok(WsMessage::Text(text))) => {
-                            if let Ok(message) = serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text) {
-                                let (session_ids, sessions) = match message {
-                                    WorkspaceActiveSnapshotClientMessage::Subscribe { session_ids, sessions, .. } => (session_ids, sessions),
-                                };
-                                let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = if !sessions.is_empty() {
-                                    sessions
-                                } else {
-                                    session_ids
-                                        .into_iter()
-                                        .map(|session_id| WorkspaceActiveSnapshotSessionSubscription { session_id, after_seq: None })
-                                        .collect()
-                                };
-                                next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
-
-                                pending.clear().await;
-                                reset_queued = false;
-                                send_control.clear_disconnect_after_flush();
-
-                                let mut next_map = HashMap::new();
-                                let mut replay_failed = false;
-                                for sub in next {
-                                    let after_seq = sub.after_seq.unwrap_or(0);
-                                    let replay = replay_session_events_active(
-                                        &state,
-                                        workspace_id,
-                                        sub.session_id,
-                                        after_seq,
-                                        |event| pending.push(event),
-                                    )
-                                    .await;
-                                    match replay {
-                                        Ok(ReplayOutcome::Replay { last_sent }) => {
-                                            next_map.insert(sub.session_id, SessionCursor { last_sent });
-                                        }
-                                        Ok(ReplayOutcome::ResetRequired) | Err(_) => {
-                                            replay_failed = true;
-                                            break;
-                                        }
-                                    };
-                                }
-                                if replay_failed {
-                                    pending.clear().await;
-                                    if queue_reset_required(&pending, &state, workspace_id)
-                                        .await
-                                        .is_err()
-                                    {
-                                        break;
-                                    }
-                                    reset_queued = true;
-                                    send_control.set_disconnect_after_flush();
-                                    continue;
-                                }
-                                subscriptions = next_map;
-                            }
-                        }
-                        Some(Ok(WsMessage::Binary(bytes))) => {
-                            if let Ok(text) = String::from_utf8(bytes.to_vec()) {
-                                if let Ok(message) = serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text) {
-                                    let (session_ids, sessions) = match message {
-                                        WorkspaceActiveSnapshotClientMessage::Subscribe { session_ids, sessions, .. } => (session_ids, sessions),
-                                    };
-                                    let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = if !sessions.is_empty() {
-                                        sessions
-                                    } else {
-                                        session_ids
-                                            .into_iter()
-                                            .map(|session_id| WorkspaceActiveSnapshotSessionSubscription { session_id, after_seq: None })
-                                            .collect()
-                                    };
-                                    next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
-
-                                    pending.clear().await;
-                                    reset_queued = false;
-                                    send_control.clear_disconnect_after_flush();
-
-                                    let mut next_map = HashMap::new();
-                                    let mut replay_failed = false;
-                                    for sub in next {
-                                        let after_seq = sub.after_seq.unwrap_or(0);
-                                        let replay = replay_session_events_active(
-                                            &state,
-                                            workspace_id,
-                                            sub.session_id,
-                                            after_seq,
-                                            |event| pending.push(event),
-                                        )
-                                        .await;
-                                        match replay {
-                                            Ok(ReplayOutcome::Replay { last_sent }) => {
-                                                next_map.insert(sub.session_id, SessionCursor { last_sent });
-                                            }
-                                            Ok(ReplayOutcome::ResetRequired) | Err(_) => {
-                                                replay_failed = true;
-                                                break;
-                                            }
-                                        };
-                                    }
-                                    if replay_failed {
-                                        pending.clear().await;
-                                        if queue_reset_required(&pending, &state, workspace_id)
-                                            .await
-                                            .is_err()
-                                        {
-                                            break;
-                                        }
-                                        reset_queued = true;
-                                        send_control.set_disconnect_after_flush();
-                                        continue;
-                                    }
-                                    subscriptions = next_map;
-                                }
-                            }
-                        }
-                        Some(Ok(WsMessage::Close(_))) => break,
-                        Some(Ok(_)) => {}
-                        Some(Err(_)) => break,
-                        None => break,
-                    }
-                }
-                event = rx.recv() => {
-                    let event = match event {
-                        Ok(event) => event,
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                            if reset_queued {
-                                continue;
-                            }
-                            pending.clear().await;
-                            if queue_reset_required(&pending, &state, workspace_id)
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                            reset_queued = true;
-                            send_control.set_disconnect_after_flush();
-                            continue;
-                        }
-                        Err(_) => break,
-                    };
-
-                    if reset_queued {
-                        continue;
-                    }
-
-                    if let WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } = &event {
-                        let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
-                            continue;
-                        };
-                        if let Some(ev) = &delta.event {
-                            if ev.seq >= 0 {
-                                if ev.seq <= cursor.last_sent {
-                                    continue;
-                                }
-                                cursor.last_sent = ev.seq;
-                            }
-                        } else if delta.last_event_seq <= cursor.last_sent {
-                            continue;
-                        } else {
-                            cursor.last_sent = delta.last_event_seq;
-                        }
-                    }
-
-                    if pending
-                        .push(WorkspaceActiveSnapshotWsPayload::Event(event))
-                        .await
-                        .is_err()
-                    {
-                        if reset_queued {
-                            continue;
-                        }
-                        pending.clear().await;
-                        if queue_reset_required(&pending, &state, workspace_id)
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                        reset_queued = true;
-                        send_control.set_disconnect_after_flush();
-                    }
-                }
-            }
-        }
-    };
-
-    let (send_task, _recv_result) = crate::async_util::race_join_handle(send_task, recv_loop).await;
-
-    send_control.set_disconnect_after_flush();
-    pending.notify.notify_one();
-    if let Some(send_task) = send_task {
-        let _ = send_task.await;
-    }
-}
-
-async fn replay_session_events_secure<F, Fut>(
-    state: &Arc<AppState>,
-    workspace_id: WorkspaceId,
-    session_id: SessionId,
-    after_seq: i64,
-    mut emit: F,
-) -> Result<ReplayOutcome, ()>
-where
-    F: FnMut(WorkspaceActiveSnapshotWsPayload) -> Fut,
-    Fut: Future<Output = Result<(), ()>>,
-{
-    let (snapshot_rev, _) = load_workspace_active_snapshot_state(state, workspace_id).await;
-    if crate::fault_injection::maybe_fail("ctx_http.replay_session_events_secure.list").is_err() {
-        return Ok(ReplayOutcome::ResetRequired);
-    }
-    let replay = state
-        .workspace_active_snapshot
-        .replay_session_head_deltas(
-            workspace_id,
-            session_id,
-            after_seq,
-            SESSION_REPLAY_MAX_EVENTS,
-        )
-        .await;
-    match replay {
-        SessionReplayResult::Replay { deltas, last_sent } => {
-            for delta in deltas {
-                let wrapped = WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                    workspace_id,
-                    snapshot_rev,
-                    delta: Box::new(delta),
-                };
-                emit(WorkspaceActiveSnapshotWsPayload::Event(wrapped)).await?;
-            }
-            Ok(ReplayOutcome::Replay { last_sent })
-        }
-        SessionReplayResult::ResetRequired => Ok(ReplayOutcome::ResetRequired),
-    }
 }
 
 async fn load_and_cache_worktree_files(
@@ -12072,43 +7930,6 @@ fn order_effort_ids(list: &mut [String]) {
         }
         a.cmp(b)
     });
-}
-
-fn extract_model_entries(models: &serde_json::Value) -> Vec<(String, Option<String>)> {
-    let Some(list) = models.as_array() else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for item in list {
-        if let Some(id) = item.as_str() {
-            let id = id.trim();
-            if !id.is_empty() {
-                out.push((id.to_string(), None));
-            }
-            continue;
-        }
-        let Some(obj) = item.as_object() else {
-            continue;
-        };
-        let id = obj
-            .get("id")
-            .or_else(|| obj.get("model_id"))
-            .or_else(|| obj.get("model"))
-            .or_else(|| obj.get("name"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if id.is_empty() {
-            continue;
-        }
-        let name = obj
-            .get("name")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        out.push((id, name));
-    }
-    out
 }
 
 fn build_model_catalog(models: &serde_json::Value) -> Option<ModelCatalog> {
@@ -14143,60 +9964,3067 @@ async fn submit_ask_user_question(
     Ok(Json(SubmitAskUserQuestionResp { ok: true }))
 }
 
-async fn dictation_livekit_stream_ws(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| dictation_livekit::dictation_livekit_stream(socket, state))
+async fn resolve_web_session_work_dir(
+    state: &Arc<AppState>,
+    session_id: Option<String>,
+    worktree_id: Option<String>,
+) -> anyhow::Result<Option<PathBuf>> {
+    if let Some(worktree_id) = worktree_id {
+        let worktree_id =
+            WorktreeId(uuid::Uuid::parse_str(&worktree_id).context("invalid worktree id")?);
+        let store = state.store_for_worktree(worktree_id).await?;
+        let worktree = store
+            .get_worktree(worktree_id)
+            .await?
+            .context("worktree not found")?;
+        return Ok(Some(PathBuf::from(worktree.root_path)));
+    }
+    if let Some(session_id) = session_id {
+        let session_id =
+            SessionId(uuid::Uuid::parse_str(&session_id).context("invalid session id")?);
+        let store = state.store_for_session(session_id).await?;
+        let session = store
+            .get_session(session_id)
+            .await?
+            .context("session not found")?;
+        let worktree = store
+            .get_worktree(session.worktree_id)
+            .await?
+            .context("worktree not found")?;
+        return Ok(Some(PathBuf::from(worktree.root_path)));
+    }
+    Ok(None)
 }
 
-async fn verify_mobile_api_token(
-    state: &Arc<AppState>,
-    token: &str,
-) -> Result<Option<ConnectionProfileId>, StatusCode> {
-    let hash = hash_api_token(token);
-    let profile = state
+async fn create_workspace(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateWorkspaceReq>,
+) -> Result<Json<Workspace>, (StatusCode, Json<ApiErrorResp>)> {
+    let raw = req.root_path.trim();
+    if raw.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "root_path is required".to_string(),
+            }),
+        ));
+    }
+
+    let expanded = if raw == "~" || raw.starts_with("~/") {
+        let base = directories::BaseDirs::new().ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "could not resolve home directory to expand '~'".to_string(),
+                }),
+            )
+        })?;
+        let home = base.home_dir();
+        if raw == "~" {
+            home.to_path_buf()
+        } else {
+            home.join(raw.trim_start_matches("~/"))
+        }
+    } else {
+        PathBuf::from(raw)
+    };
+
+    let root_path = tokio::fs::canonicalize(&expanded).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: format!("invalid root_path '{}': {}", expanded.to_string_lossy(), e),
+            }),
+        )
+    })?;
+
+    assert_git_repo(&root_path).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+
+    let root_path_str = root_path.to_string_lossy().to_string();
+
+    let name = req.name.unwrap_or_else(|| {
+        root_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("workspace")
+            .to_string()
+    });
+    let workspace = state
         .global_store()
-        .get_mobile_connection_profile_by_token_hash(&hash)
+        .create_workspace(name, root_path_str)
         .await
         .map_err(|e| {
-            tracing::error!("failed to query mobile connection profile: {e:?}");
-            StatusCode::INTERNAL_SERVER_ERROR
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
         })?;
-    if let Some(profile) = profile {
-        if let Err(err) = state
-            .global_store()
-            .mark_mobile_connection_profile_used(profile.id)
+    if let Err(e) = state.store_for_workspace(workspace.id).await {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        ));
+    }
+    state
+        .telemetry
+        .emit(TelemetryEvent::workspace_registered())
+        .await;
+    Ok(Json(workspace))
+}
+
+async fn delete_workspace(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    state
+        .global_store()
+        .delete_workspace_indexes(id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state
+        .global_store()
+        .delete_workspace(id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state.stores.evict_workspace(id).await;
+    let workspace_db_dir = state
+        .data_root
+        .join("db")
+        .join("workspaces")
+        .join(id.0.to_string());
+    let _ = tokio::fs::remove_dir_all(workspace_db_dir).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+struct SyncWorkspaceAttachmentsReq {
+    #[serde(default)]
+    refresh: Option<bool>,
+}
+
+async fn list_workspace_attachments(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<WorkspaceAttachment>>, StatusCode> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let store = state
+        .store_for_workspace(ws_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    store
+        .list_workspace_attachments(ws_id)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn sync_workspace_attachments(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<SyncWorkspaceAttachmentsReq>,
+) -> Result<Json<Vec<WorkspaceAttachment>>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let refresh = req.refresh.unwrap_or(false);
+    let attachments = attachments::sync_workspace_attachments(&state, &workspace, refresh)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let _ = attachments::ensure_workspace_attachments_for_worktrees_with_attachments(
+        &state,
+        &workspace,
+        &attachments,
+        false,
+        false,
+    )
+    .await;
+    Ok(Json(attachments))
+}
+
+#[derive(Debug, Serialize)]
+struct AgentSystemPromptConfigResponse {
+    config_path: String,
+    default_append: String,
+    configured_append: Option<String>,
+    effective_append: Option<String>,
+    source: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateAgentSystemPromptConfigReq {
+    #[serde(default)]
+    system_prompt_append: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SubagentSystemPromptConfigResponse {
+    config_path: String,
+    default_append: String,
+    configured_append: Option<String>,
+    effective_append: Option<String>,
+    source: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateSubagentSystemPromptConfigReq {
+    #[serde(default)]
+    system_prompt_append: Option<String>,
+}
+
+async fn get_agent_system_prompt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<AgentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let cfg = workspace_config::load_agent_system_prompt_append(StdPath::new(&workspace.root_path))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let configured_append = cfg
+        .configured_append
+        .as_ref()
+        .map(|value| value.trim().to_string());
+    let effective_append = cfg.effective_append();
+    let source = match cfg.source() {
+        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
+    };
+    let response = AgentSystemPromptConfigResponse {
+        config_path: cfg.config_path.to_string_lossy().to_string(),
+        default_append: cfg.default_append.clone(),
+        configured_append,
+        effective_append,
+        source,
+    };
+
+    Ok(Json(response))
+}
+
+async fn update_agent_system_prompt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateAgentSystemPromptConfigReq>,
+) -> Result<Json<AgentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    workspace_config::update_agent_system_prompt_append(
+        StdPath::new(&workspace.root_path),
+        req.system_prompt_append,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let cfg = workspace_config::load_agent_system_prompt_append(StdPath::new(&workspace.root_path))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let configured_append = cfg
+        .configured_append
+        .as_ref()
+        .map(|value| value.trim().to_string());
+    let effective_append = cfg.effective_append();
+    let source = match cfg.source() {
+        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
+    };
+    let response = AgentSystemPromptConfigResponse {
+        config_path: cfg.config_path.to_string_lossy().to_string(),
+        default_append: cfg.default_append.clone(),
+        configured_append,
+        effective_append,
+        source,
+    };
+
+    Ok(Json(response))
+}
+
+async fn get_subagent_system_prompt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<SubagentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let cfg =
+        workspace_config::load_subagent_system_prompt_append(StdPath::new(&workspace.root_path))
             .await
-        {
-            tracing::warn!("failed to update profile usage: {err:?}");
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+
+    let configured_append = cfg
+        .configured_append
+        .as_ref()
+        .map(|value| value.trim().to_string());
+    let effective_append = cfg.effective_append();
+    let source = match cfg.source() {
+        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
+    };
+    let response = SubagentSystemPromptConfigResponse {
+        config_path: cfg.config_path.to_string_lossy().to_string(),
+        default_append: cfg.default_append.clone(),
+        configured_append,
+        effective_append,
+        source,
+    };
+
+    Ok(Json(response))
+}
+
+async fn update_subagent_system_prompt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateSubagentSystemPromptConfigReq>,
+) -> Result<Json<SubagentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    workspace_config::update_subagent_system_prompt_append(
+        StdPath::new(&workspace.root_path),
+        req.system_prompt_append,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let cfg =
+        workspace_config::load_subagent_system_prompt_append(StdPath::new(&workspace.root_path))
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+
+    let configured_append = cfg
+        .configured_append
+        .as_ref()
+        .map(|value| value.trim().to_string());
+    let effective_append = cfg.effective_append();
+    let source = match cfg.source() {
+        workspace_config::AgentSystemPromptAppendSource::Default => "default".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Config => "config".to_string(),
+        workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
+    };
+    let response = SubagentSystemPromptConfigResponse {
+        config_path: cfg.config_path.to_string_lossy().to_string(),
+        default_append: cfg.default_append.clone(),
+        configured_append,
+        effective_append,
+        source,
+    };
+
+    Ok(Json(response))
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateWorkspaceAttachmentReq {
+    kind: WorkspaceAttachmentKind,
+    name: String,
+    source: String,
+    #[serde(default)]
+    revision: Option<String>,
+    #[serde(default)]
+    subpath: Option<String>,
+    #[serde(default)]
+    mount_relpath: Option<String>,
+    #[serde(default)]
+    mode: Option<AttachmentMode>,
+    #[serde(default)]
+    update_policy: Option<AttachmentUpdatePolicy>,
+}
+
+async fn create_workspace_attachment(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<CreateWorkspaceAttachmentReq>,
+) -> Result<Json<Vec<WorkspaceAttachment>>, (StatusCode, Json<ApiErrorResp>)> {
+    if req.name.trim().is_empty() || req.source.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "name and source are required".to_string(),
+            }),
+        ));
+    }
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let cfg = attachments::AttachmentConfig {
+        kind: req.kind,
+        name: req.name,
+        source: req.source,
+        revision: req.revision,
+        subpath: req.subpath,
+        mount_relpath: req.mount_relpath,
+        mode: req.mode,
+        update_policy: req.update_policy,
+    };
+    attachments::upsert_attachment_config(StdPath::new(&workspace.root_path), cfg)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let attachments = attachments::sync_workspace_attachments(&state, &workspace, true)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let _ = attachments::ensure_workspace_attachments_for_worktrees_with_attachments(
+        &state,
+        &workspace,
+        &attachments,
+        false,
+        false,
+    )
+    .await;
+    Ok(Json(attachments))
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteWorkspaceAttachmentReq {
+    kind: WorkspaceAttachmentKind,
+    name: String,
+}
+
+async fn delete_workspace_attachment(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<DeleteWorkspaceAttachmentReq>,
+) -> Result<Json<Vec<WorkspaceAttachment>>, (StatusCode, Json<ApiErrorResp>)> {
+    if req.name.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "name is required".to_string(),
+            }),
+        ));
+    }
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let removed = attachments::remove_attachment_config(
+        StdPath::new(&workspace.root_path),
+        req.kind,
+        &req.name,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    if !removed {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "attachment not found".to_string(),
+            }),
+        ));
+    }
+
+    let attachments = attachments::sync_workspace_attachments(&state, &workspace, false)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    Ok(Json(attachments))
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateTaskReq {
+    title: String,
+    description: Option<String>,
+    #[serde(default = "default_true")]
+    create_default_session: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+async fn update_task_title(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateTaskTitleReq>,
+) -> Result<Json<Task>, (StatusCode, Json<ApiErrorResp>)> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid task id".to_string(),
+            }),
+        )
+    })?);
+    let title = req.title.trim().to_string();
+    if title.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "title is required".to_string(),
+            }),
+        ));
+    }
+    if title.len() > 120 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "title is too long".to_string(),
+            }),
+        ));
+    }
+
+    let store = state.store_for_task(task_id).await.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let updated = store.update_task_title(task_id, title).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    if !updated {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "task not found".to_string(),
+            }),
+        ));
+    }
+
+    let task = match store.get_task_with_activity(task_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })? {
+        Some(task) => task,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "task not found".to_string(),
+                }),
+            ))
         }
-        Ok(Some(profile.id))
+    };
+
+    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
+        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
+    }
+    let sessions = match store.list_sessions_for_task(task_id).await {
+        Ok(sessions) => sessions,
+        Err(e) => {
+            tracing::warn!(task_id = %task_id.0, "failed to list sessions for archived task: {e:?}");
+            Vec::new()
+        }
+    };
+    let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
+    if let Some(primary_worktree_id) = task.primary_worktree_id {
+        worktree_ids.insert(primary_worktree_id);
+    }
+    let mut worktree_id_strings = HashSet::new();
+    for worktree_id in worktree_ids {
+        match store.get_worktree(worktree_id).await {
+            Ok(Some(worktree)) => {
+                worktree_id_strings.insert(worktree.id.0.to_string());
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree_id.0,
+                    "worktree missing for archived task"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree_id.0,
+                    "failed to load worktree for archived task: {e:?}"
+                );
+            }
+        }
+    }
+    let session_ids: HashSet<String> = sessions
+        .iter()
+        .map(|session| session.id.0.to_string())
+        .collect();
+    if let Err(e) = state
+        .web_sessions
+        .close_for_task(&session_ids, &worktree_id_strings)
+        .await
+    {
+        tracing::warn!(task_id = %task_id.0, "failed to close web sessions for archived task: {e:?}");
+    }
+    Ok(Json(task))
+}
+
+async fn delete_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let store = state
+        .store_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let task = store
+        .get_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let sessions = store
+        .list_sessions_for_task(task_id)
+        .await
+        .unwrap_or_default();
+    let deleted = store
+        .delete_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !deleted {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let _ = state
+        .global_store()
+        .delete_workspace_task_index(task_id)
+        .await;
+    for session in sessions {
+        let _ = state
+            .global_store()
+            .delete_workspace_session_index(session.id)
+            .await;
+    }
+    state
+        .emit_workspace_task_delete(task.workspace_id, task_id)
+        .await;
+    if task.archived_at.is_some() {
+        state
+            .emit_workspace_archived_task_delete(task.workspace_id, task_id)
+            .await;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn managed_worktree_root(
+    state: &AppState,
+    workspace: &Workspace,
+    worktree: &Worktree,
+) -> Option<PathBuf> {
+    let root = PathBuf::from(&worktree.root_path);
+    let expected = managed_worktree_path(&state.data_root, workspace.id, worktree.id);
+    if root == expected {
+        Some(root)
     } else {
-        Ok(None)
+        None
     }
 }
 
-fn hash_api_token(token: &str) -> String {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(token.as_bytes());
-    hex::encode(hasher.finalize())
+async fn remove_worktree(
+    workspace_root: impl AsRef<StdPath>,
+    worktree_path: impl AsRef<StdPath>,
+) -> anyhow::Result<()> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(workspace_root.as_ref())
+        .arg("worktree")
+        .arg("remove")
+        .arg("--force")
+        .arg(worktree_path.as_ref())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git worktree remove")?;
+    if !output.status.success() {
+        bail!(
+            "git worktree remove failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    if tokio::fs::metadata(worktree_path.as_ref()).await.is_ok() {
+        tokio::fs::remove_dir_all(worktree_path.as_ref())
+            .await
+            .context("removing worktree dir")?;
+    }
+    Ok(())
 }
 
-fn hash_pairing_token(token: &str) -> String {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(token.as_bytes());
-    hex::encode(hasher.finalize())
+async fn prune_worktrees(workspace_root: impl AsRef<StdPath>) -> anyhow::Result<()> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(workspace_root.as_ref())
+        .arg("worktree")
+        .arg("prune")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git worktree prune")?;
+    if !output.status.success() {
+        bail!(
+            "git worktree prune failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
 }
 
-fn generate_mobile_api_token() -> String {
-    format!("ctxm_{}", uuid::Uuid::new_v4().to_string().replace('-', ""))
+async fn ensure_worktree_attached(
+    workspace_root: impl AsRef<StdPath>,
+    worktree_path: impl AsRef<StdPath>,
+    base_commit_sha: &str,
+    branch_name: &str,
+) -> anyhow::Result<()> {
+    let worktree_path = worktree_path.as_ref();
+    if let Some(parent) = worktree_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .context("creating worktree parent dir")?;
+    }
+
+    if tokio::fs::metadata(worktree_path).await.is_ok() {
+        if is_git_worktree(worktree_path).await.unwrap_or(false) {
+            return Ok(());
+        }
+        tokio::fs::remove_dir_all(worktree_path)
+            .await
+            .context("removing stale worktree dir")?;
+    }
+
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
+        .arg(workspace_root.as_ref())
+        .arg("worktree")
+        .arg("add")
+        .arg(worktree_path);
+    if branch_exists(workspace_root, branch_name).await? {
+        cmd.arg(branch_name);
+    } else {
+        cmd.arg("-b").arg(branch_name).arg(base_commit_sha);
+    }
+    let output = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git worktree add")?;
+    if !output.status.success() {
+        bail!(
+            "git worktree add failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
 }
 
-fn generate_pairing_token() -> String {
-    let mut bytes = [0u8; 32];
-    rand_core::OsRng.fill_bytes(&mut bytes);
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+async fn branch_exists(
+    workspace_root: impl AsRef<StdPath>,
+    branch_name: &str,
+) -> anyhow::Result<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(workspace_root.as_ref())
+        .arg("show-ref")
+        .arg("--verify")
+        .arg("--quiet")
+        .arg(format!("refs/heads/{branch_name}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git show-ref --verify")?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    if output.status.code() == Some(1) {
+        return Ok(false);
+    }
+    bail!(
+        "git show-ref failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+async fn is_git_worktree(worktree_path: impl AsRef<StdPath>) -> anyhow::Result<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(worktree_path.as_ref())
+        .arg("rev-parse")
+        .arg("--is-inside-work-tree")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git rev-parse --is-inside-work-tree")?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
+}
+
+async fn archive_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Task>, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let store = state
+        .store_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let task = store
+        .get_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = state
+        .global_store()
+        .get_workspace(task.workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let sessions = store
+        .list_sessions_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
+    if let Some(primary_worktree_id) = task.primary_worktree_id {
+        worktree_ids.insert(primary_worktree_id);
+    }
+    let mut seen = HashSet::new();
+    let mut worktrees = Vec::new();
+    for worktree_id in worktree_ids {
+        if !seen.insert(worktree_id) {
+            continue;
+        }
+        let worktree = store
+            .get_worktree(worktree_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        worktrees.push(worktree);
+    }
+
+    let mut errors: Vec<anyhow::Error> = Vec::new();
+    let mut needs_prune = false;
+    for worktree in &worktrees {
+        let Some(root) = managed_worktree_root(&state, &workspace, worktree) else {
+            continue;
+        };
+        let branch = worktree
+            .git_branch
+            .as_deref()
+            .filter(|name| name.starts_with("ctx/"));
+        if tokio::fs::metadata(&root).await.is_err() {
+            if branch.is_some() {
+                needs_prune = true;
+            }
+            if let Some(branch) = branch {
+                if let Err(err) = delete_branch(&workspace.root_path, branch).await {
+                    tracing::warn!(
+                        task_id = %task_id.0,
+                        worktree_id = %worktree.id.0,
+                        branch,
+                        "failed to delete worktree branch: {err:#}"
+                    );
+                }
+            }
+            continue;
+        }
+        let is_git = is_git_worktree(&root).await.unwrap_or(false);
+        if is_git {
+            needs_prune = true;
+            if let Err(err) = remove_worktree(&workspace.root_path, &root).await {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    "failed to remove worktree: {err:#}"
+                );
+                errors.push(err);
+                continue;
+            }
+            // Defensive: ensure the directory is actually gone even if `git worktree remove`
+            // succeeds but leaves the directory behind.
+            if tokio::fs::metadata(&root).await.is_ok() {
+                if let Err(err) = tokio::fs::remove_dir_all(&root)
+                    .await
+                    .with_context(|| format!("removing worktree dir at {}", root.display()))
+                {
+                    tracing::warn!(
+                        task_id = %task_id.0,
+                        worktree_id = %worktree.id.0,
+                        "failed to remove worktree dir: {err:#}"
+                    );
+                    errors.push(err);
+                }
+            }
+        } else if let Err(err) = tokio::fs::remove_dir_all(&root)
+            .await
+            .with_context(|| format!("removing non-git worktree dir at {}", root.display()))
+        {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree.id.0,
+                "failed to remove worktree dir: {err:#}"
+            );
+            errors.push(err);
+        }
+        if let Some(branch) = branch {
+            if let Err(err) = delete_branch(&workspace.root_path, branch).await {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    branch,
+                    "failed to delete worktree branch: {err:#}"
+                );
+            }
+        }
+    }
+    if needs_prune {
+        if let Err(err) = prune_worktrees(&workspace.root_path).await {
+            tracing::warn!(
+                task_id = %task_id.0,
+                "failed to prune worktrees: {err:#}"
+            );
+            errors.push(err);
+        }
+    }
+    if !errors.is_empty() {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    let updated = store
+        .archive_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !updated {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let task = match store
+        .get_task_with_activity(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        Some(task) => task,
+        None => return Err(StatusCode::NOT_FOUND),
+    };
+    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
+        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
+    }
+    Ok(Json(task))
+}
+
+async fn unarchive_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Task>, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let store = state
+        .store_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let task = store
+        .get_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = state
+        .global_store()
+        .get_workspace(task.workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let mut seen = HashSet::new();
+    let mut managed_worktrees: Vec<(Worktree, PathBuf)> = Vec::new();
+    let mut worktrees: Vec<Worktree> = Vec::new();
+    let sessions = store
+        .list_sessions_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
+    if let Some(primary) = task.primary_worktree_id {
+        worktree_ids.insert(primary);
+    }
+    for worktree_id in worktree_ids {
+        let worktree = store
+            .get_worktree(worktree_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+        if let Some(root) = managed_worktree_root(&state, &workspace, &worktree) {
+            if seen.insert(worktree.id) {
+                managed_worktrees.push((worktree.clone(), root));
+            }
+        }
+        worktrees.push(worktree);
+    }
+
+    for (worktree, root) in &managed_worktrees {
+        let branch = worktree.git_branch.as_deref().unwrap_or_default();
+        if let Err(err) = ensure_worktree_attached(
+            &workspace.root_path,
+            root,
+            &worktree.base_commit_sha,
+            branch,
+        )
+        .await
+        {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree.id.0,
+                "failed to recreate worktree: {err:#}"
+            );
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    for worktree in &worktrees {
+        if let Err(e) =
+            attachments::ensure_worktree_attachment_mounts(&state, &workspace, worktree, false)
+                .await
+        {
+            tracing::warn!(task_id = %task_id.0, "attachment mounts failed: {e:?}");
+        }
+        if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
+            Arc::clone(&state),
+            workspace.clone(),
+            worktree.clone(),
+        )
+        .await
+        {
+            tracing::warn!(task_id = %task_id.0, "worktree bootstrap failed: {e:?}");
+        }
+    }
+
+    let updated = store
+        .unarchive_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !updated {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let task = match store
+        .get_task_with_activity(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        Some(task) => task,
+        None => return Err(StatusCode::NOT_FOUND),
+    };
+    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
+        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
+    }
+    state
+        .emit_workspace_archived_task_delete(task.workspace_id, task_id)
+        .await;
+    Ok(Json(task))
+}
+
+async fn mark_task_read(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Task>, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let store = state
+        .store_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let updated = store
+        .mark_task_read(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !updated {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let task = match store
+        .get_task_with_activity(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        Some(task) => task,
+        None => return Err(StatusCode::NOT_FOUND),
+    };
+    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
+        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
+    }
+    Ok(Json(task))
+}
+
+async fn mark_task_unread(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Task>, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let store = state
+        .store_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let updated = store
+        .mark_task_unread(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !updated {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let task = match store
+        .get_task_with_activity(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        Some(task) => task,
+        None => return Err(StatusCode::NOT_FOUND),
+    };
+    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
+        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
+    }
+    Ok(Json(task))
+}
+
+async fn list_workspace_tasks(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<Task>>, StatusCode> {
+    let workspace_id =
+        WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let store = state
+        .store_for_workspace(workspace_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let tasks = store
+        .list_tasks(workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(tasks))
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceArchivedQuery {
+    limit: Option<u32>,
+    cursor_sort_at: Option<String>,
+    cursor_task_id: Option<String>,
+}
+
+async fn list_workspace_archived_task_summaries(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<WorkspaceArchivedQuery>,
+) -> Result<Json<WorkspaceArchivedPage>, StatusCode> {
+    let workspace_id =
+        WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let limit = query.limit.unwrap_or(50) as i64;
+    let cursor = match (
+        query.cursor_sort_at.as_deref(),
+        query.cursor_task_id.as_deref(),
+    ) {
+        (None, None) => None,
+        (Some(sort_at), Some(task_id)) => {
+            let sort_at = DateTime::parse_from_rfc3339(sort_at)
+                .map_err(|_| StatusCode::BAD_REQUEST)?
+                .with_timezone(&Utc);
+            let task_id =
+                TaskId(uuid::Uuid::parse_str(task_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+            Some(WorkspaceIndexCursor { sort_at, task_id })
+        }
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+
+    let store = state
+        .store_for_workspace(workspace_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let (tasks, next_cursor) = store
+        .list_workspace_archived_page(workspace_id, cursor, limit)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (_, total_archived) = store
+        .workspace_task_counts(workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (_, archived_rev) = load_workspace_active_snapshot_state(&state, workspace_id).await;
+
+    Ok(Json(WorkspaceArchivedPage {
+        workspace_id,
+        archived_rev,
+        tasks,
+        next_cursor,
+        total_archived,
+    }))
+}
+
+async fn list_task_sessions(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<Session>>, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let store = state
+        .store_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let sessions = store
+        .list_sessions_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(sessions))
+}
+
+async fn create_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<CreateTaskReq>,
+) -> Result<Json<Task>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let ws = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let want_default_session = req.create_default_session;
+    if want_default_session {
+        assert_git_repo(&ws.root_path).await.map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    }
+
+    let task = store
+        .create_task(ws_id, req.title, req.description)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    if let Err(e) = state
+        .global_store()
+        .upsert_workspace_task_index(task.id, ws_id)
+        .await
+    {
+        tracing::warn!(task_id = %task.id.0, "failed to update task index: {e:?}");
+    }
+
+    if !req.create_default_session {
+        if let Err(e) = state.emit_workspace_task_upsert(task.id).await {
+            tracing::warn!(task_id = %task.id.0, "workspace active snapshot refresh failed: {e:?}");
+        }
+        return Ok(Json(task));
+    }
+
+    let base_commit_sha = rev_parse_head(&ws.root_path).await.map_err(|e| {
+        let msg = e.to_string().to_lowercase();
+        if msg.contains("ambiguous argument 'head'")
+            || msg.contains("unknown revision or path not in the working tree")
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "git repo has no commits; create an initial commit before creating a worktree".to_string(),
+                }),
+            );
+        }
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let worktree_id = WorktreeId::new();
+    let wt_path = managed_worktree_path(&state.data_root, ws_id, worktree_id);
+    if let Some(parent) = wt_path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    }
+    let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
+    create_worktree(&ws.root_path, &wt_path, &base_commit_sha, &branch_name)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let worktree = Worktree {
+        id: worktree_id,
+        workspace_id: ws_id,
+        root_path: wt_path.to_string_lossy().to_string(),
+        base_commit_sha,
+        git_branch: Some(branch_name),
+        created_at: chrono::Utc::now(),
+        bootstrap_status: None,
+        bootstrap_started_at: None,
+        bootstrap_finished_at: None,
+        bootstrap_exit_code: None,
+        bootstrap_timeout_sec: None,
+        bootstrap_error: None,
+        bootstrap_log_path: None,
+        bootstrap_log_truncated: None,
+        bootstrap_config_path: None,
+        bootstrap_config_key: None,
+        bootstrap_command: None,
+        bootstrap_script_path: None,
+    };
+    store.insert_worktree(worktree.clone()).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    if let Err(e) = state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree_id, ws_id)
+        .await
+    {
+        tracing::warn!(worktree_id = %worktree_id.0, "failed to update worktree index: {e:?}");
+    }
+
+    if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
+        Arc::clone(&state),
+        ws.clone(),
+        worktree.clone(),
+    )
+    .await
+    {
+        tracing::warn!(task_id = %task.id.0, "worktree bootstrap failed: {e:?}");
+    }
+
+    if let Err(e) = store.set_task_primary_worktree(task.id, worktree_id).await {
+        tracing::warn!(task_id = %task.id.0, "failed to set primary worktree: {e:?}");
+    }
+
+    if let Err(e) = attachments::sync_workspace_attachments(&state, &ws, false).await {
+        tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
+    }
+
+    if let Err(e) =
+        attachments::ensure_worktree_attachment_mounts(&state, &ws, &worktree, false).await
+    {
+        tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
+    }
+
+    let task = match store.get_task_with_activity(task.id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })? {
+        Some(task) => task,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "task not found".to_string(),
+                }),
+            ))
+        }
+    };
+
+    if let Err(e) = state.emit_workspace_task_upsert(task.id).await {
+        tracing::warn!(task_id = %task.id.0, "workspace active snapshot refresh failed: {e:?}");
+    }
+    Ok(Json(task))
+}
+
+#[derive(Debug, Serialize)]
+struct SessionWithEnv {
+    #[serde(flatten)]
+    session: Session,
+    env_target: String, // "worktree" | "local"
+}
+
+fn env_target_for_worktree(wt: Option<&Worktree>) -> String {
+    match wt.and_then(|w| w.git_branch.as_ref()) {
+        Some(_) => "worktree".to_string(),
+        None => "local".to_string(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateSessionReq {
+    provider_id: String,
+    model_id: String,
+    parent_session_id: Option<String>,
+    relationship: Option<String>,
+    initial_prompt: Option<String>,
+    #[serde(default)]
+    worktree_id: Option<String>,
+    #[serde(default)]
+    env_target: Option<String>, // "worktree" | "local"
+}
+
+async fn create_session_for_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<CreateSessionReq>,
+) -> Result<Json<SessionWithEnv>, StatusCode> {
+    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let store = state
+        .store_for_task(task_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let task = store
+        .get_task(task_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = state
+        .global_store()
+        .get_workspace(task.workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let run_id_header = headers
+        .get("x-ctx-run-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string());
+
+    let parent_session_id = match req.parent_session_id {
+        Some(id) => Some(SessionId(
+            uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?,
+        )),
+        None => None,
+    };
+    let relationship = req
+        .relationship
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
+    if parent_session_id.is_some() != relationship.is_some() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let worktree_id = if let Some(worktree_id) = req.worktree_id.as_deref() {
+        WorktreeId(uuid::Uuid::parse_str(worktree_id).map_err(|_| StatusCode::BAD_REQUEST)?)
+    } else if let Some(primary) = task.primary_worktree_id {
+        primary
+    } else {
+        let env_target = req
+            .env_target
+            .as_deref()
+            .unwrap_or("local")
+            .trim()
+            .to_lowercase();
+        let base_commit_sha = rev_parse_head(&workspace.root_path).await.map_err(|e| {
+            let msg = e.to_string().to_lowercase();
+            if msg.contains("ambiguous argument 'head'")
+                || msg.contains("unknown revision or path not in the working tree")
+            {
+                return StatusCode::BAD_REQUEST;
+            }
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        match env_target.as_str() {
+            "worktree" | "cloud" => {
+                let worktree_id = WorktreeId::new();
+                let wt_path =
+                    managed_worktree_path(&state.data_root, task.workspace_id, worktree_id);
+                if let Some(parent) = wt_path.parent() {
+                    tokio::fs::create_dir_all(parent)
+                        .await
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                }
+                let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
+                create_worktree(
+                    &workspace.root_path,
+                    &wt_path,
+                    &base_commit_sha,
+                    &branch_name,
+                )
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+                let worktree = Worktree {
+                    id: worktree_id,
+                    workspace_id: task.workspace_id,
+                    root_path: wt_path.to_string_lossy().to_string(),
+                    base_commit_sha,
+                    git_branch: Some(branch_name),
+                    created_at: chrono::Utc::now(),
+                    bootstrap_status: None,
+                    bootstrap_started_at: None,
+                    bootstrap_finished_at: None,
+                    bootstrap_exit_code: None,
+                    bootstrap_timeout_sec: None,
+                    bootstrap_error: None,
+                    bootstrap_log_path: None,
+                    bootstrap_log_truncated: None,
+                    bootstrap_config_path: None,
+                    bootstrap_config_key: None,
+                    bootstrap_command: None,
+                    bootstrap_script_path: None,
+                };
+                store
+                    .insert_worktree(worktree.clone())
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                if let Err(e) = state
+                    .global_store()
+                    .upsert_workspace_worktree_index(worktree_id, task.workspace_id)
+                    .await
+                {
+                    tracing::warn!(
+                        worktree_id = %worktree_id.0,
+                        "failed to update worktree index: {e:?}"
+                    );
+                }
+                if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
+                    Arc::clone(&state),
+                    workspace.clone(),
+                    worktree.clone(),
+                )
+                .await
+                {
+                    tracing::warn!(task_id = %task.id.0, "worktree bootstrap failed: {e:?}");
+                }
+                if let Err(e) =
+                    attachments::sync_workspace_attachments(&state, &workspace, false).await
+                {
+                    tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
+                }
+                if let Err(e) = attachments::ensure_worktree_attachment_mounts(
+                    &state, &workspace, &worktree, false,
+                )
+                .await
+                {
+                    tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
+                }
+                worktree_id
+            }
+            "local" => {
+                if let Some(existing) = store
+                    .get_local_worktree_for_root(task.workspace_id, &workspace.root_path)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                {
+                    existing.id
+                } else {
+                    let worktree_id = WorktreeId::new();
+                    let worktree = Worktree {
+                        id: worktree_id,
+                        workspace_id: task.workspace_id,
+                        root_path: workspace.root_path.clone(),
+                        base_commit_sha,
+                        git_branch: None,
+                        created_at: chrono::Utc::now(),
+                        bootstrap_status: None,
+                        bootstrap_started_at: None,
+                        bootstrap_finished_at: None,
+                        bootstrap_exit_code: None,
+                        bootstrap_timeout_sec: None,
+                        bootstrap_error: None,
+                        bootstrap_log_path: None,
+                        bootstrap_log_truncated: None,
+                        bootstrap_config_path: None,
+                        bootstrap_config_key: None,
+                        bootstrap_command: None,
+                        bootstrap_script_path: None,
+                    };
+                    store
+                        .insert_worktree(worktree.clone())
+                        .await
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                    if let Err(e) = state
+                        .global_store()
+                        .upsert_workspace_worktree_index(worktree_id, task.workspace_id)
+                        .await
+                    {
+                        tracing::warn!(
+                            worktree_id = %worktree_id.0,
+                            "failed to update worktree index: {e:?}"
+                        );
+                    }
+                    if let Err(e) =
+                        attachments::sync_workspace_attachments(&state, &workspace, false).await
+                    {
+                        tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
+                    }
+                    if let Err(e) = attachments::ensure_worktree_attachment_mounts(
+                        &state, &workspace, &worktree, false,
+                    )
+                    .await
+                    {
+                        tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
+                    }
+                    worktree_id
+                }
+            }
+            _ => return Err(StatusCode::BAD_REQUEST),
+        }
+    };
+
+    let session = store
+        .create_session(
+            task.id,
+            task.workspace_id,
+            worktree_id,
+            req.provider_id,
+            req.model_id,
+            "implementer".into(),
+            parent_session_id,
+            relationship,
+            None,
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if let Err(e) = state
+        .global_store()
+        .upsert_workspace_session_index(session.id, task.workspace_id)
+        .await
+    {
+        tracing::warn!(session_id = %session.id.0, "failed to update session index: {e:?}");
+    }
+
+    if session.parent_session_id.is_none() && session.relationship.is_none() {
+        let _ = store
+            .set_task_primary_session(task.id, session.id, worktree_id)
+            .await;
+    }
+
+    if let Some(prompt) = req.initial_prompt {
+        let run_id = RunId::new();
+        let turn_id = TurnId::new();
+        let msg = Message {
+            id: MessageId::new(),
+            session_id: session.id,
+            task_id: session.task_id,
+            run_id: Some(run_id),
+            turn_id: Some(turn_id),
+            turn_sequence: Some(0),
+            role: MessageRole::User,
+            content: prompt,
+            attachments: vec![],
+            delivery: MessageDelivery::Immediate,
+            delivered_at: None,
+            created_at: chrono::Utc::now(),
+        };
+        let saved = store
+            .insert_message(msg)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let event = store
+            .append_session_event(
+                session.id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::UserMessage,
+                serde_json::json!({
+                    "message_id": saved.id.0,
+                    "content": saved.content.clone(),
+                    "delivery": saved.delivery.clone(),
+                    "attachments": saved.attachments,
+                }),
+            )
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let start_seq = event.seq;
+
+        let turn = SessionTurn {
+            turn_id,
+            session_id: session.id,
+            run_id: Some(run_id),
+            user_message_id: Some(saved.id),
+            status: SessionTurnStatus::Running,
+            start_seq: Some(start_seq),
+            end_seq: None,
+            started_at: saved.created_at,
+            updated_at: saved.created_at,
+            assistant_partial: None,
+            thought_partial: None,
+            metrics_json: None,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+        };
+        let _ = store.insert_session_turn(turn).await;
+        state.publish_event(event).await;
+
+        let prompt = saved.content.clone();
+        let tx = state.ensure_scheduler(session.clone()).await;
+        let queued = crate::scheduler::QueuedMessage {
+            message: saved,
+            enqueued_at: Instant::now(),
+            run_id: run_id_header.clone(),
+        };
+        let _ = tx.send(SchedulerCommand::Enqueue(queued)).await;
+
+        let _ =
+            schedule_session_title_generation(state.clone(), session.clone(), prompt, false).await;
+    }
+
+    let worktree = match state.store_for_session(session.id).await {
+        Ok(store) => store.get_worktree(session.worktree_id).await.ok().flatten(),
+        Err(_) => None,
+    };
+    let env_target = env_target_for_worktree(worktree.as_ref());
+    state
+        .telemetry
+        .emit(TelemetryEvent::session_started(
+            session.provider_id.clone(),
+            session.model_id.clone(),
+            Some(env_target.clone()),
+        ))
+        .await;
+    let mut ops_event = OpsEvent::new("info", "session_started");
+    ops_event.session_id = Some(session.id.0.to_string());
+    ops_event.worktree_id = Some(session.worktree_id.0.to_string());
+    ops_event.provider_id = Some(session.provider_id.clone());
+    ops_event.meta = Some(serde_json::json!({
+        "model_id": session.model_id.clone(),
+        "env_target": env_target.clone(),
+        "parent_session_id": session.parent_session_id.map(|id| id.0.to_string()),
+        "relationship": session.relationship.clone(),
+    }));
+    state.ops_events.emit(ops_event);
+    state.remember_session_meta(&session).await;
+    if let Err(e) = state.emit_workspace_task_upsert(session.task_id).await {
+        tracing::warn!(task_id = %session.task_id.0, "workspace active snapshot refresh failed: {e:?}");
+    }
+    Ok(Json(SessionWithEnv {
+        env_target,
+        session,
+    }))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct SessionSnapshotQuery {
+    limit: Option<u32>,
+    include_events: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct SessionHeadQuery {
+    limit: Option<u32>,
+    include_events: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionDiffApplyReq {
+    action: String, // "accept" | "reject"
+    patch: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionDiffResponse {
+    diff: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct SessionDiffQuery {
+    base_commit_sha: Option<String>,
+    target_branch: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionDiffSummaryResponse {
+    base_commit_sha: String,
+    head_commit_sha: String,
+    file_count: i64,
+    line_additions: i64,
+    line_deletions: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct SessionGitStatusResponse {
+    raw: String,
+    summary_line: String,
+    branch: Option<String>,
+    upstream: Option<String>,
+    ahead: i64,
+    behind: i64,
+    detached: bool,
+    staged: i64,
+    unstaged: i64,
+    untracked: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    entries: Vec<GitStatusEntry>,
+}
+
+async fn get_session_snapshot(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionSnapshotQuery>,
+) -> Result<Json<SessionSnapshot>, StatusCode> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let limit = q.limit.unwrap_or(60);
+    let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let store = state
+        .store_for_session(session_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    match store
+        .get_session_snapshot(session_id, limit, include_events)
+        .await
+    {
+        Ok(Some(snapshot)) => Ok(Json(snapshot)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+async fn get_session_head(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionHeadQuery>,
+) -> Result<Json<SessionHeadSnapshot>, StatusCode> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let limit = q.limit.unwrap_or(60);
+    let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let store = state
+        .store_for_session(session_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    match store
+        .get_session_head_snapshot(session_id, limit, include_events)
+        .await
+    {
+        Ok(Some(head)) => Ok(Json(head)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+async fn get_session_state(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<SessionState>, StatusCode> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let store = state
+        .store_for_session(session_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let session = store
+        .get_session(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if session.is_none() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let mut state = store
+        .get_session_state(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    for artifact in state.artifacts.iter_mut() {
+        if tokio::fs::metadata(&artifact.absolute_path).await.is_err() {
+            artifact.missing = Some(true);
+        }
+    }
+    Ok(Json(state))
+}
+
+async fn get_session_diff(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionDiffQuery>,
+) -> Result<Json<SessionDiffResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+    let store = state.store_for_session(session_id).await.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let session = store
+        .get_session(session_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "session not found".to_string(),
+                }),
+            )
+        })?;
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "worktree not found".to_string(),
+                }),
+            )
+        })?;
+    let workspace = state
+        .global_store()
+        .get_workspace(session.workspace_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "workspace not found".to_string(),
+                }),
+            )
+        })?;
+    let base_commit_sha = resolve_session_diff_base(&workspace, &worktree, &q).await?;
+    let diff = ctx_fs::worktrees::diff_worktree(&worktree.root_path, &base_commit_sha)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    Ok(Json(SessionDiffResponse { diff }))
+}
+
+async fn get_session_diff_summary(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionDiffQuery>,
+) -> Result<Json<SessionDiffSummaryResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+    let store = state.store_for_session(session_id).await.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let session = store
+        .get_session(session_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "session not found".to_string(),
+                }),
+            )
+        })?;
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "worktree not found".to_string(),
+                }),
+            )
+        })?;
+    let workspace = state
+        .global_store()
+        .get_workspace(session.workspace_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "workspace not found".to_string(),
+                }),
+            )
+        })?;
+    let base_commit_sha = resolve_session_diff_base(&workspace, &worktree, &q).await?;
+    let (file_count, line_additions, line_deletions) =
+        ctx_fs::worktrees::diff_worktree_summary(&worktree.root_path, &base_commit_sha)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+    let head_commit_sha = match rev_parse_head(&worktree.root_path).await {
+        Ok(value) => value,
+        Err(_) => base_commit_sha.clone(),
+    };
+    Ok(Json(SessionDiffSummaryResponse {
+        base_commit_sha,
+        head_commit_sha,
+        file_count,
+        line_additions,
+        line_deletions,
+    }))
+}
+
+async fn get_session_git_status(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<SessionGitStatusResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+    let store = state.store_for_session(session_id).await.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let session = store
+        .get_session(session_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "session not found".to_string(),
+                }),
+            )
+        })?;
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "worktree not found".to_string(),
+                }),
+            )
+        })?;
+    let snapshot = load_git_status_snapshot(StdPath::new(&worktree.root_path))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let resp = SessionGitStatusResponse {
+        raw: snapshot.raw,
+        summary_line: snapshot.summary_line,
+        branch: snapshot.branch,
+        upstream: snapshot.upstream,
+        ahead: snapshot.ahead,
+        behind: snapshot.behind,
+        detached: snapshot.detached,
+        staged: snapshot.staged,
+        unstaged: snapshot.unstaged,
+        untracked: snapshot.untracked,
+        entries: snapshot.entries,
+    };
+    let summary = SessionGitStatusSummary {
+        summary_line: resp.summary_line.clone(),
+        branch: resp.branch.clone(),
+        upstream: resp.upstream.clone(),
+        ahead: resp.ahead,
+        behind: resp.behind,
+        detached: resp.detached,
+        staged: resp.staged,
+        unstaged: resp.unstaged,
+        untracked: resp.untracked,
+    };
+    if let Err(err) = store
+        .upsert_session_git_status_summary(session_id, worktree.id, &summary)
+        .await
+    {
+        tracing::warn!(session_id = %session_id.0, "git status summary persist failed: {err:?}");
+    }
+    maybe_emit_git_status_snapshot(&state, session_id, worktree.id, &resp).await;
+    Ok(Json(resp))
+}
+
+async fn resolve_session_diff_base(
+    workspace: &Workspace,
+    worktree: &Worktree,
+    query: &SessionDiffQuery,
+) -> Result<String, (StatusCode, Json<ApiErrorResp>)> {
+    if let Some(base) = query.base_commit_sha.as_deref() {
+        let trimmed = base.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    let explicit_target = query
+        .target_branch
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let target_branch = match query.target_branch.as_deref() {
+        Some(target) if !target.trim().is_empty() => Some(target.trim().to_string()),
+        _ => match workspace_config::load_merge_queue_config(StdPath::new(&workspace.root_path))
+            .await
+        {
+            Ok(cfg) => Some(cfg.target_branch),
+            Err(err) => {
+                tracing::warn!(
+                    workspace_id = %workspace.id.0,
+                    "failed to load merge queue config: {err:#}"
+                );
+                None
+            }
+        },
+    };
+    if let Some(target_branch) = target_branch {
+        match git_merge_base(&worktree.root_path, &target_branch, "HEAD").await {
+            Ok(base) => return Ok(base),
+            Err(err) => {
+                if explicit_target {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&err.to_string()),
+                        }),
+                    ));
+                }
+                tracing::warn!(
+                    worktree_id = %worktree.id.0,
+                    "merge-base failed for target {target_branch}: {err:#}"
+                );
+            }
+        }
+    }
+    Ok(worktree.base_commit_sha.clone())
+}
+
+async fn maybe_emit_git_status_snapshot(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    worktree_id: WorktreeId,
+    snapshot: &SessionGitStatusResponse,
+) {
+    const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
+    const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
+    let summary = serde_json::json!({
+        "summary_line": snapshot.summary_line,
+        "branch": snapshot.branch,
+        "upstream": snapshot.upstream,
+        "ahead": snapshot.ahead,
+        "behind": snapshot.behind,
+        "detached": snapshot.detached,
+        "staged": snapshot.staged,
+        "unstaged": snapshot.unstaged,
+        "untracked": snapshot.untracked,
+    });
+    let payload = serde_json::json!({
+        "kind": "git_status_snapshot",
+        "worktree_id": worktree_id.0.to_string(),
+        "summary": summary,
+        "entries": snapshot.entries,
+    });
+    let payload_raw = match serde_json::to_string(&payload) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    let now = Instant::now();
+    {
+        let mut cache = state.git_status_snapshots.lock().await;
+        let entry = cache
+            .entry(worktree_id)
+            .or_insert_with(|| GitStatusSnapshotCacheEntry {
+                payload: String::new(),
+                emitted_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
+                last_change_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
+            });
+        let is_first = entry.payload.is_empty();
+        if entry.payload == payload_raw {
+            return;
+        }
+        let since_change = now.duration_since(entry.last_change_at);
+        entry.payload = payload_raw;
+        entry.last_change_at = now;
+        let since_emit = now.duration_since(entry.emitted_at);
+        if !is_first
+            && since_emit < Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS)
+            && since_change < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS)
+        {
+            return;
+        }
+        entry.emitted_at = now;
+    }
+    let notice = match state.store_for_session(session_id).await {
+        Ok(store) => {
+            store
+                .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
+                .await
+        }
+        Err(_) => return,
+    };
+    if let Ok(event) = notice {
+        state.publish_event(event).await;
+    }
+}
+
+async fn apply_session_diff_patch(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<SessionDiffApplyReq>,
+) -> Result<Json<SessionDiffResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+    if req.patch.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "patch is empty".to_string(),
+            }),
+        ));
+    }
+
+    let action = req.action.trim().to_lowercase();
+    let reverse = match action.as_str() {
+        "accept" => false,
+        "reject" => true,
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "action must be accept or reject".to_string(),
+                }),
+            ));
+        }
+    };
+
+    let store = state.store_for_session(session_id).await.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let session = store
+        .get_session(session_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "session not found".to_string(),
+                }),
+            )
+        })?;
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "worktree not found".to_string(),
+                }),
+            )
+        })?;
+    let workspace = state
+        .global_store()
+        .get_workspace(session.workspace_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "workspace not found".to_string(),
+                }),
+            )
+        })?;
+
+    ctx_fs::git::git_apply_patch(
+        &worktree.root_path,
+        &req.patch,
+        ctx_fs::git::ApplyPatchTarget::Worktree,
+        reverse,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let base_commit_sha =
+        resolve_session_diff_base(&workspace, &worktree, &SessionDiffQuery::default()).await?;
+    let diff = ctx_fs::worktrees::diff_worktree(&worktree.root_path, &base_commit_sha)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    Ok(Json(SessionDiffResponse { diff }))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct SessionEventsQuery {
+    after_seq: Option<i64>,
+    limit: Option<u32>,
+    tail: Option<u32>,
+    include_transient: Option<String>,
+}
+
+async fn get_session_events(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionEventsQuery>,
+) -> Result<Json<ctx_core::models::SessionEventsPage>, StatusCode> {
+    const DEFAULT_LIMIT: u32 = 200;
+    const MAX_LIMIT: u32 = 1000;
+
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let include_transient = parse_boolish_flag(q.include_transient.as_deref(), "include_transient")
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let store = state
+        .store_for_session(session_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    let (events, has_more, next_cursor) = if let Some(tail) = q.tail {
+        let tail = tail.clamp(1, MAX_LIMIT);
+        let mut rows = store
+            .list_session_events_tail_by_seq(session_id, tail + 1, include_transient)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let has_more = rows.len() as u32 > tail;
+        if has_more {
+            rows = rows.split_off(rows.len().saturating_sub(tail as usize));
+        }
+        let next_cursor = rows.last().map(|ev| ev.seq);
+        (rows, has_more, next_cursor)
+    } else {
+        let mut rows = store
+            .list_session_events_page_by_seq(
+                session_id,
+                q.after_seq,
+                Some(limit + 1),
+                include_transient,
+            )
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let has_more = rows.len() as u32 > limit;
+        if has_more {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor = rows.last().map(|ev| ev.seq);
+        (rows, has_more, next_cursor)
+    };
+
+    Ok(Json(ctx_core::models::SessionEventsPage {
+        session_id,
+        events,
+        next_cursor,
+        has_more,
+    }))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct SessionHistoryQuery {
+    before_seq: Option<i64>,
+    limit: Option<u32>,
+}
+
+async fn get_session_history(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionHistoryQuery>,
+) -> Result<Json<SessionHistoryPage>, StatusCode> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let limit = q.limit.unwrap_or(60);
+    let store = state
+        .store_for_session(session_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    match store
+        .get_session_history_page(session_id, q.before_seq, limit)
+        .await
+    {
+        Ok(Some(page)) => Ok(Json(page)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+async fn list_session_turn_tools(
+    State(state): State<Arc<AppState>>,
+    Path((id, turn_id)): Path<(String, String)>,
+) -> Result<Json<Vec<SessionTurnTool>>, StatusCode> {
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let turn_id = TurnId(uuid::Uuid::parse_str(&turn_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let store = state
+        .store_for_session(session_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    store
+        .list_turn_tools(session_id, turn_id)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct FileCompletionsQuery {
+    query: Option<String>,
+    limit: Option<u32>,
+}
+
+async fn session_file_completions(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<FileCompletionsQuery>,
+) -> Result<Json<Vec<String>>, StatusCode> {
+    const DEFAULT_LIMIT: u32 = 20;
+    const MAX_LIMIT: u32 = 200;
+    const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+
+    let store = state
+        .store_for_session(session_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let session = store
+        .get_session(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let query = q.query.unwrap_or_default();
+    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT) as usize;
+
+    let files = {
+        let now = Instant::now();
+        let cache = state.file_completions_cache.lock().await;
+        if let Some(entry) = cache.get(&worktree.id) {
+            if now.duration_since(entry.cached_at) <= CACHE_TTL {
+                entry.files.clone()
+            } else {
+                drop(cache);
+                load_and_cache_worktree_files(&state, &worktree, now).await?
+            }
+        } else {
+            drop(cache);
+            load_and_cache_worktree_files(&state, &worktree, now).await?
+        }
+    };
+
+    Ok(Json(completions::filter_and_rank_paths(
+        &files, &query, limit,
+    )))
+}
+
+async fn workspace_file_completions(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<FileCompletionsQuery>,
+) -> Result<Json<Vec<String>>, StatusCode> {
+    const DEFAULT_LIMIT: u32 = 20;
+    const MAX_LIMIT: u32 = 200;
+    const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let ws = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let root = PathBuf::from(&ws.root_path);
+    if assert_git_repo(&root).await.is_err() {
+        return Ok(Json(Vec::new()));
+    }
+
+    let query = q.query.unwrap_or_default();
+    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT) as usize;
+
+    let files = {
+        let now = Instant::now();
+        let cache = state.workspace_file_completions_cache.lock().await;
+        if let Some(entry) = cache.get(&ws_id) {
+            if now.duration_since(entry.cached_at) <= CACHE_TTL {
+                entry.files.clone()
+            } else {
+                drop(cache);
+                load_and_cache_workspace_files(&state, ws_id, &root, now).await?
+            }
+        } else {
+            drop(cache);
+            load_and_cache_workspace_files(&state, ws_id, &root, now).await?
+        }
+    };
+
+    Ok(Json(completions::filter_and_rank_paths(
+        &files, &query, limit,
+    )))
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceActiveSnapshotQuery {
+    limit: Option<u32>,
+}
+
+fn parse_boolish_flag(raw: Option<&str>, label: &str) -> Result<bool, String> {
+    match raw {
+        Some(value) => {
+            let normalized = value.trim();
+            if normalized.eq_ignore_ascii_case("true") || normalized == "1" {
+                Ok(true)
+            } else if normalized.is_empty()
+                || normalized.eq_ignore_ascii_case("false")
+                || normalized == "0"
+            {
+                Ok(false)
+            } else {
+                Err(format!("{label} must be true/false or 1/0"))
+            }
+        }
+        None => Ok(false),
+    }
+}
+
+async fn load_workspace_active_snapshot_state(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+) -> (i64, i64) {
+    match state.store_for_workspace(workspace_id).await {
+        Ok(store) => store
+            .get_workspace_active_snapshot_state(workspace_id)
+            .await
+            .unwrap_or((0, 0)),
+        Err(_) => (0, 0),
+    }
+}
+
+async fn get_workspace_active_snapshot(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<WorkspaceActiveSnapshotQuery>,
+) -> Result<Json<WorkspaceActiveSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+
+    let limit = query.limit.unwrap_or(50) as i64;
+    let store = state.store_for_workspace(workspace_id).await.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let (tasks, total_count) = store
+        .list_workspace_active_page_read_model(workspace_id, limit)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let (snapshot_rev, archived_rev) = store
+        .get_workspace_active_snapshot_state(workspace_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let snapshot = WorkspaceActiveSnapshot {
+        workspace_id,
+        snapshot_rev,
+        archived_rev,
+        active: WorkspaceActivePage { tasks, total_count },
+    };
+    Ok(Json(snapshot))
+}
+
+async fn get_workspace_active_heads(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkspaceActiveHeadBatch>, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+
+    let store = state.store_for_workspace(workspace_id).await.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let (snapshot_rev, _) = store
+        .get_workspace_active_snapshot_state(workspace_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let heads = store
+        .list_workspace_active_head_snapshots(workspace_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    Ok(Json(WorkspaceActiveHeadBatch {
+        workspace_id,
+        snapshot_rev,
+        heads,
+    }))
 }
 
 #[cfg(test)]

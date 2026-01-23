@@ -1,0 +1,93 @@
+import type React from "react";
+import type { MessageAttachment, ProviderOptions, ProviderStatus } from "../../api/client";
+import type { SlashCommandDescriptor } from "../../state/useComposerAutocomplete";
+import type { SessionViewVerbosity } from "../../state/uiStateStore";
+import type { HarnessCatalogEntry } from "../../utils/harnessCatalog";
+
+export type WorkbenchModeId = "default" | "research" | "plan" | "review";
+export type ContextWindowInfo = {
+  windowTokens?: number;
+  usedTokens?: number;
+  remainingTokens?: number;
+  remainingFraction?: number;
+};
+
+export type DraftTrack = {
+  key: string;
+  label: string;
+  providerId: string;
+  modelId: string;
+};
+
+type SharedProps = {
+  variant: "newSession" | "activeSession";
+
+  value: string;
+  setValue: (next: string) => void;
+  placeholder: string;
+  inputDisabled?: boolean;
+
+  sessionIdForAutocomplete: string | null;
+  workspaceIdForAutocomplete?: string | null;
+  slashCommands: SlashCommandDescriptor[];
+
+  attachments: MessageAttachment[];
+  setAttachments: React.Dispatch<React.SetStateAction<MessageAttachment[]>>;
+
+  onSend: () => void;
+  sendDisabledReason?: string | null;
+  sendDisabled?: boolean;
+
+  onInterrupt?: (() => void) | null;
+  isWorking?: boolean;
+  verbosity?: SessionViewVerbosity;
+  onSetVerbosity?: (next: SessionViewVerbosity) => void;
+
+  modeId: WorkbenchModeId;
+  setModeId: (next: WorkbenchModeId) => void;
+
+  recording?: boolean;
+  recordDisabledReason?: string | null;
+  onToggleRecording?: (() => void) | null;
+};
+
+export type NewSessionProps = SharedProps & {
+  variant: "newSession";
+  harnessCatalog: HarnessCatalogEntry[];
+  providersById: Record<string, ProviderStatus>;
+  providerInstallsById: Record<
+    string,
+    | {
+        installId: string;
+        state: "running" | "succeeded" | "failed";
+        pct: number | null;
+      }
+    | undefined
+  >;
+  onInstallProvider: (providerId: string) => void;
+  onInstallAllProviders: () => void;
+  installAllBusy?: boolean;
+  providerOptions: Record<string, ProviderOptions | undefined>;
+  ensureProviderOptions: (providerId: string, opts?: { force?: boolean }) => Promise<ProviderOptions | undefined>;
+
+  draftTracks: DraftTrack[];
+  setDraftTracks: React.Dispatch<React.SetStateAction<DraftTrack[]>>;
+  defaultProviderId: string;
+  useMultipleAgents: boolean;
+  setUseMultipleAgents: (next: boolean) => void;
+};
+
+export type ActiveSessionProps = SharedProps & {
+  variant: "activeSession";
+  harnessLabel: string;
+  harnessLogoSrc?: string;
+  harnessLogoInvert?: boolean;
+
+  availableModels: Array<{ id: string; name?: string }>;
+  currentModelId: string;
+  onSetModelId: (next: string) => void;
+
+  contextWindow?: ContextWindowInfo | null;
+};
+
+export type WorkbenchComposerProps = NewSessionProps | ActiveSessionProps;

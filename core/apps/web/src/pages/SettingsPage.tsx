@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import type { User } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
@@ -63,7 +63,6 @@ import {
 import {
   type DesktopEditorSettings,
   desktopGetEditorSettings,
-  desktopSaveTextFile,
   desktopUpdateEditorSettings,
   isDesktopApp,
 } from "../utils/desktop";
@@ -76,363 +75,29 @@ import {
   writeCachedValue,
 } from "../utils/entitlementsCache";
 import { getSupabaseClient } from "../utils/supabaseClient";
-
-const AGENT_PROMPT_DEFAULT = "You are working inside ctx, an agent development environment. Use ctx MCP tools to attach photos/videos as artifacts, start persistent web sessions (Playwright REPL/scripts), and run sub-agents for research or well-scoped implementations. Check `.ctx/attachments/refs/` and `.ctx/attachments/docs/` for extra reference repos and docs." as const;
-const SUBAGENT_PROMPT_DEFAULT = "Subagents may use rg/grep and other token-heavy commands the main agent avoids." as const;
-
-const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "auto", label: "Default (Deepgram Nova-3)" },
-  { value: "deepgram/flux-general", label: "Deepgram Flux" },
-  { value: "deepgram/nova-3", label: "Deepgram Nova-3" },
-  { value: "deepgram/nova-3-medical", label: "Deepgram Nova-3 Medical" },
-  { value: "deepgram/nova-2", label: "Deepgram Nova-2" },
-  { value: "deepgram/nova-2-medical", label: "Deepgram Nova-2 Medical" },
-  { value: "deepgram/nova-2-conversationalai", label: "Deepgram Nova-2 Conversational AI" },
-  { value: "deepgram/nova-2-phonecall", label: "Deepgram Nova-2 Phonecall" },
-  { value: "assemblyai/universal-streaming", label: "AssemblyAI Universal-Streaming" },
-  { value: "assemblyai/universal-streaming-multilingual", label: "AssemblyAI Universal-Streaming Multilingual" },
-  { value: "cartesia/ink-whisper", label: "Cartesia Ink Whisper" },
-  { value: "elevenlabs/scribe_v2_realtime", label: "ElevenLabs Scribe V2 Realtime" },
-];
-
-const EDITOR_OPTIONS: Array<{ value: DesktopEditorSettings["target"]; label: string }> = [
-  { value: "system", label: "System default" },
-  { value: "vscode", label: "Visual Studio Code" },
-  { value: "vscode_insiders", label: "Visual Studio Code Insiders" },
-  { value: "cursor", label: "Cursor" },
-  { value: "windsurf", label: "Windsurf" },
-  { value: "antigravity", label: "Google Antigravity" },
-  { value: "idea", label: "IntelliJ IDEA" },
-  { value: "pycharm", label: "PyCharm" },
-  { value: "xcode", label: "Xcode" },
-  { value: "android_studio", label: "Android Studio" },
-  { value: "custom", label: "Custom command" },
-];
-
-const saveTextFile = async (name: string, contents: string) => {
-  if (isDesktopApp()) {
-    await desktopSaveTextFile({ suggested_name: name, contents });
-    return;
-  }
-  const blob = new Blob([contents], { type: "text/plain" });
-  const url = URL.createObjectURL(blob);
-  try {
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    a.rel = "noopener";
-    a.click();
-  } finally {
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-};
-
-type SectionId =
-  | "general"
-  | "agent_harnesses"
-  | "harness_subscriptions"
-  | "models_routing"
-  | "sandboxing"
-  | "worktree_bootstrap"
-  | "agent_system_prompt"
-  | "workspace_attachments"
-  | "merge_queue"
-  | "context_pack"
-  | "resource_governance"
-  | "mobile_access"
-  | "resource_utilization"
-  | "dictation"
-  | "title_generation"
-  | "billing"
-  | "team_enterprise"
-  | "usage_analytics";
-
-type InstallSession = {
-  installId: string;
-  state: InstallInfo["state"];
-  pct: number | null;
-  streamError?: string;
-  error?: string;
-};
-
-const SECTIONS: Array<{
-  id: SectionId;
-  label: string;
-  group?: "main" | "advanced";
-}> = [
-  { id: "general", label: "General", group: "main" },
-  { id: "agent_harnesses", label: "Agent Harnesses", group: "main" },
-  { id: "harness_subscriptions", label: "Harness Subscriptions", group: "main" },
-  { id: "models_routing", label: "Models & Routing", group: "main" },
-  { id: "sandboxing", label: "Sandboxing", group: "main" },
-  { id: "worktree_bootstrap", label: "Worktree Bootstrap", group: "main" },
-  { id: "agent_system_prompt", label: "Agent System Prompt", group: "main" },
-  { id: "workspace_attachments", label: "Workspace Attachments", group: "main" },
-  { id: "merge_queue", label: "Merge Queue", group: "main" },
-  { id: "context_pack", label: "ctx pack", group: "main" },
-  { id: "resource_governance", label: "Resource Limits", group: "main" },
-  { id: "mobile_access", label: "Mobile Access", group: "main" },
-  { id: "resource_utilization", label: "Resource Utilization", group: "main" },
-  { id: "dictation", label: "Dictation", group: "advanced" },
-  { id: "title_generation", label: "Title Generation", group: "advanced" },
-  { id: "billing", label: "Billing", group: "advanced" },
-  { id: "team_enterprise", label: "Team & Enterprise", group: "advanced" },
-  { id: "usage_analytics", label: "Usage Analytics", group: "advanced" },
-];
-
-function sectionFromHash(hash: string): SectionId | null {
-  const raw = String(hash || "").replace(/^#/, "").trim();
-  if (!raw) return null;
-  return (SECTIONS.find((s) => s.id === raw)?.id ?? null) as any;
-}
-
-function clampPct(n: number): number {
-  if (!Number.isFinite(n)) return 0;
-  return Math.max(0, Math.min(100, n));
-}
-
-function formatPct(value?: number | null): string {
-  if (!Number.isFinite(value)) return "—";
-  return `${Math.round(value as number)}%`;
-}
-
-function formatBytes(value?: number | null): string {
-  if (!Number.isFinite(value)) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  let idx = 0;
-  let v = value as number;
-  while (v >= 1024 && idx < units.length - 1) {
-    v /= 1024;
-    idx += 1;
-  }
-  const precision = v >= 100 ? 0 : v >= 10 ? 1 : 2;
-  return `${v.toFixed(precision)} ${units[idx]}`;
-}
-
-function formatAge(ms?: number | null): string {
-  if (!Number.isFinite(ms)) return "—";
-  const totalSeconds = Math.max(0, Math.round((ms as number) / 1000));
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const mins = Math.floor(totalSeconds / 60);
-  const secs = totalSeconds % 60;
-  return `${mins}m ${secs}s`;
-}
-
-function isLinuxPlatform(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const platform = navigator.platform?.toLowerCase() ?? "";
-  const agent = navigator.userAgent?.toLowerCase() ?? "";
-  return platform.includes("linux") || agent.includes("linux");
-}
-
-function codexResetAtMs(window?: any): number | null {
-  if (!window) return null;
-  if (Number.isFinite(window.reset_at)) return (window.reset_at as number) * 1000;
-  if (Number.isFinite(window.resetAt)) return (window.resetAt as number) * 1000;
-  if (Number.isFinite(window.reset_after_seconds)) {
-    return Date.now() + (window.reset_after_seconds as number) * 1000;
-  }
-  if (Number.isFinite(window.resetAfterSeconds)) {
-    return Date.now() + (window.resetAfterSeconds as number) * 1000;
-  }
-  return null;
-}
-
-function codexRemainingPct(window?: any): number | null {
-  if (!window) return null;
-  if (Number.isFinite(window.remaining_percent)) return clampPct(window.remaining_percent as number);
-  if (Number.isFinite(window.remainingPercent)) return clampPct(window.remainingPercent as number);
-  if (Number.isFinite(window.used_percent)) return clampPct(100 - (window.used_percent as number));
-  if (Number.isFinite(window.usedPercent)) return clampPct(100 - (window.usedPercent as number));
-  return null;
-}
-
-function formatResetLabel(resetAtMs?: number | null): string {
-  if (!Number.isFinite(resetAtMs)) return "Reset time unavailable";
-  const date = new Date(resetAtMs as number);
-  if (!Number.isFinite(date.getTime())) return "Reset time unavailable";
-  const now = new Date();
-  const options: Intl.DateTimeFormatOptions = {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  };
-  if (date.getFullYear() !== now.getFullYear()) {
-    options.year = "numeric";
-  }
-  return `Resets ${date.toLocaleString(undefined, options)}`;
-}
-
-type CodexUsageSummary = {
-  planType: string | null;
-  primaryRemaining: number | null;
-  secondaryRemaining: number | null;
-  primaryResetAt: number | null;
-  secondaryResetAt: number | null;
-  creditsValue: string;
-  creditsSub: string;
-  updatedLabel: string;
-  source: string | null;
-  error: string | null;
-};
-
-function summarizeCodexUsage(snapshot?: ProviderUsageSnapshot | null): CodexUsageSummary {
-  const payload = (snapshot?.payload ?? null) as any;
-  const planType = payload?.plan_type ?? payload?.planType ?? null;
-  const rateLimit = payload?.rate_limit ?? payload?.rateLimit ?? null;
-  const primaryWindow = rateLimit?.primary_window ?? rateLimit?.primaryWindow ?? null;
-  const secondaryWindow = rateLimit?.secondary_window ?? rateLimit?.secondaryWindow ?? null;
-  const credits = payload?.credits ?? null;
-  const primaryRemaining = codexRemainingPct(primaryWindow);
-  const secondaryRemaining = codexRemainingPct(secondaryWindow);
-  const primaryResetAt = codexResetAtMs(primaryWindow);
-  const secondaryResetAt = codexResetAtMs(secondaryWindow);
-  const creditsValue = (() => {
-    if (!credits) return "—";
-    if (credits.unlimited) return "Unlimited";
-    if (credits.balance !== undefined && credits.balance !== null) {
-      return String(credits.balance);
-    }
-    if (credits.has_credits === false) return "None";
-    return "—";
-  })();
-  const creditsSub = (() => {
-    if (!credits) return "Credits unavailable";
-    if (credits.unlimited) return "No spend cap";
-    if (credits.has_credits === false) return "Credits exhausted";
-    return "Credits balance";
-  })();
-  const updatedLabel = (() => {
-    if (!snapshot?.fetched_at) return "";
-    const ts = Date.parse(snapshot.fetched_at);
-    if (!Number.isFinite(ts)) return "";
-    return `Updated ${formatAge(Date.now() - ts)} ago`;
-  })();
-
-  return {
-    planType,
-    primaryRemaining,
-    secondaryRemaining,
-    primaryResetAt,
-    secondaryResetAt,
-    creditsValue,
-    creditsSub,
-    updatedLabel,
-    source: snapshot?.source ?? null,
-    error: snapshot?.error ?? null,
-  };
-}
-
-function formatGiB(mb?: number | null): string {
-  if (!Number.isFinite(mb) || !mb) return "";
-  const gb = (mb as number) / 1024;
-  const precision = gb >= 10 ? 0 : 1;
-  return gb.toFixed(precision);
-}
-
-function parseGiB(value: string): number | null {
-  const v = Number(value);
-  if (!Number.isFinite(v) || v <= 0) return null;
-  return Math.round(v * 1024);
-}
-
-function truncateText(value: string, maxLen: number): string {
-  const s = String(value ?? "");
-  if (s.length <= maxLen) return s;
-  return `${s.slice(0, Math.max(0, maxLen - 1))}…`;
-}
-
-function guessAttachmentName(source: string): string {
-  let cleaned = String(source ?? "").trim();
-  if (!cleaned) return "";
-  cleaned = cleaned.replace(/[\\/]+$/, "");
-  const slashIdx = Math.max(cleaned.lastIndexOf("/"), cleaned.lastIndexOf(":"));
-  let name = slashIdx >= 0 ? cleaned.slice(slashIdx + 1) : cleaned;
-  if (name.endsWith(".git")) name = name.slice(0, -4);
-  return name;
-}
-
-function Toggle({
-  checked,
-  disabled,
-  onChange,
-  ariaLabel,
-}: {
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (next: boolean) => void;
-  ariaLabel: string;
-}) {
-  return (
-    <button
-      type="button"
-      className={`settings-toggle ${checked ? "settings-toggle-on" : ""}`}
-      role="switch"
-      aria-checked={checked}
-      aria-label={ariaLabel}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-    >
-      <span className="settings-toggle-thumb" aria-hidden="true" />
-    </button>
-  );
-}
-
-function Row({
-  title,
-  description,
-  control,
-}: {
-  title: string;
-  description?: string;
-  control: ReactNode;
-}) {
-  return (
-    <div className="settings-row">
-      <div className="settings-row-left">
-        <div className="settings-row-title">{title}</div>
-        {description ? <div className="settings-row-desc">{description}</div> : null}
-      </div>
-      <div className="settings-row-right">{control}</div>
-    </div>
-  );
-}
-
-function Card({ children, title }: { title?: string; children: ReactNode }) {
-  return (
-    <div className="settings-card">
-      {title ? <div className="settings-card-title">{title}</div> : null}
-      <div className="settings-card-rows">{children}</div>
-    </div>
-  );
-}
-
-function Metric({
-  label,
-  value,
-  sublabel,
-  pct,
-}: {
-  label: string;
-  value: string;
-  sublabel?: string;
-  pct?: number | null;
-}) {
-  const safePct = pct === null || pct === undefined ? 0 : clampPct(pct);
-  return (
-    <div className="settings-metric">
-      <div className="settings-metric-header">
-        <div className="settings-metric-label">{label}</div>
-        <div className="settings-metric-value">{value}</div>
-      </div>
-      <div className="settings-meter-track" role="presentation">
-        <div className="settings-meter-fill" style={{ width: `${safePct}%` }} />
-      </div>
-      {sublabel ? <div className="settings-metric-sub">{sublabel}</div> : null}
-    </div>
-  );
-}
+import {
+  AGENT_PROMPT_DEFAULT,
+  EDITOR_OPTIONS,
+  MODEL_OPTIONS,
+  SECTIONS,
+  SUBAGENT_PROMPT_DEFAULT,
+} from "./SettingsPage.constants";
+import { Card, Metric, Row, Toggle } from "./SettingsPage.components";
+import type { InstallSession, SectionId } from "./SettingsPage.types";
+import {
+  formatAge,
+  formatBytes,
+  formatGiB,
+  formatPct,
+  formatResetLabel,
+  guessAttachmentName,
+  isLinuxPlatform,
+  parseGiB,
+  saveTextFile,
+  sectionFromHash,
+  summarizeCodexUsage,
+  truncateText,
+} from "./SettingsPage.utils";
 
 export default function SettingsPage() {
   const location = useLocation();
