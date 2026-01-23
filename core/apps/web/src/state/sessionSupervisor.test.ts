@@ -284,6 +284,103 @@ describe("SessionSupervisor", () => {
     expect(persisted?.turns?.[0]?.assistant_partial ?? null).toBeNull();
   });
 
+  it("resets and reloads on session gap", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-gap";
+    const headWithMessage = {
+      session: mkSession(sessionId),
+      turns: [] as SessionTurn[],
+      events: [] as SessionEvent[],
+      messages: [
+        {
+          id: { 0: "msg-gap" },
+          session_id: { 0: sessionId },
+          turn_id: { 0: "turn-gap" },
+          role: "assistant",
+          content: "hello",
+          delivery: "immediate",
+          created_at: new Date().toISOString(),
+        } as Message,
+      ],
+      last_event_seq: 2,
+      has_more_turns: false,
+    };
+    const headAfterGap = {
+      session: mkSession(sessionId),
+      turns: [] as SessionTurn[],
+      events: [] as SessionEvent[],
+      messages: [] as Message[],
+      last_event_seq: 2,
+      has_more_turns: false,
+    };
+
+    let resolveHead: ((value: any) => void) | null = null;
+    const headPromise = new Promise((resolve) => {
+      resolveHead = resolve;
+    });
+
+    (getSessionHead as any)
+      .mockResolvedValueOnce(headWithMessage)
+      .mockImplementationOnce(() => headPromise);
+
+    const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (listener: (evt: WorkspaceActiveSnapshotEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      setSubscriptions: (_subs) => {},
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      getSnapshot: () => ({
+        workspaceId: "ws-1",
+        initialized: true,
+        connection: "connected" as const,
+        tasksById: {},
+        activeIds: [],
+        archivedIds: [],
+        totalActive: 0,
+        totalArchived: 0,
+        fetchState: { active: "idle", archived: "idle" },
+        hasMoreActive: false,
+        hasMoreArchived: false,
+        archivedLoaded: false,
+      }),
+    };
+
+    const sup = new SessionSupervisor();
+    sup.bindWorkspaceActiveSnapshotStore(store);
+    sup.openSession(sessionId);
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return Boolean(entry && !entry.loading);
+    });
+    expect(sup.getSnapshot().sessions[sessionId]?.messages.length).toBe(1);
+
+    const gapEvent: WorkspaceActiveSnapshotEvent = {
+      type: "session_gap",
+      workspace_id: { 0: "ws-1" },
+      snapshot_rev: 2,
+      session_id: { 0: sessionId },
+      after_seq: 5,
+    };
+    listeners.forEach((listener) => listener(gapEvent));
+
+    const internalEntry = (sup as any).entries.get(sessionId);
+    expect(internalEntry.turnsHydrated).toBe(false);
+    expect(internalEntry.messages.length).toBe(0);
+    expect(internalEntry.lastEventSeq).toBe(5);
+
+    resolveHead?.(headAfterGap);
+
+    await waitForCondition(() => (getSessionHead as any).mock.calls.length >= 2);
+    await waitForCondition(() => !sup.getSnapshot().sessions[sessionId]?.loading);
+    expect(sup.getSnapshot().sessions[sessionId]?.messages.length).toBe(0);
+  });
+
   it("ignores active task upserts without head data", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

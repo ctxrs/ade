@@ -56,7 +56,6 @@ export function WorkbenchSessionSlot({
         </div>
       ) : null}
       <SessionView
-        key={sessionId}
         sessionId={sessionId}
         isActive={active}
         autoOpenSession={false}

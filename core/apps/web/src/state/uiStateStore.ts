@@ -1,75 +1,43 @@
+import { getWebappStorage } from "./storage";
+
 export type UiKvRecord = {
   key: string;
   value: unknown;
   updatedAtMs: number;
 };
 
-const DB_NAME = "ctx-ui";
-const DB_VERSION = 1;
-const STORE_NAME = "kv";
+export type UiStateBatchOp =
+  | { kind: "set"; key: string; value: unknown }
+  | { kind: "delete"; key: string };
+
 const SESSION_HISTORY_PAGE_LIMIT = 120;
+const SESSION_HISTORY_PAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const SESSION_HISTORY_TOUCH_GRACE_MS = 30 * 1000;
 
-let dbPromise: Promise<IDBDatabase> | null = null;
+const storage = getWebappStorage();
 
-function requestToPromise<T>(req: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    req.addEventListener("success", () => resolve(req.result));
-    req.addEventListener("error", () => reject(req.error ?? new Error("IndexedDB request failed")));
-  });
-}
-
-function txDone(tx: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    tx.addEventListener("complete", () => resolve());
-    tx.addEventListener("abort", () => reject(tx.error ?? new Error("IndexedDB transaction aborted")));
-    tx.addEventListener("error", () => reject(tx.error ?? new Error("IndexedDB transaction failed")));
-  });
-}
-
-async function openDb(): Promise<IDBDatabase> {
-  if (dbPromise) return dbPromise;
-  if (typeof indexedDB === "undefined") {
-    throw new Error("IndexedDB is unavailable in this environment.");
+export async function uiStateBatch(ops: UiStateBatchOp[]): Promise<void> {
+  if (ops.length === 0) return;
+  for (const op of ops) {
+    if (op.kind === "set") {
+      await storage.setKv(op.key, op.value);
+    } else {
+      await storage.deleteKv(op.key);
+    }
   }
-
-  dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.addEventListener("upgradeneeded", () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: "key" });
-      }
-    });
-    req.addEventListener("success", () => resolve(req.result));
-    req.addEventListener("error", () => reject(req.error ?? new Error("Failed to open IndexedDB")));
-  });
-
-  return dbPromise;
+  await storage.flush();
 }
 
 export async function uiStateGet(key: string): Promise<unknown | null> {
-  const db = await openDb();
-  const tx = db.transaction(STORE_NAME, "readonly");
-  const store = tx.objectStore(STORE_NAME);
-  const rec = (await requestToPromise(store.get(key))) as UiKvRecord | undefined;
-  await txDone(tx);
-  return rec?.value ?? null;
+  return (await storage.getKv<unknown>(key)) ?? null;
 }
 
 export async function uiStateSet(key: string, value: unknown): Promise<void> {
-  const db = await openDb();
-  const tx = db.transaction(STORE_NAME, "readwrite");
-  const store = tx.objectStore(STORE_NAME);
-  await requestToPromise(store.put({ key, value, updatedAtMs: Date.now() } satisfies UiKvRecord));
-  await txDone(tx);
+  await storage.setKv(key, value);
 }
 
 export async function uiStateDelete(key: string): Promise<void> {
-  const db = await openDb();
-  const tx = db.transaction(STORE_NAME, "readwrite");
-  const store = tx.objectStore(STORE_NAME);
-  await requestToPromise(store.delete(key));
-  await txDone(tx);
+  await storage.deleteKv(key);
 }
 
 export type PersistedWorkbenchSelectionV1 = {
@@ -135,10 +103,10 @@ export function workspaceActiveSnapshotKeyV1(workspaceId: string) {
   return `wb.active_snapshot.v1.${workspaceId}`;
 }
 
-export async function loadWorkspaceActiveSnapshotV1(
+export function decodeWorkspaceActiveSnapshotV1(
+  raw: unknown,
   workspaceId: string,
-): Promise<PersistedWorkspaceActiveSnapshotV1 | null> {
-  const raw = await uiStateGet(workspaceActiveSnapshotKeyV1(workspaceId));
+): PersistedWorkspaceActiveSnapshotV1 | null {
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as PersistedWorkspaceActiveSnapshotV1;
   if (rec.v !== 1 || rec.workspaceId !== workspaceId) return null;
@@ -163,11 +131,20 @@ export async function loadWorkspaceActiveSnapshotV1(
   return rec;
 }
 
+export async function loadWorkspaceActiveSnapshotV1(
+  workspaceId: string,
+): Promise<PersistedWorkspaceActiveSnapshotV1 | null> {
+  const raw = await storage.getSnapshot<PersistedWorkspaceActiveSnapshotV1>(
+    workspaceActiveSnapshotKeyV1(workspaceId),
+  );
+  return decodeWorkspaceActiveSnapshotV1(raw, workspaceId);
+}
+
 export async function saveWorkspaceActiveSnapshotV1(
   workspaceId: string,
   payload: Omit<PersistedWorkspaceActiveSnapshotV1, "v" | "workspaceId" | "updatedAtMs">,
 ): Promise<void> {
-  await uiStateSet(workspaceActiveSnapshotKeyV1(workspaceId), {
+  await storage.setSnapshot(workspaceActiveSnapshotKeyV1(workspaceId), {
     v: 1,
     workspaceId,
     updatedAtMs: Date.now(),
@@ -187,7 +164,7 @@ export function sessionHeadKeyV1(sessionId: string) {
 }
 
 export async function loadSessionHeadV1(sessionId: string): Promise<PersistedSessionHeadV1 | null> {
-  const raw = await uiStateGet(sessionHeadKeyV1(sessionId));
+  const raw = await storage.getSnapshot<PersistedSessionHeadV1>(sessionHeadKeyV1(sessionId));
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as PersistedSessionHeadV1;
   if (rec.v !== 1 || rec.sessionId !== sessionId || !rec.head) return null;
@@ -198,7 +175,7 @@ export async function saveSessionHeadV1(
   sessionId: string,
   head: PersistedSessionHeadV1["head"],
 ): Promise<void> {
-  await uiStateSet(sessionHeadKeyV1(sessionId), {
+  await storage.setSnapshot(sessionHeadKeyV1(sessionId), {
     v: 1,
     sessionId,
     head,
@@ -232,10 +209,67 @@ function decodeSessionHistoryIndexV1(raw: unknown): PersistedSessionHistoryIndex
   if (!raw || typeof raw !== "object") return { v: 1, entries: [] };
   const rec = raw as PersistedSessionHistoryIndexV1;
   if (rec.v !== 1 || !Array.isArray(rec.entries)) return { v: 1, entries: [] };
-  const entries = rec.entries.filter(
-    (entry) => entry && typeof entry.key === "string" && typeof entry.updatedAtMs === "number",
-  );
+  const entries: PersistedSessionHistoryIndexV1["entries"] = [];
+  for (const entry of rec.entries) {
+    if (!entry || typeof entry.key !== "string") continue;
+    if (!Number.isFinite(entry.updatedAtMs)) continue;
+    entries.push({ key: entry.key, updatedAtMs: entry.updatedAtMs });
+  }
   return { v: 1, entries };
+}
+
+function planSessionHistoryEvictions(
+  entries: PersistedSessionHistoryIndexV1["entries"],
+  nowMs: number,
+): { kept: PersistedSessionHistoryIndexV1["entries"]; evictKeys: string[] } {
+  const expiresBefore = nowMs - SESSION_HISTORY_PAGE_TTL_MS;
+  const evict = new Set<string>();
+  const latestByKey = new Map<string, number>();
+
+  for (const entry of entries) {
+    if (!entry.key || !Number.isFinite(entry.updatedAtMs)) continue;
+    if (entry.updatedAtMs < expiresBefore) {
+      evict.add(entry.key);
+      continue;
+    }
+    const existing = latestByKey.get(entry.key);
+    if (existing === undefined || existing < entry.updatedAtMs) {
+      latestByKey.set(entry.key, entry.updatedAtMs);
+    }
+  }
+
+  const sorted = Array.from(latestByKey.entries())
+    .map(([key, updatedAtMs]) => ({ key, updatedAtMs }))
+    .sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+  const kept = sorted.slice(0, SESSION_HISTORY_PAGE_LIMIT);
+  const keptKeys = new Set(kept.map((entry) => entry.key));
+
+  for (const entry of sorted.slice(SESSION_HISTORY_PAGE_LIMIT)) {
+    evict.add(entry.key);
+  }
+
+  const evictKeys = Array.from(evict).filter((key) => !keptKeys.has(key));
+  return { kept, evictKeys };
+}
+
+async function updateSessionHistoryIndexV1(
+  key: string,
+  nowMs: number,
+  opts?: { force?: boolean },
+): Promise<void> {
+  const index = decodeSessionHistoryIndexV1(
+    await storage.getKv<PersistedSessionHistoryIndexV1>(sessionHistoryIndexKeyV1()),
+  );
+  const existing = index.entries.find((entry) => entry.key === key);
+  if (!opts?.force && existing && nowMs - existing.updatedAtMs < SESSION_HISTORY_TOUCH_GRACE_MS) {
+    return;
+  }
+  const entries = index.entries.filter((entry) => entry.key !== key);
+  entries.unshift({ key, updatedAtMs: nowMs });
+  const { kept, evictKeys } = planSessionHistoryEvictions(entries, nowMs);
+  await storage.setKv(sessionHistoryIndexKeyV1(), { v: 1, entries: kept } satisfies PersistedSessionHistoryIndexV1);
+  if (evictKeys.length === 0) return;
+  await Promise.all(evictKeys.map((evictKey) => storage.deleteHistoryPage(evictKey)));
 }
 
 export async function loadSessionHistoryPageV1(
@@ -243,10 +277,12 @@ export async function loadSessionHistoryPageV1(
   beforeSeq: number,
   limit: number,
 ): Promise<PersistedSessionHistoryPageV1 | null> {
-  const raw = await uiStateGet(sessionHistoryPageKeyV1(sessionId, beforeSeq, limit));
+  const key = sessionHistoryPageKeyV1(sessionId, beforeSeq, limit);
+  const raw = await storage.getHistoryPage<PersistedSessionHistoryPageV1>(key);
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as PersistedSessionHistoryPageV1;
   if (rec.v !== 1 || rec.sessionId !== sessionId) return null;
+  void updateSessionHistoryIndexV1(key, Date.now()).catch(() => {});
   return rec;
 }
 
@@ -258,26 +294,17 @@ export async function saveSessionHistoryPageV1(
 ): Promise<void> {
   const key = sessionHistoryPageKeyV1(sessionId, beforeSeq, limit);
   const now = Date.now();
-  await uiStateSet(key, {
+  const pageValue: PersistedSessionHistoryPageV1 = {
     v: 1,
     sessionId,
     beforeSeq,
     limit,
     page,
     updatedAtMs: now,
-  } satisfies PersistedSessionHistoryPageV1);
+  };
 
-  const index = decodeSessionHistoryIndexV1(await uiStateGet(sessionHistoryIndexKeyV1()));
-  const entries = index.entries.filter((entry) => entry.key !== key);
-  entries.unshift({ key, updatedAtMs: now });
-  entries.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-
-  const pruned = entries.slice(SESSION_HISTORY_PAGE_LIMIT);
-  const trimmed = entries.slice(0, SESSION_HISTORY_PAGE_LIMIT);
-  await uiStateSet(sessionHistoryIndexKeyV1(), { v: 1, entries: trimmed } satisfies PersistedSessionHistoryIndexV1);
-  for (const entry of pruned) {
-    await uiStateDelete(entry.key);
-  }
+  await storage.setHistoryPage(key, pageValue);
+  await updateSessionHistoryIndexV1(key, now, { force: true });
 }
 
 export type PersistedSessionAcpMetaV1 = {
@@ -294,7 +321,7 @@ export function sessionAcpMetaKeyV1(sessionId: string) {
 }
 
 export async function loadSessionAcpMetaV1(sessionId: string): Promise<PersistedSessionAcpMetaV1 | null> {
-  const raw = await uiStateGet(sessionAcpMetaKeyV1(sessionId));
+  const raw = await storage.getSnapshot<PersistedSessionAcpMetaV1>(sessionAcpMetaKeyV1(sessionId));
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as PersistedSessionAcpMetaV1;
   if (rec.v !== 1 || rec.sessionId !== sessionId) return null;
@@ -305,7 +332,7 @@ export async function saveSessionAcpMetaV1(
   sessionId: string,
   meta: Omit<PersistedSessionAcpMetaV1, "v" | "sessionId" | "updatedAtMs">,
 ): Promise<void> {
-  await uiStateSet(sessionAcpMetaKeyV1(sessionId), {
+  await storage.setSnapshot(sessionAcpMetaKeyV1(sessionId), {
     v: 1,
     sessionId,
     updatedAtMs: Date.now(),
@@ -324,7 +351,7 @@ export function settingsKeyV1() {
 }
 
 export async function loadSettingsV1(): Promise<PersistedSettingsV1 | null> {
-  const raw = await uiStateGet(settingsKeyV1());
+  const raw = await storage.getKv<PersistedSettingsV1>(settingsKeyV1());
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as PersistedSettingsV1;
   if (rec.v !== 1 || !rec.settings) return null;
@@ -332,7 +359,7 @@ export async function loadSettingsV1(): Promise<PersistedSettingsV1 | null> {
 }
 
 export async function saveSettingsV1(settings: PersistedSettingsV1["settings"]): Promise<void> {
-  await uiStateSet(settingsKeyV1(), {
+  await storage.setKv(settingsKeyV1(), {
     v: 1,
     settings,
     updatedAtMs: Date.now(),
@@ -352,7 +379,7 @@ export function sessionViewPrefsKeyV1() {
 }
 
 export async function loadSessionViewPrefsV1(): Promise<PersistedSessionViewPrefsV1 | null> {
-  const raw = await uiStateGet(sessionViewPrefsKeyV1());
+  const raw = await storage.getKv<PersistedSessionViewPrefsV1>(sessionViewPrefsKeyV1());
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as PersistedSessionViewPrefsV1;
   if (rec.v !== 1) return null;
@@ -361,7 +388,7 @@ export async function loadSessionViewPrefsV1(): Promise<PersistedSessionViewPref
 }
 
 export async function saveSessionViewPrefsV1(verbosity: SessionViewVerbosity): Promise<void> {
-  await uiStateSet(sessionViewPrefsKeyV1(), {
+  await storage.setKv(sessionViewPrefsKeyV1(), {
     v: 1,
     verbosity,
     updatedAtMs: Date.now(),

@@ -20,6 +20,10 @@ export type DesktopHttpResponse = {
   content_type?: string | null;
 };
 
+export type DesktopStorageBatchOp =
+  | { kind: "set"; key: string; value: unknown }
+  | { kind: "delete"; key: string };
+
 export type DesktopDeepLinkToken = {
   token: string;
   expires_at_ms: number;
@@ -57,7 +61,8 @@ export type DesktopEditorSettings = {
 
 export const isDesktopApp = (): boolean => {
   try {
-    return Boolean((window as any).__TAURI_INTERNALS__ || (window as any).__TAURI__);
+    const g = globalThis as any;
+    return Boolean(g?.__TAURI_INTERNALS__ || g?.__TAURI__);
   } catch {
     return false;
   }
@@ -135,6 +140,12 @@ export const desktopDaemonRequest = async (req: {
   headers?: Array<[string, string]>;
 }): Promise<DesktopHttpResponse> =>
   invoke<DesktopHttpResponse>("desktop_daemon_request", { req });
+
+export const desktopStorageGet = async (key: string): Promise<unknown | null> =>
+  invoke<unknown | null>("desktop_storage_get", { key });
+
+export const desktopStorageBatch = async (ops: DesktopStorageBatchOp[]): Promise<void> =>
+  invoke<void>("desktop_storage_batch", { ops });
 
 export const desktopUploadBlob = async (args: {
   bytes: number[];

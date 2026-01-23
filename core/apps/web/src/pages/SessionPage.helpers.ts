@@ -1,5 +1,8 @@
 import { blobUrl, type MessageAttachment, type SessionTurn, type SubagentInvocationChild } from "../api/client";
 
+const PLAIN_TEXT_CACHE_LIMIT = 500;
+const plainTextCache = new Map<string, string>();
+
 export function imageAttachmentSrc(a: MessageAttachment): string {
   return a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
 }
@@ -30,6 +33,8 @@ export function appendFragment(base: string, fragment: string): string {
 
 export function markdownToPlainText(input: string): string {
   if (!input) return "";
+  const cached = plainTextCache.get(input);
+  if (cached != null) return cached;
   let text = input.replace(/\r/g, "");
   text = text.replace(/```[a-zA-Z0-9_-]*\n/g, "");
   text = text.replace(/```/g, "");
@@ -41,7 +46,13 @@ export function markdownToPlainText(input: string): string {
     .map((line) => line.replace(/^\s*(?:[#>*+-]|\d+\.)\s+/, ""))
     .join("\n");
   text = text.replace(/\n{3,}/g, "\n\n");
-  return text.trim();
+  const trimmed = text.trim();
+  if (plainTextCache.size >= PLAIN_TEXT_CACHE_LIMIT) {
+    const oldest = plainTextCache.keys().next().value as string | undefined;
+    if (oldest) plainTextCache.delete(oldest);
+  }
+  plainTextCache.set(input, trimmed);
+  return trimmed;
 }
 
 export function parseIsoMs(value?: string | null): number | null {

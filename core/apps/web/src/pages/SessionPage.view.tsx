@@ -67,6 +67,7 @@ import {
   formatElapsedMs,
   formatSubagentChildMeta,
   humanToolStatus,
+  markdownToPlainText,
   parseIsoMs,
   subagentChildLabel,
 } from "./SessionPage.helpers";
@@ -95,6 +96,38 @@ const createClientMessageId = (): string => {
   }
   return `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 };
+
+function useRafCoalesced<T>(value: T): T {
+  const latestRef = useRef(value);
+  const [coalesced, setCoalesced] = useState(value);
+  const rafRef = useRef<number | null>(null);
+  latestRef.current = value;
+
+  useEffect(() => {
+    if (Object.is(value, coalesced)) return;
+    if (rafRef.current != null) return;
+    const schedule =
+      typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+        ? window.requestAnimationFrame.bind(window)
+        : (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 16);
+    const cancel =
+      typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function"
+        ? window.cancelAnimationFrame.bind(window)
+        : clearTimeout;
+    rafRef.current = schedule(() => {
+      rafRef.current = null;
+      setCoalesced(latestRef.current);
+    }) as unknown as number;
+    return () => {
+      if (rafRef.current != null) {
+        cancel(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [value, coalesced]);
+
+  return coalesced;
+}
 
 export function SessionView({
   sessionId,
@@ -175,6 +208,36 @@ export function SessionView({
 
   useEffect(() => {
     setPendingMessages([]);
+    setDraftAttachments([]);
+    setSendError(null);
+    setFileOpenError(null);
+    setDropActive(false);
+    setOptimisticAskAnswers({});
+    setExpandedTurnHeaders({});
+    setExpandedTurnDetailsById({});
+    setExpandedToolById({});
+    setAuthMethodId("");
+    setAuthBusy(false);
+    setAuthError(null);
+    setProviderGuardActionError(null);
+    setProviderGuardActionBusy(false);
+    setAtBottom(true);
+    setStickToBottom(true);
+    stickToBottomRef.current = true;
+    lastScrollPersistedRef.current = null;
+    liveScrollTopRef.current = null;
+    restorePendingRef.current = true;
+    restoreRetryRef.current = 0;
+    restoringScrollRef.current = false;
+    setRestoreInProgress(false);
+    if (restoreCooldownRef.current) {
+      window.clearTimeout(restoreCooldownRef.current);
+      restoreCooldownRef.current = null;
+    }
+    if (dropHideTimerRef.current) {
+      window.clearTimeout(dropHideTimerRef.current);
+      dropHideTimerRef.current = null;
+    }
   }, [id]);
   const didInitialScrollRef = useRef(false);
   const lastScrollPersistedRef = useRef<{
@@ -618,6 +681,12 @@ export function SessionView({
     [turnsKey, pendingTurns],
   );
   const displayTurnsKey = deriveTurnsKey(displayTurns);
+  const coalescedEvents = useRafCoalesced(events);
+  const coalescedEventsKey = useRafCoalesced(eventsKey);
+  const coalescedDisplayMessages = useRafCoalesced(displayMessages);
+  const coalescedDisplayMessagesKey = useRafCoalesced(displayMessagesKey);
+  const coalescedDisplayTurns = useRafCoalesced(displayTurns);
+  const coalescedDisplayTurnsKey = useRafCoalesced(displayTurnsKey);
   const contextWindow = useMemo<ContextWindowInfo | null>(() => {
     let latestMetrics: any = null;
     let latestAt = -1;
@@ -974,24 +1043,24 @@ export function SessionView({
   }, [perfEnabled, entry?.loading, entry?.events.length, entry?.diff]);
 
   const workbenchThreadView = useMemo(() => {
-    if (displayTurns.length === 0) {
+    if (coalescedDisplayTurns.length === 0) {
       return { groups: [], debugEvents: [] };
     }
     return buildWorkbenchThreadViewModelFromTurns(
-      displayTurns,
-      displayMessages,
+      coalescedDisplayTurns,
+      coalescedDisplayMessages,
       toolSummariesReady ? turnToolsByTurnId : {},
-      events,
+      coalescedEvents,
       askUserQuestionAnswers,
     );
     // messages are canonical for turn headers; include in memo key
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    displayTurnsKey,
-    displayMessagesKey,
+    coalescedDisplayTurnsKey,
+    coalescedDisplayMessagesKey,
     toolSummariesReady ? turnToolsByTurnId : null,
-    eventsKey,
-    displayTurns.length,
+    coalescedEventsKey,
+    coalescedDisplayTurns.length,
     askUserQuestionAnswers,
   ]);
 
@@ -1028,10 +1097,11 @@ export function SessionView({
   stickToBottomRef.current = stickToBottom;
   const wasActiveRef = useRef(isActive);
   const prevActiveRef = useRef(isActive);
+  const lastSessionIdRef = useRef(id);
   const virtuosoPersistTimerRef = useRef<number | null>(null);
   const scrollSyncKey = useMemo(
-    () => `${eventsKey}:${displayMessagesKey}:${displayTurnsKey}`,
-    [eventsKey, displayMessagesKey, displayTurnsKey],
+    () => `${coalescedEventsKey}:${coalescedDisplayMessagesKey}:${coalescedDisplayTurnsKey}`,
+    [coalescedEventsKey, coalescedDisplayMessagesKey, coalescedDisplayTurnsKey],
   );
   const [restoreInProgress, setRestoreInProgress] = useState(false);
   const { initialTopMostItemIndex, markAutoScroll, scheduleAutoScroll } = usePinnedScrollManager({
@@ -1063,7 +1133,15 @@ export function SessionView({
     autoScrollAttemptRef,
   });
   useLayoutEffect(() => {
-    if (isActive && !wasActiveRef.current) {
+    const sessionChanged = lastSessionIdRef.current !== id;
+    if (sessionChanged) {
+      lastSessionIdRef.current = id;
+      wasActiveRef.current = false;
+      restorePendingRef.current = true;
+      didInitialScrollRef.current = false;
+      restoringScrollRef.current = false;
+    }
+    if (isActive && (!wasActiveRef.current || sessionChanged)) {
       const hasVirtuosoState = Boolean(scrollState?.virtuosoState);
       const shouldUseVirtuosoRestore = hasVirtuosoState && !preserveScrollOnFocus && scrollState?.stickToBottom === false;
       restorePendingRef.current = !shouldUseVirtuosoRestore;
@@ -1088,7 +1166,7 @@ export function SessionView({
       }
     }
     wasActiveRef.current = isActive;
-  }, [isActive, preserveScrollOnFocus, scrollState?.stickToBottom, scrollState?.virtuosoState]);
+  }, [id, isActive, preserveScrollOnFocus, scrollState?.stickToBottom, scrollState?.virtuosoState]);
 
   const persistCurrentScroll = useCallback(() => {
     if (!onScrollStateChange) return;
@@ -1677,11 +1755,13 @@ export function SessionView({
       if (!item) return <div style={{ height: 1 }} />;
       if ((item as any).kind === "turn_header") {
         const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
-        const isLong = header.plain_text.split("\n").length > 4 || header.plain_text.length > 280;
+        const plainText = header.plain_text ?? markdownToPlainText(header.content ?? "");
+        const isLong = plainText.split("\n").length > 4 || plainText.length > 280;
         const expanded = expandedTurnHeaders[header.id] ?? !isLong;
         return (
           <WorkbenchTurnHeaderView
             header={header}
+            plainText={plainText}
             expanded={expanded}
             onToggle={() => setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }))}
           />

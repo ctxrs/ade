@@ -15,6 +15,11 @@ const args = process.argv.slice(2);
 let fixturePath = defaultFixture;
 let outPath = defaultOut;
 let baseUrl = process.env.CTX_LOADTEST_BASE_URL || defaultBaseUrl;
+let check = false;
+let maxSessionSwitchP95 = null;
+let maxSessionSwitchP99 = null;
+let maxLongTaskMs = null;
+let maxLongTaskCount = null;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -33,11 +38,47 @@ for (let i = 0; i < args.length; i++) {
     i += 1;
     continue;
   }
+  if (arg === "--check") {
+    check = true;
+    continue;
+  }
+  if (arg === "--max-session-switch-p95") {
+    maxSessionSwitchP95 = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--max-session-switch-p99") {
+    maxSessionSwitchP99 = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--max-long-task-ms") {
+    maxLongTaskMs = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--max-long-task-count") {
+    maxLongTaskCount = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
   if (arg === "--help" || arg === "-h") {
-    console.log(`Usage: node ./scripts/replay-loadtest.mjs [--fixture path] [--out path] [--base-url url]\n`);
+    console.log(
+      "Usage: node ./scripts/replay-loadtest.mjs [--fixture path] [--out path] [--base-url url] " +
+        "[--check] [--max-session-switch-p95 ms] [--max-session-switch-p99 ms] " +
+        "[--max-long-task-ms ms] [--max-long-task-count n]\n",
+    );
     process.exit(0);
   }
 }
+
+const percentile = (values, pct) => {
+  if (!values.length) return null;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const rank = Math.ceil(pct * sorted.length) - 1;
+  const idx = Math.min(sorted.length - 1, Math.max(0, rank));
+  return sorted[idx];
+};
 
 const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
 const workspaceId = fixture?.workspace?.id || fixture?.active_snapshot?.workspace_id;
@@ -306,16 +347,98 @@ try {
   );
 
   const telemetry = await page.evaluate(() => window.__ctxLoadTestTelemetry?.getSnapshot?.());
+  if (check) {
+    if (!Number.isFinite(maxSessionSwitchP95)) maxSessionSwitchP95 = 100;
+    if (!Number.isFinite(maxSessionSwitchP99)) maxSessionSwitchP99 = 300;
+    if (!Number.isFinite(maxLongTaskMs)) maxLongTaskMs = 50;
+    if (!Number.isFinite(maxLongTaskCount)) maxLongTaskCount = 0;
+  }
+
+  const sessionDurations = Array.isArray(telemetry?.session_switches)
+    ? telemetry.session_switches
+        .filter((entry) => entry?.status === "completed" && Number.isFinite(entry?.duration_ms))
+        .map((entry) => entry.duration_ms)
+    : [];
+  const longTasks = Array.isArray(telemetry?.long_tasks) ? telemetry.long_tasks : [];
+  const longTaskDurations = longTasks
+    .filter((entry) => Number.isFinite(entry?.duration_ms))
+    .map((entry) => entry.duration_ms);
+  const longTaskBudget = Number.isFinite(maxLongTaskMs) ? maxLongTaskMs : null;
+  const longTasksOverBudget = longTaskBudget
+    ? longTaskDurations.filter((value) => value > longTaskBudget).length
+    : 0;
+  const summary = {
+    session_switch_ms: {
+      count: sessionDurations.length,
+      p50: percentile(sessionDurations, 0.5),
+      p95: percentile(sessionDurations, 0.95),
+      p99: percentile(sessionDurations, 0.99),
+      max: sessionDurations.length ? Math.max(...sessionDurations) : null,
+    },
+    long_tasks_ms: {
+      count: longTaskDurations.length,
+      max: longTaskDurations.length ? Math.max(...longTaskDurations) : null,
+      over_budget: longTasksOverBudget,
+      budget_ms: longTaskBudget,
+    },
+  };
+  console.log(
+    `session switches: count=${summary.session_switch_ms.count} ` +
+      `p50=${summary.session_switch_ms.p50 ?? "n/a"} ` +
+      `p95=${summary.session_switch_ms.p95 ?? "n/a"} ` +
+      `p99=${summary.session_switch_ms.p99 ?? "n/a"} ` +
+      `max=${summary.session_switch_ms.max ?? "n/a"}`,
+  );
+  console.log(
+    `long tasks: count=${summary.long_tasks_ms.count} ` +
+      `over_budget=${summary.long_tasks_ms.over_budget} ` +
+      `max=${summary.long_tasks_ms.max ?? "n/a"} ` +
+      `budget=${summary.long_tasks_ms.budget_ms ?? "n/a"}`,
+  );
+
+  const failures = [];
+  if (check && sessionDurations.length === 0) {
+    failures.push("no session switch telemetry captured");
+  }
+  if (check && Number.isFinite(maxSessionSwitchP95)) {
+    const p95 = summary.session_switch_ms.p95 ?? Infinity;
+    if (p95 > maxSessionSwitchP95) {
+      failures.push(`session switch p95 ${p95}ms > ${maxSessionSwitchP95}ms`);
+    }
+  }
+  if (check && Number.isFinite(maxSessionSwitchP99)) {
+    const p99 = summary.session_switch_ms.p99 ?? Infinity;
+    if (p99 > maxSessionSwitchP99) {
+      failures.push(`session switch p99 ${p99}ms > ${maxSessionSwitchP99}ms`);
+    }
+  }
+  if (check && Number.isFinite(maxLongTaskCount)) {
+    if (summary.long_tasks_ms.over_budget > maxLongTaskCount) {
+      failures.push(
+        `long tasks over budget ${summary.long_tasks_ms.over_budget} > ${maxLongTaskCount}`,
+      );
+    }
+  }
+
   const output = {
     fixture: fixturePath,
     base_url: baseUrl,
     workspace_id: workspaceId,
     captured_at: new Date().toISOString(),
     telemetry,
+    summary,
   };
   await mkdir(path.dirname(outPath), { recursive: true });
   await writeFile(outPath, JSON.stringify(output, null, 2));
   console.log(`wrote telemetry to ${outPath}`);
+
+  if (failures.length > 0) {
+    console.error("loadtest gate failed:");
+    for (const failure of failures) {
+      console.error(`- ${failure}`);
+    }
+    process.exit(1);
+  }
 } finally {
   await browser.close();
 }

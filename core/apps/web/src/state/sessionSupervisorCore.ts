@@ -34,6 +34,8 @@ import {
   saveSessionHeadV1,
   saveSessionHistoryPageV1,
 } from "./uiStateStore";
+import { SessionReplicaBridge } from "./sessionReplicaBridge";
+import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
 
 const readTunableInt = (key: string, fallback: number) => {
   try {
@@ -224,6 +226,7 @@ export class SessionSupervisor {
   private listeners = new Set<() => void>();
   private snapshot: SessionSupervisorSnapshot = { connection: "idle", sessions: {} };
   private entries = new Map<string, InternalEntry>();
+  private replica: SessionReplicaBridge;
   private snapshotStore: WorkspaceActiveSnapshotEventSource | null = null;
   private snapshotUnsub: (() => void) | null = null;
   private snapshotStateUnsub: (() => void) | null = null;
@@ -232,6 +235,13 @@ export class SessionSupervisor {
   private subscribedSessionIds: string[] = [];
   private providerOptionsCache = new Map<string, ProviderOptions>();
   private providerOptionsInFlight = new Map<string, Promise<ProviderOptions | undefined>>();
+
+  constructor() {
+    this.replica = new SessionReplicaBridge(this.handleReplicaPatches, {
+      eventBufferLimit: EVENT_BUFFER_LIMIT,
+      headLimit: HEAD_LIMIT,
+    });
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -269,7 +279,16 @@ export class SessionSupervisor {
     const entry = this.ensureEntry(sessionId);
     entry.refCount += 1;
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
-    this.ensureLoaded(sessionId, opts).catch(() => {});
+    const seededHead = this.snapshotStore?.getSessionHeadSnapshot(sessionId);
+    if (seededHead) {
+      this.replica.dispatch({ type: "seed_head", sessionId, head: seededHead });
+    }
+    this.replica.dispatch({
+      type: "open_session",
+      sessionId,
+      force: opts?.force,
+      silent: opts?.silent,
+    });
     this.refreshSubscriptions();
     return () => this.closeSession(sessionId, opts);
   };
@@ -279,16 +298,17 @@ export class SessionSupervisor {
     if (!entry) return;
     entry.refCount = Math.max(0, entry.refCount - 1);
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
+    this.replica.dispatch({ type: "close_session", sessionId });
     this.refreshSubscriptions();
     this.publish();
   };
 
   refreshSession = (sessionId: string, opts?: OpenOptions) => {
-    this.ensureLoaded(sessionId, { ...opts, force: true }).catch(() => {});
+    this.replica.dispatch({ type: "refresh_session", sessionId });
   };
 
   refreshQueue = (sessionId: string) => {
-    this.ensureLoaded(sessionId, { force: true }).catch(() => {});
+    this.replica.dispatch({ type: "refresh_session", sessionId });
   };
 
   setActiveTaskSessionIds = (sessionIds: string[]) => {
@@ -377,6 +397,7 @@ export class SessionSupervisor {
     this.entries.set(to, entry);
     this.refreshSubscriptions();
     this.publish();
+    this.replica.dispatch({ type: "replace_session_id", oldSessionId: from, newSessionId: to });
   };
 
   replaceSessionTaskId = (sessionId: string, taskId: string) => {
@@ -392,6 +413,7 @@ export class SessionSupervisor {
     entry.queue = entry.queue.map((msg) => ({ ...msg, task_id: nextTaskId }));
     entry.updatedAtMs = Date.now();
     this.publish();
+    this.replica.dispatch({ type: "replace_session_task_id", sessionId: id, taskId: nextTaskId });
   };
 
   dropSessionEntry = (sessionId: string) => {
@@ -541,6 +563,108 @@ export class SessionSupervisor {
     this.snapshot = { connection: this.snapshot.connection, sessions };
     for (const l of this.listeners) l();
   }
+
+  private handleReplicaPatches = (patches: SessionReplicaPatch[]) => {
+    if (!patches || patches.length === 0) return;
+    let changed = false;
+    for (const patch of patches) {
+      const sessionId = String(patch.sessionId || "").trim();
+      if (!sessionId) continue;
+      const entry = this.ensureEntry(sessionId);
+      if (patch.op === "replace") {
+        this.resetEntryForGap(entry);
+      }
+      if (patch.op === "evict") {
+        const beforeSeq = patch.data.eventsBeforeSeq;
+        if (typeof beforeSeq === "number") {
+          entry.events = entry.events.filter((event) => event.seq >= beforeSeq);
+          entry.seqSet = new Set(entry.events.map((event) => event.seq));
+          entry.updatedAtMs = Date.now();
+          changed = true;
+        }
+        continue;
+      }
+      const data = patch.data;
+      if (data.session) {
+        entry.session = data.session;
+      }
+      if (data.turns && data.turns.length > 0) {
+        this.mergeTurns(entry, data.turns);
+      }
+      if (data.messages && data.messages.length > 0) {
+        this.mergeMessages(entry, data.messages);
+      }
+      if (data.events && data.events.length > 0) {
+        this.mergeEvents(entry, data.events);
+      }
+      if (data.toolSummaries && data.toolSummaries.length > 0) {
+        this.applyToolSummaries(entry, data.toolSummaries);
+      }
+      if (data.acpMeta) {
+        entry.acpModels = data.acpMeta.models ?? entry.acpModels;
+        entry.acpModes = data.acpMeta.modes ?? entry.acpModes;
+        entry.acpCurrentModelId = data.acpMeta.currentModelId ?? entry.acpCurrentModelId;
+        entry.acpMetaUpdatedAtMs = Date.now();
+      }
+      if (data.gitStatusSummary !== undefined) {
+        entry.gitStatusSummary = data.gitStatusSummary ?? null;
+      }
+      if (data.artifacts) {
+        entry.artifacts = data.artifacts;
+        entry.artifactsFetchedAtMs = Date.now();
+        entry.artifactsLoaded = true;
+        entry.artifactsLoading = false;
+      }
+      if (data.artifactsLoaded !== undefined) {
+        entry.artifactsLoaded = data.artifactsLoaded;
+        if (data.artifactsLoaded) {
+          entry.artifactsLoading = false;
+        }
+      }
+      if (data.stateLoaded !== undefined) {
+        entry.stateLoaded = data.stateLoaded;
+      }
+      if (data.stateLoading !== undefined) {
+        entry.stateLoading = data.stateLoading;
+      }
+      if (data.stateRev !== undefined) {
+        entry.stateRev = data.stateRev;
+      }
+      if (data.summaryCheckpoint !== undefined) {
+        entry.summaryCheckpoint = data.summaryCheckpoint;
+      }
+      if (data.headWindow !== undefined) {
+        entry.headWindow = data.headWindow;
+      }
+      if (data.lastEventSeq !== undefined) {
+        entry.lastEventSeq = data.lastEventSeq;
+      }
+      if (data.hasMoreTurns !== undefined) {
+        entry.hasMoreTurns = data.hasMoreTurns;
+      }
+      if (data.turnsHydrated !== undefined) {
+        entry.turnsHydrated = data.turnsHydrated;
+      }
+      if (data.loading !== undefined) {
+        entry.loading = data.loading;
+      }
+      if (data.error !== undefined) {
+        entry.error = data.error ?? undefined;
+      }
+      if (data.subagentNotice) {
+        void this.ensureSubagentInvocations(entry, { force: true });
+      }
+      if (!entry.acpModels || !hasModelList(entry.acpModels)) {
+        void this.ensureProviderOptions(entry);
+      }
+      entry.queue = entry.messages.filter((m) => m.delivery === "queued");
+      entry.updatedAtMs = Date.now();
+      changed = true;
+    }
+    if (changed) {
+      this.publish();
+    }
+  };
 
   private evictIfNeeded() {
     if (this.entries.size <= MAX_CACHED_SESSIONS) return;
@@ -1047,7 +1171,7 @@ export class SessionSupervisor {
     for (const sessionId of this.subscribedSessionIds) {
       const entry = this.entries.get(sessionId);
       if (!entry || entry.refCount === 0) continue;
-      this.ensureLoaded(sessionId, { force: true, silent: true }).catch(() => {});
+      this.replica.dispatch({ type: "refresh_session", sessionId });
     }
   }
 
@@ -1306,112 +1430,7 @@ export class SessionSupervisor {
   }
 
   private handleWorkspaceEvent(evt: WorkspaceActiveSnapshotEvent) {
-    if (evt.type === "session_gap") {
-      const sid = idToString(evt.session_id);
-      if (!sid) return;
-      const entry = this.entries.get(sid);
-      if (!entry) return;
-      entry.lastEventSeq = evt.after_seq;
-      this.resetEntryForGap(entry);
-      this.ensureLoaded(sid, { force: true, silent: true }).catch(() => {});
-      return;
-    }
-    if (evt.type === "active_task_upsert") {
-      const head = evt.task.primary_session_head;
-      if (head) {
-        const sessionId = idToString(head.session?.id);
-        if (sessionId) {
-          const entry = this.ensureEntry(sessionId);
-          const applied = this.applyActiveSnapshotHead(entry, head);
-          if (applied) {
-            entry.updatedAtMs = Date.now();
-            this.publish();
-          }
-        }
-      }
-      return;
-    }
-    if (evt.type !== "session_head_delta") return;
-    const delta = evt.delta;
-    const sid = idToString(delta.session_id);
-    if (!sid) return;
-    const entry = this.entries.get(sid);
-    if (!entry) return;
-
-    const isPartial = isPartialEvent(delta.event);
-    const allowPartial = entry.refCount > 0;
-
-    let changed = false;
-    if (typeof delta.last_event_seq === "number") {
-      if (!entry.lastEventSeq || delta.last_event_seq > entry.lastEventSeq) {
-        entry.lastEventSeq = delta.last_event_seq;
-        changed = true;
-      }
-    }
-    if (typeof delta.state_rev === "number") {
-      const next = delta.state_rev;
-      const prev = typeof entry.stateRev === "number" ? entry.stateRev : 0;
-      if (next > prev) {
-        entry.stateRev = next;
-      }
-    }
-
-    if (delta.turn) {
-      this.mergeTurns(entry, [delta.turn]);
-      changed = true;
-    }
-
-    if (delta.message) {
-      this.mergeMessages(entry, [delta.message]);
-      changed = true;
-    }
-
-    if (delta.event) {
-      if (isPartial) {
-        if (allowPartial) {
-          this.ensureTurnFromEvent(entry, delta.event);
-          if (this.applyEventToTurns(entry, delta.event)) {
-            changed = true;
-          }
-        }
-      } else {
-        if (!entry.seqSet.has(delta.event.seq)) {
-          entry.seqSet.add(delta.event.seq);
-          entry.events.push(delta.event);
-          if (entry.events.length > EVENT_BUFFER_LIMIT) {
-            const overflow = entry.events.length - EVENT_BUFFER_LIMIT;
-            const removed = entry.events.splice(0, overflow);
-            removed.forEach((e) => entry.seqSet.delete(e.seq));
-          }
-          changed = true;
-        }
-        const meta = extractAcpMetaFromEvent(delta.event);
-        if (meta && this.applyAcpMeta(entry, meta)) {
-          changed = true;
-        }
-        this.ensureTurnFromEvent(entry, delta.event);
-        if (this.applyEventToTurns(entry, delta.event)) {
-          changed = true;
-        }
-        if (this.applyArtifactsEvent(entry, delta.event)) {
-          changed = true;
-        }
-        if (this.applyGitStatusSnapshotNotice(entry, delta.event)) {
-          changed = true;
-        }
-        if (this.applySubagentInvocationNotice(entry, delta.event)) {
-          changed = true;
-        }
-      }
-    }
-
-    if (changed) {
-      entry.updatedAtMs = Date.now();
-      this.publish();
-      if (delta.turn || delta.message || (delta.event && !isPartial)) {
-        void this.persistHead(entry);
-      }
-    }
+    this.replica.dispatch({ type: "workspace_event", event: evt });
   }
 
   private syncActiveSnapshot(state: WorkspaceActiveSnapshotState) {

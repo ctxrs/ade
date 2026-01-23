@@ -12,7 +12,7 @@ import type {
   WorkbenchThreadView,
   WorkbenchTurnHeader,
 } from "./SessionPage.types";
-import { humanToolKind, markdownToPlainText } from "./SessionPage.helpers";
+import { humanToolKind } from "./SessionPage.helpers";
 import type { ContextWindowInfo } from "../components/WorkbenchComposer";
 import type { SessionViewVerbosity } from "../state/uiStateStore";
 
@@ -720,7 +720,6 @@ export function buildWorkbenchThreadViewModelFromTurns(
       ? {
         id: userMessageId || turnId,
         content: userMessage.content ?? "",
-        plain_text: markdownToPlainText(userMessage.content ?? ""),
         attachments: Array.isArray((userMessage as any).attachments)
           ? ((userMessage as any).attachments as MessageAttachment[])
           : [],
@@ -1019,7 +1018,6 @@ function buildWorkbenchThreadViewModelFromEvents(
       const header: WorkbenchTurnHeader = {
         id: mid,
         content: String(u.payload_json?.content ?? ""),
-        plain_text: markdownToPlainText(String(u.payload_json?.content ?? "")),
         attachments: Array.isArray(u.payload_json?.attachments)
           ? (u.payload_json.attachments as MessageAttachment[])
           : [],
@@ -1235,7 +1233,6 @@ function buildWorkbenchThreadViewModelFromEvents(
       header: {
         id: mid,
         content: u.content ?? "",
-        plain_text: u.content ?? "",
         attachments: Array.isArray((u as any).attachments) ? ((u as any).attachments as MessageAttachment[]) : [],
         created_at: u.created_at,
       },

@@ -11,6 +11,16 @@ export type LoadTestTelemetrySnapshot = {
     start_ms: number;
     duration_ms: number;
   }>;
+  worker_apply: Array<{
+    at_ms: number;
+    duration_ms: number;
+    batch_size?: number;
+  }>;
+  patch_latency: Array<{
+    at_ms: number;
+    duration_ms: number;
+    patch_size?: number;
+  }>;
   memory_samples: Array<{
     at_ms: number;
     used_js_heap_size?: number;
@@ -33,15 +43,48 @@ type LoadTestTelemetry = {
   enabled: boolean;
   startSessionSwitch: (fromSessionId: string | null, toSessionId: string | null) => void;
   finishSessionSwitch: (toSessionId: string | null) => void;
+  recordWorkerApply: (durationMs: number, opts?: { batchSize?: number }) => void;
+  recordPatchLatency: (durationMs: number, opts?: { patchSize?: number }) => void;
   getSnapshot: () => LoadTestTelemetrySnapshot;
+  getSummary: () => LoadTestTelemetrySummary;
   reset: () => void;
   stop: () => void;
+};
+
+type LoadTestTelemetrySummary = {
+  session_switch_ms: PercentileSummary;
+  long_task_ms: PercentileSummary;
+  worker_apply_ms: PercentileSummary;
+  patch_latency_ms: PercentileSummary;
+};
+
+type PercentileSummary = {
+  count: number;
+  p50?: number;
+  p95?: number;
+  p99?: number;
 };
 
 const MAX_ENTRIES = 2000;
 const MEMORY_SAMPLE_MS = 2000;
 
 let telemetry: LoadTestTelemetry | null = null;
+
+const summarizePercentiles = (values: number[]): PercentileSummary => {
+  if (values.length === 0) return { count: 0 };
+  const sorted = values.slice().sort((a, b) => a - b);
+  const pick = (p: number) => {
+    const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1));
+    return sorted[idx];
+  };
+  const round = (v: number) => Math.round(v * 10) / 10;
+  return {
+    count: sorted.length,
+    p50: round(pick(0.5)),
+    p95: round(pick(0.95)),
+    p99: round(pick(0.99)),
+  };
+};
 
 const nowMs = (): number => {
   if (typeof performance !== "undefined" && typeof performance.now === "function") {
@@ -64,6 +107,8 @@ export const initLoadTestTelemetry = (): LoadTestTelemetry | null => {
 
   const session_switches: LoadTestTelemetrySnapshot["session_switches"] = [];
   const long_tasks: LoadTestTelemetrySnapshot["long_tasks"] = [];
+  const worker_apply: LoadTestTelemetrySnapshot["worker_apply"] = [];
+  const patch_latency: LoadTestTelemetrySnapshot["patch_latency"] = [];
   const memory_samples: LoadTestTelemetrySnapshot["memory_samples"] = [];
   const meta: LoadTestTelemetrySnapshot["meta"] = {
     time_origin_ms:
@@ -148,15 +193,43 @@ export const initLoadTestTelemetry = (): LoadTestTelemetry | null => {
       });
       pending = null;
     },
+    recordWorkerApply: (durationMs, opts) => {
+      pushWithLimit(worker_apply, {
+        at_ms: nowMs(),
+        duration_ms: durationMs,
+        batch_size: opts?.batchSize,
+      });
+    },
+    recordPatchLatency: (durationMs, opts) => {
+      pushWithLimit(patch_latency, {
+        at_ms: nowMs(),
+        duration_ms: durationMs,
+        patch_size: opts?.patchSize,
+      });
+    },
     getSnapshot: () => ({
       session_switches: session_switches.slice(),
       long_tasks: long_tasks.slice(),
+      worker_apply: worker_apply.slice(),
+      patch_latency: patch_latency.slice(),
       memory_samples: memory_samples.slice(),
       meta,
+    }),
+    getSummary: () => ({
+      session_switch_ms: summarizePercentiles(
+        session_switches
+          .map((entry) => entry.duration_ms ?? null)
+          .filter((entry): entry is number => typeof entry === "number"),
+      ),
+      long_task_ms: summarizePercentiles(long_tasks.map((entry) => entry.duration_ms)),
+      worker_apply_ms: summarizePercentiles(worker_apply.map((entry) => entry.duration_ms)),
+      patch_latency_ms: summarizePercentiles(patch_latency.map((entry) => entry.duration_ms)),
     }),
     reset: () => {
       session_switches.length = 0;
       long_tasks.length = 0;
+      worker_apply.length = 0;
+      patch_latency.length = 0;
       memory_samples.length = 0;
       pending = null;
       sampleMemory();
@@ -175,6 +248,7 @@ export const initLoadTestTelemetry = (): LoadTestTelemetry | null => {
     (window as any).__ctxLoadTestTelemetry = {
       enabled: true,
       getSnapshot: telemetry.getSnapshot,
+      getSummary: telemetry.getSummary,
       reset: telemetry.reset,
       stop: telemetry.stop,
     };

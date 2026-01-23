@@ -183,10 +183,12 @@ export function ThreadItemView({
 
 export function WorkbenchTurnHeaderView({
   header,
+  plainText,
   expanded,
   onToggle,
 }: {
   header: WorkbenchTurnHeader;
+  plainText: string;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -253,7 +255,7 @@ export function WorkbenchTurnHeaderView({
           </button>
         )}
         <div className="wb-turn-header-content">
-          {header.plain_text.split("\n").map((line, idx, list) => (
+          {plainText.split("\n").map((line, idx, list) => (
             <span key={`${header.id}-${idx}`}>
               {line}
               {idx < list.length - 1 ? <br /> : null}

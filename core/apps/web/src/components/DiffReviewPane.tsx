@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type { editor as MonacoEditor } from "monaco-editor";
 import { ChevronDown, ChevronUp } from "lucide-react";
@@ -27,6 +27,67 @@ type DiffHunk = {
   lines: string[];
 };
 
+type PendingDiffRequest = {
+  resolve: (files: DiffFile[]) => void;
+  reject: (error: Error) => void;
+};
+
+let diffWorker: Worker | null = null;
+let diffWorkerFailed = false;
+let diffWorkerSeq = 0;
+const diffWorkerPending = new Map<number, PendingDiffRequest>();
+
+const failDiffWorker = (error: Error) => {
+  diffWorkerFailed = true;
+  if (diffWorker) {
+    diffWorker.terminate();
+    diffWorker = null;
+  }
+  for (const pending of diffWorkerPending.values()) {
+    pending.reject(error);
+  }
+  diffWorkerPending.clear();
+};
+
+const ensureDiffWorker = (): Worker | null => {
+  if (diffWorkerFailed) return null;
+  if (diffWorker) return diffWorker;
+  if (typeof Worker === "undefined") return null;
+  try {
+    diffWorker = new Worker(new URL("../workers/diffParserWorker.ts", import.meta.url), { type: "module" });
+    diffWorker.onmessage = (event) => {
+      const payload = event.data as { id?: number; files?: DiffFile[] };
+      if (!payload || typeof payload.id !== "number") return;
+      const pending = diffWorkerPending.get(payload.id);
+      if (!pending) return;
+      diffWorkerPending.delete(payload.id);
+      pending.resolve(Array.isArray(payload.files) ? payload.files : []);
+    };
+    diffWorker.onerror = () => {
+      failDiffWorker(new Error("Diff worker failed."));
+    };
+    diffWorker.onmessageerror = () => {
+      failDiffWorker(new Error("Diff worker message error."));
+    };
+    return diffWorker;
+  } catch {
+    diffWorkerFailed = true;
+    diffWorker = null;
+    return null;
+  }
+};
+
+const parseDiffInWorker = (diff: string): Promise<DiffFile[]> => {
+  const worker = ensureDiffWorker();
+  if (!worker) return Promise.resolve(parseUnifiedDiff(diff));
+  return new Promise((resolve, reject) => {
+    const id = diffWorkerSeq + 1;
+    diffWorkerSeq = id;
+    diffWorkerPending.set(id, { resolve, reject });
+    worker.postMessage({ id, diff });
+  });
+};
+
 const DiffReviewPane = memo(function DiffReviewPane({
   diff,
   labels,
@@ -38,12 +99,40 @@ const DiffReviewPane = memo(function DiffReviewPane({
 }) {
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
   const [wrapLines, setWrapLines] = useState(true);
+  const [files, setFiles] = useState<DiffFile[]>([]);
+  const [parsing, setParsing] = useState(false);
 
   useEffect(() => {
     setExpandedFiles({});
   }, [diff]);
 
-  const files = useMemo(() => parseUnifiedDiff(diff), [diff]);
+  useEffect(() => {
+    const diffText = String(diff ?? "");
+    if (!diffText.trim()) {
+      setFiles([]);
+      setParsing(false);
+      return;
+    }
+    let cancelled = false;
+    setParsing(true);
+    setFiles([]);
+    parseDiffInWorker(diffText)
+      .then((next) => {
+        if (cancelled) return;
+        setFiles(next);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFiles(parseUnifiedDiff(diffText));
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setParsing(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [diff]);
 
   const toggleFile = (key: string) => setExpandedFiles((prev) => ({ ...prev, [key]: !(prev[key] ?? false) }));
 
@@ -53,7 +142,9 @@ const DiffReviewPane = memo(function DiffReviewPane({
     <div className="diff-pane">
       {!hasChanges && <div className="muted">{labels?.empty ?? "No changes."}</div>}
 
-      {hasChanges && (
+      {hasChanges && parsing && <div className="muted">Parsing diff...</div>}
+
+      {hasChanges && !parsing && (
         <div className="cursor-diff">
           <div className="cursor-diff-toolbar">
             <button
@@ -67,6 +158,7 @@ const DiffReviewPane = memo(function DiffReviewPane({
             </button>
           </div>
           <div className="cursor-diff-list">
+            {files.length === 0 && <div className="muted">No parsed file diffs yet.</div>}
             {files.map((f) => {
               const isOpen = expandedFiles[f.key] ?? false;
 

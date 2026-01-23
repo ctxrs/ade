@@ -7,10 +7,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::{Row, SqlitePool};
 use tauri::Manager;
 use tauri::Emitter;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tokio::sync::OnceCell;
 use url::Url;
 
 fn main() {
@@ -18,6 +21,7 @@ fn main() {
         .manage(ConnectionManager::default())
         .manage(DeepLinkTokenStore::default())
         .manage(WorkspaceWindowRegistry::default())
+        .manage(DesktopStorage::default())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             focus_app_window(app);
         }))
@@ -42,6 +46,8 @@ fn main() {
             desktop_register_workspace_window,
             desktop_unregister_workspace_window,
             desktop_upload_blob,
+            desktop_storage_get,
+            desktop_storage_batch,
             desktop_daemon_request,
         ])
         .setup(|app| {
@@ -116,6 +122,97 @@ struct DesktopHttpResponse {
     body: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     content_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum DesktopStorageBatchOp {
+    Set { key: String, value: serde_json::Value },
+    Delete { key: String },
+}
+
+#[derive(Default)]
+struct DesktopStorage {
+    pool: OnceCell<SqlitePool>,
+}
+
+impl DesktopStorage {
+    async fn pool(&self, app: &tauri::AppHandle) -> Result<&SqlitePool> {
+        self.pool
+            .get_or_try_init(|| async {
+                let path = desktop_storage_path(app)?;
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                let options = SqliteConnectOptions::new()
+                    .filename(&path)
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Wal)
+                    .synchronous(SqliteSynchronous::Normal)
+                    .busy_timeout(Duration::from_secs(5));
+                let pool = SqlitePoolOptions::new()
+                    .max_connections(1)
+                    .connect_with(options)
+                    .await
+                    .context("opening desktop storage sqlite db")?;
+                ensure_ui_kv_schema(&pool).await?;
+                Ok(pool)
+            })
+            .await
+    }
+}
+
+async fn ensure_ui_kv_schema(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ui_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at_ms INTEGER NOT NULL)",
+    )
+    .execute(pool)
+    .await
+    .context("creating ui_kv table")?;
+
+    let rows = sqlx::query("PRAGMA table_info(ui_kv)")
+        .fetch_all(pool)
+        .await
+        .context("reading ui_kv schema")?;
+    let mut has_key = false;
+    let mut has_value = false;
+    let mut has_updated = false;
+    for row in rows {
+        let name: String = row.try_get("name").context("reading ui_kv column name")?;
+        match name.as_str() {
+            "key" => has_key = true,
+            "value" => has_value = true,
+            "updated_at_ms" => has_updated = true,
+            _ => {}
+        }
+    }
+
+    if !has_key || !has_value {
+        sqlx::query("DROP TABLE IF EXISTS ui_kv_legacy")
+            .execute(pool)
+            .await
+            .context("dropping legacy ui_kv table")?;
+        sqlx::query("ALTER TABLE ui_kv RENAME TO ui_kv_legacy")
+            .execute(pool)
+            .await
+            .context("renaming legacy ui_kv table")?;
+        sqlx::query(
+            "CREATE TABLE ui_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at_ms INTEGER NOT NULL)",
+        )
+        .execute(pool)
+        .await
+        .context("recreating ui_kv table")?;
+        return Ok(());
+    }
+
+    if !has_updated {
+        sqlx::query("ALTER TABLE ui_kv ADD COLUMN updated_at_ms INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await
+            .context("migrating ui_kv schema")?;
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -639,6 +736,78 @@ fn desktop_upload_blob(
     name: Option<String>,
 ) -> Result<serde_json::Value, String> {
     state.upload_blob(bytes, mime_type, name).map_err(to_err)
+}
+
+#[tauri::command]
+async fn desktop_storage_get(
+    app: tauri::AppHandle,
+    storage: tauri::State<'_, DesktopStorage>,
+    key: String,
+) -> Result<Option<serde_json::Value>, String> {
+    let pool = storage.pool(&app).await.map_err(to_err)?;
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM ui_kv WHERE key = ?1")
+        .bind(&key)
+        .fetch_optional(pool)
+        .await
+        .map_err(to_err)?;
+    if let Some((value,)) = row {
+        match serde_json::from_str(&value) {
+            Ok(parsed) => Ok(Some(parsed)),
+            Err(err) => {
+                let _ = sqlx::query("DELETE FROM ui_kv WHERE key = ?1")
+                    .bind(&key)
+                    .execute(pool)
+                    .await;
+                eprintln!("dropping corrupt ui_kv value for key {key}: {err}");
+                Ok(None)
+            }
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+async fn desktop_storage_batch(
+    app: tauri::AppHandle,
+    storage: tauri::State<'_, DesktopStorage>,
+    ops: Vec<DesktopStorageBatchOp>,
+) -> Result<(), String> {
+    if ops.is_empty() {
+        return Ok(());
+    }
+    let pool = storage.pool(&app).await.map_err(to_err)?;
+    let mut tx = pool.begin().await.map_err(to_err)?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    for op in ops {
+        match op {
+            DesktopStorageBatchOp::Set { key, value } => {
+                let value_json = serde_json::to_string(&value).map_err(to_err)?;
+                sqlx::query(
+                    "INSERT INTO ui_kv (key, value, updated_at_ms) VALUES (?1, ?2, ?3) \
+                     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at_ms=excluded.updated_at_ms",
+                )
+                .bind(&key)
+                .bind(&value_json)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(to_err)?;
+            }
+            DesktopStorageBatchOp::Delete { key } => {
+                sqlx::query("DELETE FROM ui_kv WHERE key = ?1")
+                    .bind(&key)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(to_err)?;
+            }
+        }
+    }
+    tx.commit().await.map_err(to_err)?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1548,6 +1717,14 @@ fn desktop_settings_path(app: &tauri::AppHandle) -> Result<PathBuf> {
         .app_data_dir()
         .context("resolving app_data_dir")?;
     Ok(root.join("desktop-settings.json"))
+}
+
+fn desktop_storage_path(app: &tauri::AppHandle) -> Result<PathBuf> {
+    let root = app
+        .path()
+        .app_data_dir()
+        .context("resolving app_data_dir")?;
+    Ok(root.join("web").join("ui_state.sqlite"))
 }
 
 fn load_desktop_settings(app: &tauri::AppHandle) -> DesktopSettings {

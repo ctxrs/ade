@@ -92,7 +92,7 @@ export type AskUserQuestionAnswerState = {
 export type WorkbenchTurnHeader = {
   id: string;
   content: string;
-  plain_text: string;
+  plain_text?: string;
   attachments: MessageAttachment[];
   created_at: string;
 };

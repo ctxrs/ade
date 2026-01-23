@@ -1,0 +1,147 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const storageMock = vi.hoisted(() => ({
+  getKv: vi.fn(),
+  setKv: vi.fn(),
+  deleteKv: vi.fn(),
+  getSnapshot: vi.fn(),
+  setSnapshot: vi.fn(),
+  deleteSnapshot: vi.fn(),
+  getHistoryPage: vi.fn(),
+  setHistoryPage: vi.fn(),
+  deleteHistoryPage: vi.fn(),
+  flush: vi.fn(),
+}));
+
+vi.mock("./storage", () => ({
+  getWebappStorage: () => storageMock,
+}));
+
+import {
+  decodeWorkspaceActiveSnapshotV1,
+  loadSessionHeadV1,
+  loadWorkspaceActiveSnapshotV1,
+  saveSessionHeadV1,
+  saveWorkspaceActiveSnapshotV1,
+  sessionHeadKeyV1,
+  workspaceActiveSnapshotKeyV1,
+} from "./uiStateStore";
+
+describe("uiStateStore", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("decodes legacy active snapshot payloads", () => {
+    const raw = {
+      v: 1,
+      workspaceId: "ws-1",
+      snapshotRev: 2,
+      archivedRev: 1,
+      tasks: [
+        {
+          task: { id: "task-1" },
+          primary_session: null,
+          primary_session_head: null,
+          sessions: [],
+          sort_at: "2025-01-01T00:00:00Z",
+        },
+      ],
+      totalCount: 1,
+      updatedAtMs: 123,
+    } as any;
+
+    const decoded = decodeWorkspaceActiveSnapshotV1(raw, "ws-1");
+    expect(decoded?.active.tasks.length).toBe(1);
+    expect(decoded?.active.totalCount).toBe(1);
+  });
+
+  it("rejects mismatched workspace ids", () => {
+    const raw = {
+      v: 1,
+      workspaceId: "ws-2",
+      active: { tasks: [], totalCount: 0 },
+      updatedAtMs: 5,
+    } as any;
+    expect(decodeWorkspaceActiveSnapshotV1(raw, "ws-1")).toBeNull();
+  });
+
+  it("stores workspace snapshots via snapshot storage", async () => {
+    const stored = {
+      v: 1,
+      workspaceId: "ws-1",
+      snapshotRev: 2,
+      archivedRev: 1,
+      active: { tasks: [], totalCount: 0 },
+      updatedAtMs: 123,
+    };
+    storageMock.getSnapshot.mockResolvedValue(stored);
+
+    const loaded = await loadWorkspaceActiveSnapshotV1("ws-1");
+    expect(storageMock.getSnapshot).toHaveBeenCalledWith(workspaceActiveSnapshotKeyV1("ws-1"));
+    expect(storageMock.getKv).not.toHaveBeenCalled();
+    expect(loaded?.workspaceId).toBe("ws-1");
+
+    await saveWorkspaceActiveSnapshotV1("ws-1", {
+      snapshotRev: 3,
+      archivedRev: 1,
+      active: { tasks: [], totalCount: 0 },
+    });
+    expect(storageMock.setSnapshot).toHaveBeenCalledWith(
+      workspaceActiveSnapshotKeyV1("ws-1"),
+      expect.objectContaining({
+        v: 1,
+        workspaceId: "ws-1",
+        snapshotRev: 3,
+        archivedRev: 1,
+        active: { tasks: [], totalCount: 0 },
+        updatedAtMs: expect.any(Number),
+      }),
+    );
+    expect(storageMock.setKv).not.toHaveBeenCalled();
+  });
+
+  it("stores session heads via snapshot storage", async () => {
+    const head = {
+      session: {
+        id: { 0: "session-1" },
+        task_id: { 0: "task-1" },
+        workspace_id: { 0: "ws-1" },
+        worktree_id: { 0: "wt-1" },
+        provider_id: "fake",
+        model_id: "fake-model",
+        title: "New Task",
+        agent_role: "assistant",
+        status: "active",
+      },
+      turns: [],
+      messages: [],
+      events: [],
+      last_event_seq: 0,
+      has_more_turns: false,
+    } as any;
+    storageMock.getSnapshot.mockResolvedValue({
+      v: 1,
+      sessionId: "session-1",
+      head,
+      updatedAtMs: 5,
+    });
+
+    const loaded = await loadSessionHeadV1("session-1");
+    expect(storageMock.getSnapshot).toHaveBeenCalledWith(sessionHeadKeyV1("session-1"));
+    expect(storageMock.getKv).not.toHaveBeenCalled();
+    expect(loaded?.sessionId).toBe("session-1");
+
+    await saveSessionHeadV1("session-1", head);
+    expect(storageMock.setSnapshot).toHaveBeenCalledWith(
+      sessionHeadKeyV1("session-1"),
+      expect.objectContaining({
+        v: 1,
+        sessionId: "session-1",
+        head,
+        updatedAtMs: expect.any(Number),
+      }),
+    );
+    expect(storageMock.setKv).not.toHaveBeenCalled();
+  });
+});

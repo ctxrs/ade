@@ -1850,10 +1850,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (activeSessionIdFromTabResolved) return activeSessionIdFromTabResolved;
     return pickPreferredSessionId(sessions, null);
   }, [activeSessionIdFromTabResolved, primarySessionId, sessions]);
-
-  const sessionIdsToRender = useMemo(() => {
-    return activeSessionId ? [activeSessionId] : [];
-  }, [activeSessionId]);
   const preserveScrollOnFocus = true;
   const openSessionId = activeSessionId && !optimisticSessionIdSet.has(activeSessionId) ? activeSessionId : "";
   useOpenSession(openSessionId, { watchDiff: diffOpen });
@@ -3804,24 +3800,19 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               ) : null}
 
               <div className="wb-session">
-                {sessionIdsToRender.map((sessionId) => {
-                  const scrollState = workbenchSnap.window.scrollByKey[scrollKey(sessionId)] ?? null;
-                  return (
-                    <WorkbenchSessionSlot
-                      key={sessionId}
-                      sessionId={sessionId}
-                      active={sessionId === activeSessionId}
-                      scrollState={scrollState}
-                      preserveScrollOnFocus={preserveScrollOnFocus}
-                      optimisticFailure={optimisticFailureBySessionId[sessionId] ?? null}
-                    />
-                  );
-                })}
-                {!activeSessionId ? (
+                {activeSessionId ? (
+                  <WorkbenchSessionSlot
+                    sessionId={activeSessionId}
+                    active
+                    scrollState={workbenchSnap.window.scrollByKey[scrollKey(activeSessionId)] ?? null}
+                    preserveScrollOnFocus={preserveScrollOnFocus}
+                    optimisticFailure={optimisticFailureBySessionId[activeSessionId] ?? null}
+                  />
+                ) : (
                   <div className="wb-muted" style={{ padding: 16 }}>
                     Select a session to view this task.
                   </div>
-                ) : null}
+                )}
               </div>
             </div>
 

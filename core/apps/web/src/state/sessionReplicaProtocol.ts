@@ -1,0 +1,73 @@
+import type {
+  Artifact,
+  Message,
+  Session,
+  SessionEvent,
+  SessionHeadSnapshot,
+  SessionHeadWindow,
+  SessionSummaryCheckpoint,
+  SessionTurn,
+  SessionTurnToolSummary,
+  WorkspaceActiveSnapshotEvent,
+} from "@ctx/types";
+import type { GitStatusSummary } from "../api/client";
+
+export type SessionReplicaAcpMeta = {
+  models?: unknown;
+  modes?: unknown;
+  currentModelId?: string;
+};
+
+export type SessionReplicaConfig = {
+  eventBufferLimit: number;
+  headLimit: number;
+};
+
+export type SessionReplicaCommand =
+  | {
+      type: "init";
+      config: SessionReplicaConfig;
+      baseUrl?: string | null;
+      authToken?: string | null;
+    }
+  | { type: "open_session"; sessionId: string; force?: boolean; silent?: boolean }
+  | { type: "close_session"; sessionId: string }
+  | { type: "refresh_session"; sessionId: string }
+  | { type: "seed_head"; sessionId: string; head: SessionHeadSnapshot }
+  | { type: "workspace_event"; event: WorkspaceActiveSnapshotEvent }
+  | { type: "set_session"; session: Session }
+  | { type: "replace_session_id"; oldSessionId: string; newSessionId: string }
+  | { type: "replace_session_task_id"; sessionId: string; taskId: string };
+
+export type SessionReplicaData = {
+  session?: Session;
+  turns?: SessionTurn[];
+  messages?: Message[];
+  events?: SessionEvent[];
+  toolSummaries?: SessionTurnToolSummary[];
+  headWindow?: SessionHeadWindow | null;
+  summaryCheckpoint?: SessionSummaryCheckpoint | null;
+  lastEventSeq?: number;
+  hasMoreTurns?: boolean;
+  stateRev?: number;
+  artifacts?: Artifact[];
+  gitStatusSummary?: GitStatusSummary | null;
+  acpMeta?: SessionReplicaAcpMeta;
+  loading?: boolean;
+  error?: string | null;
+  turnsHydrated?: boolean;
+  stateLoaded?: boolean;
+  stateLoading?: boolean;
+  artifactsLoaded?: boolean;
+  subagentNotice?: boolean;
+};
+
+export type SessionReplicaPatch =
+  | { op: "append"; sessionId: string; data: SessionReplicaData }
+  | { op: "replace"; sessionId: string; data: SessionReplicaData }
+  | { op: "evict"; sessionId: string; data: { eventsBeforeSeq?: number } };
+
+export type SessionReplicaWorkerMessage = {
+  type: "patches";
+  patches: SessionReplicaPatch[];
+};
