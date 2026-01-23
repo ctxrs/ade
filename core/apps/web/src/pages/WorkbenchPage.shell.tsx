@@ -2114,6 +2114,11 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const artifactsCount = artifacts.length;
 
   useEffect(() => {
+    if (!artifactsOpen || !activeSessionId) return;
+    supervisor.loadArtifacts(activeSessionId);
+  }, [activeSessionId, artifactsOpen, supervisor]);
+
+  useEffect(() => {
     artifactPrefetcher.prefetch(activeSessionId ?? null, artifacts, !activeTaskArchived);
   }, [activeSessionId, activeTaskArchived, artifacts]);
   const sessionsCount = webSessionsEnabled ? webSessions.length : 0;

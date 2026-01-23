@@ -58,10 +58,16 @@ impl SessionReplayState {
             };
         }
         let Some(oldest_seq) = self.events.front().map(|entry| entry.seq) else {
-            return SessionReplayResult::ResetRequired;
+            return SessionReplayResult::Gap {
+                last_known_seq: self.last_event_seq,
+                reason: Some("missing_replay_events".to_string()),
+            };
         };
         if after_seq < oldest_seq {
-            return SessionReplayResult::ResetRequired;
+            return SessionReplayResult::Gap {
+                last_known_seq: self.last_event_seq,
+                reason: Some("replay_buffer_overflow".to_string()),
+            };
         }
         let mut deltas = Vec::new();
         for entry in self.events.iter() {
@@ -70,10 +76,16 @@ impl SessionReplayState {
             }
         }
         if deltas.is_empty() && self.last_event_seq > after_seq {
-            return SessionReplayResult::ResetRequired;
+            return SessionReplayResult::Gap {
+                last_known_seq: self.last_event_seq,
+                reason: Some("replay_gap".to_string()),
+            };
         }
         if deltas.len() > limit {
-            return SessionReplayResult::ResetRequired;
+            return SessionReplayResult::Gap {
+                last_known_seq: self.last_event_seq,
+                reason: Some("replay_limit_exceeded".to_string()),
+            };
         }
         let last_sent = deltas
             .last()
@@ -88,6 +100,10 @@ pub enum SessionReplayResult {
     Replay {
         deltas: Vec<SessionHeadDelta>,
         last_sent: i64,
+    },
+    Gap {
+        last_known_seq: i64,
+        reason: Option<String>,
     },
     ResetRequired,
 }
@@ -126,22 +142,39 @@ impl WorkspaceActiveSnapshotEntry {
         state.record(delta);
     }
 
+    fn seed_session_replay(&mut self, session_id: SessionId, last_event_seq: i64) {
+        let state = self.session_replay.entry(session_id).or_default();
+        if last_event_seq > state.last_event_seq {
+            state.last_event_seq = last_event_seq;
+        }
+    }
+
     fn replay_session(
         &self,
         session_id: SessionId,
         after_seq: i64,
         limit: usize,
     ) -> SessionReplayResult {
+        let after_seq = after_seq.max(0);
         match self.session_replay.get(&session_id) {
             Some(state) => state.replay(after_seq, limit),
             None => {
                 if after_seq <= 0 {
                     SessionReplayResult::Replay {
                         deltas: Vec::new(),
-                        last_sent: after_seq.max(0),
+                        last_sent: after_seq,
                     }
                 } else {
-                    SessionReplayResult::ResetRequired
+                    let last_known_seq = self
+                        .active_heads
+                        .get(&session_id)
+                        .map(|head| head.last_event_seq)
+                        .unwrap_or(after_seq)
+                        .max(after_seq);
+                    SessionReplayResult::Gap {
+                        last_known_seq,
+                        reason: Some("missing_replay_state".to_string()),
+                    }
                 }
             }
         }
@@ -444,12 +477,14 @@ impl ActiveSnapshotObserver for WorkspaceActiveSnapshotHub {
     async fn on_active_head_snapshot(&self, head: SessionHeadSnapshot) {
         let workspace_id = head.session.workspace_id;
         let session_id = head.session.id;
+        let last_event_seq = head.last_event_seq;
         {
             let mut guard = self.inner.lock().await;
             let entry = guard
                 .entry(workspace_id)
                 .or_insert_with(WorkspaceActiveSnapshotEntry::new);
             entry.active_heads.insert(session_id, head);
+            entry.seed_session_replay(session_id, last_event_seq);
         }
         let mut index = self.active_head_index.lock().await;
         index.insert(session_id, workspace_id);

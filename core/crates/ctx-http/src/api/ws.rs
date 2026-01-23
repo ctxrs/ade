@@ -700,6 +700,22 @@ where
             }
             Ok(ReplayOutcome::Replay { last_sent })
         }
+        SessionReplayResult::Gap {
+            last_known_seq,
+            reason,
+        } => {
+            let gap = WorkspaceActiveSnapshotEvent::SessionGap {
+                workspace_id,
+                snapshot_rev,
+                session_id,
+                after_seq,
+                reason,
+            };
+            emit(WorkspaceActiveSnapshotWsPayload::Event(gap)).await?;
+            Ok(ReplayOutcome::Replay {
+                last_sent: last_known_seq.max(after_seq),
+            })
+        }
         SessionReplayResult::ResetRequired => Ok(ReplayOutcome::ResetRequired),
     }
 }
@@ -998,6 +1014,22 @@ where
                 emit(WorkspaceActiveSnapshotWsPayload::Event(wrapped)).await?;
             }
             Ok(ReplayOutcome::Replay { last_sent })
+        }
+        SessionReplayResult::Gap {
+            last_known_seq,
+            reason,
+        } => {
+            let gap = WorkspaceActiveSnapshotEvent::SessionGap {
+                workspace_id,
+                snapshot_rev,
+                session_id,
+                after_seq,
+                reason,
+            };
+            emit(WorkspaceActiveSnapshotWsPayload::Event(gap)).await?;
+            Ok(ReplayOutcome::Replay {
+                last_sent: last_known_seq.max(after_seq),
+            })
         }
         SessionReplayResult::ResetRequired => Ok(ReplayOutcome::ResetRequired),
     }

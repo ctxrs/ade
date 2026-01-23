@@ -307,6 +307,12 @@ export class SessionSupervisor {
     this.replica.dispatch({ type: "refresh_session", sessionId });
   };
 
+  loadArtifacts = (sessionId: string, opts?: { force?: boolean }) => {
+    const entry = this.entries.get(String(sessionId));
+    if (!entry) return;
+    void this.ensureArtifacts(entry, opts);
+  };
+
   refreshQueue = (sessionId: string) => {
     this.replica.dispatch({ type: "refresh_session", sessionId });
   };
@@ -517,9 +523,6 @@ export class SessionSupervisor {
     const prev = this.snapshot.connection;
     if (prev === next) return;
     this.snapshot = { ...this.snapshot, connection: next };
-    if (next === "connected" && prev !== "connected") {
-      this.refreshSubscribedHeads();
-    }
     for (const l of this.listeners) l();
   }
 
@@ -1220,14 +1223,6 @@ export class SessionSupervisor {
       this.snapshotStore.setSubscriptions(subs);
     }
     this.publish();
-  }
-
-  private refreshSubscribedHeads() {
-    for (const sessionId of this.subscribedSessionIds) {
-      const entry = this.entries.get(sessionId);
-      if (!entry || entry.refCount === 0) continue;
-      this.replica.dispatch({ type: "refresh_session", sessionId });
-    }
   }
 
   private mergeTurns(entry: InternalEntry, incoming: SessionTurn[]) {

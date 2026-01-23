@@ -40,6 +40,7 @@ type SessionReplicaEntry = {
   hasMoreTurns: boolean;
   loading: boolean;
   requestToken: number;
+  hydrated: boolean;
 };
 
 const normalizeId = (value: unknown): string => {
@@ -248,6 +249,7 @@ export class SessionReplicaCore {
       hasMoreTurns: true,
       loading: false,
       requestToken: 0,
+      hydrated: false,
     };
     this.entries.set(id, entry);
     return entry;
@@ -336,6 +338,7 @@ export class SessionReplicaCore {
     entry.toolSummaries = data.toolSummaries ?? entry.toolSummaries;
     entry.lastEventSeq = Math.max(existingSeq, incomingSeq);
     entry.hasMoreTurns = data.hasMoreTurns ?? entry.hasMoreTurns;
+    entry.hydrated = true;
 
     const patch: SessionReplicaData = {
       session: entry.session,
@@ -362,44 +365,32 @@ export class SessionReplicaCore {
     if (!id) return;
     const entry = this.ensureEntry(id);
     if (entry.loading && !opts?.force) return;
-    entry.loading = true;
+    const minSeq = typeof opts?.minEventSeq === "number" ? opts.minEventSeq : undefined;
+    if (!opts?.force && entry.hydrated) {
+      const entrySeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
+      if (minSeq === undefined || entrySeq >= minSeq) {
+        if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: null });
+        return;
+      }
+    }
     const token = ++entry.requestToken;
-    if (!opts?.silent) this.emitPatch("append", id, { loading: true, error: null });
-
-    const getSnapshot = this.deps.api.getSessionSnapshot;
-    const snapshotPromise =
-      typeof getSnapshot === "function"
-        ? getSnapshot(id, this.config.headLimit, true).catch(() => null)
-        : null;
-    let snapshotState: SessionState | null = null;
-
-    const cached = await loadSessionHeadV1(id).catch(() => null);
-    if (token !== entry.requestToken) return;
-    if (cached?.head && !opts?.skipCache) {
-      const minSeq = typeof opts?.minEventSeq === "number" ? opts.minEventSeq : undefined;
-      if (minSeq === undefined || cached.head.last_event_seq >= minSeq) {
+    if (!opts?.skipCache) {
+      const cached = await loadSessionHeadV1(id).catch(() => null);
+      if (token !== entry.requestToken) return;
+      if (cached?.head && (minSeq === undefined || cached.head.last_event_seq >= minSeq)) {
         this.applyHead(entry, cached.head);
       }
     }
-
-    if (snapshotPromise) {
-      const snapshot = await snapshotPromise;
-      if (token !== entry.requestToken) return;
-      const summarySession = snapshot?.summary?.session ?? null;
-      if (summarySession) {
-        entry.session = summarySession;
-        this.emitPatch("append", id, { session: entry.session });
-      }
-      const state = snapshot?.state ?? null;
-      if (state) {
-        snapshotState = state;
-      }
-      if (snapshot?.head) {
-        const persisted = snapshotToHead(snapshot.head);
-        this.applyHead(entry, persisted);
-        await saveSessionHeadV1(id, sanitizeHeadForCache(persisted)).catch(() => {});
+    if (!opts?.force && entry.hydrated) {
+      const entrySeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
+      if (minSeq === undefined || entrySeq >= minSeq) {
+        if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: null });
+        return;
       }
     }
+
+    entry.loading = true;
+    if (!opts?.silent) this.emitPatch("append", id, { loading: true, error: null });
 
     try {
       const head = await this.deps.api.getSessionHead(id, this.config.headLimit, true);
@@ -415,20 +406,15 @@ export class SessionReplicaCore {
       entry.loading = false;
       const message = err instanceof Error && err.message ? err.message : typeof err === "string" ? err : "request failed";
       if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: message });
-    } finally {
-      if (snapshotState && token === entry.requestToken) {
-        const data: SessionReplicaData = { stateLoaded: true, stateLoading: false };
-        if ("git_status" in snapshotState) data.gitStatusSummary = snapshotState.git_status ?? null;
-        data.artifacts = snapshotState.artifacts ?? [];
-        this.emitPatch("append", id, data);
-      }
-      void this.loadStateAndArtifacts(entry, token, opts?.silent);
     }
   }
 
   private seedHead(sessionId: string, head: SessionHeadSnapshot) {
     const id = normalizeId(sessionId);
-    if (id) this.applyHead(this.ensureEntry(id), head);
+    if (!id) return;
+    const entry = this.ensureEntry(id);
+    this.applyHead(entry, head);
+    entry.hydrated = true;
   }
 
   private handleWorkspaceEvent(evt: WorkspaceActiveSnapshotEvent) {
@@ -442,25 +428,16 @@ export class SessionReplicaCore {
       const sessionId = normalizeId((evt as { session_id?: unknown }).session_id);
       const afterSeq = typeof (evt as { after_seq?: number }).after_seq === "number" ? (evt as { after_seq?: number }).after_seq : undefined;
       if (!sessionId) return;
-      const entry = this.ensureEntry(sessionId);
-      entry.turns = [];
-      entry.messages = [];
-      entry.events = [];
-      entry.toolSummaries = [];
-      entry.lastEventSeq = afterSeq;
-      entry.hasMoreTurns = true;
-      entry.stateRev = undefined;
-      this.emitPatch("replace", sessionId, {
-        session: entry.session,
-        turns: [],
-        messages: [],
-        events: [],
-        toolSummaries: [],
-        hasMoreTurns: true,
-        lastEventSeq: afterSeq,
-        summaryCheckpoint: entry.summaryCheckpoint ?? null,
-        headWindow: entry.headWindow ?? null,
-      });
+      const entry = this.entries.get(sessionId);
+      if (!entry) return;
+      entry.hydrated = false;
+      if (typeof afterSeq === "number") {
+        const entrySeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
+        if (afterSeq > entrySeq) {
+          entry.lastEventSeq = afterSeq;
+          this.emitPatch("append", sessionId, { lastEventSeq: afterSeq });
+        }
+      }
       this.openSession(sessionId, { force: true, silent: true, minEventSeq: afterSeq, skipCache: true }).catch(() => {});
     }
   }
@@ -500,9 +477,7 @@ export class SessionReplicaCore {
     if (entry.summaryCheckpoint !== undefined) data.summaryCheckpoint = entry.summaryCheckpoint ?? null;
     if (entry.headWindow !== undefined) data.headWindow = entry.headWindow ?? null;
     this.emitPatch("append", sessionId, data);
-    if (entry.requestToken > 0 && entry.stateRev !== undefined && entry.stateRev !== prevStateRev) {
-      void this.loadStateAndArtifacts(entry, entry.requestToken, true);
-    }
+    entry.hydrated = true;
     void this.persistHead(entry);
   }
 
@@ -520,34 +495,5 @@ export class SessionReplicaCore {
       head_window: entry.headWindow ?? undefined,
     };
     await saveSessionHeadV1(entry.sessionId, sanitizeHeadForCache(head)).catch(() => {});
-  }
-
-  private async loadStateAndArtifacts(entry: SessionReplicaEntry, token: number, silent?: boolean): Promise<void> {
-    if (token !== entry.requestToken) return;
-    const getState = this.deps.api.getSessionState;
-    const listArtifacts = this.deps.api.listSessionArtifacts;
-    const hasState = typeof getState === "function";
-    const hasArtifacts = typeof listArtifacts === "function";
-    if (!hasState && !hasArtifacts) return;
-    if (hasState && !silent) this.emitPatch("append", entry.sessionId, { stateLoading: true, stateLoaded: false });
-
-    let state: SessionState | null = null;
-    let stateFailed = false;
-    if (hasState) {
-      try { state = await getState(entry.sessionId); } catch { stateFailed = true; }
-    }
-    if (token !== entry.requestToken) return;
-
-    let artifacts: Artifact[] | undefined = state?.artifacts;
-    if (hasArtifacts) {
-      try { artifacts = await listArtifacts(entry.sessionId); } catch { /* ignore */ }
-    }
-    if (token !== entry.requestToken) return;
-
-    const data: SessionReplicaData = { stateLoading: false };
-    if (hasState) data.stateLoaded = !stateFailed;
-    if (state && "git_status" in state) data.gitStatusSummary = state.git_status ?? null;
-    if (artifacts !== undefined) data.artifacts = artifacts;
-    this.emitPatch("append", entry.sessionId, data);
   }
 }

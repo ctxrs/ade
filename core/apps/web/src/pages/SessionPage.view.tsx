@@ -1930,6 +1930,9 @@ export function SessionView({
     <div
       className={`${wrapperClass} ctx-drop-scope`}
       ref={dropScopeRef}
+      data-testid="session-view"
+      data-session-id={id}
+      data-thread-count={wbListItems.length}
     >
       {dropActive && (
         <div className="ctx-drop-overlay" aria-hidden="true">
