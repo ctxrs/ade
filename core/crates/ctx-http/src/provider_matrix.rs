@@ -173,8 +173,95 @@ pub fn builtin_matrix() -> ProviderMatrix {
     ProviderMatrix::default()
 }
 
+fn merge_matrix_entries(
+    mut primary: ProviderMatrixEntry,
+    fallback: ProviderMatrixEntry,
+) -> ProviderMatrixEntry {
+    if primary.display_name.is_none() {
+        primary.display_name = fallback.display_name;
+    }
+    if primary.tier.is_none() {
+        primary.tier = fallback.tier;
+    }
+    if primary.command.is_none() {
+        primary.command = fallback.command;
+    }
+    if primary.managed_install.is_none() {
+        primary.managed_install = fallback.managed_install;
+    }
+    if primary.version_probe.is_none() {
+        primary.version_probe = fallback.version_probe;
+    }
+
+    if primary.dependencies.is_empty() {
+        primary.dependencies = fallback.dependencies;
+    } else if !fallback.dependencies.is_empty() {
+        let mut known = std::collections::HashSet::new();
+        for dep in &primary.dependencies {
+            known.insert(dep.id.clone());
+        }
+        for dep in fallback.dependencies {
+            if known.insert(dep.id.clone()) {
+                primary.dependencies.push(dep);
+            }
+        }
+    }
+
+    if primary.releases.is_empty() {
+        primary.releases = fallback.releases;
+    } else if !fallback.releases.is_empty() {
+        let mut known = std::collections::HashSet::new();
+        for release in &primary.releases {
+            known.insert(release.version.clone());
+        }
+        for release in fallback.releases {
+            if known.insert(release.version.clone()) {
+                primary.releases.push(release);
+            }
+        }
+    }
+
+    primary
+}
+
+fn merge_matrices(primary: ProviderMatrix, fallback: ProviderMatrix) -> ProviderMatrix {
+    let mut primary_map = HashMap::new();
+    let mut primary_order = Vec::new();
+    for entry in primary.providers {
+        primary_order.push(entry.id.clone());
+        primary_map.insert(entry.id.clone(), entry);
+    }
+
+    let mut fallback_map = HashMap::new();
+    for entry in fallback.providers {
+        fallback_map.insert(entry.id.clone(), entry);
+    }
+
+    let mut providers = Vec::new();
+    for id in primary_order {
+        let mut entry = primary_map
+            .remove(&id)
+            .expect("primary provider entry missing");
+        if let Some(fallback_entry) = fallback_map.remove(&id) {
+            entry = merge_matrix_entries(entry, fallback_entry);
+        }
+        providers.push(entry);
+    }
+
+    for (_, entry) in fallback_map {
+        providers.push(entry);
+    }
+
+    ProviderMatrix {
+        version: primary.version,
+        generated_at: primary.generated_at.or(fallback.generated_at),
+        providers,
+    }
+}
+
 pub async fn load_matrix(data_root: &Path) -> ProviderMatrix {
     let cached = load_cached_matrix(data_root);
+    let builtin = builtin_matrix();
     let refresh = cached
         .as_ref()
         .and_then(|_| cached_age_ok(data_root).ok())
@@ -183,7 +270,7 @@ pub async fn load_matrix(data_root: &Path) -> ProviderMatrix {
 
     if !refresh {
         if let Some(matrix) = cached {
-            return matrix;
+            return merge_matrices(matrix, builtin);
         }
     }
 
@@ -191,8 +278,9 @@ pub async fn load_matrix(data_root: &Path) -> ProviderMatrix {
     let channel = default_matrix_channel();
     match fetch_remote_matrix(&base_url, &channel).await {
         Ok(matrix) => {
-            let _ = save_cached_matrix(data_root, &matrix).await;
-            return matrix;
+            let merged = merge_matrices(matrix, builtin);
+            let _ = save_cached_matrix(data_root, &merged).await;
+            return merged;
         }
         Err(err) => {
             tracing::warn!("failed to fetch provider matrix: {err:#}");
@@ -200,10 +288,10 @@ pub async fn load_matrix(data_root: &Path) -> ProviderMatrix {
     }
 
     if let Some(matrix) = cached {
-        return matrix;
+        return merge_matrices(matrix, builtin);
     }
 
-    builtin_matrix()
+    builtin
 }
 
 pub async fn load_matrix_cached(
