@@ -9127,7 +9127,7 @@ async fn create_session_for_task(
         let env_target = req
             .env_target
             .as_deref()
-            .unwrap_or("local")
+            .unwrap_or("worktree")
             .trim()
             .to_lowercase();
         let base_commit_sha = rev_parse_head(&workspace.root_path).await.map_err(|e| {
@@ -9277,6 +9277,16 @@ async fn create_session_for_task(
             _ => return Err(StatusCode::BAD_REQUEST),
         }
     };
+
+    let worktree = store
+        .get_worktree(worktree_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let worktree_root = std::path::Path::new(&worktree.root_path);
+    if tokio::fs::metadata(worktree_root).await.is_err() {
+        return Err(StatusCode::NOT_FOUND);
+    }
 
     let session = store
         .create_session(
