@@ -5073,13 +5073,9 @@ async fn handle_mobile_secure_ws(
             }
         })
     };
-    let mut send_task = send_task;
-
-    let result = async {
+    let recv_loop = async {
         loop {
             tokio::select! {
-                biased;
-                _ = &mut send_task => break,
                 msg = receiver.next() => {
                     match msg {
                         Some(Ok(WsMessage::Text(text))) => {
@@ -5217,14 +5213,17 @@ async fn handle_mobile_secure_ws(
             }
         }
         Ok(())
-    }
-    .await;
+    };
+
+    let (send_task, recv_result) = crate::async_util::race_join_handle(send_task, recv_loop).await;
 
     send_control.set_disconnect_after_flush();
     pending.notify.notify_one();
-    let _ = send_task.await;
+    if let Some(send_task) = send_task {
+        let _ = send_task.await;
+    }
 
-    result
+    recv_result.unwrap_or(Ok(()))
 }
 
 struct SessionCursor {
@@ -10660,76 +10659,16 @@ async fn handle_workspace_active_snapshot_ws(
             }
         })
     };
-    let mut send_task = send_task;
-
-    loop {
-        tokio::select! {
-            biased;
-            _ = &mut send_task => break,
-            msg = receiver.next() => {
-                match msg {
-                    Some(Ok(WsMessage::Text(text))) => {
-                        if let Ok(message) = serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text) {
-                            let (session_ids, sessions) = match message {
-                                WorkspaceActiveSnapshotClientMessage::Subscribe { session_ids, sessions, .. } => (session_ids, sessions),
-                            };
-                            let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = if !sessions.is_empty() {
-                                sessions
-                            } else {
-                                session_ids
-                                    .into_iter()
-                                    .map(|session_id| WorkspaceActiveSnapshotSessionSubscription { session_id, after_seq: None })
-                                    .collect()
-                            };
-                            next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
-
-                            pending.clear().await;
-                            reset_queued = false;
-                            send_control.clear_disconnect_after_flush();
-
-                            let mut next_map = HashMap::new();
-                            let mut replay_failed = false;
-                            for sub in next {
-                                let after_seq = sub.after_seq.unwrap_or(0);
-                                let replay = replay_session_events_active(
-                                    &state,
-                                    workspace_id,
-                                    sub.session_id,
-                                    after_seq,
-                                    |event| pending.push(event),
-                                )
-                                .await;
-                                match replay {
-                                    Ok(ReplayOutcome::Replay { last_sent }) => {
-                                        next_map.insert(sub.session_id, SessionCursor { last_sent });
-                                    }
-                                    Ok(ReplayOutcome::ResetRequired) | Err(_) => {
-                                        replay_failed = true;
-                                        break;
-                                    }
-                                };
-                            }
-                            if replay_failed {
-                                pending.clear().await;
-                                if queue_reset_required(&pending, &state, workspace_id)
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                                reset_queued = true;
-                                send_control.set_disconnect_after_flush();
-                                continue;
-                            }
-                            subscriptions = next_map;
-                        }
-                    }
-                    Some(Ok(WsMessage::Binary(bytes))) => {
-                        if let Ok(text) = String::from_utf8(bytes.to_vec()) {
+    let recv_loop = async {
+        loop {
+            tokio::select! {
+                msg = receiver.next() => {
+                    match msg {
+                        Some(Ok(WsMessage::Text(text))) => {
                             if let Ok(message) = serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text) {
-                            let (session_ids, sessions) = match message {
-                                WorkspaceActiveSnapshotClientMessage::Subscribe { session_ids, sessions, .. } => (session_ids, sessions),
-                            };
+                                let (session_ids, sessions) = match message {
+                                    WorkspaceActiveSnapshotClientMessage::Subscribe { session_ids, sessions, .. } => (session_ids, sessions),
+                                };
                                 let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = if !sessions.is_empty() {
                                     sessions
                                 } else {
@@ -10758,8 +10697,7 @@ async fn handle_workspace_active_snapshot_ws(
                                     .await;
                                     match replay {
                                         Ok(ReplayOutcome::Replay { last_sent }) => {
-                                            next_map
-                                                .insert(sub.session_id, SessionCursor { last_sent });
+                                            next_map.insert(sub.session_id, SessionCursor { last_sent });
                                         }
                                         Ok(ReplayOutcome::ResetRequired) | Err(_) => {
                                             replay_failed = true;
@@ -10782,17 +10720,118 @@ async fn handle_workspace_active_snapshot_ws(
                                 subscriptions = next_map;
                             }
                         }
+                        Some(Ok(WsMessage::Binary(bytes))) => {
+                            if let Ok(text) = String::from_utf8(bytes.to_vec()) {
+                                if let Ok(message) = serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text) {
+                                    let (session_ids, sessions) = match message {
+                                        WorkspaceActiveSnapshotClientMessage::Subscribe { session_ids, sessions, .. } => (session_ids, sessions),
+                                    };
+                                    let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = if !sessions.is_empty() {
+                                        sessions
+                                    } else {
+                                        session_ids
+                                            .into_iter()
+                                            .map(|session_id| WorkspaceActiveSnapshotSessionSubscription { session_id, after_seq: None })
+                                            .collect()
+                                    };
+                                    next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
+
+                                    pending.clear().await;
+                                    reset_queued = false;
+                                    send_control.clear_disconnect_after_flush();
+
+                                    let mut next_map = HashMap::new();
+                                    let mut replay_failed = false;
+                                    for sub in next {
+                                        let after_seq = sub.after_seq.unwrap_or(0);
+                                        let replay = replay_session_events_active(
+                                            &state,
+                                            workspace_id,
+                                            sub.session_id,
+                                            after_seq,
+                                            |event| pending.push(event),
+                                        )
+                                        .await;
+                                        match replay {
+                                            Ok(ReplayOutcome::Replay { last_sent }) => {
+                                                next_map.insert(sub.session_id, SessionCursor { last_sent });
+                                            }
+                                            Ok(ReplayOutcome::ResetRequired) | Err(_) => {
+                                                replay_failed = true;
+                                                break;
+                                            }
+                                        };
+                                    }
+                                    if replay_failed {
+                                        pending.clear().await;
+                                        if queue_reset_required(&pending, &state, workspace_id)
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
+                                        reset_queued = true;
+                                        send_control.set_disconnect_after_flush();
+                                        continue;
+                                    }
+                                    subscriptions = next_map;
+                                }
+                            }
+                        }
+                        Some(Ok(WsMessage::Close(_))) => break,
+                        Some(Ok(_)) => {}
+                        Some(Err(_)) => break,
+                        None => break,
                     }
-                    Some(Ok(WsMessage::Close(_))) => break,
-                    Some(Ok(_)) => {}
-                    Some(Err(_)) => break,
-                    None => break,
                 }
-            }
-            event = rx.recv() => {
-                let event = match event {
-                    Ok(event) => event,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                event = rx.recv() => {
+                    let event = match event {
+                        Ok(event) => event,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            if reset_queued {
+                                continue;
+                            }
+                            pending.clear().await;
+                            if queue_reset_required(&pending, &state, workspace_id)
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                            reset_queued = true;
+                            send_control.set_disconnect_after_flush();
+                            continue;
+                        }
+                        Err(_) => break,
+                    };
+
+                    if reset_queued {
+                        continue;
+                    }
+
+                    if let WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } = &event {
+                        let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
+                            continue;
+                        };
+                        if let Some(ev) = &delta.event {
+                            if ev.seq >= 0 {
+                                if ev.seq <= cursor.last_sent {
+                                    continue;
+                                }
+                                cursor.last_sent = ev.seq;
+                            }
+                        } else if delta.last_event_seq <= cursor.last_sent {
+                            continue;
+                        } else {
+                            cursor.last_sent = delta.last_event_seq;
+                        }
+                    }
+
+                    if pending
+                        .push(WorkspaceActiveSnapshotWsPayload::Event(event))
+                        .await
+                        .is_err()
+                    {
                         if reset_queued {
                             continue;
                         }
@@ -10805,58 +10844,19 @@ async fn handle_workspace_active_snapshot_ws(
                         }
                         reset_queued = true;
                         send_control.set_disconnect_after_flush();
-                        continue;
                     }
-                    Err(_) => break,
-                };
-
-                if reset_queued {
-                    continue;
-                }
-
-                if let WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } = &event {
-                    let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
-                        continue;
-                    };
-                    if let Some(ev) = &delta.event {
-                        if ev.seq >= 0 {
-                            if ev.seq <= cursor.last_sent {
-                                continue;
-                            }
-                            cursor.last_sent = ev.seq;
-                        }
-                    } else if delta.last_event_seq <= cursor.last_sent {
-                        continue;
-                    } else {
-                        cursor.last_sent = delta.last_event_seq;
-                    }
-                }
-
-                if pending
-                    .push(WorkspaceActiveSnapshotWsPayload::Event(event))
-                    .await
-                    .is_err()
-                {
-                    if reset_queued {
-                        continue;
-                    }
-                    pending.clear().await;
-                    if queue_reset_required(&pending, &state, workspace_id)
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                    reset_queued = true;
-                    send_control.set_disconnect_after_flush();
                 }
             }
         }
-    }
+    };
+
+    let (send_task, _recv_result) = crate::async_util::race_join_handle(send_task, recv_loop).await;
 
     send_control.set_disconnect_after_flush();
     pending.notify.notify_one();
-    let _ = send_task.await;
+    if let Some(send_task) = send_task {
+        let _ = send_task.await;
+    }
 }
 
 async fn replay_session_events_secure<F, Fut>(

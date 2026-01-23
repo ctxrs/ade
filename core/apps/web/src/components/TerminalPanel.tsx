@@ -8,24 +8,17 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import { ChevronDown, Plus, SplitSquareVertical, Terminal as TerminalIcon, X } from "lucide-react";
 import type { TerminalSession } from "@ctx/types";
 import {
-  authToken,
   createWorkspaceTerminal,
   deleteTerminal,
-  resolveDaemonWsBaseUrl,
   idToString,
   listWorkspaceTerminals,
   type CreateTerminalRequest,
 } from "../api/client";
 import type {
   PersistedWorkbenchTerminalLayoutV1,
-  SplitDirection,
   TerminalGroupState,
-  TerminalLayoutNode,
   TerminalPanelScopeState,
   TerminalScope,
 } from "../workbench/types";
@@ -35,7 +28,23 @@ import {
   saveWorkbenchTerminalLayoutV1,
   saveWorkbenchTerminalTitlesV1,
 } from "../workbench/persistence";
-import { randomUuid } from "../utils/randomUuid";
+import {
+  createSingleTerminalGroup,
+  defaultPanelState,
+  findGroupForTerminal,
+  findLeafIdForTerminal,
+  findTerminalIdForLeaf,
+  firstLeafId,
+  reconcileScopeState,
+  removeTerminalFromLayout,
+  resolveActiveLeafId,
+  splitLeaf,
+  terminalIdsInLayout,
+  updateSplitRatio,
+} from "./terminalLayout";
+import { TerminalSplitView } from "./TerminalSplitView";
+import { TerminalTabs } from "./TerminalTabs";
+import { useTerminalClients } from "./useTerminalClients";
 
 export type TerminalPanelHandle = {
   createTerminal: (opts: CreateTerminalOptions) => Promise<string | null>;
@@ -61,193 +70,6 @@ type TerminalPanelProps = {
   onRequestClose: () => void;
 };
 
-type TerminalClient = {
-  id: string;
-  terminal: Terminal;
-  fitAddon: FitAddon;
-  element: HTMLElement | null;
-  status: TerminalSession["status"];
-  exitCode: number | null;
-  attach: (el: HTMLElement) => void;
-  fit: () => void;
-  focus: () => void;
-  dispose: () => void;
-  reconnect: () => void;
-};
-
-type TerminalStatusMessage = {
-  type: "status";
-  status: TerminalSession["status"];
-  exit_code?: number | null;
-};
-
-const emptyScopeState = (): TerminalPanelScopeState => ({
-  groups: [],
-  activeGroupId: null,
-  tabOrder: [],
-});
-
-const defaultPanelState = (): PersistedWorkbenchTerminalLayoutV1 => ({
-  v: 1,
-  scope: "workspace",
-  scopes: {
-    task: emptyScopeState(),
-    workspace: emptyScopeState(),
-  },
-});
-
-function leafIds(node: TerminalLayoutNode | null, out: string[] = []): string[] {
-  if (!node) return out;
-  if (node.kind === "leaf") {
-    out.push(node.id);
-    return out;
-  }
-  leafIds(node.first, out);
-  leafIds(node.second, out);
-  return out;
-}
-
-function firstLeafId(node: TerminalLayoutNode | null): string | null {
-  if (!node) return null;
-  if (node.kind === "leaf") return node.id;
-  return firstLeafId(node.first) ?? firstLeafId(node.second);
-}
-
-function findLeafIdForTerminal(node: TerminalLayoutNode | null, terminalId: string): string | null {
-  if (!node) return null;
-  if (node.kind === "leaf") return node.terminalId === terminalId ? node.id : null;
-  return findLeafIdForTerminal(node.first, terminalId) ?? findLeafIdForTerminal(node.second, terminalId);
-}
-
-function findTerminalIdForLeaf(node: TerminalLayoutNode | null, leafId: string | null): string | null {
-  if (!node || !leafId) return null;
-  if (node.kind === "leaf") return node.id === leafId ? node.terminalId : null;
-  return findTerminalIdForLeaf(node.first, leafId) ?? findTerminalIdForLeaf(node.second, leafId);
-}
-
-function terminalIdsInLayout(node: TerminalLayoutNode | null, out: string[] = []): string[] {
-  if (!node) return out;
-  if (node.kind === "leaf") {
-    out.push(node.terminalId);
-    return out;
-  }
-  terminalIdsInLayout(node.first, out);
-  terminalIdsInLayout(node.second, out);
-  return out;
-}
-
-function resolveActiveLeafId(node: TerminalLayoutNode | null, activeLeafId: string | null): string | null {
-  if (!node) return null;
-  const list = leafIds(node);
-  if (activeLeafId && list.includes(activeLeafId)) return activeLeafId;
-  return list[0] ?? null;
-}
-
-function createSingleTerminalGroup(terminalId: string): TerminalGroupState {
-  const leafId = randomUuid();
-  return {
-    id: randomUuid(),
-    layout: { kind: "leaf", id: leafId, terminalId },
-    activeLeafId: leafId,
-  };
-}
-
-function findGroupForTerminal(
-  groups: TerminalGroupState[],
-  terminalId: string,
-): { group: TerminalGroupState; leafId: string } | null {
-  for (const group of groups) {
-    const leafId = findLeafIdForTerminal(group.layout, terminalId);
-    if (leafId) return { group, leafId };
-  }
-  return null;
-}
-
-function pruneLayout(node: TerminalLayoutNode | null, allowed: Set<string>): TerminalLayoutNode | null {
-  if (!node) return null;
-  if (node.kind === "leaf") {
-    return allowed.has(node.terminalId) ? node : null;
-  }
-  const first = pruneLayout(node.first, allowed);
-  const second = pruneLayout(node.second, allowed);
-  if (!first && !second) return null;
-  if (!first) return second;
-  if (!second) return first;
-  return { ...node, first, second };
-}
-
-function updateSplitRatio(node: TerminalLayoutNode, splitId: string, ratio: number): TerminalLayoutNode {
-  if (node.kind === "leaf") return node;
-  if (node.id === splitId) return { ...node, ratio };
-  return {
-    ...node,
-    first: updateSplitRatio(node.first, splitId, ratio),
-    second: updateSplitRatio(node.second, splitId, ratio),
-  };
-}
-
-function splitLeaf(
-  node: TerminalLayoutNode,
-  leafId: string,
-  newTerminalId: string,
-  direction: SplitDirection,
-): TerminalLayoutNode {
-  if (node.kind === "leaf") {
-    if (node.id !== leafId) return node;
-    const existing = node.terminalId;
-    return {
-      kind: "split",
-      id: randomUuid(),
-      direction,
-      ratio: 0.5,
-      first: { kind: "leaf", id: randomUuid(), terminalId: existing },
-      second: { kind: "leaf", id: randomUuid(), terminalId: newTerminalId },
-    };
-  }
-  return {
-    ...node,
-    first: splitLeaf(node.first, leafId, newTerminalId, direction),
-    second: splitLeaf(node.second, leafId, newTerminalId, direction),
-  };
-}
-
-function removeTerminalFromLayout(node: TerminalLayoutNode | null, terminalId: string): TerminalLayoutNode | null {
-  if (!node) return null;
-  if (node.kind === "leaf") {
-    return node.terminalId === terminalId ? null : node;
-  }
-  const first = removeTerminalFromLayout(node.first, terminalId);
-  const second = removeTerminalFromLayout(node.second, terminalId);
-  if (!first && !second) return null;
-  if (!first) return second;
-  if (!second) return first;
-  return { ...node, first, second };
-}
-
-function buildTerminalWsUrl(terminalId: string): string {
-  const wsBase = resolveDaemonWsBaseUrl();
-  const baseUrl = `${wsBase}/api/terminals/${terminalId}/stream`;
-  const token = authToken();
-  if (!token) return baseUrl;
-  return `${baseUrl}?token=${encodeURIComponent(token)}`;
-}
-
-function terminalTheme() {
-  const styles = getComputedStyle(document.documentElement);
-  const read = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
-  return {
-    background: read("--panel", "#252526"),
-    foreground: read("--text", "#d4d4d4"),
-    cursor: read("--text", "#d4d4d4"),
-    selectionBackground: "rgba(255, 255, 255, 0.2)",
-  };
-}
-
-function terminalFontFamily() {
-  const styles = getComputedStyle(document.documentElement);
-  return styles.getPropertyValue("--mono").trim() || "monospace";
-}
-
 export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>(function TerminalPanel(
   { workspaceId, activeTaskId, activeSessionId, open, height, onRequestClose },
   ref,
@@ -263,7 +85,7 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
   const [contextMenu, setContextMenu] = useState<{ terminalId: string; x: number; y: number } | null>(null);
   const [contextMenuStyle, setContextMenuStyle] = useState<React.CSSProperties | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
-  const clientsRef = useRef<Map<string, TerminalClient>>(new Map());
+  const clientsRef = useTerminalClients(terminals, setTerminals, workspaceId);
   const resizeFrameRef = useRef<number | null>(null);
   const autoCreateWorkspaceRef = useRef(false);
 
@@ -381,51 +203,6 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
     setContextMenuStyle({ left, top, position: "fixed" });
   }, [contextMenu]);
 
-  useEffect(() => {
-    const map = clientsRef.current;
-    const seen = new Set<string>();
-    for (const terminal of terminals) {
-      const id = idToString(terminal.id);
-      if (!id) continue;
-      seen.add(id);
-      if (map.has(id)) {
-        const client = map.get(id)!;
-        client.status = terminal.status;
-        client.exitCode = terminal.exit_code ?? null;
-        continue;
-      }
-      const client = createClient(terminal, (status, exitCode) => {
-        setTerminals((prev) =>
-          prev.map((t) =>
-            idToString(t.id) === id
-              ? {
-                  ...t,
-                  status,
-                  exit_code: exitCode ?? null,
-                }
-              : t,
-          ),
-        );
-      });
-      map.set(id, client);
-    }
-    for (const id of Array.from(map.keys())) {
-      if (!seen.has(id)) {
-        const client = map.get(id);
-        client?.dispose();
-        map.delete(id);
-      }
-    }
-  }, [terminals]);
-
-  useEffect(() => {
-    return () => {
-      for (const client of clientsRef.current.values()) {
-        client.dispose();
-      }
-      clientsRef.current.clear();
-    };
-  }, [workspaceId]);
 
   const workspaceTerminals = terminals;
   const taskTerminals = useMemo(() => {
@@ -918,130 +695,34 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
   return (
     <div className="wb-terminal-panel wb-terminal-panel-inner">
       <div className="wb-terminal-body" aria-hidden={!open}>
-        <div className="wb-terminal-tabs">
-          <div className="wb-terminal-toolbar">
-            <button type="button" className="wb-terminal-action" title="New terminal" onClick={handleNewTerminal}>
-              <Plus size={14} />
-            </button>
-            <div className="wb-terminal-toolbar-spacer" />
-            <button type="button" className="wb-terminal-action" title="Hide terminal panel" onClick={onRequestClose}>
-              <ChevronDown size={14} />
-            </button>
-          </div>
-          <div className="wb-terminal-scope">
-            <button
-              type="button"
-              className={panelState.scope === "task" ? "wb-terminal-scope-active" : ""}
-              onClick={() => handleScopeChange("task")}
-              disabled={!activeTaskId}
-            >
-              Task
-            </button>
-            <button
-              type="button"
-              className={panelState.scope === "workspace" ? "wb-terminal-scope-active" : ""}
-              onClick={() => handleScopeChange("workspace")}
-            >
-              Workspace
-            </button>
-          </div>
-          <div className="wb-terminal-tablist" aria-disabled={scopeDisabled}>
-            {orderedTerminals.length === 0 && (
-              <div className="wb-terminal-tab-empty">No terminals</div>
-            )}
-            {orderedTerminals.map((terminal) => {
-              const id = idToString(terminal.id);
-              if (!id) return null;
-              const active = id === activeTerminalId;
-              const exited = terminal.status === "exited";
-              const groupInfo = groupInfoByTerminal.get(id) ?? null;
-              const title = titleOverrides[id] ?? terminal.title;
-              const isRenaming = renamingId === id;
-              return (
-                <div
-                  key={id}
-                  className={`wb-terminal-tab ${active ? "wb-terminal-tab-active" : ""} ${
-                    exited ? "wb-terminal-tab-exited" : ""
-                  }`}
-                  onClick={() => handleSelectTerminal(id)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setContextMenu({ terminalId: id, x: e.clientX, y: e.clientY });
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      handleSelectTerminal(id);
-                    }
-                  }}
-                  role="button"
-                  tabIndex={0}
-                >
-                  {groupInfo ? (
-                    <span
-                      className={`wb-terminal-tab-split wb-terminal-tab-split-${groupInfo.position}`}
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <TerminalIcon size={14} />
-                  )}
-                  {isRenaming ? (
-                    <input
-                      ref={renameInputRef}
-                      className="wb-terminal-tab-input"
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onClick={(e) => e.stopPropagation()}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onBlur={commitRenameTerminal}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          commitRenameTerminal();
-                        } else if (e.key === "Escape") {
-                          e.preventDefault();
-                          cancelRenameTerminal();
-                        }
-                      }}
-                    />
-                  ) : (
-                    <span className="wb-terminal-tab-title">{title}</span>
-                  )}
-                  {exited && <span className="wb-terminal-tab-exit">Exited</span>}
-                  <span className="wb-terminal-tab-spacer" />
-                  {!isRenaming && (
-                    <span className="wb-terminal-tab-actions">
-                      <button
-                        type="button"
-                        className="wb-terminal-tab-action"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void splitTerminalForId(id);
-                        }}
-                        title="Split terminal"
-                        aria-label="Split terminal"
-                      >
-                        <SplitSquareVertical size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        className="wb-terminal-tab-action wb-terminal-tab-close"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void handleKillTerminal(id);
-                        }}
-                        title="Kill terminal"
-                        aria-label="Kill terminal"
-                      >
-                        <X size={12} />
-                      </button>
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <TerminalTabs
+          orderedTerminals={orderedTerminals}
+          activeTerminalId={activeTerminalId}
+          groupInfoByTerminal={groupInfoByTerminal}
+          titleOverrides={titleOverrides}
+          renamingId={renamingId}
+          renameValue={renameValue}
+          renameInputRef={renameInputRef}
+          scope={panelState.scope}
+          scopeDisabled={scopeDisabled}
+          activeTaskId={activeTaskId}
+          onNewTerminal={handleNewTerminal}
+          onRequestClose={onRequestClose}
+          onScopeChange={handleScopeChange}
+          onSelectTerminal={handleSelectTerminal}
+          onRenameValueChange={(value) => setRenameValue(value)}
+          onCommitRename={commitRenameTerminal}
+          onCancelRename={cancelRenameTerminal}
+          onSplitTerminal={(terminalId) => {
+            void splitTerminalForId(terminalId);
+          }}
+          onKillTerminal={(terminalId) => {
+            void handleKillTerminal(terminalId);
+          }}
+          onOpenContextMenu={(terminalId, x, y) => {
+            setContextMenu({ terminalId, x, y });
+          }}
+        />
         <div className="wb-terminal-view">
           {scopeState.groups.length > 0 ? (
             scopeState.groups.map((group) => {
@@ -1127,256 +808,4 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
     </div>
   );
 
-  function createClient(
-    terminal: TerminalSession,
-    onStatus: (status: TerminalSession["status"], exitCode: number | null) => void,
-  ): TerminalClient {
-    const id = idToString(terminal.id);
-    const term = new Terminal({
-      fontFamily: terminalFontFamily(),
-      fontSize: 12,
-      lineHeight: 1.15,
-      scrollback: 2000,
-      cursorBlink: true,
-      theme: terminalTheme(),
-    });
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-
-    let socket: WebSocket | null = null;
-    let element: HTMLElement | null = null;
-    const canFit = () => {
-      if (!element || !element.isConnected) return false;
-      if (element.closest(".wb-terminal-group-hidden")) return false;
-      return element.clientWidth > 0 && element.clientHeight > 0;
-    };
-
-    const sendResize = () => {
-      if (!socket || socket.readyState !== WebSocket.OPEN) return;
-      const cols = term.cols;
-      const rows = term.rows;
-      socket.send(JSON.stringify({ type: "resize", cols, rows }));
-    };
-
-    const fitNow = () => {
-      if (!canFit()) return;
-      fitAddon.fit();
-      sendResize();
-    };
-
-    const connect = () => {
-      if (socket && socket.readyState === WebSocket.OPEN) return;
-      socket = new WebSocket(buildTerminalWsUrl(id));
-      socket.binaryType = "arraybuffer";
-      socket.addEventListener("open", () => {
-        sendResize();
-      });
-      socket.addEventListener("close", () => {
-      });
-      socket.addEventListener("message", (ev) => {
-        if (typeof ev.data === "string") {
-          try {
-            const msg = JSON.parse(ev.data) as TerminalStatusMessage;
-            if (msg.type === "status") {
-              onStatus(msg.status, msg.exit_code ?? null);
-              return;
-            }
-          } catch {
-            // ignore
-          }
-          term.write(ev.data);
-          return;
-        }
-        if (ev.data instanceof ArrayBuffer) {
-          term.write(new Uint8Array(ev.data));
-          return;
-        }
-        if (ev.data instanceof Blob) {
-          void ev.data.arrayBuffer().then((buf) => term.write(new Uint8Array(buf)));
-        }
-      });
-    };
-
-    term.onData((data) => {
-      if (!socket || socket.readyState !== WebSocket.OPEN) return;
-      socket.send(data);
-    });
-
-    connect();
-
-    return {
-      id,
-      terminal: term,
-      fitAddon,
-      element,
-      status: terminal.status,
-      exitCode: terminal.exit_code ?? null,
-      attach: (el) => {
-        if (element === el) return;
-        element = el;
-        if (term.element) {
-          el.replaceChildren(term.element);
-        } else {
-          term.open(el);
-        }
-        requestAnimationFrame(fitNow);
-      },
-      fit: () => {
-        fitNow();
-      },
-      focus: () => {
-        term.focus();
-      },
-      dispose: () => {
-        socket?.close();
-        term.dispose();
-      },
-      reconnect: () => {
-        socket?.close();
-        connect();
-      },
-    };
-  }
-
-  function reconcileScopeState(state: TerminalPanelScopeState, scopeTerminals: TerminalSession[]): TerminalPanelScopeState {
-    const ids = scopeTerminals.map((t) => idToString(t.id)).filter(Boolean) as string[];
-    const allowed = new Set(ids);
-    const tabOrder = state.tabOrder.filter((id) => allowed.has(id));
-    const newIds = ids.filter((id) => !tabOrder.includes(id));
-    const nextOrder = tabOrder.concat(newIds);
-    let groups = state.groups
-      .map((group) => {
-        const layout = pruneLayout(group.layout, allowed);
-        if (!layout) return null;
-        const activeLeafId = resolveActiveLeafId(layout, group.activeLeafId);
-        return { ...group, layout, activeLeafId };
-      })
-      .filter(Boolean) as TerminalGroupState[];
-
-    if (groups.length === 0 && nextOrder.length > 0) {
-      groups = [createSingleTerminalGroup(nextOrder[0])];
-    }
-
-    let activeGroupId = state.activeGroupId;
-    if (activeGroupId && !groups.some((group) => group.id === activeGroupId)) {
-      activeGroupId = groups[0]?.id ?? null;
-    }
-    if (!activeGroupId && groups.length > 0) {
-      activeGroupId = groups[0].id;
-    }
-    return {
-      groups,
-      activeGroupId,
-      tabOrder: nextOrder,
-    };
-  }
 });
-
-function TerminalSplitView({
-  node,
-  activeLeafId,
-  onActivate,
-  onResize,
-  clients,
-}: {
-  node: TerminalLayoutNode;
-  activeLeafId: string | null;
-  onActivate: (leafId: string, terminalId: string) => void;
-  onResize: (splitId: string, ratio: number) => void;
-  clients: React.MutableRefObject<Map<string, TerminalClient>>;
-}) {
-  if (node.kind === "leaf") {
-    return (
-      <TerminalLeaf
-        leaf={node}
-        active={node.id === activeLeafId}
-        onActivate={onActivate}
-        clients={clients}
-      />
-    );
-  }
-  const isHorizontal = node.direction === "horizontal";
-  const ratio = node.ratio;
-  return (
-    <div className={`wb-terminal-split ${isHorizontal ? "wb-terminal-split-horizontal" : "wb-terminal-split-vertical"}`}>
-      <div className="wb-terminal-split-pane" style={{ flexBasis: `${ratio * 100}%` }}>
-        <TerminalSplitView node={node.first} activeLeafId={activeLeafId} onActivate={onActivate} onResize={onResize} clients={clients} />
-      </div>
-      <TerminalSplitResizer direction={node.direction} onResize={(next) => onResize(node.id, next)} />
-      <div className="wb-terminal-split-pane" style={{ flexBasis: `${(1 - ratio) * 100}%` }}>
-        <TerminalSplitView node={node.second} activeLeafId={activeLeafId} onActivate={onActivate} onResize={onResize} clients={clients} />
-      </div>
-    </div>
-  );
-}
-
-function TerminalSplitResizer({
-  direction,
-  onResize,
-}: {
-  direction: SplitDirection;
-  onResize: (ratio: number) => void;
-}) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      const parent = ref.current?.parentElement;
-      if (!parent) return;
-      const rect = parent.getBoundingClientRect();
-      const onMove = (ev: MouseEvent) => {
-        const nextRatio = direction === "horizontal"
-          ? Math.min(0.9, Math.max(0.1, (ev.clientX - rect.left) / rect.width))
-          : Math.min(0.9, Math.max(0.1, (ev.clientY - rect.top) / rect.height));
-        onResize(nextRatio);
-      };
-      const onUp = () => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
-    },
-    [direction, onResize],
-  );
-  return (
-    <div
-      ref={ref}
-      className={`wb-terminal-splitter ${direction === "horizontal" ? "wb-terminal-splitter-vertical" : "wb-terminal-splitter-horizontal"}`}
-      onMouseDown={onMouseDown}
-    />
-  );
-}
-
-function TerminalLeaf({
-  leaf,
-  active,
-  onActivate,
-  clients,
-}: {
-  leaf: Extract<TerminalLayoutNode, { kind: "leaf" }>;
-  active: boolean;
-  onActivate: (leafId: string, terminalId: string) => void;
-  clients: React.MutableRefObject<Map<string, TerminalClient>>;
-}) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const terminalId = leaf.terminalId;
-  useLayoutEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const client = clients.current.get(terminalId);
-    if (!client) return;
-    client.attach(el);
-    const ro = new ResizeObserver(() => client.fit());
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [clients, terminalId]);
-
-  return (
-    <div
-      ref={containerRef}
-      className={`wb-terminal-pane ${active ? "wb-terminal-pane-active" : ""}`}
-      onMouseDown={() => onActivate(leaf.id, terminalId)}
-    />
-  );
-}
