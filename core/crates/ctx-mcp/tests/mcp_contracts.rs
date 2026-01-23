@@ -292,6 +292,13 @@ async fn mcp_merge_queue_submit_scrubs_internal_ids() {
 async fn mcp_oracle_forwards_prompt_and_overrides() {
     let body_tx = std::sync::Arc::new(tokio::sync::Mutex::new(None::<Value>));
     let body_tx2 = body_tx.clone();
+    let temp_dir = std::env::temp_dir().join(format!("ctx-mcp-oracle-{}", rand::random::<u64>()));
+    tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+    let prompt_path = temp_dir.join("prompt.txt");
+    let response_path = temp_dir.join("response.txt");
+    tokio::fs::write(&prompt_path, "hello").await.unwrap();
+    let prompt_path_str = prompt_path.to_string_lossy().to_string();
+    let response_path_str = response_path.to_string_lossy().to_string();
 
     let app = Router::new()
         .route(
@@ -339,7 +346,8 @@ async fn mcp_oracle_forwards_prompt_and_overrides() {
             "params":{
                 "name":"ctx.oracle",
                 "arguments":{
-                    "prompt":"hello",
+                    "prompt_path": prompt_path_str.clone(),
+                    "response_path": response_path_str.clone(),
                     "model":"gpt-5.2-pro",
                     "reasoning_effort":"high",
                     "max_output_tokens":123,
@@ -364,7 +372,24 @@ async fn mcp_oracle_forwards_prompt_and_overrides() {
             let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
             let payload: Value = serde_json::from_str(text).unwrap();
             let obj = payload.as_object().expect("response must be object");
-            assert_eq!(obj.get("text").and_then(|v| v.as_str()), Some("ok"));
+            assert_eq!(
+                obj.get("prompt_path").and_then(|v| v.as_str()),
+                Some(prompt_path_str.as_str())
+            );
+            assert_eq!(
+                obj.get("response_path").and_then(|v| v.as_str()),
+                Some(response_path_str.as_str())
+            );
+            assert_eq!(obj.get("prompt_bytes").and_then(|v| v.as_u64()), Some(5));
+            assert_eq!(obj.get("response_bytes").and_then(|v| v.as_u64()), Some(2));
+            let input_copy_path = obj
+                .get("input_copy_path")
+                .and_then(|v| v.as_str())
+                .expect("missing input_copy_path");
+            let copied_prompt = tokio::fs::read_to_string(input_copy_path).await.unwrap();
+            assert_eq!(copied_prompt, "hello");
+            let response_text = tokio::fs::read_to_string(&response_path).await.unwrap();
+            assert_eq!(response_text, "ok");
             got_call = true;
             break;
         }

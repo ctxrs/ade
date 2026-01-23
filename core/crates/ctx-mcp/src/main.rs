@@ -7,7 +7,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Parser, Debug)]
 #[command(name = "ctx-mcp")]
@@ -593,13 +595,14 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "prompt": { "type": "string", "description": "Full self-contained problem statement + the question for the oracle." },
+                                    "prompt_path": { "type": "string", "description": "Path to a file containing the full self-contained problem statement + the question for the oracle." },
+                                    "response_path": { "type": "string", "description": "Optional file path to write the oracle response." },
                                     "model": { "type": "string", "description": "Optional model override (defaults to daemon oracle settings)." },
                                     "reasoning_effort": { "type": "string", "description": "Optional reasoning effort override (defaults to daemon oracle settings)." },
                                     "max_output_tokens": { "type": "integer", "minimum": 1, "description": "Optional output token cap (defaults to daemon oracle settings)." },
                                     "timeout_ms": { "type": "integer", "minimum": 1, "description": "Optional request timeout override (defaults to daemon oracle settings)." }
                                 },
-                                "required": ["prompt"],
+                                "required": ["prompt_path"],
                                 "additionalProperties": false
                             }
                         },
@@ -2387,12 +2390,61 @@ async fn merge_queue_submit_call(
 
 async fn oracle_call(client: &reqwest::Client, daemon_url: &str, args: &Value) -> Result<Value> {
     let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let prompt = args
-        .get("prompt")
+    if args.get("prompt").is_some() {
+        bail!("inline prompt is not supported; use prompt_path");
+    }
+
+    let prompt_path = args
+        .get("prompt_path")
         .and_then(|v| v.as_str())
         .map(|v| v.trim())
         .filter(|v| !v.is_empty())
-        .context("missing prompt")?;
+        .context("missing prompt_path")?;
+    let response_path = args
+        .get("response_path")
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty());
+
+    let cwd = std::env::current_dir().context("resolve current dir")?;
+    let resolve_path = |path: &str| -> PathBuf {
+        let candidate = PathBuf::from(path);
+        if candidate.is_absolute() {
+            candidate
+        } else {
+            cwd.join(candidate)
+        }
+    };
+    let path_to_string = |path: &Path| path.to_string_lossy().to_string();
+
+    let prompt_path = resolve_path(prompt_path);
+    let prompt_bytes = tokio::fs::read(&prompt_path)
+        .await
+        .with_context(|| format!("reading prompt_path {}", prompt_path.display()))?;
+    let prompt = String::from_utf8(prompt_bytes.clone()).context("prompt_path must be utf-8")?;
+    if prompt.trim().is_empty() {
+        bail!("prompt file is empty");
+    }
+
+    let oracle_id = {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        format!("{timestamp}-{session_id}")
+    };
+    let oracle_dir = cwd.join(".ctx/tmp/oracle").join(&oracle_id);
+    tokio::fs::create_dir_all(&oracle_dir)
+        .await
+        .context("creating oracle temp directory")?;
+    let input_copy_path = oracle_dir.join("input.md");
+    tokio::fs::write(&input_copy_path, &prompt_bytes)
+        .await
+        .context("writing oracle prompt copy")?;
+
+    let response_path = response_path
+        .map(resolve_path)
+        .unwrap_or_else(|| oracle_dir.join("output.md"));
 
     let mut body = json!({ "prompt": prompt });
     if let Some(model) = args
@@ -2434,7 +2486,24 @@ async fn oracle_call(client: &reqwest::Client, daemon_url: &str, args: &Value) -
 
     let path = format!("/api/mcp/sessions/{}/oracle", session_id);
     let response = daemon_post_json(client, daemon_url, &path, &body).await?;
-    Ok(response)
+    let response_text = response
+        .get("text")
+        .and_then(|v| v.as_str())
+        .context("missing oracle response text")?;
+    tokio::fs::write(&response_path, response_text.as_bytes())
+        .await
+        .with_context(|| format!("writing oracle response {}", response_path.display()))?;
+
+    let response_bytes = response_text.len() as u64;
+    let prompt_bytes_len = prompt_bytes.len() as u64;
+
+    Ok(json!({
+        "prompt_path": path_to_string(&prompt_path),
+        "input_copy_path": path_to_string(&input_copy_path),
+        "response_path": path_to_string(&response_path),
+        "prompt_bytes": prompt_bytes_len,
+        "response_bytes": response_bytes
+    }))
 }
 
 async fn agent_init_call(
