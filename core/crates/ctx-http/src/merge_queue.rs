@@ -1122,7 +1122,6 @@ async fn tool_slice_command(
     if systemd_run_available().await {
         let mut cmd = Command::new("systemd-run");
         cmd.arg("--user")
-            .arg("--scope")
             .arg("--slice")
             .arg(TOOL_SLICE_UNIT)
             .arg("--quiet")
