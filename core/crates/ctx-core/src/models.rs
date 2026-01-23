@@ -862,6 +862,12 @@ pub struct WorkspaceActiveSnapshotSessionSubscription {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceActiveSnapshotSubscribeScope {
+    Active,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkspaceActiveSnapshotClientMessage {
     Subscribe {
@@ -869,6 +875,10 @@ pub enum WorkspaceActiveSnapshotClientMessage {
         session_ids: Vec<SessionId>,
         #[serde(default)]
         sessions: Vec<WorkspaceActiveSnapshotSessionSubscription>,
+        #[serde(default)]
+        task_ids: Vec<TaskId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<WorkspaceActiveSnapshotSubscribeScope>,
         #[serde(default, skip_serializing_if = "is_false")]
         include_active_heads: bool,
     },

@@ -46,6 +46,8 @@ pub(crate) async fn spawn_ws_listener(
     let message = WorkspaceActiveSnapshotClientMessage::Subscribe {
         session_ids: sessions,
         sessions: Vec::new(),
+        task_ids: Vec::new(),
+        scope: None,
         include_active_heads: false,
     };
     let payload = serde_json::to_string(&message)?;
@@ -139,6 +141,8 @@ pub(crate) async fn run_ws_replay_once(
             session_id,
             after_seq: Some(0),
         }],
+        task_ids: Vec::new(),
+        scope: None,
         include_active_heads: false,
     };
     let payload = serde_json::to_string(&message)?;

@@ -117,7 +117,6 @@ describe("SessionSupervisor", () => {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
-      setSubscriptions: (_subs) => {},
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
       getSnapshot: () => ({
@@ -213,7 +212,6 @@ describe("SessionSupervisor", () => {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
-      setSubscriptions: (_subs) => {},
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
       getSnapshot: () => ({
@@ -331,7 +329,6 @@ describe("SessionSupervisor", () => {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
-      setSubscriptions: (_subs) => {},
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
       getSnapshot: () => ({
@@ -428,7 +425,6 @@ describe("SessionSupervisor", () => {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
-      setSubscriptions: (_subs) => {},
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
       getSnapshot: () => ({

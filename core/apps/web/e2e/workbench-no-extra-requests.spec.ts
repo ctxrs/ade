@@ -9,12 +9,14 @@ test("workbench: switching between cached sessions makes no extra HTTP requests"
     throttleMs: 5,
   });
 
+  const isProviderNoise = (url: string) =>
+    url.includes("/api/providers") || url.includes("/api/sessions/web");
+
   const requests: Array<{ url: string; method: string; ts: number }> = [];
-  page.on("requestfinished", (req) => {
+  page.on("request", (req) => {
     const url = req.url();
     if (!url.includes("/api/")) return;
-    if (url.includes("/api/providers")) return;
-    if (url.includes("/api/sessions/web")) return;
+    if (isProviderNoise(url)) return;
     requests.push({ url, method: req.method(), ts: Date.now() });
   });
 

@@ -8,7 +8,6 @@ import type {
   SessionTurn,
   Task,
   WorkspaceActiveSnapshotEvent,
-  WorkspaceActiveSnapshotSessionSubscription,
   WorkspaceActiveTaskSummary,
   WorkspaceIndexCursor,
   WorkspaceTaskSummary,
@@ -68,7 +67,6 @@ export type WorkspaceActiveSnapshotEventSource = {
   getSnapshot: () => WorkspaceActiveSnapshotState;
   getSessionHeadSnapshot: (sessionId: string) => SessionHeadSnapshot | null;
   getWorktreeRoot: (worktreeId: string) => string | null;
-  setSubscriptions: (subscriptions: WorkspaceActiveSnapshotSessionSubscription[]) => void;
 };
 
 const ACTIVE_PAGE_SIZE = 50;
@@ -89,27 +87,6 @@ const dedupeUrls = (urls: string[]): string[] => {
     seen.add(url);
     out.push(url);
   }
-  return out;
-};
-
-const normalizeSubscriptions = (
-  subs: WorkspaceActiveSnapshotSessionSubscription[],
-  lastSeqBySession: Map<string, number>,
-): WorkspaceActiveSnapshotSessionSubscription[] => {
-  const seen = new Set<string>();
-  const out: WorkspaceActiveSnapshotSessionSubscription[] = [];
-  for (const sub of subs) {
-    const id = idToString(sub.session_id);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    let afterSeq =
-      typeof sub.after_seq === "number" ? sub.after_seq : lastSeqBySession.get(id);
-    if (!Number.isFinite(afterSeq as number) || (afterSeq as number) < 0) {
-      afterSeq = 0;
-    }
-    out.push({ session_id: id, after_seq: afterSeq ?? 0 });
-  }
-  out.sort((a, b) => String(idToString(a.session_id)).localeCompare(String(idToString(b.session_id))));
   return out;
 };
 
@@ -261,9 +238,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private reconnectDelayMs = 1000;
   private snapshotRev = 0;
   private archivedRev = 0;
-  private subscriptions: WorkspaceActiveSnapshotSessionSubscription[] = [];
-  private sessionLastEventSeq = new Map<string, number>();
-  private subscriptionKey = "";
   private cacheHydrated = false;
   private activeHeadsQueued = false;
   private activeHeadsQueuedForce = false;
@@ -315,15 +289,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     const id = idToString(worktreeId);
     if (!id) return null;
     return this.worktreeRootsById.get(id) ?? null;
-  };
-
-  setSubscriptions = (subscriptions: WorkspaceActiveSnapshotSessionSubscription[]) => {
-    const next = normalizeSubscriptions(subscriptions, this.sessionLastEventSeq);
-    const key = next.map((sub) => `${idToString(sub.session_id)}:${sub.after_seq ?? 0}`).join("|");
-    if (key === this.subscriptionKey) return;
-    this.subscriptionKey = key;
-    this.subscriptions = next;
-    this.flushSubscriptions();
   };
 
   init = () => {
@@ -441,7 +406,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     const totalCount = Number.isFinite(cached.active?.totalCount) ? cached.active.totalCount : nextActiveIds.size;
     this.totalActive = Math.max(totalCount, nextActiveIds.size);
     this.snapshotRev = Math.max(this.snapshotRev, cached.snapshotRev ?? 0);
-    this.rebuildSessionLastEventSeq();
     this.snapshot.initialized = true;
     this.publish();
     this.queueActiveHeadHydration({ force: true });
@@ -586,9 +550,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       if (this.shouldReplaceHead(prev, sanitized)) {
         this.sessionHeadsById.set(sessionId, sanitized);
         changed = true;
-        if (typeof sanitized.last_event_seq === "number") {
-          this.sessionLastEventSeq.set(sessionId, sanitized.last_event_seq);
-        }
       }
     }
 
@@ -727,7 +688,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         }
       }
 
-      this.rebuildSessionLastEventSeq();
       this.snapshot.initialized = true;
       this.liveSnapshotApplied = true;
       this.publish();
@@ -987,25 +947,12 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const message: WorkspaceActiveSnapshotClientMessage = {
       type: "subscribe",
-      sessions: this.subscriptions,
+      scope: "active",
     };
     try {
       ws.send(JSON.stringify(message));
     } catch {
       // ignore send errors
-    }
-  }
-
-  private rebuildSessionLastEventSeq() {
-    this.sessionLastEventSeq.clear();
-    for (const task of this.tasks.values()) {
-      for (const summary of task.sessions) {
-        const id = idToString(summary.session.id);
-        if (!id) continue;
-        if (typeof summary.last_event_seq === "number") {
-          this.sessionLastEventSeq.set(id, summary.last_event_seq);
-        }
-      }
     }
   }
 
@@ -1027,7 +974,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         this.totalActive = Math.max(0, this.totalActive - 1);
       }
     }
-    this.rebuildSessionLastEventSeq();
     this.schedulePersistCache();
   }
 
@@ -1044,7 +990,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.totalActive += 1;
     }
     this.placeInOrders(normalized);
-    this.rebuildSessionLastEventSeq();
     this.schedulePersistCache();
     const primaryId = this.pickPrimarySessionId(normalized);
     if (primaryId && !normalized.primarySessionHead && !this.sessionHeadsById.has(primaryId)) {
@@ -1064,7 +1009,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       }
     }
     this.placeInOrders(item);
-    this.rebuildSessionLastEventSeq();
   }
 
   private updateCountsForMove(prev: WorkspaceActiveSnapshotItem, next: WorkspaceActiveSnapshotItem) {
@@ -1095,7 +1039,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       nextSessions.push(normalized);
     }
     this.tasks.set(taskId, { ...task, sessions: sortSessionSummaries(nextSessions) });
-    this.rebuildSessionLastEventSeq();
     this.schedulePersistCache();
   }
 
@@ -1135,10 +1078,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (!this.shouldReplaceHead(existing, next)) return false;
     this.sessionHeadsById.set(sessionId, next);
     changed = true;
-    if (typeof delta.last_event_seq === "number") {
-      this.sessionLastEventSeq.set(sessionId, delta.last_event_seq);
-    }
-
     const headTaskId = idToString(next.session?.task_id ?? "");
     const headSessionId = idToString(next.session?.id ?? "");
     for (const [taskId, item] of this.tasks.entries()) {
@@ -1419,4 +1358,3 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     for (const l of this.listeners) l();
   }
 }
-

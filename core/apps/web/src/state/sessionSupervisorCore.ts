@@ -220,7 +220,6 @@ const MAX_CACHED_SESSIONS = readTunableInt(
 );
 const WARM_TTL_MS = readTunableInt("contextWarmSessionTtlMs", 10 * 60 * 1000);
 const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
-const SUBSCRIBE_LIMIT = readTunableInt("contextSubscribeLimit", 20);
 
 export class SessionSupervisor {
   private listeners = new Set<() => void>();
@@ -1195,7 +1194,7 @@ export class SessionSupervisor {
       .filter((entry) => entry.refCount > 0)
       .map((entry) => entry.sessionId);
     const combined = mergeOrderedIds(openIds, this.activeTaskSessionIds, this.warmSessionIds);
-    const next = combined.slice(0, SUBSCRIBE_LIMIT);
+    const next = combined;
     const key = next.join("|");
     const prev = this.subscribedSessionIds.join("|");
     if (key === prev) return;
@@ -1210,17 +1209,6 @@ export class SessionSupervisor {
         const entry = this.ensureEntry(sessionId);
         entry.subscribed = true;
       }
-    }
-    if (this.snapshotStore) {
-      const subs = next.map((sessionId) => {
-        const entry = this.entries.get(sessionId);
-        const afterSeq = entry?.lastEventSeq;
-        return {
-          session_id: sessionId,
-          ...(typeof afterSeq === "number" ? { after_seq: afterSeq } : {}),
-        };
-      });
-      this.snapshotStore.setSubscriptions(subs);
     }
     this.publish();
   }

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -147,18 +147,27 @@ async fn handle_mobile_secure_ws(
                                 &frame.ciphertext,
                             )?;
                             let message: WorkspaceActiveSnapshotClientMessage = serde_json::from_slice(&payload)?;
-                            let (session_ids, sessions) = match message {
-                                WorkspaceActiveSnapshotClientMessage::Subscribe { session_ids, sessions, .. } => (session_ids, sessions),
+                            let next = match resolve_workspace_active_snapshot_subscriptions(
+                                &state,
+                                workspace_id,
+                                message,
+                            )
+                            .await
+                            {
+                                Ok(next) => next,
+                                Err(_) => {
+                                    pending.clear().await;
+                                    if queue_reset_required(&pending, &state, workspace_id)
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                    reset_queued = true;
+                                    send_control.set_disconnect_after_flush();
+                                    continue;
+                                }
                             };
-                            let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = if !sessions.is_empty() {
-                                sessions
-                            } else {
-                                session_ids
-                                    .into_iter()
-                                    .map(|session_id| WorkspaceActiveSnapshotSessionSubscription { session_id, after_seq: None })
-                                    .collect()
-                            };
-                            next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
 
                             pending.clear().await;
                             reset_queued = false;
@@ -720,6 +729,83 @@ where
     }
 }
 
+async fn resolve_workspace_active_snapshot_subscriptions(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    message: WorkspaceActiveSnapshotClientMessage,
+) -> Result<Vec<WorkspaceActiveSnapshotSessionSubscription>, ()> {
+    match message {
+        WorkspaceActiveSnapshotClientMessage::Subscribe {
+            session_ids,
+            sessions,
+            task_ids,
+            scope,
+            ..
+        } => {
+            let use_task_scope = scope.is_some() || !task_ids.is_empty();
+            if use_task_scope {
+                let mut resolved = HashSet::new();
+                if matches!(scope, Some(WorkspaceActiveSnapshotSubscribeScope::Active)) {
+                    let snapshot = state
+                        .workspace_active_snapshot
+                        .active_snapshot(workspace_id, i64::MAX)
+                        .await;
+                    for task in snapshot.active.tasks {
+                        let session_id = task
+                            .task
+                            .primary_session_id
+                            .unwrap_or(task.primary_session.session.id);
+                        resolved.insert(session_id);
+                    }
+                }
+                if !task_ids.is_empty() {
+                    let store = state.store_for_workspace(workspace_id).await.map_err(|_| ())?;
+                    for task_id in task_ids {
+                        let task = store.get_task(task_id).await.map_err(|_| ())?;
+                        let Some(task) = task else {
+                            continue;
+                        };
+                        if task.workspace_id != workspace_id {
+                            continue;
+                        }
+                        if let Some(primary_session_id) = task.primary_session_id {
+                            resolved.insert(primary_session_id);
+                        }
+                    }
+                }
+                let mut after_map: HashMap<SessionId, Option<i64>> = HashMap::new();
+                for sub in sessions {
+                    after_map.insert(sub.session_id, sub.after_seq);
+                }
+                let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = resolved
+                    .into_iter()
+                    .map(|session_id| WorkspaceActiveSnapshotSessionSubscription {
+                        session_id,
+                        after_seq: after_map.get(&session_id).copied().flatten(),
+                    })
+                    .collect();
+                next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
+                return Ok(next);
+            }
+
+            let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = if !sessions.is_empty()
+            {
+                sessions
+            } else {
+                session_ids
+                    .into_iter()
+                    .map(|session_id| WorkspaceActiveSnapshotSessionSubscription {
+                        session_id,
+                        after_seq: None,
+                    })
+                    .collect()
+            };
+            next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
+            Ok(next)
+        }
+    }
+}
+
 async fn handle_workspace_active_snapshot_ws(
     socket: WebSocket,
     state: Arc<AppState>,
@@ -786,18 +872,27 @@ async fn handle_workspace_active_snapshot_ws(
                     match msg {
                         Some(Ok(WsMessage::Text(text))) => {
                             if let Ok(message) = serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text) {
-                                let (session_ids, sessions) = match message {
-                                    WorkspaceActiveSnapshotClientMessage::Subscribe { session_ids, sessions, .. } => (session_ids, sessions),
+                                let next = match resolve_workspace_active_snapshot_subscriptions(
+                                    &state,
+                                    workspace_id,
+                                    message,
+                                )
+                                .await
+                                {
+                                    Ok(next) => next,
+                                    Err(_) => {
+                                        pending.clear().await;
+                                        if queue_reset_required(&pending, &state, workspace_id)
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
+                                        reset_queued = true;
+                                        send_control.set_disconnect_after_flush();
+                                        continue;
+                                    }
                                 };
-                                let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = if !sessions.is_empty() {
-                                    sessions
-                                } else {
-                                    session_ids
-                                        .into_iter()
-                                        .map(|session_id| WorkspaceActiveSnapshotSessionSubscription { session_id, after_seq: None })
-                                        .collect()
-                                };
-                                next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
 
                                 pending.clear().await;
                                 reset_queued = false;
@@ -843,18 +938,27 @@ async fn handle_workspace_active_snapshot_ws(
                         Some(Ok(WsMessage::Binary(bytes))) => {
                             if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                                 if let Ok(message) = serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text) {
-                                    let (session_ids, sessions) = match message {
-                                        WorkspaceActiveSnapshotClientMessage::Subscribe { session_ids, sessions, .. } => (session_ids, sessions),
+                                    let next = match resolve_workspace_active_snapshot_subscriptions(
+                                        &state,
+                                        workspace_id,
+                                        message,
+                                    )
+                                    .await
+                                    {
+                                        Ok(next) => next,
+                                        Err(_) => {
+                                            pending.clear().await;
+                                            if queue_reset_required(&pending, &state, workspace_id)
+                                                .await
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                            reset_queued = true;
+                                            send_control.set_disconnect_after_flush();
+                                            continue;
+                                        }
                                     };
-                                    let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = if !sessions.is_empty() {
-                                        sessions
-                                    } else {
-                                        session_ids
-                                            .into_iter()
-                                            .map(|session_id| WorkspaceActiveSnapshotSessionSubscription { session_id, after_seq: None })
-                                            .collect()
-                                    };
-                                    next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
 
                                     pending.clear().await;
                                     reset_queued = false;

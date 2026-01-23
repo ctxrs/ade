@@ -457,11 +457,16 @@ export type WorkspaceActiveSnapshotSessionSubscription = {
   after_seq?: number | null;
 };
 
+export type WorkspaceActiveSnapshotSubscribeScope = "active";
+
 export type WorkspaceActiveSnapshotClientMessage =
   | {
       type: "subscribe";
       session_ids?: ({ 0: string } | string)[];
       sessions?: WorkspaceActiveSnapshotSessionSubscription[];
+      task_ids?: ({ 0: string } | string)[];
+      scope?: WorkspaceActiveSnapshotSubscribeScope | null;
+      include_active_heads?: boolean;
     };
 
 export type Message = {

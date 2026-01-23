@@ -186,6 +186,8 @@ impl ShellView {
         WorkspaceActiveSnapshotClientMessage::Subscribe {
             session_ids: Vec::new(),
             sessions,
+            task_ids: Vec::new(),
+            scope: None,
             include_active_heads: false,
         }
     }

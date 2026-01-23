@@ -11,6 +11,9 @@ test("workbench: switching between active tasks is instant (no jank, no loading)
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   const rows = page.locator(".wb-task-row");
+  const sessionView = page.locator(".wb-session");
+  const firstMarker = "fixture msg 1.1.1";
+  const secondMarker = "fixture msg 2.1.1";
   await expect(rows).toHaveCount(2);
 
   await page.evaluate(() => {
@@ -25,9 +28,26 @@ test("workbench: switching between active tasks is instant (no jank, no loading)
   });
 
   await rows.nth(0).click();
-  await page.waitForTimeout(200);
+  await expect(sessionView).toContainText(firstMarker, { timeout: 20000 });
   await rows.nth(1).click();
-  await page.waitForTimeout(400);
+  await expect(sessionView).toContainText(secondMarker, { timeout: 20000 });
+
+  await page.evaluate(() => {
+    (window as any).__cls = 0;
+  });
+
+  const measureSwitch = async (rowIndex: number, marker: string) => {
+    const start = await page.evaluate(() => performance.now());
+    await rows.nth(rowIndex).click();
+    await expect(sessionView).toContainText(marker, { timeout: 20000 });
+    const end = await page.evaluate(() => performance.now());
+    return end - start;
+  };
+
+  const latencyA = await measureSwitch(0, firstMarker);
+  const latencyB = await measureSwitch(1, secondMarker);
+  const maxLatencyMs = 120;
+  expect(Math.max(latencyA, latencyB)).toBeLessThanOrEqual(maxLatencyMs);
 
   const cls = await page.evaluate(() => (window as any).__cls ?? 0);
   expect(cls).toBeLessThanOrEqual(0.01);
