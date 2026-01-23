@@ -19,8 +19,10 @@ use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
 use ctx_core::ids::{MessageId, SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    Session, SessionEvent, SessionEventType, SessionHeadDelta, SessionSnapshot, SessionTurnStatus,
-    Task, WorkspaceTaskSummary, Worktree,
+    Message, MessageAttachment, MessageDelivery, MessageRole, Session, SessionEvent,
+    SessionEventType, SessionHeadDelta, SessionHeadSnapshot, SessionSnapshot, SessionTurn,
+    SessionTurnStatus, Task, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
+    WorkspaceTaskSummary, Worktree,
 };
 use ctx_lsp::Language as LspLanguage;
 use ctx_lsp::{LspManager, LspManagerConfig};
@@ -29,7 +31,7 @@ use ctx_providers::adapters::ProviderStatus;
 use ctx_providers::ask_user_question::AskUserQuestionBroker;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_providers::tier1::Tier1AcpAdapter;
-use ctx_store::{Store, StoreManager, StoreManagerConfig};
+use ctx_store::{register_active_snapshot_observer, Store, StoreManager, StoreManagerConfig};
 
 use crate::api;
 use crate::installer;
@@ -100,6 +102,90 @@ fn active_head_projection_should_flush(
     max_flush: Duration,
 ) -> bool {
     now.duration_since(last_event_at) >= debounce || now.duration_since(last_flush_at) >= max_flush
+}
+
+fn message_from_event(event: &SessionEvent, session: &Session) -> Option<Message> {
+    let message_id = event
+        .payload_json
+        .get("message_id")
+        .and_then(|v| v.as_str())
+        .and_then(|id| uuid::Uuid::parse_str(id).ok())
+        .map(MessageId)?;
+    let content = event
+        .payload_json
+        .get("content")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())?;
+    let delivery = event
+        .payload_json
+        .get("delivery")
+        .and_then(|v| serde_json::from_value::<MessageDelivery>(v.clone()).ok())
+        .unwrap_or(MessageDelivery::Immediate);
+    let attachments = event
+        .payload_json
+        .get("attachments")
+        .and_then(|v| serde_json::from_value::<Vec<MessageAttachment>>(v.clone()).ok())
+        .unwrap_or_default();
+    let role = match event.event_type {
+        SessionEventType::UserMessage => MessageRole::User,
+        SessionEventType::AssistantMessageInserted => MessageRole::Assistant,
+        _ => return None,
+    };
+    let delivered_at = match role {
+        MessageRole::Assistant => Some(event.created_at),
+        _ => None,
+    };
+    Some(Message {
+        id: message_id,
+        session_id: event.session_id,
+        task_id: session.task_id,
+        run_id: event.run_id,
+        turn_id: event.turn_id,
+        turn_sequence: event
+            .payload_json
+            .get("turn_sequence")
+            .and_then(|v| v.as_i64()),
+        role,
+        content,
+        attachments,
+        delivery,
+        delivered_at,
+        created_at: event.created_at,
+    })
+}
+
+fn turn_from_event(event: &SessionEvent, message: Option<&Message>) -> Option<SessionTurn> {
+    if !matches!(event.event_type, SessionEventType::UserMessage) {
+        return None;
+    }
+    let turn_id = event.turn_id?;
+    let delivery = message
+        .map(|msg| msg.delivery.clone())
+        .unwrap_or(MessageDelivery::Immediate);
+    let status = if matches!(delivery, MessageDelivery::Queued) {
+        SessionTurnStatus::Queued
+    } else {
+        SessionTurnStatus::Running
+    };
+    Some(SessionTurn {
+        turn_id,
+        session_id: event.session_id,
+        run_id: event.run_id,
+        user_message_id: message.map(|msg| msg.id),
+        status,
+        start_seq: Some(event.seq),
+        end_seq: None,
+        started_at: event.created_at,
+        updated_at: event.created_at,
+        assistant_partial: None,
+        thought_partial: None,
+        metrics_json: None,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -250,7 +336,12 @@ pub struct AppState {
     pub provider_usage_cache: Mutex<HashMap<String, provider_usage::ProviderUsageSnapshot>>,
     pub codex_login_sessions: Mutex<HashMap<String, provider_accounts::CodexLoginStatus>>,
     pub resource_sampler: Mutex<ResourceSampler>,
-    pub workspace_active_snapshot: WorkspaceActiveSnapshotHub,
+    pub workspace_active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    pub workspace_active_snapshot_cache:
+        Mutex<HashMap<WorkspaceId, WorkspaceActiveSnapshotCacheEntry>>,
+    pub workspace_active_heads_cache: Mutex<HashMap<WorkspaceId, WorkspaceActiveHeadCacheEntry>>,
+    pub session_head_cache:
+        Mutex<HashMap<SessionId, HashMap<SessionHeadCacheKey, SessionHeadSnapshot>>>,
     pub terminals: TerminalManager,
     pub mobile_tunnel: MobileTunnelManager,
     pub web_sessions: Arc<WebSessionManager>,
@@ -294,6 +385,22 @@ pub struct GitStatusSnapshotCacheEntry {
     pub payload: String,
     pub emitted_at: Instant,
     pub last_change_at: Instant,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkspaceActiveSnapshotCacheEntry {
+    pub snapshot: WorkspaceActiveSnapshot,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SessionHeadCacheKey {
+    pub limit: u32,
+    pub include_events: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkspaceActiveHeadCacheEntry {
+    pub batch: WorkspaceActiveHeadBatch,
 }
 
 #[derive(Clone, Debug)]
@@ -386,7 +493,8 @@ impl AppState {
         let telemetry = Telemetry::new(data_root.clone());
         let ops_events = OpsEvents::new(data_root.clone());
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
-        let workspace_active_snapshot = WorkspaceActiveSnapshotHub::new();
+        let workspace_active_snapshot = Arc::new(WorkspaceActiveSnapshotHub::new());
+        register_active_snapshot_observer(workspace_active_snapshot.clone());
         let web_sessions = Arc::new(WebSessionManager::new());
         let merge_queue_notify = Arc::new(Notify::new());
         Self {
@@ -422,6 +530,9 @@ impl AppState {
             codex_login_sessions: Mutex::new(HashMap::new()),
             resource_sampler: Mutex::new(ResourceSampler::new()),
             workspace_active_snapshot,
+            workspace_active_snapshot_cache: Mutex::new(HashMap::new()),
+            workspace_active_heads_cache: Mutex::new(HashMap::new()),
+            session_head_cache: Mutex::new(HashMap::new()),
             terminals: TerminalManager::default(),
             mobile_tunnel: MobileTunnelManager::default(),
             web_sessions,
@@ -478,6 +589,79 @@ impl AppState {
         self.stores.store_for_worktree(worktree_id).await
     }
 
+    pub async fn cached_workspace_active_snapshot_state(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Option<(i64, i64)> {
+        let cache = self.workspace_active_snapshot_cache.lock().await;
+        cache
+            .get(&workspace_id)
+            .map(|entry| (entry.snapshot.snapshot_rev, entry.snapshot.archived_rev))
+    }
+
+    pub async fn cached_workspace_active_snapshot(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Option<WorkspaceActiveSnapshot> {
+        let cache = self.workspace_active_snapshot_cache.lock().await;
+        cache.get(&workspace_id).map(|entry| entry.snapshot.clone())
+    }
+
+    pub async fn cache_workspace_active_snapshot(&self, snapshot: WorkspaceActiveSnapshot) {
+        let workspace_id = snapshot.workspace_id;
+        let mut cache = self.workspace_active_snapshot_cache.lock().await;
+        cache.insert(workspace_id, WorkspaceActiveSnapshotCacheEntry { snapshot });
+    }
+
+    pub async fn cached_workspace_active_heads(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Option<WorkspaceActiveHeadBatch> {
+        let cache = self.workspace_active_heads_cache.lock().await;
+        cache.get(&workspace_id).map(|entry| entry.batch.clone())
+    }
+
+    pub async fn cache_workspace_active_heads(&self, batch: WorkspaceActiveHeadBatch) {
+        let workspace_id = batch.workspace_id;
+        let mut cache = self.workspace_active_heads_cache.lock().await;
+        cache.insert(workspace_id, WorkspaceActiveHeadCacheEntry { batch });
+    }
+
+    pub async fn cached_session_head_snapshot(
+        &self,
+        session_id: SessionId,
+        limit: u32,
+        include_events: bool,
+    ) -> Option<SessionHeadSnapshot> {
+        let cache = self.session_head_cache.lock().await;
+        cache
+            .get(&session_id)
+            .and_then(|by_key| {
+                by_key.get(&SessionHeadCacheKey {
+                    limit,
+                    include_events,
+                })
+            })
+            .cloned()
+    }
+
+    pub async fn cache_session_head_snapshot(
+        &self,
+        session_id: SessionId,
+        limit: u32,
+        include_events: bool,
+        snapshot: SessionHeadSnapshot,
+    ) {
+        let mut cache = self.session_head_cache.lock().await;
+        cache.entry(session_id).or_insert_with(HashMap::new).insert(
+            SessionHeadCacheKey {
+                limit,
+                include_events,
+            },
+            snapshot,
+        );
+    }
+
     pub async fn get_broadcaster(&self, session_id: SessionId) -> broadcast::Sender<SessionEvent> {
         let mut map = self.broadcasters.lock().await;
         map.entry(session_id)
@@ -519,7 +703,10 @@ impl AppState {
             tx
         });
         let _ = sender.send(event.seq);
-        if !matches!(event.event_type, SessionEventType::AssistantChunk) {
+        if !matches!(
+            event.event_type,
+            SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
+        ) {
             self.queue_active_head_projection(event.session_id, event.seq)
                 .await;
         }
@@ -649,14 +836,19 @@ impl AppState {
                     return;
                 }
             };
-            if let Err(err) = store
+            match store
                 .refresh_active_session_head_projection(session_id)
                 .await
             {
-                tracing::warn!(
-                    "failed to refresh active head projection for session {}: {err}",
-                    session_id.0
-                );
+                Ok(_) => {
+                    self.refresh_session_head_cache(session_id).await;
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "failed to refresh active head projection for session {}: {err}",
+                        session_id.0
+                    );
+                }
             }
 
             let flushed_at = Instant::now();
@@ -723,6 +915,35 @@ impl AppState {
         cache.insert(session.id, session.clone());
     }
 
+    pub async fn refresh_session_head_cache(&self, session_id: SessionId) {
+        let store = match self.store_for_session(session_id).await {
+            Ok(store) => store,
+            Err(_) => return,
+        };
+        let head = match store
+            .get_session_head_snapshot(session_id, u32::MAX, true)
+            .await
+        {
+            Ok(Some(head)) => head,
+            Ok(None) => {
+                self.workspace_active_snapshot
+                    .remove_session_head(session_id)
+                    .await;
+                return;
+            }
+            Err(err) => {
+                tracing::warn!(
+                    session_id = %session_id.0,
+                    "session head cache refresh failed: {err:#}"
+                );
+                return;
+            }
+        };
+        self.workspace_active_snapshot
+            .update_session_head(head)
+            .await;
+    }
+
     pub async fn register_worktree_bootstrap(
         &self,
         worktree_id: WorktreeId,
@@ -766,20 +987,6 @@ impl AppState {
         let _ = done_rx.changed().await;
     }
 
-    async fn session_meta(&self, session_id: SessionId) -> Option<Session> {
-        {
-            let cache = self.session_meta_cache.lock().await;
-            if let Some(session) = cache.get(&session_id) {
-                return Some(session.clone());
-            }
-        }
-        let store = self.store_for_session(session_id).await.ok()?;
-        let session = store.get_session(session_id).await.ok().flatten()?;
-        let mut cache = self.session_meta_cache.lock().await;
-        cache.insert(session_id, session.clone());
-        Some(session)
-    }
-
     pub async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> Result<()> {
         let mut task: Option<Task> = None;
         let store = self.store_for_task(task_id).await?;
@@ -787,24 +994,24 @@ impl AppState {
             Some(summary) => {
                 let workspace_id = summary.task.workspace_id;
                 task = Some(summary.task.clone());
-                let snapshot_rev = store
+                let _ = store
                     .upsert_workspace_active_task_summary_read_model(&summary)
                     .await?;
                 self.workspace_active_snapshot
-                    .publish_active_task_upsert(workspace_id, snapshot_rev, summary)
+                    .publish_active_task_upsert(workspace_id, summary)
                     .await;
             }
             None => {
                 if let Some(loaded) = store.get_task(task_id).await? {
                     task = Some(loaded.clone());
-                    let snapshot_rev = store
+                    let _ = store
                         .delete_workspace_active_task_summary_read_model(
                             loaded.workspace_id,
                             task_id,
                         )
                         .await?;
                     self.workspace_active_snapshot
-                        .publish_active_task_delete(loaded.workspace_id, snapshot_rev, task_id)
+                        .publish_active_task_delete(loaded.workspace_id, task_id)
                         .await;
                 }
             }
@@ -817,19 +1024,19 @@ impl AppState {
     }
 
     pub async fn emit_workspace_task_delete(&self, workspace_id: WorkspaceId, task_id: TaskId) {
-        let snapshot_rev = match self.store_for_workspace(workspace_id).await {
+        let updated = match self.store_for_workspace(workspace_id).await {
             Ok(store) => match store
                 .delete_workspace_active_task_summary_read_model(workspace_id, task_id)
                 .await
             {
-                Ok(rev) => Some(rev),
+                Ok(_) => true,
                 Err(err) => {
                     tracing::warn!(
                         workspace_id = %workspace_id.0,
                         task_id = %task_id.0,
                         "workspace task delete read model update failed: {err:#}"
                     );
-                    None
+                    false
                 }
             },
             Err(err) => {
@@ -838,12 +1045,12 @@ impl AppState {
                     task_id = %task_id.0,
                     "workspace task delete read model store missing: {err:#}"
                 );
-                None
+                false
             }
         };
-        if let Some(snapshot_rev) = snapshot_rev {
+        if updated {
             self.workspace_active_snapshot
-                .publish_active_task_delete(workspace_id, snapshot_rev, task_id)
+                .publish_active_task_delete(workspace_id, task_id)
                 .await;
         }
     }
@@ -853,19 +1060,19 @@ impl AppState {
         workspace_id: WorkspaceId,
         task_id: TaskId,
     ) {
-        let archived_rev = match self.store_for_workspace(workspace_id).await {
+        let updated = match self.store_for_workspace(workspace_id).await {
             Ok(store) => match store
                 .bump_workspace_archived_snapshot_rev(workspace_id)
                 .await
             {
-                Ok(rev) => Some(rev),
+                Ok(_) => true,
                 Err(err) => {
                     tracing::warn!(
                         workspace_id = %workspace_id.0,
                         task_id = %task_id.0,
                         "workspace archived delete read model update failed: {err:#}"
                     );
-                    None
+                    false
                 }
             },
             Err(err) => {
@@ -874,12 +1081,12 @@ impl AppState {
                     task_id = %task_id.0,
                     "workspace archived delete read model store missing: {err:#}"
                 );
-                None
+                false
             }
         };
-        if let Some(archived_rev) = archived_rev {
+        if updated {
             self.workspace_active_snapshot
-                .publish_archived_task_delete(workspace_id, archived_rev, task_id)
+                .publish_archived_task_delete(workspace_id, task_id)
                 .await;
         }
     }
@@ -903,11 +1110,11 @@ impl AppState {
             }
             None => None,
         };
-        let archived_rev = store
+        let _ = store
             .bump_workspace_archived_snapshot_rev(task.workspace_id)
             .await?;
         self.workspace_active_snapshot
-            .publish_archived_task_upsert(task.workspace_id, archived_rev, summary, snapshot)
+            .publish_archived_task_upsert(task.workspace_id, summary, snapshot)
             .await;
         Ok(())
     }
@@ -919,8 +1126,6 @@ impl AppState {
                 Some(state) => state.global_broadcaster.subscribe(),
                 None => return,
             };
-            let mut last_persisted_seq: HashMap<SessionId, i64> = HashMap::new();
-            let mut last_snapshot_rev: HashMap<WorkspaceId, i64> = HashMap::new();
             loop {
                 let event = match rx.recv().await {
                     Ok(event) => event,
@@ -930,10 +1135,17 @@ impl AppState {
                     break;
                 };
 
-                let Some(session) = state.session_meta(event.session_id).await else {
+                let session = {
+                    let cache = state.session_meta_cache.lock().await;
+                    cache.get(&event.session_id).cloned()
+                };
+                let Some(session) = session else {
                     continue;
                 };
-                let stream_only = matches!(event.event_type, SessionEventType::AssistantChunk);
+                let stream_only = matches!(
+                    event.event_type,
+                    SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
+                );
 
                 let update_task = matches!(
                     event.event_type,
@@ -952,56 +1164,24 @@ impl AppState {
                     event.event_type,
                     SessionEventType::UserMessage | SessionEventType::AssistantMessageInserted
                 ) {
-                    let message_id = event
-                        .payload_json
-                        .get("message_id")
-                        .and_then(|v| v.as_str())
-                        .and_then(|id| uuid::Uuid::parse_str(id).ok())
-                        .map(MessageId);
-                    if let Some(message_id) = message_id {
-                        match state.store_for_session(event.session_id).await {
-                            Ok(store) => store.get_message(message_id).await.ok().flatten(),
-                            Err(_) => None,
-                        }
-                    } else {
-                        None
-                    }
+                    message_from_event(&event, &session)
                 } else {
                     None
                 };
+                let turn = turn_from_event(&event, message.as_ref());
 
-                let turn = if matches!(event.event_type, SessionEventType::UserMessage) {
-                    match event.turn_id {
-                        Some(turn_id) => match state.store_for_session(event.session_id).await {
-                            Ok(store) => store
-                                .get_session_turn(event.session_id, turn_id)
-                                .await
-                                .ok()
-                                .flatten(),
-                            Err(_) => None,
-                        },
-                        None => None,
-                    }
+                let last_event_seq = if stream_only {
+                    state
+                        .workspace_active_snapshot
+                        .session_last_event_seq(session.workspace_id, event.session_id)
+                        .await
                 } else {
-                    None
+                    event.seq
                 };
-
-                let (last_event_seq, state_rev) = if stream_only {
-                    let mut cached = last_persisted_seq.get(&event.session_id).copied();
-                    if cached.is_none() {
-                        if let Ok(store) = state.store_for_session(event.session_id).await {
-                            cached = store
-                                .get_session_last_event_seq(event.session_id)
-                                .await
-                                .ok();
-                        }
-                    }
-                    let cached = cached.unwrap_or(0);
-                    last_persisted_seq.insert(event.session_id, cached);
-                    (cached, cached)
+                let state_rev = if stream_only {
+                    last_event_seq
                 } else {
-                    last_persisted_seq.insert(event.session_id, event.seq);
-                    (event.seq, event.seq)
+                    event.seq
                 };
 
                 let delta = SessionHeadDelta {
@@ -1012,61 +1192,9 @@ impl AppState {
                     turn,
                     message,
                 };
-                let snapshot_rev = if stream_only {
-                    let cached = last_snapshot_rev.get(&session.workspace_id).copied();
-                    if let Some(rev) = cached {
-                        rev
-                    } else {
-                        let rev = match state.store_for_workspace(session.workspace_id).await {
-                            Ok(store) => store
-                                .get_workspace_active_snapshot_state(session.workspace_id)
-                                .await
-                                .map(|(rev, _)| rev)
-                                .unwrap_or(0),
-                            Err(err) => {
-                                tracing::warn!(
-                                    workspace_id = %session.workspace_id.0,
-                                    "workspace snapshot rev store missing: {err:#}"
-                                );
-                                0
-                            }
-                        };
-                        last_snapshot_rev.insert(session.workspace_id, rev);
-                        rev
-                    }
-                } else {
-                    let rev = match state.store_for_workspace(session.workspace_id).await {
-                        Ok(store) => match store
-                            .bump_workspace_active_snapshot_rev(session.workspace_id)
-                            .await
-                        {
-                            Ok(rev) => rev,
-                            Err(err) => {
-                                tracing::warn!(
-                                    workspace_id = %session.workspace_id.0,
-                                    "workspace snapshot rev bump failed: {err:#}"
-                                );
-                                store
-                                    .get_workspace_active_snapshot_state(session.workspace_id)
-                                    .await
-                                    .map(|(rev, _)| rev)
-                                    .unwrap_or(0)
-                            }
-                        },
-                        Err(err) => {
-                            tracing::warn!(
-                                workspace_id = %session.workspace_id.0,
-                                "workspace snapshot rev store missing: {err:#}"
-                            );
-                            0
-                        }
-                    };
-                    last_snapshot_rev.insert(session.workspace_id, rev);
-                    rev
-                };
                 state
                     .workspace_active_snapshot
-                    .publish_session_head_delta(session.workspace_id, snapshot_rev, delta)
+                    .publish_session_head_delta(session.workspace_id, delta, !stream_only)
                     .await;
             }
         });
@@ -1164,6 +1292,7 @@ impl AppState {
         self: &Arc<Self>,
         session: Session,
     ) -> mpsc::Sender<SchedulerCommand> {
+        self.remember_session_meta(&session).await;
         let mut map = self.schedulers.lock().await;
         if let Some(tx) = map.get(&session.id) {
             return tx.clone();
@@ -1843,6 +1972,7 @@ pub async fn init_workspace(root: Option<String>) -> Result<()> {
     tokio::fs::create_dir_all(pack_dir.join("docs")).await?;
     tokio::fs::create_dir_all(pack_dir.join("skills")).await?;
     tokio::fs::create_dir_all(&tmp_dir).await?;
+
     tokio::fs::create_dir_all(context_dir.join("exec-plans")).await?;
 
     let gitignore_path = root_path.join(".gitignore");

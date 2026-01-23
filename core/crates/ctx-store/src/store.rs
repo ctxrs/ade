@@ -16,6 +16,8 @@ use sqlx::{Pool, Row, Sqlite};
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 
+use crate::active_snapshot_observer::active_snapshot_observers;
+
 #[derive(Clone)]
 pub struct Store {
     pool: Pool<Sqlite>,
@@ -662,7 +664,12 @@ fn strip_snapshot_partials(turns: &mut [SessionTurn], events: &mut Vec<SessionEv
     if events.is_empty() {
         return;
     }
-    events.retain(|event| !matches!(event.event_type, SessionEventType::AssistantChunk));
+    events.retain(|event| {
+        !matches!(
+            event.event_type,
+            SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
+        )
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3710,6 +3717,7 @@ impl Store {
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<(i64, i64)> {
+        crate::fault_injection::maybe_fail("ctx_store.get_workspace_active_snapshot_state")?;
         let row = self
             .query(
                 r#"SELECT snapshot_rev, archived_rev
@@ -3898,6 +3906,7 @@ impl Store {
         workspace_id: WorkspaceId,
         limit: i64,
     ) -> Result<(Vec<WorkspaceActiveTaskSummary>, i64)> {
+        crate::fault_injection::maybe_fail("ctx_store.list_workspace_active_page_read_model")?;
         const MAX_LIMIT: i64 = 200;
         let limit = limit.clamp(1, MAX_LIMIT);
 
@@ -3977,6 +3986,7 @@ impl Store {
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<Vec<SessionHeadSnapshot>> {
+        crate::fault_injection::maybe_fail("ctx_store.list_workspace_active_head_snapshots")?;
         let rows = self
             .query(
                 r#"SELECT s.id AS session_id,
@@ -5530,6 +5540,9 @@ impl Store {
                 .bind(session_id.0.to_string())
                 .execute(&self.pool)
                 .await?;
+            for observer in active_snapshot_observers() {
+                observer.on_active_head_removed(session_id).await;
+            }
             return Ok(());
         }
 
@@ -5544,6 +5557,12 @@ impl Store {
         let projection = ActiveSnapshotHeadProjection::from_head(&head);
         self.upsert_active_snapshot_head_projection(session_id, &projection)
             .await?;
+        let mut snapshot_head = head;
+        strip_snapshot_partials(&mut snapshot_head.turns, &mut snapshot_head.events);
+        let snapshot = session_head_to_snapshot(snapshot_head);
+        for observer in active_snapshot_observers() {
+            observer.on_active_head_snapshot(snapshot.clone()).await;
+        }
         Ok(())
     }
 
@@ -5551,6 +5570,7 @@ impl Store {
         if disable_head_materialization_writes() {
             return Ok(());
         }
+        let sessions = self.list_sessions_for_task(task_id).await?;
         self.query(
             r#"DELETE FROM session_active_snapshot_heads
                WHERE session_id IN (SELECT id FROM sessions WHERE task_id = ?)"#,
@@ -5558,6 +5578,14 @@ impl Store {
         .bind(task_id.0.to_string())
         .execute(&self.pool)
         .await?;
+        let observers = active_snapshot_observers();
+        if !observers.is_empty() {
+            for session in sessions {
+                for observer in &observers {
+                    observer.on_active_head_removed(session.id).await;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -5839,6 +5867,7 @@ impl Store {
         limit: u32,
         include_events: bool,
     ) -> Result<Option<SessionHeadSnapshot>> {
+        crate::fault_injection::maybe_fail("ctx_store.get_session_head_snapshot")?;
         let head = self
             .get_session_head(session_id, limit, include_events)
             .await?;
@@ -5878,9 +5907,30 @@ impl Store {
             }
         }
 
+        let turn_limit = match head_kind {
+            SessionHeadKind::Active => SESSION_HEAD_MAX_TURNS,
+            SessionHeadKind::Archived => SESSION_HEAD_ARCHIVED_TURN_LIMIT,
+        };
+        let materialize_limits = session_head_limits(head_kind, turn_limit);
         let head = self
-            .materialize_session_head(&session, head_kind, last_event_seq)
+            .build_session_head(&session, materialize_limits, true, last_event_seq)
             .await?;
+        if !disable_head_materialization_writes() {
+            let store = self.clone();
+            let session_id = session.id;
+            let materialized = SessionHeadMaterialization::from_head(&head);
+            tokio::spawn(async move {
+                if let Err(err) = store
+                    .upsert_session_head_materialization(session_id, head_kind, &materialized)
+                    .await
+                {
+                    tracing::warn!(
+                        session_id = %session_id.0,
+                        "failed to persist session head materialization: {err:#}"
+                    );
+                }
+            });
+        }
         let limits = session_head_limits(head_kind, limit);
         Ok(Some(apply_session_head_limits(
             head,
@@ -6425,7 +6475,10 @@ impl Store {
             transient,
             created_at: Utc::now(),
         };
-        if matches!(event.event_type, SessionEventType::AssistantChunk) {
+        if matches!(
+            event.event_type,
+            SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
+        ) {
             event.seq = next_stream_only_event_seq();
             event.transient = true;
             return Ok(event);

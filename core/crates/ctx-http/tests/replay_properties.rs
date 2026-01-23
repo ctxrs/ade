@@ -114,6 +114,7 @@ async fn property_replay_respects_after_seq_and_monotonicity() {
         .json()
         .await
         .unwrap();
+    state.remember_session_meta(&session).await;
     let store = state.store_for_session(session.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert!(
@@ -133,6 +134,7 @@ async fn property_replay_respects_after_seq_and_monotonicity() {
             )
             .await
             .unwrap();
+        state.publish_event(ev.clone()).await;
         seqs.push(ev.seq);
     }
     assert!(seqs.windows(2).all(|w| w[0] < w[1]));

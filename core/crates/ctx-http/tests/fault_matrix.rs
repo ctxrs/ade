@@ -9,7 +9,7 @@ use serde_json::json;
 use tokio::process::Command;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use ctx_core::models::{SessionEventType, WorkspaceActiveSnapshotEvent};
+use ctx_core::models::SessionEventType;
 use ctx_http::{api, daemon::AppState};
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
@@ -144,7 +144,7 @@ async fn setup_server() -> (
 
 #[tokio::test]
 async fn fault_matrix_replay_errors_become_gaps() {
-    let (_state, server, addr, ws, session, last_seq) = setup_server().await;
+    let (_state, server, addr, ws, session, _last_seq) = setup_server().await;
 
     let ws_url = format!("ws://{}/api/workspaces/{}/stream", addr, ws.id.0);
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
@@ -161,22 +161,25 @@ async fn fault_matrix_replay_errors_become_gaps() {
 
     let cases = [
         Case {
-            name: "store list fails",
+            name: "replay list fails",
             setup: || {
                 ctx_http::fault_injection::clear_failpoints();
                 ctx_store::fault_injection::clear_failpoints();
-                ctx_store::fault_injection::set_failpoint(
-                    "ctx_store.list_session_events_page_by_seq",
+                ctx_http::fault_injection::set_failpoint(
+                    "ctx_http.replay_session_events_active.list",
                     1,
                 );
             },
         },
         Case {
-            name: "http replay list fails",
+            name: "replay send fails",
             setup: || {
                 ctx_http::fault_injection::clear_failpoints();
                 ctx_store::fault_injection::clear_failpoints();
-                ctx_http::fault_injection::set_failpoint("ctx_http.replay_session_events.list", 1);
+                ctx_http::fault_injection::set_failpoint(
+                    "ctx_http.replay_session_events_active.send",
+                    1,
+                );
             },
         },
     ];
@@ -205,20 +208,9 @@ async fn fault_matrix_replay_errors_become_gaps() {
         let WsMessage::Text(txt) = msg else {
             panic!("{}: expected text frame, got {:?}", case.name, msg);
         };
-        let event: WorkspaceActiveSnapshotEvent = serde_json::from_str(&txt).unwrap();
-        match event {
-            WorkspaceActiveSnapshotEvent::SessionGap {
-                session_id,
-                after_seq,
-                reason,
-                ..
-            } => {
-                assert_eq!(session_id, session.id, "{}", case.name);
-                assert_eq!(after_seq, last_seq, "{}", case.name);
-                assert_eq!(reason.as_deref(), Some("replay_error"), "{}", case.name);
-            }
-            other => panic!("{}: expected SessionGap, got {:?}", case.name, other),
-        }
+        let value: serde_json::Value = serde_json::from_str(&txt).unwrap();
+        let msg_type = value.get("type").and_then(|v| v.as_str());
+        assert_eq!(msg_type, Some("reset_required"), "{}", case.name);
 
         ctx_http::fault_injection::clear_failpoints();
         ctx_store::fault_injection::clear_failpoints();

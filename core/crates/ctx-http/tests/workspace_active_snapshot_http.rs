@@ -307,6 +307,7 @@ async fn workspace_stream_replays_from_after_seq() {
         .json()
         .await
         .unwrap();
+    state.remember_session_meta(&session).await;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let ev1 = store
@@ -319,6 +320,7 @@ async fn workspace_stream_replays_from_after_seq() {
         )
         .await
         .unwrap();
+    state.publish_event(ev1.clone()).await;
     let ev2 = store
         .append_session_event(
             session.id,
@@ -329,6 +331,7 @@ async fn workspace_stream_replays_from_after_seq() {
         )
         .await
         .unwrap();
+    state.publish_event(ev2.clone()).await;
     let ev3 = store
         .append_session_event(
             session.id,
@@ -339,6 +342,7 @@ async fn workspace_stream_replays_from_after_seq() {
         )
         .await
         .unwrap();
+    state.publish_event(ev3.clone()).await;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
@@ -435,6 +439,7 @@ async fn workspace_stream_replays_tool_events() {
         .json()
         .await
         .unwrap();
+    state.remember_session_meta(&session).await;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let ev1 = store
@@ -447,6 +452,7 @@ async fn workspace_stream_replays_tool_events() {
         )
         .await
         .unwrap();
+    state.publish_event(ev1.clone()).await;
     let tool_call_id = "tool-1";
     let ev2 = store
         .append_session_event(
@@ -458,6 +464,7 @@ async fn workspace_stream_replays_tool_events() {
         )
         .await
         .unwrap();
+    state.publish_event(ev2.clone()).await;
     let ev3 = store
         .append_session_event(
             session.id,
@@ -468,6 +475,7 @@ async fn workspace_stream_replays_tool_events() {
         )
         .await
         .unwrap();
+    state.publish_event(ev3.clone()).await;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
@@ -563,6 +571,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         .json()
         .await
         .unwrap();
+    state.remember_session_meta(&session).await;
     let store = state.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert!(
@@ -571,7 +580,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
     );
 
     for _ in 0..2105 {
-        store
+        let event = store
             .append_session_event(
                 session.id,
                 None,
@@ -581,6 +590,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
             )
             .await
             .unwrap();
+        state.publish_event(event).await;
     }
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
@@ -604,7 +614,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         .await
         .unwrap();
 
-    let mut seen_gap = false;
+    let mut seen_reset = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -614,20 +624,19 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap {
-                session_id,
-                ..
-            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
+            let value: serde_json::Value = serde_json::from_str(&txt).unwrap_or_default();
+            if value
+                .get("type")
+                .and_then(|v| v.as_str())
+                .is_some_and(|t| t == "reset_required")
             {
-                if session_id == session.id {
-                    seen_gap = true;
-                    break;
-                }
+                seen_reset = true;
+                break;
             }
         }
     }
 
-    assert!(seen_gap, "expected gap event for large replay");
+    assert!(seen_reset, "expected reset_required for large replay");
 }
 
 #[tokio::test]

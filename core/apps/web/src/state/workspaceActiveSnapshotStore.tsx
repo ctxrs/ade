@@ -885,6 +885,18 @@ class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSo
   private async handleStreamMessage(data: unknown) {
     const parsed = await parseWsJson(data);
     if (!parsed || typeof parsed !== "object") return;
+    const parsedType = (parsed as { type?: string }).type;
+    if (parsedType === "reset_required") {
+      const latestRev =
+        (parsed as { latest_rev?: number }).latest_rev ??
+        (parsed as { latestRev?: number }).latestRev ??
+        0;
+      if (typeof latestRev === "number") {
+        this.snapshotRev = Math.max(this.snapshotRev, latestRev);
+      }
+      this.ensureActiveSnapshot(true).catch(() => {});
+      return;
+    }
     const evt = parsed as WorkspaceActiveSnapshotEvent;
     if (typeof evt.snapshot_rev === "number") {
       if (evt.snapshot_rev < this.snapshotRev) {

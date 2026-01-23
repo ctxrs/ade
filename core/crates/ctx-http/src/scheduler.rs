@@ -691,6 +691,9 @@ async fn start_turn(
                                     SessionEventType::AssistantMessageInserted,
                                     json!({
                                         "message_id": saved.id.0,
+                                        "content": saved.content,
+                                        "delivery": saved.delivery,
+                                        "attachments": saved.attachments,
                                         "turn_sequence": saved.turn_sequence,
                                     }),
                                 )
@@ -791,6 +794,9 @@ async fn start_turn(
                                         SessionEventType::AssistantMessageInserted,
                                         json!({
                                             "message_id": saved.id.0,
+                                            "content": saved.content,
+                                            "delivery": saved.delivery,
+                                            "attachments": saved.attachments,
                                             "turn_sequence": saved.turn_sequence,
                                         }),
                                     )
