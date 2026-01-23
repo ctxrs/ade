@@ -759,7 +759,10 @@ async fn resolve_workspace_active_snapshot_subscriptions(
                     }
                 }
                 if !task_ids.is_empty() {
-                    let store = state.store_for_workspace(workspace_id).await.map_err(|_| ())?;
+                    let store = state
+                        .store_for_workspace(workspace_id)
+                        .await
+                        .map_err(|_| ())?;
                     for task_id in task_ids {
                         let task = store.get_task(task_id).await.map_err(|_| ())?;
                         let Some(task) = task else {
