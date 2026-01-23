@@ -93,6 +93,7 @@ import { pickPreferredSessionId } from "../utils/workbenchSelection";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { parseModelId } from "../utils/modelEffort";
 import { getLoadTestTelemetry } from "../utils/loadTestTelemetry";
+import { randomUuid } from "../utils/randomUuid";
 import {
   NEW_TASK_DRAFT_KEY,
   scrollKey,
@@ -2129,6 +2130,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const fetchGitStatusSummary = useCallback(
     async (sessionId: string, opts?: { silent?: boolean; force?: boolean }) => {
       if (!sessionId) return null;
+      if (sessionId.startsWith("optimistic-")) {
+        gitStatusPrefetchedRef.current.add(sessionId);
+        return null;
+      }
       if (!opts?.force && gitStatusPrefetchedRef.current.has(sessionId)) {
         return null;
       }

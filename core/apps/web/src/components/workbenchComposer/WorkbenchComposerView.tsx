@@ -26,6 +26,7 @@ import {
   labelForMode,
   labelForVerbosity,
   modelIdFromProviderOptions,
+  pickDefaultEffort,
 } from "./WorkbenchComposer.utils";
 import type {
   ActiveSessionProps,

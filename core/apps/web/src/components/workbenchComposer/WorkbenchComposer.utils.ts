@@ -99,7 +99,7 @@ export function buildModelsForProvider(providerId: string, opts?: ProviderOption
   return FALLBACK_MODELS_BY_PROVIDER[providerId] ?? [];
 }
 
-function pickDefaultEffort(efforts: string[]): string | null {
+export function pickDefaultEffort(efforts: string[]): string | null {
   if (efforts.includes("medium")) return "medium";
   return efforts[0] ?? null;
 }

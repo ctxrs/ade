@@ -1091,6 +1091,61 @@ export class SessionSupervisor {
     this.publish();
   }
 
+  private applyToolSummaries(entry: InternalEntry, summaries: SessionTurnToolSummary[]) {
+    const hydrated = entry.turnToolsHydratedByTurnId;
+    let changed = false;
+    const nextByTurn: Record<string, SessionTurnTool[]> = {};
+
+    for (const summary of summaries) {
+      const turnId = idToString(summary.turn_id);
+      if (!turnId) continue;
+      if (hydrated[turnId]) continue;
+      const list = nextByTurn[turnId] ?? [];
+      list.push({
+        session_id: summary.session_id,
+        tool_call_id: summary.tool_call_id,
+        turn_id: summary.turn_id,
+        tool_kind: summary.tool_kind ?? null,
+        title: summary.title ?? null,
+        status: summary.status ?? null,
+        input_json: summary.input_preview ?? null,
+        output_text: null,
+        input_truncated: summary.input_truncated ?? null,
+        input_original_bytes: summary.input_original_bytes ?? null,
+        output_truncated: summary.output_truncated ?? null,
+        output_original_bytes: summary.output_original_bytes ?? null,
+        created_at: summary.created_at,
+        updated_at: summary.updated_at,
+        summary_only: true,
+      } as SessionTurnTool & { summary_only: boolean });
+      nextByTurn[turnId] = list;
+    }
+
+    for (const [turnId, incoming] of Object.entries(nextByTurn)) {
+      const existing = entry.turnToolsByTurnId[turnId] ?? [];
+      const seen = new Set(existing.map((tool) => String(tool.tool_call_id)));
+      const merged = existing.slice();
+      for (const tool of incoming) {
+        const key = String(tool.tool_call_id);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(tool);
+      }
+      entry.turnToolsByTurnId = {
+        ...entry.turnToolsByTurnId,
+        [turnId]: merged,
+      };
+      if (!hydrated[turnId]) hydrated[turnId] = false;
+      changed = true;
+    }
+
+    if (changed) {
+      entry.toolSummariesReady = true;
+      entry.updatedAtMs = Date.now();
+      this.publish();
+    }
+  }
+
   private applyState(entry: InternalEntry, state: SessionState | null, stateRev?: number) {
     if (!state) return;
     if (
