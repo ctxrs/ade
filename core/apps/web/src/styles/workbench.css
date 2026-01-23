@@ -2625,6 +2625,14 @@
   margin-right: auto;
 }
 
+.wb-session-view .queue-panel {
+  width: calc(100% - 24px);
+  max-width: calc(var(--wb-thread-max-width) - 32px);
+  margin-left: auto;
+  margin-right: auto;
+  margin-bottom: -10px;
+}
+
 .wb-session-view .wb-thread-stack {
   max-width: none;
   width: calc(100% + (var(--wb-session-padding-inline) * 2));
