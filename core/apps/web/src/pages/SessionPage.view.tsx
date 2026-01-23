@@ -10,6 +10,7 @@ import {
   type MutableRefObject,
   type PointerEvent,
 } from "react";
+import { ChevronDown, CornerUpRight, Pencil, Trash2 } from "lucide-react";
 import type { StateSnapshot, VirtuosoHandle } from "react-virtuoso";
 import {
   deleteMessage,
@@ -64,6 +65,7 @@ import type {
 } from "./SessionPage.types";
 import {
   appendSegment,
+  attachmentDisplayName,
   formatElapsedMs,
   formatSubagentChildMeta,
   humanToolStatus,
@@ -191,6 +193,7 @@ export function SessionView({
   const [workbenchModeInternal, setWorkbenchModeInternal] = useState<WorkbenchModeId>("default");
   const [sendBusy, setSendBusy] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [queueActionBusyId, setQueueActionBusyId] = useState<string | null>(null);
   const [pendingMessages, setPendingMessages] = useState<PendingMessageEntry[]>([]);
   const [fileOpenError, setFileOpenError] = useState<string | null>(null);
   const [modifierDown, setModifierDown] = useState(false);
@@ -341,6 +344,7 @@ export function SessionView({
     },
     [draft, onModeChange],
   );
+  const queueActionBusy = queueActionBusyId !== null;
 
   const persistScroll = useCallback(
     (next: {
@@ -651,6 +655,7 @@ export function SessionView({
   const queue: Message[] = entry?.queue ?? [];
   const subagentInvocations: SubagentInvocation[] = entry?.subagentInvocations ?? [];
   const subagentInvocationsLoading = entry?.subagentInvocationsLoading ?? false;
+  const showQueuePanel = queue.length > 0;
   const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
@@ -1425,6 +1430,30 @@ export function SessionView({
     supervisor.loadMoreTurns(id);
   }, [hasMoreTurns, id, supervisor]);
 
+  const getQueuedAttachments = (message: Message): MessageAttachment[] => {
+    return Array.isArray(message.attachments) ? message.attachments : [];
+  };
+
+  const formatQueuedPreview = (message: Message, attachments: MessageAttachment[]): string => {
+    const base = markdownToPlainText(message.content ?? "");
+    const compact = base.replace(/\s+/g, " ").trim();
+    if (compact) return compact;
+    if (attachments.length > 0) return "Message with attachments";
+    return "Queued message";
+  };
+
+  const formatQueuedAttachmentMeta = (attachments: MessageAttachment[]) => {
+    if (attachments.length === 0) return null;
+    const names = attachments.map((a) => attachmentDisplayName(a.name));
+    const label = attachments.length === 1 ? "1 attachment" : `${attachments.length} attachments`;
+    const preview = names.slice(0, 2).join(", ");
+    const overflow = names.length > 2 ? ` +${names.length - 2}` : "";
+    return {
+      label,
+      detail: preview ? `${preview}${overflow}` : null,
+      title: names.join(", "),
+    };
+  };
 
   const sendNow = async () => {
     if (!id) return;
@@ -1478,8 +1507,100 @@ export function SessionView({
   };
 
   const onRemoveQueued = async (messageId: string) => {
-    await deleteMessage(messageId);
-    supervisor.refreshQueue(id ?? "");
+    if (!id) return;
+    if (!messageId) return;
+    if (queueActionBusy) return;
+    setQueueActionBusyId(messageId);
+    setSendError(null);
+    try {
+      await deleteMessage(messageId);
+    } catch (e: any) {
+      setSendError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setQueueActionBusyId(null);
+      supervisor.refreshQueue(id);
+    }
+  };
+
+  const onEditQueued = async (message: Message) => {
+    if (!id) return;
+    if (queueActionBusy) return;
+    const mid = idToString(message.id);
+    if (!mid) return;
+    const attachments = getQueuedAttachments(message);
+    setInput(message.content ?? "");
+    setDraftAttachments(attachments);
+    setQueueActionBusyId(mid);
+    setSendError(null);
+    try {
+      await deleteMessage(mid);
+    } catch (e: any) {
+      setSendError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setQueueActionBusyId(null);
+      supervisor.refreshQueue(id);
+    }
+  };
+
+  const onSendQueuedNow = async (message: Message) => {
+    if (!id) return;
+    if (queueActionBusy || sendBusy) return;
+    const mid = idToString(message.id);
+    if (!mid) return;
+    const attachments = getQueuedAttachments(message);
+    const content = message.content ?? "";
+    setQueueActionBusyId(mid);
+    setSendError(null);
+    try {
+      await interruptSession(id);
+    } catch (e: any) {
+      setSendError(e?.message ? String(e.message) : String(e));
+      setQueueActionBusyId(null);
+      return;
+    }
+    try {
+      await deleteMessage(mid);
+    } catch (e: any) {
+      setSendError(e?.message ? String(e.message) : String(e));
+      setQueueActionBusyId(null);
+      supervisor.refreshQueue(id);
+      return;
+    }
+    supervisor.refreshQueue(id);
+    setSendBusy(true);
+
+    const optimisticId = createClientMessageId();
+    const optimisticMessage: Message = {
+      id: optimisticId,
+      session_id: id,
+      task_id: session?.task_id ?? "",
+      turn_id: null,
+      turn_sequence: null,
+      role: "user",
+      content,
+      attachments,
+      delivery: "immediate",
+      created_at: new Date().toISOString(),
+    };
+    setPendingMessages((prev) => [...prev, { clientId: optimisticId, message: optimisticMessage }]);
+    stickToBottomRef.current = true;
+    setStickToBottom(true);
+    liveScrollTopRef.current = null;
+    pendingScrollToBottomRef.current = true;
+
+    try {
+      const posted = await postMessage(id, content, "immediate", attachments);
+      setPendingMessages((prev) =>
+        prev.map((entry) => (entry.clientId === optimisticId ? { ...entry, message: posted } : entry)),
+      );
+      supervisor.refreshSession(id, { watchDiff: true });
+    } catch (e: any) {
+      setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== optimisticId));
+      setSendError(e?.message ? String(e.message) : String(e));
+    } finally {
+      setSendBusy(false);
+      setQueueActionBusyId(null);
+    }
   };
 
   const acpAvailableCommands = useMemo<SlashCommandDescriptor[]>(() => {
@@ -2130,27 +2251,6 @@ export function SessionView({
           </div>
         )}
 
-        {queue.length > 0 && (
-          <div className="queue-panel card">
-            <div className="row">
-              <strong>Pending messages ({queue.length})</strong>
-            </div>
-            <ul className="sublist">
-              {queue.map((m) => {
-                const mid = idToString(m.id);
-                return (
-                  <li key={mid} className="row">
-                    <span className="muted">{m.content}</span>
-                    <button type="button" onClick={() => onRemoveQueued(mid)}>
-                      Remove
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
-
         {showDebug && debugEvents.length > 0 && (
           <DebugPanel events={debugEvents} />
         )}
@@ -2180,6 +2280,77 @@ export function SessionView({
           onScrollbarThumbPointerUp={handleScrollbarThumbPointerUp}
           scheduleScrollbarUpdate={scheduleScrollbarUpdate}
         />
+
+        {showQueuePanel && (
+          <div className="queue-panel card" aria-label="Queued messages">
+            <div className="queue-header">
+              <ChevronDown size={14} aria-hidden="true" />
+              <span className="queue-header-title">{queue.length} Queued</span>
+            </div>
+            <ul className="queue-list" role="list">
+              {queue.map((m, index) => {
+                const messageId = idToString(m.id);
+                const rowKey = messageId || `queued-${index}`;
+                const attachments = getQueuedAttachments(m);
+                const preview = formatQueuedPreview(m, attachments);
+                const attachmentMeta = formatQueuedAttachmentMeta(attachments);
+                const canSendNow = index === 0 && !!messageId;
+                return (
+                  <li key={rowKey} className="queue-item">
+                    <span className="queue-item-dot" aria-hidden="true" />
+                    <div className="queue-item-body">
+                      <div className="queue-item-content" title={preview}>
+                        {preview}
+                      </div>
+                      {attachmentMeta && (
+                        <div className="queue-item-meta" title={attachmentMeta.title}>
+                          <span>{attachmentMeta.label}</span>
+                          {attachmentMeta.detail && (
+                            <span className="queue-item-meta-detail">{attachmentMeta.detail}</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="queue-item-actions">
+                      {canSendNow && (
+                        <button
+                          type="button"
+                          className="queue-action"
+                          disabled={queueActionBusy || sendBusy}
+                          onClick={() => onSendQueuedNow(m)}
+                          aria-label="Send now"
+                          title="Send now"
+                        >
+                          <CornerUpRight size={14} aria-hidden="true" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="queue-action"
+                        disabled={queueActionBusy || !messageId}
+                        onClick={() => onEditQueued(m)}
+                        aria-label="Edit queued message"
+                        title="Edit"
+                      >
+                        <Pencil size={14} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        className="queue-action"
+                        disabled={queueActionBusy || !messageId}
+                        onClick={() => onRemoveQueued(messageId)}
+                        aria-label="Cancel queued message"
+                        title="Cancel"
+                      >
+                        <Trash2 size={14} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
 
         <UnifiedWorkbenchComposer
           variant="activeSession"
