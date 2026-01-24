@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use async_trait::async_trait;
 use tokio::sync::{broadcast, Mutex};
@@ -112,6 +112,7 @@ struct WorkspaceActiveSnapshotEntry {
     tx: broadcast::Sender<WorkspaceActiveSnapshotEvent>,
     snapshot_rev: i64,
     archived_rev: i64,
+    hydrated: bool,
     active_tasks: HashMap<TaskId, WorkspaceActiveTaskSummary>,
     active_heads: HashMap<SessionId, SessionHeadSnapshot>,
     session_replay: HashMap<SessionId, SessionReplayState>,
@@ -124,6 +125,7 @@ impl WorkspaceActiveSnapshotEntry {
             tx,
             snapshot_rev: 0,
             archived_rev: 0,
+            hydrated: false,
             active_tasks: HashMap::new(),
             active_heads: HashMap::new(),
             session_replay: HashMap::new(),
@@ -262,7 +264,7 @@ impl WorkspaceActiveSnapshotHub {
             }
         };
         tasks.sort_by(|a, b| {
-            let ord = b.sort_at.cmp(&a.sort_at);
+            let ord = b.task.created_at.cmp(&a.task.created_at);
             if ord == Ordering::Equal {
                 b.task.id.0.cmp(&a.task.id.0)
             } else {
@@ -303,6 +305,72 @@ impl WorkspaceActiveSnapshotHub {
             workspace_id,
             snapshot_rev,
             heads,
+        }
+    }
+
+    pub async fn needs_hydration(&self, workspace_id: WorkspaceId) -> bool {
+        let mut guard = self.inner.lock().await;
+        let entry = guard
+            .entry(workspace_id)
+            .or_insert_with(WorkspaceActiveSnapshotEntry::new);
+        !entry.hydrated
+    }
+
+    pub async fn hydrate_snapshot(
+        &self,
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        archived_rev: i64,
+        tasks: Vec<WorkspaceActiveTaskSummary>,
+        heads: Vec<SessionHeadSnapshot>,
+    ) {
+        let mut tasks_by_id = HashMap::with_capacity(tasks.len());
+        for task in tasks {
+            tasks_by_id.insert(task.task.id, task);
+        }
+
+        let mut heads_by_id = HashMap::with_capacity(heads.len());
+        for head in &heads {
+            heads_by_id.insert(head.session.id, head.clone());
+        }
+
+        {
+            let mut guard = self.inner.lock().await;
+            let entry = guard
+                .entry(workspace_id)
+                .or_insert_with(WorkspaceActiveSnapshotEntry::new);
+            if entry.hydrated {
+                return;
+            }
+            entry.hydrated = true;
+            entry.snapshot_rev = entry.snapshot_rev.max(snapshot_rev);
+            entry.archived_rev = entry.archived_rev.max(archived_rev);
+            entry.active_tasks = tasks_by_id;
+            entry.active_heads = heads_by_id;
+            let active_session_ids: HashSet<SessionId> =
+                entry.active_heads.keys().cloned().collect();
+            if !active_session_ids.is_empty() {
+                entry
+                    .session_replay
+                    .retain(|session_id, _| active_session_ids.contains(session_id));
+            }
+            let replay_seeds: Vec<(SessionId, i64)> = entry
+                .active_heads
+                .values()
+                .map(|head| (head.session.id, head.last_event_seq))
+                .collect();
+            for (session_id, last_event_seq) in replay_seeds {
+                entry.seed_session_replay(session_id, last_event_seq);
+            }
+        }
+
+        if !heads.is_empty() {
+            let mut session_heads = self.session_heads.lock().await;
+            let mut index = self.active_head_index.lock().await;
+            for head in heads {
+                session_heads.insert(head.session.id, head.clone());
+                index.insert(head.session.id, workspace_id);
+            }
         }
     }
 

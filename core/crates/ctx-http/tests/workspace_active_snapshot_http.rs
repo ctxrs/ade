@@ -614,7 +614,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         .await
         .unwrap();
 
-    let mut seen_reset = false;
+    let mut seen_gap = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -628,15 +628,15 @@ async fn workspace_stream_emits_gap_on_large_replay() {
             if value
                 .get("type")
                 .and_then(|v| v.as_str())
-                .is_some_and(|t| t == "reset_required")
+                .is_some_and(|t| t == "session_gap")
             {
-                seen_reset = true;
+                seen_gap = true;
                 break;
             }
         }
     }
 
-    assert!(seen_reset, "expected reset_required for large replay");
+    assert!(seen_gap, "expected session_gap for large replay");
 }
 
 #[tokio::test]

@@ -330,8 +330,18 @@ mod tests {
         let mut seen_done = false;
         while let Some(Ok(frame)) = ws_stream.next().await {
             if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
+                let value: serde_json::Value = serde_json::from_str(&txt).unwrap();
+                if matches!(
+                    value
+                        .get("type")
+                        .and_then(|kind| kind.as_str())
+                        .unwrap_or_default(),
+                    "snapshot" | "reset_required"
+                ) {
+                    continue;
+                }
                 let ev: ctx_core::models::WorkspaceActiveSnapshotEvent =
-                    serde_json::from_str(&txt).unwrap();
+                    serde_json::from_value(value).unwrap();
                 if let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
                     delta,
                     ..

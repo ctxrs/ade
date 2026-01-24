@@ -172,6 +172,12 @@ async fn handle_mobile_secure_ws(
                             pending.clear().await;
                             reset_queued = false;
                             send_control.clear_disconnect_after_flush();
+                            if queue_snapshot_payload(&pending, &state, workspace_id)
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
 
                             let mut next_map = HashMap::new();
                             let mut replay_failed = false;
@@ -645,6 +651,7 @@ impl StreamSendControl {
 #[serde(untagged)]
 enum WorkspaceActiveSnapshotWsPayload {
     Event(WorkspaceActiveSnapshotEvent),
+    Snapshot(WorkspaceActiveSnapshotStreamMessage),
     ResetRequired(WorkspaceActiveSnapshotStreamMessage),
 }
 
@@ -666,6 +673,33 @@ async fn queue_reset_required(
         .push(WorkspaceActiveSnapshotWsPayload::ResetRequired(
             WorkspaceActiveSnapshotStreamMessage::ResetRequired {
                 latest_rev: snapshot_rev,
+            },
+        ))
+        .await
+}
+
+async fn queue_snapshot_payload(
+    pending: &StreamQueue<WorkspaceActiveSnapshotWsPayload>,
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+) -> Result<(), ()> {
+    state
+        .ensure_workspace_active_snapshot_hydrated(workspace_id)
+        .await;
+    let active_snapshot = state
+        .workspace_active_snapshot
+        .active_snapshot(workspace_id, i64::MAX)
+        .await;
+    let active_heads = state
+        .workspace_active_snapshot
+        .active_heads(workspace_id)
+        .await;
+    pending
+        .push(WorkspaceActiveSnapshotWsPayload::Snapshot(
+            WorkspaceActiveSnapshotStreamMessage::Snapshot {
+                rev: active_snapshot.snapshot_rev,
+                active_snapshot,
+                active_heads: Some(active_heads),
             },
         ))
         .await
@@ -900,6 +934,12 @@ async fn handle_workspace_active_snapshot_ws(
                                 pending.clear().await;
                                 reset_queued = false;
                                 send_control.clear_disconnect_after_flush();
+                                if queue_snapshot_payload(&pending, &state, workspace_id)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
 
                                 let mut next_map = HashMap::new();
                                 let mut replay_failed = false;
@@ -966,6 +1006,12 @@ async fn handle_workspace_active_snapshot_ws(
                                     pending.clear().await;
                                     reset_queued = false;
                                     send_control.clear_disconnect_after_flush();
+                                    if queue_snapshot_payload(&pending, &state, workspace_id)
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
 
                                     let mut next_map = HashMap::new();
                                     let mut replay_failed = false;

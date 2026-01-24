@@ -24,19 +24,3 @@ pub fn register_active_snapshot_observer(observer: Arc<dyn ActiveSnapshotObserve
         .expect("active snapshot observers mutex poisoned");
     guard.push(Arc::downgrade(&observer));
 }
-
-pub(crate) fn active_snapshot_observers() -> Vec<Arc<dyn ActiveSnapshotObserver>> {
-    let mut guard = observers()
-        .lock()
-        .expect("active snapshot observers mutex poisoned");
-    let mut live = Vec::new();
-    guard.retain(|weak| {
-        if let Some(observer) = weak.upgrade() {
-            live.push(observer);
-            true
-        } else {
-            false
-        }
-    });
-    live
-}

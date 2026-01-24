@@ -12115,6 +12115,17 @@ async fn get_session_head(
     let limit = q.limit.unwrap_or(60);
     let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
+    if let Some(mut head) = state
+        .workspace_active_snapshot
+        .get_session_head(session_id)
+        .await
+    {
+        if !include_events {
+            head.events.clear();
+            head.head_window.event_count = 0;
+        }
+        return Ok(Json(head));
+    }
     let store = state
         .store_for_session(session_id)
         .await
@@ -12123,7 +12134,15 @@ async fn get_session_head(
         .get_session_head_snapshot(session_id, limit, include_events)
         .await
     {
-        Ok(Some(head)) => Ok(Json(head)),
+        Ok(Some(head)) => {
+            if include_events {
+                state
+                    .workspace_active_snapshot
+                    .update_session_head(head.clone())
+                    .await;
+            }
+            Ok(Json(head))
+        }
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
@@ -12949,13 +12968,10 @@ async fn load_workspace_active_snapshot_state(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
 ) -> (i64, i64) {
-    match state.store_for_workspace(workspace_id).await {
-        Ok(store) => store
-            .get_workspace_active_snapshot_state(workspace_id)
-            .await
-            .unwrap_or((0, 0)),
-        Err(_) => (0, 0),
-    }
+    state
+        .workspace_active_snapshot
+        .snapshot_state(workspace_id)
+        .await
 }
 
 async fn get_workspace_active_snapshot(
@@ -12973,42 +12989,13 @@ async fn get_workspace_active_snapshot(
     })?);
 
     let limit = query.limit.unwrap_or(50) as i64;
-    let store = state.store_for_workspace(workspace_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    let (tasks, total_count) = store
-        .list_workspace_active_page_read_model(workspace_id, limit)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    let (snapshot_rev, archived_rev) = store
-        .get_workspace_active_snapshot_state(workspace_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    let snapshot = WorkspaceActiveSnapshot {
-        workspace_id,
-        snapshot_rev,
-        archived_rev,
-        active: WorkspaceActivePage { tasks, total_count },
-    };
+    state
+        .ensure_workspace_active_snapshot_hydrated(workspace_id)
+        .await;
+    let snapshot = state
+        .workspace_active_snapshot
+        .active_snapshot(workspace_id, limit)
+        .await;
     Ok(Json(snapshot))
 }
 
@@ -13025,41 +13012,14 @@ async fn get_workspace_active_heads(
         )
     })?);
 
-    let store = state.store_for_workspace(workspace_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    let (snapshot_rev, _) = store
-        .get_workspace_active_snapshot_state(workspace_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    let heads = store
-        .list_workspace_active_head_snapshots(workspace_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    Ok(Json(WorkspaceActiveHeadBatch {
-        workspace_id,
-        snapshot_rev,
-        heads,
-    }))
+    state
+        .ensure_workspace_active_snapshot_hydrated(workspace_id)
+        .await;
+    let heads = state
+        .workspace_active_snapshot
+        .active_heads(workspace_id)
+        .await;
+    Ok(Json(heads))
 }
 
 #[cfg(test)]

@@ -278,16 +278,18 @@ export class SessionSupervisor {
     const entry = this.ensureEntry(sessionId);
     entry.refCount += 1;
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
-    const seededHead = this.snapshotStore?.getSessionHeadSnapshot(sessionId);
+    const seededHead = this.getActiveSnapshotHead(sessionId);
     if (seededHead) {
       this.replica.dispatch({ type: "seed_head", sessionId, head: seededHead });
     }
-    this.replica.dispatch({
-      type: "open_session",
-      sessionId,
-      force: opts?.force,
-      silent: opts?.silent,
-    });
+    if (!seededHead || opts?.force) {
+      this.replica.dispatch({
+        type: "open_session",
+        sessionId,
+        force: opts?.force,
+        silent: opts?.silent,
+      });
+    }
     this.refreshSubscriptions();
     return () => this.closeSession(sessionId, opts);
   };
@@ -997,8 +999,8 @@ export class SessionSupervisor {
   }
 
   private seedHeadFromActiveSnapshot(entry: InternalEntry): boolean {
-    const store = this.snapshotStore;
-    if (!store) return false;
+    const head = this.getActiveSnapshotHead(entry.sessionId);
+    if (!head) return false;
     const applySnapshot = (head: SessionHeadSnapshot): boolean => {
       const nextSeq = typeof head.last_event_seq === "number" ? head.last_event_seq : -1;
       const prevSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
@@ -1013,19 +1015,24 @@ export class SessionSupervisor {
       return true;
     };
 
-    const direct = store.getSessionHeadSnapshot(entry.sessionId);
-    if (direct && applySnapshot(direct)) return true;
+    return applySnapshot(head);
+  }
 
+  private getActiveSnapshotHead(sessionId: string): SessionHeadSnapshot | null {
+    const store = this.snapshotStore;
+    if (!store) return null;
+    const direct = store.getSessionHeadSnapshot(sessionId);
+    if (direct) return direct;
     const state = store.getSnapshot();
     for (const taskId of state.activeIds) {
       const item = state.tasksById[taskId];
       const head = item?.primarySessionHead;
       if (!head) continue;
-      const sessionId = idToString(head.session?.id);
-      if (!sessionId || sessionId !== entry.sessionId) continue;
-      return applySnapshot(head);
+      const headSessionId = idToString(head.session?.id);
+      if (!headSessionId || headSessionId !== sessionId) continue;
+      return head;
     }
-    return false;
+    return null;
   }
 
   private applyHead(

@@ -29,7 +29,7 @@ use ctx_providers::adapters::ProviderStatus;
 use ctx_providers::ask_user_question::AskUserQuestionBroker;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_providers::tier1::Tier1AcpAdapter;
-use ctx_store::{register_active_snapshot_observer, Store, StoreManager, StoreManagerConfig};
+use ctx_store::{Store, StoreManager, StoreManagerConfig};
 
 use crate::api;
 use crate::installer;
@@ -413,7 +413,6 @@ impl AppState {
         let ops_events = OpsEvents::new(data_root.clone());
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
         let workspace_active_snapshot = Arc::new(WorkspaceActiveSnapshotHub::new());
-        register_active_snapshot_observer(workspace_active_snapshot.clone());
         let web_sessions = Arc::new(WebSessionManager::new());
         let merge_queue_notify = Arc::new(Notify::new());
         Self {
@@ -545,6 +544,43 @@ impl AppState {
         let workspace_id = batch.workspace_id;
         let mut cache = self.workspace_active_heads_cache.lock().await;
         cache.insert(workspace_id, WorkspaceActiveHeadCacheEntry { batch });
+    }
+
+    pub async fn ensure_workspace_active_snapshot_hydrated(&self, workspace_id: WorkspaceId) {
+        if !self
+            .workspace_active_snapshot
+            .needs_hydration(workspace_id)
+            .await
+        {
+            return;
+        }
+        let store = match self.store_for_workspace(workspace_id).await {
+            Ok(store) => store,
+            Err(_) => {
+                return;
+            }
+        };
+        let (_, archived_rev) = store
+            .get_workspace_active_snapshot_state(workspace_id)
+            .await
+            .unwrap_or((0, 0));
+        let (tasks, _) = store
+            .list_workspace_active_page_base(workspace_id, i64::MAX)
+            .await
+            .unwrap_or_default();
+        let session_ids = store
+            .list_workspace_active_session_ids(workspace_id)
+            .await
+            .unwrap_or_default();
+        let mut heads = Vec::new();
+        for session_id in session_ids {
+            if let Ok(Some(head)) = store.get_active_snapshot_head(session_id).await {
+                heads.push(head);
+            }
+        }
+        self.workspace_active_snapshot
+            .hydrate_snapshot(workspace_id, 0, archived_rev, tasks, heads)
+            .await;
     }
 
     pub async fn cached_session_head_snapshot(
@@ -748,28 +784,7 @@ impl AppState {
             }
             let target_seq = entry.last_event_seq;
 
-            let store = match self.store_for_session(session_id).await {
-                Ok(store) => store,
-                Err(_) => {
-                    let mut map = self.active_head_projections.lock().await;
-                    map.remove(&session_id);
-                    return;
-                }
-            };
-            match store
-                .refresh_active_session_head_projection(session_id)
-                .await
-            {
-                Ok(_) => {
-                    self.refresh_session_head_cache(session_id).await;
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        "failed to refresh active head projection for session {}: {err}",
-                        session_id.0
-                    );
-                }
-            }
+            self.refresh_session_head_cache(session_id).await;
 
             let flushed_at = Instant::now();
             let mut map = self.active_head_projections.lock().await;
@@ -914,9 +929,6 @@ impl AppState {
             Some(summary) => {
                 let workspace_id = summary.task.workspace_id;
                 task = Some(summary.task.clone());
-                let _ = store
-                    .upsert_workspace_active_task_summary_read_model(&summary)
-                    .await?;
                 self.workspace_active_snapshot
                     .publish_active_task_upsert(workspace_id, summary)
                     .await;
@@ -924,12 +936,6 @@ impl AppState {
             None => {
                 if let Some(loaded) = store.get_task(task_id).await? {
                     task = Some(loaded.clone());
-                    let _ = store
-                        .delete_workspace_active_task_summary_read_model(
-                            loaded.workspace_id,
-                            task_id,
-                        )
-                        .await?;
                     self.workspace_active_snapshot
                         .publish_active_task_delete(loaded.workspace_id, task_id)
                         .await;
@@ -944,35 +950,17 @@ impl AppState {
     }
 
     pub async fn emit_workspace_task_delete(&self, workspace_id: WorkspaceId, task_id: TaskId) {
-        let updated = match self.store_for_workspace(workspace_id).await {
-            Ok(store) => match store
-                .delete_workspace_active_task_summary_read_model(workspace_id, task_id)
-                .await
-            {
-                Ok(_) => true,
-                Err(err) => {
-                    tracing::warn!(
-                        workspace_id = %workspace_id.0,
-                        task_id = %task_id.0,
-                        "workspace task delete read model update failed: {err:#}"
-                    );
-                    false
-                }
-            },
-            Err(err) => {
-                tracing::warn!(
-                    workspace_id = %workspace_id.0,
-                    task_id = %task_id.0,
-                    "workspace task delete read model store missing: {err:#}"
-                );
-                false
-            }
-        };
-        if updated {
-            self.workspace_active_snapshot
-                .publish_active_task_delete(workspace_id, task_id)
-                .await;
+        if let Err(err) = self.store_for_workspace(workspace_id).await {
+            tracing::warn!(
+                workspace_id = %workspace_id.0,
+                task_id = %task_id.0,
+                "workspace task delete store missing: {err:#}"
+            );
+            return;
         }
+        self.workspace_active_snapshot
+            .publish_active_task_delete(workspace_id, task_id)
+            .await;
     }
 
     pub async fn emit_workspace_archived_task_delete(

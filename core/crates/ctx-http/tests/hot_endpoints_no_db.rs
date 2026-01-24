@@ -2,13 +2,14 @@
 
 use std::time::Duration;
 
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use ctx_core::models::{
     SessionEventType, SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
-    WorkspaceActiveSnapshotEvent,
+    WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
+    WorkspaceActiveSnapshotStreamMessage,
 };
 
 mod common;
@@ -75,36 +76,50 @@ async fn hot_endpoints_use_cache_when_db_unavailable() {
         .refresh_active_session_head_projection(session.id)
         .await;
 
-    let _: WorkspaceActiveSnapshot = client
-        .get(format!(
-            "{base}/api/workspaces/{}/active_snapshot?limit=5",
-            ws.id.0
-        ))
-        .send()
+    state.emit_workspace_task_upsert(task.id).await.unwrap();
+    state.refresh_session_head_cache(session.id).await;
+
+    let head_snapshot = store
+        .get_session_head_snapshot(session.id, 10, true)
         .await
         .unwrap()
-        .json()
-        .await
         .unwrap();
-    let _: WorkspaceActiveHeadBatch = client
-        .get(format!("{base}/api/workspaces/{}/active_heads", ws.id.0))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let _: SessionHeadSnapshot = client
-        .get(format!(
-            "{base}/api/sessions/{}/head?limit=10&include_events=true",
-            session.id.0
-        ))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    state
+        .cache_session_head_snapshot(session.id, 10, true, head_snapshot)
+        .await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let mut cached_snapshot = state
+        .workspace_active_snapshot
+        .active_snapshot(ws.id, 50)
+        .await;
+    while cached_snapshot.active.tasks.is_empty() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cached_snapshot = state
+            .workspace_active_snapshot
+            .active_snapshot(ws.id, 50)
+            .await;
+    }
+    assert!(
+        !cached_snapshot.active.tasks.is_empty(),
+        "expected active snapshot to be cached"
+    );
+    state
+        .cache_workspace_active_snapshot(cached_snapshot.clone())
+        .await;
+
+    let mut cached_heads = state.workspace_active_snapshot.active_heads(ws.id).await;
+    while cached_heads.heads.is_empty() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cached_heads = state.workspace_active_snapshot.active_heads(ws.id).await;
+    }
+    assert!(
+        !cached_heads.heads.is_empty(),
+        "expected active heads to be cached"
+    );
+    state
+        .cache_workspace_active_heads(cached_heads.clone())
+        .await;
 
     ctx_store::fault_injection::clear_failpoints();
     ctx_store::fault_injection::set_failpoint("ctx_store.get_workspace_active_snapshot_state", 10);
@@ -115,32 +130,43 @@ async fn hot_endpoints_use_cache_when_db_unavailable() {
     ctx_store::fault_injection::set_failpoint("ctx_store.list_workspace_active_head_snapshots", 10);
     ctx_store::fault_injection::set_failpoint("ctx_store.get_session_head_snapshot", 10);
 
-    let snapshot = client
+    let snapshot: WorkspaceActiveSnapshot = client
         .get(format!(
             "{base}/api/workspaces/{}/active_snapshot?limit=5",
             ws.id.0
         ))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert!(snapshot.status().is_success());
+    assert_eq!(snapshot.workspace_id, ws.id);
+    assert_eq!(snapshot.active.tasks.len(), 1);
 
-    let heads = client
+    let heads: WorkspaceActiveHeadBatch = client
         .get(format!("{base}/api/workspaces/{}/active_heads", ws.id.0))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert!(heads.status().is_success());
+    assert_eq!(heads.workspace_id, ws.id);
+    assert_eq!(heads.heads.len(), 1);
 
-    let head = client
+    let head: SessionHeadSnapshot = client
         .get(format!(
             "{base}/api/sessions/{}/head?limit=10&include_events=true",
             session.id.0
         ))
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert!(head.status().is_success());
+    assert_eq!(head.session.id, session.id);
 
     let ws_url = format!(
         "ws://{}/api/workspaces/{}/stream",
@@ -156,6 +182,46 @@ async fn hot_endpoints_use_cache_when_db_unavailable() {
     let WsMessage::Text(txt) = msg else {
         panic!("expected text frame, got {:?}", msg);
     };
-    let event: WorkspaceActiveSnapshotEvent = serde_json::from_str(&txt).unwrap();
-    assert!(matches!(event, WorkspaceActiveSnapshotEvent::Ready { .. }));
+    let ready: WorkspaceActiveSnapshotEvent = serde_json::from_str(&txt).unwrap();
+    assert!(matches!(ready, WorkspaceActiveSnapshotEvent::Ready { .. }));
+
+    let subscribe = WorkspaceActiveSnapshotClientMessage::Subscribe {
+        session_ids: vec![session.id],
+        sessions: Vec::new(),
+        task_ids: Vec::new(),
+        scope: None,
+        include_active_heads: true,
+    };
+    socket
+        .send(WsMessage::Text(
+            serde_json::to_string(&subscribe).unwrap().into(),
+        ))
+        .await
+        .unwrap();
+
+    let msg = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let WsMessage::Text(txt) = msg else {
+        panic!("expected text frame, got {:?}", msg);
+    };
+    let message: WorkspaceActiveSnapshotStreamMessage = serde_json::from_str(&txt).unwrap();
+    match message {
+        WorkspaceActiveSnapshotStreamMessage::Snapshot {
+            active_snapshot,
+            active_heads,
+            ..
+        } => {
+            assert_eq!(active_snapshot.workspace_id, ws.id);
+            assert_eq!(active_snapshot.active.tasks.len(), 1);
+            let Some(active_heads) = active_heads else {
+                panic!("expected active heads in snapshot payload");
+            };
+            assert_eq!(active_heads.workspace_id, ws.id);
+            assert_eq!(active_heads.heads.len(), 1);
+        }
+        other => panic!("expected snapshot payload, got {other:?}"),
+    }
 }

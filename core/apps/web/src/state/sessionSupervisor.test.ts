@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { waitForCondition } from "../testUtils/waitForCondition";
 
-import type { Message, Session, SessionEvent, SessionTurn, WorkspaceActiveSnapshotEvent } from "../api/client";
+import type {
+  Message,
+  Session,
+  SessionEvent,
+  SessionHeadSnapshot,
+  SessionTurn,
+  WorkspaceActiveSnapshotEvent,
+} from "../api/client";
 import type { WorkspaceActiveSnapshotEventSource } from "./workspaceActiveSnapshotStore";
 
 vi.mock("../api/client", () => {
@@ -525,5 +532,55 @@ describe("SessionSupervisor", () => {
 
     await sup.loadTurnTools(sessionId, turnId);
     expect(listTurnTools).toHaveBeenCalledWith(sessionId, turnId);
+  });
+
+  it("uses active snapshot heads to avoid HTTP on open", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-5";
+    const head: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [] as SessionTurn[],
+      events: [] as SessionEvent[],
+      messages: [] as Message[],
+      last_event_seq: 0,
+      state_rev: 0,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    };
+
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (_listener: (evt: WorkspaceActiveSnapshotEvent) => void) => () => {},
+      getSessionHeadSnapshot: (id: string) => (id === sessionId ? head : null),
+      getWorktreeRoot: () => null,
+      getSnapshot: () => ({
+        workspaceId: "ws-1",
+        initialized: true,
+        connection: "connected" as const,
+        tasksById: {},
+        activeIds: [],
+        archivedIds: [],
+        totalActive: 0,
+        totalArchived: 0,
+        fetchState: { active: "idle", archived: "idle" },
+        hasMoreActive: false,
+        hasMoreArchived: false,
+        archivedLoaded: false,
+      }),
+    };
+
+    const sup = new SessionSupervisor();
+    sup.bindWorkspaceActiveSnapshotStore(store);
+    sup.openSession(sessionId);
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return Boolean(entry && !entry.loading);
+    });
+
+    expect(getSessionHead).not.toHaveBeenCalled();
+    expect(getSessionSnapshot).not.toHaveBeenCalled();
   });
 });
