@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::{SinkExt, StreamExt};
 use serde_json::json;
@@ -70,17 +70,32 @@ async fn workspace_active_snapshot_includes_sessions() {
         .await
         .unwrap();
 
-    let snapshot: ctx_core::models::WorkspaceActiveSnapshot = client
-        .get(format!(
-            "{base}/api/workspaces/{}/active_snapshot?limit=5",
-            ws.id.0
-        ))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let snapshot: ctx_core::models::WorkspaceActiveSnapshot = loop {
+        let snapshot: ctx_core::models::WorkspaceActiveSnapshot = client
+            .get(format!(
+                "{base}/api/workspaces/{}/active_snapshot?limit=5",
+                ws.id.0
+            ))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let found = snapshot
+            .active
+            .tasks
+            .iter()
+            .any(|summary| summary.primary_session.session.id == session.id);
+        if found {
+            break snapshot;
+        }
+        if Instant::now() >= deadline {
+            panic!("session missing from active snapshot");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
     assert_eq!(snapshot.active.tasks.len(), 1);
     let summary = &snapshot.active.tasks[0];
     assert_eq!(summary.task.id, task_active.id);
@@ -150,14 +165,24 @@ async fn workspace_active_heads_batch_strips_partials() {
         .await
         .unwrap();
 
-    let batch: ctx_core::models::WorkspaceActiveHeadBatch = client
-        .get(format!("{base}/api/workspaces/{}/active_heads", ws.id.0))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let batch: ctx_core::models::WorkspaceActiveHeadBatch = loop {
+        let batch: ctx_core::models::WorkspaceActiveHeadBatch = client
+            .get(format!("{base}/api/workspaces/{}/active_heads", ws.id.0))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if batch.heads.iter().any(|head| head.session.id == session.id) {
+            break batch;
+        }
+        if Instant::now() >= deadline {
+            panic!("session head missing from active heads batch");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
 
     let head = batch
         .heads
@@ -703,11 +728,19 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            let value: serde_json::Value = serde_json::from_str(&txt).unwrap_or_default();
+            let Some(kind) = value.get("type").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if kind != "active_task_upsert" {
+                continue;
+            }
+            let evt: ctx_core::models::WorkspaceActiveSnapshotEvent =
+                serde_json::from_value(value).unwrap();
             if let ctx_core::models::WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
                 task: summary,
                 ..
-            } = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
-                .unwrap()
+            } = evt
             {
                 if summary.task.id == task.id {
                     saw_upsert = true;
