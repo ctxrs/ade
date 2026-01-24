@@ -176,8 +176,8 @@ async fn emit_diff(client: &reqwest::Client, args: &ResolvedArgs) -> Result<()> 
 
     let diff = DiffArtifact {
         worker_id: args.worker_id.clone(),
-        base_commit_sha: patch.base_commit_sha,
-        head_commit_sha: patch.head_commit_sha,
+        base_commit_sha: patch.base_revision,
+        head_commit_sha: patch.head_revision,
         generated_at: Utc::now(),
         patch: patch.patch,
         changed_files: patch.changed_files,
