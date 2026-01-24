@@ -1281,6 +1281,7 @@ async fn update_target_branch(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn push_target_branch(
     state: &AppState,
     entry: &MergeQueueEntry,
