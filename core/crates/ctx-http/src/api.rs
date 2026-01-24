@@ -381,14 +381,6 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(list_workspace_terminals).post(create_workspace_terminal),
         )
         .route(
-            "/api/workspaces/:id/active_snapshot",
-            get(get_workspace_active_snapshot),
-        )
-        .route(
-            "/api/workspaces/:id/active_heads",
-            get(get_workspace_active_heads),
-        )
-        .route(
             "/api/workspaces/:id/active_snapshot/stream",
             get(workspace_active_snapshot_stream_ws),
         )
@@ -11908,6 +11900,7 @@ async fn create_session_for_task(
         )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state.remember_session_meta(&session).await;
     if let Err(e) = state
         .global_store()
         .upsert_workspace_session_index(session.id, task.workspace_id)
@@ -12019,7 +12012,6 @@ async fn create_session_for_task(
         "relationship": session.relationship.clone(),
     }));
     state.ops_events.emit(ops_event);
-    state.remember_session_meta(&session).await;
     if let Err(e) = state.emit_workspace_task_upsert(session.task_id).await {
         tracing::warn!(task_id = %session.task_id.0, "workspace active snapshot refresh failed: {e:?}");
     }
@@ -12940,11 +12932,6 @@ async fn workspace_file_completions(
     )))
 }
 
-#[derive(Debug, Deserialize)]
-struct WorkspaceActiveSnapshotQuery {
-    limit: Option<u32>,
-}
-
 fn parse_boolish_flag(raw: Option<&str>, label: &str) -> Result<bool, String> {
     match raw {
         Some(value) => {
@@ -12972,54 +12959,6 @@ async fn load_workspace_active_snapshot_state(
         .workspace_active_snapshot
         .snapshot_state(workspace_id)
         .await
-}
-
-async fn get_workspace_active_snapshot(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(query): Query<WorkspaceActiveSnapshotQuery>,
-) -> Result<Json<WorkspaceActiveSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
-    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-
-    let limit = query.limit.unwrap_or(50) as i64;
-    state
-        .ensure_workspace_active_snapshot_hydrated(workspace_id)
-        .await;
-    let snapshot = state
-        .workspace_active_snapshot
-        .active_snapshot(workspace_id, limit)
-        .await;
-    Ok(Json(snapshot))
-}
-
-async fn get_workspace_active_heads(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<WorkspaceActiveHeadBatch>, (StatusCode, Json<ApiErrorResp>)> {
-    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-
-    state
-        .ensure_workspace_active_snapshot_hydrated(workspace_id)
-        .await;
-    let heads = state
-        .workspace_active_snapshot
-        .active_heads(workspace_id)
-        .await;
-    Ok(Json(heads))
 }
 
 #[cfg(test)]

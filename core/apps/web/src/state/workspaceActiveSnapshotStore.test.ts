@@ -17,7 +17,11 @@ vi.mock("../api/client", () => {
     getDaemonBaseUrl: vi.fn(() => ""),
     getHealth: vi.fn(async () => ({ daemon_url: "" })),
     getSessionHead: vi.fn(async () => null),
-    getWorkspaceActiveHeads: vi.fn(async () => []),
+    getWorkspaceActiveHeads: vi.fn(async () => ({
+      workspace_id: "ws-1",
+      snapshot_rev: 0,
+      heads: [],
+    })),
     getWorkspaceActiveSnapshot: vi.fn(),
     listWorkspaceArchivedTaskSummaries: vi.fn(async () => ({
       workspace_id: "ws-1",

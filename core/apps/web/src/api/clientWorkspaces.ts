@@ -3,8 +3,8 @@ import type {
   AttachmentUpdatePolicy,
   MergeQueueEntry,
   Session,
-  SessionHeadSnapshot,
   Task,
+  WorkspaceActiveHeadBatch,
   TerminalSession,
   Workspace,
   WorkspaceActiveSnapshot,
@@ -132,7 +132,7 @@ export const getWorkspaceActiveSnapshot = (workspaceId: string, params?: Workspa
 };
 
 export const getWorkspaceActiveHeads = (workspaceId: string) => {
-  return apiAny<SessionHeadSnapshot[]>(`/api/workspaces/${workspaceId}/active_heads`);
+  return apiAny<WorkspaceActiveHeadBatch>(`/api/workspaces/${workspaceId}/active_heads`);
 };
 
 export const listWorkspaceTasks = (workspaceId: string) =>

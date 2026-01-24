@@ -1047,8 +1047,21 @@ impl AppState {
                     let cache = state.session_meta_cache.lock().await;
                     cache.get(&event.session_id).cloned()
                 };
-                let Some(session) = session else {
-                    continue;
+                let session = match session {
+                    Some(session) => session,
+                    None => {
+                        let store = match state.store_for_session(event.session_id).await {
+                            Ok(store) => store,
+                            Err(_) => continue,
+                        };
+                        let Some(session) =
+                            store.get_session(event.session_id).await.ok().flatten()
+                        else {
+                            continue;
+                        };
+                        state.remember_session_meta(&session).await;
+                        session
+                    }
                 };
                 let stream_only = matches!(
                     event.event_type,

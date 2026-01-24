@@ -16,12 +16,9 @@ import type {
 import {
   getDaemonBaseUrl,
   getHealth,
-  getSessionHead,
-  getWorkspaceActiveSnapshot,
   idToString,
   listWorkspaceArchivedTaskSummaries,
   type WorkspaceActiveSnapshotClientMessage,
-  type WorkspaceActiveSnapshotParams,
 } from "../api/client";
 import {
   loadWorkspaceActiveSnapshotV1,
@@ -266,7 +263,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private hasMoreActive = true;
   private hasMoreArchived = false;
   private archivedLoaded = false;
-  private activeLimit = ACTIVE_PAGE_SIZE;
   private archivedCursor: WorkspaceIndexCursor | null = null;
   private ws: WebSocket | null = null;
   private reconnectTimer: number | null = null;
@@ -274,7 +270,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private snapshotRev = 0;
   private archivedRev = 0;
   private cacheHydrated = false;
-  private sessionHeadFetches = new Map<string, Promise<void>>();
   private liveSnapshotApplied = false;
   private snapshotWaitTimer: number | null = null;
   private cachePersistTimer: number | null = null;
@@ -352,9 +347,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   };
 
   loadMoreActive = () => {
-    if (!this.hasMoreActive || this.snapshot.fetchState.active === "loading") return;
-    this.activeLimit += ACTIVE_PAGE_SIZE;
-    this.ensureActiveSnapshot(false).catch(() => {});
+    return;
   };
 
   ensureArchivedLoaded = () => {
@@ -454,6 +447,9 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   private scheduleSnapshotWarning(reason: string) {
     if (this.destroyed) return;
+    if (this.snapshot.initialized && (reason === "ws_open" || reason === "ready")) {
+      return;
+    }
     if (this.snapshotWaitTimer) {
       window.clearTimeout(this.snapshotWaitTimer);
     }
@@ -575,28 +571,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     return changed;
   }
 
-  private async refreshSessionHead(sessionId: string) {
-    const id = idToString(sessionId);
-    if (!id || this.destroyed) return;
-    if (this.sessionHeadFetches.has(id)) return;
-    const request = getSessionHead(id, undefined, true)
-      .then((head) => {
-        if (!head || this.destroyed) return;
-        const changed = this.applyActiveHeads([head]);
-        if (changed) {
-          this.publish();
-          this.schedulePersistCache();
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (this.sessionHeadFetches.get(id) === request) {
-          this.sessionHeadFetches.delete(id);
-        }
-      });
-    this.sessionHeadFetches.set(id, request);
-  }
-
   private buildPersistedSummary(
     item: WorkspaceActiveSnapshotItem,
   ): PersistedWorkspaceActiveTaskSummaryV1 | null {
@@ -673,75 +647,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.clearSnapshotWarning();
     this.publish();
     this.schedulePersistCache();
-  }
-
-  private async ensureActiveSnapshot(reset: boolean) {
-    if (this.destroyed) return;
-    if (reset && this.snapshot.fetchState.active === "loading") return;
-
-    this.setFetchState("active", "loading");
-    const params: WorkspaceActiveSnapshotParams = {
-      limit: this.activeLimit,
-    };
-    try {
-      const snapshot = await getWorkspaceActiveSnapshot(this.workspaceId, params);
-      this.snapshotRev = Math.max(this.snapshotRev, snapshot.snapshot_rev ?? 0);
-      if (typeof snapshot.archived_rev === "number" && snapshot.archived_rev > this.archivedRev) {
-        this.archivedRev = snapshot.archived_rev;
-        this.archivedLoaded = false;
-        this.archivedCursor = null;
-      }
-      const nextTotalActive = snapshot.active.total_count ?? this.totalActive;
-      this.totalActive = nextTotalActive;
-      const shouldClearActive = reset;
-      const archivedHeads = shouldClearActive ? this.collectArchivedHeads() : null;
-      if (shouldClearActive) {
-        for (const [id, item] of this.tasks.entries()) {
-          if (!item.task.archived_at) {
-            this.tasks.delete(id);
-          }
-        }
-        this.activeOrder = [];
-        this.sessionHeadsById.clear();
-        if (archivedHeads) {
-          for (const [sessionId, head] of archivedHeads) {
-            this.sessionHeadsById.set(sessionId, head);
-          }
-        }
-      }
-
-      const activeTasks = snapshot.active.tasks ?? [];
-      const nextActiveIds = new Set<string>();
-      for (const summary of activeTasks) {
-        const existing = this.tasks.get(idToString(summary.task.id));
-        const normalized = this.normalizeActiveSummary(summary, existing);
-        nextActiveIds.add(normalized.id);
-        this.tasks.set(normalized.id, normalized);
-        this.placeInOrders(normalized);
-      }
-
-      if (this.activeLimit >= this.totalActive) {
-        const prevActive = [...this.activeOrder];
-        for (const id of prevActive) {
-          if (nextActiveIds.has(id)) continue;
-          const existing = this.tasks.get(id);
-          if (!existing) continue;
-          if (!existing.task.archived_at) {
-            this.removeTask(id, { adjustCounts: false });
-          }
-        }
-      }
-
-      this.snapshot.initialized = true;
-      this.liveSnapshotApplied = true;
-      this.clearSnapshotWarning();
-      this.publish();
-      this.schedulePersistCache();
-    } catch {
-      this.setFetchState("active", "error");
-      return;
-    }
-    this.setFetchState("active", "idle");
   }
 
   private async fetchArchivedPage(firstLoad: boolean) {
@@ -936,10 +841,12 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       case "active_task_upsert":
         this.upsertActiveSummary(evt.task);
         this.publish();
+        this.flushSubscriptions("active_task_upsert");
         break;
       case "active_task_delete":
         this.removeTask(idToString(evt.task_id), { adjustCounts: true });
         this.publish();
+        this.flushSubscriptions("active_task_delete");
         break;
       case "archived_task_upsert": {
         const head = evt.snapshot?.head ?? null;
@@ -965,10 +872,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         }
         break;
       case "session_gap": {
-        const sessionId = idToString(evt.session_id ?? "");
-        if (sessionId) {
-          this.refreshSessionHead(sessionId);
-        }
+        this.flushSubscriptions("session_gap");
         break;
       }
       case "worktree_bootstrap": {

@@ -31,7 +31,7 @@ const SESSION_HEAD_MAX_TURNS: u32 = 200;
 const SESSION_HEAD_MESSAGE_LIMIT: usize = 200;
 const SESSION_HEAD_EVENT_LIMIT: usize = 200;
 const SESSION_HEAD_BYTE_LIMIT: usize = 1_500_000;
-const ACTIVE_SNAPSHOT_HEAD_LIMIT: u32 = 60;
+const ACTIVE_SNAPSHOT_HEAD_LIMIT: u32 = 5;
 const SESSION_HEAD_ARCHIVED_TURN_LIMIT: u32 = 50;
 static STREAM_ONLY_EVENT_SEQ: AtomicI64 = AtomicI64::new(-1);
 
@@ -3867,11 +3867,11 @@ impl Store {
         let rows = self
             .query(
                 r#"SELECT s.id
-               FROM sessions s
-               JOIN tasks t ON t.id = s.task_id
-               WHERE s.workspace_id = ?
+               FROM tasks t
+               JOIN sessions s ON s.id = t.primary_session_id
+               WHERE t.workspace_id = ?
                  AND t.archived_at IS NULL
-               ORDER BY s.created_at ASC, s.id ASC"#,
+               ORDER BY t.created_at ASC, t.id ASC"#,
             )
             .bind(workspace_id.0.to_string())
             .fetch_all(&self.pool)

@@ -438,7 +438,7 @@ export class SessionReplicaCore {
           this.emitPatch("append", sessionId, { lastEventSeq: afterSeq });
         }
       }
-      this.openSession(sessionId, { force: true, silent: true, minEventSeq: afterSeq, skipCache: true }).catch(() => {});
+      return;
     }
   }
 

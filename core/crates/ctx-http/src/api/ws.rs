@@ -821,6 +821,15 @@ async fn resolve_workspace_active_snapshot_subscriptions(
                         after_seq: after_map.get(&session_id).copied().flatten(),
                     })
                     .collect();
+                for sub in next.iter_mut() {
+                    if sub.after_seq.is_none() {
+                        let last_seq = state
+                            .workspace_active_snapshot
+                            .session_last_event_seq(workspace_id, sub.session_id)
+                            .await;
+                        sub.after_seq = Some(last_seq);
+                    }
+                }
                 next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
                 return Ok(next);
             }
@@ -837,6 +846,15 @@ async fn resolve_workspace_active_snapshot_subscriptions(
                     })
                     .collect()
             };
+            for sub in next.iter_mut() {
+                if sub.after_seq.is_none() {
+                    let last_seq = state
+                        .workspace_active_snapshot
+                        .session_last_event_seq(workspace_id, sub.session_id)
+                        .await;
+                    sub.after_seq = Some(last_seq);
+                }
+            }
             next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
             Ok(next)
         }
@@ -875,6 +893,22 @@ async fn handle_workspace_active_snapshot_ws(
     {
         return;
     }
+
+    // Bootstrap a snapshot + subscriptions so clients that don't (or can't) send
+    // a subscribe message still receive active heads and deltas.
+    state
+        .ensure_workspace_active_snapshot_hydrated(workspace_id)
+        .await;
+    let bootstrap_heads = state.workspace_active_snapshot.active_heads(workspace_id).await;
+    for head in bootstrap_heads.heads {
+        subscriptions.insert(
+            head.session.id,
+            SessionCursor {
+                last_sent: head.last_event_seq,
+            },
+        );
+    }
+    let _ = queue_snapshot_payload(&pending, &state, workspace_id).await;
 
     let send_task = {
         let pending = pending.clone();
