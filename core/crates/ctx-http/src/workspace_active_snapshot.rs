@@ -801,7 +801,7 @@ fn strip_snapshot_partials(turns: &mut [SessionTurn], events: &mut Vec<SessionEv
         turn.assistant_partial = None;
         turn.thought_partial = None;
     }
-    events.retain(|event| should_include_event(event));
+    events.retain(should_include_event);
 }
 
 fn trim_head_window(head: &mut SessionHeadSnapshot) {

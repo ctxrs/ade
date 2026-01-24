@@ -39,6 +39,7 @@ use crate::ops_events::OpsEvents;
 use crate::perf_telemetry::PerfTelemetry;
 use crate::provider_accounts;
 use crate::provider_child_reclassifier;
+use crate::provider_debug::apply_acp_heap_profile_env;
 use crate::provider_guard;
 use crate::provider_restart;
 use crate::provider_usage;
@@ -1829,6 +1830,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
                     env.extend(extra);
                 }
             }
+            apply_acp_heap_profile_env(id, &mut env, &state.data_root);
             tokio::spawn(async move {
                 let status = adapter.inspect().await;
                 let ok = status.as_ref().is_ok_and(|s| {

@@ -74,6 +74,20 @@ pub struct ProviderMemorySample {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ProviderMemoryRollup {
+    pub provider_id: String,
+    pub label: String,
+    pub pid: u32,
+    pub read_ok: bool,
+    pub rss_bytes: Option<u64>,
+    pub rss_anon_bytes: Option<u64>,
+    pub rss_file_bytes: Option<u64>,
+    pub rss_shmem_bytes: Option<u64>,
+    pub vm_hwm_bytes: Option<u64>,
+    pub vm_size_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct WorktreeDiskSnapshot {
     pub worktree_id: String,
     pub root_path: String,
@@ -111,6 +125,27 @@ pub struct ResourceSampler {
     disks: Disks,
     last_refresh: Option<Instant>,
     disk_cache: HashMap<WorkspaceId, WorkspaceDiskCache>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct ProcMemoryRollup {
+    rss_bytes: Option<u64>,
+    rss_anon_bytes: Option<u64>,
+    rss_file_bytes: Option<u64>,
+    rss_shmem_bytes: Option<u64>,
+    vm_hwm_bytes: Option<u64>,
+    vm_size_bytes: Option<u64>,
+}
+
+impl ProcMemoryRollup {
+    fn is_empty(&self) -> bool {
+        self.rss_bytes.is_none()
+            && self.rss_anon_bytes.is_none()
+            && self.rss_file_bytes.is_none()
+            && self.rss_shmem_bytes.is_none()
+            && self.vm_hwm_bytes.is_none()
+            && self.vm_size_bytes.is_none()
+    }
 }
 
 impl ResourceSampler {
@@ -188,6 +223,31 @@ impl ResourceSampler {
             .filter_map(|p| {
                 let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
                 aggregate_provider_memory(&self.system, &children, p.pid, &p.provider_id, &label)
+            })
+            .collect()
+    }
+
+    pub fn provider_memory_rollups(
+        &self,
+        providers: &[ProviderProcessInfo],
+    ) -> Vec<ProviderMemoryRollup> {
+        providers
+            .iter()
+            .map(|p| {
+                let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
+                let rollup = read_proc_memory_rollup(p.pid);
+                ProviderMemoryRollup {
+                    provider_id: p.provider_id.clone(),
+                    label,
+                    pid: p.pid,
+                    read_ok: rollup.is_some(),
+                    rss_bytes: rollup.as_ref().and_then(|r| r.rss_bytes),
+                    rss_anon_bytes: rollup.as_ref().and_then(|r| r.rss_anon_bytes),
+                    rss_file_bytes: rollup.as_ref().and_then(|r| r.rss_file_bytes),
+                    rss_shmem_bytes: rollup.as_ref().and_then(|r| r.rss_shmem_bytes),
+                    vm_hwm_bytes: rollup.as_ref().and_then(|r| r.vm_hwm_bytes),
+                    vm_size_bytes: rollup.as_ref().and_then(|r| r.vm_size_bytes),
+                }
             })
             .collect()
     }
@@ -463,4 +523,60 @@ fn dir_size(root: &Path) -> u64 {
         }
     }
     total
+}
+
+#[cfg(target_os = "linux")]
+fn read_proc_memory_rollup(pid: u32) -> Option<ProcMemoryRollup> {
+    let mut rollup = ProcMemoryRollup::default();
+    let smaps_path = format!("/proc/{pid}/smaps_rollup");
+    if let Ok(contents) = std::fs::read_to_string(smaps_path) {
+        for line in contents.lines() {
+            if let Some(value) = parse_kb_line(line, "Rss:") {
+                rollup.rss_bytes = Some(value);
+            } else if let Some(value) = parse_kb_line(line, "RssAnon:") {
+                rollup.rss_anon_bytes = Some(value);
+            } else if let Some(value) = parse_kb_line(line, "RssFile:") {
+                rollup.rss_file_bytes = Some(value);
+            } else if let Some(value) = parse_kb_line(line, "RssShmem:") {
+                rollup.rss_shmem_bytes = Some(value);
+            }
+        }
+    }
+
+    let status_path = format!("/proc/{pid}/status");
+    if let Ok(contents) = std::fs::read_to_string(status_path) {
+        for line in contents.lines() {
+            if rollup.rss_bytes.is_none() {
+                if let Some(value) = parse_kb_line(line, "VmRSS:") {
+                    rollup.rss_bytes = Some(value);
+                }
+            }
+            if let Some(value) = parse_kb_line(line, "VmHWM:") {
+                rollup.vm_hwm_bytes = Some(value);
+            }
+            if let Some(value) = parse_kb_line(line, "VmSize:") {
+                rollup.vm_size_bytes = Some(value);
+            }
+        }
+    }
+
+    if rollup.is_empty() {
+        None
+    } else {
+        Some(rollup)
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_proc_memory_rollup(_pid: u32) -> Option<ProcMemoryRollup> {
+    None
+}
+
+fn parse_kb_line(line: &str, key: &str) -> Option<u64> {
+    let mut parts = line.split_whitespace();
+    if parts.next()? != key {
+        return None;
+    }
+    let value = parts.next()?.parse::<u64>().ok()?;
+    Some(value.saturating_mul(1024))
 }

@@ -13,7 +13,9 @@ use ctx_providers::adapters::ProviderProcessInfo;
 use crate::daemon::AppState;
 use crate::logs;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
-use crate::resource_utilization::{ResourceProcess, ResourceProcesses, SystemSnapshot};
+use crate::resource_utilization::{
+    ProviderMemoryRollup, ResourceProcess, ResourceProcesses, SystemSnapshot,
+};
 
 const RESOURCE_LOG_PREFIX: &str = "resource-util-";
 const RESOURCE_LOG_SUFFIX: &str = ".jsonl";
@@ -63,6 +65,7 @@ struct ResourceTelemetryEvent {
     system: SystemSnapshot,
     processes: ResourceProcesses,
     provider_sessions: HashMap<String, u64>,
+    provider_memory_rollups: Vec<ProviderMemoryRollup>,
 }
 
 pub fn spawn_resource_telemetry(state: Arc<AppState>) {
@@ -100,11 +103,12 @@ async fn sample_once(
     last_cleanup: &mut Option<String>,
 ) -> Result<()> {
     let provider_processes = list_provider_processes(state).await;
-    let (system, cache_age_ms, processes) = {
+    let (system, cache_age_ms, processes, provider_memory_rollups) = {
         let mut sampler = state.resource_sampler.lock().await;
         let (system, _disks, cache_age_ms) = sampler.system_snapshot();
         let processes = sampler.processes_snapshot(std::process::id(), &provider_processes);
-        (system, cache_age_ms, processes)
+        let provider_memory_rollups = sampler.provider_memory_rollups(&provider_processes);
+        (system, cache_age_ms, processes, provider_memory_rollups)
     };
 
     let provider_sessions = provider_session_counts(state).await;
@@ -115,6 +119,7 @@ async fn sample_once(
         system: system.clone(),
         processes: processes.clone(),
         provider_sessions: provider_sessions.clone(),
+        provider_memory_rollups,
     };
 
     append_local_log(&state.data_root, &event, cfg).await?;

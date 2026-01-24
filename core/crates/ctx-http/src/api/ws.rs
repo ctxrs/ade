@@ -877,7 +877,10 @@ async fn handle_workspace_active_snapshot_ws(
     state
         .ensure_workspace_active_snapshot_hydrated(workspace_id)
         .await;
-    let bootstrap_heads = state.workspace_active_snapshot.active_heads(workspace_id).await;
+    let bootstrap_heads = state
+        .workspace_active_snapshot
+        .active_heads(workspace_id)
+        .await;
     for head in bootstrap_heads.heads {
         subscriptions.insert(
             head.session.id,
