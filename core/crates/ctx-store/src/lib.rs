@@ -25,7 +25,7 @@ mod tests {
     use std::time::Duration;
 
     use ctx_core::ids::{MessageId, RunId, TurnId, WorkspaceId};
-    use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionEventType};
+    use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionEventType, VcsKind};
     use tokio::sync::Barrier;
 
     #[tokio::test]
@@ -35,7 +35,7 @@ mod tests {
         let store = Store::open(&db_path).await.unwrap();
 
         let ws = store
-            .create_workspace("test".into(), "/tmp/test".into())
+            .create_workspace("test".into(), "/tmp/test".into(), VcsKind::Git)
             .await
             .unwrap();
         assert_eq!(ws.name, "test");
@@ -58,7 +58,7 @@ mod tests {
         let db_path = dir.path().join("db.sqlite");
         let store = Store::open(&db_path).await.unwrap();
         let ws = store
-            .create_workspace("test".into(), "/tmp/test".into())
+            .create_workspace("test".into(), "/tmp/test".into(), VcsKind::Git)
             .await
             .unwrap();
 
@@ -114,7 +114,7 @@ mod tests {
             let store = Store::open(&db_path).await.unwrap();
 
             let ws = store
-                .create_workspace("test".into(), "/tmp/test".into())
+                .create_workspace("test".into(), "/tmp/test".into(), VcsKind::Git)
                 .await
                 .unwrap();
             let task = store
@@ -207,7 +207,7 @@ mod tests {
         let store = Store::open(&db_path).await.unwrap();
 
         let ws = store
-            .create_workspace("test".into(), "/tmp/test".into())
+            .create_workspace("test".into(), "/tmp/test".into(), VcsKind::Git)
             .await
             .unwrap();
         let task = store.create_task(ws.id, "task".into(), None).await.unwrap();
@@ -297,7 +297,7 @@ mod tests {
         let db_path = dir.path().join("db.sqlite");
         let store = Store::open(&db_path).await.unwrap();
         let ws = store
-            .create_workspace("ws".into(), "/tmp/ws".into())
+            .create_workspace("ws".into(), "/tmp/ws".into(), VcsKind::Git)
             .await
             .unwrap();
 

@@ -100,7 +100,8 @@ pub async fn session_worker(
         _ => return,
     };
     let workdir = PathBuf::from(worktree.root_path.clone());
-    let env_target = if worktree.git_branch.is_some() {
+    let is_worktree = worktree.vcs_ref.is_some() || worktree.git_branch.is_some();
+    let env_target = if is_worktree {
         "worktree".to_string()
     } else {
         "local".to_string()
@@ -111,6 +112,8 @@ pub async fn session_worker(
     worktree_event.worktree_root = Some(workdir.to_string_lossy().to_string());
     worktree_event.meta = Some(json!({
         "env_target": env_target.clone(),
+        "vcs_kind": worktree.vcs_kind,
+        "vcs_ref": worktree.vcs_ref,
         "git_branch": worktree.git_branch,
     }));
     state.ops_events.emit(worktree_event);

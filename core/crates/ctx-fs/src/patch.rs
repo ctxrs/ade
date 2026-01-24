@@ -8,8 +8,8 @@ use crate::git;
 
 #[derive(Debug, Clone)]
 pub struct WorktreePatch {
-    pub base_commit_sha: String,
-    pub head_commit_sha: String,
+    pub base_revision: String,
+    pub head_revision: String,
     pub patch: String,
     pub changed_files: Vec<String>,
     pub file_count: i64,
@@ -21,6 +21,7 @@ pub fn should_ignore_path(path: &Path) -> bool {
     for component in path.components() {
         let name = component.as_os_str().to_string_lossy();
         if name == ".git"
+            || name == ".jj"
             || name == ".ctx"
             || name == "node_modules"
             || name == "target"
@@ -38,7 +39,17 @@ pub async fn build_worktree_patch(
     base_commit_sha: &str,
 ) -> Result<WorktreePatch> {
     let workdir = workdir.as_ref();
-    let head_commit_sha = git::rev_parse_head(workdir)
+    let untracked = git::list_untracked_files(workdir).await?;
+    build_worktree_patch_with_untracked(workdir, base_commit_sha, untracked).await
+}
+
+pub async fn build_worktree_patch_with_untracked(
+    workdir: impl AsRef<Path>,
+    base_commit_sha: &str,
+    untracked: Vec<String>,
+) -> Result<WorktreePatch> {
+    let workdir = workdir.as_ref();
+    let head_revision = git::rev_parse_head(workdir)
         .await
         .unwrap_or_else(|_| base_commit_sha.to_string());
 
@@ -66,7 +77,6 @@ pub async fn build_worktree_patch(
         }
     }
 
-    let untracked = git::list_untracked_files(workdir).await?;
     for file in &untracked {
         if should_ignore_path(Path::new(file)) {
             continue;
@@ -89,8 +99,8 @@ pub async fn build_worktree_patch(
         diff_stats(workdir, base_commit_sha, &untracked).await?;
 
     Ok(WorktreePatch {
-        base_commit_sha: base_commit_sha.to_string(),
-        head_commit_sha: head_commit_sha.trim().to_string(),
+        base_revision: base_commit_sha.to_string(),
+        head_revision: head_revision.trim().to_string(),
         patch,
         changed_files,
         file_count,

@@ -1,4 +1,4 @@
-import { test, expect } from "playwright/test";
+import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 test("workbench: switching between cached sessions makes no extra HTTP requests", async ({ page, request }) => {

@@ -131,7 +131,8 @@ async fn prepare_worktree_bootstrap(
     workspace: &Workspace,
     worktree: &Worktree,
 ) -> Result<Option<WorktreeBootstrapPlan>> {
-    if worktree.git_branch.is_none() {
+    let has_vcs_ref = worktree.vcs_ref.is_some() || worktree.git_branch.is_some();
+    if !has_vcs_ref {
         return Ok(None);
     }
 
@@ -474,9 +475,26 @@ async fn run_bootstrap_step(
         .env("CTX_WORKTREE_ID", worktree.id.0.to_string())
         .env(
             "CTX_BRANCH_NAME",
-            worktree.git_branch.clone().unwrap_or_default(),
+            worktree
+                .vcs_ref
+                .clone()
+                .or_else(|| worktree.git_branch.clone())
+                .unwrap_or_default(),
         )
-        .env("CTX_BASE_COMMIT_SHA", &worktree.base_commit_sha);
+        .env(
+            "CTX_BASE_REVISION",
+            worktree
+                .base_revision
+                .as_deref()
+                .unwrap_or(&worktree.base_commit_sha),
+        )
+        .env(
+            "CTX_BASE_COMMIT_SHA",
+            worktree
+                .base_revision
+                .as_deref()
+                .unwrap_or(&worktree.base_commit_sha),
+        );
 
     let mut child = cmd
         .stdout(Stdio::piped())

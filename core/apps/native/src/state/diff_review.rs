@@ -201,7 +201,7 @@ impl DiffReviewState {
                             view.git_status = Some(GitStatusViewData {
                                 summary_line: String::new(),
                                 entries: Vec::new(),
-                                lines: vec!["Git status unavailable.".to_string()],
+                                lines: vec!["Status unavailable.".to_string()],
                             });
                         }
                     }
@@ -298,11 +298,7 @@ fn parse_unified_diff(diff_text: &str) -> Vec<DiffFile> {
         if line.starts_with("diff --git ") {
             push_current(&mut files, &mut current, &mut current_hunk, &mut in_header);
 
-            let mut parts = line.trim_start_matches("diff --git ").split_whitespace();
-            let old_raw = parts.next().unwrap_or("");
-            let new_raw = parts.next().unwrap_or("");
-            let old_path = old_raw.strip_prefix("a/").unwrap_or(old_raw).to_string();
-            let new_path = new_raw.strip_prefix("b/").unwrap_or(new_raw).to_string();
+            let (old_path, new_path) = parse_diff_header_paths(line);
             let key = format!("{old_path}=>{new_path}:{idx}");
             current = Some(RawDiffFile {
                 key,
@@ -344,6 +340,66 @@ fn parse_unified_diff(diff_text: &str) -> Vec<DiffFile> {
         .into_iter()
         .filter(|file| file.section_lines.iter().any(|line| !line.trim().is_empty()))
         .collect()
+}
+
+fn parse_diff_header_paths(line: &str) -> (String, String) {
+    let remainder = line.trim_start_matches("diff --git ");
+    let tokens = split_diff_header_tokens(remainder);
+    let old_raw = tokens.get(0).map(String::as_str).unwrap_or("");
+    let new_raw = tokens.get(1).map(String::as_str).unwrap_or("");
+    (normalize_diff_path(old_raw), normalize_diff_path(new_raw))
+}
+
+fn split_diff_header_tokens(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut chars = input.chars().peekable();
+    while tokens.len() < 2 {
+        while matches!(chars.peek(), Some(ch) if ch.is_whitespace()) {
+            chars.next();
+        }
+        let Some(&ch) = chars.peek() else {
+            break;
+        };
+        if ch == '"' {
+            chars.next();
+            let mut token = String::new();
+            while let Some(next) = chars.next() {
+                if next == '"' {
+                    break;
+                }
+                if next == '\\' {
+                    if let Some(escaped) = chars.next() {
+                        token.push(escaped);
+                    }
+                    continue;
+                }
+                token.push(next);
+            }
+            tokens.push(token);
+            continue;
+        }
+
+        let mut token = String::new();
+        while let Some(&next) = chars.peek() {
+            if next.is_whitespace() {
+                break;
+            }
+            token.push(next);
+            chars.next();
+        }
+        tokens.push(token);
+    }
+    tokens
+}
+
+fn normalize_diff_path(raw: &str) -> String {
+    let mut out = raw.trim_matches('"').to_string();
+    if let Some(stripped) = out.strip_prefix("a/") {
+        out = stripped.to_string();
+    } else if let Some(stripped) = out.strip_prefix("b/") {
+        out = stripped.to_string();
+    }
+    out
 }
 
 fn push_current(

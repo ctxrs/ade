@@ -170,7 +170,7 @@ impl<'a> DiffReviewView<'a> {
                     div()
                         .text_sm()
                         .text_color(self.colors.text)
-                        .child("Git status unavailable."),
+                        .child("Status unavailable."),
                 );
             }
         } else if self.state.session_id.is_none() {
@@ -185,14 +185,14 @@ impl<'a> DiffReviewView<'a> {
                 div()
                     .text_sm()
                     .text_color(self.colors.text)
-                    .child("Loading git status..."),
+                    .child("Loading status..."),
             );
         } else {
             status_body = status_body.child(
                 div()
                     .text_sm()
                     .text_color(self.colors.text)
-                    .child("Git status unavailable."),
+                    .child("Status unavailable."),
             );
         }
         root = root.child(
@@ -215,7 +215,7 @@ impl<'a> DiffReviewView<'a> {
                         .text_size(px(12.0))
                         .font_weight(FontWeight(600.0))
                         .text_color(self.colors.text)
-                        .child("git status -sb"),
+                        .child("Repo status"),
                 )
                 .child(status_body),
         );

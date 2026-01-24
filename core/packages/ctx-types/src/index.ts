@@ -3,7 +3,10 @@ export type Workspace = {
   name: string;
   root_path: string;
   created_at: string;
+  vcs_kind?: VcsKind | null;
 };
+
+export type VcsKind = "git" | "jj" | "hg" | "svn" | "p4" | "other";
 
 export type WorkspaceAttachmentKind = "reference_repo" | "doc_mirror";
 
@@ -49,6 +52,9 @@ export type Worktree = {
   root_path: string;
   base_commit_sha: string;
   git_branch?: string | null;
+  vcs_kind?: VcsKind | null;
+  base_revision?: string | null;
+  vcs_ref?: string | null;
   created_at: string;
   bootstrap_status?: "success" | "failed" | "timeout";
   bootstrap_started_at?: string | null;

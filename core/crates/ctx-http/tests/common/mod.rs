@@ -18,6 +18,40 @@ use tokio::process::Command;
 use tokio::task::JoinHandle;
 use tower::ServiceExt;
 
+const JJ_MIN_VERSION: (u64, u64, u64) = (0, 25, 0);
+
+fn parse_jj_version(output: &str) -> Option<(u64, u64, u64)> {
+    for token in output.split_whitespace() {
+        let token = token.trim_start_matches('v');
+        let mut version = String::new();
+        let mut saw_digit = false;
+        for ch in token.chars() {
+            if ch.is_ascii_digit() {
+                saw_digit = true;
+                version.push(ch);
+                continue;
+            }
+            if ch == '.' && saw_digit {
+                version.push(ch);
+                continue;
+            }
+            break;
+        }
+        if version.is_empty() {
+            continue;
+        }
+        let parts = version.split('.').collect::<Vec<_>>();
+        if parts.len() < 2 {
+            continue;
+        }
+        let major = parts[0].parse().ok()?;
+        let minor = parts[1].parse().ok()?;
+        let patch = parts.get(2).and_then(|part| part.parse().ok()).unwrap_or(0);
+        return Some((major, minor, patch));
+    }
+    None
+}
+
 pub async fn init_git_repo(files: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -36,6 +70,73 @@ pub async fn init_git_repo(files: &[(&str, &str)]) -> tempfile::TempDir {
     run_git(root, &["commit", "-m", "init"]).await;
 
     dir
+}
+
+pub async fn jj_available() -> bool {
+    Command::new("jj")
+        .arg("--version")
+        .output()
+        .await
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| parse_jj_version(&String::from_utf8_lossy(&output.stdout)))
+        .map(|version| version >= JJ_MIN_VERSION)
+        .unwrap_or(false)
+}
+
+pub async fn init_jj_repo(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    init_jj_repo_root(root).await;
+
+    run_git(root, &["config", "user.email", "test@example.com"]).await;
+    run_git(root, &["config", "user.name", "Test"]).await;
+    for (path, contents) in files {
+        let p = root.join(path);
+        if let Some(parent) = p.parent() {
+            tokio::fs::create_dir_all(parent).await.unwrap();
+        }
+        tokio::fs::write(p, *contents).await.unwrap();
+    }
+    run_git(root, &["add", "."]).await;
+    run_git(root, &["commit", "-m", "init"]).await;
+    run_git(root, &["branch", "-M", "main"]).await;
+    run_jj(root, &["git", "import"]).await;
+
+    dir
+}
+
+async fn init_jj_repo_root(root: &Path) {
+    let candidates: &[&[&str]] = &[
+        &["git", "init"],
+        &["git", "init", "--colocate"],
+        &["init", "--git"],
+        &["init", "--git-repo", "."],
+    ];
+    let mut last_err = None;
+    for args in candidates {
+        match Command::new("jj")
+            .current_dir(root)
+            .args(*args)
+            .output()
+            .await
+        {
+            Ok(output) if output.status.success() => {
+                assert!(root.join(".jj").exists());
+                return;
+            }
+            Ok(output) => {
+                last_err = Some(String::from_utf8_lossy(&output.stderr).to_string());
+            }
+            Err(err) => {
+                last_err = Some(err.to_string());
+            }
+        }
+    }
+    panic!(
+        "jj init failed: {}",
+        last_err.unwrap_or_else(|| "unknown error".to_string())
+    );
 }
 
 pub async fn setup_store(data_root: &Path) -> StoreManager {
@@ -189,6 +290,56 @@ pub async fn run_git(root: &Path, args: &[&str]) {
     assert!(
         output.status.success(),
         "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+pub async fn run_git_output(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
+pub async fn run_jj_output(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("jj")
+        .arg("-R")
+        .arg(root)
+        .args(args)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "jj {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
+pub async fn run_jj(root: &Path, args: &[&str]) {
+    let output = Command::new("jj")
+        .arg("-R")
+        .arg(root)
+        .args(args)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "jj {:?} failed: {}",
         args,
         String::from_utf8_lossy(&output.stderr)
     );

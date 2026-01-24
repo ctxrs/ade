@@ -1,5 +1,6 @@
 pub mod git;
 pub mod patch;
+pub mod vcs;
 pub mod worktrees;
 
 #[cfg(test)]

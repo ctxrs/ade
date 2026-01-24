@@ -9,8 +9,8 @@ use tokio::sync::mpsc;
 
 use ctx_core::ids::{SessionId, WorktreeId};
 use ctx_core::models::{SessionEventType, SessionGitStatusSummary, SessionStatus, Worktree};
-use ctx_fs::git::{assert_git_repo, git_status_porcelain, git_status_short};
 use ctx_fs::patch::should_ignore_path;
+use ctx_fs::vcs::{self, VcsDriver};
 
 use crate::daemon::AppState;
 
@@ -52,10 +52,16 @@ struct GitStatusBranchInfo {
     detached: bool,
 }
 
-pub async fn load_git_status_snapshot(root: &Path) -> Result<GitStatusSnapshot> {
-    let status_text = git_status_short(root).await?;
+fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
+    vcs::driver_for_kind(worktree.vcs_kind.clone())
+}
+
+pub async fn load_git_status_snapshot(worktree: &Worktree) -> Result<GitStatusSnapshot> {
+    let vcs = vcs_driver_for_worktree(worktree);
+    let root = Path::new(&worktree.root_path);
+    let status_text = vcs.status_short(root).await?;
     let branch_info = parse_git_status_short(&status_text);
-    let entries = git_status_porcelain(root).await?;
+    let entries = vcs.status_porcelain(root).await?;
     let parsed_entries = parse_git_status_entries(&entries);
     let (staged, unstaged, untracked) = count_git_status_entries(&parsed_entries);
     Ok(GitStatusSnapshot {
@@ -87,7 +93,7 @@ pub async fn emit_git_status_snapshot_for_worktree(
     if active_session_ids.is_empty() {
         return Ok(());
     }
-    let snapshot = load_git_status_snapshot(Path::new(&worktree.root_path)).await?;
+    let snapshot = load_git_status_snapshot(worktree).await?;
     emit_git_status_snapshot_for_sessions(state, &active_session_ids, worktree.id, &snapshot).await;
     Ok(())
 }
@@ -189,7 +195,8 @@ pub async fn emit_git_status_snapshot_for_sessions(
 
 pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
     let root = Path::new(&worktree.root_path);
-    assert_git_repo(root).await?;
+    let vcs = vcs_driver_for_worktree(&worktree);
+    vcs.assert_repo(root).await?;
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let mut watcher = watcher(tx)?;

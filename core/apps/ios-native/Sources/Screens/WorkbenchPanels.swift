@@ -127,7 +127,7 @@ struct WorkbenchDiffPanelView: View {
                 GlassPanel {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .center, spacing: 8) {
-                            Text("Git Status")
+                            Text("Repo Status")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundColor(.ctxTextPrimary)
 
@@ -426,13 +426,65 @@ private func parseUnifiedDiff(_ diffText: String) -> DiffParseResult {
         totalDeletions += currentDeleted
     }
 
-    func normalizePath(_ raw: Substring) -> String {
-        var path = String(raw)
+    func normalizePath(_ raw: String) -> String {
+        var path = raw
         path = path.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
         if path.hasPrefix("a/") || path.hasPrefix("b/") {
             path.removeFirst(2)
         }
         return path
+    }
+
+    func parseDiffHeaderPaths(_ line: String) -> (String, String) {
+        let prefix = "diff --git "
+        guard line.hasPrefix(prefix) else {
+            return ("", "")
+        }
+        let remainder = String(line.dropFirst(prefix.count))
+        var index = remainder.startIndex
+
+        func nextToken() -> String? {
+            while index < remainder.endIndex, remainder[index].isWhitespace {
+                index = remainder.index(after: index)
+            }
+            if index >= remainder.endIndex {
+                return nil
+            }
+            if remainder[index] == "\"" {
+                index = remainder.index(after: index)
+                var token = ""
+                while index < remainder.endIndex {
+                    let ch = remainder[index]
+                    if ch == "\"" {
+                        index = remainder.index(after: index)
+                        break
+                    }
+                    if ch == "\\" {
+                        let next = remainder.index(after: index)
+                        if next < remainder.endIndex {
+                            token.append(remainder[next])
+                            index = remainder.index(after: next)
+                            continue
+                        }
+                        index = next
+                        break
+                    }
+                    token.append(ch)
+                    index = remainder.index(after: index)
+                }
+                return token
+            }
+            var token = ""
+            while index < remainder.endIndex, !remainder[index].isWhitespace {
+                token.append(remainder[index])
+                index = remainder.index(after: index)
+            }
+            return token
+        }
+
+        let oldRaw = nextToken() ?? ""
+        let newRaw = nextToken() ?? ""
+        return (normalizePath(oldRaw), normalizePath(newRaw))
     }
 
     for line in lines {
@@ -447,12 +499,8 @@ private func parseUnifiedDiff(_ diffText: String) -> DiffParseResult {
             currentDeleted = 0
             isNew = false
             isDeleted = false
-            let parts = text.split(separator: " ")
-            if parts.count >= 4 {
-                currentPath = normalizePath(parts[3])
-            } else {
-                currentPath = "(unknown)"
-            }
+            let (_, newPath) = parseDiffHeaderPaths(text)
+            currentPath = newPath.isEmpty ? "(unknown)" : newPath
             continue
         }
 

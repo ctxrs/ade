@@ -14,13 +14,9 @@ use tokio::process::Command;
 use ctx_core::ids::{MergeQueueEntryId, MergeQueueRunId, SessionId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSource, MergeQueueRun,
-    MergeQueueRunStatus, SessionEventType, Workspace, Worktree,
+    MergeQueueRunStatus, SessionEventType, VcsKind, Workspace, Worktree,
 };
-use ctx_fs::git::{
-    assert_git_repo, delete_branch, git_is_ancestor, git_merge_base, git_status_porcelain,
-    rev_parse_ref,
-};
-use ctx_fs::patch::build_worktree_patch;
+use ctx_fs::vcs::{self, ApplyPatchTarget, VcsDriver};
 use ctx_fs::worktrees::{create_worktree, remove_worktree};
 
 use crate::daemon::AppState;
@@ -34,6 +30,10 @@ pub struct MergeQueueSubmitParams {
     pub worktree_id: Option<WorktreeId>,
     pub target_branch: Option<String>,
     pub message: Option<String>,
+}
+
+fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
+    vcs::driver_for_kind(worktree.vcs_kind.clone())
 }
 
 pub async fn get_merge_queue_entry(
@@ -86,8 +86,18 @@ pub async fn submit_merge_queue_entry(
     let worktree = worktree
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("worktree is required to submit to the merge queue"))?;
-    assert_git_repo(&worktree.root_path).await?;
-    let dirty = git_status_porcelain(&worktree.root_path).await?;
+    let vcs = vcs_driver_for_worktree(worktree);
+    let worktree_root = Path::new(&worktree.root_path);
+    vcs.assert_repo(worktree_root).await?;
+    let dirty = vcs.status_porcelain(worktree_root).await?;
+    let dirty = if vcs.kind() == VcsKind::Jj {
+        dirty
+            .into_iter()
+            .filter(|entry| entry.starts_with("?? "))
+            .collect::<Vec<_>>()
+    } else {
+        dirty
+    };
     if !dirty.is_empty() {
         bail!(
             "worktree has uncommitted changes:\n{}",
@@ -99,18 +109,22 @@ pub async fn submit_merge_queue_entry(
                 .join("\n")
         );
     }
-    let up_to_date = git_is_ancestor(&worktree.root_path, &target_branch, "HEAD").await?;
+    let up_to_date = vcs
+        .is_ancestor(worktree_root, &target_branch, "HEAD")
+        .await?;
     if !up_to_date {
         bail!("worktree HEAD is behind target branch {target_branch}; sync and retry");
     }
-    let merge_base = git_merge_base(&worktree.root_path, &target_branch, "HEAD").await?;
-    let worktree_patch = build_worktree_patch(&worktree.root_path, &merge_base).await?;
+    let merge_base = vcs
+        .merge_base(worktree_root, &target_branch, "HEAD")
+        .await?;
+    let worktree_patch = vcs.build_worktree_patch(worktree_root, &merge_base).await?;
     if worktree_patch.patch.trim().is_empty() {
         bail!("no changes detected; nothing to submit");
     }
     let patch_source = MergeQueuePatchSource::Generated;
-    let base_commit_sha = Some(worktree_patch.base_commit_sha);
-    let head_commit_sha = Some(worktree_patch.head_commit_sha);
+    let base_commit_sha = Some(worktree_patch.base_revision);
+    let head_commit_sha = Some(worktree_patch.head_revision);
     let patch_text = worktree_patch.patch;
 
     let entry_id = MergeQueueEntryId::new();
@@ -372,17 +386,24 @@ async fn run_entry_inner(
     cfg: &MergeQueueConfig,
     log_file: &mut fs::File,
 ) -> std::result::Result<String, QueueError> {
-    assert_git_repo(&workspace.root_path)
+    let vcs = vcs::driver_for_path(Path::new(&workspace.root_path))
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    vcs.assert_repo(Path::new(&workspace.root_path))
         .await
         .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
 
-    let target_head = rev_parse_ref(&workspace.root_path, &entry.target_branch)
+    let target_head = resolve_target_head(vcs.as_ref(), &workspace.root_path, &entry.target_branch)
         .await
         .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
     let worktree_path = merge_queue_worktree_path(&state.data_root, workspace.id, entry.id);
     let worktree_branch = format!("ctx-merge-queue/{}", entry.id.0);
     let _ = remove_worktree(&workspace.root_path, &worktree_path).await;
-    let _ = delete_branch(&workspace.root_path, &worktree_branch).await;
+    if vcs.kind() == VcsKind::Git {
+        let _ = vcs
+            .delete_branch(Path::new(&workspace.root_path), &worktree_branch)
+            .await;
+    }
     create_worktree(
         &workspace.root_path,
         &worktree_path,
@@ -392,6 +413,10 @@ async fn run_entry_inner(
     .await
     .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
 
+    if vcs.kind() == VcsKind::Jj {
+        ensure_jj_working_copy(&worktree_path, &target_head, log_file, vcs.as_ref()).await?;
+    }
+
     let result = async {
         let patch = read_patch_file(&entry.patch_path)
             .await
@@ -399,9 +424,19 @@ async fn run_entry_inner(
         write_log_line(log_file, "apply patch\n")
             .await
             .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-        apply_patch(state, entry, &worktree_path, &patch).await?;
+        let apply_target = if vcs.kind() == VcsKind::Git {
+            ApplyPatchTarget::Index
+        } else {
+            ApplyPatchTarget::Worktree
+        };
+        apply_patch(state, entry, vcs.as_ref(), &worktree_path, &patch, apply_target).await?;
 
-        if !has_staged_changes(state, entry, &worktree_path).await? {
+        let has_changes = if vcs.kind() == VcsKind::Git {
+            has_staged_changes(state, entry, &worktree_path).await?
+        } else {
+            has_worktree_changes(vcs.as_ref(), &worktree_path, &target_head).await?
+        };
+        if !has_changes {
             return Err(QueueError::fail(
                 "patch did not produce any changes".to_string(),
                 None,
@@ -414,8 +449,9 @@ async fn run_entry_inner(
             .as_deref()
             .filter(|m| !m.trim().is_empty())
             .unwrap_or("merge queue entry");
-        commit_changes(state, entry, &worktree_path, message, log_file).await?;
-        let commit_sha = rev_parse_ref(&worktree_path, "HEAD")
+        commit_changes(state, entry, &worktree_path, vcs.kind(), message, log_file).await?;
+        let commit_sha = vcs
+            .rev_parse_head(&worktree_path)
             .await
             .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
 
@@ -423,16 +459,21 @@ async fn run_entry_inner(
             run_verify_command(state, &worktree_path, entry, cmd, log_file).await?;
         }
 
-        let target_checkout = find_checked_out_worktree_for_branch(
-            state,
-            entry,
-            &workspace.root_path,
-            &entry.target_branch,
-        )
-        .await
-        .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
+        let target_checkout = if vcs.kind() == VcsKind::Git {
+            find_checked_out_worktree_for_branch(
+                state,
+                entry,
+                &workspace.root_path,
+                &entry.target_branch,
+            )
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?
+        } else {
+            None
+        };
         if let Some(path) = target_checkout.as_ref() {
-            let dirty = git_status_porcelain(path)
+            let dirty = vcs
+                .status_porcelain(Path::new(path))
                 .await
                 .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
             if !dirty.is_empty() {
@@ -454,7 +495,8 @@ async fn run_entry_inner(
         .await
         .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
         if let Some(path) = target_checkout.as_ref() {
-            let previous_head = rev_parse_ref(path, "HEAD")
+            let previous_head = vcs
+                .rev_parse_ref(Path::new(path), "HEAD")
                 .await
                 .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
             if previous_head != target_head {
@@ -499,6 +541,7 @@ async fn run_entry_inner(
                 state,
                 entry,
                 &workspace.root_path,
+                vcs.kind(),
                 &entry.target_branch,
                 &commit_sha,
                 &target_head,
@@ -520,9 +563,11 @@ async fn run_entry_inner(
                 state,
                 entry,
                 &workspace.root_path,
+                vcs.kind(),
                 &cfg.push_remote,
                 &entry.target_branch,
                 &cfg.push_branch,
+                &commit_sha,
             )
             .await
             {
@@ -539,7 +584,11 @@ async fn run_entry_inner(
     .await;
 
     let _ = remove_worktree(&workspace.root_path, &worktree_path).await;
-    let _ = delete_branch(&workspace.root_path, &worktree_branch).await;
+    if vcs.kind() == VcsKind::Git {
+        let _ = vcs
+            .delete_branch(Path::new(&workspace.root_path), &worktree_branch)
+            .await;
+    }
     result
 }
 
@@ -645,50 +694,98 @@ async fn write_log_line(file: &mut fs::File, line: &str) -> Result<()> {
     Ok(())
 }
 
-async fn apply_patch(
-    state: &AppState,
-    entry: &MergeQueueEntry,
+async fn ensure_jj_working_copy(
     worktree_path: &Path,
-    patch: &str,
+    target_head: &str,
+    log_file: &mut fs::File,
+    vcs: &dyn VcsDriver,
 ) -> std::result::Result<(), QueueError> {
-    let mut cmd =
-        merge_queue_command(state, entry, "git apply", "git", Some(worktree_path), &[]).await;
-    cmd.arg("-C")
-        .arg(worktree_path)
-        .arg("apply")
-        .arg("--index")
-        .arg("--3way")
-        .arg("--whitespace=nowarn")
-        .arg("-");
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    let current = vcs
+        .rev_parse_head(worktree_path)
+        .await
         .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        use tokio::io::AsyncWriteExt;
-        stdin
-            .write_all(patch.as_bytes())
-            .await
-            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    if current.trim() != target_head.trim() {
+        return Ok(());
     }
-
-    let output = child
-        .wait_with_output()
+    write_log_line(log_file, "jj new\n")
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    let output = vcs::jj_command_output(worktree_path, &["new"])
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    write_log_line(log_file, &String::from_utf8_lossy(&output.stdout))
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    write_log_line(log_file, &String::from_utf8_lossy(&output.stderr))
         .await
         .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(QueueError::Conflict {
-            message: if stderr.is_empty() {
-                "patch conflict".to_string()
-            } else {
-                stderr
-            },
-        });
+        return Err(QueueError::fail(
+            "jj new failed".to_string(),
+            Some(output.status.code().unwrap_or(1) as i64),
+            None,
+        ));
     }
+    Ok(())
+}
+
+async fn apply_patch(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    vcs: &dyn VcsDriver,
+    worktree_path: &Path,
+    patch: &str,
+    target: ApplyPatchTarget,
+) -> std::result::Result<(), QueueError> {
+    if vcs.kind() == VcsKind::Git {
+        let mut cmd =
+            merge_queue_command(state, entry, "git apply", "git", Some(worktree_path), &[]).await;
+        cmd.arg("-C")
+            .arg(worktree_path)
+            .arg("apply")
+            .arg("--3way")
+            .arg("--whitespace=nowarn");
+        if matches!(target, ApplyPatchTarget::Index) {
+            cmd.arg("--index");
+        }
+        cmd.arg("-");
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            stdin
+                .write_all(patch.as_bytes())
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        }
+
+        let output = child
+            .wait_with_output()
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(QueueError::Conflict {
+                message: if stderr.is_empty() {
+                    "patch conflict".to_string()
+                } else {
+                    stderr
+                },
+            });
+        }
+        return Ok(());
+    }
+
+    vcs.apply_patch(worktree_path, patch, target, false)
+        .await
+        .map_err(|e| QueueError::Conflict {
+            message: e.to_string(),
+        })?;
     Ok(())
 }
 
@@ -716,46 +813,103 @@ async fn has_staged_changes(
     Ok(!status.success())
 }
 
+async fn has_worktree_changes(
+    vcs: &dyn VcsDriver,
+    worktree_path: &Path,
+    base_revision: &str,
+) -> std::result::Result<bool, QueueError> {
+    let diff = vcs
+        .diff(worktree_path, base_revision)
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    Ok(!diff.trim().is_empty())
+}
+
 async fn commit_changes(
     state: &AppState,
     entry: &MergeQueueEntry,
     worktree_path: &Path,
+    vcs_kind: VcsKind,
     message: &str,
     log_file: &mut fs::File,
 ) -> std::result::Result<(), QueueError> {
-    let mut cmd =
-        merge_queue_command(state, entry, "git commit", "git", Some(worktree_path), &[]).await;
-    let output = cmd
-        .arg("-C")
-        .arg(worktree_path)
-        .args([
-            "-c",
-            "user.name=ctx",
-            "-c",
-            "user.email=ctx@local",
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "-m",
-            message,
-        ])
-        .output()
-        .await
-        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-    write_log_line(log_file, &String::from_utf8_lossy(&output.stdout))
-        .await
-        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-    write_log_line(log_file, &String::from_utf8_lossy(&output.stderr))
-        .await
-        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-    if !output.status.success() {
-        return Err(QueueError::fail(
-            "git commit failed".to_string(),
-            Some(output.status.code().unwrap_or(1) as i64),
+    match vcs_kind {
+        VcsKind::Git => {
+            let mut cmd =
+                merge_queue_command(state, entry, "git commit", "git", Some(worktree_path), &[])
+                    .await;
+            let output = cmd
+                .arg("-C")
+                .arg(worktree_path)
+                .args([
+                    "-c",
+                    "user.name=ctx",
+                    "-c",
+                    "user.email=ctx@local",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-m",
+                    message,
+                ])
+                .output()
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+            write_log_line(log_file, &String::from_utf8_lossy(&output.stdout))
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+            write_log_line(log_file, &String::from_utf8_lossy(&output.stderr))
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+            if !output.status.success() {
+                return Err(QueueError::fail(
+                    "git commit failed".to_string(),
+                    Some(output.status.code().unwrap_or(1) as i64),
+                    None,
+                ));
+            }
+            Ok(())
+        }
+        VcsKind::Jj => {
+            let mut cmd = merge_queue_command(
+                state,
+                entry,
+                "jj describe",
+                "jj",
+                Some(worktree_path),
+                &[],
+            )
+            .await;
+            let output = cmd
+                .arg("-R")
+                .arg(worktree_path)
+                .arg("--color=never")
+                .arg("--no-pager")
+                .args(["describe", "-m", message])
+                .output()
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+            write_log_line(log_file, &String::from_utf8_lossy(&output.stdout))
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+            write_log_line(log_file, &String::from_utf8_lossy(&output.stderr))
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+            if !output.status.success() {
+                return Err(QueueError::fail(
+                    "jj describe failed".to_string(),
+                    Some(output.status.code().unwrap_or(1) as i64),
+                    None,
+                ));
+            }
+            Ok(())
+        }
+        VcsKind::Hg | VcsKind::Svn | VcsKind::P4 | VcsKind::Other => Err(QueueError::fail(
+            format!("merge queue does not support {vcs_kind:?} commits"),
             None,
-        ));
+            None,
+        )),
     }
-    Ok(())
 }
 
 async fn run_verify_command(
@@ -814,15 +968,22 @@ async fn maybe_sync_originating_worktree(
     if worktree.workspace_id != workspace.id {
         return Ok(());
     }
-    assert_git_repo(&worktree.root_path).await?;
-    let dirty = git_status_porcelain(&worktree.root_path).await?;
+    let vcs = vcs_driver_for_worktree(&worktree);
+    let worktree_root = Path::new(&worktree.root_path);
+    vcs.assert_repo(worktree_root).await?;
+    let dirty = vcs.status_porcelain(worktree_root).await?;
     if !dirty.is_empty() {
         return Ok(());
     }
-    let previous_head = rev_parse_ref(&worktree.root_path, "HEAD")
+    let previous_head = vcs
+        .rev_parse_head(worktree_root)
         .await
         .unwrap_or_else(|_| "unknown".to_string());
-    reset_worktree_to_commit(state, entry, &worktree.root_path, commit_sha).await?;
+    if vcs.kind() == VcsKind::Git {
+        reset_worktree_to_commit(state, entry, &worktree.root_path, commit_sha).await?;
+    } else {
+        reset_worktree_to_revision(vcs.as_ref(), &worktree.root_path, commit_sha).await?;
+    }
     let updated = store
         .update_worktree_base_commit(worktree_id, commit_sha)
         .await?;
@@ -870,11 +1031,23 @@ async fn emit_merge_queue_sync_notice(
                 "target_branch": target_branch,
                 "previous_commit_sha": previous_commit_sha,
                 "commit_sha": commit_sha,
+                "base_revision": commit_sha,
                 "base_commit_sha": commit_sha,
             }),
         )
         .await?;
     state.publish_event(notice).await;
+    Ok(())
+}
+
+async fn reset_worktree_to_revision(
+    vcs: &dyn VcsDriver,
+    worktree_path: &str,
+    revision: &str,
+) -> Result<()> {
+    vcs.reset_worktree_to_revision(Path::new(worktree_path), revision)
+        .await
+        .context("resetting worktree to revision")?;
     Ok(())
 }
 
@@ -909,6 +1082,49 @@ async fn reset_worktree_to_commit(
         );
     }
     Ok(())
+}
+
+async fn resolve_target_head(
+    vcs: &dyn VcsDriver,
+    workspace_root: &str,
+    target_branch: &str,
+) -> Result<String> {
+    match vcs.kind() {
+        VcsKind::Git => vcs
+            .rev_parse_ref(Path::new(workspace_root), target_branch)
+            .await
+            .context("resolving target branch"),
+        VcsKind::Jj => jj_rev_parse_bookmark(Path::new(workspace_root), target_branch)
+            .await
+            .context("resolving target bookmark"),
+        VcsKind::Hg | VcsKind::Svn | VcsKind::P4 | VcsKind::Other => {
+            bail!("merge queue does not support {:?}", vcs.kind());
+        }
+    }
+}
+
+async fn jj_rev_parse_bookmark(root: &Path, bookmark: &str) -> Result<String> {
+    let output = Command::new("jj")
+        .arg("-R")
+        .arg(root)
+        .arg("--color=never")
+        .arg("--no-pager")
+        .args(["log", "-r", bookmark, "--no-graph", "-T", "commit_id"])
+        .output()
+        .await
+        .context("running jj log")?;
+    if !output.status.success() {
+        bail!(
+            "jj log failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let revision = stdout
+        .split_whitespace()
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("jj log produced no revision output"))?;
+    Ok(revision.to_string())
 }
 
 async fn find_checked_out_worktree_for_branch(
@@ -986,73 +1202,184 @@ async fn update_target_branch(
     state: &AppState,
     entry: &MergeQueueEntry,
     workspace_root: &str,
+    vcs_kind: VcsKind,
     target_branch: &str,
     commit_sha: &str,
     expected_old: &str,
 ) -> std::result::Result<(), QueueError> {
-    let mut cmd = merge_queue_command(
-        state,
-        entry,
-        "git update-ref",
-        "git",
-        Some(Path::new(workspace_root)),
-        &[],
-    )
-    .await;
-    let output = cmd
-        .arg("-C")
-        .arg(workspace_root)
-        .args([
-            "update-ref",
-            &format!("refs/heads/{target_branch}"),
-            commit_sha,
-            expected_old,
-        ])
-        .output()
-        .await
-        .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(QueueError::fail(
-            format!("failed to update target branch: {stderr}"),
-            Some(output.status.code().unwrap_or(1) as i64),
+    match vcs_kind {
+        VcsKind::Git => {
+            let mut cmd = merge_queue_command(
+                state,
+                entry,
+                "git update-ref",
+                "git",
+                Some(Path::new(workspace_root)),
+                &[],
+            )
+            .await;
+            let output = cmd
+                .arg("-C")
+                .arg(workspace_root)
+                .args([
+                    "update-ref",
+                    &format!("refs/heads/{target_branch}"),
+                    commit_sha,
+                    expected_old,
+                ])
+                .output()
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                return Err(QueueError::fail(
+                    format!("failed to update target branch: {stderr}"),
+                    Some(output.status.code().unwrap_or(1) as i64),
+                    Some(commit_sha.to_string()),
+                ));
+            }
+            Ok(())
+        }
+        VcsKind::Jj => {
+            let current = jj_rev_parse_bookmark(Path::new(workspace_root), target_branch)
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
+            if current.trim() != expected_old.trim() {
+                return Err(QueueError::fail(
+                    format!("target branch advanced (expected {expected_old}, found {current})"),
+                    None,
+                    Some(commit_sha.to_string()),
+                ));
+            }
+            let mut cmd = merge_queue_command(
+                state,
+                entry,
+                "jj bookmark set",
+                "jj",
+                Some(Path::new(workspace_root)),
+                &[],
+            )
+            .await;
+            let output = cmd
+                .arg("-R")
+                .arg(workspace_root)
+                .arg("--color=never")
+                .arg("--no-pager")
+                .args(["bookmark", "set", target_branch, "-r", commit_sha])
+                .output()
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                return Err(QueueError::fail(
+                    format!("failed to update target bookmark: {stderr}"),
+                    Some(output.status.code().unwrap_or(1) as i64),
+                    Some(commit_sha.to_string()),
+                ));
+            }
+            Ok(())
+        }
+        VcsKind::Hg | VcsKind::Svn | VcsKind::P4 | VcsKind::Other => Err(QueueError::fail(
+            format!("merge queue does not support {vcs_kind:?} branches"),
+            None,
             Some(commit_sha.to_string()),
-        ));
+        )),
     }
-    Ok(())
 }
 
 async fn push_target_branch(
     state: &AppState,
     entry: &MergeQueueEntry,
     workspace_root: &str,
+    vcs_kind: VcsKind,
     remote: &str,
     target_branch: &str,
     push_branch: &str,
+    commit_sha: &str,
 ) -> Result<()> {
-    let mut cmd = merge_queue_command(
-        state,
-        entry,
-        "git push",
-        "git",
-        Some(Path::new(workspace_root)),
-        &[],
-    )
-    .await;
-    let output = cmd
-        .arg("-C")
-        .arg(workspace_root)
-        .args(["push", remote, &format!("{target_branch}:{push_branch}")])
-        .output()
-        .await
-        .context("running git push")?;
-    if !output.status.success() {
-        bail!(
-            "git push failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+    match vcs_kind {
+        VcsKind::Git => {
+            let mut cmd = merge_queue_command(
+                state,
+                entry,
+                "git push",
+                "git",
+                Some(Path::new(workspace_root)),
+                &[],
+            )
+            .await;
+            let output = cmd
+                .arg("-C")
+                .arg(workspace_root)
+                .args(["push", remote, &format!("{target_branch}:{push_branch}")])
+                .output()
+                .await
+                .context("running git push")?;
+            if !output.status.success() {
+                bail!(
+                    "git push failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            Ok(())
+        }
+        VcsKind::Jj => {
+            if target_branch != push_branch {
+                let mut cmd = merge_queue_command(
+                    state,
+                    entry,
+                    "jj bookmark set",
+                    "jj",
+                    Some(Path::new(workspace_root)),
+                    &[],
+                )
+                .await;
+                let output = cmd
+                    .arg("-R")
+                    .arg(workspace_root)
+                    .arg("--color=never")
+                    .arg("--no-pager")
+                    .args(["bookmark", "set", push_branch, "-r", commit_sha])
+                    .output()
+                    .await
+                    .context("running jj bookmark set")?;
+                if !output.status.success() {
+                    bail!(
+                        "jj bookmark set failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+            }
+            let mut cmd = merge_queue_command(
+                state,
+                entry,
+                "jj git push",
+                "jj",
+                Some(Path::new(workspace_root)),
+                &[],
+            )
+            .await;
+            let output = cmd
+                .arg("-R")
+                .arg(workspace_root)
+                .arg("--color=never")
+                .arg("--no-pager")
+                .args(["git", "push", "--remote", remote, "--bookmark", push_branch])
+                .output()
+                .await
+                .context("running jj git push")?;
+            if !output.status.success() {
+                bail!(
+                    "jj git push failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            Ok(())
+        }
+        VcsKind::Hg | VcsKind::Svn | VcsKind::P4 | VcsKind::Other => {
+            bail!("merge queue does not support {vcs_kind:?} pushes");
+        }
     }
-    Ok(())
 }
 
 #[derive(Debug)]

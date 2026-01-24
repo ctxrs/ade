@@ -807,6 +807,30 @@ fn parse_bootstrap_status(raw: Option<String>) -> Option<WorktreeBootstrapStatus
     }
 }
 
+fn vcs_kind_to_str(kind: &VcsKind) -> &'static str {
+    match kind {
+        VcsKind::Git => "git",
+        VcsKind::Jj => "jj",
+        VcsKind::Hg => "hg",
+        VcsKind::Svn => "svn",
+        VcsKind::P4 => "p4",
+        VcsKind::Other => "other",
+    }
+}
+
+fn parse_vcs_kind(raw: Option<String>) -> Option<VcsKind> {
+    match raw.as_deref() {
+        Some("git") => Some(VcsKind::Git),
+        Some("jj") => Some(VcsKind::Jj),
+        Some("hg") => Some(VcsKind::Hg),
+        Some("svn") => Some(VcsKind::Svn),
+        Some("p4") => Some(VcsKind::P4),
+        Some("other") => Some(VcsKind::Other),
+        Some(_) => Some(VcsKind::Other),
+        None => None,
+    }
+}
+
 fn parse_optional_session_id(raw: Option<String>) -> Option<SessionId> {
     raw.and_then(|value| uuid::Uuid::parse_str(&value).ok())
         .map(SessionId)
@@ -1233,7 +1257,7 @@ impl Store {
     pub async fn list_workspaces(&self) -> Result<Vec<Workspace>> {
         let rows = self
             .query(
-                r#"SELECT id, name, root_path, created_at FROM workspaces ORDER BY created_at ASC"#,
+                r#"SELECT id, name, root_path, created_at, vcs_kind FROM workspaces ORDER BY created_at ASC"#,
             )
             .fetch_all(&self.pool)
             .await?;
@@ -1244,11 +1268,13 @@ impl Store {
             let name: String = r.try_get("name")?;
             let root_path: String = r.try_get("root_path")?;
             let created_at: String = r.try_get("created_at")?;
+            let vcs_kind: Option<String> = r.try_get("vcs_kind").ok();
             out.push(Workspace {
                 id: WorkspaceId(uuid::Uuid::parse_str(&id)?),
                 name,
                 root_path,
                 created_at: parse_dt(&created_at)?,
+                vcs_kind: parse_vcs_kind(vcs_kind),
             });
         }
         Ok(out)
@@ -1256,36 +1282,47 @@ impl Store {
 
     pub async fn get_workspace(&self, id: WorkspaceId) -> Result<Option<Workspace>> {
         let row = self
-            .query(r#"SELECT id, name, root_path, created_at FROM workspaces WHERE id = ?"#)
+            .query(
+                r#"SELECT id, name, root_path, created_at, vcs_kind FROM workspaces WHERE id = ?"#,
+            )
             .bind(id.0.to_string())
             .fetch_optional(&self.pool)
             .await?;
 
         Ok(row.and_then(|r| {
             let id: String = r.try_get("id").ok()?;
+            let vcs_kind: Option<String> = r.try_get("vcs_kind").ok()?;
             Some(Workspace {
                 id: WorkspaceId(uuid::Uuid::parse_str(&id).ok()?),
                 name: r.try_get("name").ok()?,
                 root_path: r.try_get("root_path").ok()?,
                 created_at: parse_dt(r.try_get::<String, _>("created_at").ok()?.as_str()).ok()?,
+                vcs_kind: parse_vcs_kind(vcs_kind),
             })
         }))
     }
 
-    pub async fn create_workspace(&self, name: String, root_path: String) -> Result<Workspace> {
+    pub async fn create_workspace(
+        &self,
+        name: String,
+        root_path: String,
+        vcs_kind: VcsKind,
+    ) -> Result<Workspace> {
         let workspace = Workspace {
             id: WorkspaceId::new(),
             name,
             root_path,
             created_at: Utc::now(),
+            vcs_kind: Some(vcs_kind),
         };
         self.query(
-            r#"INSERT INTO workspaces (id, name, root_path, created_at) VALUES (?, ?, ?, ?)"#,
+            r#"INSERT INTO workspaces (id, name, root_path, created_at, vcs_kind) VALUES (?, ?, ?, ?, ?)"#,
         )
         .bind(workspace.id.0.to_string())
         .bind(&workspace.name)
         .bind(&workspace.root_path)
         .bind(workspace.created_at.to_rfc3339())
+        .bind(workspace.vcs_kind.as_ref().map(vcs_kind_to_str))
         .execute(&self.pool)
         .await?;
         Ok(workspace)
@@ -1301,16 +1338,18 @@ impl Store {
 
     pub async fn upsert_workspace(&self, workspace: &Workspace) -> Result<()> {
         self.query(
-            r#"INSERT INTO workspaces (id, name, root_path, created_at)
-               VALUES (?, ?, ?, ?)
+            r#"INSERT INTO workspaces (id, name, root_path, created_at, vcs_kind)
+               VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                  name = excluded.name,
-                 root_path = excluded.root_path"#,
+                 root_path = excluded.root_path,
+                 vcs_kind = excluded.vcs_kind"#,
         )
         .bind(workspace.id.0.to_string())
         .bind(&workspace.name)
         .bind(&workspace.root_path)
         .bind(workspace.created_at.to_rfc3339())
+        .bind(workspace.vcs_kind.as_ref().map(vcs_kind_to_str))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1864,15 +1903,29 @@ impl Store {
 
     // Worktree APIs
     pub async fn insert_worktree(&self, worktree: Worktree) -> Result<Worktree> {
+        let mut worktree = worktree;
+        if worktree.vcs_kind.is_none() {
+            worktree.vcs_kind = Some(VcsKind::Git);
+        }
+        if worktree.base_revision.is_none() {
+            worktree.base_revision = Some(worktree.base_commit_sha.clone());
+        }
+        if worktree.vcs_ref.is_none() {
+            worktree.vcs_ref = worktree.git_branch.clone();
+        }
+        let vcs_kind = worktree.vcs_kind.as_ref().map(vcs_kind_to_str);
         self.query(
-            r#"INSERT INTO worktrees (id, workspace_id, root_path, base_commit_sha, git_branch, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO worktrees (id, workspace_id, root_path, base_commit_sha, git_branch, vcs_kind, base_revision, vcs_ref, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(worktree.id.0.to_string())
         .bind(worktree.workspace_id.0.to_string())
         .bind(&worktree.root_path)
         .bind(&worktree.base_commit_sha)
         .bind(&worktree.git_branch)
+        .bind(vcs_kind)
+        .bind(worktree.base_revision.as_deref())
+        .bind(worktree.vcs_ref.as_deref())
         .bind(worktree.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
@@ -1892,6 +1945,9 @@ impl Store {
             root_path,
             base_commit_sha,
             git_branch,
+            vcs_kind: None,
+            base_revision: None,
+            vcs_ref: None,
             created_at: Utc::now(),
             bootstrap_status: None,
             bootstrap_started_at: None,
@@ -1906,24 +1962,12 @@ impl Store {
             bootstrap_command: None,
             bootstrap_script_path: None,
         };
-        self.query(
-            r#"INSERT INTO worktrees (id, workspace_id, root_path, base_commit_sha, git_branch, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)"#,
-        )
-        .bind(worktree.id.0.to_string())
-        .bind(worktree.workspace_id.0.to_string())
-        .bind(&worktree.root_path)
-        .bind(&worktree.base_commit_sha)
-        .bind(&worktree.git_branch)
-        .bind(worktree.created_at.to_rfc3339())
-        .execute(&self.pool)
-        .await?;
-        Ok(worktree)
+        self.insert_worktree(worktree).await
     }
 
     pub async fn get_worktree(&self, id: WorktreeId) -> Result<Option<Worktree>> {
         let row = self.query(
-            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at,
+            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, vcs_kind, base_revision, vcs_ref, created_at,
                       bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
                       bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
                       bootstrap_config_path, bootstrap_config_key, bootstrap_command, bootstrap_script_path
@@ -1949,12 +1993,18 @@ impl Store {
             let bootstrap_config_key: Option<String> = r.try_get("bootstrap_config_key").ok()?;
             let bootstrap_command: Option<String> = r.try_get("bootstrap_command").ok()?;
             let bootstrap_script_path: Option<String> = r.try_get("bootstrap_script_path").ok()?;
+            let vcs_kind: Option<String> = r.try_get("vcs_kind").ok()?;
+            let base_revision: Option<String> = r.try_get("base_revision").ok()?;
+            let vcs_ref: Option<String> = r.try_get("vcs_ref").ok()?;
             Some(Worktree {
                 id: WorktreeId(uuid::Uuid::parse_str(&id).ok()?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
                 root_path: r.try_get("root_path").ok()?,
                 base_commit_sha: r.try_get("base_commit_sha").ok()?,
                 git_branch: r.try_get("git_branch").ok()?,
+                vcs_kind: parse_vcs_kind(vcs_kind),
+                base_revision,
+                vcs_ref,
                 created_at: parse_dt(&created_at).ok()?,
                 bootstrap_status: parse_bootstrap_status(bootstrap_status),
                 bootstrap_started_at: bootstrap_started_at
@@ -1986,7 +2036,7 @@ impl Store {
         root_path: &str,
     ) -> Result<Option<Worktree>> {
         let row = self.query(
-            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at,
+            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, vcs_kind, base_revision, vcs_ref, created_at,
                       bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
                       bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
                       bootstrap_config_path, bootstrap_config_key, bootstrap_command, bootstrap_script_path
@@ -2016,12 +2066,18 @@ impl Store {
             let bootstrap_config_key: Option<String> = r.try_get("bootstrap_config_key").ok()?;
             let bootstrap_command: Option<String> = r.try_get("bootstrap_command").ok()?;
             let bootstrap_script_path: Option<String> = r.try_get("bootstrap_script_path").ok()?;
+            let vcs_kind: Option<String> = r.try_get("vcs_kind").ok()?;
+            let base_revision: Option<String> = r.try_get("base_revision").ok()?;
+            let vcs_ref: Option<String> = r.try_get("vcs_ref").ok()?;
             Some(Worktree {
                 id: WorktreeId(uuid::Uuid::parse_str(&id).ok()?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
                 root_path: r.try_get("root_path").ok()?,
                 base_commit_sha: r.try_get("base_commit_sha").ok()?,
                 git_branch: r.try_get("git_branch").ok()?,
+                vcs_kind: parse_vcs_kind(vcs_kind),
+                base_revision,
+                vcs_ref,
                 created_at: parse_dt(&created_at).ok()?,
                 bootstrap_status: parse_bootstrap_status(bootstrap_status),
                 bootstrap_started_at: bootstrap_started_at
@@ -2049,7 +2105,7 @@ impl Store {
 
     pub async fn list_worktrees(&self, workspace_id: WorkspaceId) -> Result<Vec<Worktree>> {
         let rows = self.query(
-            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, created_at,
+            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, vcs_kind, base_revision, vcs_ref, created_at,
                       bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
                       bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
                       bootstrap_config_path, bootstrap_config_key, bootstrap_command, bootstrap_script_path
@@ -2076,12 +2132,18 @@ impl Store {
             let bootstrap_config_key: Option<String> = r.try_get("bootstrap_config_key")?;
             let bootstrap_command: Option<String> = r.try_get("bootstrap_command")?;
             let bootstrap_script_path: Option<String> = r.try_get("bootstrap_script_path")?;
+            let vcs_kind: Option<String> = r.try_get("vcs_kind")?;
+            let base_revision: Option<String> = r.try_get("base_revision")?;
+            let vcs_ref: Option<String> = r.try_get("vcs_ref")?;
             out.push(Worktree {
                 id: WorktreeId(uuid::Uuid::parse_str(&id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                 root_path: r.try_get("root_path")?,
                 base_commit_sha: r.try_get("base_commit_sha")?,
                 git_branch: r.try_get("git_branch")?,
+                vcs_kind: parse_vcs_kind(vcs_kind),
+                base_revision,
+                vcs_ref,
                 created_at: parse_dt(&created_at)?,
                 bootstrap_status: parse_bootstrap_status(bootstrap_status),
                 bootstrap_started_at: bootstrap_started_at.as_deref().map(parse_dt).transpose()?,
@@ -2111,9 +2173,11 @@ impl Store {
         let result = self
             .query(
                 r#"UPDATE worktrees
-               SET base_commit_sha = ?
+               SET base_commit_sha = ?,
+                   base_revision = ?
                WHERE id = ?"#,
             )
+            .bind(base_commit_sha)
             .bind(base_commit_sha)
             .bind(worktree_id.0.to_string())
             .execute(&self.pool)
@@ -8616,7 +8680,7 @@ mod tests {
         assistant_partial: Option<String>,
     ) -> (Session, TurnId) {
         let ws = store
-            .create_workspace("test".into(), "/tmp/test".into())
+            .create_workspace("test".into(), "/tmp/test".into(), VcsKind::Git)
             .await
             .unwrap();
         let task = store.create_task(ws.id, "task".into(), None).await.unwrap();

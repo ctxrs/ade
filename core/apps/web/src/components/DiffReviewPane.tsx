@@ -262,9 +262,7 @@ function parseUnifiedDiff(diffText: string): DiffFile[] {
     const line = lines[i];
     if (line.startsWith("diff --git ")) {
       pushCurrent();
-      const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
-      const oldPath = m?.[1] ?? "";
-      const newPath = m?.[2] ?? "";
+      const { oldPath, newPath } = parseDiffHeaderPaths(line);
       const key = `${oldPath}=>${newPath}:${i}`;
       current = {
         key,
@@ -297,6 +295,62 @@ function parseUnifiedDiff(diffText: string): DiffFile[] {
 
   pushCurrent();
   return files.filter((f) => f.sectionLines.some((l) => l.trim().length > 0));
+}
+
+function parseDiffHeaderPaths(line: string): { oldPath: string; newPath: string } {
+  const remainder = line.trim().replace(/^diff --git\s+/, "");
+  const parts = splitDiffHeaderTokens(remainder);
+  const oldRaw = parts[0] ?? "";
+  const newRaw = parts[1] ?? "";
+  return {
+    oldPath: normalizeDiffPath(oldRaw),
+    newPath: normalizeDiffPath(newRaw),
+  };
+}
+
+function splitDiffHeaderTokens(input: string): string[] {
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < input.length && tokens.length < 2) {
+    while (i < input.length && /\s/.test(input[i])) i++;
+    if (i >= input.length) break;
+    if (input[i] === "\"") {
+      i++;
+      let token = "";
+      while (i < input.length) {
+        const ch = input[i];
+        if (ch === "\"") {
+          i++;
+          break;
+        }
+        if (ch === "\\" && i + 1 < input.length) {
+          i++;
+          token += input[i];
+          i++;
+          continue;
+        }
+        token += ch;
+        i++;
+      }
+      tokens.push(token);
+      continue;
+    }
+    let token = "";
+    while (i < input.length && !/\s/.test(input[i])) {
+      token += input[i];
+      i++;
+    }
+    tokens.push(token);
+  }
+  return tokens;
+}
+
+function normalizeDiffPath(value: string): string {
+  let out = value.replace(/^"+|"+$/g, "");
+  if (out.startsWith("a/") || out.startsWith("b/")) {
+    out = out.slice(2);
+  }
+  return out;
 }
 
 function finalizeFile(

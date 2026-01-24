@@ -4,7 +4,7 @@ use tempfile::TempDir;
 use tokio::process::Command;
 
 use ctx_core::ids::WorktreeId;
-use ctx_core::models::Worktree;
+use ctx_core::models::{VcsKind, Worktree};
 use ctx_fs::git::rev_parse_head;
 use ctx_http::attachments;
 use ctx_http::daemon::AppState;
@@ -71,7 +71,11 @@ async fn attachments_demo_react_smoketest() {
 
     let ws = stores
         .global()
-        .create_workspace("demo".to_string(), ws_root.to_string_lossy().to_string())
+        .create_workspace(
+            "demo".to_string(),
+            ws_root.to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
         .await
         .unwrap();
     let store = stores.workspace(ws.id).await.unwrap();
@@ -81,6 +85,9 @@ async fn attachments_demo_react_smoketest() {
         workspace_id: ws.id,
         root_path: ws_root.to_string_lossy().to_string(),
         base_commit_sha,
+        vcs_kind: Some(VcsKind::Git),
+        base_revision: None,
+        vcs_ref: None,
         git_branch: None,
         created_at: chrono::Utc::now(),
         bootstrap_status: None,

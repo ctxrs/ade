@@ -9,6 +9,8 @@ pub struct Workspace {
     pub name: String,
     pub root_path: String,
     pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vcs_kind: Option<VcsKind>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +61,17 @@ pub enum WorktreeBootstrapStatus {
     Timeout,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VcsKind {
+    Git,
+    Jj,
+    Hg,
+    Svn,
+    P4,
+    Other,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Worktree {
     pub id: WorktreeId,
@@ -66,6 +79,12 @@ pub struct Worktree {
     pub root_path: String,
     pub base_commit_sha: String,
     pub git_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vcs_kind: Option<VcsKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vcs_ref: Option<String>,
     pub created_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bootstrap_status: Option<WorktreeBootstrapStatus>,

@@ -1,4 +1,4 @@
-import { test, expect, chromium } from "playwright/test";
+import { test, expect, chromium } from "./fixtures";
 import { mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { mkdir } from "fs/promises";
 import { execFileSync } from "child_process";
@@ -571,7 +571,7 @@ test.describe("parity screenshots (web vs GPUI native)", () => {
       await expect(diffToggle).toBeVisible({ timeout: 20_000 });
       await diffToggle.click();
       await expect(page.locator(".wb-right-pane.wb-diff")).toBeVisible({ timeout: 20_000 });
-      await expect(page.locator(".wb-diff-status-title")).toHaveText("git status -sb", {
+      await expect(page.locator(".wb-diff-status-title")).toHaveText("Repo status", {
         timeout: 20_000,
       });
       await expect(page.locator(".wb-git-status-path").filter({ hasText: "file.txt" }).first()).toBeVisible({
