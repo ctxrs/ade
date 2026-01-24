@@ -2631,6 +2631,7 @@
   margin-left: auto;
   margin-right: auto;
   margin-bottom: 0;
+  border-radius: 10px 10px 0 0;
 }
 
 .wb-session-view .wb-thread-stack {
