@@ -871,15 +871,9 @@ async fn commit_changes(
             Ok(())
         }
         VcsKind::Jj => {
-            let mut cmd = merge_queue_command(
-                state,
-                entry,
-                "jj describe",
-                "jj",
-                Some(worktree_path),
-                &[],
-            )
-            .await;
+            let mut cmd =
+                merge_queue_command(state, entry, "jj describe", "jj", Some(worktree_path), &[])
+                    .await;
             let output = cmd
                 .arg("-R")
                 .arg(worktree_path)
