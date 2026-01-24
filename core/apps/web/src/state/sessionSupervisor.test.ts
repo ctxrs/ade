@@ -126,6 +126,7 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
+      setSubscribedSessionIds: () => {},
       getSnapshot: () => ({
         workspaceId: "ws-1",
         initialized: true,
@@ -221,6 +222,7 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
+      setSubscribedSessionIds: () => {},
       getSnapshot: () => ({
         workspaceId: "ws-1",
         initialized: true,
@@ -338,6 +340,7 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
+      setSubscribedSessionIds: () => {},
       getSnapshot: () => ({
         workspaceId: "ws-1",
         initialized: true,
@@ -434,6 +437,7 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
+      setSubscribedSessionIds: () => {},
       getSnapshot: () => ({
         workspaceId: "ws-1",
         initialized: true,
@@ -555,6 +559,7 @@ describe("SessionSupervisor", () => {
       subscribeEvents: (_listener: (evt: WorkspaceActiveSnapshotEvent) => void) => () => {},
       getSessionHeadSnapshot: (id: string) => (id === sessionId ? head : null),
       getWorktreeRoot: () => null,
+      setSubscribedSessionIds: () => {},
       getSnapshot: () => ({
         workspaceId: "ws-1",
         initialized: true,

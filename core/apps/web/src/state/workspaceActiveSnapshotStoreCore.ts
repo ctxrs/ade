@@ -64,6 +64,7 @@ export type WorkspaceActiveSnapshotEventSource = {
   getSnapshot: () => WorkspaceActiveSnapshotState;
   getSessionHeadSnapshot: (sessionId: string) => SessionHeadSnapshot | null;
   getWorktreeRoot: (worktreeId: string) => string | null;
+  setSubscribedSessionIds?: (sessionIds: string[]) => void;
 };
 
 const ACTIVE_PAGE_SIZE = 50;
@@ -256,6 +257,8 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private tasks = new Map<string, WorkspaceActiveSnapshotItem>();
   private sessionHeadsById = new Map<string, SessionHeadSnapshot>();
   private worktreeRootsById = new Map<string, string>();
+  private subscribedSessionIds: string[] = [];
+  private activeSessionIds: string[] = [];
   private activeOrder: string[] = [];
   private archivedOrder: string[] = [];
   private totalActive = 0;
@@ -315,6 +318,16 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     const id = idToString(worktreeId);
     if (!id) return null;
     return this.worktreeRootsById.get(id) ?? null;
+  };
+
+  setSubscribedSessionIds = (sessionIds: string[]) => {
+    const next = sessionIds
+      .map((id) => String(id || "").trim())
+      .filter((id) => id.length > 0);
+    const deduped = Array.from(new Set(next));
+    if (deduped.join("|") === this.subscribedSessionIds.join("|")) return;
+    this.subscribedSessionIds = deduped;
+    this.flushSubscriptions("session_ids");
   };
 
   init = () => {
@@ -430,6 +443,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     const totalCount = Number.isFinite(cached.active?.totalCount) ? cached.active.totalCount : nextActiveIds.size;
     this.totalActive = Math.max(totalCount, nextActiveIds.size);
     this.snapshotRev = Math.max(this.snapshotRev, cached.snapshotRev ?? 0);
+    this.activeSessionIds = this.collectActiveSessionIds();
     this.snapshot.initialized = true;
     this.publish();
     if (this.needsCacheMigration(cached)) {
@@ -642,6 +656,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (Array.isArray(heads) && heads.length > 0) {
       this.applyActiveHeads(heads);
     }
+    this.activeSessionIds = this.collectActiveSessionIds();
     this.snapshot.initialized = true;
     this.liveSnapshotApplied = true;
     this.clearSnapshotWarning();
@@ -841,12 +856,12 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       case "active_task_upsert":
         this.upsertActiveSummary(evt.task);
         this.publish();
-        this.flushSubscriptions("active_task_upsert");
+        this.refreshActiveSessionSubscriptions("active_task_upsert");
         break;
       case "active_task_delete":
         this.removeTask(idToString(evt.task_id), { adjustCounts: true });
         this.publish();
-        this.flushSubscriptions("active_task_delete");
+        this.refreshActiveSessionSubscriptions("active_task_delete");
         break;
       case "archived_task_upsert": {
         const head = evt.snapshot?.head ?? null;
@@ -914,11 +929,31 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       type: "subscribe",
       scope: "active",
     };
+    if (this.subscribedSessionIds.length > 0) {
+      message.session_ids = this.subscribedSessionIds.slice();
+    }
     try {
       ws.send(JSON.stringify(message));
     } catch {
       // ignore send errors
     }
+  }
+
+  private collectActiveSessionIds(): string[] {
+    const ids = new Set<string>();
+    for (const item of this.tasks.values()) {
+      if (item.task.archived_at) continue;
+      const primaryId = this.pickPrimarySessionId(item);
+      if (primaryId) ids.add(primaryId);
+    }
+    return Array.from(ids).sort();
+  }
+
+  private refreshActiveSessionSubscriptions(reason: string) {
+    const next = this.collectActiveSessionIds();
+    if (next.join("|") === this.activeSessionIds.join("|")) return;
+    this.activeSessionIds = next;
+    this.flushSubscriptions(reason);
   }
 
   private removeTask(taskId: string | undefined, opts?: { adjustCounts?: boolean }) {

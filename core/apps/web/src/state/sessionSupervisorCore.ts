@@ -1200,6 +1200,7 @@ export class SessionSupervisor {
     const openIds = Array.from(this.entries.values())
       .filter((entry) => entry.refCount > 0)
       .map((entry) => entry.sessionId);
+    this.snapshotStore?.setSubscribedSessionIds?.(openIds);
     const combined = mergeOrderedIds(openIds, this.activeTaskSessionIds, this.warmSessionIds);
     const next = combined;
     const key = next.join("|");
@@ -1266,6 +1267,17 @@ export class SessionSupervisor {
 
   private mergeEvents(entry: InternalEntry, incoming: SessionEvent[]) {
     if (incoming.length === 0) return;
+    const existingSeqs = entry.seqSet;
+    const newEvents: SessionEvent[] = [];
+    for (const ev of incoming) {
+      if (typeof ev.seq === "number") {
+        if (!existingSeqs.has(ev.seq)) {
+          newEvents.push(ev);
+        }
+      } else {
+        newEvents.push(ev);
+      }
+    }
     const bySeq = new Map<number, SessionEvent>();
     for (const ev of entry.events) {
       if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
@@ -1277,6 +1289,25 @@ export class SessionSupervisor {
     const trimmed = next.length > EVENT_BUFFER_LIMIT ? next.slice(-EVENT_BUFFER_LIMIT) : next;
     entry.events = trimmed;
     entry.seqSet = new Set(trimmed.map((ev) => ev.seq));
+    let changed = false;
+    for (const ev of newEvents) {
+      this.ensureTurnFromEvent(entry, ev);
+      if (this.applyEventToTurns(entry, ev)) {
+        changed = true;
+      }
+      if (this.applyArtifactsEvent(entry, ev)) {
+        changed = true;
+      }
+      if (this.applyGitStatusSnapshotNotice(entry, ev)) {
+        changed = true;
+      }
+      if (this.applySubagentInvocationNotice(entry, ev)) {
+        changed = true;
+      }
+    }
+    if (changed) {
+      entry.updatedAtMs = Date.now();
+    }
   }
 
   private compareTurnOrder(a: SessionTurn, b: SessionTurn): number {
