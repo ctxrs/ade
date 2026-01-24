@@ -12378,16 +12378,14 @@ async fn get_session_git_status(
                 }),
             )
         })?;
-    let snapshot = load_git_status_snapshot(StdPath::new(&worktree.root_path))
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
+    let snapshot = load_git_status_snapshot(&worktree).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
     let resp = SessionGitStatusResponse {
         raw: snapshot.raw,
         summary_line: snapshot.summary_line,
@@ -13044,6 +13042,7 @@ mod tests {
             .create_workspace(
                 "ws".to_string(),
                 data_dir.path().to_string_lossy().to_string(),
+                VcsKind::Git,
             )
             .await
             .unwrap();
