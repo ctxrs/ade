@@ -50,8 +50,8 @@ use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::git::{
     assert_git_repo, delete_branch, git_merge_base, list_tracked_files, list_untracked_files,
-    rev_parse_head,
 };
+use ctx_fs::vcs;
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_store::store::MobileDeviceUpsert;
 
@@ -10038,7 +10038,15 @@ async fn create_workspace(
         )
     })?;
 
-    assert_git_repo(&root_path).await.map_err(|e| {
+    let vcs = vcs::driver_for_path(&root_path).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    vcs.assert_repo(&root_path).await.map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -10058,7 +10066,7 @@ async fn create_workspace(
     });
     let workspace = state
         .global_store()
-        .create_workspace(name, root_path_str)
+        .create_workspace(name, root_path_str, vcs.kind())
         .await
         .map_err(|e| {
             (
@@ -11465,8 +11473,9 @@ async fn create_task(
     })?;
 
     let want_default_session = req.create_default_session;
-    if want_default_session {
-        assert_git_repo(&ws.root_path).await.map_err(|e| {
+    let ws_root = StdPath::new(&ws.root_path);
+    let vcs = if want_default_session {
+        let vcs = vcs::driver_for_path(ws_root).await.map_err(|e| {
             (
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
@@ -11474,7 +11483,18 @@ async fn create_task(
                 }),
             )
         })?;
-    }
+        vcs.assert_repo(ws_root).await.map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+        Some(vcs)
+    } else {
+        None
+    };
 
     let task = store
         .create_task(ws_id, req.title, req.description)
@@ -11502,7 +11522,8 @@ async fn create_task(
         return Ok(Json(task));
     }
 
-    let base_commit_sha = rev_parse_head(&ws.root_path).await.map_err(|e| {
+    let vcs = vcs.expect("vcs is set for default session");
+    let base_commit_sha = vcs.rev_parse_head(ws_root).await.map_err(|e| {
         let msg = e.to_string().to_lowercase();
         if msg.contains("ambiguous argument 'head'")
             || msg.contains("unknown revision or path not in the working tree")
@@ -11551,7 +11572,10 @@ async fn create_task(
         workspace_id: ws_id,
         root_path: wt_path.to_string_lossy().to_string(),
         base_commit_sha,
-        git_branch: Some(branch_name),
+        git_branch: (vcs.kind() == VcsKind::Git).then(|| branch_name.clone()),
+        vcs_kind: Some(vcs.kind()),
+        base_revision: Some(base_commit_sha.clone()),
+        vcs_ref: Some(branch_name.clone()),
         created_at: chrono::Utc::now(),
         bootstrap_status: None,
         bootstrap_started_at: None,
@@ -11712,7 +11736,11 @@ async fn create_session_for_task(
             .unwrap_or("local")
             .trim()
             .to_lowercase();
-        let base_commit_sha = rev_parse_head(&workspace.root_path).await.map_err(|e| {
+        let workspace_root = StdPath::new(&workspace.root_path);
+        let vcs = vcs::driver_for_path(workspace_root)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let base_commit_sha = vcs.rev_parse_head(workspace_root).await.map_err(|e| {
             let msg = e.to_string().to_lowercase();
             if msg.contains("ambiguous argument 'head'")
                 || msg.contains("unknown revision or path not in the working tree")
@@ -11746,7 +11774,10 @@ async fn create_session_for_task(
                     workspace_id: task.workspace_id,
                     root_path: wt_path.to_string_lossy().to_string(),
                     base_commit_sha,
-                    git_branch: Some(branch_name),
+                    git_branch: (vcs.kind() == VcsKind::Git).then(|| branch_name.clone()),
+                    vcs_kind: Some(vcs.kind()),
+                    base_revision: Some(base_commit_sha.clone()),
+                    vcs_ref: Some(branch_name.clone()),
                     created_at: chrono::Utc::now(),
                     bootstrap_status: None,
                     bootstrap_started_at: None,
@@ -11813,6 +11844,9 @@ async fn create_session_for_task(
                         root_path: workspace.root_path.clone(),
                         base_commit_sha,
                         git_branch: None,
+                        vcs_kind: Some(vcs.kind()),
+                        base_revision: Some(base_commit_sha.clone()),
+                        vcs_ref: None,
                         created_at: chrono::Utc::now(),
                         bootstrap_status: None,
                         bootstrap_started_at: None,
@@ -12307,8 +12341,11 @@ async fn get_session_diff_summary(
                     }),
                 )
             })?;
-    let head_commit_sha = match rev_parse_head(&worktree.root_path).await {
-        Ok(value) => value,
+    let head_commit_sha = match vcs::driver_for_path(StdPath::new(&worktree.root_path)).await {
+        Ok(vcs) => match vcs.rev_parse_head(StdPath::new(&worktree.root_path)).await {
+            Ok(value) => value,
+            Err(_) => base_commit_sha.clone(),
+        },
         Err(_) => base_commit_sha.clone(),
     };
     Ok(Json(SessionDiffSummaryResponse {
