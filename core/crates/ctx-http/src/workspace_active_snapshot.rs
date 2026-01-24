@@ -2,12 +2,14 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use async_trait::async_trait;
+use serde::Serialize;
 use tokio::sync::{broadcast, Mutex};
 
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
-    SessionHeadDelta, SessionHeadSnapshot, SessionSnapshot, SessionSnapshotSummary,
-    WorkspaceActiveHeadBatch, WorkspaceActivePage, WorkspaceActiveSnapshot,
+    Message, Session, SessionActivityState, SessionEvent, SessionEventType, SessionHeadDelta,
+    SessionHeadSnapshot, SessionMetadata, SessionSnapshot, SessionSnapshotSummary, SessionTurn,
+    SessionTurnToolSummary, WorkspaceActiveHeadBatch, WorkspaceActivePage, WorkspaceActiveSnapshot,
     WorkspaceActiveSnapshotEvent, WorkspaceActiveTaskSummary, WorkspaceTaskSummary,
     WorktreeBootstrapNotice,
 };
@@ -20,6 +22,10 @@ pub struct WorkspaceActiveSnapshotHub {
 }
 
 const SESSION_REPLAY_BUFFER_LIMIT: usize = 2000;
+const ACTIVE_HEAD_TURN_LIMIT: usize = 5;
+const ACTIVE_HEAD_MESSAGE_LIMIT: usize = 200;
+const ACTIVE_HEAD_EVENT_LIMIT: usize = 200;
+const ACTIVE_HEAD_BYTE_LIMIT: usize = 1_500_000;
 
 #[derive(Debug, Clone)]
 struct SessionReplayEntry {
@@ -375,8 +381,22 @@ impl WorkspaceActiveSnapshotHub {
     }
 
     pub async fn update_session_head(&self, head: SessionHeadSnapshot) {
+        let session_id = head.session.id;
+        let workspace_id = head.session.workspace_id;
+        let last_event_seq = head.last_event_seq;
         let mut heads = self.session_heads.lock().await;
-        heads.insert(head.session.id, head);
+        heads.insert(session_id, head.clone());
+        drop(heads);
+        let mut guard = self.inner.lock().await;
+        let entry = guard
+            .entry(workspace_id)
+            .or_insert_with(WorkspaceActiveSnapshotEntry::new);
+        if is_primary_session(entry, session_id) {
+            entry.active_heads.insert(session_id, head);
+            entry.seed_session_replay(session_id, last_event_seq);
+            let mut index = self.active_head_index.lock().await;
+            index.insert(session_id, workspace_id);
+        }
     }
 
     pub async fn remove_session_head(&self, session_id: SessionId) {
@@ -451,6 +471,7 @@ impl WorkspaceActiveSnapshotHub {
     pub async fn publish_session_head_delta(
         &self,
         workspace_id: WorkspaceId,
+        session: &Session,
         delta: SessionHeadDelta,
         bump_snapshot: bool,
     ) {
@@ -463,8 +484,14 @@ impl WorkspaceActiveSnapshotHub {
                 entry.snapshot_rev += 1;
             }
             entry.record_session_delta(&delta);
-            if let Some(head) = entry.active_heads.get_mut(&delta.session_id) {
-                apply_head_delta(head, &delta);
+            if session.parent_session_id.is_none() {
+                if let Some(head) = entry.active_heads.get_mut(&delta.session_id) {
+                    apply_head_delta(head, &delta);
+                } else {
+                    let mut head = new_head_snapshot(session);
+                    apply_head_delta(&mut head, &delta);
+                    entry.active_heads.insert(delta.session_id, head);
+                }
             }
             (entry.tx.clone(), entry.snapshot_rev)
         };
@@ -472,6 +499,10 @@ impl WorkspaceActiveSnapshotHub {
             let mut heads = self.session_heads.lock().await;
             if let Some(head) = heads.get_mut(&delta.session_id) {
                 apply_head_delta(head, &delta);
+            } else if session.parent_session_id.is_none() {
+                let mut head = new_head_snapshot(session);
+                apply_head_delta(&mut head, &delta);
+                heads.insert(delta.session_id, head);
             }
         }
         let _ = tx.send(WorkspaceActiveSnapshotEvent::SessionHeadDelta {
@@ -588,6 +619,281 @@ impl Default for WorkspaceActiveSnapshotHub {
     }
 }
 
+#[derive(Serialize)]
+struct SessionHeadWindowPayload<'a> {
+    turns: &'a [SessionTurn],
+    tool_summaries: &'a [SessionTurnToolSummary],
+    events: &'a [SessionEvent],
+    messages: &'a [Message],
+}
+
+fn session_metadata_from_session(session: &Session) -> SessionMetadata {
+    SessionMetadata {
+        id: session.id,
+        task_id: session.task_id,
+        workspace_id: session.workspace_id,
+        worktree_id: session.worktree_id,
+        parent_session_id: session.parent_session_id,
+        relationship: session.relationship.clone(),
+        provider_id: session.provider_id.clone(),
+        model_id: session.model_id.clone(),
+        title: session.title.clone(),
+        agent_role: session.agent_role.clone(),
+        status: session.status.clone(),
+        provider_session_ref: session.provider_session_ref.clone(),
+        created_at: session.created_at,
+        updated_at: session.updated_at,
+    }
+}
+
+fn new_head_window() -> ctx_core::models::SessionHeadWindow {
+    ctx_core::models::SessionHeadWindow {
+        turn_limit: ACTIVE_HEAD_TURN_LIMIT as i64,
+        message_limit: ACTIVE_HEAD_MESSAGE_LIMIT as i64,
+        event_limit: ACTIVE_HEAD_EVENT_LIMIT as i64,
+        byte_limit: ACTIVE_HEAD_BYTE_LIMIT as i64,
+        turn_count: 0,
+        message_count: 0,
+        event_count: 0,
+        bytes: 0,
+        truncated: false,
+    }
+}
+
+fn new_head_snapshot(session: &Session) -> SessionHeadSnapshot {
+    SessionHeadSnapshot {
+        session: session_metadata_from_session(session),
+        turns: Vec::new(),
+        tool_summaries: Vec::new(),
+        events: Vec::new(),
+        messages: Vec::new(),
+        last_event_seq: 0,
+        state_rev: 0,
+        activity: SessionActivityState::default(),
+        has_more_turns: false,
+        history_cursor: None,
+        has_more_history: false,
+        summary_checkpoint: None,
+        head_window: new_head_window(),
+    }
+}
+
+fn is_primary_session(entry: &WorkspaceActiveSnapshotEntry, session_id: SessionId) -> bool {
+    entry.active_tasks.values().any(|summary| {
+        let primary_id = summary
+            .task
+            .primary_session_id
+            .unwrap_or(summary.primary_session.session.id);
+        primary_id == session_id
+    })
+}
+
+fn is_partial_event(event: &SessionEvent) -> bool {
+    matches!(
+        event.event_type,
+        SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
+    )
+}
+
+fn should_include_event(event: &SessionEvent) -> bool {
+    if event.seq < 0 {
+        return false;
+    }
+    !is_partial_event(event)
+}
+
+fn compare_turn_order(a: &SessionTurn, b: &SessionTurn) -> Ordering {
+    match (a.start_seq, b.start_seq) {
+        (Some(sa), Some(sb)) if sa != sb => sa.cmp(&sb),
+        _ => a.started_at.cmp(&b.started_at),
+    }
+}
+
+fn upsert_turn(turns: &mut Vec<SessionTurn>, next: &SessionTurn) {
+    if let Some(pos) = turns.iter().position(|turn| turn.turn_id == next.turn_id) {
+        turns[pos] = next.clone();
+    } else {
+        turns.push(next.clone());
+    }
+    turns.sort_by(compare_turn_order);
+}
+
+fn compare_message_order(a: &Message, b: &Message) -> Ordering {
+    let created = a.created_at.cmp(&b.created_at);
+    if created != Ordering::Equal {
+        return created;
+    }
+    match (a.turn_sequence, b.turn_sequence) {
+        (Some(sa), Some(sb)) if sa != sb => sa.cmp(&sb),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        _ => a.id.0.cmp(&b.id.0),
+    }
+}
+
+fn upsert_message(messages: &mut Vec<Message>, next: &Message) {
+    if let Some(pos) = messages.iter().position(|msg| msg.id == next.id) {
+        messages[pos] = next.clone();
+    } else {
+        messages.push(next.clone());
+    }
+    messages.sort_by(compare_message_order);
+}
+
+fn upsert_event(events: &mut Vec<SessionEvent>, next: &SessionEvent) {
+    if let Some(pos) = events.iter().position(|event| event.seq == next.seq) {
+        events[pos] = next.clone();
+    } else {
+        events.push(next.clone());
+    }
+    events.sort_by(|a, b| a.seq.cmp(&b.seq));
+}
+
+fn head_window_bytes(
+    turns: &[SessionTurn],
+    tool_summaries: &[SessionTurnToolSummary],
+    events: &[SessionEvent],
+    messages: &[Message],
+) -> usize {
+    let payload = SessionHeadWindowPayload {
+        turns,
+        tool_summaries,
+        events,
+        messages,
+    };
+    serde_json::to_vec(&payload)
+        .map(|bytes| bytes.len())
+        .unwrap_or(0)
+}
+
+fn retain_messages_for_turns(messages: &mut Vec<Message>, turns: &[SessionTurn]) {
+    if turns.is_empty() {
+        messages.clear();
+        return;
+    }
+    let mut allowed = HashSet::new();
+    for turn in turns {
+        allowed.insert(turn.turn_id);
+    }
+    messages.retain(|msg| match msg.turn_id {
+        Some(turn_id) => allowed.contains(&turn_id),
+        None => true,
+    });
+}
+
+fn retain_tool_summaries_for_turns(
+    tool_summaries: &mut Vec<SessionTurnToolSummary>,
+    turns: &[SessionTurn],
+) {
+    if turns.is_empty() {
+        tool_summaries.clear();
+        return;
+    }
+    let mut allowed = HashSet::new();
+    for turn in turns {
+        allowed.insert(turn.turn_id);
+    }
+    tool_summaries.retain(|tool| allowed.contains(&tool.turn_id));
+}
+
+fn strip_snapshot_partials(turns: &mut [SessionTurn], events: &mut Vec<SessionEvent>) {
+    for turn in turns.iter_mut() {
+        turn.assistant_partial = None;
+        turn.thought_partial = None;
+    }
+    events.retain(|event| should_include_event(event));
+}
+
+fn trim_head_window(head: &mut SessionHeadSnapshot) {
+    let turn_limit = if head.head_window.turn_limit > 0 {
+        head.head_window.turn_limit as usize
+    } else {
+        ACTIVE_HEAD_TURN_LIMIT
+    };
+    let message_limit = if head.head_window.message_limit > 0 {
+        head.head_window.message_limit as usize
+    } else {
+        ACTIVE_HEAD_MESSAGE_LIMIT
+    };
+    let event_limit = if head.head_window.event_limit > 0 {
+        head.head_window.event_limit as usize
+    } else {
+        ACTIVE_HEAD_EVENT_LIMIT
+    };
+    let byte_limit = if head.head_window.byte_limit > 0 {
+        head.head_window.byte_limit as usize
+    } else {
+        ACTIVE_HEAD_BYTE_LIMIT
+    };
+
+    let mut truncated = false;
+    while head.turns.len() > turn_limit {
+        head.turns.remove(0);
+        truncated = true;
+        head.has_more_turns = true;
+    }
+    retain_messages_for_turns(&mut head.messages, &head.turns);
+    retain_tool_summaries_for_turns(&mut head.tool_summaries, &head.turns);
+
+    while head.messages.len() > message_limit && !head.turns.is_empty() {
+        head.turns.remove(0);
+        truncated = true;
+        head.has_more_turns = true;
+        retain_messages_for_turns(&mut head.messages, &head.turns);
+        retain_tool_summaries_for_turns(&mut head.tool_summaries, &head.turns);
+    }
+
+    if head.events.len() > event_limit {
+        let drop = head.events.len() - event_limit;
+        head.events.drain(0..drop);
+        truncated = true;
+    }
+
+    loop {
+        let bytes = head_window_bytes(
+            &head.turns,
+            &head.tool_summaries,
+            &head.events,
+            &head.messages,
+        );
+        if bytes <= byte_limit || (head.turns.is_empty() && head.events.is_empty()) {
+            break;
+        }
+        if !head.turns.is_empty() {
+            head.turns.remove(0);
+            truncated = true;
+            head.has_more_turns = true;
+            retain_messages_for_turns(&mut head.messages, &head.turns);
+            retain_tool_summaries_for_turns(&mut head.tool_summaries, &head.turns);
+            continue;
+        }
+        if !head.events.is_empty() {
+            head.events.remove(0);
+            truncated = true;
+            continue;
+        }
+        break;
+    }
+
+    let bytes = head_window_bytes(
+        &head.turns,
+        &head.tool_summaries,
+        &head.events,
+        &head.messages,
+    );
+    head.head_window = ctx_core::models::SessionHeadWindow {
+        turn_limit: turn_limit as i64,
+        message_limit: message_limit as i64,
+        event_limit: event_limit as i64,
+        byte_limit: byte_limit as i64,
+        turn_count: head.turns.len() as i64,
+        message_count: head.messages.len() as i64,
+        event_count: head.events.len() as i64,
+        bytes: bytes as i64,
+        truncated,
+    };
+}
+
 fn apply_head_delta(head: &mut SessionHeadSnapshot, delta: &SessionHeadDelta) {
     let next_seq = delta
         .event
@@ -599,5 +905,25 @@ fn apply_head_delta(head: &mut SessionHeadSnapshot, delta: &SessionHeadDelta) {
     }
     if delta.state_rev > head.state_rev {
         head.state_rev = delta.state_rev;
+    }
+
+    let mut changed = false;
+    if let Some(turn) = delta.turn.as_ref() {
+        upsert_turn(&mut head.turns, turn);
+        changed = true;
+    }
+    if let Some(message) = delta.message.as_ref() {
+        upsert_message(&mut head.messages, message);
+        changed = true;
+    }
+    if let Some(event) = delta.event.as_ref() {
+        if should_include_event(event) {
+            upsert_event(&mut head.events, event);
+            changed = true;
+        }
+    }
+    if changed {
+        strip_snapshot_partials(&mut head.turns, &mut head.events);
+        trim_head_window(head);
     }
 }

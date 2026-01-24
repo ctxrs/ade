@@ -1117,7 +1117,7 @@ impl AppState {
                 };
                 state
                     .workspace_active_snapshot
-                    .publish_session_head_delta(session.workspace_id, delta, !stream_only)
+                    .publish_session_head_delta(session.workspace_id, &session, delta, !stream_only)
                     .await;
             }
         });
@@ -1788,8 +1788,28 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     if !prewarm_ids.is_empty() {
         let mut base_env = HashMap::<String, String>::new();
         base_env.insert("CTX_DAEMON_URL".to_string(), daemon_url.clone());
+        base_env.insert(
+            "CTX_DATA_ROOT".to_string(),
+            state.data_root.to_string_lossy().to_string(),
+        );
         if let Some(token) = auth_token_for_env.clone() {
             base_env.insert("CTX_AUTH_TOKEN".to_string(), token);
+        }
+        for key in [
+            "RUST_LOG",
+            "RUST_BACKTRACE",
+            "RUST_LOG_SPAN_EVENTS",
+            "RUST_LIB_BACKTRACE",
+        ] {
+            if let Ok(value) = std::env::var(key) {
+                base_env.insert(key.to_string(), value);
+            }
+        }
+        if let Ok(value) = std::env::var("CTX_MCP_COMMAND") {
+            base_env.insert("CTX_MCP_COMMAND".to_string(), value);
+        }
+        if let Ok(value) = std::env::var("CTX_MCP_DISABLED") {
+            base_env.insert("CTX_MCP_DISABLED".to_string(), value);
         }
 
         for (id, adapter) in [
@@ -1801,7 +1821,14 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
                 continue;
             }
             let workdir = prewarm_workdir.clone();
-            let env = base_env.clone();
+            let mut env = base_env.clone();
+            if id == "codex" {
+                if let Ok(extra) =
+                    provider_accounts::codex_env_for_active_account(&state.data_root).await
+                {
+                    env.extend(extra);
+                }
+            }
             tokio::spawn(async move {
                 let status = adapter.inspect().await;
                 let ok = status.as_ref().is_ok_and(|s| {
