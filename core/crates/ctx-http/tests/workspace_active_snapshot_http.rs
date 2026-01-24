@@ -376,10 +376,14 @@ async fn workspace_stream_replays_from_after_seq() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                delta,
+            if let Ok(ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                event:
+                    ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                        delta,
+                        ..
+                    },
                 ..
-            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
+            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
                 if delta.session_id != session.id {
                     continue;
@@ -509,10 +513,14 @@ async fn workspace_stream_replays_tool_events() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                delta,
+            if let Ok(ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                event:
+                    ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                        delta,
+                        ..
+                    },
                 ..
-            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
+            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
                 if delta.session_id != session.id {
                     continue;
@@ -663,10 +671,13 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
         .unwrap()
         .unwrap();
     if let WsMessage::Text(txt) = ready_msg {
-        let evt: ctx_core::models::WorkspaceActiveSnapshotEvent =
+        let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
             serde_json::from_str(&txt).unwrap();
-        match evt {
-            ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. } => {}
+        match message {
+            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                event: ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. },
+                ..
+            } => {}
             other => panic!("expected ready, got {other:?}"),
         }
     } else {
@@ -703,11 +714,14 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let ctx_core::models::WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
-                task: summary,
+            if let Ok(ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                event:
+                    ctx_core::models::WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+                        task: summary,
+                        ..
+                    },
                 ..
-            } = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
-                .unwrap()
+            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
                 if summary.task.id == task.id {
                     saw_upsert = true;
@@ -819,10 +833,14 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Ok(ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                delta,
+            if let Ok(ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                event:
+                    ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                        delta,
+                        ..
+                    },
                 ..
-            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotEvent>(&txt)
+            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
                 if delta.session_id == session_a.id {
                     seen_a = true;

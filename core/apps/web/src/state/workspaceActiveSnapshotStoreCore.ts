@@ -3,6 +3,7 @@ import type {
   Session,
   SessionEvent,
   SessionHeadSnapshot,
+  SessionHeadWindow,
   SessionSummary,
   SessionSnapshotSummary,
   SessionTurn,
@@ -69,6 +70,18 @@ export type WorkspaceActiveSnapshotEventSource = {
 
 const ACTIVE_PAGE_SIZE = 50;
 const SNAPSHOT_WAIT_MS = 1200;
+const shouldRequestSnapshot = (reason: string): boolean => {
+  switch (reason) {
+    case "ws_open":
+    case "reset_required":
+    case "snapshot_rev_reset":
+    case "stream_seq_gap":
+    case "stream_seq_reset":
+      return true;
+    default:
+      return false;
+  }
+};
 
 const authToken = (): string | null => {
   try {
@@ -105,6 +118,12 @@ const isWorkspaceActiveSnapshot = (value: unknown): value is WorkspaceActiveSnap
   const active = (value as WorkspaceActiveSnapshot).active as { tasks?: unknown } | undefined;
   if (!active || typeof active !== "object") return false;
   return Array.isArray(active.tasks);
+};
+
+const readWorkspaceStreamRev = (value: unknown): number | null => {
+  if (!value || typeof value !== "object") return null;
+  const rec = value as { rev?: unknown };
+  return typeof rec.rev === "number" ? rec.rev : null;
 };
 
 const readWorkspaceSnapshotPayload = (
@@ -153,6 +172,18 @@ const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] => {
 const stripPartialEvents = (events: SessionEvent[]): SessionEvent[] => {
   return events.filter((event) => !isPartialEvent(event));
 };
+
+const emptyHeadWindow = (): SessionHeadWindow => ({
+  turn_limit: 0,
+  message_limit: 0,
+  event_limit: 0,
+  byte_limit: 0,
+  turn_count: 0,
+  message_count: 0,
+  event_count: 0,
+  bytes: 0,
+  truncated: false,
+});
 
 const sanitizeHeadSnapshot = (head: SessionHeadSnapshot): SessionHeadSnapshot => {
   const turns = Array.isArray(head.turns) ? stripTurnPartials(head.turns) : head.turns ?? [];
@@ -272,6 +303,8 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private reconnectDelayMs = 1000;
   private snapshotRev = 0;
   private archivedRev = 0;
+  private lastStreamSeq = 0;
+  private allowSnapshotReset = false;
   private cacheHydrated = false;
   private liveSnapshotApplied = false;
   private snapshotWaitTimer: number | null = null;
@@ -617,10 +650,13 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   private applyWorkspaceSnapshot(snapshot: WorkspaceActiveSnapshot, heads?: SessionHeadSnapshot[] | null) {
     if (this.destroyed || !snapshot || typeof snapshot !== "object") return;
-    if (typeof snapshot.snapshot_rev === "number" && snapshot.snapshot_rev < this.snapshotRev) {
+    const incomingRev = typeof snapshot.snapshot_rev === "number" ? snapshot.snapshot_rev : 0;
+    const allowLower = !this.liveSnapshotApplied || this.allowSnapshotReset;
+    if (incomingRev < this.snapshotRev && !allowLower) {
       return;
     }
-    this.snapshotRev = Math.max(this.snapshotRev, snapshot.snapshot_rev ?? 0);
+    this.snapshotRev = incomingRev < this.snapshotRev ? incomingRev : Math.max(this.snapshotRev, incomingRev);
+    this.allowSnapshotReset = false;
     if (typeof snapshot.archived_rev === "number" && snapshot.archived_rev > this.archivedRev) {
       this.archivedRev = snapshot.archived_rev;
       this.archivedLoaded = false;
@@ -769,6 +805,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         window.clearTimeout(timeoutId);
         this.ws = ws;
         this.reconnectDelayMs = 1000;
+        this.lastStreamSeq = 0;
         this.snapshot.connection = "connected";
         this.publish();
         this.flushSubscriptions("ws_open");
@@ -808,6 +845,18 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private async handleStreamMessage(data: unknown) {
     const parsed = await parseWsJson(data);
     if (!parsed || typeof parsed !== "object") return;
+    const streamRev = readWorkspaceStreamRev(parsed);
+    if (typeof streamRev === "number") {
+      if (this.lastStreamSeq > 0 && streamRev < this.lastStreamSeq) {
+        this.lastStreamSeq = streamRev;
+        this.allowSnapshotReset = true;
+        this.flushSubscriptions("stream_seq_reset");
+      } else if (this.lastStreamSeq > 0 && streamRev > this.lastStreamSeq + 1) {
+        this.allowSnapshotReset = true;
+        this.flushSubscriptions("stream_seq_gap");
+      }
+      this.lastStreamSeq = Math.max(this.lastStreamSeq, streamRev);
+    }
     const normalized = this.unwrapEvent(parsed);
     if (!normalized || typeof normalized !== "object") return;
     const parsedType = (normalized as { type?: string }).type;
@@ -819,10 +868,13 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       if (typeof latestRev === "number") {
         this.snapshotRev = Math.max(this.snapshotRev, latestRev);
       }
+      this.lastStreamSeq = 0;
+      this.allowSnapshotReset = true;
+      this.liveSnapshotApplied = false;
       this.flushSubscriptions("reset_required");
       return;
     }
-    const wsSnapshot = readWorkspaceSnapshotPayload(normalized);
+    const wsSnapshot = readWorkspaceSnapshotPayload(parsed);
     if (wsSnapshot) {
       this.applyWorkspaceSnapshot(wsSnapshot.snapshot, wsSnapshot.heads);
       return;
@@ -831,13 +883,13 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (typeof evt.snapshot_rev === "number") {
       if (evt.snapshot_rev < this.snapshotRev) {
         this.snapshotRev = evt.snapshot_rev;
-        this.flushSubscriptions("snapshot_rev_reset");
-      } else if (evt.snapshot_rev > this.snapshotRev + 1) {
-        this.flushSubscriptions("snapshot_rev_gap");
-      } else if (evt.type === "ready" && evt.snapshot_rev !== this.snapshotRev && this.liveSnapshotApplied) {
-        this.flushSubscriptions("snapshot_rev_ready");
+        this.allowSnapshotReset = true;
+        if (this.liveSnapshotApplied) {
+          this.flushSubscriptions("snapshot_rev_reset");
+        }
+      } else {
+        this.snapshotRev = Math.max(this.snapshotRev, evt.snapshot_rev);
       }
-      this.snapshotRev = evt.snapshot_rev;
     }
     if (typeof evt.archived_rev === "number") {
       if (evt.archived_rev !== this.archivedRev) {
@@ -851,7 +903,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       case "ready":
         this.snapshot.connection = "connected";
         this.publish();
-        this.flushSubscriptions("ready");
         break;
       case "active_task_upsert":
         this.upsertActiveSummary(evt.task);
@@ -922,12 +973,16 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   }
 
   private flushSubscriptions(reason = "subscribe") {
-    this.scheduleSnapshotWarning(reason);
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const requestSnapshot = shouldRequestSnapshot(reason);
+    if (requestSnapshot) {
+      this.scheduleSnapshotWarning(reason);
+    }
     const message: WorkspaceActiveSnapshotClientMessage = {
       type: "subscribe",
       scope: "active",
+      include_active_heads: requestSnapshot,
     };
     if (this.subscribedSessionIds.length > 0) {
       message.session_ids = this.subscribedSessionIds.slice();
@@ -1038,11 +1093,41 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.schedulePersistCache();
   }
 
+  private seedHeadSnapshot(sessionId: string): SessionHeadSnapshot | null {
+    for (const item of this.tasks.values()) {
+      for (const summary of item.sessions) {
+        const candidateId = idToString(summary.session.id);
+        if (candidateId !== sessionId) continue;
+        return {
+          session: summary.session,
+          turns: [],
+          tool_summaries: [],
+          events: [],
+          messages: [],
+          last_event_seq: summary.last_event_seq ?? 0,
+          state_rev: summary.state_rev ?? 0,
+          activity: summary.activity ?? { is_working: false },
+          has_more_turns: false,
+          history_cursor: null,
+          has_more_history: false,
+          summary_checkpoint: undefined,
+          head_window: emptyHeadWindow(),
+        };
+      }
+    }
+    return null;
+  }
+
   private applySessionHeadDelta(delta: any): boolean {
     const sessionId = idToString(delta?.session_id ?? "");
     if (!sessionId) return false;
-    const existing = this.sessionHeadsById.get(sessionId);
-    if (!existing) return false;
+    let existing = this.sessionHeadsById.get(sessionId);
+    if (!existing) {
+      const seeded = this.seedHeadSnapshot(sessionId);
+      if (!seeded) return false;
+      existing = seeded;
+      this.sessionHeadsById.set(sessionId, seeded);
+    }
     let changed = false;
     let turns = existing.turns ?? [];
     let messages = existing.messages ?? [];

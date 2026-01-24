@@ -182,8 +182,14 @@ async fn hot_endpoints_use_cache_when_db_unavailable() {
     let WsMessage::Text(txt) = msg else {
         panic!("expected text frame, got {:?}", msg);
     };
-    let ready: WorkspaceActiveSnapshotEvent = serde_json::from_str(&txt).unwrap();
-    assert!(matches!(ready, WorkspaceActiveSnapshotEvent::Ready { .. }));
+    let ready: WorkspaceActiveSnapshotStreamMessage = serde_json::from_str(&txt).unwrap();
+    assert!(matches!(
+        ready,
+        WorkspaceActiveSnapshotStreamMessage::Event {
+            event: WorkspaceActiveSnapshotEvent::Ready { .. },
+            ..
+        }
+    ));
 
     let subscribe = WorkspaceActiveSnapshotClientMessage::Subscribe {
         session_ids: vec![session.id],

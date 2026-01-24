@@ -14,7 +14,7 @@ use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
     SessionEvent, SessionEventType, SessionHeadDelta, SessionSnapshotSummary,
     WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotClientMessage,
-    WorkspaceActiveSnapshotSessionSubscription,
+    WorkspaceActiveSnapshotSessionSubscription, WorkspaceActiveSnapshotStreamMessage,
 };
 
 use super::ShellView;
@@ -578,6 +578,18 @@ fn parse_workspace_stream_message(message: WsMessage) -> Option<StreamUpdate> {
         _ => return None,
     };
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    if let Ok(message) = serde_json::from_value::<WorkspaceActiveSnapshotStreamMessage>(value.clone())
+    {
+        match message {
+            WorkspaceActiveSnapshotStreamMessage::ResetRequired { latest_rev } => {
+                return Some(StreamUpdate::ResetRequired { latest_rev })
+            }
+            WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+                return Some(StreamUpdate::Event(event))
+            }
+            WorkspaceActiveSnapshotStreamMessage::Snapshot { .. } => return None,
+        }
+    }
     if value
         .get("type")
         .and_then(|v| v.as_str())

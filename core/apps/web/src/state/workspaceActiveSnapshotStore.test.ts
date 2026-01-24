@@ -191,7 +191,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(getSessionHead).toHaveBeenCalledWith("session-1", undefined, true);
   });
 
-  it("requests snapshot on snapshot rev gap", async () => {
+  it("requests snapshot on stream seq gap", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStore");
     const { getWorkspaceActiveSnapshot } = await import("../api/client");
 

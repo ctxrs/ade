@@ -8,7 +8,6 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use futures::{Sink, SinkExt, StreamExt};
-use serde::Serialize;
 use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinSet;
 use tokio_tungstenite::{connect_async, tungstenite::Message as TungsteniteMessage};
@@ -85,10 +84,15 @@ async fn handle_mobile_secure_ws(
         snapshot_rev,
         archived_rev,
     };
-    if pending
-        .push(WorkspaceActiveSnapshotWsPayload::Event(ready))
-        .await
-        .is_err()
+    if push_stream_message(
+        &pending,
+        workspace_id,
+        None,
+        "ready_secure",
+        WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: ready },
+    )
+    .await
+    .is_err()
     {
         return Ok(());
     }
@@ -100,16 +104,24 @@ async fn handle_mobile_secure_ws(
         let send_device_id = device_id.clone();
         tokio::spawn(async move {
             let mut sender = sender;
-            let mut outbound_seq: i64 = 0;
+            let mut envelope_seq: i64 = 0;
+            let mut stream_seq: i64 = 0;
             loop {
                 let notified = pending.notify.notified();
                 if let Some(message) = pending.pop().await {
-                    outbound_seq += 1;
+                    envelope_seq += 1;
+                    let message = match message {
+                        WorkspaceActiveSnapshotStreamMessage::ResetRequired { .. } => message,
+                        other => {
+                            stream_seq += 1;
+                            with_stream_rev(other, stream_seq)
+                        }
+                    };
                     if send_secure_ws(
                         &mut sender,
                         &send_key,
                         &send_device_id,
-                        outbound_seq,
+                        envelope_seq,
                         &message,
                     )
                     .await
@@ -147,6 +159,16 @@ async fn handle_mobile_secure_ws(
                                 &frame.ciphertext,
                             )?;
                             let message: WorkspaceActiveSnapshotClientMessage = serde_json::from_slice(&payload)?;
+                            let include_active_heads = matches!(
+                                &message,
+                                WorkspaceActiveSnapshotClientMessage::Subscribe {
+                                    include_active_heads: true,
+                                    ..
+                                }
+                            );
+                            state
+                                .ensure_workspace_active_snapshot_hydrated(workspace_id)
+                                .await;
                             let next = match resolve_workspace_active_snapshot_subscriptions(
                                 &state,
                                 workspace_id,
@@ -156,6 +178,11 @@ async fn handle_mobile_secure_ws(
                             {
                                 Ok(next) => next,
                                 Err(_) => {
+                                        tracing::error!(
+                                            target: "ctx_http.ws_active_snapshot",
+                                            workspace_id = %workspace_id.0,
+                                            "workspace stream subscribe resolution failed (secure)",
+                                        );
                                     pending.clear().await;
                                     if queue_reset_required(&pending, &state, workspace_id)
                                         .await
@@ -172,11 +199,13 @@ async fn handle_mobile_secure_ws(
                             pending.clear().await;
                             reset_queued = false;
                             send_control.clear_disconnect_after_flush();
-                            if queue_snapshot_payload(&pending, &state, workspace_id)
-                                .await
-                                .is_err()
-                            {
-                                break;
+                            if include_active_heads {
+                                if queue_snapshot_payload(&pending, &state, workspace_id)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
                             }
 
                             let mut next_map = HashMap::new();
@@ -188,7 +217,15 @@ async fn handle_mobile_secure_ws(
                                     workspace_id,
                                     sub.session_id,
                                     after_seq,
-                                    |event| pending.push(event),
+                                    |event| {
+                                        push_stream_message(
+                                            &pending,
+                                            workspace_id,
+                                            Some(sub.session_id),
+                                            "replay_secure",
+                                            event,
+                                        )
+                                    },
                                 )
                                 .await;
                                 match replay {
@@ -196,6 +233,13 @@ async fn handle_mobile_secure_ws(
                                         next_map.insert(sub.session_id, SessionCursor { last_sent });
                                     }
                                     Ok(ReplayOutcome::ResetRequired) | Err(_) => {
+                                        tracing::error!(
+                                            target: "ctx_http.ws_active_snapshot",
+                                            workspace_id = %workspace_id.0,
+                                            session_id = %sub.session_id.0,
+                                            after_seq,
+                                            "workspace stream replay failed (secure)",
+                                        );
                                         replay_failed = true;
                                         break;
                                     }
@@ -224,21 +268,27 @@ async fn handle_mobile_secure_ws(
                 event = rx.recv() => {
                     let event = match event {
                         Ok(event) => event,
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        if reset_queued {
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(lagged)) => {
+                            if reset_queued {
+                                continue;
+                            }
+                            tracing::error!(
+                                target: "ctx_http.ws_active_snapshot",
+                                workspace_id = %workspace_id.0,
+                                lagged,
+                                "workspace stream lagged (secure)",
+                            );
+                            pending.clear().await;
+                            if queue_reset_required(&pending, &state, workspace_id)
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                            reset_queued = true;
+                            send_control.set_disconnect_after_flush();
                             continue;
                         }
-                        pending.clear().await;
-                        if queue_reset_required(&pending, &state, workspace_id)
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                        reset_queued = true;
-                        send_control.set_disconnect_after_flush();
-                        continue;
-                    }
                         Err(_) => break,
                     };
 
@@ -262,10 +312,24 @@ async fn handle_mobile_secure_ws(
                         }
                     }
 
-                    if pending
-                        .push(WorkspaceActiveSnapshotWsPayload::Event(event))
-                        .await
-                        .is_err()
+                    let session_id = match &event {
+                        WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
+                            Some(delta.session_id)
+                        }
+                        WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => {
+                            Some(*session_id)
+                        }
+                        _ => None,
+                    };
+                    if push_stream_message(
+                        &pending,
+                        workspace_id,
+                        session_id,
+                        "event_secure",
+                        WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event },
+                    )
+                    .await
+                    .is_err()
                     {
                         if reset_queued {
                             continue;
@@ -306,7 +370,7 @@ async fn send_secure_ws<S>(
     key: &crate::mobile_e2ee::E2eeKey,
     device_id: &str,
     seq: i64,
-    payload: &WorkspaceActiveSnapshotWsPayload,
+    payload: &WorkspaceActiveSnapshotStreamMessage,
 ) -> Result<(), anyhow::Error>
 where
     S: Sink<WsMessage> + Unpin,
@@ -572,6 +636,12 @@ struct StreamQueueEntry<T> {
     message: T,
 }
 
+#[derive(Debug)]
+enum StreamQueuePushError {
+    QueueFull { len: usize, limit: usize },
+    QueueStale { age_ms: u64, max_age_ms: u64 },
+}
+
 struct StreamQueue<T> {
     pending: Mutex<VecDeque<StreamQueueEntry<T>>>,
     notify: Notify,
@@ -589,15 +659,23 @@ impl<T> StreamQueue<T> {
         }
     }
 
-    async fn push(&self, message: T) -> Result<(), ()> {
+    async fn push(&self, message: T) -> Result<(), StreamQueuePushError> {
         let now = Instant::now();
         let mut guard = self.pending.lock().await;
-        if guard.len() >= self.limit {
-            return Err(());
+        let len = guard.len();
+        if len >= self.limit {
+            return Err(StreamQueuePushError::QueueFull {
+                len,
+                limit: self.limit,
+            });
         }
         if let Some(front) = guard.front() {
-            if now.duration_since(front.enqueued_at) >= self.max_age {
-                return Err(());
+            let age = now.duration_since(front.enqueued_at);
+            if age >= self.max_age {
+                return Err(StreamQueuePushError::QueueStale {
+                    age_ms: age.as_millis() as u64,
+                    max_age_ms: self.max_age.as_millis() as u64,
+                });
             }
         }
         guard.push_back(StreamQueueEntry {
@@ -620,6 +698,55 @@ impl<T> StreamQueue<T> {
 
     async fn is_empty(&self) -> bool {
         self.pending.lock().await.is_empty()
+    }
+}
+
+fn log_stream_queue_push_error(
+    context: &'static str,
+    workspace_id: WorkspaceId,
+    session_id: Option<SessionId>,
+    err: &StreamQueuePushError,
+) {
+    match err {
+        StreamQueuePushError::QueueFull { len, limit } => {
+            tracing::error!(
+                target: "ctx_http.ws_active_snapshot",
+                workspace_id = %workspace_id.0,
+                session_id = ?session_id,
+                queue_len = *len,
+                queue_limit = *limit,
+                "workspace stream queue full ({context})",
+            );
+        }
+        StreamQueuePushError::QueueStale {
+            age_ms,
+            max_age_ms,
+        } => {
+            tracing::error!(
+                target: "ctx_http.ws_active_snapshot",
+                workspace_id = %workspace_id.0,
+                session_id = ?session_id,
+                oldest_age_ms = *age_ms,
+                max_age_ms = *max_age_ms,
+                "workspace stream queue stale ({context})",
+            );
+        }
+    }
+}
+
+async fn push_stream_message(
+    pending: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
+    workspace_id: WorkspaceId,
+    session_id: Option<SessionId>,
+    context: &'static str,
+    message: WorkspaceActiveSnapshotStreamMessage,
+) -> Result<(), ()> {
+    match pending.push(message).await {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            log_stream_queue_push_error(context, workspace_id, session_id, &err);
+            Err(())
+        }
     }
 }
 
@@ -647,21 +774,39 @@ impl StreamSendControl {
     }
 }
 
-#[derive(Debug, Serialize)]
-#[serde(untagged)]
-enum WorkspaceActiveSnapshotWsPayload {
-    Event(WorkspaceActiveSnapshotEvent),
-    Snapshot(WorkspaceActiveSnapshotStreamMessage),
-    ResetRequired(WorkspaceActiveSnapshotStreamMessage),
-}
-
 enum ReplayOutcome {
     Replay { last_sent: i64 },
     ResetRequired,
 }
 
+fn with_stream_rev(
+    message: WorkspaceActiveSnapshotStreamMessage,
+    stream_rev: i64,
+) -> WorkspaceActiveSnapshotStreamMessage {
+    match message {
+        WorkspaceActiveSnapshotStreamMessage::Snapshot {
+            active_snapshot,
+            active_heads,
+            ..
+        } => WorkspaceActiveSnapshotStreamMessage::Snapshot {
+            rev: stream_rev,
+            active_snapshot,
+            active_heads,
+        },
+        WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+            WorkspaceActiveSnapshotStreamMessage::Event {
+                rev: stream_rev,
+                event,
+            }
+        }
+        WorkspaceActiveSnapshotStreamMessage::ResetRequired { latest_rev } => {
+            WorkspaceActiveSnapshotStreamMessage::ResetRequired { latest_rev }
+        }
+    }
+}
+
 async fn queue_reset_required(
-    pending: &StreamQueue<WorkspaceActiveSnapshotWsPayload>,
+    pending: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
 ) -> Result<(), ()> {
@@ -669,17 +814,20 @@ async fn queue_reset_required(
     if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_reset").is_err() {
         return Err(());
     }
-    pending
-        .push(WorkspaceActiveSnapshotWsPayload::ResetRequired(
-            WorkspaceActiveSnapshotStreamMessage::ResetRequired {
-                latest_rev: snapshot_rev,
-            },
-        ))
-        .await
+    push_stream_message(
+        pending,
+        workspace_id,
+        None,
+        "reset_required",
+        WorkspaceActiveSnapshotStreamMessage::ResetRequired {
+            latest_rev: snapshot_rev,
+        },
+    )
+    .await
 }
 
 async fn queue_snapshot_payload(
-    pending: &StreamQueue<WorkspaceActiveSnapshotWsPayload>,
+    pending: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
 ) -> Result<(), ()> {
@@ -694,15 +842,30 @@ async fn queue_snapshot_payload(
         .workspace_active_snapshot
         .active_heads(workspace_id)
         .await;
-    pending
-        .push(WorkspaceActiveSnapshotWsPayload::Snapshot(
-            WorkspaceActiveSnapshotStreamMessage::Snapshot {
-                rev: active_snapshot.snapshot_rev,
-                active_snapshot,
-                active_heads: Some(active_heads),
-            },
-        ))
-        .await
+    let snapshot_rev = active_snapshot.snapshot_rev;
+    let task_count = active_snapshot.active.tasks.len();
+    let head_count = active_heads.heads.len();
+    push_stream_message(
+        pending,
+        workspace_id,
+        None,
+        "snapshot",
+        WorkspaceActiveSnapshotStreamMessage::Snapshot {
+            rev: 0,
+            active_snapshot,
+            active_heads: Some(active_heads),
+        },
+    )
+    .await?;
+    tracing::debug!(
+        target: "ctx_http.ws_active_snapshot",
+        workspace_id = %workspace_id.0,
+        snapshot_rev,
+        active_tasks = task_count,
+        active_heads = head_count,
+        "workspace snapshot queued",
+    );
+    Ok(())
 }
 
 async fn replay_session_events_active<F, Fut>(
@@ -713,7 +876,7 @@ async fn replay_session_events_active<F, Fut>(
     mut emit: F,
 ) -> Result<ReplayOutcome, ()>
 where
-    F: FnMut(WorkspaceActiveSnapshotWsPayload) -> Fut,
+    F: FnMut(WorkspaceActiveSnapshotStreamMessage) -> Fut,
     Fut: std::future::Future<Output = Result<(), ()>>,
 {
     let (snapshot_rev, _) = super::load_workspace_active_snapshot_state(state, workspace_id).await;
@@ -739,7 +902,8 @@ where
                 };
                 crate::fault_injection::maybe_fail("ctx_http.replay_session_events_active.send")
                     .map_err(|_| ())?;
-                emit(WorkspaceActiveSnapshotWsPayload::Event(wrapped)).await?;
+                emit(WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: wrapped })
+                    .await?;
             }
             Ok(ReplayOutcome::Replay { last_sent })
         }
@@ -754,7 +918,7 @@ where
                 after_seq,
                 reason,
             };
-            emit(WorkspaceActiveSnapshotWsPayload::Event(gap)).await?;
+            emit(WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: gap }).await?;
             Ok(ReplayOutcome::Replay {
                 last_sent: last_known_seq.max(after_seq),
             })
@@ -864,41 +1028,35 @@ async fn handle_workspace_active_snapshot_ws(
         snapshot_rev,
         archived_rev,
     };
-    if pending
-        .push(WorkspaceActiveSnapshotWsPayload::Event(ready))
-        .await
-        .is_err()
+    if push_stream_message(
+        &pending,
+        workspace_id,
+        None,
+        "ready",
+        WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: ready },
+    )
+    .await
+    .is_err()
     {
         return;
     }
-
-    // Bootstrap a snapshot + subscriptions so clients that don't (or can't) send
-    // a subscribe message still receive active heads and deltas.
-    state
-        .ensure_workspace_active_snapshot_hydrated(workspace_id)
-        .await;
-    let bootstrap_heads = state
-        .workspace_active_snapshot
-        .active_heads(workspace_id)
-        .await;
-    for head in bootstrap_heads.heads {
-        subscriptions.insert(
-            head.session.id,
-            SessionCursor {
-                last_sent: head.last_event_seq,
-            },
-        );
-    }
-    let _ = queue_snapshot_payload(&pending, &state, workspace_id).await;
 
     let send_task = {
         let pending = pending.clone();
         let send_control = send_control.clone();
         tokio::spawn(async move {
             let mut sender = sender;
+            let mut stream_seq: i64 = 0;
             loop {
                 let notified = pending.notify.notified();
                 if let Some(message) = pending.pop().await {
+                    let message = match message {
+                        WorkspaceActiveSnapshotStreamMessage::ResetRequired { .. } => message,
+                        other => {
+                            stream_seq += 1;
+                            with_stream_rev(other, stream_seq)
+                        }
+                    };
                     let Ok(text) = serde_json::to_string(&message) else {
                         break;
                     };
@@ -923,7 +1081,19 @@ async fn handle_workspace_active_snapshot_ws(
                 msg = receiver.next() => {
                     match msg {
                         Some(Ok(WsMessage::Text(text))) => {
-                            if let Ok(message) = serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text) {
+                            if let Ok(message) =
+                                serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text)
+                            {
+                                let include_active_heads = matches!(
+                                    &message,
+                                    WorkspaceActiveSnapshotClientMessage::Subscribe {
+                                        include_active_heads: true,
+                                        ..
+                                    }
+                                );
+                                state
+                                    .ensure_workspace_active_snapshot_hydrated(workspace_id)
+                                    .await;
                                 let next = match resolve_workspace_active_snapshot_subscriptions(
                                     &state,
                                     workspace_id,
@@ -933,6 +1103,11 @@ async fn handle_workspace_active_snapshot_ws(
                                 {
                                     Ok(next) => next,
                                     Err(_) => {
+                                        tracing::error!(
+                                            target: "ctx_http.ws_active_snapshot",
+                                            workspace_id = %workspace_id.0,
+                                            "workspace stream subscribe resolution failed",
+                                        );
                                         pending.clear().await;
                                         if queue_reset_required(&pending, &state, workspace_id)
                                             .await
@@ -949,11 +1124,13 @@ async fn handle_workspace_active_snapshot_ws(
                                 pending.clear().await;
                                 reset_queued = false;
                                 send_control.clear_disconnect_after_flush();
-                                if queue_snapshot_payload(&pending, &state, workspace_id)
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
+                                if include_active_heads {
+                                    if queue_snapshot_payload(&pending, &state, workspace_id)
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
                                 }
 
                                 let mut next_map = HashMap::new();
@@ -965,7 +1142,15 @@ async fn handle_workspace_active_snapshot_ws(
                                         workspace_id,
                                         sub.session_id,
                                         after_seq,
-                                        |event| pending.push(event),
+                                        |event| {
+                                            push_stream_message(
+                                                &pending,
+                                                workspace_id,
+                                                Some(sub.session_id),
+                                                "replay",
+                                                event,
+                                            )
+                                        },
                                     )
                                     .await;
                                     match replay {
@@ -973,6 +1158,13 @@ async fn handle_workspace_active_snapshot_ws(
                                             next_map.insert(sub.session_id, SessionCursor { last_sent });
                                         }
                                         Ok(ReplayOutcome::ResetRequired) | Err(_) => {
+                                            tracing::error!(
+                                                target: "ctx_http.ws_active_snapshot",
+                                                workspace_id = %workspace_id.0,
+                                                session_id = %sub.session_id.0,
+                                                after_seq,
+                                                "workspace stream replay failed",
+                                            );
                                             replay_failed = true;
                                             break;
                                         }
@@ -995,7 +1187,19 @@ async fn handle_workspace_active_snapshot_ws(
                         }
                         Some(Ok(WsMessage::Binary(bytes))) => {
                             if let Ok(text) = String::from_utf8(bytes.to_vec()) {
-                                if let Ok(message) = serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text) {
+                                if let Ok(message) =
+                                    serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text)
+                                {
+                                    let include_active_heads = matches!(
+                                        &message,
+                                        WorkspaceActiveSnapshotClientMessage::Subscribe {
+                                            include_active_heads: true,
+                                            ..
+                                        }
+                                    );
+                                    state
+                                        .ensure_workspace_active_snapshot_hydrated(workspace_id)
+                                        .await;
                                     let next = match resolve_workspace_active_snapshot_subscriptions(
                                         &state,
                                         workspace_id,
@@ -1005,6 +1209,11 @@ async fn handle_workspace_active_snapshot_ws(
                                     {
                                         Ok(next) => next,
                                         Err(_) => {
+                                            tracing::error!(
+                                                target: "ctx_http.ws_active_snapshot",
+                                                workspace_id = %workspace_id.0,
+                                                "workspace stream subscribe resolution failed (binary)",
+                                            );
                                             pending.clear().await;
                                             if queue_reset_required(&pending, &state, workspace_id)
                                                 .await
@@ -1021,11 +1230,13 @@ async fn handle_workspace_active_snapshot_ws(
                                     pending.clear().await;
                                     reset_queued = false;
                                     send_control.clear_disconnect_after_flush();
-                                    if queue_snapshot_payload(&pending, &state, workspace_id)
-                                        .await
-                                        .is_err()
-                                    {
-                                        break;
+                                    if include_active_heads {
+                                        if queue_snapshot_payload(&pending, &state, workspace_id)
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
                                     }
 
                                     let mut next_map = HashMap::new();
@@ -1037,7 +1248,15 @@ async fn handle_workspace_active_snapshot_ws(
                                             workspace_id,
                                             sub.session_id,
                                             after_seq,
-                                            |event| pending.push(event),
+                                            |event| {
+                                                push_stream_message(
+                                                    &pending,
+                                                    workspace_id,
+                                                    Some(sub.session_id),
+                                                    "replay_binary",
+                                                    event,
+                                                )
+                                            },
                                         )
                                         .await;
                                         match replay {
@@ -1045,6 +1264,13 @@ async fn handle_workspace_active_snapshot_ws(
                                                 next_map.insert(sub.session_id, SessionCursor { last_sent });
                                             }
                                             Ok(ReplayOutcome::ResetRequired) | Err(_) => {
+                                                tracing::error!(
+                                                    target: "ctx_http.ws_active_snapshot",
+                                                    workspace_id = %workspace_id.0,
+                                                    session_id = %sub.session_id.0,
+                                                    after_seq,
+                                                    "workspace stream replay failed (binary)",
+                                                );
                                                 replay_failed = true;
                                                 break;
                                             }
@@ -1075,10 +1301,16 @@ async fn handle_workspace_active_snapshot_ws(
                 event = rx.recv() => {
                     let event = match event {
                         Ok(event) => event,
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(lagged)) => {
                             if reset_queued {
                                 continue;
                             }
+                            tracing::error!(
+                                target: "ctx_http.ws_active_snapshot",
+                                workspace_id = %workspace_id.0,
+                                lagged,
+                                "workspace stream lagged",
+                            );
                             pending.clear().await;
                             if queue_reset_required(&pending, &state, workspace_id)
                                 .await
@@ -1115,10 +1347,24 @@ async fn handle_workspace_active_snapshot_ws(
                         }
                     }
 
-                    if pending
-                        .push(WorkspaceActiveSnapshotWsPayload::Event(event))
-                        .await
-                        .is_err()
+                    let session_id = match &event {
+                        WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
+                            Some(delta.session_id)
+                        }
+                        WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => {
+                            Some(*session_id)
+                        }
+                        _ => None,
+                    };
+                    if push_stream_message(
+                        &pending,
+                        workspace_id,
+                        session_id,
+                        "event",
+                        WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event },
+                    )
+                    .await
+                    .is_err()
                     {
                         if reset_queued {
                             continue;
@@ -1155,7 +1401,7 @@ async fn replay_session_events_secure<F, Fut>(
     mut emit: F,
 ) -> Result<ReplayOutcome, ()>
 where
-    F: FnMut(WorkspaceActiveSnapshotWsPayload) -> Fut,
+    F: FnMut(WorkspaceActiveSnapshotStreamMessage) -> Fut,
     Fut: std::future::Future<Output = Result<(), ()>>,
 {
     let (snapshot_rev, _) = super::load_workspace_active_snapshot_state(state, workspace_id).await;
@@ -1179,7 +1425,8 @@ where
                     snapshot_rev,
                     delta: Box::new(delta),
                 };
-                emit(WorkspaceActiveSnapshotWsPayload::Event(wrapped)).await?;
+                emit(WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: wrapped })
+                    .await?;
             }
             Ok(ReplayOutcome::Replay { last_sent })
         }
@@ -1194,7 +1441,7 @@ where
                 after_seq,
                 reason,
             };
-            emit(WorkspaceActiveSnapshotWsPayload::Event(gap)).await?;
+            emit(WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: gap }).await?;
             Ok(ReplayOutcome::Replay {
                 last_sent: last_known_seq.max(after_seq),
             })
