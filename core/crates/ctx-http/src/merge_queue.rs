@@ -400,7 +400,11 @@ async fn run_entry_inner(
 
     let worktree_path =
         merge_queue_worktree_path(Path::new(&workspace.root_path), workspace.id, entry.id);
-    let worktree_branch = format!("ctx-merge-queue/{}", entry.id.0);
+    let worktree_branch = if vcs.kind() == VcsKind::Jj {
+        format!("ctx-merge-queue-{}", entry.id.0)
+    } else {
+        format!("ctx-merge-queue/{}", entry.id.0)
+    };
     let (repo_root, target_head) = if vcs.kind() == VcsKind::Git {
         let repo_root = ensure_merge_queue_repo(state, entry, workspace, cfg, log_file).await?;
         let target_head =
@@ -1692,14 +1696,30 @@ async fn maybe_sync_originating_worktree(
     let vcs = vcs_driver_for_worktree(&worktree);
     let worktree_root = Path::new(&worktree.root_path);
     vcs.assert_repo(worktree_root).await?;
-    let dirty = vcs.status_porcelain(worktree_root).await?;
-    if !dirty.is_empty() {
-        return Ok(());
-    }
-    let previous_head = vcs
-        .rev_parse_head(worktree_root)
-        .await
-        .unwrap_or_else(|_| "unknown".to_string());
+    let previous_head = match vcs.kind() {
+        VcsKind::Jj => {
+            let Some(expected_head) = entry.head_commit_sha.as_deref() else {
+                return Ok(());
+            };
+            let current_head = vcs
+                .rev_parse_head(worktree_root)
+                .await
+                .unwrap_or_else(|_| "unknown".to_string());
+            if current_head.trim() != expected_head.trim() {
+                return Ok(());
+            }
+            current_head
+        }
+        _ => {
+            let dirty = vcs.status_porcelain(worktree_root).await?;
+            if !dirty.is_empty() {
+                return Ok(());
+            }
+            vcs.rev_parse_head(worktree_root)
+                .await
+                .unwrap_or_else(|_| "unknown".to_string())
+        }
+    };
     if vcs.kind() == VcsKind::Git {
         reset_worktree_to_commit(state, entry, &worktree.root_path, commit_sha).await?;
     } else {
