@@ -6,6 +6,7 @@ type CreateWorkspaceArgs = {
   request: any;
   repo: string;
   workspaceName: string;
+  token?: string;
 };
 
 const readId = (v: any): string => {
@@ -16,9 +17,10 @@ const readId = (v: any): string => {
 };
 
 export async function createWorkspaceAndOpenWorkbench(opts: CreateWorkspaceArgs): Promise<string> {
-  const { page, request, repo, workspaceName } = opts;
+  const { page, request, repo, workspaceName, token } = opts;
 
-  await page.goto("/workspaces");
+  const url = token ? `/workspaces?token=${encodeURIComponent(token)}&desktop_ui=1` : "/workspaces";
+  await page.goto(url);
   await page.getByLabel("Root path").fill(repo);
   await page.getByLabel("Name (optional)").fill(workspaceName);
   await page.getByRole("button", { name: "Add workspace" }).click();
@@ -27,7 +29,9 @@ export async function createWorkspaceAndOpenWorkbench(opts: CreateWorkspaceArgs)
   await expect
     .poll(
       async () => {
-        const workspacesResp = await request.get("/api/workspaces");
+        const workspacesResp = await request.get("/api/workspaces", {
+          headers: token ? { authorization: `Bearer ${token}` } : undefined,
+        });
         if (!workspacesResp.ok()) return "";
         const workspaces = (await workspacesResp.json()) as any[];
         const ws = workspaces.find((w) => path.resolve(String(w?.root_path ?? "")) === path.resolve(repo));

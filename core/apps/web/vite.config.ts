@@ -64,6 +64,9 @@ export default defineConfig(({ command }) => {
         ? [mkcert(httpsHosts.length > 0 ? { hosts: httpsHosts } : undefined)]
         : []),
     ],
+    worker: {
+      format: "es",
+    },
     test: {
       globals: true,
       environment: "jsdom",

@@ -2630,7 +2630,7 @@
   max-width: calc(var(--wb-thread-max-width) - 32px);
   margin-left: auto;
   margin-right: auto;
-  margin-bottom: -10px;
+  margin-bottom: 0;
 }
 
 .wb-session-view .wb-thread-stack {

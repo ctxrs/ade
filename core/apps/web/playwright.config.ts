@@ -1,5 +1,11 @@
 import { defineConfig } from "playwright/test";
+import crypto from "crypto";
 import os from "os";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const HOST = "127.0.0.1";
 const PORT = process.env.CTX_E2E_PORT ?? "4401";
@@ -14,6 +20,12 @@ const authSetupCommand = `node -e 'const fs = require(\\"fs\\"); const path = re
 ).replace(/"/g, '\\"')}; fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, \\"daemon_auth.json\\"), JSON.stringify({ token: ${JSON.stringify(
   AUTH_TOKEN,
 ).replace(/"/g, '\\"')} }, null, 2));'`;
+const cargoTargetDir =
+  process.env.CTX_E2E_CARGO_TARGET_DIR ??
+  path.join(
+    os.tmpdir(),
+    `ctx-e2e-cargo-${crypto.createHash("sha1").update(path.resolve(__dirname, "../..")).digest("hex").slice(0, 10)}`,
+  );
 
 export default defineConfig({
   testDir: "./e2e",
@@ -32,7 +44,7 @@ export default defineConfig({
   webServer: {
     url: baseURL,
     command:
-      `bash -lc "rm -rf ${dataDir} && ${authSetupCommand} && pnpm -C apps/web build && CTX_SHOW_FAKE_PROVIDER=1 CTX_STORAGE_BACKEND=sqlite cargo run -p ctx-http --bin ctx -- serve --bind ${HOST}:${PORT} --data-dir ${dataDir}"`,
+      `bash -lc "rm -rf ${dataDir} && ${authSetupCommand} && pnpm -C apps/web build && CARGO_TARGET_DIR=${cargoTargetDir} CTX_SHOW_FAKE_PROVIDER=1 CTX_STORAGE_BACKEND=sqlite cargo run -p ctx-http --bin ctx -- serve --bind ${HOST}:${PORT} --data-dir ${dataDir}"`,
     cwd: "../..",
     reuseExistingServer: false,
     timeout: 300_000,
