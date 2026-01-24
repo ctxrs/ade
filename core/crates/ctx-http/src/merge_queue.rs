@@ -1357,37 +1357,25 @@ async fn apply_patch(
     target: ApplyPatchTarget,
 ) -> std::result::Result<(), QueueError> {
     if vcs.kind() == VcsKind::Git {
-        let mut cmd =
-            merge_queue_command(state, entry, "git apply", "git", Some(worktree_path), &[]).await;
-        cmd.arg("-C")
-            .arg(worktree_path)
-            .arg("apply")
-            .arg("--whitespace=nowarn");
-        cmd.arg("--3way");
-        if matches!(target, ApplyPatchTarget::Index) {
-            cmd.arg("--index");
+        let output = run_git_apply(
+            state,
+            entry,
+            worktree_path,
+            patch,
+            matches!(target, ApplyPatchTarget::Index),
+            true,
+        )
+        .await?;
+        if output.status.success() {
+            return Ok(());
         }
-        cmd.arg("-");
-        let mut child = cmd
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-
-        if let Some(mut stdin) = child.stdin.take() {
-            use tokio::io::AsyncWriteExt;
-            stdin
-                .write_all(patch.as_bytes())
-                .await
-                .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-        }
-
-        let output = child
-            .wait_with_output()
-            .await
-            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-        if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if matches!(target, ApplyPatchTarget::Index) && stderr.contains("does not exist in index") {
+            let output = run_git_apply(state, entry, worktree_path, patch, false, false).await?;
+            if output.status.success() {
+                stage_worktree(state, entry, worktree_path).await?;
+                return Ok(());
+            }
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(QueueError::Conflict {
                 message: if stderr.is_empty() {
@@ -1397,7 +1385,13 @@ async fn apply_patch(
                 },
             });
         }
-        return Ok(());
+        return Err(QueueError::Conflict {
+            message: if stderr.is_empty() {
+                "patch conflict".to_string()
+            } else {
+                stderr
+            },
+        });
     }
 
     if vcs.kind() == VcsKind::Jj {
@@ -1450,6 +1444,75 @@ async fn apply_patch(
         .map_err(|e| QueueError::Conflict {
             message: e.to_string(),
         })?;
+    Ok(())
+}
+
+async fn run_git_apply(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    worktree_path: &Path,
+    patch: &str,
+    apply_index: bool,
+    three_way: bool,
+) -> std::result::Result<std::process::Output, QueueError> {
+    let mut cmd =
+        merge_queue_command(state, entry, "git apply", "git", Some(worktree_path), &[]).await;
+    cmd.arg("-C")
+        .arg(worktree_path)
+        .arg("apply")
+        .arg("--whitespace=nowarn");
+    if three_way {
+        cmd.arg("--3way");
+    }
+    if apply_index {
+        cmd.arg("--index");
+    }
+    cmd.arg("-");
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        stdin
+            .write_all(patch.as_bytes())
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    }
+
+    child
+        .wait_with_output()
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))
+}
+
+async fn stage_worktree(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    worktree_path: &Path,
+) -> std::result::Result<(), QueueError> {
+    let mut cmd =
+        merge_queue_command(state, entry, "git add -A", "git", Some(worktree_path), &[]).await;
+    let output = cmd
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["add", "-A"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(QueueError::fail(
+            format!("git add failed: {stderr}"),
+            Some(output.status.code().unwrap_or(1) as i64),
+            None,
+        ));
+    }
     Ok(())
 }
 

@@ -76,7 +76,11 @@ async fn wait_for_entry(state: &Arc<AppState>, entry_id: MergeQueueEntryId) -> M
 
 #[tokio::test]
 async fn merge_queue_isolation_and_canonical_sync() {
-    let repo = common::init_git_repo(&[("note.txt", "base\n")]).await;
+    let repo = common::init_git_repo(&[
+        ("note.txt", "base\n"),
+        (".gitignore", ".ctx/merge-queue\n.ctx/config.toml\n"),
+    ])
+    .await;
     let target_branch = git_output(repo.path(), &["rev-parse", "--abbrev-ref", "HEAD"]).await;
     write_merge_queue_config(repo.path(), &target_branch, "never").await;
 
@@ -93,33 +97,39 @@ async fn merge_queue_isolation_and_canonical_sync() {
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-test").await;
 
-    let feature_path = repo.path().join("feature");
+    let worktree_root = tempfile::tempdir().unwrap();
+    let feature1_path = worktree_root.path().join("feature-1");
     common::run_git(
         repo.path(),
         &[
             "worktree",
             "add",
-            feature_path.to_str().unwrap(),
+            feature1_path.to_str().unwrap(),
             "-b",
             "feature",
         ],
     )
     .await;
 
-    append_file(&feature_path.join("note.txt"), "mq-1\n").await;
-    common::run_git(&feature_path, &["add", "note.txt"]).await;
-    common::run_git(&feature_path, &["commit", "-m", "mq-1"]).await;
+    append_file(&feature1_path.join("note.txt"), "mq-1\n").await;
+    common::run_git(&feature1_path, &["add", "note.txt"]).await;
+    common::run_git(&feature1_path, &["commit", "-m", "mq-1"]).await;
 
     let base_head = git_output(repo.path(), &["rev-parse", "HEAD"]).await;
-    let feature_head = git_output(&feature_path, &["rev-parse", "HEAD"]).await;
+    let feature_head = git_output(&feature1_path, &["rev-parse", "HEAD"]).await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
+    let worktree1 = store
         .create_worktree(
             workspace.id,
-            feature_path.to_string_lossy().to_string(),
+            feature1_path.to_string_lossy().to_string(),
             feature_head,
             Some("feature".to_string()),
         )
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree1.id, workspace.id)
         .await
         .unwrap();
 
@@ -128,7 +138,7 @@ async fn merge_queue_isolation_and_canonical_sync() {
         Method::POST,
         "/api/merge-queue/entries",
         Some(json!({
-            "worktree_id": worktree.id.0.to_string(),
+            "worktree_id": worktree1.id.0.to_string(),
             "message": "mq-1",
         })),
     )
@@ -141,20 +151,61 @@ async fn merge_queue_isolation_and_canonical_sync() {
     assert_eq!(canonical_head, base_head);
 
     let merge_queue_repo = repo.path().join(".ctx/merge-queue/repo");
-    let mq_head = git_output(&merge_queue_repo, &["rev-parse", "HEAD"]).await;
+    let mq_head = git_output(&merge_queue_repo, &["rev-parse", &target_branch]).await;
     assert_ne!(mq_head, base_head);
+    common::run_git(
+        repo.path(),
+        &[
+            "fetch",
+            merge_queue_repo.to_str().unwrap(),
+            &format!("refs/heads/{target_branch}"),
+        ],
+    )
+    .await;
+    common::run_git(repo.path(), &["reset", "--hard", "FETCH_HEAD"]).await;
+    let canonical_synced = git_output(repo.path(), &["rev-parse", "HEAD"]).await;
+    assert_eq!(canonical_synced, mq_head);
+
+    let feature2_path = worktree_root.path().join("feature-2");
+    common::run_git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            feature2_path.to_str().unwrap(),
+            "-b",
+            "feature-2",
+        ],
+    )
+    .await;
 
     write_merge_queue_config(repo.path(), &target_branch, "clean_only").await;
-    append_file(&feature_path.join("note.txt"), "mq-2\n").await;
-    common::run_git(&feature_path, &["add", "note.txt"]).await;
-    common::run_git(&feature_path, &["commit", "-m", "mq-2"]).await;
+    append_file(&feature2_path.join("note.txt"), "mq-2\n").await;
+    common::run_git(&feature2_path, &["add", "note.txt"]).await;
+    common::run_git(&feature2_path, &["commit", "-m", "mq-2"]).await;
+
+    let feature2_head = git_output(&feature2_path, &["rev-parse", "HEAD"]).await;
+    let worktree2 = store
+        .create_worktree(
+            workspace.id,
+            feature2_path.to_string_lossy().to_string(),
+            feature2_head,
+            Some("feature-2".to_string()),
+        )
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree2.id, workspace.id)
+        .await
+        .unwrap();
 
     let (status, entry): (StatusCode, MergeQueueEntry) = common::json_request(
         &app,
         Method::POST,
         "/api/merge-queue/entries",
         Some(json!({
-            "worktree_id": worktree.id.0.to_string(),
+            "worktree_id": worktree2.id.0.to_string(),
             "message": "mq-2",
         })),
     )
@@ -166,17 +217,45 @@ async fn merge_queue_isolation_and_canonical_sync() {
     let expected = entry.result_commit_sha.clone().unwrap();
     assert_eq!(canonical_head, expected);
 
+    let feature3_path = worktree_root.path().join("feature-3");
+    common::run_git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            feature3_path.to_str().unwrap(),
+            "-b",
+            "feature-3",
+        ],
+    )
+    .await;
+    append_file(&feature3_path.join("note.txt"), "mq-3\n").await;
+    common::run_git(&feature3_path, &["add", "note.txt"]).await;
+    common::run_git(&feature3_path, &["commit", "-m", "mq-3"]).await;
+    let feature3_head = git_output(&feature3_path, &["rev-parse", "HEAD"]).await;
+    let worktree3 = store
+        .create_worktree(
+            workspace.id,
+            feature3_path.to_string_lossy().to_string(),
+            feature3_head,
+            Some("feature-3".to_string()),
+        )
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree3.id, workspace.id)
+        .await
+        .unwrap();
+
     append_file(&repo.path().join("note.txt"), "dirty\n").await;
-    append_file(&feature_path.join("note.txt"), "mq-3\n").await;
-    common::run_git(&feature_path, &["add", "note.txt"]).await;
-    common::run_git(&feature_path, &["commit", "-m", "mq-3"]).await;
 
     let (status, entry): (StatusCode, MergeQueueEntry) = common::json_request(
         &app,
         Method::POST,
         "/api/merge-queue/entries",
         Some(json!({
-            "worktree_id": worktree.id.0.to_string(),
+            "worktree_id": worktree3.id.0.to_string(),
             "message": "mq-3",
         })),
     )
