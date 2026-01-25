@@ -3,6 +3,7 @@ import Foundation
 private enum SelectionDefaults {
     static let workspaceVersion = 1
     static let workbenchVersion = 2
+    static let workspaceHiddenVersion = 1
 
     static func normalizedKey(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -24,6 +25,10 @@ private enum SelectionDefaults {
         "ctx.ios.workbench.selection.v\(workbenchVersion).\(daemonKey).\(workspaceId)"
     }
 
+    static func workspaceHiddenKey(daemonKey: String) -> String {
+        "ctx.ios.workspace.hidden.v\(workspaceHiddenVersion).\(daemonKey)"
+    }
+
     static func loadRecord<T: Decodable>(_ type: T.Type, key: String) -> T? {
         guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(type, from: data)
@@ -37,12 +42,39 @@ private enum SelectionDefaults {
     static func deleteRecord(key: String) {
         UserDefaults.standard.removeObject(forKey: key)
     }
+
+    static func loadHiddenWorkspaceIds(daemonKey: String?) -> Set<String> {
+        guard let daemonKey = normalizedKey(daemonKey) else { return [] }
+        let key = workspaceHiddenKey(daemonKey: daemonKey)
+        guard let record = loadRecord(PersistedWorkspaceHidden.self, key: key),
+              record.v == workspaceHiddenVersion else { return [] }
+        return Set(record.ids.compactMap(normalizedId))
+    }
+
+    static func saveHiddenWorkspaceIds(daemonKey: String?, ids: Set<String>) {
+        guard let daemonKey = normalizedKey(daemonKey) else { return }
+        let key = workspaceHiddenKey(daemonKey: daemonKey)
+        if ids.isEmpty {
+            deleteRecord(key: key)
+            return
+        }
+        let record = PersistedWorkspaceHidden(
+            v: workspaceHiddenVersion,
+            ids: ids.sorted()
+        )
+        saveRecord(record, key: key)
+    }
 }
 
 private struct PersistedWorkspaceSelection: Codable {
     let v: Int
     let id: String
     let name: String
+}
+
+private struct PersistedWorkspaceHidden: Codable {
+    let v: Int
+    let ids: [String]
 }
 
 private struct PersistedWorkbenchSelection: Codable {
@@ -192,5 +224,32 @@ final class WorkbenchSelectionStore: ObservableObject {
         primarySessionId: String?
     ) -> String? {
         return primarySessionId
+    }
+}
+
+@MainActor
+final class WorkspaceVisibilityStore: ObservableObject {
+    @Published private(set) var hiddenWorkspaceIds: Set<String> = []
+    private var daemonKey: String?
+
+    func load(daemonKey: String?) {
+        let nextKey = SelectionDefaults.normalizedKey(daemonKey)
+        self.daemonKey = nextKey
+        hiddenWorkspaceIds = SelectionDefaults.loadHiddenWorkspaceIds(daemonKey: nextKey)
+    }
+
+    func hide(workspaceId: String, daemonKey: String?) {
+        guard let daemonKey = SelectionDefaults.normalizedKey(daemonKey),
+              let workspaceId = SelectionDefaults.normalizedId(workspaceId) else { return }
+        self.daemonKey = daemonKey
+        hiddenWorkspaceIds.insert(workspaceId)
+        SelectionDefaults.saveHiddenWorkspaceIds(daemonKey: daemonKey, ids: hiddenWorkspaceIds)
+    }
+
+    func clear(daemonKey: String?) {
+        let daemonKey = SelectionDefaults.normalizedKey(daemonKey)
+        self.daemonKey = daemonKey
+        hiddenWorkspaceIds = []
+        SelectionDefaults.saveHiddenWorkspaceIds(daemonKey: daemonKey, ids: hiddenWorkspaceIds)
     }
 }

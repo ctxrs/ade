@@ -49,5 +49,6 @@ struct RootView: View {
         .environmentObject(ConnectionStore())
         .environmentObject(WorkspaceSelectionStore())
         .environmentObject(WorkbenchSelectionStore())
+        .environmentObject(WorkspaceVisibilityStore())
         .environmentObject(RootNavigationStore())
 }

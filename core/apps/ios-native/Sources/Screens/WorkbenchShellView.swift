@@ -8,6 +8,7 @@ struct WorkbenchShellView: View {
     @EnvironmentObject private var connection: ConnectionStore
     @EnvironmentObject private var workspaceSelection: WorkspaceSelectionStore
     @EnvironmentObject private var workbenchSelection: WorkbenchSelectionStore
+    @EnvironmentObject private var workspaceVisibility: WorkspaceVisibilityStore
     @State private var isDrawerOpen = false
     @State private var workspaces: [WorkspaceSummary] = []
     @State private var isLoadingWorkspaces = false
@@ -536,9 +537,12 @@ struct WorkbenchShellView: View {
         do {
             let daemonKey = connection.baseURLText
             workspaceSelection.load(daemonKey: daemonKey)
+            workspaceVisibility.load(daemonKey: daemonKey)
             let items = try await client.listWorkspaces()
-            workspaces = items
-            let resolved = resolveWorkspaceSelection(from: items)
+            let hiddenIds = workspaceVisibility.hiddenWorkspaceIds
+            let visibleItems = items.filter { !hiddenIds.contains($0.id) }
+            workspaces = visibleItems
+            let resolved = resolveWorkspaceSelection(from: visibleItems)
             if let resolved {
                 workspaceSelection.setWorkspace(resolved, daemonKey: daemonKey)
             }
@@ -1609,28 +1613,43 @@ private struct WorkbenchWorkspaceSwitcherView: View {
     let isLoadingWorkspaces: Bool
     let workspaceError: String?
     let onRefresh: () -> Void
+    @State private var isWorkspaceMenuPresented = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            NavigationLink {
-                SettingsView(selectedWorkspace: selectedWorkspace)
-            } label: {
-                HStack(spacing: 12) {
-                    LucideIcon(name: .settings, size: 16)
-                        .foregroundColor(.ctxAccent)
-                    Text(selectedWorkspace?.name ?? "No workspace")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.ctxTextPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer()
-                    LucideIcon(name: .chevronRight, size: 12)
-                        .foregroundColor(.ctxTextSecondary)
+            HStack(spacing: 12) {
+                Button {
+                    isWorkspaceMenuPresented = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "folder")
+                            .foregroundColor(.ctxAccent)
+                        Text(selectedWorkspace?.name ?? "No workspace")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.ctxTextPrimary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer()
+                        LucideIcon(name: .chevronDown, size: 12)
+                            .foregroundColor(.ctxTextSecondary)
+                    }
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.vertical, 10)
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("drawer.workspace.switch")
+
+                NavigationLink {
+                    SettingsView(selectedWorkspace: selectedWorkspace)
+                } label: {
+                    LucideIcon(name: .settings, size: 16)
+                        .foregroundColor(.ctxTextSecondary)
+                        .frame(width: 32, height: 32)
+                        .background(Color.ctxSurface.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("drawer.workspace.settings")
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("drawer.workspace.switch")
 
             if isLoadingWorkspaces {
                 HStack(spacing: 8) {
@@ -1653,6 +1672,12 @@ private struct WorkbenchWorkspaceSwitcherView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .sheet(isPresented: $isWorkspaceMenuPresented, onDismiss: onRefresh) {
+            NavigationStack {
+                WorkspaceSwitchView()
+            }
+            .presentationDetents([.medium, .large])
+        }
     }
 }
 
@@ -3261,4 +3286,5 @@ private func formatRelativeAgeShort(_ iso: String?) -> String {
         .environmentObject(ConnectionStore())
         .environmentObject(WorkspaceSelectionStore())
         .environmentObject(WorkbenchSelectionStore())
+        .environmentObject(WorkspaceVisibilityStore())
 }
