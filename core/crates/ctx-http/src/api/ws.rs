@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -70,6 +70,7 @@ async fn handle_mobile_secure_ws(
         .subscribe(workspace_id)
         .await;
     let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
+    let mut subscription_state = WorkspaceActiveSubscriptionState::default();
     let control = Arc::new(StreamQueue::new(
         WORKSPACE_STREAM_QUEUE_LIMIT,
         WORKSPACE_STREAM_QUEUE_MAX_AGE,
@@ -101,12 +102,14 @@ async fn handle_mobile_secure_ws(
         return Ok(());
     }
 
+    let latest_snapshot_rev = Arc::new(AtomicI64::new(snapshot_rev));
     let send_task = {
         let control = control.clone();
         let head_buffer = head_buffer.clone();
         let send_control = send_control.clone();
         let send_key = key.clone();
         let send_device_id = device_id.clone();
+        let latest_snapshot_rev = latest_snapshot_rev.clone();
         tokio::spawn(async move {
             let mut sender = sender;
             let mut envelope_seq: i64 = 0;
@@ -184,6 +187,9 @@ async fn handle_mobile_secure_ws(
                 if !send_control.is_hydrating() {
                     let (snapshot_rev, deltas) = head_buffer.take().await;
                     if !deltas.is_empty() {
+                        let latest_rev = latest_snapshot_rev.load(Ordering::Relaxed);
+                        let snapshot_rev = snapshot_rev.max(latest_rev);
+                        bump_latest_snapshot_rev(&latest_snapshot_rev, snapshot_rev);
                         envelope_seq += 1;
                         stream_seq += 1;
                         let message = WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
@@ -287,13 +293,31 @@ async fn handle_mobile_secure_ws(
                                 break;
                             }
 
+                            let mut skip_replay_sessions = HashSet::new();
+                            if include_active_heads && resolved.state.active_scope {
+                                for session_id in resolved.state.active_task_sessions.values() {
+                                    skip_replay_sessions.insert(*session_id);
+                                }
+                            }
+
                             let mut next_map = HashMap::new();
                             let mut replay_failed = false;
                             for sub in resolved.sessions {
                                 let after_seq = sub.after_seq.unwrap_or(0);
+                                let session_id = sub.session_id;
+                                if include_active_heads
+                                    && skip_replay_sessions.contains(&session_id)
+                                {
+                                    let last_sent = state
+                                        .workspace_active_snapshot
+                                        .session_last_event_seq(workspace_id, session_id)
+                                        .await
+                                        .max(after_seq);
+                                    next_map.insert(session_id, SessionCursor { last_sent });
+                                    continue;
+                                }
                                 let control = control.clone();
                                 let head_buffer = head_buffer.clone();
-                                let session_id = sub.session_id;
                                 let replay = replay_session_events_secure(
                                     &state,
                                     workspace_id,
@@ -406,6 +430,10 @@ async fn handle_mobile_secure_ws(
                         }
                         Err(_) => break,
                     };
+
+                    if let Some(rev) = event_snapshot_rev(&event) {
+                        bump_latest_snapshot_rev(&latest_snapshot_rev, rev);
+                    }
 
                     if reset_queued {
                         continue;
@@ -597,6 +625,30 @@ fn terminal_stream_tail_bytes(params: &HashMap<String, String>) -> usize {
             }
         })
         .unwrap_or(crate::terminals::DEFAULT_OUTPUT_TAIL_BYTES)
+}
+
+fn bump_latest_snapshot_rev(latest: &AtomicI64, rev: i64) {
+    let mut current = latest.load(Ordering::Relaxed);
+    while rev > current {
+        match latest.compare_exchange(current, rev, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(next) => current = next,
+        }
+    }
+}
+
+fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option<i64> {
+    match event {
+        WorkspaceActiveSnapshotEvent::Ready { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::ActiveTaskDelete { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::SessionSummary { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::SessionHeadDelta { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::SessionGap { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::WorktreeBootstrap { snapshot_rev, .. } => Some(*snapshot_rev),
+        WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert { .. }
+        | WorkspaceActiveSnapshotEvent::ArchivedTaskDelete { .. } => None,
+    }
 }
 
 pub(super) async fn terminal_stream_ws(
@@ -1401,10 +1453,13 @@ async fn handle_workspace_active_snapshot_ws(
         return;
     }
 
+    let latest_snapshot_rev = Arc::new(AtomicI64::new(snapshot_rev));
+
     let send_task = {
         let control = control.clone();
         let head_buffer = head_buffer.clone();
         let send_control = send_control.clone();
+        let latest_snapshot_rev = latest_snapshot_rev.clone();
         tokio::spawn(async move {
             let mut sender = sender;
             let mut stream_seq: i64 = 0;
@@ -1475,6 +1530,9 @@ async fn handle_workspace_active_snapshot_ws(
                 if !send_control.is_hydrating() {
                     let (snapshot_rev, deltas) = head_buffer.take().await;
                     if !deltas.is_empty() {
+                        let latest_rev = latest_snapshot_rev.load(Ordering::Relaxed);
+                        let snapshot_rev = snapshot_rev.max(latest_rev);
+                        bump_latest_snapshot_rev(&latest_snapshot_rev, snapshot_rev);
                         stream_seq += 1;
                         let message = WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
                             rev: stream_seq,
@@ -1562,71 +1620,89 @@ async fn handle_workspace_active_snapshot_ws(
                                     break;
                                 }
 
-                                    let mut next_map = HashMap::new();
-                                    let mut replay_failed = false;
-                                    for sub in resolved.sessions {
-                                        let after_seq = sub.after_seq.unwrap_or(0);
-                                        let control = control.clone();
-                                        let head_buffer = head_buffer.clone();
-                                        let session_id = sub.session_id;
-                                        let replay = replay_session_events_active(
-                                            &state,
-                                            workspace_id,
-                                            session_id,
-                                            after_seq,
-                                            move |event| {
-                                                let control = control.clone();
-                                                let head_buffer = head_buffer.clone();
-                                                async move {
-                                                    match event {
-                                                        WorkspaceActiveSnapshotStreamMessage::Event {
-                                                            event:
-                                                                WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                                                                    snapshot_rev,
-                                                                    delta,
-                                                                    ..
-                                                                },
-                                                            ..
-                                                        } => {
-                                                            if let Err(err) =
-                                                                head_buffer.push(snapshot_rev, *delta).await
-                                                            {
-                                                                log_head_batch_push_error(
-                                                                    "replay",
-                                                                    workspace_id,
-                                                                    &err,
-                                                                );
-                                                                return Err(());
-                                                            }
-                                                            Ok(())
-                                                        }
-                                                        other => {
-                                                            push_stream_message(
-                                                                &control,
-                                                                workspace_id,
-                                                                Some(session_id),
+                                let mut skip_replay_sessions = HashSet::new();
+                                if include_active_heads && resolved.state.active_scope {
+                                    for session_id in resolved.state.active_task_sessions.values() {
+                                        skip_replay_sessions.insert(*session_id);
+                                    }
+                                }
+
+                                let mut next_map = HashMap::new();
+                                let mut replay_failed = false;
+                                for sub in resolved.sessions {
+                                    let after_seq = sub.after_seq.unwrap_or(0);
+                                    let session_id = sub.session_id;
+                                    if include_active_heads
+                                        && skip_replay_sessions.contains(&session_id)
+                                    {
+                                        let last_sent = state
+                                            .workspace_active_snapshot
+                                            .session_last_event_seq(workspace_id, session_id)
+                                            .await
+                                            .max(after_seq);
+                                        next_map.insert(session_id, SessionCursor { last_sent });
+                                        continue;
+                                    }
+                                    let control = control.clone();
+                                    let head_buffer = head_buffer.clone();
+                                    let replay = replay_session_events_active(
+                                        &state,
+                                        workspace_id,
+                                        session_id,
+                                        after_seq,
+                                        move |event| {
+                                            let control = control.clone();
+                                            let head_buffer = head_buffer.clone();
+                                            async move {
+                                                match event {
+                                                    WorkspaceActiveSnapshotStreamMessage::Event {
+                                                        event:
+                                                            WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                                                snapshot_rev,
+                                                                delta,
+                                                                ..
+                                                            },
+                                                        ..
+                                                    } => {
+                                                        if let Err(err) =
+                                                            head_buffer.push(snapshot_rev, *delta).await
+                                                        {
+                                                            log_head_batch_push_error(
                                                                 "replay",
-                                                                other,
-                                                            )
-                                                            .await
+                                                                workspace_id,
+                                                                &err,
+                                                            );
+                                                            return Err(());
                                                         }
+                                                        Ok(())
+                                                    }
+                                                    other => {
+                                                        push_stream_message(
+                                                            &control,
+                                                            workspace_id,
+                                                            Some(session_id),
+                                                            "replay",
+                                                            other,
+                                                        )
+                                                        .await
                                                     }
                                                 }
-                                            },
-                                        )
-                                        .await;
-                                        match replay {
-                                            Ok(ReplayOutcome::Replay { last_sent }) => {
-                                                next_map.insert(session_id, SessionCursor { last_sent });
                                             }
-                                            Ok(ReplayOutcome::ResetRequired) | Err(_) => {
-                                                tracing::error!(
-                                                    target: "ctx_http.ws_active_snapshot",
-                                                    workspace_id = %workspace_id.0,
-                                                    session_id = %session_id.0,
-                                                    after_seq,
-                                                    "workspace stream replay failed",
-                                                );
+                                        },
+                                    )
+                                    .await;
+                                    match replay {
+                                        Ok(ReplayOutcome::Replay { last_sent }) => {
+                                            next_map.insert(session_id, SessionCursor { last_sent });
+                                        }
+                                        Ok(ReplayOutcome::ResetRequired) | Err(_) => {
+                                            tracing::error!(
+                                                target: "ctx_http.ws_active_snapshot",
+                                                workspace_id = %workspace_id.0,
+                                                session_id = %session_id.0,
+                                                after_seq,
+                                                "workspace stream replay failed",
+                                            );
                                             replay_failed = true;
                                             break;
                                         }
@@ -1708,13 +1784,31 @@ async fn handle_workspace_active_snapshot_ws(
                                         break;
                                     }
 
+                                    let mut skip_replay_sessions = HashSet::new();
+                                    if include_active_heads && resolved.state.active_scope {
+                                        for session_id in resolved.state.active_task_sessions.values() {
+                                            skip_replay_sessions.insert(*session_id);
+                                        }
+                                    }
+
                                     let mut next_map = HashMap::new();
                                     let mut replay_failed = false;
                                     for sub in resolved.sessions {
                                         let after_seq = sub.after_seq.unwrap_or(0);
+                                        let session_id = sub.session_id;
+                                        if include_active_heads
+                                            && skip_replay_sessions.contains(&session_id)
+                                        {
+                                            let last_sent = state
+                                                .workspace_active_snapshot
+                                                .session_last_event_seq(workspace_id, session_id)
+                                                .await
+                                                .max(after_seq);
+                                            next_map.insert(session_id, SessionCursor { last_sent });
+                                            continue;
+                                        }
                                         let control = control.clone();
                                         let head_buffer = head_buffer.clone();
-                                        let session_id = sub.session_id;
                                         let replay = replay_session_events_active(
                                             &state,
                                             workspace_id,
@@ -1829,6 +1923,10 @@ async fn handle_workspace_active_snapshot_ws(
                         }
                         Err(_) => break,
                     };
+
+                    if let Some(rev) = event_snapshot_rev(&event) {
+                        bump_latest_snapshot_rev(&latest_snapshot_rev, rev);
+                    }
 
                     if reset_queued {
                         continue;
