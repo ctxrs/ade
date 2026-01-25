@@ -1236,7 +1236,7 @@ export class SessionSupervisor {
     }
     const next = Array.from(byId.values()).sort(this.compareTurnOrder.bind(this));
     entry.turns = next;
-    entry.oldestTurnSeq = next[0]?.start_seq ?? entry.oldestTurnSeq;
+    entry.oldestTurnSeq = next[0]?.start_seq ?? next[0]?.end_seq ?? entry.oldestTurnSeq;
   }
 
   private mergeMessages(entry: InternalEntry, incoming: Message[]) {
@@ -1311,8 +1311,8 @@ export class SessionSupervisor {
   }
 
   private compareTurnOrder(a: SessionTurn, b: SessionTurn): number {
-    const sa = Number(a.start_seq ?? Number.NaN);
-    const sb = Number(b.start_seq ?? Number.NaN);
+    const sa = Number(a.start_seq ?? a.end_seq ?? Number.NaN);
+    const sb = Number(b.start_seq ?? b.end_seq ?? Number.NaN);
     if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) {
       return sa - sb;
     }
@@ -1346,7 +1346,7 @@ export class SessionSupervisor {
       tool_failed: 0,
     };
     entry.turns = [...entry.turns, turn].sort(this.compareTurnOrder.bind(this));
-    entry.oldestTurnSeq = entry.turns[0]?.start_seq ?? entry.oldestTurnSeq;
+    entry.oldestTurnSeq = entry.turns[0]?.start_seq ?? entry.turns[0]?.end_seq ?? entry.oldestTurnSeq;
     return turn;
   }
 
