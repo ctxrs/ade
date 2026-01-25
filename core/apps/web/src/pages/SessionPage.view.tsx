@@ -45,6 +45,7 @@ import { startMicPcmStream } from "../utils/micPcmStream";
 import { parseWsJson } from "../utils/wsJson";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
+import { useAlignedNowMs } from "../utils/useAlignedNowMs";
 import { usePinnedScrollManager } from "./usePinnedScrollManager";
 import { useWorkbenchStore } from "../workbench/store";
 import {
@@ -294,7 +295,6 @@ export function SessionView({
   const restorePendingRef = useRef(true);
   const restoreRetryRef = useRef(0);
   const pendingScrollToBottomRef = useRef(false);
-  const [nowMs, setNowMs] = useState(() => Date.now());
   const settingsStore = useSettingsStore();
   const settingsSnapshot = useSettingsSnapshot();
   const [providerGuardActionError, setProviderGuardActionError] = useState<string | null>(null);
@@ -734,15 +734,7 @@ export function SessionView({
   );
   const providerGuardCountdownTarget = providerGuardNotice?.killAtMs ?? null;
   const needsNowMs = hasActiveTurn || (providerGuardCountdownTarget != null && providerGuardCountdownTarget > Date.now());
-
-  useEffect(() => {
-    if (!needsNowMs) return;
-    setNowMs(Date.now());
-    const timer = window.setInterval(() => {
-      setNowMs(Date.now());
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [needsNowMs]);
+  const nowMs = useAlignedNowMs({ active: needsNowMs, intervalMs: 1000 });
 
   const providerGuardNoticeKey = providerGuardNotice
     ? `${providerGuardNotice.kind}:${providerGuardNotice.stage}:${providerGuardNotice.pid ?? ""}:${providerGuardNotice.killAtMs ?? ""}`
