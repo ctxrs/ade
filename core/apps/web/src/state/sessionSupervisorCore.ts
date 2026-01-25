@@ -11,7 +11,6 @@ import {
   type Artifact,
   type GitStatusSummary,
   type Message,
-  type MessageAttachment,
   type ProviderOptions,
   type Session,
   type SessionEvent,
@@ -168,30 +167,6 @@ const normalizeGitStatusSummaryInput = (value: unknown, entries?: unknown): Part
   if (Array.isArray(src.entries)) out.entries = src.entries as GitStatusSummary["entries"];
   if (Array.isArray(entries)) out.entries = entries as GitStatusSummary["entries"];
   return out;
-};
-
-const isOptimisticMessageId = (value: unknown): boolean => {
-  const id = idToString(value as { 0?: string } | string);
-  return Boolean(id && id.startsWith("optimistic-"));
-};
-
-const normalizeAttachmentKey = (value: MessageAttachment): string => {
-  const key = String((value as any)?.blob_id ?? (value as any)?.name ?? (value as any)?.kind ?? "").trim();
-  return key;
-};
-
-const buildAttachmentSignature = (attachments?: MessageAttachment[]): string => {
-  if (!Array.isArray(attachments) || attachments.length === 0) return "";
-  const keys = attachments.map(normalizeAttachmentKey).filter(Boolean).sort();
-  return keys.join("|");
-};
-
-const messagesMatchForOptimistic = (optimistic: Message, incoming: Message): boolean => {
-  if (!optimistic || !incoming) return false;
-  if (optimistic.role !== incoming.role) return false;
-  if (optimistic.role !== "user") return false;
-  if (String(optimistic.content ?? "") !== String(incoming.content ?? "")) return false;
-  return buildAttachmentSignature(optimistic.attachments) === buildAttachmentSignature(incoming.attachments);
 };
 
 const extractAcpMetaFromEvent = (event: SessionEvent): AcpMeta | null => {
@@ -600,25 +575,8 @@ export class SessionSupervisor {
       const sessionId = String(patch.sessionId || "").trim();
       if (!sessionId) continue;
       const entry = this.ensureEntry(sessionId);
-      const incomingMessages = Array.isArray(patch.data.messages) ? patch.data.messages : [];
-      const optimisticMessages = entry.messages.filter((message) => isOptimisticMessageId(message.id));
-      const optimisticMatchesIncoming = (message: Message) =>
-        incomingMessages.some((incoming) => messagesMatchForOptimistic(message, incoming));
-      const optimisticMessagesToKeep =
-        patch.op === "replace" && optimisticMessages.length > 0
-          ? optimisticMessages.filter((message) => !optimisticMatchesIncoming(message))
-          : [];
-      const optimisticDropIds =
-        patch.op !== "replace" && incomingMessages.length > 0 && optimisticMessages.length > 0
-          ? new Set(
-              optimisticMessages
-                .filter((message) => optimisticMatchesIncoming(message))
-                .map((message) => idToString(message.id))
-                .filter(Boolean),
-            )
-          : null;
       if (patch.op === "replace") {
-        this.resetEntryForGap(entry, { skipPublish: true });
+        this.resetEntryForGap(entry);
       }
       if (patch.op === "evict") {
         const beforeSeq = patch.data.eventsBeforeSeq;
@@ -639,16 +597,6 @@ export class SessionSupervisor {
       }
       if (data.messages && data.messages.length > 0) {
         this.mergeMessages(entry, data.messages);
-      }
-      if (optimisticMessagesToKeep.length > 0) {
-        this.mergeMessages(entry, optimisticMessagesToKeep);
-      }
-      if (optimisticDropIds && optimisticDropIds.size > 0) {
-        entry.messages = entry.messages.filter((message) => {
-          const id = idToString(message.id);
-          return !id || !optimisticDropIds.has(id);
-        });
-        entry.queue = entry.messages.filter((message) => message.delivery === "queued");
       }
       if (data.events && data.events.length > 0) {
         this.mergeEvents(entry, data.events);
@@ -1288,7 +1236,7 @@ export class SessionSupervisor {
     }
     const next = Array.from(byId.values()).sort(this.compareTurnOrder.bind(this));
     entry.turns = next;
-    entry.oldestTurnSeq = next[0]?.start_seq ?? next[0]?.end_seq ?? entry.oldestTurnSeq;
+    entry.oldestTurnSeq = next[0]?.start_seq ?? entry.oldestTurnSeq;
   }
 
   private mergeMessages(entry: InternalEntry, incoming: Message[]) {
@@ -1363,8 +1311,8 @@ export class SessionSupervisor {
   }
 
   private compareTurnOrder(a: SessionTurn, b: SessionTurn): number {
-    const sa = Number(a.start_seq ?? a.end_seq ?? Number.NaN);
-    const sb = Number(b.start_seq ?? b.end_seq ?? Number.NaN);
+    const sa = Number(a.start_seq ?? Number.NaN);
+    const sb = Number(b.start_seq ?? Number.NaN);
     if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) {
       return sa - sb;
     }
@@ -1398,7 +1346,7 @@ export class SessionSupervisor {
       tool_failed: 0,
     };
     entry.turns = [...entry.turns, turn].sort(this.compareTurnOrder.bind(this));
-    entry.oldestTurnSeq = entry.turns[0]?.start_seq ?? entry.turns[0]?.end_seq ?? entry.oldestTurnSeq;
+    entry.oldestTurnSeq = entry.turns[0]?.start_seq ?? entry.oldestTurnSeq;
     return turn;
   }
 
@@ -1596,7 +1544,7 @@ export class SessionSupervisor {
     return true;
   }
 
-  private resetEntryForGap(entry: InternalEntry, opts?: { skipPublish?: boolean }) {
+  private resetEntryForGap(entry: InternalEntry) {
     entry.turns = [];
     entry.events = [];
     entry.messages = [];
@@ -1624,9 +1572,7 @@ export class SessionSupervisor {
     entry.toolSummariesReady = false;
     entry.hasMoreTurns = true;
     entry.updatedAtMs = Date.now();
-    if (!opts?.skipPublish) {
-      this.publish();
-    }
+    this.publish();
   }
 }
 

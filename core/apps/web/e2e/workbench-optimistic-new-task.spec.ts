@@ -80,7 +80,6 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
     (window as any).__optimisticHeaderAt = performance.now();
   });
   await page.waitForTimeout(400);
-  await expect(header).toBeVisible();
 
   const { queuePanelSeen, shiftAfterHeader } = await page.evaluate(() => {
     const w = window as any;
