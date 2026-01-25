@@ -367,9 +367,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   };
 
   setSubscribedSessionIds = (sessionIds: string[]) => {
+    const activeSet = new Set(this.activeSessionIds);
     const next = sessionIds
       .map((id) => String(id || "").trim())
-      .filter((id) => id.length > 0);
+      .filter((id) => id.length > 0 && !activeSet.has(id));
     const deduped = Array.from(new Set(next));
     if (deduped.join("|") === this.subscribedSessionIds.join("|")) return;
     this.subscribedSessionIds = deduped;
@@ -951,13 +952,13 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         break;
       case "active_task_upsert":
         this.upsertActiveSummary(evt.task);
+        this.activeSessionIds = this.collectActiveSessionIds();
         this.publish();
-        this.refreshActiveSessionSubscriptions("active_task_upsert");
         break;
       case "active_task_delete":
         this.removeTask(idToString(evt.task_id), { adjustCounts: true });
+        this.activeSessionIds = this.collectActiveSessionIds();
         this.publish();
-        this.refreshActiveSessionSubscriptions("active_task_delete");
         break;
       case "archived_task_upsert": {
         const head = evt.snapshot?.head ?? null;

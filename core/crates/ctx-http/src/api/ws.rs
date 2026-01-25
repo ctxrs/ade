@@ -114,7 +114,9 @@ async fn handle_mobile_secure_ws(
             let mut tick = tokio::time::interval(HEAD_BATCH_FLUSH_INTERVAL);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                if let Some(message) = control.pop().await {
+                if let Some(entry) = control.pop().await {
+                    let message = entry.message;
+                    let queued_ms = entry.enqueued_at.elapsed().as_millis();
                     let is_snapshot = matches!(
                         message,
                         WorkspaceActiveSnapshotStreamMessage::Snapshot { .. }
@@ -127,6 +129,7 @@ async fn handle_mobile_secure_ws(
                             with_stream_rev(other, stream_seq)
                         }
                     };
+                    let send_start = Instant::now();
                     if send_secure_ws(
                         &mut sender,
                         &send_key,
@@ -138,6 +141,33 @@ async fn handle_mobile_secure_ws(
                     .is_err()
                     {
                         break;
+                    }
+                    if is_snapshot {
+                        let send_ms = send_start.elapsed().as_millis();
+                        let payload_bytes = serde_json::to_vec(&message)
+                            .map(|data| data.len())
+                            .unwrap_or(0);
+                        let (task_count, head_count) = match &message {
+                            WorkspaceActiveSnapshotStreamMessage::Snapshot {
+                                active_snapshot,
+                                active_heads,
+                                ..
+                            } => (
+                                active_snapshot.active.tasks.len(),
+                                active_heads.as_ref().map(|h| h.heads.len()).unwrap_or(0),
+                            ),
+                            _ => (0, 0),
+                        };
+                        tracing::error!(
+                            target: "ctx_http.ws_active_snapshot",
+                            workspace_id = %workspace_id.0,
+                            snapshot_bytes = payload_bytes,
+                            snapshot_queue_ms = queued_ms,
+                            snapshot_send_ms = send_ms,
+                            active_tasks = task_count,
+                            active_heads = head_count,
+                            "workspace snapshot sent (secure)",
+                        );
                     }
                     if is_snapshot {
                         send_control.clear_hydrating();
@@ -213,20 +243,21 @@ async fn handle_mobile_secure_ws(
                             state
                                 .ensure_workspace_active_snapshot_hydrated(workspace_id)
                                 .await;
-                            let next = match resolve_workspace_active_snapshot_subscriptions(
+                            let resolved = match resolve_workspace_active_snapshot_subscriptions(
                                 &state,
                                 workspace_id,
                                 message,
+                                &subscriptions,
                             )
                             .await
                             {
                                 Ok(next) => next,
                                 Err(_) => {
-                                        tracing::error!(
-                                            target: "ctx_http.ws_active_snapshot",
-                                            workspace_id = %workspace_id.0,
-                                            "workspace stream subscribe resolution failed (secure)",
-                                        );
+                                    tracing::error!(
+                                        target: "ctx_http.ws_active_snapshot",
+                                        workspace_id = %workspace_id.0,
+                                        "workspace stream subscribe resolution failed (secure)",
+                                    );
                                     control.clear().await;
                                     head_buffer.clear().await;
                                     if queue_reset_required(&control, &state, workspace_id)
@@ -258,7 +289,7 @@ async fn handle_mobile_secure_ws(
 
                             let mut next_map = HashMap::new();
                             let mut replay_failed = false;
-                            for sub in next {
+                            for sub in resolved.sessions {
                                 let after_seq = sub.after_seq.unwrap_or(0);
                                 let control = control.clone();
                                 let head_buffer = head_buffer.clone();
@@ -340,6 +371,7 @@ async fn handle_mobile_secure_ws(
                                 continue;
                             }
                             subscriptions = next_map;
+                            subscription_state = resolved.state;
                         }
                         Some(Ok(WsMessage::Close(_))) => break,
                         Some(Ok(_)) => {}
@@ -377,6 +409,42 @@ async fn handle_mobile_secure_ws(
 
                     if reset_queued {
                         continue;
+                    }
+
+                    if subscription_state.active_scope {
+                        match &event {
+                            WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
+                                let session_id = primary_session_id_for_active_task(task);
+                                subscription_state
+                                    .active_task_sessions
+                                    .insert(task.task.id, session_id);
+                                if !subscriptions.contains_key(&session_id) {
+                                    let last_sent = state
+                                        .workspace_active_snapshot
+                                        .session_last_event_seq(workspace_id, session_id)
+                                        .await;
+                                    subscriptions.insert(session_id, SessionCursor { last_sent });
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. } => {
+                                if let Some(session_id) =
+                                    subscription_state.active_task_sessions.remove(task_id)
+                                {
+                                    let still_active = subscription_state
+                                        .active_task_sessions
+                                        .values()
+                                        .any(|id| *id == session_id);
+                                    if !still_active
+                                        && !subscription_state
+                                            .explicit_sessions
+                                            .contains(&session_id)
+                                    {
+                                        subscriptions.remove(&session_id);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
                     }
 
                     if let WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } = &event {
@@ -479,6 +547,18 @@ async fn handle_mobile_secure_ws(
 
 struct SessionCursor {
     last_sent: i64,
+}
+
+#[derive(Default)]
+struct WorkspaceActiveSubscriptionState {
+    active_scope: bool,
+    explicit_sessions: HashSet<SessionId>,
+    active_task_sessions: HashMap<TaskId, SessionId>,
+}
+
+struct ResolvedWorkspaceActiveSubscriptions {
+    sessions: Vec<WorkspaceActiveSnapshotSessionSubscription>,
+    state: WorkspaceActiveSubscriptionState,
 }
 
 async fn send_secure_ws<S>(
@@ -891,9 +971,9 @@ impl<T> StreamQueue<T> {
         guard.clear();
     }
 
-    async fn pop(&self) -> Option<T> {
+    async fn pop(&self) -> Option<StreamQueueEntry<T>> {
         let mut guard = self.pending.lock().await;
-        guard.pop_front().map(|entry| entry.message)
+        guard.pop_front()
     }
 
     async fn is_empty(&self) -> bool {
@@ -1077,6 +1157,7 @@ async fn queue_snapshot_payload(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
 ) -> Result<(), ()> {
+    let build_start = Instant::now();
     state
         .ensure_workspace_active_snapshot_hydrated(workspace_id)
         .await;
@@ -1091,6 +1172,7 @@ async fn queue_snapshot_payload(
     let snapshot_rev = active_snapshot.snapshot_rev;
     let task_count = active_snapshot.active.tasks.len();
     let head_count = active_heads.heads.len();
+    let build_ms = build_start.elapsed().as_millis();
     push_stream_message(
         pending,
         workspace_id,
@@ -1103,12 +1185,13 @@ async fn queue_snapshot_payload(
         },
     )
     .await?;
-    tracing::debug!(
+    tracing::error!(
         target: "ctx_http.ws_active_snapshot",
         workspace_id = %workspace_id.0,
         snapshot_rev,
         active_tasks = task_count,
         active_heads = head_count,
+        snapshot_build_ms = build_ms,
         "workspace snapshot queued",
     );
     Ok(())
@@ -1176,11 +1259,18 @@ where
     }
 }
 
+fn primary_session_id_for_active_task(task: &WorkspaceActiveTaskSummary) -> SessionId {
+    task.task
+        .primary_session_id
+        .unwrap_or(task.primary_session.session.id)
+}
+
 async fn resolve_workspace_active_snapshot_subscriptions(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
     message: WorkspaceActiveSnapshotClientMessage,
-) -> Result<Vec<WorkspaceActiveSnapshotSessionSubscription>, ()> {
+    existing: &HashMap<SessionId, SessionCursor>,
+) -> Result<ResolvedWorkspaceActiveSubscriptions, ()> {
     match message {
         WorkspaceActiveSnapshotClientMessage::Subscribe {
             session_ids,
@@ -1191,24 +1281,28 @@ async fn resolve_workspace_active_snapshot_subscriptions(
         } => {
             let mut resolved = HashSet::new();
             let mut after_map: HashMap<SessionId, Option<i64>> = HashMap::new();
+            let mut explicit_sessions = HashSet::new();
+            let mut active_task_sessions = HashMap::new();
+            let mut active_scope = false;
             for sub in sessions {
                 after_map.insert(sub.session_id, sub.after_seq);
                 resolved.insert(sub.session_id);
+                explicit_sessions.insert(sub.session_id);
             }
             for session_id in session_ids {
                 resolved.insert(session_id);
+                explicit_sessions.insert(session_id);
             }
             if matches!(scope, Some(WorkspaceActiveSnapshotSubscribeScope::Active)) {
+                active_scope = true;
                 let snapshot = state
                     .workspace_active_snapshot
                     .active_snapshot(workspace_id, i64::MAX)
                     .await;
                 for task in snapshot.active.tasks {
-                    let session_id = task
-                        .task
-                        .primary_session_id
-                        .unwrap_or(task.primary_session.session.id);
+                    let session_id = primary_session_id_for_active_task(&task);
                     resolved.insert(session_id);
+                    active_task_sessions.insert(task.task.id, session_id);
                 }
             }
             if !task_ids.is_empty() {
@@ -1226,6 +1320,7 @@ async fn resolve_workspace_active_snapshot_subscriptions(
                     }
                     if let Some(primary_session_id) = task.primary_session_id {
                         resolved.insert(primary_session_id);
+                        explicit_sessions.insert(primary_session_id);
                     }
                 }
             }
@@ -1234,7 +1329,11 @@ async fn resolve_workspace_active_snapshot_subscriptions(
                 .into_iter()
                 .map(|session_id| WorkspaceActiveSnapshotSessionSubscription {
                     session_id,
-                    after_seq: after_map.get(&session_id).copied().flatten(),
+                    after_seq: after_map
+                        .get(&session_id)
+                        .copied()
+                        .flatten()
+                        .or_else(|| existing.get(&session_id).map(|cursor| cursor.last_sent)),
                 })
                 .collect();
             for sub in next.iter_mut() {
@@ -1247,7 +1346,14 @@ async fn resolve_workspace_active_snapshot_subscriptions(
                 }
             }
             next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
-            Ok(next)
+            Ok(ResolvedWorkspaceActiveSubscriptions {
+                sessions: next,
+                state: WorkspaceActiveSubscriptionState {
+                    active_scope,
+                    explicit_sessions,
+                    active_task_sessions,
+                },
+            })
         }
     }
 }
@@ -1269,6 +1375,7 @@ async fn handle_workspace_active_snapshot_ws(
         .subscribe(workspace_id)
         .await;
     let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
+    let mut subscription_state = WorkspaceActiveSubscriptionState::default();
     let mut reset_queued = false;
 
     let (snapshot_rev, archived_rev) =
@@ -1304,7 +1411,9 @@ async fn handle_workspace_active_snapshot_ws(
             let mut tick = tokio::time::interval(HEAD_BATCH_FLUSH_INTERVAL);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                if let Some(message) = control.pop().await {
+                if let Some(entry) = control.pop().await {
+                    let message = entry.message;
+                    let queued_ms = entry.enqueued_at.elapsed().as_millis();
                     let is_snapshot = matches!(
                         message,
                         WorkspaceActiveSnapshotStreamMessage::Snapshot { .. }
@@ -1316,11 +1425,40 @@ async fn handle_workspace_active_snapshot_ws(
                             with_stream_rev(other, stream_seq)
                         }
                     };
+                    let serialize_start = Instant::now();
                     let Ok(text) = serde_json::to_string(&message) else {
                         break;
                     };
+                    let payload_bytes = text.len();
+                    let send_start = Instant::now();
                     if sender.send(WsMessage::Text(text)).await.is_err() {
                         break;
+                    }
+                    if is_snapshot {
+                        let encode_ms = serialize_start.elapsed().as_millis();
+                        let send_ms = send_start.elapsed().as_millis();
+                        let (task_count, head_count) = match &message {
+                            WorkspaceActiveSnapshotStreamMessage::Snapshot {
+                                active_snapshot,
+                                active_heads,
+                                ..
+                            } => (
+                                active_snapshot.active.tasks.len(),
+                                active_heads.as_ref().map(|h| h.heads.len()).unwrap_or(0),
+                            ),
+                            _ => (0, 0),
+                        };
+                        tracing::error!(
+                            target: "ctx_http.ws_active_snapshot",
+                            workspace_id = %workspace_id.0,
+                            snapshot_bytes = payload_bytes,
+                            snapshot_queue_ms = queued_ms,
+                            snapshot_encode_ms = encode_ms,
+                            snapshot_send_ms = send_ms,
+                            active_tasks = task_count,
+                            active_heads = head_count,
+                            "workspace snapshot sent",
+                        );
                     }
                     if is_snapshot {
                         send_control.clear_hydrating();
@@ -1380,10 +1518,11 @@ async fn handle_workspace_active_snapshot_ws(
                                 state
                                     .ensure_workspace_active_snapshot_hydrated(workspace_id)
                                     .await;
-                                let next = match resolve_workspace_active_snapshot_subscriptions(
+                                let resolved = match resolve_workspace_active_snapshot_subscriptions(
                                     &state,
                                     workspace_id,
                                     message,
+                                    &subscriptions,
                                 )
                                 .await
                                 {
@@ -1425,7 +1564,7 @@ async fn handle_workspace_active_snapshot_ws(
 
                                     let mut next_map = HashMap::new();
                                     let mut replay_failed = false;
-                                    for sub in next {
+                                    for sub in resolved.sessions {
                                         let after_seq = sub.after_seq.unwrap_or(0);
                                         let control = control.clone();
                                         let head_buffer = head_buffer.clone();
@@ -1507,6 +1646,7 @@ async fn handle_workspace_active_snapshot_ws(
                                     continue;
                                 }
                                 subscriptions = next_map;
+                                subscription_state = resolved.state;
                             }
                         }
                         Some(Ok(WsMessage::Binary(bytes))) => {
@@ -1524,10 +1664,11 @@ async fn handle_workspace_active_snapshot_ws(
                                     state
                                         .ensure_workspace_active_snapshot_hydrated(workspace_id)
                                         .await;
-                                    let next = match resolve_workspace_active_snapshot_subscriptions(
+                                    let resolved = match resolve_workspace_active_snapshot_subscriptions(
                                         &state,
                                         workspace_id,
                                         message,
+                                        &subscriptions,
                                     )
                                     .await
                                     {
@@ -1569,7 +1710,7 @@ async fn handle_workspace_active_snapshot_ws(
 
                                     let mut next_map = HashMap::new();
                                     let mut replay_failed = false;
-                                    for sub in next {
+                                    for sub in resolved.sessions {
                                         let after_seq = sub.after_seq.unwrap_or(0);
                                         let control = control.clone();
                                         let head_buffer = head_buffer.clone();
@@ -1651,6 +1792,7 @@ async fn handle_workspace_active_snapshot_ws(
                                         continue;
                                     }
                                     subscriptions = next_map;
+                                    subscription_state = resolved.state;
                                 }
                             }
                         }
@@ -1690,6 +1832,42 @@ async fn handle_workspace_active_snapshot_ws(
 
                     if reset_queued {
                         continue;
+                    }
+
+                    if subscription_state.active_scope {
+                        match &event {
+                            WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
+                                let session_id = primary_session_id_for_active_task(task);
+                                subscription_state
+                                    .active_task_sessions
+                                    .insert(task.task.id, session_id);
+                                if !subscriptions.contains_key(&session_id) {
+                                    let last_sent = state
+                                        .workspace_active_snapshot
+                                        .session_last_event_seq(workspace_id, session_id)
+                                        .await;
+                                    subscriptions.insert(session_id, SessionCursor { last_sent });
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. } => {
+                                if let Some(session_id) =
+                                    subscription_state.active_task_sessions.remove(task_id)
+                                {
+                                    let still_active = subscription_state
+                                        .active_task_sessions
+                                        .values()
+                                        .any(|id| *id == session_id);
+                                    if !still_active
+                                        && !subscription_state
+                                            .explicit_sessions
+                                            .contains(&session_id)
+                                    {
+                                        subscriptions.remove(&session_id);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
                     }
 
                     if let WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } = &event {
