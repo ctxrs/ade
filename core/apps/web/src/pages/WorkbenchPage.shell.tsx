@@ -3604,6 +3604,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           <div className="wb-sidebar-header">
             <input
               className="wb-search"
+              data-testid="workbench-task-search"
               placeholder="Search Tasks"
               value={taskQuery}
               onChange={(e) => setTaskQuery(e.target.value)}

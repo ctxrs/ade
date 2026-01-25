@@ -4,14 +4,18 @@ import { tmpdir } from "os";
 import path from "path";
 import type { APIRequestContext } from "playwright/test";
 
+type NumberRange = { min: number; max: number };
+
 type SeedOptions = {
   tasks: number;
-  sessionsPerTask: number | { min: number; max: number };
+  sessionsPerTask: number | NumberRange;
   turnsPerSession: number;
   workspaceName?: string;
   repoRoot?: string;
   throttleMs?: number;
   createDefaultSession?: boolean;
+  messageBytes?: number | NumberRange;
+  messagePrefix?: string;
   includeToolSummaries?: boolean;
   toolSummariesPerTurn?: number;
   toolSummaryFixtures?: Array<{
@@ -30,7 +34,23 @@ type SeedResult = {
   sessionIdsByTask: Record<string, string[]>;
 };
 
-const parseCount = (value: number | { min: number; max: number }, index: number): number => {
+type StreamOptions = {
+  sessionIds: string[];
+  intervalMs?: number;
+  durationMs?: number;
+  messageBytes?: number | NumberRange;
+  messagePrefix?: string;
+  includeToolSummaries?: boolean;
+  toolSummariesPerTurn?: number;
+  toolSummaryFixtures?: Array<{
+    kind: string;
+    title?: string;
+    input?: any;
+    output_text?: string;
+  }>;
+};
+
+const parseCount = (value: number | NumberRange, index: number): number => {
   if (typeof value === "number") return value;
   const span = Math.max(0, value.max - value.min);
   return value.min + (index % (span + 1));
@@ -70,6 +90,13 @@ const chunkFixtures = (fixtures: SeedOptions["toolSummaryFixtures"], count: numb
 const buildToolMarker = (fixtures: SeedOptions["toolSummaryFixtures"]) => {
   if (!fixtures || fixtures.length === 0) return "";
   return `\n[[tool_calls]]\n${JSON.stringify(fixtures)}\n[[/tool_calls]]`;
+};
+
+const buildPaddedMessage = (base: string, targetBytes?: number): string => {
+  if (!targetBytes || targetBytes <= base.length) return base;
+  const padding = targetBytes - base.length;
+  if (padding === 1) return `${base} `;
+  return `${base} ${"x".repeat(padding - 1)}`;
 };
 
 function initRepo(): string {
@@ -117,6 +144,8 @@ export async function seedDummyWorkspace(
   const includeToolSummaries = Boolean(opts.includeToolSummaries);
   const toolSummariesPerTurn = opts.toolSummariesPerTurn ?? 6;
   const toolSummaryFixtures = opts.toolSummaryFixtures ?? DEFAULT_TOOL_FIXTURES;
+  const messagePrefix = opts.messagePrefix ?? "fixture msg";
+  const messageBytes = opts.messageBytes;
   const awaitTurnCompletion = Boolean(opts.awaitTurnCompletion);
   const completionTimeoutMs = opts.completionTimeoutMs ?? 15_000;
 
@@ -141,8 +170,13 @@ export async function seedDummyWorkspace(
           ? chunkFixtures(toolSummaryFixtures, toolSummariesPerTurn, t * toolSummariesPerTurn)
           : [];
         const toolMarker = includeToolSummaries ? buildToolMarker(toolFixtures) : "";
+        const baseMessage = `${messagePrefix} ${i + 1}.${s + 1}.${t + 1}`;
+        const paddedMessage = buildPaddedMessage(
+          baseMessage,
+          messageBytes ? parseCount(messageBytes, t) : undefined,
+        );
         await apiPost(request, `/api/sessions/${session.id}/messages`, {
-          content: `fixture msg ${i + 1}.${s + 1}.${t + 1}${toolMarker}`,
+          content: `${paddedMessage}${toolMarker}`,
           delivery: "immediate",
         });
         if (awaitTurnCompletion) {
@@ -171,4 +205,67 @@ export async function seedDummyWorkspace(
   }
 
   return { workspaceId: workspace.id, taskIds, sessionIdsByTask };
+}
+
+export function startStreamingMessages(
+  request: APIRequestContext,
+  opts: StreamOptions,
+): { stop: () => Promise<void> } {
+  const intervalMs = opts.intervalMs ?? 250;
+  const messagePrefix = opts.messagePrefix ?? "stream msg";
+  const includeToolSummaries = Boolean(opts.includeToolSummaries);
+  const toolSummariesPerTurn = opts.toolSummariesPerTurn ?? 3;
+  const toolSummaryFixtures = opts.toolSummaryFixtures ?? DEFAULT_TOOL_FIXTURES;
+  const messageBytes = opts.messageBytes;
+  const sessionIds = opts.sessionIds;
+
+  if (!sessionIds || sessionIds.length === 0) {
+    throw new Error("startStreamingMessages requires at least one session id");
+  }
+
+  let stopped = false;
+  let tick = 0;
+  let inflight: Promise<void> = Promise.resolve();
+
+  const sendOnce = async () => {
+    if (stopped) return;
+    const sessionId = sessionIds[tick % sessionIds.length];
+    const toolFixtures = includeToolSummaries
+      ? chunkFixtures(toolSummaryFixtures, toolSummariesPerTurn, tick * toolSummariesPerTurn)
+      : [];
+    const toolMarker = includeToolSummaries ? buildToolMarker(toolFixtures) : "";
+    const baseMessage = `${messagePrefix} ${tick + 1}`;
+    const paddedMessage = buildPaddedMessage(
+      baseMessage,
+      messageBytes ? parseCount(messageBytes, tick) : undefined,
+    );
+    tick += 1;
+    await apiPost(request, `/api/sessions/${sessionId}/messages`, {
+      content: `${paddedMessage}${toolMarker}`,
+      delivery: "immediate",
+    });
+  };
+
+  const timer = setInterval(() => {
+    inflight = inflight.then(sendOnce).catch(() => {
+      // Swallow to keep the interval alive for the test harness.
+    });
+  }, intervalMs);
+
+  const stop = async () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(timer);
+    await inflight;
+  };
+
+  if (opts.durationMs && opts.durationMs > 0) {
+    setTimeout(() => {
+      stop().catch(() => {
+        // ignore
+      });
+    }, opts.durationMs);
+  }
+
+  return { stop };
 }
