@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "ctx-mobile",
+    "slug": "ctx-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#171717"
+    },
+    "plugins": ["./plugins/withDevMenuOnboarding", "./plugins/withDisableDevLoadingView"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "rs.ctx.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Scan QR codes to connect the device.",
+        "NSMicrophoneUsageDescription": "Send voice messages.",
+        "NSPhotoLibraryUsageDescription": "Attach images.",
+        "NSPhotoLibraryAddUsageDescription": "Save images."
+      }
+    },
+    "android": {
+      "package": "rs.ctx.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#171717"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

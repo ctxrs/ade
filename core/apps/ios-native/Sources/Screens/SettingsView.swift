@@ -44,6 +44,10 @@ struct SettingsView: View {
     @State private var pushStatusMessage: String?
     @State private var pushWorking = false
 
+    private var isUITestPreview: Bool {
+        UITestOverrides.isActive(.settings)
+    }
+
     private let supabaseTokenStore = KeychainTokenStore(service: "rs.ctx.mobile", account: "supabaseToken")
     private let deviceIdentityStore = DeviceIdentityStore()
 
@@ -207,10 +211,12 @@ struct SettingsView: View {
             _Concurrency.Task { await refreshAll() }
         }
         .onChange(of: pushManager.pushToken) { _ in
+            guard !isUITestPreview else { return }
             guard pushManager.isEnabled else { return }
             _Concurrency.Task { await syncPushRegistration(enabled: true) }
         }
         .onChange(of: routingProviderId) { newValue in
+            guard !isUITestPreview else { return }
             guard let workspaceId = selectedWorkspaceId, !newValue.isEmpty else { return }
             _Concurrency.Task { await ensureProviderOptions(newValue, workspaceId: workspaceId, force: false) }
         }
@@ -370,7 +376,8 @@ struct SettingsView: View {
     }
 
     private var routingEnabled: Bool {
-        connection.apiClient != nil && selectedWorkspaceId != nil && daemonKey != nil
+        if isUITestPreview { return true }
+        return connection.apiClient != nil && selectedWorkspaceId != nil && daemonKey != nil
     }
 
     private var routingProviderChoices: [String] {
@@ -482,7 +489,35 @@ struct SettingsView: View {
     }
 
     @MainActor
+    private func applyUITestFixtures() {
+        settings = UITestFixtures.settings
+        settingsError = nil
+        telemetryEnabled = UITestFixtures.settings.telemetry?.enabled ?? true
+        telemetryReady = true
+        isLoadingSettings = false
+        mobileStatus = UITestFixtures.mobileAccessStatus
+        mobileStatusError = nil
+        isLoadingMobileStatus = false
+        entitlements = UITestFixtures.entitlements
+        entitlementsError = nil
+        entitlementsLoading = false
+        hasSupabaseToken = true
+        supabaseEmail = UITestFixtures.supabaseEmail
+        providers = UITestFixtures.providers
+        providersError = nil
+        isLoadingProviders = false
+        routingEntry = UITestFixtures.routingEntry
+        routingProviderId = UITestFixtures.routingEntry.providerId
+        routingModelId = UITestFixtures.routingEntry.modelId
+        routingError = nil
+    }
+
+    @MainActor
     private func refreshAll() async {
+        if isUITestPreview {
+            applyUITestFixtures()
+            return
+        }
         await refreshSettings()
         await refreshProviders()
         await refreshMobileStatus()

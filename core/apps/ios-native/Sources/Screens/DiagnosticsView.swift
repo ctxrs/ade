@@ -9,6 +9,10 @@ struct DiagnosticsView: View {
     @State private var errorMessage: String?
     @State private var didCopy = false
 
+    private var isUITestPreview: Bool {
+        UITestOverrides.isActive(.diagnostics)
+    }
+
     var body: some View {
         ZStack {
             CtxBackgroundView()
@@ -167,6 +171,13 @@ struct DiagnosticsView: View {
 
     @MainActor
     private func refreshDiagnostics() async {
+        if isUITestPreview {
+            diagnostics = UITestFixtures.diagnostics
+            errorMessage = nil
+            isLoading = false
+            didCopy = false
+            return
+        }
         guard let client = connection.apiClient else {
             diagnostics = nil
             errorMessage = nil

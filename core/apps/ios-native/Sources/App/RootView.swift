@@ -7,20 +7,32 @@ struct RootView: View {
     @State private var didBootstrap = false
 
     var body: some View {
-        NavigationStack {
-            Group {
-                switch rootNavigation.route {
-                case .launcher:
-                    ConnectionView()
-                case .workbench:
-                    WorkbenchShellView()
+        let uiTestScreen = UITestOverrides.screen
+        Group {
+            if let uiTestScreen {
+                UITestScreenOverrideView(screen: uiTestScreen)
+            } else {
+                NavigationStack {
+                    Group {
+                        switch rootNavigation.route {
+                        case .launcher:
+                            ConnectionView()
+                        case .workbench:
+                            WorkbenchShellView()
+                        }
+                    }
+                    .toolbar(.hidden, for: .navigationBar)
                 }
             }
-            .toolbar(.hidden, for: .navigationBar)
         }
         .preferredColorScheme(.dark)
-        .task { await bootstrapIfNeeded() }
+        .task {
+            if uiTestScreen == nil {
+                await bootstrapIfNeeded()
+            }
+        }
         .onChange(of: connection.isConnected) { connected in
+            guard uiTestScreen == nil else { return }
             if connected {
                 rootNavigation.route = .workbench
             } else if rootNavigation.route == .workbench {

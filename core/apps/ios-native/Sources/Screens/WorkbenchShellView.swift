@@ -1686,6 +1686,53 @@ private struct WorkbenchDrawerView: View {
     }
 }
 
+struct WorkbenchTaskListPreviewView: View {
+    @State private var taskQuery = ""
+    private let drawerWidth: CGFloat = 320
+    private let workspaces = UITestFixtures.taskListWorkspaces
+    private let activeTasks = UITestFixtures.taskListActiveTasks
+    private let archivedTasks = UITestFixtures.taskListArchivedTasks
+
+    private var selectedWorkspace: WorkspaceSummary? {
+        workspaces.first
+    }
+
+    private var taskRowIndicators: [String: TaskRowIndicators] {
+        let tasks = activeTasks + archivedTasks
+        return Dictionary(uniqueKeysWithValues: tasks.map { ($0.task.id.stringValue, TaskRowIndicators(task: $0)) })
+    }
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            CtxBackgroundView()
+            WorkbenchDrawerView(
+                workspaces: workspaces,
+                selectedWorkspace: selectedWorkspace,
+                isLoadingWorkspaces: false,
+                workspaceError: nil,
+                activeTasks: activeTasks,
+                archivedTasks: archivedTasks,
+                isLoadingTasks: false,
+                isRefreshingTasks: false,
+                taskError: nil,
+                activeTaskId: activeTasks.first?.task.id.stringValue,
+                taskRowIndicators: taskRowIndicators,
+                taskQuery: $taskQuery,
+                drawerWidth: drawerWidth,
+                onRefresh: {},
+                onSelectTask: { _ in },
+                onNewTask: {},
+                onRenameTask: { _ in },
+                onArchiveToggle: { _ in },
+                markReadInFlight: Set<String>(),
+                deleteInFlight: Set<String>(),
+                onToggleReadState: { _ in },
+                onDeleteTask: { _ in }
+            )
+        }
+    }
+}
+
 private struct WorkbenchWorkspaceSwitcherView: View {
     let workspaces: [WorkspaceSummary]
     let selectedWorkspace: WorkspaceSummary?
@@ -1848,6 +1895,10 @@ private struct WorkbenchNewTaskView: View {
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var pendingAttachments: [MessageAttachment] = []
     @FocusState private var isPromptFocused: Bool
+
+    private var isUITestPreview: Bool {
+        UITestOverrides.isActive(.newTask)
+    }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -2097,7 +2148,26 @@ private struct WorkbenchNewTaskView: View {
     }
 
     @MainActor
+    private func applyUITestFixtures() {
+        providers = UITestFixtures.providers
+        models = UITestFixtures.newTaskModels
+        routingEntry = UITestFixtures.routingEntry
+        selectedProviderId = providers.first?.providerId ?? ""
+        selectedModelId = models.first ?? ""
+        selectedEffortId = ""
+        selectedMode = .default
+        isLoadingProviders = false
+        isLoadingModels = false
+        errorMessage = nil
+        isSubmitting = false
+    }
+
+    @MainActor
     private func loadProviders() async {
+        if isUITestPreview {
+            applyUITestFixtures()
+            return
+        }
         guard let client = connection.apiClient else {
             providers = []
             errorMessage = "Connect to a daemon to start."
@@ -2130,6 +2200,9 @@ private struct WorkbenchNewTaskView: View {
 
     @MainActor
     private func loadModels() async {
+        if isUITestPreview {
+            return
+        }
         guard let client = connection.apiClient, !effectiveProviderId.isEmpty else {
             models = []
             isLoadingModels = false
@@ -2316,6 +2389,20 @@ private struct WorkbenchNewTaskView: View {
         let suffix = (fileExtension?.isEmpty == false) ? ".\(fileExtension ?? "")" : ""
         let shortId = String(UUID().uuidString.prefix(8))
         return "photo-\(shortId)\(suffix)"
+    }
+}
+
+struct WorkbenchNewTaskPreviewView: View {
+    var body: some View {
+        ZStack {
+            CtxBackgroundView()
+            WorkbenchNewTaskView(
+                workspace: UITestFixtures.workspace,
+                isLoadingTasks: false,
+                taskError: nil,
+                onTaskCreated: {}
+            )
+        }
     }
 }
 

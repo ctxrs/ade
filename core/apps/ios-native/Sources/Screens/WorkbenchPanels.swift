@@ -97,6 +97,7 @@ private struct WorkbenchPanelScaffold<Content: View>: View {
 struct WorkbenchDiffPanelView: View {
     @EnvironmentObject private var connection: ConnectionStore
     let session: SessionSummary?
+    private let preview: DiffPreview?
 
     @State private var diffText = ""
     @State private var diffFiles: [DiffFile] = []
@@ -105,6 +106,20 @@ struct WorkbenchDiffPanelView: View {
     @State private var diffSummary: DiffSummary?
     @State private var isLoading = false
     @State private var errorMessage: String?
+
+    init(session: SessionSummary?) {
+        self.session = session
+        self.preview = nil
+    }
+
+    private init(session: SessionSummary?, preview: DiffPreview?) {
+        self.session = session
+        self.preview = preview
+    }
+
+    static func uiTestView() -> WorkbenchDiffPanelView {
+        WorkbenchDiffPanelView(session: nil, preview: .uiTest)
+    }
 
     private var hasChanges: Bool {
         !diffText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -190,6 +205,16 @@ struct WorkbenchDiffPanelView: View {
 
     @MainActor
     private func loadDiff() async {
+        if let preview {
+            diffText = preview.diffText
+            diffFiles = preview.files
+            statusSummary = preview.statusSummary
+            diffSummary = preview.diffSummary
+            expandedFileIds = Set(preview.files.map(\.id))
+            errorMessage = nil
+            isLoading = false
+            return
+        }
         guard let sessionId = session?.id, !sessionId.isEmpty else {
             diffText = ""
             diffFiles = []
@@ -303,6 +328,54 @@ private struct DiffSummary: Equatable {
     let fileCount: Int
     let additions: Int
     let deletions: Int
+}
+
+private struct DiffPreview {
+    let diffText: String
+    let statusSummary: String
+    let diffSummary: DiffSummary
+    let files: [DiffFile]
+
+    static let uiTest: DiffPreview = {
+        let diffText = """
+        diff --git a/core/apps/ios-native/Sources/App/RootView.swift b/core/apps/ios-native/Sources/App/RootView.swift
+        index 2b4e9b4..a83e3d1 100644
+        --- a/core/apps/ios-native/Sources/App/RootView.swift
+        +++ b/core/apps/ios-native/Sources/App/RootView.swift
+        @@ -10,6 +10,10 @@ struct RootView: View {
+         @State private var didBootstrap = false
+
+         var body: some View {
+        +    let uiTestScreen = UITestOverrides.screen
+        +    if let uiTestScreen {
+        +        UITestScreenOverrideView(screen: uiTestScreen)
+        +    }
+        diff --git a/core/apps/ios-native/Sources/App/UITestOverrides.swift b/core/apps/ios-native/Sources/App/UITestOverrides.swift
+        new file mode 100644
+        index 0000000..1d2f3a4
+        --- /dev/null
+        +++ b/core/apps/ios-native/Sources/App/UITestOverrides.swift
+        @@ -0,0 +1,4 @@
+        +import Foundation
+        +enum UITestOverrides {}
+        """
+        let parseResult = parseUnifiedDiff(diffText)
+        let diffSummary = DiffSummary(
+            fileCount: parseResult.files.count,
+            additions: parseResult.additions,
+            deletions: parseResult.deletions
+        )
+        let statusSummary = """
+         M core/apps/ios-native/Sources/App/RootView.swift
+         A core/apps/ios-native/Sources/App/UITestOverrides.swift
+        """
+        return DiffPreview(
+            diffText: diffText,
+            statusSummary: statusSummary,
+            diffSummary: diffSummary,
+            files: parseResult.files
+        )
+    }()
 }
 
 private struct DiffFile: Identifiable, Hashable {

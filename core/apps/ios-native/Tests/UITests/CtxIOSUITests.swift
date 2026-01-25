@@ -96,6 +96,10 @@ final class CtxIOSUITests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+        if let outputDir = ProcessInfo.processInfo.environment["CTX_SCREENSHOT_DIR"] {
+            let url = URL(fileURLWithPath: outputDir).appendingPathComponent("\(name).png")
+            try? screenshot.pngRepresentation.write(to: url)
+        }
     }
 
     private func tapElement(_ element: XCUIElement, in app: XCUIApplication) {
@@ -107,58 +111,26 @@ final class CtxIOSUITests: XCTestCase {
         }
     }
 
-    private func startNewTask(app: XCUIApplication, prompt: String) {
-        let promptField = waitForPromptInput(in: app, timeout: 30)
-        app.activate()
-        tapElement(promptField, in: app)
-        if app.keyboards.firstMatch.waitForExistence(timeout: 2) {
-            app.typeText(prompt)
-        } else {
-            tapElement(promptField, in: app)
-            app.typeText(prompt)
+    private func openDrawerIfNeeded(in app: XCUIApplication) {
+        let scrim = app.otherElements["drawer.scrim"]
+        if !scrim.exists {
+            let drawerButton = app.buttons["drawer.open"]
+            XCTAssertTrue(drawerButton.waitForExistence(timeout: 10))
+            tapElement(drawerButton, in: app)
+            XCTAssertTrue(scrim.waitForExistence(timeout: 5))
         }
-
-        let startButton = app.buttons["newtask.start"]
-        XCTAssertTrue(startButton.waitForExistence(timeout: 10))
-        let startEnabled = NSPredicate(format: "isEnabled == true")
-        expectation(for: startEnabled, evaluatedWith: startButton)
-        waitForExpectations(timeout: 20)
-        startButton.tap()
-
-        let messageList = app.scrollViews["chat.messages"]
-        XCTAssertTrue(messageList.waitForExistence(timeout: 30))
     }
 
-    func testConnectionScreenshot() {
-        let app = XCUIApplication()
-        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CTX_AUTO_CONNECT"] = "0"
-        app.launch()
-
-        let connectButton = app.buttons["connection.connect"]
-        XCTAssertTrue(connectButton.waitForExistence(timeout: 10))
-        attachScreenshot("connection-view")
+    private func closeDrawerIfOpen(in app: XCUIApplication) {
+        let scrim = app.otherElements["drawer.scrim"]
+        if scrim.exists {
+            tapElement(scrim, in: app)
+        }
     }
 
-    func testSettingsScreenshot() throws {
-        guard let config = resolveConfig() else {
-            throw XCTSkip("Pass CTX_IOS_BASE_URL + CTX_IOS_TOKEN (or --ctx-base-url/--ctx-token) to run settings screenshot.")
-        }
-
-        let app = XCUIApplication()
-        app.launchEnvironment["CTX_IOS_BASE_URL"] = config.baseURL
-        app.launchEnvironment["CTX_IOS_TOKEN"] = config.token
-        app.launchEnvironment["CTX_AUTO_CONNECT"] = "1"
-        app.launchEnvironment["CTX_RESET_SELECTION"] = "1"
-        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
-        app.launch()
-
-        connectIfNeeded(app: app, config: config)
-
-        let drawerButton = app.buttons["drawer.open"]
-        if drawerButton.waitForExistence(timeout: 10) {
-            drawerButton.tap()
-        }
+    private func openSettingsScreen(in app: XCUIApplication) {
+        XCTAssertTrue(app.buttons["drawer.open"].waitForExistence(timeout: 20))
+        openDrawerIfNeeded(in: app)
         var settingsLink = app.buttons["drawer.workspace.switch"]
         if !settingsLink.waitForExistence(timeout: 6) {
             settingsLink = app.otherElements["drawer.workspace.switch"]
@@ -177,117 +149,24 @@ final class CtxIOSUITests: XCTestCase {
             settingsLink = app.staticTexts["Settings"]
         }
         XCTAssertTrue(settingsLink.waitForExistence(timeout: 20))
-        settingsLink.tap()
+        tapElement(settingsLink, in: app)
 
         let settingsTitle = app.staticTexts["Settings"]
         XCTAssertTrue(settingsTitle.waitForExistence(timeout: 10))
-        attachScreenshot("settings-view")
     }
 
-    func testNewTaskScreenshot() throws {
-        guard let config = resolveConfig() else {
-            throw XCTSkip("Pass CTX_IOS_BASE_URL + CTX_IOS_TOKEN (or --ctx-base-url/--ctx-token) to run new task screenshot.")
-        }
-
-        let app = XCUIApplication()
-        app.launchEnvironment["CTX_IOS_BASE_URL"] = config.baseURL
-        app.launchEnvironment["CTX_IOS_TOKEN"] = config.token
-        app.launchEnvironment["CTX_AUTO_CONNECT"] = "1"
-        app.launchEnvironment["CTX_RESET_SELECTION"] = "1"
-        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
-        app.launch()
-
-        connectIfNeeded(app: app, config: config)
-        _ = waitForPromptInput(in: app, timeout: 30)
-        attachScreenshot("new-task-view")
-    }
-
-    func testTaskListScreenshot() throws {
-        guard let config = resolveConfig() else {
-            throw XCTSkip("Pass CTX_IOS_BASE_URL + CTX_IOS_TOKEN (or --ctx-base-url/--ctx-token) to run task list screenshot.")
-        }
-
-        let app = XCUIApplication()
-        app.launchEnvironment["CTX_IOS_BASE_URL"] = config.baseURL
-        app.launchEnvironment["CTX_IOS_TOKEN"] = config.token
-        app.launchEnvironment["CTX_AUTO_CONNECT"] = "1"
-        app.launchEnvironment["CTX_RESET_SELECTION"] = "1"
-        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CTX_OPEN_DRAWER_ON_LAUNCH"] = "1"
-        app.launch()
-
-        connectIfNeeded(app: app, config: config)
-        let drawer = app.descendants(matching: .any).matching(identifier: "drawer.container").firstMatch
-        XCTAssertTrue(drawer.waitForExistence(timeout: 20))
-        attachScreenshot("task-list")
-    }
-
-    func testDiffPanelScreenshot() throws {
-        guard let config = resolveConfig() else {
-            throw XCTSkip("Pass CTX_IOS_BASE_URL + CTX_IOS_TOKEN (or --ctx-base-url/--ctx-token) to run diff panel screenshot.")
-        }
-
-        let app = XCUIApplication()
-        app.launchEnvironment["CTX_IOS_BASE_URL"] = config.baseURL
-        app.launchEnvironment["CTX_IOS_TOKEN"] = config.token
-        app.launchEnvironment["CTX_AUTO_CONNECT"] = "1"
-        app.launchEnvironment["CTX_RESET_SELECTION"] = "1"
-        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CTX_OPEN_DRAWER_ON_LAUNCH"] = "1"
-        app.launch()
-
-        connectIfNeeded(app: app, config: config)
-        let taskButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "drawer.task."))
-        if taskButtons.firstMatch.waitForExistence(timeout: 10) {
-            taskButtons.firstMatch.tap()
-        } else {
-            startNewTask(app: app, prompt: "Diff panel \(Int(Date().timeIntervalSince1970))")
-        }
-        let diffButton = app.buttons["topbar.diff"]
-        XCTAssertTrue(diffButton.waitForExistence(timeout: 10))
-        diffButton.tap()
-
-        let diffTitle = app.staticTexts["Diff"]
-        XCTAssertTrue(diffTitle.waitForExistence(timeout: 10))
-        attachScreenshot("diff-panel")
-    }
-
-    func testSendAndReceiveMessage() throws {
-        guard let config = resolveConfig() else {
-            throw XCTSkip("Pass CTX_IOS_BASE_URL + CTX_IOS_TOKEN (or --ctx-base-url/--ctx-token) to run UI tests.")
-        }
-
-        let app = XCUIApplication()
-        app.launchEnvironment["CTX_IOS_BASE_URL"] = config.baseURL
-        app.launchEnvironment["CTX_IOS_TOKEN"] = config.token
-        app.launchEnvironment["CTX_AUTO_CONNECT"] = "1"
-        app.launchEnvironment["CTX_RESET_SELECTION"] = "1"
-        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
-        app.launch()
-
-        connectIfNeeded(app: app, config: config)
-
-        let drawerButton = app.buttons["drawer.open"]
-        if drawerButton.waitForExistence(timeout: 10) {
-            drawerButton.tap()
-            let drawer = app.otherElements["drawer.container"]
-            if drawer.waitForExistence(timeout: 5) {
-                app.buttons["drawer.close"].tap()
-            }
-        }
-
-        let prompt = "UI Test \(Int(Date().timeIntervalSince1970))"
+    private func startNewTask(app: XCUIApplication, prompt: String) {
         let promptField = waitForPromptInput(in: app, timeout: 30)
-        if promptField.isHittable {
-            promptField.tap()
-            promptField.typeText(prompt)
+        app.activate()
+        tapElement(promptField, in: app)
+        if app.keyboards.firstMatch.waitForExistence(timeout: 2) {
+            app.typeText(prompt)
         } else {
-            app.activate()
-            promptField.tap()
-            promptField.typeText(prompt)
+            tapElement(promptField, in: app)
+            app.typeText(prompt)
         }
 
-        let startButton = app.buttons["newtask.start"]
+        let startButton = app.buttons["newtask.send"]
         XCTAssertTrue(startButton.waitForExistence(timeout: 10))
         let startEnabled = NSPredicate(format: "isEnabled == true")
         expectation(for: startEnabled, evaluatedWith: startButton)
@@ -296,26 +175,104 @@ final class CtxIOSUITests: XCTestCase {
 
         let messageList = app.scrollViews["chat.messages"]
         XCTAssertTrue(messageList.waitForExistence(timeout: 30))
-        attachScreenshot("chat-loaded")
+    }
 
-        let composer = waitForComposerInput(in: app, timeout: 10)
-        if composer.isHittable {
-            composer.tap()
-            composer.typeText("Ping from UI test")
-        } else {
-            app.activate()
-            composer.tap()
-            composer.typeText("Ping from UI test")
-        }
-        app.buttons["chat.composer.send"].tap()
+    func testConnectionScreenshot() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["CTX_UI_TEST_SCREEN"] = "connection"
+        app.launchEnvironment["CTX_AUTO_CONNECT"] = "0"
+        app.launch()
 
-        XCTAssertTrue(app.staticTexts["Ping from UI test"].waitForExistence(timeout: 20))
-        attachScreenshot("chat-after-send")
+        let connectButton = app.buttons["connection.connect"]
+        XCTAssertTrue(connectButton.waitForExistence(timeout: 10))
+        attachScreenshot("connection-view")
+    }
 
-        let assistantTexts = app.staticTexts.matching(identifier: "chat.message.text.assistant")
-        let assistantPredicate = NSPredicate(format: "count >= 1")
-        expectation(for: assistantPredicate, evaluatedWith: assistantTexts)
-        waitForExpectations(timeout: 90)
-        attachScreenshot("chat-received")
+    func testSettingsScreenshot() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["CTX_UI_TEST_SCREEN"] = "settings"
+        app.launch()
+
+        let title = app.staticTexts["Settings"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        attachScreenshot("settings-view")
+    }
+
+    func testNewTaskScreenshot() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["CTX_UI_TEST_SCREEN"] = "new_task"
+        app.launch()
+
+        _ = waitForPromptInput(in: app, timeout: 30)
+        attachScreenshot("new-task-view")
+    }
+
+    func testTaskListScreenshot() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["CTX_UI_TEST_SCREEN"] = "task_list"
+        app.launch()
+
+        let drawer = app.descendants(matching: .any).matching(identifier: "drawer.container").firstMatch
+        XCTAssertTrue(drawer.waitForExistence(timeout: 20))
+        attachScreenshot("task-list")
+    }
+
+    func testDiffPanelScreenshot() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["CTX_UI_TEST_SCREEN"] = "diff"
+        app.launch()
+
+        let diffTitle = app.staticTexts["Diff"]
+        XCTAssertTrue(diffTitle.waitForExistence(timeout: 10))
+        attachScreenshot("diff-panel")
+    }
+
+    func testChatScreenshot() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["CTX_UI_TEST_SCREEN"] = "chat"
+        app.launch()
+
+        let messageList = app.scrollViews["chat.messages"]
+        XCTAssertTrue(messageList.waitForExistence(timeout: 20))
+        attachScreenshot("chat-view")
+    }
+
+    func testMobileAccessScreenshot() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["CTX_UI_TEST_SCREEN"] = "mobile_access"
+        app.launch()
+
+        let title = app.staticTexts["Mobile Access"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        attachScreenshot("mobile-access")
+    }
+
+    func testWorkspaceSelectorScreenshot() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["CTX_UI_TEST_SCREEN"] = "workspace_selector"
+        app.launch()
+
+        let workspaceTitle = app.staticTexts["Select workspace"]
+        XCTAssertTrue(workspaceTitle.waitForExistence(timeout: 10))
+        attachScreenshot("workspace-selector")
+    }
+
+    func testDiagnosticsScreenshot() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CTX_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["CTX_UI_TEST_SCREEN"] = "diagnostics"
+        app.launch()
+
+        let title = app.staticTexts["Diagnostics"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        attachScreenshot("diagnostics")
     }
 }

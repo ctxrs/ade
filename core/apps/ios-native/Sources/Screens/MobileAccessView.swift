@@ -18,6 +18,10 @@ struct MobileAccessView: View {
     @State private var tokenMessage: String?
     @State private var didCopyPayload = false
 
+    private var isUITestPreview: Bool {
+        UITestOverrides.isActive(.mobileAccess)
+    }
+
     private let supabaseTokenStore = KeychainTokenStore(service: "rs.ctx.mobile", account: "supabaseToken")
 
     var body: some View {
@@ -199,11 +203,16 @@ struct MobileAccessView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .task {
+            if isUITestPreview {
+                applyUITestFixtures()
+                return
+            }
             await loadSupabaseToken()
             await refreshEntitlements()
             await refreshStatus()
         }
         .onChange(of: connection.isConnected) { _ in
+            guard !isUITestPreview else { return }
             _Concurrency.Task { await refreshStatus() }
         }
         .onChange(of: supabaseToken) { newValue in
@@ -238,6 +247,12 @@ struct MobileAccessView: View {
 
     @MainActor
     private func refreshStatus() async {
+        if isUITestPreview {
+            status = UITestFixtures.mobileAccessStatus
+            isLoadingStatus = false
+            errorMessage = nil
+            return
+        }
         guard let client = connection.apiClient else {
             status = nil
             return
@@ -309,6 +324,13 @@ struct MobileAccessView: View {
 
     @MainActor
     private func refreshEntitlements() async {
+        if isUITestPreview {
+            entitlements = UITestFixtures.entitlements
+            entitlementsLoading = false
+            entitlementsError = nil
+            hasSupabaseToken = true
+            return
+        }
         entitlementsError = nil
         let trimmed = supabaseToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -336,6 +358,22 @@ struct MobileAccessView: View {
         } catch {
             tokenMessage = "Failed to save Supabase token."
         }
+    }
+
+    @MainActor
+    private func applyUITestFixtures() {
+        status = UITestFixtures.mobileAccessStatus
+        lastEnableResponse = UITestFixtures.mobileAccessResponse
+        supabaseToken = "sbp_test_token"
+        entitlements = UITestFixtures.entitlements
+        entitlementsLoading = false
+        entitlementsError = nil
+        hasSupabaseToken = true
+        isLoadingStatus = false
+        isWorking = false
+        errorMessage = nil
+        tokenMessage = nil
+        didCopyPayload = false
     }
 
     private func sanitizedSupabaseToken() -> String? {
