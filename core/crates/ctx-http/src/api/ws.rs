@@ -446,12 +446,14 @@ async fn handle_mobile_secure_ws(
                                 subscription_state
                                     .active_task_sessions
                                     .insert(task.task.id, session_id);
-                                if !subscriptions.contains_key(&session_id) {
+                                if let std::collections::hash_map::Entry::Vacant(entry) =
+                                    subscriptions.entry(session_id)
+                                {
                                     let last_sent = state
                                         .workspace_active_snapshot
                                         .session_last_event_seq(workspace_id, session_id)
                                         .await;
-                                    subscriptions.insert(session_id, SessionCursor { last_sent });
+                                    entry.insert(SessionCursor { last_sent });
                                 }
                             }
                             WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. } => {
@@ -645,7 +647,9 @@ fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option<i64> {
         | WorkspaceActiveSnapshotEvent::SessionSummary { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionHeadDelta { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionGap { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::WorktreeBootstrap { snapshot_rev, .. } => Some(*snapshot_rev),
+        | WorkspaceActiveSnapshotEvent::WorktreeBootstrap { snapshot_rev, .. } => {
+            Some(*snapshot_rev)
+        }
         WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert { .. }
         | WorkspaceActiveSnapshotEvent::ArchivedTaskDelete { .. } => None,
     }
@@ -1939,12 +1943,14 @@ async fn handle_workspace_active_snapshot_ws(
                                 subscription_state
                                     .active_task_sessions
                                     .insert(task.task.id, session_id);
-                                if !subscriptions.contains_key(&session_id) {
+                                if let std::collections::hash_map::Entry::Vacant(entry) =
+                                    subscriptions.entry(session_id)
+                                {
                                     let last_sent = state
                                         .workspace_active_snapshot
                                         .session_last_event_seq(workspace_id, session_id)
                                         .await;
-                                    subscriptions.insert(session_id, SessionCursor { last_sent });
+                                    entry.insert(SessionCursor { last_sent });
                                 }
                             }
                             WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. } => {
