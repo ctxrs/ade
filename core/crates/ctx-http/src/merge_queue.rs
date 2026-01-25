@@ -16,13 +16,14 @@ use ctx_core::models::{
     MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSource, MergeQueueRun,
     MergeQueueRunStatus, SessionEventType, VcsKind, Workspace, Worktree,
 };
+use ctx_fs::git::{delete_branch, git_status_porcelain, rev_parse_ref};
 use ctx_fs::vcs::{self, ApplyPatchTarget, VcsDriver};
 use ctx_fs::worktrees::{create_worktree, remove_worktree};
 
 use crate::daemon::AppState;
 use crate::ops_events::OpsEvent;
 use crate::tool_cgroup::TOOL_SLICE_UNIT;
-use crate::workspace_config::{load_merge_queue_config, MergeQueueConfig};
+use crate::workspace_config::{load_merge_queue_config, MergeQueueCanonicalSync, MergeQueueConfig};
 
 #[derive(Debug, Clone)]
 pub struct MergeQueueSubmitParams {
@@ -31,6 +32,9 @@ pub struct MergeQueueSubmitParams {
     pub target_branch: Option<String>,
     pub message: Option<String>,
 }
+
+const MERGE_QUEUE_CANONICAL_REMOTE: &str = "canonical";
+const MERGE_QUEUE_HEAD_REF: &str = "refs/heads/ctx-merge-queue";
 
 fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
     vcs::driver_for_kind(worktree.vcs_kind.clone())
@@ -128,7 +132,8 @@ pub async fn submit_merge_queue_entry(
     let patch_text = worktree_patch.patch;
 
     let entry_id = MergeQueueEntryId::new();
-    let patch_path = write_patch_file(&state.data_root, entry_id, &patch_text).await?;
+    let patch_path =
+        write_patch_file(Path::new(&workspace.root_path), entry_id, &patch_text).await?;
     let now = Utc::now();
     let entry = MergeQueueEntry {
         id: entry_id,
@@ -251,7 +256,7 @@ async fn run_entry(
 ) -> Result<()> {
     let store = state.store_for_workspace(workspace.id).await?;
     let run_id = MergeQueueRunId::new();
-    let log_path = merge_queue_log_path(&state.data_root, run_id);
+    let log_path = merge_queue_log_path(Path::new(&workspace.root_path), run_id);
     let mut run = MergeQueueRun {
         id: run_id,
         entry_id: entry.id,
@@ -393,32 +398,50 @@ async fn run_entry_inner(
         .await
         .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
 
-    let target_head = resolve_target_head(vcs.as_ref(), &workspace.root_path, &entry.target_branch)
+    let worktree_path =
+        merge_queue_worktree_path(Path::new(&workspace.root_path), workspace.id, entry.id);
+    let worktree_branch = if vcs.kind() == VcsKind::Jj {
+        format!("ctx-merge-queue-{}", entry.id.0)
+    } else {
+        format!("ctx-merge-queue/{}", entry.id.0)
+    };
+    let (repo_root, target_head) = if vcs.kind() == VcsKind::Git {
+        let repo_root = ensure_merge_queue_repo(state, entry, workspace, cfg, log_file).await?;
+        let target_head =
+            ensure_merge_queue_target_branch(state, entry, &repo_root, &entry.target_branch)
+                .await?;
+        let _ = remove_worktree(&repo_root, &worktree_path).await;
+        let _ = delete_branch(&repo_root, &worktree_branch).await;
+        create_worktree(&repo_root, &worktree_path, &target_head, &worktree_branch)
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        (Some(repo_root), target_head)
+    } else {
+        let target_head =
+            resolve_target_head(vcs.as_ref(), &workspace.root_path, &entry.target_branch)
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        let _ = remove_worktree(&workspace.root_path, &worktree_path).await;
+        create_worktree(
+            &workspace.root_path,
+            &worktree_path,
+            &target_head,
+            &worktree_branch,
+        )
         .await
         .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-    let worktree_path = merge_queue_worktree_path(&state.data_root, workspace.id, entry.id);
-    let worktree_branch = format!("ctx-merge-queue/{}", entry.id.0);
-    let _ = remove_worktree(&workspace.root_path, &worktree_path).await;
-    if vcs.kind() == VcsKind::Git {
-        let _ = vcs
-            .delete_branch(Path::new(&workspace.root_path), &worktree_branch)
-            .await;
-    }
-    create_worktree(
-        &workspace.root_path,
-        &worktree_path,
-        &target_head,
-        &worktree_branch,
-    )
-    .await
-    .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        (None, target_head)
+    };
+    let git_repo_root = repo_root
+        .as_deref()
+        .unwrap_or_else(|| Path::new(&workspace.root_path));
 
     if vcs.kind() == VcsKind::Jj {
         ensure_jj_working_copy(&worktree_path, &target_head, log_file, vcs.as_ref()).await?;
     }
 
     let result = async {
-        let patch = read_patch_file(&entry.patch_path)
+        let mut patch = read_patch_file(&entry.patch_path)
             .await
             .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
         write_log_line(log_file, "apply patch\n")
@@ -429,7 +452,47 @@ async fn run_entry_inner(
         } else {
             ApplyPatchTarget::Worktree
         };
-        apply_patch(state, entry, vcs.as_ref(), &worktree_path, &patch, apply_target).await?;
+        if let Err(err) = apply_patch(
+            state,
+            entry,
+            vcs.as_ref(),
+            git_repo_root,
+            &worktree_path,
+            &patch,
+            apply_target,
+        )
+        .await
+        {
+            if matches!(err, QueueError::Conflict { .. }) && vcs.kind() == VcsKind::Git {
+                if let Some(head_commit_sha) = entry.head_commit_sha.as_deref() {
+                    write_log_line(log_file, "apply patch failed; rebasing\n")
+                        .await
+                        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+                    patch = build_rebased_patch(
+                        state,
+                        entry,
+                        git_repo_root,
+                        &target_head,
+                        head_commit_sha,
+                    )
+                    .await?;
+                    apply_patch(
+                        state,
+                        entry,
+                        vcs.as_ref(),
+                        git_repo_root,
+                        &worktree_path,
+                        &patch,
+                        apply_target,
+                    )
+                    .await?;
+                } else {
+                    return Err(err);
+                }
+            } else {
+                return Err(err);
+            }
+        }
 
         let has_changes = if vcs.kind() == VcsKind::Git {
             has_staged_changes(state, entry, &worktree_path).await?
@@ -463,7 +526,7 @@ async fn run_entry_inner(
             find_checked_out_worktree_for_branch(
                 state,
                 entry,
-                &workspace.root_path,
+                git_repo_root,
                 &entry.target_branch,
             )
             .await
@@ -511,36 +574,20 @@ async fn run_entry_inner(
             reset_worktree_to_commit(state, entry, path, &commit_sha)
                 .await
                 .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
-            let store = state
-                .store_for_workspace(workspace.id)
-                .await
-                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
-            let worktrees = store
-                .list_worktrees(workspace.id)
-                .await
-                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
-            let checkout_path = fs::canonicalize(path)
-                .await
-                .unwrap_or_else(|_| PathBuf::from(path));
-            for worktree in worktrees {
-                let root_path = fs::canonicalize(&worktree.root_path)
-                    .await
-                    .unwrap_or_else(|_| PathBuf::from(&worktree.root_path));
-                if root_path == checkout_path {
-                    store
-                        .update_worktree_base_commit(worktree.id, &commit_sha)
-                        .await
-                        .map_err(|e| {
-                            QueueError::fail(e.to_string(), None, Some(commit_sha.clone()))
-                        })?;
-                    break;
-                }
-            }
+            let _ = maybe_update_worktree_base_commit_for_path(
+                state,
+                workspace.id,
+                path,
+                &commit_sha,
+            )
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
         } else {
             update_target_branch(
                 state,
                 entry,
-                &workspace.root_path,
+                git_repo_root,
+                Path::new(&workspace.root_path),
                 vcs.kind(),
                 &entry.target_branch,
                 &commit_sha,
@@ -562,7 +609,8 @@ async fn run_entry_inner(
             if let Err(err) = push_target_branch(
                 state,
                 entry,
-                &workspace.root_path,
+                git_repo_root,
+                Path::new(&workspace.root_path),
                 vcs.kind(),
                 &cfg.push_remote,
                 &entry.target_branch,
@@ -579,15 +627,40 @@ async fn run_entry_inner(
             }
         }
 
+        if vcs.kind() == VcsKind::Git {
+            if let Some(repo_root) = repo_root.as_ref() {
+                if let Err(err) = maybe_sync_canonical_worktree(
+                    state,
+                    workspace,
+                    entry,
+                    repo_root,
+                    &commit_sha,
+                    cfg.canonical_sync,
+                    log_file,
+                )
+                .await
+                {
+                    let _ = write_log_line(
+                        log_file,
+                        &format!("canonical sync failed: {err:#}\n"),
+                    )
+                    .await;
+                    tracing::warn!("merge queue canonical sync failed: {err:#}");
+                }
+            }
+        }
+
         Ok(commit_sha)
     }
     .await;
 
-    let _ = remove_worktree(&workspace.root_path, &worktree_path).await;
     if vcs.kind() == VcsKind::Git {
-        let _ = vcs
-            .delete_branch(Path::new(&workspace.root_path), &worktree_branch)
-            .await;
+        if let Some(repo_root) = repo_root.as_ref() {
+            let _ = remove_worktree(repo_root, &worktree_path).await;
+            let _ = delete_branch(repo_root, &worktree_branch).await;
+        }
+    } else {
+        let _ = remove_worktree(&workspace.root_path, &worktree_path).await;
     }
     result
 }
@@ -626,39 +699,43 @@ async fn resolve_workspace_context(
     Ok((workspace, worktree))
 }
 
-fn merge_queue_root(data_root: &Path) -> PathBuf {
-    data_root.join("merge-queue")
+fn merge_queue_root(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(".ctx").join("merge-queue")
 }
 
-fn merge_queue_patch_path(data_root: &Path, entry_id: MergeQueueEntryId) -> PathBuf {
-    merge_queue_root(data_root)
+fn merge_queue_repo_root(workspace_root: &Path) -> PathBuf {
+    merge_queue_root(workspace_root).join("repo")
+}
+
+fn merge_queue_patch_path(workspace_root: &Path, entry_id: MergeQueueEntryId) -> PathBuf {
+    merge_queue_root(workspace_root)
         .join("patches")
         .join(format!("{}.patch", entry_id.0))
 }
 
-fn merge_queue_log_path(data_root: &Path, run_id: MergeQueueRunId) -> PathBuf {
-    merge_queue_root(data_root)
+fn merge_queue_log_path(workspace_root: &Path, run_id: MergeQueueRunId) -> PathBuf {
+    merge_queue_root(workspace_root)
         .join("logs")
         .join(format!("{}.log", run_id.0))
 }
 
 fn merge_queue_worktree_path(
-    data_root: &Path,
+    workspace_root: &Path,
     workspace_id: WorkspaceId,
     entry_id: MergeQueueEntryId,
 ) -> PathBuf {
-    merge_queue_root(data_root)
+    merge_queue_root(workspace_root)
         .join("worktrees")
         .join(workspace_id.0.to_string())
         .join(entry_id.0.to_string())
 }
 
 async fn write_patch_file(
-    data_root: &Path,
+    workspace_root: &Path,
     entry_id: MergeQueueEntryId,
     patch: &str,
 ) -> Result<PathBuf> {
-    let path = merge_queue_patch_path(data_root, entry_id);
+    let path = merge_queue_patch_path(workspace_root, entry_id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .await
@@ -729,26 +806,611 @@ async fn ensure_jj_working_copy(
     Ok(())
 }
 
+async fn ensure_merge_queue_repo(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    workspace: &Workspace,
+    cfg: &MergeQueueConfig,
+    log_file: &mut fs::File,
+) -> std::result::Result<PathBuf, QueueError> {
+    let workspace_root = Path::new(&workspace.root_path);
+    let repo_root = merge_queue_repo_root(workspace_root);
+    if let Some(parent) = repo_root.parent() {
+        fs::create_dir_all(parent)
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    }
+
+    let needs_init = match fs::metadata(&repo_root).await {
+        Ok(meta) => !meta.is_dir() || !repo_root.join(".git").exists(),
+        Err(_) => true,
+    };
+    if needs_init {
+        fs::create_dir_all(&repo_root)
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        write_log_line(log_file, "init merge queue repo\n")
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        let mut cmd =
+            merge_queue_command(state, entry, "git init", "git", Some(&repo_root), &[]).await;
+        let output = cmd
+            .arg("-C")
+            .arg(&repo_root)
+            .arg("init")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(QueueError::fail(
+                format!("merge queue repo init failed: {stderr}"),
+                Some(output.status.code().unwrap_or(1) as i64),
+                None,
+            ));
+        }
+        let mut cmd = merge_queue_command(
+            state,
+            entry,
+            "git symbolic-ref HEAD",
+            "git",
+            Some(&repo_root),
+            &[],
+        )
+        .await;
+        let output = cmd
+            .arg("-C")
+            .arg(&repo_root)
+            .args(["symbolic-ref", "HEAD", MERGE_QUEUE_HEAD_REF])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(QueueError::fail(
+                format!("merge queue repo HEAD update failed: {stderr}"),
+                Some(output.status.code().unwrap_or(1) as i64),
+                None,
+            ));
+        }
+    }
+
+    ensure_git_remote(
+        state,
+        entry,
+        &repo_root,
+        MERGE_QUEUE_CANONICAL_REMOTE,
+        workspace.root_path.as_str(),
+    )
+    .await?;
+
+    if cfg.push_remote != MERGE_QUEUE_CANONICAL_REMOTE {
+        if let Some(url) =
+            git_remote_get_url(state, entry, workspace_root, &cfg.push_remote).await?
+        {
+            ensure_git_remote(state, entry, &repo_root, &cfg.push_remote, url.trim()).await?;
+        } else if cfg.push_on_success {
+            return Err(QueueError::fail(
+                format!(
+                    "merge queue push remote {} not configured in canonical repo",
+                    cfg.push_remote
+                ),
+                None,
+                None,
+            ));
+        }
+    }
+
+    Ok(repo_root)
+}
+
+async fn ensure_merge_queue_target_branch(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    repo_root: &Path,
+    target_branch: &str,
+) -> std::result::Result<String, QueueError> {
+    if merge_queue_branch_exists(state, entry, repo_root, target_branch).await? {
+        return rev_parse_ref(repo_root, target_branch)
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, None));
+    }
+
+    let mut cmd = merge_queue_command(
+        state,
+        entry,
+        "git fetch canonical",
+        "git",
+        Some(repo_root),
+        &[],
+    )
+    .await;
+    let refspec = format!("refs/heads/{target_branch}:refs/heads/{target_branch}");
+    let output = cmd
+        .arg("-C")
+        .arg(repo_root)
+        .args(["fetch", MERGE_QUEUE_CANONICAL_REMOTE, &refspec])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(QueueError::fail(
+            format!("merge queue fetch failed: {stderr}"),
+            Some(output.status.code().unwrap_or(1) as i64),
+            None,
+        ));
+    }
+
+    rev_parse_ref(repo_root, target_branch)
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))
+}
+
+async fn merge_queue_branch_exists(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    repo_root: &Path,
+    target_branch: &str,
+) -> std::result::Result<bool, QueueError> {
+    let mut cmd = merge_queue_command(
+        state,
+        entry,
+        "git show-ref --verify",
+        "git",
+        Some(repo_root),
+        &[],
+    )
+    .await;
+    let output = cmd
+        .arg("-C")
+        .arg(repo_root)
+        .args([
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{target_branch}"),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    if output.status.code() == Some(1) {
+        return Ok(false);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(QueueError::fail(
+        format!("git show-ref failed: {stderr}"),
+        Some(output.status.code().unwrap_or(1) as i64),
+        None,
+    ))
+}
+
+async fn git_remote_get_url(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    repo_root: &Path,
+    remote: &str,
+) -> std::result::Result<Option<String>, QueueError> {
+    let mut cmd = merge_queue_command(
+        state,
+        entry,
+        "git remote get-url",
+        "git",
+        Some(repo_root),
+        &[],
+    )
+    .await;
+    let output = cmd
+        .arg("-C")
+        .arg(repo_root)
+        .args(["remote", "get-url", remote])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    if output.status.success() {
+        return Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ));
+    }
+    if output.status.code() == Some(2) {
+        return Ok(None);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(QueueError::fail(
+        format!("git remote get-url failed: {stderr}"),
+        Some(output.status.code().unwrap_or(1) as i64),
+        None,
+    ))
+}
+
+async fn ensure_git_remote(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    repo_root: &Path,
+    remote: &str,
+    url: &str,
+) -> std::result::Result<(), QueueError> {
+    if let Some(existing) = git_remote_get_url(state, entry, repo_root, remote).await? {
+        if existing.trim() == url {
+            return Ok(());
+        }
+        let mut cmd = merge_queue_command(
+            state,
+            entry,
+            "git remote set-url",
+            "git",
+            Some(repo_root),
+            &[],
+        )
+        .await;
+        let output = cmd
+            .arg("-C")
+            .arg(repo_root)
+            .args(["remote", "set-url", remote, url])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(QueueError::fail(
+                format!("git remote set-url failed: {stderr}"),
+                Some(output.status.code().unwrap_or(1) as i64),
+                None,
+            ));
+        }
+        return Ok(());
+    }
+
+    let mut cmd =
+        merge_queue_command(state, entry, "git remote add", "git", Some(repo_root), &[]).await;
+    let output = cmd
+        .arg("-C")
+        .arg(repo_root)
+        .args(["remote", "add", remote, url])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(QueueError::fail(
+            format!("git remote add failed: {stderr}"),
+            Some(output.status.code().unwrap_or(1) as i64),
+            None,
+        ));
+    }
+    Ok(())
+}
+
+async fn maybe_update_worktree_base_commit_for_path(
+    state: &AppState,
+    workspace_id: WorkspaceId,
+    worktree_path: &str,
+    commit_sha: &str,
+) -> Result<Option<Worktree>> {
+    let store = state.store_for_workspace(workspace_id).await?;
+    let worktrees = store.list_worktrees(workspace_id).await?;
+    let checkout_path = fs::canonicalize(worktree_path)
+        .await
+        .unwrap_or_else(|_| PathBuf::from(worktree_path));
+    for worktree in worktrees {
+        let root_path = fs::canonicalize(&worktree.root_path)
+            .await
+            .unwrap_or_else(|_| PathBuf::from(&worktree.root_path));
+        if root_path == checkout_path {
+            store
+                .update_worktree_base_commit(worktree.id, commit_sha)
+                .await?;
+            return Ok(Some(worktree));
+        }
+    }
+    Ok(None)
+}
+
+async fn maybe_sync_canonical_worktree(
+    state: &Arc<AppState>,
+    workspace: &Workspace,
+    entry: &MergeQueueEntry,
+    merge_queue_repo_root: &Path,
+    commit_sha: &str,
+    policy: MergeQueueCanonicalSync,
+    log_file: &mut fs::File,
+) -> Result<()> {
+    if policy == MergeQueueCanonicalSync::Never {
+        write_log_line(log_file, "canonical sync disabled\n").await?;
+        return Ok(());
+    }
+
+    let target_checkout = find_checked_out_worktree_for_branch(
+        state,
+        entry,
+        Path::new(&workspace.root_path),
+        &entry.target_branch,
+    )
+    .await?;
+    let Some(path) = target_checkout else {
+        write_log_line(
+            log_file,
+            "canonical sync skipped: target branch not checked out\n",
+        )
+        .await?;
+        return Ok(());
+    };
+    let canonical_root = fs::canonicalize(&workspace.root_path)
+        .await
+        .unwrap_or_else(|_| PathBuf::from(&workspace.root_path));
+    let checkout_root = fs::canonicalize(&path)
+        .await
+        .unwrap_or_else(|_| PathBuf::from(&path));
+    if checkout_root != canonical_root {
+        write_log_line(
+            log_file,
+            "canonical sync skipped: target branch checked out in another worktree\n",
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let dirty = git_status_porcelain(&path).await?;
+    if !dirty.is_empty() && policy == MergeQueueCanonicalSync::CleanOnly {
+        let message = format!(
+            "canonical sync skipped: target branch {} is dirty at {}",
+            entry.target_branch, path
+        );
+        write_log_line(log_file, &format!("{message}\n")).await?;
+        if let Some(session_id) = entry.session_id {
+            emit_merge_queue_canonical_sync_notice(
+                state,
+                session_id,
+                None,
+                &entry.target_branch,
+                commit_sha,
+                "skipped",
+                &message,
+            )
+            .await?;
+        }
+        return Ok(());
+    }
+
+    write_log_line(
+        log_file,
+        &format!(
+            "canonical sync: fetch {} from merge-queue repo\n",
+            entry.target_branch
+        ),
+    )
+    .await?;
+    fetch_merge_queue_target_branch(
+        state,
+        entry,
+        Path::new(&workspace.root_path),
+        merge_queue_repo_root,
+        &entry.target_branch,
+    )
+    .await?;
+    let previous_head = rev_parse_ref(&path, "HEAD")
+        .await
+        .unwrap_or_else(|_| "unknown".to_string());
+    write_log_line(
+        log_file,
+        &format!(
+            "canonical sync: reset {} to {}\n",
+            entry.target_branch, commit_sha
+        ),
+    )
+    .await?;
+    reset_worktree_to_commit(state, entry, &path, commit_sha).await?;
+    let worktree =
+        maybe_update_worktree_base_commit_for_path(state, workspace.id, &path, commit_sha).await?;
+    if let Some(session_id) = entry.session_id {
+        if let Some(worktree) = worktree {
+            emit_merge_queue_sync_notice(
+                state,
+                session_id,
+                &worktree,
+                &entry.target_branch,
+                &previous_head,
+                commit_sha,
+            )
+            .await?;
+        } else {
+            emit_merge_queue_canonical_sync_notice(
+                state,
+                session_id,
+                None,
+                &entry.target_branch,
+                commit_sha,
+                "applied",
+                &format!(
+                    "canonical sync applied; reset {path} from {previous_head} to {commit_sha}",
+                ),
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+async fn fetch_merge_queue_target_branch(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    canonical_root: &Path,
+    merge_queue_repo_root: &Path,
+    target_branch: &str,
+) -> Result<()> {
+    let mut cmd = merge_queue_command(
+        state,
+        entry,
+        "git fetch merge-queue repo",
+        "git",
+        Some(canonical_root),
+        &[],
+    )
+    .await;
+    let output = cmd
+        .arg("-C")
+        .arg(canonical_root)
+        .args([
+            "fetch",
+            merge_queue_repo_root
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid merge queue repo path"))?,
+            &format!("refs/heads/{target_branch}"),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git fetch")?;
+    if !output.status.success() {
+        bail!(
+            "git fetch from merge queue repo failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+async fn build_rebased_patch(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    repo_root: &Path,
+    target_head: &str,
+    head_commit_sha: &str,
+) -> std::result::Result<String, QueueError> {
+    let mut cmd = merge_queue_command(
+        state,
+        entry,
+        "git fetch canonical head",
+        "git",
+        Some(repo_root),
+        &[],
+    )
+    .await;
+    let output = cmd
+        .arg("-C")
+        .arg(repo_root)
+        .args(["fetch", MERGE_QUEUE_CANONICAL_REMOTE, head_commit_sha])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(QueueError::fail(
+            format!("merge queue fetch head failed: {stderr}"),
+            Some(output.status.code().unwrap_or(1) as i64),
+            None,
+        ));
+    }
+
+    let mut cmd = merge_queue_command(
+        state,
+        entry,
+        "git diff rebased patch",
+        "git",
+        Some(repo_root),
+        &[],
+    )
+    .await;
+    let output = cmd
+        .arg("-C")
+        .arg(repo_root)
+        .args(["diff", "--binary", target_head, head_commit_sha])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(QueueError::fail(
+            format!("merge queue diff failed: {stderr}"),
+            Some(output.status.code().unwrap_or(1) as i64),
+            None,
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 async fn apply_patch(
     state: &AppState,
     entry: &MergeQueueEntry,
     vcs: &dyn VcsDriver,
+    repo_root: &Path,
     worktree_path: &Path,
     patch: &str,
     target: ApplyPatchTarget,
 ) -> std::result::Result<(), QueueError> {
     if vcs.kind() == VcsKind::Git {
-        let mut cmd =
-            merge_queue_command(state, entry, "git apply", "git", Some(worktree_path), &[]).await;
-        cmd.arg("-C")
-            .arg(worktree_path)
-            .arg("apply")
-            .arg("--3way")
-            .arg("--whitespace=nowarn");
-        if matches!(target, ApplyPatchTarget::Index) {
-            cmd.arg("--index");
+        let output = run_git_apply(
+            state,
+            entry,
+            worktree_path,
+            patch,
+            matches!(target, ApplyPatchTarget::Index),
+            true,
+        )
+        .await?;
+        if output.status.success() {
+            return Ok(());
         }
-        cmd.arg("-");
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if matches!(target, ApplyPatchTarget::Index) && stderr.contains("does not exist in index") {
+            let output = run_git_apply(state, entry, worktree_path, patch, false, false).await?;
+            if output.status.success() {
+                stage_worktree(state, entry, worktree_path).await?;
+                return Ok(());
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(QueueError::Conflict {
+                message: if stderr.is_empty() {
+                    "patch conflict".to_string()
+                } else {
+                    stderr
+                },
+            });
+        }
+        return Err(QueueError::Conflict {
+            message: if stderr.is_empty() {
+                "patch conflict".to_string()
+            } else {
+                stderr
+            },
+        });
+    }
+
+    if vcs.kind() == VcsKind::Jj {
+        let rel = worktree_path.strip_prefix(repo_root).map_err(|_| {
+            QueueError::fail("jj worktree is outside repo root".to_string(), None, None)
+        })?;
+        let mut cmd =
+            merge_queue_command(state, entry, "git apply", "git", Some(repo_root), &[]).await;
+        cmd.arg("-C")
+            .arg(repo_root)
+            .arg("apply")
+            .arg("--whitespace=nowarn")
+            .arg("--directory")
+            .arg(rel)
+            .arg("-");
         let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -786,6 +1448,75 @@ async fn apply_patch(
         .map_err(|e| QueueError::Conflict {
             message: e.to_string(),
         })?;
+    Ok(())
+}
+
+async fn run_git_apply(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    worktree_path: &Path,
+    patch: &str,
+    apply_index: bool,
+    three_way: bool,
+) -> std::result::Result<std::process::Output, QueueError> {
+    let mut cmd =
+        merge_queue_command(state, entry, "git apply", "git", Some(worktree_path), &[]).await;
+    cmd.arg("-C")
+        .arg(worktree_path)
+        .arg("apply")
+        .arg("--whitespace=nowarn");
+    if three_way {
+        cmd.arg("--3way");
+    }
+    if apply_index {
+        cmd.arg("--index");
+    }
+    cmd.arg("-");
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        stdin
+            .write_all(patch.as_bytes())
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    }
+
+    child
+        .wait_with_output()
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))
+}
+
+async fn stage_worktree(
+    state: &AppState,
+    entry: &MergeQueueEntry,
+    worktree_path: &Path,
+) -> std::result::Result<(), QueueError> {
+    let mut cmd =
+        merge_queue_command(state, entry, "git add -A", "git", Some(worktree_path), &[]).await;
+    let output = cmd
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["add", "-A"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(QueueError::fail(
+            format!("git add failed: {stderr}"),
+            Some(output.status.code().unwrap_or(1) as i64),
+            None,
+        ));
+    }
     Ok(())
 }
 
@@ -965,14 +1696,30 @@ async fn maybe_sync_originating_worktree(
     let vcs = vcs_driver_for_worktree(&worktree);
     let worktree_root = Path::new(&worktree.root_path);
     vcs.assert_repo(worktree_root).await?;
-    let dirty = vcs.status_porcelain(worktree_root).await?;
-    if !dirty.is_empty() {
-        return Ok(());
-    }
-    let previous_head = vcs
-        .rev_parse_head(worktree_root)
-        .await
-        .unwrap_or_else(|_| "unknown".to_string());
+    let previous_head = match vcs.kind() {
+        VcsKind::Jj => {
+            let Some(expected_head) = entry.head_commit_sha.as_deref() else {
+                return Ok(());
+            };
+            let current_head = vcs
+                .rev_parse_head(worktree_root)
+                .await
+                .unwrap_or_else(|_| "unknown".to_string());
+            if current_head.trim() != expected_head.trim() {
+                return Ok(());
+            }
+            current_head
+        }
+        _ => {
+            let dirty = vcs.status_porcelain(worktree_root).await?;
+            if !dirty.is_empty() {
+                return Ok(());
+            }
+            vcs.rev_parse_head(worktree_root)
+                .await
+                .unwrap_or_else(|_| "unknown".to_string())
+        }
+    };
     if vcs.kind() == VcsKind::Git {
         reset_worktree_to_commit(state, entry, &worktree.root_path, commit_sha).await?;
     } else {
@@ -1027,6 +1774,36 @@ async fn emit_merge_queue_sync_notice(
                 "commit_sha": commit_sha,
                 "base_revision": commit_sha,
                 "base_commit_sha": commit_sha,
+            }),
+        )
+        .await?;
+    state.publish_event(notice).await;
+    Ok(())
+}
+
+async fn emit_merge_queue_canonical_sync_notice(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    worktree_id: Option<WorktreeId>,
+    target_branch: &str,
+    commit_sha: &str,
+    status: &str,
+    message: &str,
+) -> Result<()> {
+    let store = state.store_for_session(session_id).await?;
+    let notice = store
+        .append_session_event(
+            session_id,
+            None,
+            None,
+            SessionEventType::Notice,
+            serde_json::json!({
+                "kind": "merge_queue_canonical_sync",
+                "status": status,
+                "message": message,
+                "worktree_id": worktree_id.map(|id| id.0.to_string()),
+                "target_branch": target_branch,
+                "commit_sha": commit_sha,
             }),
         )
         .await?;
@@ -1124,7 +1901,7 @@ async fn jj_rev_parse_bookmark(root: &Path, bookmark: &str) -> Result<String> {
 async fn find_checked_out_worktree_for_branch(
     state: &AppState,
     entry: &MergeQueueEntry,
-    workspace_root: &str,
+    workspace_root: &Path,
     target_branch: &str,
 ) -> Result<Option<String>> {
     let mut cmd = merge_queue_command(
@@ -1132,7 +1909,7 @@ async fn find_checked_out_worktree_for_branch(
         entry,
         "git worktree list --porcelain",
         "git",
-        Some(Path::new(workspace_root)),
+        Some(workspace_root),
         &[],
     )
     .await;
@@ -1192,10 +1969,12 @@ async fn command_for_shell(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn update_target_branch(
     state: &AppState,
     entry: &MergeQueueEntry,
-    workspace_root: &str,
+    repo_root: &Path,
+    workspace_root: &Path,
     vcs_kind: VcsKind,
     target_branch: &str,
     commit_sha: &str,
@@ -1203,18 +1982,12 @@ async fn update_target_branch(
 ) -> std::result::Result<(), QueueError> {
     match vcs_kind {
         VcsKind::Git => {
-            let mut cmd = merge_queue_command(
-                state,
-                entry,
-                "git update-ref",
-                "git",
-                Some(Path::new(workspace_root)),
-                &[],
-            )
-            .await;
+            let mut cmd =
+                merge_queue_command(state, entry, "git update-ref", "git", Some(repo_root), &[])
+                    .await;
             let output = cmd
                 .arg("-C")
-                .arg(workspace_root)
+                .arg(repo_root)
                 .args([
                     "update-ref",
                     &format!("refs/heads/{target_branch}"),
@@ -1235,7 +2008,7 @@ async fn update_target_branch(
             Ok(())
         }
         VcsKind::Jj => {
-            let current = jj_rev_parse_bookmark(Path::new(workspace_root), target_branch)
+            let current = jj_rev_parse_bookmark(workspace_root, target_branch)
                 .await
                 .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
             if current.trim() != expected_old.trim() {
@@ -1250,7 +2023,7 @@ async fn update_target_branch(
                 entry,
                 "jj bookmark set",
                 "jj",
-                Some(Path::new(workspace_root)),
+                Some(workspace_root),
                 &[],
             )
             .await;
@@ -1285,7 +2058,8 @@ async fn update_target_branch(
 async fn push_target_branch(
     state: &AppState,
     entry: &MergeQueueEntry,
-    workspace_root: &str,
+    repo_root: &Path,
+    workspace_root: &Path,
     vcs_kind: VcsKind,
     remote: &str,
     target_branch: &str,
@@ -1294,18 +2068,11 @@ async fn push_target_branch(
 ) -> Result<()> {
     match vcs_kind {
         VcsKind::Git => {
-            let mut cmd = merge_queue_command(
-                state,
-                entry,
-                "git push",
-                "git",
-                Some(Path::new(workspace_root)),
-                &[],
-            )
-            .await;
+            let mut cmd =
+                merge_queue_command(state, entry, "git push", "git", Some(repo_root), &[]).await;
             let output = cmd
                 .arg("-C")
-                .arg(workspace_root)
+                .arg(repo_root)
                 .args(["push", remote, &format!("{target_branch}:{push_branch}")])
                 .output()
                 .await
@@ -1325,7 +2092,7 @@ async fn push_target_branch(
                     entry,
                     "jj bookmark set",
                     "jj",
-                    Some(Path::new(workspace_root)),
+                    Some(workspace_root),
                     &[],
                 )
                 .await;
@@ -1345,15 +2112,9 @@ async fn push_target_branch(
                     );
                 }
             }
-            let mut cmd = merge_queue_command(
-                state,
-                entry,
-                "jj git push",
-                "jj",
-                Some(Path::new(workspace_root)),
-                &[],
-            )
-            .await;
+            let mut cmd =
+                merge_queue_command(state, entry, "jj git push", "jj", Some(workspace_root), &[])
+                    .await;
             let output = cmd
                 .arg("-R")
                 .arg(workspace_root)

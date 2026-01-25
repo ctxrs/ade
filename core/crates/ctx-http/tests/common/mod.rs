@@ -203,7 +203,14 @@ pub async fn oneshot_json<T: DeserializeOwned>(
     let res = app.clone().oneshot(req).await.unwrap();
     let status = res.status();
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let parsed = serde_json::from_slice(&body).unwrap();
+    let parsed = serde_json::from_slice(&body).unwrap_or_else(|err| {
+        panic!(
+            "failed to parse JSON response (status {}): {}\nbody: {}",
+            status,
+            err,
+            String::from_utf8_lossy(&body)
+        )
+    });
     (status, parsed)
 }
 

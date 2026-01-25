@@ -139,6 +139,16 @@ struct WorkspaceMergeQueueConfig {
     push_remote: Option<String>,
     #[serde(default)]
     push_branch: Option<String>,
+    #[serde(default)]
+    canonical_sync: Option<MergeQueueCanonicalSync>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeQueueCanonicalSync {
+    Never,
+    CleanOnly,
+    Force,
 }
 
 #[derive(Debug, Clone)]
@@ -150,6 +160,7 @@ pub struct MergeQueueConfig {
     pub push_on_success: bool,
     pub push_remote: String,
     pub push_branch: String,
+    pub canonical_sync: MergeQueueCanonicalSync,
 }
 
 impl MergeQueueConfig {
@@ -162,6 +173,7 @@ impl MergeQueueConfig {
             push_on_success: false,
             push_remote: "origin".to_string(),
             push_branch: "main".to_string(),
+            canonical_sync: MergeQueueCanonicalSync::CleanOnly,
         }
     }
 }
@@ -261,6 +273,9 @@ pub async fn load_merge_queue_config(root: &Path) -> Result<MergeQueueConfig> {
         };
     } else {
         cfg.push_branch = cfg.target_branch.clone();
+    }
+    if let Some(canonical_sync) = configured.canonical_sync {
+        cfg.canonical_sync = canonical_sync;
     }
 
     Ok(cfg)

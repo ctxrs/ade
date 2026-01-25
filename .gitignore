@@ -53,6 +53,7 @@ supabase/supabase/
 **/.ctx/tmp/
 **/.ctx/docker-target/
 **/.ctx/attachments/
+**/.ctx/merge-queue/
 
 # Local git worktrees (agent/dev tooling)
 .worktrees/
