@@ -35,6 +35,11 @@ pub struct MergeQueueSubmitParams {
 
 const MERGE_QUEUE_CANONICAL_REMOTE: &str = "canonical";
 const MERGE_QUEUE_HEAD_REF: &str = "refs/heads/ctx-merge-queue";
+const MERGE_QUEUE_CONFLICT_MESSAGE: &str = concat!(
+    "Your merge queue submission produces conflicts with the current head. ",
+    "Please rebase your changes, carefully considering the intent of your changes and the intent of the upstream changes. ",
+    "If in doubt about how to resolve conflicts, please ask for help."
+);
 
 fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
     vcs::driver_for_kind(worktree.vcs_kind.clone())
@@ -112,12 +117,6 @@ pub async fn submit_merge_queue_entry(
                 .collect::<Vec<_>>()
                 .join("\n")
         );
-    }
-    let up_to_date = vcs
-        .is_ancestor(worktree_root, &target_branch, "HEAD")
-        .await?;
-    if !up_to_date {
-        bail!("worktree HEAD is behind target branch {target_branch}; sync and retry");
     }
     let merge_base = vcs
         .merge_base(worktree_root, &target_branch, "HEAD")
@@ -441,7 +440,7 @@ async fn run_entry_inner(
     }
 
     let result = async {
-        let mut patch = read_patch_file(&entry.patch_path)
+        let patch = read_patch_file(&entry.patch_path)
             .await
             .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
         write_log_line(log_file, "apply patch\n")
@@ -463,34 +462,18 @@ async fn run_entry_inner(
         )
         .await
         {
-            if matches!(err, QueueError::Conflict { .. }) && vcs.kind() == VcsKind::Git {
-                if let Some(head_commit_sha) = entry.head_commit_sha.as_deref() {
-                    write_log_line(log_file, "apply patch failed; rebasing\n")
-                        .await
-                        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-                    patch = build_rebased_patch(
-                        state,
-                        entry,
-                        git_repo_root,
-                        &target_head,
-                        head_commit_sha,
+            match err {
+                QueueError::Conflict { message } => {
+                    let _ = write_log_line(
+                        log_file,
+                        &format!("apply patch conflict: {message}\n"),
                     )
-                    .await?;
-                    apply_patch(
-                        state,
-                        entry,
-                        vcs.as_ref(),
-                        git_repo_root,
-                        &worktree_path,
-                        &patch,
-                        apply_target,
-                    )
-                    .await?;
-                } else {
-                    return Err(err);
+                    .await;
+                    return Err(QueueError::Conflict {
+                        message: MERGE_QUEUE_CONFLICT_MESSAGE.to_string(),
+                    });
                 }
-            } else {
-                return Err(err);
+                other => return Err(other),
             }
         }
 
@@ -1286,69 +1269,6 @@ async fn fetch_merge_queue_target_branch(
         );
     }
     Ok(())
-}
-
-async fn build_rebased_patch(
-    state: &AppState,
-    entry: &MergeQueueEntry,
-    repo_root: &Path,
-    target_head: &str,
-    head_commit_sha: &str,
-) -> std::result::Result<String, QueueError> {
-    let mut cmd = merge_queue_command(
-        state,
-        entry,
-        "git fetch canonical head",
-        "git",
-        Some(repo_root),
-        &[],
-    )
-    .await;
-    let output = cmd
-        .arg("-C")
-        .arg(repo_root)
-        .args(["fetch", MERGE_QUEUE_CANONICAL_REMOTE, head_commit_sha])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(QueueError::fail(
-            format!("merge queue fetch head failed: {stderr}"),
-            Some(output.status.code().unwrap_or(1) as i64),
-            None,
-        ));
-    }
-
-    let mut cmd = merge_queue_command(
-        state,
-        entry,
-        "git diff rebased patch",
-        "git",
-        Some(repo_root),
-        &[],
-    )
-    .await;
-    let output = cmd
-        .arg("-C")
-        .arg(repo_root)
-        .args(["diff", "--binary", target_head, head_commit_sha])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(QueueError::fail(
-            format!("merge queue diff failed: {stderr}"),
-            Some(output.status.code().unwrap_or(1) as i64),
-            None,
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 async fn apply_patch(
