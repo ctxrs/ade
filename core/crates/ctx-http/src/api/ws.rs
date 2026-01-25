@@ -8,6 +8,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use futures::{Sink, SinkExt, StreamExt};
+use serde_json::Value;
 use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinSet;
 use tokio_tungstenite::{connect_async, tungstenite::Message as TungsteniteMessage};
@@ -937,6 +938,94 @@ enum HeadBatchPushError {
     TotalLimit { limit: usize },
 }
 
+fn is_partial_event(event: &SessionEvent) -> bool {
+    matches!(
+        event.event_type,
+        SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
+    )
+}
+
+fn is_same_partial_type(prev: &SessionEvent, next: &SessionEvent) -> bool {
+    matches!(
+        (&prev.event_type, &next.event_type),
+        (
+            &SessionEventType::AssistantChunk,
+            &SessionEventType::AssistantChunk
+        ) | (
+            &SessionEventType::ThoughtChunk,
+            &SessionEventType::ThoughtChunk
+        )
+    )
+}
+
+fn extract_fragment(event: &SessionEvent) -> Option<&str> {
+    event
+        .payload_json
+        .get("content_fragment")
+        .and_then(Value::as_str)
+}
+
+fn merge_partial_fragment(prev: &str, next: &str) -> String {
+    if prev.is_empty() {
+        return next.to_string();
+    }
+    if next.is_empty() {
+        return prev.to_string();
+    }
+    if next.starts_with(prev) {
+        return next.to_string();
+    }
+    if prev.ends_with(next) {
+        return prev.to_string();
+    }
+    format!("{prev}{next}")
+}
+
+fn try_coalesce_partial_delta(entry: &mut [SessionHeadDelta], next: &SessionHeadDelta) -> bool {
+    let Some(prev) = entry.last_mut() else {
+        return false;
+    };
+    if prev.turn.is_some()
+        || prev.message.is_some()
+        || next.turn.is_some()
+        || next.message.is_some()
+    {
+        return false;
+    }
+    let (Some(prev_event), Some(next_event)) = (prev.event.as_ref(), next.event.as_ref()) else {
+        return false;
+    };
+    if !is_partial_event(prev_event) || !is_partial_event(next_event) {
+        return false;
+    }
+    if !is_same_partial_type(prev_event, next_event) {
+        return false;
+    }
+    if prev_event.turn_id != next_event.turn_id || prev_event.turn_id.is_none() {
+        return false;
+    }
+    let (Some(prev_fragment), Some(next_fragment)) =
+        (extract_fragment(prev_event), extract_fragment(next_event))
+    else {
+        return false;
+    };
+    let merged_fragment = merge_partial_fragment(prev_fragment, next_fragment);
+    let mut merged_event = next_event.clone();
+    match merged_event.payload_json {
+        Value::Object(ref mut map) => {
+            map.insert(
+                "content_fragment".to_string(),
+                Value::String(merged_fragment),
+            );
+        }
+        _ => return false,
+    }
+    prev.event = Some(merged_event);
+    prev.last_event_seq = prev.last_event_seq.max(next.last_event_seq);
+    prev.state_rev = prev.state_rev.max(next.state_rev);
+    true
+}
+
 impl HeadBatchBuffer {
     fn new() -> Self {
         Self {
@@ -957,6 +1046,12 @@ impl HeadBatchBuffer {
         let mut state = self.state.lock().await;
         let session_id = delta.session_id;
         state.snapshot_rev = state.snapshot_rev.max(snapshot_rev);
+        if let Some(entry) = state.deltas.get_mut(&session_id) {
+            if try_coalesce_partial_delta(entry.as_mut_slice(), &delta) {
+                self.notify.notify_one();
+                return Ok(());
+            }
+        }
         if state.total_len >= HEAD_BATCH_TOTAL_LIMIT {
             return Err(HeadBatchPushError::TotalLimit {
                 limit: HEAD_BATCH_TOTAL_LIMIT,
@@ -2227,4 +2322,84 @@ pub(super) async fn dictation_livekit_stream_ws(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| crate::dictation_livekit::dictation_livekit_stream(socket, state))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn make_partial_delta(
+        session_id: SessionId,
+        turn_id: TurnId,
+        fragment: &str,
+    ) -> SessionHeadDelta {
+        let event = SessionEvent {
+            seq: -1,
+            id: SessionEventId::new(),
+            session_id,
+            run_id: None,
+            turn_id: Some(turn_id),
+            event_type: SessionEventType::AssistantChunk,
+            payload_json: json!({ "content_fragment": fragment }),
+            transient: true,
+            created_at: Utc::now(),
+        };
+        SessionHeadDelta {
+            session_id,
+            last_event_seq: 0,
+            state_rev: 0,
+            event: Some(event),
+            turn: None,
+            message: None,
+        }
+    }
+
+    fn fragment_from_delta(delta: &SessionHeadDelta) -> String {
+        delta
+            .event
+            .as_ref()
+            .and_then(|event| event.payload_json.get("content_fragment"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn head_batch_coalesces_partials_per_session() {
+        let buffer = HeadBatchBuffer::new();
+        let session_a = SessionId::new();
+        let session_b = SessionId::new();
+        let turn_a = TurnId::new();
+        let turn_b = TurnId::new();
+        let limit = HEAD_BATCH_SESSION_LIMIT + 25;
+
+        for i in 0..limit {
+            let fragment = format!("a-{i}-");
+            buffer
+                .push(1, make_partial_delta(session_a, turn_a, &fragment))
+                .await
+                .expect("partial burst should coalesce");
+            if i % 5 == 0 {
+                let fragment_b = format!("b-{i}-");
+                buffer
+                    .push(1, make_partial_delta(session_b, turn_b, &fragment_b))
+                    .await
+                    .expect("partial burst should coalesce");
+            }
+        }
+
+        let (_, deltas) = buffer.take().await;
+        let mut by_session = HashMap::new();
+        for delta in deltas {
+            by_session.insert(delta.session_id, delta);
+        }
+        assert_eq!(by_session.len(), 2);
+
+        let merged_a = fragment_from_delta(by_session.get(&session_a).unwrap());
+        assert!(merged_a.contains("a-0-"));
+        assert!(merged_a.contains(&format!("a-{}-", limit - 1)));
+    }
 }
