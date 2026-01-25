@@ -14,6 +14,8 @@ export type AttachmentMode = "ro" | "rw";
 
 export type AttachmentUpdatePolicy = "manual" | "on_open" | "scheduled";
 
+export type WorkspaceAttachmentStatus = "pending" | "syncing" | "ready" | "error";
+
 export type WorkspaceAttachment = {
   id: { 0: string } | string;
   workspace_id: { 0: string } | string;
@@ -25,6 +27,9 @@ export type WorkspaceAttachment = {
   mount_relpath: string;
   mode: AttachmentMode;
   update_policy: AttachmentUpdatePolicy;
+  status: WorkspaceAttachmentStatus;
+  last_sync_at?: string | null;
+  error_message?: string | null;
   created_at: string;
   updated_at: string;
 };

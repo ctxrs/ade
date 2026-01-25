@@ -20,6 +20,8 @@ const authSetupCommand = `node -e 'const fs = require(\\"fs\\"); const path = re
 ).replace(/"/g, '\\"')}; fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, \\"daemon_auth.json\\"), JSON.stringify({ token: ${JSON.stringify(
   AUTH_TOKEN,
 ).replace(/"/g, '\\"')} }, null, 2));'`;
+const docsMirrorBin = path.resolve(__dirname, "e2e/fixtures/ctx-docs-mirror-fixture.sh");
+const docsMirrorBinEscaped = docsMirrorBin.replace(/"/g, '\\"');
 const cargoTargetDir =
   process.env.CTX_E2E_CARGO_TARGET_DIR ??
   path.join(
@@ -44,7 +46,7 @@ export default defineConfig({
   webServer: {
     url: baseURL,
     command:
-      `bash -lc "rm -rf ${dataDir} && ${authSetupCommand} && pnpm -C apps/web build && CARGO_TARGET_DIR=${cargoTargetDir} CTX_SHOW_FAKE_PROVIDER=1 CTX_STORAGE_BACKEND=sqlite cargo run -p ctx-http --bin ctx -- serve --bind ${HOST}:${PORT} --data-dir ${dataDir}"`,
+      `bash -lc "rm -rf ${dataDir} && ${authSetupCommand} && pnpm -C apps/web build && CTX_DOCS_MIRROR_BIN=\\"${docsMirrorBinEscaped}\\" CARGO_TARGET_DIR=${cargoTargetDir} CTX_SHOW_FAKE_PROVIDER=1 CTX_STORAGE_BACKEND=sqlite cargo run -p ctx-http --bin ctx -- serve --bind ${HOST}:${PORT} --data-dir ${dataDir}"`,
     cwd: "../..",
     reuseExistingServer: false,
     timeout: 300_000,

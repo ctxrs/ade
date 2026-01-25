@@ -535,7 +535,7 @@
 
 .settings-table-attachments .settings-table-head,
 .settings-table-attachments .settings-table-row {
-  grid-template-columns: 1.1fr 1.6fr 0.9fr 0.7fr auto;
+  grid-template-columns: 1.1fr 1.6fr 0.9fr 0.7fr 0.7fr auto;
 }
 
 @media (max-width: 900px) {

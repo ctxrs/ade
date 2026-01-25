@@ -1042,8 +1042,40 @@ impl Store {
             .await?;
 
             self.query(
-                r#"INSERT INTO workspace_attachments
-                   SELECT * FROM legacy.workspace_attachments WHERE workspace_id = ?"#,
+                r#"INSERT INTO workspace_attachments (
+                       id,
+                       workspace_id,
+                       kind,
+                       name,
+                       source,
+                       revision,
+                       subpath,
+                       mount_relpath,
+                       mode,
+                       update_policy,
+                       status,
+                       last_sync_at,
+                       error_message,
+                       created_at,
+                       updated_at
+                   )
+                   SELECT
+                       id,
+                       workspace_id,
+                       kind,
+                       name,
+                       source,
+                       revision,
+                       subpath,
+                       mount_relpath,
+                       mode,
+                       update_policy,
+                       'ready',
+                       NULL,
+                       NULL,
+                       created_at,
+                       updated_at
+                   FROM legacy.workspace_attachments WHERE workspace_id = ?"#,
             )
             .bind(&workspace_id)
             .execute(&mut *conn)
@@ -2195,7 +2227,7 @@ impl Store {
     ) -> Result<Vec<WorkspaceAttachment>> {
         let rows = self.query(
             r#"SELECT id, workspace_id, kind, name, source, revision, subpath, mount_relpath, mode,
-                      update_policy, created_at, updated_at
+                      update_policy, status, last_sync_at, error_message, created_at, updated_at
                FROM workspace_attachments
                WHERE workspace_id = ?
                ORDER BY created_at ASC"#,
@@ -2213,6 +2245,7 @@ impl Store {
             let kind: String = r.try_get("kind")?;
             let mode: String = r.try_get("mode")?;
             let update_policy: String = r.try_get("update_policy")?;
+            let status: String = r.try_get("status")?;
             out.push(WorkspaceAttachment {
                 id: WorkspaceAttachmentId(uuid::Uuid::parse_str(&id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
@@ -2224,11 +2257,62 @@ impl Store {
                 mount_relpath: r.try_get("mount_relpath")?,
                 mode: parse_attachment_mode(&mode),
                 update_policy: parse_attachment_update_policy(&update_policy),
+                status: parse_workspace_attachment_status(&status),
+                last_sync_at: r
+                    .try_get::<Option<String>, _>("last_sync_at")?
+                    .and_then(|v| parse_dt(&v).ok()),
+                error_message: r.try_get("error_message")?,
                 created_at: parse_dt(&created_at)?,
                 updated_at: parse_dt(&updated_at)?,
             });
         }
         Ok(out)
+    }
+
+    pub async fn get_workspace_attachment(
+        &self,
+        id: WorkspaceAttachmentId,
+    ) -> Result<Option<WorkspaceAttachment>> {
+        let row = self
+            .query(
+                r#"SELECT id, workspace_id, kind, name, source, revision, subpath, mount_relpath, mode,
+                          update_policy, status, last_sync_at, error_message, created_at, updated_at
+                   FROM workspace_attachments
+                   WHERE id = ?"#,
+            )
+            .bind(id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+        let Some(r) = row else {
+            return Ok(None);
+        };
+        let id: String = r.try_get("id")?;
+        let ws_id: String = r.try_get("workspace_id")?;
+        let created_at: String = r.try_get("created_at")?;
+        let updated_at: String = r.try_get("updated_at")?;
+        let kind: String = r.try_get("kind")?;
+        let mode: String = r.try_get("mode")?;
+        let update_policy: String = r.try_get("update_policy")?;
+        let status: String = r.try_get("status")?;
+        Ok(Some(WorkspaceAttachment {
+            id: WorkspaceAttachmentId(uuid::Uuid::parse_str(&id)?),
+            workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+            kind: parse_attachment_kind(&kind),
+            name: r.try_get("name")?,
+            source: r.try_get("source")?,
+            revision: r.try_get("revision")?,
+            subpath: r.try_get("subpath")?,
+            mount_relpath: r.try_get("mount_relpath")?,
+            mode: parse_attachment_mode(&mode),
+            update_policy: parse_attachment_update_policy(&update_policy),
+            status: parse_workspace_attachment_status(&status),
+            last_sync_at: r
+                .try_get::<Option<String>, _>("last_sync_at")?
+                .and_then(|v| parse_dt(&v).ok()),
+            error_message: r.try_get("error_message")?,
+            created_at: parse_dt(&created_at)?,
+            updated_at: parse_dt(&updated_at)?,
+        }))
     }
 
     pub async fn upsert_workspace_attachment(
@@ -2237,8 +2321,8 @@ impl Store {
     ) -> Result<()> {
         self.query(
             r#"INSERT INTO workspace_attachments
-               (id, workspace_id, kind, name, source, revision, subpath, mount_relpath, mode, update_policy, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               (id, workspace_id, kind, name, source, revision, subpath, mount_relpath, mode, update_policy, status, last_sync_at, error_message, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                  kind = excluded.kind,
                  name = excluded.name,
@@ -2248,6 +2332,9 @@ impl Store {
                  mount_relpath = excluded.mount_relpath,
                  mode = excluded.mode,
                  update_policy = excluded.update_policy,
+                 status = excluded.status,
+                 last_sync_at = excluded.last_sync_at,
+                 error_message = excluded.error_message,
                  updated_at = excluded.updated_at"#,
         )
         .bind(attachment.id.0.to_string())
@@ -2260,8 +2347,37 @@ impl Store {
         .bind(&attachment.mount_relpath)
         .bind(attachment_mode_to_str(&attachment.mode))
         .bind(attachment_update_policy_to_str(&attachment.update_policy))
+        .bind(workspace_attachment_status_to_str(&attachment.status))
+        .bind(attachment.last_sync_at.map(|v| v.to_rfc3339()))
+        .bind(&attachment.error_message)
         .bind(attachment.created_at.to_rfc3339())
         .bind(attachment.updated_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_workspace_attachment_status(
+        &self,
+        id: WorkspaceAttachmentId,
+        status: WorkspaceAttachmentStatus,
+        last_sync_at: Option<DateTime<Utc>>,
+        error_message: Option<String>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<()> {
+        self.query(
+            r#"UPDATE workspace_attachments
+               SET status = ?,
+                   last_sync_at = COALESCE(?, last_sync_at),
+                   error_message = ?,
+                   updated_at = ?
+               WHERE id = ?"#,
+        )
+        .bind(workspace_attachment_status_to_str(&status))
+        .bind(last_sync_at.map(|v| v.to_rfc3339()))
+        .bind(error_message)
+        .bind(updated_at.to_rfc3339())
+        .bind(id.0.to_string())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -7695,6 +7811,25 @@ fn parse_attachment_update_policy(value: &str) -> AttachmentUpdatePolicy {
         "scheduled" => AttachmentUpdatePolicy::Scheduled,
         "manual" => AttachmentUpdatePolicy::Manual,
         _ => AttachmentUpdatePolicy::Manual,
+    }
+}
+
+fn workspace_attachment_status_to_str(status: &WorkspaceAttachmentStatus) -> &'static str {
+    match status {
+        WorkspaceAttachmentStatus::Pending => "pending",
+        WorkspaceAttachmentStatus::Syncing => "syncing",
+        WorkspaceAttachmentStatus::Ready => "ready",
+        WorkspaceAttachmentStatus::Error => "error",
+    }
+}
+
+fn parse_workspace_attachment_status(value: &str) -> WorkspaceAttachmentStatus {
+    match value {
+        "pending" => WorkspaceAttachmentStatus::Pending,
+        "syncing" => WorkspaceAttachmentStatus::Syncing,
+        "ready" => WorkspaceAttachmentStatus::Ready,
+        "error" => WorkspaceAttachmentStatus::Error,
+        _ => WorkspaceAttachmentStatus::Ready,
     }
 }
 

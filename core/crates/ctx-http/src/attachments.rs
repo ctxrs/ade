@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -12,7 +13,8 @@ use toml::Value as TomlValue;
 use ctx_core::ids::{WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, Workspace, WorkspaceAttachment,
-    WorkspaceAttachmentKind, Worktree, WorktreeAttachmentMount, WorktreeAttachmentStatus,
+    WorkspaceAttachmentKind, WorkspaceAttachmentStatus, Worktree, WorktreeAttachmentMount,
+    WorktreeAttachmentStatus,
 };
 
 use crate::daemon::AppState;
@@ -48,8 +50,14 @@ struct MaterializationResult {
     materialized_id: String,
 }
 
+#[derive(Debug, Clone)]
+struct AttachmentSyncPlan {
+    id: WorkspaceAttachmentId,
+    refresh: bool,
+}
+
 pub async fn sync_workspace_attachments(
-    state: &AppState,
+    state: Arc<AppState>,
     workspace: &Workspace,
     refresh: bool,
 ) -> Result<Vec<WorkspaceAttachment>> {
@@ -58,7 +66,7 @@ pub async fn sync_workspace_attachments(
     let existing = store.list_workspace_attachments(workspace.id).await?;
     if cfg.is_none() {
         for attachment in existing {
-            cleanup_removed_attachment(state, &attachment).await?;
+            cleanup_removed_attachment(state.as_ref(), &attachment).await?;
             store.delete_workspace_attachment(attachment.id).await?;
         }
         return Ok(vec![]);
@@ -76,12 +84,23 @@ pub async fn sync_workspace_attachments(
 
     let mut keep_ids = HashSet::new();
     let mut out = Vec::with_capacity(cfg.attachments.len());
+    let mut sync_plans = Vec::new();
     for entry in cfg.attachments {
-        let attachment =
+        let mut attachment =
             normalize_attachment_config(workspace.id, entry, |key| existing_map.remove(key));
+        let should_refresh = refresh || attachment.update_policy != AttachmentUpdatePolicy::Manual;
+        let should_materialize = should_refresh
+            || !materialized_path_for_attachment(state.as_ref(), &attachment).exists();
+        if should_materialize && attachment.status != WorkspaceAttachmentStatus::Syncing {
+            attachment.status = WorkspaceAttachmentStatus::Pending;
+            attachment.error_message = None;
+            sync_plans.push(AttachmentSyncPlan {
+                id: attachment.id,
+                refresh: should_refresh,
+            });
+        }
         keep_ids.insert(attachment.id);
         store.upsert_workspace_attachment(&attachment).await?;
-        maybe_materialize_attachment(state, workspace, &attachment, refresh).await?;
         out.push(attachment);
     }
 
@@ -93,11 +112,99 @@ pub async fn sync_workspace_attachments(
     }
 
     for attachment in removed {
-        cleanup_removed_attachment(state, &attachment).await?;
+        cleanup_removed_attachment(state.as_ref(), &attachment).await?;
         store.delete_workspace_attachment(attachment.id).await?;
     }
 
+    for plan in sync_plans {
+        spawn_attachment_materialization(
+            Arc::clone(&state),
+            workspace.clone(),
+            plan.id,
+            plan.refresh,
+        );
+    }
+
     Ok(out)
+}
+
+fn spawn_attachment_materialization(
+    state: Arc<AppState>,
+    workspace: Workspace,
+    attachment_id: WorkspaceAttachmentId,
+    refresh: bool,
+) {
+    tokio::spawn(async move {
+        let store = match state.store_for_workspace(workspace.id).await {
+            Ok(store) => store,
+            Err(err) => {
+                tracing::warn!("attachment sync store load failed: {err:#}");
+                return;
+            }
+        };
+        let attachment = match store.get_workspace_attachment(attachment_id).await {
+            Ok(Some(attachment)) => attachment,
+            Ok(None) => return,
+            Err(err) => {
+                tracing::warn!("attachment sync lookup failed: {err:#}");
+                return;
+            }
+        };
+
+        let now = Utc::now();
+        if let Err(err) = store
+            .update_workspace_attachment_status(
+                attachment_id,
+                WorkspaceAttachmentStatus::Syncing,
+                None,
+                None,
+                now,
+            )
+            .await
+        {
+            tracing::warn!("attachment sync status update failed: {err:#}");
+            return;
+        }
+
+        match materialize_attachment(&state, &workspace, &attachment, refresh).await {
+            Ok(_) => {
+                let now = Utc::now();
+                if let Err(err) = store
+                    .update_workspace_attachment_status(
+                        attachment_id,
+                        WorkspaceAttachmentStatus::Ready,
+                        Some(now),
+                        None,
+                        now,
+                    )
+                    .await
+                {
+                    tracing::warn!("attachment sync status update failed: {err:#}");
+                    return;
+                }
+                let _ = ensure_workspace_attachments_for_worktrees_with_attachments(
+                    &state,
+                    &workspace,
+                    &[attachment],
+                    false,
+                    false,
+                )
+                .await;
+            }
+            Err(err) => {
+                let now = Utc::now();
+                let _ = store
+                    .update_workspace_attachment_status(
+                        attachment_id,
+                        WorkspaceAttachmentStatus::Error,
+                        None,
+                        Some(err.to_string()),
+                        now,
+                    )
+                    .await;
+            }
+        }
+    });
 }
 
 pub async fn ensure_worktree_attachment_mounts(
@@ -115,6 +222,24 @@ pub async fn ensure_worktree_attachment_mounts(
         &attachments,
         refresh,
         true,
+    )
+    .await
+}
+
+pub async fn ensure_worktree_attachment_mounts_if_materialized(
+    state: &AppState,
+    workspace: &Workspace,
+    worktree: &Worktree,
+) -> Result<Vec<WorktreeAttachmentMount>> {
+    let store = state.store_for_workspace(workspace.id).await?;
+    let attachments = store.list_workspace_attachments(workspace.id).await?;
+    let ready = attachments
+        .into_iter()
+        .filter(|attachment| attachment.status == WorkspaceAttachmentStatus::Ready)
+        .filter(|attachment| materialized_path_for_attachment(state, attachment).exists())
+        .collect::<Vec<_>>();
+    ensure_worktree_attachment_mounts_for_attachments(
+        state, workspace, worktree, &ready, false, false,
     )
     .await
 }
@@ -300,9 +425,21 @@ fn normalize_attachment_config(
     let name = cfg.name.trim().to_string();
     let key = (cfg.kind.clone(), name.clone());
     let now = Utc::now();
-    let (id, created_at) = match take_existing(&key) {
-        Some(existing) => (existing.id, existing.created_at),
-        None => (WorkspaceAttachmentId::new(), now),
+    let (id, created_at, status, last_sync_at, error_message) = match take_existing(&key) {
+        Some(existing) => (
+            existing.id,
+            existing.created_at,
+            existing.status,
+            existing.last_sync_at,
+            existing.error_message,
+        ),
+        None => (
+            WorkspaceAttachmentId::new(),
+            now,
+            WorkspaceAttachmentStatus::Pending,
+            None,
+            None,
+        ),
     };
 
     let mount_relpath = cfg
@@ -327,20 +464,12 @@ fn normalize_attachment_config(
         mount_relpath,
         mode: cfg.mode.unwrap_or(AttachmentMode::Ro),
         update_policy: cfg.update_policy.unwrap_or(AttachmentUpdatePolicy::Manual),
+        status,
+        last_sync_at,
+        error_message,
         created_at,
         updated_at: now,
     }
-}
-
-async fn maybe_materialize_attachment(
-    state: &AppState,
-    workspace: &Workspace,
-    attachment: &WorkspaceAttachment,
-    refresh: bool,
-) -> Result<()> {
-    let should_refresh = refresh || attachment.update_policy != AttachmentUpdatePolicy::Manual;
-    let _ = materialize_attachment(state, workspace, attachment, should_refresh).await?;
-    Ok(())
 }
 
 async fn ensure_attachment_mount(

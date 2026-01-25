@@ -113,20 +113,21 @@ async fn attachments_demo_react_smoketest() {
         String,
         std::sync::Arc<dyn ctx_providers::adapters::ProviderAdapter>,
     > = std::collections::HashMap::new();
-    let state = AppState::new(
+    let state = std::sync::Arc::new(AppState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    );
+    ));
 
-    attachments::sync_workspace_attachments(&state, &ws, true)
+    attachments::sync_workspace_attachments(std::sync::Arc::clone(&state), &ws, false)
         .await
         .unwrap();
-    let mounts = attachments::ensure_worktree_attachment_mounts(&state, &ws, &worktree, true)
-        .await
-        .unwrap();
+    let mounts =
+        attachments::ensure_worktree_attachment_mounts(state.as_ref(), &ws, &worktree, true)
+            .await
+            .unwrap();
 
     assert!(!mounts.is_empty());
     assert!(ws_root.join(".ctx/attachments/refs/react").exists());

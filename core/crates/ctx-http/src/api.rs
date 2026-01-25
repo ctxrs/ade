@@ -10207,16 +10207,17 @@ async fn sync_workspace_attachments(
         ))?;
 
     let refresh = req.refresh.unwrap_or(false);
-    let attachments = attachments::sync_workspace_attachments(&state, &workspace, refresh)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
+    let attachments =
+        attachments::sync_workspace_attachments(Arc::clone(&state), &workspace, refresh)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
     let _ = attachments::ensure_workspace_attachments_for_worktrees_with_attachments(
         &state,
         &workspace,
@@ -10620,7 +10621,7 @@ async fn create_workspace_attachment(
             )
         })?;
 
-    let attachments = attachments::sync_workspace_attachments(&state, &workspace, true)
+    let attachments = attachments::sync_workspace_attachments(Arc::clone(&state), &workspace, true)
         .await
         .map_err(|e| {
             (
@@ -10630,14 +10631,6 @@ async fn create_workspace_attachment(
                 }),
             )
         })?;
-    let _ = attachments::ensure_workspace_attachments_for_worktrees_with_attachments(
-        &state,
-        &workspace,
-        &attachments,
-        false,
-        false,
-    )
-    .await;
     Ok(Json(attachments))
 }
 
@@ -10710,16 +10703,17 @@ async fn delete_workspace_attachment(
         ));
     }
 
-    let attachments = attachments::sync_workspace_attachments(&state, &workspace, false)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
+    let attachments =
+        attachments::sync_workspace_attachments(Arc::clone(&state), &workspace, false)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
     Ok(Json(attachments))
 }
 
@@ -11279,9 +11273,10 @@ async fn unarchive_task(
     }
 
     for worktree in &worktrees {
-        if let Err(e) =
-            attachments::ensure_worktree_attachment_mounts(&state, &workspace, worktree, false)
-                .await
+        if let Err(e) = attachments::ensure_worktree_attachment_mounts_if_materialized(
+            &state, &workspace, worktree,
+        )
+        .await
         {
             tracing::warn!(task_id = %task_id.0, "attachment mounts failed: {e:?}");
         }
@@ -11656,12 +11651,12 @@ async fn create_task(
         tracing::warn!(task_id = %task.id.0, "failed to set primary worktree: {e:?}");
     }
 
-    if let Err(e) = attachments::sync_workspace_attachments(&state, &ws, false).await {
+    if let Err(e) = attachments::sync_workspace_attachments(Arc::clone(&state), &ws, false).await {
         tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
     }
 
     if let Err(e) =
-        attachments::ensure_worktree_attachment_mounts(&state, &ws, &worktree, false).await
+        attachments::ensure_worktree_attachment_mounts_if_materialized(&state, &ws, &worktree).await
     {
         tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
     }
@@ -11852,12 +11847,13 @@ async fn create_session_for_task(
                     tracing::warn!(task_id = %task.id.0, "worktree bootstrap failed: {e:?}");
                 }
                 if let Err(e) =
-                    attachments::sync_workspace_attachments(&state, &workspace, false).await
+                    attachments::sync_workspace_attachments(Arc::clone(&state), &workspace, false)
+                        .await
                 {
                     tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
                 }
-                if let Err(e) = attachments::ensure_worktree_attachment_mounts(
-                    &state, &workspace, &worktree, false,
+                if let Err(e) = attachments::ensure_worktree_attachment_mounts_if_materialized(
+                    &state, &workspace, &worktree,
                 )
                 .await
                 {
@@ -11911,13 +11907,17 @@ async fn create_session_for_task(
                             "failed to update worktree index: {e:?}"
                         );
                     }
-                    if let Err(e) =
-                        attachments::sync_workspace_attachments(&state, &workspace, false).await
+                    if let Err(e) = attachments::sync_workspace_attachments(
+                        Arc::clone(&state),
+                        &workspace,
+                        false,
+                    )
+                    .await
                     {
                         tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
                     }
-                    if let Err(e) = attachments::ensure_worktree_attachment_mounts(
-                        &state, &workspace, &worktree, false,
+                    if let Err(e) = attachments::ensure_worktree_attachment_mounts_if_materialized(
+                        &state, &workspace, &worktree,
                     )
                     .await
                     {

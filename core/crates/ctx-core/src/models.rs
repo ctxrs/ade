@@ -134,6 +134,15 @@ pub enum AttachmentUpdatePolicy {
     Scheduled,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceAttachmentStatus {
+    Pending,
+    Syncing,
+    Ready,
+    Error,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceAttachment {
     pub id: WorkspaceAttachmentId,
@@ -146,6 +155,9 @@ pub struct WorkspaceAttachment {
     pub mount_relpath: String,
     pub mode: AttachmentMode,
     pub update_policy: AttachmentUpdatePolicy,
+    pub status: WorkspaceAttachmentStatus,
+    pub last_sync_at: Option<DateTime<Utc>>,
+    pub error_message: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

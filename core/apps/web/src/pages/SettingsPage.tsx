@@ -99,6 +99,23 @@ import {
   truncateText,
 } from "./SettingsPage.utils";
 
+const formatAttachmentStatus = (status?: WorkspaceAttachment["status"]) => {
+  switch (status) {
+    case "pending":
+      return "Pending";
+    case "syncing":
+      return "Syncing";
+    case "ready":
+      return "Ready";
+    case "error":
+      return "Error";
+    default:
+      return "Pending";
+  }
+};
+
+const isAttachmentSyncing = (status?: WorkspaceAttachment["status"]) => status === "pending" || status === "syncing";
+
 export default function SettingsPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -777,19 +794,25 @@ export default function SettingsPage() {
   }, []);
 
   const refreshWorkspaceAttachments = useCallback(
-    async (opts?: { refresh?: boolean }) => {
+    async (opts?: { refresh?: boolean; silent?: boolean }) => {
       if (!workspaceId) return;
-      setAttachmentsLoading(true);
-      setAttachmentsError(null);
+      if (!opts?.silent) {
+        setAttachmentsLoading(true);
+        setAttachmentsError(null);
+      }
       try {
         const next = opts?.refresh
           ? await syncWorkspaceAttachments(workspaceId, true)
           : await listWorkspaceAttachments(workspaceId);
         setAttachments(next);
       } catch (e: any) {
-        setAttachmentsError(e?.message ?? String(e));
+        if (!opts?.silent) {
+          setAttachmentsError(e?.message ?? String(e));
+        }
       } finally {
-        setAttachmentsLoading(false);
+        if (!opts?.silent) {
+          setAttachmentsLoading(false);
+        }
       }
     },
     [workspaceId],
@@ -1107,10 +1130,36 @@ export default function SettingsPage() {
   }, [workspaceId]);
 
   useEffect(() => {
-    if (active !== "workspace_attachments") return;
+    if (active !== "workspace_attachments") {
+      const existing = pollTimeoutsRef.current.attachments;
+      if (existing) {
+        window.clearTimeout(existing);
+        delete pollTimeoutsRef.current.attachments;
+      }
+      return;
+    }
     if (!workspaceId) return;
     refreshWorkspaceAttachments().catch(() => {});
   }, [active, workspaceId, refreshWorkspaceAttachments]);
+
+  useEffect(() => {
+    if (active !== "workspace_attachments") return;
+    if (!workspaceId) return;
+    const hasPending = attachments.some((attachment) => isAttachmentSyncing(attachment.status));
+    const existing = pollTimeoutsRef.current.attachments;
+    if (!hasPending) {
+      if (existing) {
+        window.clearTimeout(existing);
+        delete pollTimeoutsRef.current.attachments;
+      }
+      return;
+    }
+    if (existing) return;
+    pollTimeoutsRef.current.attachments = window.setTimeout(() => {
+      delete pollTimeoutsRef.current.attachments;
+      refreshWorkspaceAttachments({ silent: true }).catch(() => {});
+    }, 2000);
+  }, [active, attachments, refreshWorkspaceAttachments, workspaceId]);
 
   useEffect(() => {
     if (active !== "merge_queue") return;
@@ -1853,14 +1902,22 @@ export default function SettingsPage() {
                     <div>Attachment</div>
                     <div>Source</div>
                     <div>Mount</div>
+                    <div>Status</div>
                     <div>Updated</div>
                     <div />
                   </div>
                   {attachments.map((attachment) => {
-                    const updatedMs = Date.parse(attachment.updated_at);
+                    const updatedAt = attachment.last_sync_at ?? attachment.updated_at;
+                    const updatedMs = updatedAt ? Date.parse(updatedAt) : Number.NaN;
                     const updatedLabel = Number.isFinite(updatedMs)
                       ? `${formatAge(Date.now() - updatedMs)} ago`
                       : "—";
+                    const statusLabel = formatAttachmentStatus(attachment.status);
+                    const statusTitle = attachment.error_message ? `${statusLabel}: ${attachment.error_message}` : statusLabel;
+                    const statusClass =
+                      attachment.status === "error"
+                        ? "settings-table-sub settings-table-sub-error"
+                        : "settings-table-sub";
                     const deleteBusy = attachmentDeleteBusy[idToString(attachment.id)] ?? false;
                     return (
                       <div key={idToString(attachment.id)} className="settings-table-row">
@@ -1875,6 +1932,9 @@ export default function SettingsPage() {
                         </div>
                         <div className="settings-table-mono" title={attachment.mount_relpath}>
                           {truncateText(attachment.mount_relpath, 32)}
+                        </div>
+                        <div className={statusClass} title={statusTitle}>
+                          {statusLabel}
                         </div>
                         <div className="settings-table-sub">{updatedLabel}</div>
                         <div className="settings-row-right">

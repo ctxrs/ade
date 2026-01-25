@@ -43,4 +43,5 @@ export type {
   Worktree,
   WorkspaceAttachment,
   WorkspaceAttachmentKind,
+  WorkspaceAttachmentStatus,
 } from "@ctx/types";
