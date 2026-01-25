@@ -1066,13 +1066,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return merged;
   }, [optimisticTasks, tasksById]);
 
-  const isEntryWorking = useCallback((entry: SessionCacheEntry): boolean => {
-    const sess = entry.session;
-    if (!sess) return false;
-    if (sess.status === "failed" || sess.status === "cancelled" || sess.status === "completed") return false;
-    return entry.turns.some((turn) => turn.status === "running");
-  }, []);
-
   const taskLiveInfo = useMemo(() => {
     const workingByTask = new Set<string>();
     const errorByTask = new Set<string>();
@@ -1089,7 +1082,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       for (const sessionSummary of summary.sessions) {
         const sessionId = idToString(sessionSummary.session.id);
         const entry = sessionId ? entryBySessionId.get(sessionId) : undefined;
-        const isWorking = entry ? isEntryWorking(entry) : sessionSummary.activity?.is_working === true;
+        const isWorking = sessionSummary.activity?.is_working === true;
         if (isWorking) workingByTask.add(taskId);
 
         const status = entry?.session?.status ?? sessionSummary.session.status;
@@ -1108,14 +1101,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     for (const entry of Object.values(sessionSnap.sessions)) {
       const taskId = entry.session ? idToString(entry.session.task_id) : "";
       if (!taskId || tasksForLiveInfo[taskId]) continue;
-      if (isEntryWorking(entry)) workingByTask.add(taskId);
       const status = entry.session?.status;
       if (status === "failed" || status === "cancelled") errorByTask.add(taskId);
       const ms = lastAssistantMessageMs(entry.messages);
       if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
     }
     return { workingByTask, errorByTask, lastAssistantMsByTask };
-  }, [isEntryWorking, sessionSnap.sessions, tasksForLiveInfo]);
+  }, [sessionSnap.sessions, tasksForLiveInfo]);
 
   useEffect(() => {
     if (optimisticTasks.length === 0) return;
