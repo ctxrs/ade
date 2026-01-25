@@ -1226,6 +1226,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const applyArchiveToggle = useCallback(
     async (taskId: string, nextArchived: boolean) => {
+      const startNavToken = workbenchStore.getNavToken();
       setArchivePendingById((prev) => ({
         ...prev,
         [taskId]: nextArchived ? "archive" : "unarchive",
@@ -1233,8 +1234,12 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       try {
         const updated = nextArchived ? await archiveTask(taskId) : await unarchiveTask(taskId);
         workspaceSnapshotStore.applyTaskUpdate(updated);
-        if (nextArchived && activeTaskId === taskId) {
-          focusNewTask();
+        if (nextArchived) {
+          const activeTab = workbenchStore.getActiveTab();
+          const activeTaskIdNow = activeTab?.kind === "task" ? activeTab.ref.taskId : null;
+          if (activeTaskIdNow === taskId && workbenchStore.getNavToken() === startNavToken) {
+            workbenchStore.focusNewTask({ navToken: startNavToken, source: "system" });
+          }
         }
       } finally {
         setArchivePendingById((prev) => {
@@ -1245,7 +1250,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         });
       }
     },
-    [activeTaskId, focusNewTask, workspaceSnapshotStore],
+    [workbenchStore, workspaceSnapshotStore],
   );
 
   const onToggleArchive = useCallback(

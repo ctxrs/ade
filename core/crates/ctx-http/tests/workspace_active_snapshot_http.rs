@@ -776,7 +776,6 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
             }) =
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-            {
                 if summary.task.id == task.id {
                     saw_upsert = true;
                     break;

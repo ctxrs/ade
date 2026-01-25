@@ -1,17 +1,19 @@
 import React from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { VirtuosoMockContext } from "react-virtuoso";
-import { describe, it, vi, beforeAll, afterEach } from "vitest";
+import { describe, it, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import WorkbenchPage from "./WorkbenchPage";
 
 const workspaceId = "ws-1";
 const taskId = "task-1";
+const taskId2 = "task-2";
 const sessionId = "session-1";
+const sessionId2 = "session-2";
 
 const baseIso = "2024-01-01T00:00:00.000Z";
 
-let sessionSnap = {
+const buildSessionSnap = () => ({
   connection: "connected",
   sessions: {
     [sessionId]: {
@@ -36,9 +38,9 @@ let sessionSnap = {
       updatedAtMs: 0,
     },
   },
-};
+});
 
-let workspaceSnapshotSnap = {
+const buildWorkspaceSnapshotSnap = () => ({
   workspaceId,
   initialized: true,
   connection: "connected",
@@ -81,6 +83,39 @@ let workspaceSnapshotSnap = {
   hasMoreActive: false,
   hasMoreArchived: false,
   archivedLoaded: true,
+});
+
+let sessionSnap = buildSessionSnap();
+let workspaceSnapshotSnap = buildWorkspaceSnapshotSnap();
+let navToken = 0;
+let activeTab: any = null;
+let activeTaskId = taskId;
+let activeSessionId: string | null = sessionId;
+const focusNewTaskSpy = vi.fn();
+const focusTaskSpy = vi.fn(
+  (nextTaskId: string, nextSessionId?: string | null, opts?: { source?: string }) => {
+    if (opts?.source !== "system") {
+      navToken += 1;
+    }
+    activeTab = {
+      id: `tab-${nextTaskId}`,
+      kind: "task",
+      ref: { taskId: nextTaskId, sessionId: nextSessionId ?? null },
+    };
+    activeTaskId = nextTaskId;
+    activeSessionId = nextSessionId ?? null;
+  },
+);
+const applyTaskUpdateSpy = vi.fn();
+
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 };
 
 vi.mock("../api/client", () => ({
@@ -130,7 +165,7 @@ vi.mock("../state/workspaceActiveSnapshotStore", () => ({
   useWorkspaceActiveSnapshotEvents: () => {},
   useWorkspaceActiveSnapshotSnapshot: () => workspaceSnapshotSnap,
   useWorkspaceActiveSnapshotStore: () => ({
-    applyTaskUpdate: vi.fn(),
+    applyTaskUpdate: applyTaskUpdateSpy,
     ensureArchivedLoaded: vi.fn(),
     getWorktreeRoot: vi.fn(() => null),
     loadMoreActive: vi.fn(),
@@ -144,12 +179,13 @@ vi.mock("../workbench/store", () => ({
   scrollKey: () => "scroll-key",
   sessionDraftKey: () => "draft-key",
   useWorkbenchStore: () => ({
-    focusNewTask: vi.fn(),
-    focusTask: vi.fn(),
+    focusNewTask: focusNewTaskSpy,
+    focusTask: focusTaskSpy,
     setActiveSessionForActiveTask: vi.fn(),
     setScrollState: vi.fn(),
     flushDraft: vi.fn(),
-    getActiveTab: vi.fn(() => null),
+    getActiveTab: () => activeTab,
+    getNavToken: () => navToken,
   }),
   useWorkbenchShellSnapshot: () => ({
     workspaceId,
@@ -159,7 +195,7 @@ vi.mock("../workbench/store", () => ({
     window: { scrollByKey: {} },
   }),
   useActiveWorkbenchTab: () => null,
-  useActiveWorkbenchIds: () => ({ taskId: null, sessionId: null }),
+  useActiveWorkbenchIds: () => ({ taskId: activeTaskId, sessionId: activeSessionId }),
   useNewTaskDraft: () => ({ value: { text: "", modeId: "default" }, setValue: vi.fn() }),
   useWorkbenchDraft: () => ({ value: { text: "", modeId: "default" }, updatedAtMs: 0, setValue: vi.fn() }),
 }));
@@ -201,6 +237,15 @@ beforeAll(() => {
     }
     (globalThis as any).ResizeObserver = ResizeObserver;
   }
+});
+
+beforeEach(() => {
+  navToken = 0;
+  activeTab = { id: `tab-${taskId}`, kind: "task", ref: { taskId, sessionId } };
+  activeTaskId = taskId;
+  activeSessionId = sessionId;
+  sessionSnap = buildSessionSnap();
+  workspaceSnapshotSnap = buildWorkspaceSnapshotSnap();
 });
 
 afterEach(() => {
@@ -248,5 +293,81 @@ describe("WorkbenchPage task rename selection", () => {
     rerender(ui);
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     expect(selectSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("WorkbenchPage archive navigation", () => {
+  it("does not refocus new task after navigation during archive", async () => {
+    workspaceSnapshotSnap = {
+      ...workspaceSnapshotSnap,
+      tasksById: {
+        ...workspaceSnapshotSnap.tasksById,
+        [taskId2]: {
+          id: taskId2,
+          sortAtMs: Date.parse("2024-01-01T00:00:02.000Z"),
+          task: {
+            id: taskId2,
+            title: "Second task",
+            created_at: baseIso,
+            updated_at: baseIso,
+            last_activity_at: baseIso,
+            archived_at: null,
+            assistant_seen_at: null,
+            last_assistant_message_at: null,
+          },
+          sessions: [
+            {
+              session: {
+                id: sessionId2,
+                task_id: taskId2,
+                provider_id: "codex",
+                status: "active",
+                created_at: baseIso,
+              },
+              last_message_at: null,
+              last_event_seq: null,
+              activity: { is_working: false, last_turn_status: null },
+              unread: false,
+            },
+          ],
+        },
+      },
+      activeIds: [taskId, taskId2],
+      totalActive: 2,
+    };
+
+    const { archiveTask } = await import("../api/client");
+    const archiveDeferred = createDeferred<any>();
+    vi.mocked(archiveTask).mockReturnValueOnce(archiveDeferred.promise);
+
+    const ui = (
+      <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
+        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
+          <Routes>
+            <Route path="/workspaces/:id" element={<WorkbenchPage />} />
+          </Routes>
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>
+    );
+
+    render(ui);
+
+    const starterRow = screen.getByText("Starter task").closest(".wb-task-row");
+    expect(starterRow).not.toBeNull();
+    const archiveButton = within(starterRow as HTMLElement).getByRole("button", { name: "Archive" });
+    fireEvent.click(archiveButton);
+
+    const dialog = await screen.findByRole("dialog", { name: "Archive confirmation" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Archive" }));
+
+    await waitFor(() => expect(archiveTask).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText("Second task"));
+    fireEvent.click(screen.getByText("Starter task"));
+
+    archiveDeferred.resolve({ id: taskId, archived_at: baseIso });
+
+    await waitFor(() => expect(applyTaskUpdateSpy).toHaveBeenCalledTimes(1));
+    expect(focusNewTaskSpy).not.toHaveBeenCalled();
   });
 });
