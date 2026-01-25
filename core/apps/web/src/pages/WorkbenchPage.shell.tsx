@@ -1071,6 +1071,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const errorByTask = new Set<string>();
     const lastAssistantMsByTask: Record<string, number> = {};
     const entryBySessionId = new Map<string, SessionCacheEntry>();
+    const primarySessionIdByTask: Record<string, string> = {};
     for (const entry of Object.values(sessionSnap.sessions)) {
       const sessionId = entry.session ? idToString(entry.session.id) : "";
       if (sessionId) entryBySessionId.set(sessionId, entry);
@@ -1079,29 +1080,40 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     for (const summary of Object.values(tasksForLiveInfo)) {
       if (!summary) continue;
       const taskId = summary.id;
-      for (const sessionSummary of summary.sessions) {
+      const primarySessionId = summary.primarySessionId ? String(summary.primarySessionId) : "";
+      if (!primarySessionId) continue;
+      primarySessionIdByTask[taskId] = primarySessionId;
+      const primarySessionSummary = summary.sessions.find((sessionSummary) => {
         const sessionId = idToString(sessionSummary.session.id);
-        const entry = sessionId ? entryBySessionId.get(sessionId) : undefined;
-        const isWorking = sessionSummary.activity?.is_working === true;
-        if (isWorking) workingByTask.add(taskId);
+        return sessionId === primarySessionId;
+      });
+      if (!primarySessionSummary) continue;
 
-        const status = entry?.session?.status ?? sessionSummary.session.status;
-        if (status === "failed" || status === "cancelled") {
-          errorByTask.add(taskId);
-        }
+      const sessionId = idToString(primarySessionSummary.session.id);
+      const entry = sessionId ? entryBySessionId.get(sessionId) : undefined;
+      const isWorking = primarySessionSummary.activity?.is_working === true;
+      if (isWorking) workingByTask.add(taskId);
 
-        const liveMs = entry ? lastAssistantMessageMs(entry.messages) : null;
-        const summaryMs = parseMs(sessionSummary.last_message_at ?? null);
-        const ms =
-          liveMs !== null && summaryMs !== null ? Math.max(liveMs, summaryMs) : liveMs ?? summaryMs;
-        if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
+      const status = entry?.session?.status ?? primarySessionSummary.session.status;
+      if (status === "failed" || status === "cancelled") {
+        errorByTask.add(taskId);
       }
+
+      const liveMs = entry ? lastAssistantMessageMs(entry.messages) : null;
+      const summaryMs = parseMs(primarySessionSummary.last_message_at ?? null);
+      const ms =
+        liveMs !== null && summaryMs !== null ? Math.max(liveMs, summaryMs) : liveMs ?? summaryMs;
+      if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
     }
 
     for (const entry of Object.values(sessionSnap.sessions)) {
-      const taskId = entry.session ? idToString(entry.session.task_id) : "";
+      const session = entry.session;
+      if (!session) continue;
+      const taskId = idToString(session.task_id);
       if (!taskId || tasksForLiveInfo[taskId]) continue;
-      const status = entry.session?.status;
+      const primarySessionId = primarySessionIdByTask[taskId];
+      if (!primarySessionId || primarySessionId !== idToString(session.id)) continue;
+      const status = session.status;
       if (status === "failed" || status === "cancelled") errorByTask.add(taskId);
       const ms = lastAssistantMessageMs(entry.messages);
       if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
