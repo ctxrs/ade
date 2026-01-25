@@ -4036,7 +4036,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         >
           <div className="wb-archive-confirm-title">Archive conversation?</div>
           <div className="wb-archive-confirm-body">
-            Archiving deletes the worktrees and ctx-managed branches, including subagents. You can unarchive to recreate them, but uncommitted or unmerged changes will be lost.
+            Archiving deletes the ctx-managed worktrees and branches associated with this task, including its subagents. Later, you can unarchive to recreate them, but unmerged changes will be lost.
+            <br />
+            <br />
+            If you want to keep changes made here, consider instructing the primary agent to use the Merge Queue to bring the changes into your main branch. Otherwise, tell it to stash the changes into another local or remote branch for later use.
+            <br />
+            <br />
+            In general, we recommend aggressively archiving tasks as you complete work for performance and organization. You can always unarchive any task later, which will restore all conversation history, including subagents.
           </div>
           <label className="wb-archive-confirm-toggle">
             <input
