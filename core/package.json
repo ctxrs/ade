@@ -28,6 +28,7 @@
     "verify:quick": "turbo run rust:fmt rust:clippy rust:test native:check native:check:automation native:test ios-native:build supabase:migrations:check supabase:functions:check --filter=ctx-monorepo --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=new-only --log-order=grouped --concurrency=1 --ui=stream --cache=local:r,remote:r"
   },
   "devDependencies": {
+    "@supabase/supabase-js": "2.49.1",
     "pixelmatch": "^7.1.0",
     "pngjs": "^7.0.0",
     "turbo": "^2.3.0",

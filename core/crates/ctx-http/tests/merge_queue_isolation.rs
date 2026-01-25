@@ -13,6 +13,12 @@ use tokio::process::Command;
 
 mod common;
 
+const MERGE_QUEUE_CONFLICT_MESSAGE: &str = concat!(
+    "Your merge queue submission produces conflicts with the current head. ",
+    "Please rebase your changes, carefully considering the intent of your changes and the intent of the upstream changes. ",
+    "If in doubt about how to resolve conflicts, please ask for help."
+);
+
 async fn write_merge_queue_config(
     root: &Path,
     target_branch: &str,
@@ -56,6 +62,17 @@ async fn git_output(root: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+async fn git_success(root: &Path, args: &[&str]) -> bool {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .await
+        .unwrap();
+    output.status.success()
+}
+
 async fn wait_for_entry(state: &Arc<AppState>, entry_id: MergeQueueEntryId) -> MergeQueueEntry {
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
@@ -72,6 +89,195 @@ async fn wait_for_entry(state: &Arc<AppState>, entry_id: MergeQueueEntryId) -> M
             _ => return entry,
         }
     }
+}
+
+#[tokio::test]
+async fn merge_queue_accepts_unrebased_changes() {
+    let repo = common::init_git_repo(&[
+        ("note.txt", "base\n"),
+        (".gitignore", ".ctx/merge-queue\n.ctx/config.toml\n"),
+    ])
+    .await;
+    let target_branch = git_output(repo.path(), &["rev-parse", "--abbrev-ref", "HEAD"]).await;
+    write_merge_queue_config(repo.path(), &target_branch, "never").await;
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+    merge_queue::spawn_merge_queue_runner(state.clone());
+
+    let workspace = common::create_workspace(&app, repo.path(), "mq-unrebased").await;
+
+    let worktree_root = tempfile::tempdir().unwrap();
+    let feature_path = worktree_root.path().join("feature");
+    common::run_git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            feature_path.to_str().unwrap(),
+            "-b",
+            "feature",
+        ],
+    )
+    .await;
+
+    append_file(&feature_path.join("note.txt"), "feature\n").await;
+    common::run_git(&feature_path, &["add", "note.txt"]).await;
+    common::run_git(&feature_path, &["commit", "-m", "feature"]).await;
+
+    append_file(&repo.path().join("target.txt"), "target\n").await;
+    common::run_git(repo.path(), &["add", "target.txt"]).await;
+    common::run_git(repo.path(), &["commit", "-m", "target"]).await;
+
+    let feature_head = git_output(&feature_path, &["rev-parse", "HEAD"]).await;
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let worktree = store
+        .create_worktree(
+            workspace.id,
+            feature_path.to_string_lossy().to_string(),
+            feature_head,
+            Some("feature".to_string()),
+        )
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree.id, workspace.id)
+        .await
+        .unwrap();
+
+    let (status, entry): (StatusCode, MergeQueueEntry) = common::json_request(
+        &app,
+        Method::POST,
+        "/api/merge-queue/entries",
+        Some(json!({
+            "worktree_id": worktree.id.0.to_string(),
+            "message": "mq-unrebased",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let entry = wait_for_entry(&state, entry.id).await;
+    assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
+    let merge_queue_repo = repo.path().join(".ctx/merge-queue/repo");
+    let mq_head = git_output(&merge_queue_repo, &["rev-parse", &target_branch]).await;
+    assert_eq!(mq_head, entry.result_commit_sha.clone().unwrap());
+}
+
+#[tokio::test]
+async fn merge_queue_conflict_message_and_cleanup() {
+    let repo = common::init_git_repo(&[
+        ("note.txt", "base\n"),
+        (".gitignore", ".ctx/merge-queue\n.ctx/config.toml\n"),
+    ])
+    .await;
+    let target_branch = git_output(repo.path(), &["rev-parse", "--abbrev-ref", "HEAD"]).await;
+    write_merge_queue_config(repo.path(), &target_branch, "never").await;
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+    merge_queue::spawn_merge_queue_runner(state.clone());
+
+    let workspace = common::create_workspace(&app, repo.path(), "mq-conflict").await;
+
+    let worktree_root = tempfile::tempdir().unwrap();
+    let feature_path = worktree_root.path().join("feature");
+    common::run_git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            feature_path.to_str().unwrap(),
+            "-b",
+            "feature",
+        ],
+    )
+    .await;
+
+    tokio::fs::write(feature_path.join("note.txt"), "feature\n")
+        .await
+        .unwrap();
+    common::run_git(&feature_path, &["add", "note.txt"]).await;
+    common::run_git(&feature_path, &["commit", "-m", "feature"]).await;
+
+    tokio::fs::write(repo.path().join("note.txt"), "target\n")
+        .await
+        .unwrap();
+    common::run_git(repo.path(), &["add", "note.txt"]).await;
+    common::run_git(repo.path(), &["commit", "-m", "target"]).await;
+
+    let feature_head = git_output(&feature_path, &["rev-parse", "HEAD"]).await;
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let worktree = store
+        .create_worktree(
+            workspace.id,
+            feature_path.to_string_lossy().to_string(),
+            feature_head,
+            Some("feature".to_string()),
+        )
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree.id, workspace.id)
+        .await
+        .unwrap();
+
+    let (status, _body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        Method::POST,
+        "/api/merge-queue/entries",
+        Some(json!({
+            "worktree_id": worktree.id.0.to_string(),
+            "message": "mq-conflict",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let entries = store
+        .list_merge_queue_entries(workspace.id, Some(1))
+        .await
+        .unwrap();
+    let entry = entries
+        .into_iter()
+        .next()
+        .expect("expected merge queue entry");
+    let entry = wait_for_entry(&state, entry.id).await;
+    assert_eq!(entry.status, MergeQueueEntryStatus::Conflict);
+    assert_eq!(
+        entry.error_message.as_deref(),
+        Some(MERGE_QUEUE_CONFLICT_MESSAGE)
+    );
+
+    let worktree_path = repo
+        .path()
+        .join(".ctx/merge-queue/worktrees")
+        .join(workspace.id.0.to_string())
+        .join(entry.id.0.to_string());
+    assert!(!worktree_path.exists());
+
+    let merge_queue_repo = repo.path().join(".ctx/merge-queue/repo");
+    let branch_ref = format!("refs/heads/ctx-merge-queue/{}", entry.id.0);
+    let branch_exists = git_success(
+        &merge_queue_repo,
+        &["show-ref", "--verify", "--quiet", &branch_ref],
+    )
+    .await;
+    assert!(!branch_exists);
 }
 
 #[tokio::test]
