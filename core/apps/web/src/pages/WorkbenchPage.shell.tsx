@@ -2690,7 +2690,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       session: optimisticSession,
       last_message_at: nowIso,
       last_message_preview: prompt.slice(0, 160),
-      activity: { is_working: true, last_turn_status: "queued" },
+      activity: { is_working: true, last_turn_status: "running" },
       unread: false,
     };
 
@@ -2724,7 +2724,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       role: "user",
       content: prompt,
       attachments: attachmentsToSend,
-      delivery: "queued",
+      delivery: "immediate",
       created_at: nowIso,
     };
 
@@ -2804,7 +2804,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                     session,
                     last_message_at: nowIso,
                     last_message_preview: summary.last_message_preview ?? prompt.slice(0, 160),
-                    activity: { is_working: true, last_turn_status: "queued" },
+                    activity: { is_working: true, last_turn_status: "running" },
                   };
                   return nextSummary;
                 });
