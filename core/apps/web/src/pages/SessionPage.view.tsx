@@ -70,7 +70,6 @@ import {
   formatSubagentChildMeta,
   humanToolStatus,
   markdownToPlainText,
-  parseIsoMs,
   subagentChildLabel,
 } from "./SessionPage.helpers";
 import {
@@ -129,6 +128,17 @@ function useRafCoalesced<T>(value: T): T {
   }, [value, coalesced]);
 
   return coalesced;
+}
+
+function isSameContextWindow(a: ContextWindowInfo | null, b: ContextWindowInfo | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.windowTokens === b.windowTokens &&
+    a.usedTokens === b.usedTokens &&
+    a.remainingTokens === b.remainingTokens &&
+    a.remainingFraction === b.remainingFraction
+  );
 }
 
 export function SessionView({
@@ -207,6 +217,7 @@ export function SessionView({
   const [expandedTurnHeaders, setExpandedTurnHeaders] = useState<Record<string, boolean>>({});
   const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
+  const [lastContextWindow, setLastContextWindow] = useState<ContextWindowInfo | null>(null);
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
 
   useEffect(() => {
@@ -219,6 +230,7 @@ export function SessionView({
     setExpandedTurnHeaders({});
     setExpandedTurnDetailsById({});
     setExpandedToolById({});
+    setLastContextWindow(null);
     setAuthMethodId("");
     setAuthBusy(false);
     setAuthError(null);
@@ -692,19 +704,22 @@ export function SessionView({
   const coalescedDisplayMessagesKey = useRafCoalesced(displayMessagesKey);
   const coalescedDisplayTurns = useRafCoalesced(displayTurns);
   const coalescedDisplayTurnsKey = useRafCoalesced(displayTurnsKey);
-  const contextWindow = useMemo<ContextWindowInfo | null>(() => {
-    let latestMetrics: any = null;
-    let latestAt = -1;
-    for (const turn of turns) {
-      if (!turn.metrics_json) continue;
-      const updatedAt = parseIsoMs(turn.updated_at) ?? 0;
-      if (updatedAt >= latestAt) {
-        latestAt = updatedAt;
-        latestMetrics = turn.metrics_json;
-      }
+  const computedContextWindow = useMemo<ContextWindowInfo | null>(() => {
+    for (let i = turns.length - 1; i >= 0; i -= 1) {
+      const metrics = turns[i]?.metrics_json;
+      if (!metrics) continue;
+      const normalized = normalizeContextWindowMetrics(metrics);
+      if (normalized) return normalized;
     }
-    return normalizeContextWindowMetrics(latestMetrics);
+    return null;
   }, [turnsKey]);
+  useEffect(() => {
+    if (!computedContextWindow) return;
+    setLastContextWindow((prev) =>
+      isSameContextWindow(prev, computedContextWindow) ? prev : computedContextWindow,
+    );
+  }, [computedContextWindow]);
+  const contextWindow = computedContextWindow ?? lastContextWindow;
   const hasActiveTurn = useMemo(
     () => turns.some((turn) => turn.status === "running" || turn.status === "queued"),
     [turnsKey],
