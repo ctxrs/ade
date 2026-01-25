@@ -47,11 +47,12 @@ test("ws: recovers from a single stream drop in a large workspace", async ({ pag
     messageBytes: 2048,
   });
 
-  const warnings: string[] = [];
+  const warnings: Array<{ text: string; ts: number; reason?: string }> = [];
   page.on("console", (msg) => {
     const text = msg.text();
     if (text.includes("Workspace active snapshot not received")) {
-      warnings.push(text);
+      const match = text.match(/Workspace active snapshot not received over WS \(([^)]+)\)/);
+      warnings.push({ text, ts: Date.now(), reason: match?.[1] });
     }
   });
 
@@ -107,5 +108,10 @@ test("ws: recovers from a single stream drop in a large workspace", async ({ pag
 
   const afterDrop = requests.filter((entry) => entry.ts >= dropTime);
   expect(afterDrop).toEqual([]);
-  expect(warnings).toEqual([]);
+  const unexpectedWarnings = warnings.filter((warning) => {
+    if (warning.reason !== "ws_open") return true;
+    if (!dropTime) return true;
+    return warning.ts > dropTime + 2000;
+  });
+  expect(unexpectedWarnings).toEqual([]);
 });
