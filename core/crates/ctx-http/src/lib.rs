@@ -334,28 +334,59 @@ mod tests {
                 let value: serde_json::Value = serde_json::from_str(&txt).unwrap();
                 let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
                     serde_json::from_value(value).unwrap();
-                let ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } =
-                    message
-                else {
-                    continue;
-                };
-                if let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                    delta,
-                    ..
-                } = event
-                {
-                    if delta.session_id == session.id
-                        && delta
-                            .event
-                            .as_ref()
-                            .map(|event| {
-                                matches!(event.event_type, ctx_core::models::SessionEventType::Done)
-                            })
-                            .unwrap_or(false)
-                    {
-                        seen_done = true;
-                        break;
+                match message {
+                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                        event:
+                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                delta,
+                                ..
+                            },
+                        ..
+                    } => {
+                        if delta.session_id == session.id
+                            && delta
+                                .event
+                                .as_ref()
+                                .map(|event| {
+                                    matches!(
+                                        event.event_type,
+                                        ctx_core::models::SessionEventType::Done
+                                    )
+                                })
+                                .unwrap_or(false)
+                        {
+                            seen_done = true;
+                            break;
+                        }
                     }
+                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                        deltas,
+                        ..
+                    } => {
+                        for delta in deltas {
+                            if delta.session_id != session.id {
+                                continue;
+                            }
+                            let is_done = delta
+                                .event
+                                .as_ref()
+                                .map(|event| {
+                                    matches!(
+                                        event.event_type,
+                                        ctx_core::models::SessionEventType::Done
+                                    )
+                                })
+                                .unwrap_or(false);
+                            if is_done {
+                                seen_done = true;
+                                break;
+                            }
+                        }
+                        if seen_done {
+                            break;
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

@@ -60,15 +60,31 @@ pub(crate) async fn spawn_ws_listener(
                 WsMessage::Binary(bytes) => String::from_utf8(bytes.to_vec()).unwrap_or_default(),
                 _ => continue,
             };
-            let evt: ctx_core::models::WorkspaceActiveSnapshotEvent =
+            let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
                 match serde_json::from_str(&text) {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-            if let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                delta, ..
-            } = evt
-            {
+            let mut deltas = Vec::new();
+            match message {
+                ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                    event:
+                        ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                            delta, ..
+                        },
+                    ..
+                } => {
+                    deltas.push(*delta);
+                }
+                ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                    deltas: batch,
+                    ..
+                } => {
+                    deltas.extend(batch);
+                }
+                _ => {}
+            }
+            for delta in deltas {
                 if let Some(ev) = delta.event.as_ref() {
                     let content = extract_event_content(&ev.event_type, &ev.payload_json);
                     if let Some(content) = content {

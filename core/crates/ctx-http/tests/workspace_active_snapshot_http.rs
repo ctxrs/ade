@@ -376,25 +376,49 @@ async fn workspace_stream_replays_from_after_seq() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Ok(ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                event:
-                    ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                        delta,
-                        ..
-                    },
-                ..
-            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
+            if let Ok(message) =
+                serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if delta.session_id != session.id {
-                    continue;
-                }
-                if let Some(event) = delta.event {
-                    if event.seq == ev3.seq {
-                        seen_replay = true;
+                match message {
+                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                        event:
+                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                delta,
+                                ..
+                            },
+                        ..
+                    } => {
+                        if delta.session_id != session.id {
+                            continue;
+                        }
+                        if let Some(event) = delta.event {
+                            if event.seq == ev3.seq {
+                                seen_replay = true;
+                            }
+                            if event.seq <= ev2.seq {
+                                seen_old = true;
+                            }
+                        }
                     }
-                    if event.seq <= ev2.seq {
-                        seen_old = true;
+                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                        deltas,
+                        ..
+                    } => {
+                        for delta in deltas {
+                            if delta.session_id != session.id {
+                                continue;
+                            }
+                            if let Some(event) = delta.event {
+                                if event.seq == ev3.seq {
+                                    seen_replay = true;
+                                }
+                                if event.seq <= ev2.seq {
+                                    seen_old = true;
+                                }
+                            }
+                        }
                     }
+                    _ => {}
                 }
             }
         }
@@ -513,24 +537,47 @@ async fn workspace_stream_replays_tool_events() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Ok(ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                event:
-                    ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                        delta,
-                        ..
-                    },
-                ..
-            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
+            if let Ok(message) =
+                serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if delta.session_id != session.id {
-                    continue;
-                }
-                if let Some(event) = delta.event {
-                    match event.event_type {
-                        SessionEventType::ToolCall => saw_call = true,
-                        SessionEventType::ToolResult => saw_result = true,
-                        _ => {}
+                match message {
+                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                        event:
+                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                delta,
+                                ..
+                            },
+                        ..
+                    } => {
+                        if delta.session_id != session.id {
+                            continue;
+                        }
+                        if let Some(event) = delta.event {
+                            match event.event_type {
+                                SessionEventType::ToolCall => saw_call = true,
+                                SessionEventType::ToolResult => saw_result = true,
+                                _ => {}
+                            }
+                        }
                     }
+                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                        deltas,
+                        ..
+                    } => {
+                        for delta in deltas {
+                            if delta.session_id != session.id {
+                                continue;
+                            }
+                            if let Some(event) = delta.event {
+                                match event.event_type {
+                                    SessionEventType::ToolCall => saw_call = true,
+                                    SessionEventType::ToolResult => saw_result = true,
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -632,14 +679,19 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            let value: serde_json::Value = serde_json::from_str(&txt).unwrap_or_default();
-            if value
-                .get("type")
-                .and_then(|v| v.as_str())
-                .is_some_and(|t| t == "session_gap")
+            if let Ok(message) =
+                serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                seen_gap = true;
-                break;
+                if matches!(
+                    message,
+                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                        event: ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap { .. },
+                        ..
+                    }
+                ) {
+                    seen_gap = true;
+                    break;
+                }
             }
         }
     }
@@ -721,7 +773,8 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
                         ..
                     },
                 ..
-            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
+            }) =
+                serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
                 if summary.task.id == task.id {
                     saw_upsert = true;
@@ -833,20 +886,39 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Ok(ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                event:
-                    ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                        delta,
-                        ..
-                    },
-                ..
-            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
+            if let Ok(message) =
+                serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if delta.session_id == session_a.id {
-                    seen_a = true;
-                }
-                if delta.session_id == session_b.id {
-                    seen_b = true;
+                match message {
+                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                        event:
+                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                delta,
+                                ..
+                            },
+                        ..
+                    } => {
+                        if delta.session_id == session_a.id {
+                            seen_a = true;
+                        }
+                        if delta.session_id == session_b.id {
+                            seen_b = true;
+                        }
+                    }
+                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                        deltas,
+                        ..
+                    } => {
+                        for delta in deltas {
+                            if delta.session_id == session_a.id {
+                                seen_a = true;
+                            }
+                            if delta.session_id == session_b.id {
+                                seen_b = true;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

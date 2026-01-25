@@ -52,6 +52,7 @@ impl StreamStatus {
 enum StreamUpdate {
     Status(StreamStatus),
     Event(WorkspaceActiveSnapshotEvent),
+    HeadsBatch { snapshot_rev: i64, deltas: Vec<SessionHeadDelta> },
     ResetRequired { latest_rev: i64 },
 }
 
@@ -205,6 +206,14 @@ impl ShellView {
                 cx.notify();
             }
             StreamUpdate::Event(event) => self.apply_workspace_event(event, cx),
+            StreamUpdate::HeadsBatch { snapshot_rev, deltas } => {
+                if snapshot_rev > 0 {
+                    self.handle_snapshot_rev(snapshot_rev, false, cx);
+                }
+                for delta in deltas {
+                    self.apply_session_head_delta(delta, cx);
+                }
+            }
             StreamUpdate::ResetRequired { latest_rev } => {
                 if latest_rev > 0 {
                     self.workspace_snapshot_rev =
@@ -586,6 +595,16 @@ fn parse_workspace_stream_message(message: WsMessage) -> Option<StreamUpdate> {
             }
             WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
                 return Some(StreamUpdate::Event(event))
+            }
+            WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                snapshot_rev,
+                deltas,
+                ..
+            } => {
+                return Some(StreamUpdate::HeadsBatch {
+                    snapshot_rev,
+                    deltas,
+                })
             }
             WorkspaceActiveSnapshotStreamMessage::Snapshot { .. } => return None,
         }

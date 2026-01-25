@@ -2,6 +2,7 @@ import type {
   Message,
   Session,
   SessionEvent,
+  SessionHeadDelta,
   SessionHeadSnapshot,
   SessionHeadWindow,
   SessionSummary,
@@ -151,6 +152,18 @@ const readWorkspaceSnapshotPayload = (
       ? (headsPayload as { heads: SessionHeadSnapshot[] }).heads
       : [];
   return { snapshot: candidate, heads: headsArray };
+};
+
+const readWorkspaceHeadsBatchPayload = (
+  value: unknown,
+): { snapshotRev: number; deltas: SessionHeadDelta[] } | null => {
+  if (!value || typeof value !== "object") return null;
+  const rec = value as Record<string, unknown>;
+  if (rec.type !== "heads_batch") return null;
+  const snapshotRev =
+    (rec.snapshot_rev as number | undefined) ?? (rec.snapshotRev as number | undefined) ?? 0;
+  const deltas = Array.isArray(rec.deltas) ? (rec.deltas as SessionHeadDelta[]) : [];
+  return { snapshotRev, deltas };
 };
 
 const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk", "thought_chunk"]);
@@ -877,6 +890,38 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     const wsSnapshot = readWorkspaceSnapshotPayload(parsed);
     if (wsSnapshot) {
       this.applyWorkspaceSnapshot(wsSnapshot.snapshot, wsSnapshot.heads);
+      return;
+    }
+    const headsBatch = readWorkspaceHeadsBatchPayload(parsed);
+    if (headsBatch) {
+      const batchRev = headsBatch.snapshotRev;
+      if (typeof batchRev === "number") {
+        if (batchRev < this.snapshotRev) {
+          this.snapshotRev = batchRev;
+          this.allowSnapshotReset = true;
+          if (this.liveSnapshotApplied) {
+            this.flushSubscriptions("snapshot_rev_reset");
+          }
+        } else {
+          this.snapshotRev = Math.max(this.snapshotRev, batchRev);
+        }
+      }
+      let changed = false;
+      for (const delta of headsBatch.deltas) {
+        if (this.applySessionHeadDelta(delta)) {
+          changed = true;
+        }
+        this.notifyEventListeners({
+          type: "session_head_delta",
+          workspace_id: this.workspaceId,
+          snapshot_rev: batchRev,
+          delta,
+        });
+      }
+      if (changed) {
+        this.publish();
+        this.schedulePersistCache();
+      }
       return;
     }
     const evt = normalized as WorkspaceActiveSnapshotEvent;

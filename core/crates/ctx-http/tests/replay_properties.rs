@@ -9,9 +9,7 @@ use serde_json::json;
 use tokio::process::Command;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use ctx_core::models::{
-    SessionEventType, WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
-};
+use ctx_core::models::{SessionEventType, WorkspaceActiveSnapshotEvent};
 use ctx_http::{api, daemon::AppState};
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
@@ -173,25 +171,42 @@ async fn property_replay_respects_after_seq_and_monotonicity() {
             let Some(Ok(WsMessage::Text(txt))) = socket.next().await else {
                 break;
             };
-            let Ok(ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                event:
-                    WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                        delta,
-                        ..
-                    },
-                ..
-            }) = serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
-            else {
+            let Ok(message) = serde_json::from_str::<
+                ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
+            >(&txt) else {
                 continue;
             };
-            if delta.session_id != session.id {
-                continue;
+            match message {
+                ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                    event: WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. },
+                    ..
+                } => {
+                    if delta.session_id != session.id {
+                        continue;
+                    }
+                    let Some(event) = delta.event else {
+                        continue;
+                    };
+                    assert_eq!(delta.last_event_seq, event.seq);
+                    got.push(event.seq);
+                }
+                ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                    deltas,
+                    ..
+                } => {
+                    for delta in deltas {
+                        if delta.session_id != session.id {
+                            continue;
+                        }
+                        let Some(event) = delta.event else {
+                            continue;
+                        };
+                        assert_eq!(delta.last_event_seq, event.seq);
+                        got.push(event.seq);
+                    }
+                }
+                _ => {}
             }
-            let Some(event) = delta.event else {
-                continue;
-            };
-            assert_eq!(delta.last_event_seq, event.seq);
-            got.push(event.seq);
         }
 
         assert_eq!(got, expected, "after_seq={after_seq}");

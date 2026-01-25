@@ -70,10 +70,11 @@ async fn handle_mobile_secure_ws(
         .subscribe(workspace_id)
         .await;
     let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
-    let pending = Arc::new(StreamQueue::new(
+    let control = Arc::new(StreamQueue::new(
         WORKSPACE_STREAM_QUEUE_LIMIT,
         WORKSPACE_STREAM_QUEUE_MAX_AGE,
     ));
+    let head_buffer = Arc::new(HeadBatchBuffer::new());
     let send_control = Arc::new(StreamSendControl::new());
     let mut reset_queued = false;
 
@@ -85,11 +86,14 @@ async fn handle_mobile_secure_ws(
         archived_rev,
     };
     if push_stream_message(
-        &pending,
+        &control,
         workspace_id,
         None,
         "ready_secure",
-        WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: ready },
+        WorkspaceActiveSnapshotStreamMessage::Event {
+            rev: 0,
+            event: ready,
+        },
     )
     .await
     .is_err()
@@ -98,7 +102,8 @@ async fn handle_mobile_secure_ws(
     }
 
     let send_task = {
-        let pending = pending.clone();
+        let control = control.clone();
+        let head_buffer = head_buffer.clone();
         let send_control = send_control.clone();
         let send_key = key.clone();
         let send_device_id = device_id.clone();
@@ -106,9 +111,14 @@ async fn handle_mobile_secure_ws(
             let mut sender = sender;
             let mut envelope_seq: i64 = 0;
             let mut stream_seq: i64 = 0;
+            let mut tick = tokio::time::interval(HEAD_BATCH_FLUSH_INTERVAL);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                let notified = pending.notify.notified();
-                if let Some(message) = pending.pop().await {
+                if let Some(message) = control.pop().await {
+                    let is_snapshot = matches!(
+                        message,
+                        WorkspaceActiveSnapshotStreamMessage::Snapshot { .. }
+                    );
                     envelope_seq += 1;
                     let message = match message {
                         WorkspaceActiveSnapshotStreamMessage::ResetRequired { .. } => message,
@@ -129,7 +139,10 @@ async fn handle_mobile_secure_ws(
                     {
                         break;
                     }
-                    if send_control.should_disconnect_after_flush() && pending.is_empty().await {
+                    if is_snapshot {
+                        send_control.clear_hydrating();
+                    }
+                    if send_control.should_disconnect_after_flush() && control.is_empty().await {
                         break;
                     }
                     continue;
@@ -137,7 +150,38 @@ async fn handle_mobile_secure_ws(
                 if send_control.should_disconnect_after_flush() {
                     break;
                 }
-                notified.await;
+
+                if !send_control.is_hydrating() {
+                    let (snapshot_rev, deltas) = head_buffer.take().await;
+                    if !deltas.is_empty() {
+                        envelope_seq += 1;
+                        stream_seq += 1;
+                        let message = WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                            rev: stream_seq,
+                            snapshot_rev,
+                            deltas,
+                        };
+                        if send_secure_ws(
+                            &mut sender,
+                            &send_key,
+                            &send_device_id,
+                            envelope_seq,
+                            &message,
+                        )
+                        .await
+                        .is_err()
+                        {
+                            break;
+                        }
+                        continue;
+                    }
+                }
+
+                tokio::select! {
+                    _ = control.notify.notified() => {},
+                    _ = head_buffer.notify.notified() => {},
+                    _ = tick.tick() => {},
+                }
             }
         })
     };
@@ -183,8 +227,9 @@ async fn handle_mobile_secure_ws(
                                             workspace_id = %workspace_id.0,
                                             "workspace stream subscribe resolution failed (secure)",
                                         );
-                                    pending.clear().await;
-                                    if queue_reset_required(&pending, &state, workspace_id)
+                                    control.clear().await;
+                                    head_buffer.clear().await;
+                                    if queue_reset_required(&control, &state, workspace_id)
                                         .await
                                         .is_err()
                                     {
@@ -196,47 +241,83 @@ async fn handle_mobile_secure_ws(
                                 }
                             };
 
-                            pending.clear().await;
+                            control.clear().await;
+                            head_buffer.clear().await;
                             reset_queued = false;
                             send_control.clear_disconnect_after_flush();
                             if include_active_heads {
-                                if queue_snapshot_payload(&pending, &state, workspace_id)
+                                send_control.set_hydrating();
+                            }
+                            if include_active_heads
+                                && queue_snapshot_payload(&control, &state, workspace_id)
                                     .await
                                     .is_err()
-                                {
-                                    break;
-                                }
+                            {
+                                break;
                             }
 
                             let mut next_map = HashMap::new();
                             let mut replay_failed = false;
                             for sub in next {
                                 let after_seq = sub.after_seq.unwrap_or(0);
+                                let control = control.clone();
+                                let head_buffer = head_buffer.clone();
+                                let session_id = sub.session_id;
                                 let replay = replay_session_events_secure(
                                     &state,
                                     workspace_id,
-                                    sub.session_id,
+                                    session_id,
                                     after_seq,
-                                    |event| {
-                                        push_stream_message(
-                                            &pending,
-                                            workspace_id,
-                                            Some(sub.session_id),
-                                            "replay_secure",
-                                            event,
-                                        )
+                                    move |event| {
+                                        let control = control.clone();
+                                        let head_buffer = head_buffer.clone();
+                                        async move {
+                                            match event {
+                                                WorkspaceActiveSnapshotStreamMessage::Event {
+                                                    event:
+                                                        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                                            snapshot_rev,
+                                                            delta,
+                                                            ..
+                                                        },
+                                                    ..
+                                                } => {
+                                                    if let Err(err) =
+                                                        head_buffer.push(snapshot_rev, *delta).await
+                                                    {
+                                                        log_head_batch_push_error(
+                                                            "replay_secure",
+                                                            workspace_id,
+                                                            &err,
+                                                        );
+                                                        return Err(());
+                                                    }
+                                                    Ok(())
+                                                }
+                                                other => {
+                                                    push_stream_message(
+                                                        &control,
+                                                        workspace_id,
+                                                        Some(session_id),
+                                                        "replay_secure",
+                                                        other,
+                                                    )
+                                                    .await
+                                                }
+                                            }
+                                        }
                                     },
                                 )
                                 .await;
                                 match replay {
                                     Ok(ReplayOutcome::Replay { last_sent }) => {
-                                        next_map.insert(sub.session_id, SessionCursor { last_sent });
+                                        next_map.insert(session_id, SessionCursor { last_sent });
                                     }
                                     Ok(ReplayOutcome::ResetRequired) | Err(_) => {
                                         tracing::error!(
                                             target: "ctx_http.ws_active_snapshot",
                                             workspace_id = %workspace_id.0,
-                                            session_id = %sub.session_id.0,
+                                            session_id = %session_id.0,
                                             after_seq,
                                             "workspace stream replay failed (secure)",
                                         );
@@ -246,8 +327,9 @@ async fn handle_mobile_secure_ws(
                                 };
                             }
                             if replay_failed {
-                                pending.clear().await;
-                                if queue_reset_required(&pending, &state, workspace_id)
+                                control.clear().await;
+                                head_buffer.clear().await;
+                                if queue_reset_required(&control, &state, workspace_id)
                                     .await
                                     .is_err()
                                 {
@@ -278,8 +360,9 @@ async fn handle_mobile_secure_ws(
                                 lagged,
                                 "workspace stream lagged (secure)",
                             );
-                            pending.clear().await;
-                            if queue_reset_required(&pending, &state, workspace_id)
+                            control.clear().await;
+                            head_buffer.clear().await;
+                            if queue_reset_required(&control, &state, workspace_id)
                                 .await
                                 .is_err()
                             {
@@ -321,28 +404,61 @@ async fn handle_mobile_secure_ws(
                         }
                         _ => None,
                     };
-                    if push_stream_message(
-                        &pending,
-                        workspace_id,
-                        session_id,
-                        "event_secure",
-                        WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event },
-                    )
-                    .await
-                    .is_err()
-                    {
-                        if reset_queued {
-                            continue;
+                    match event {
+                        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                            snapshot_rev,
+                            delta,
+                            ..
+                        } => {
+                            if let Err(err) =
+                                head_buffer.push(snapshot_rev, *delta).await
+                            {
+                                log_head_batch_push_error(
+                                    "event_secure",
+                                    workspace_id,
+                                    &err,
+                                );
+                                if reset_queued {
+                                    continue;
+                                }
+                                control.clear().await;
+                                head_buffer.clear().await;
+                                if queue_reset_required(&control, &state, workspace_id)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                reset_queued = true;
+                                send_control.set_disconnect_after_flush();
+                            }
                         }
-                        pending.clear().await;
-                        if queue_reset_required(&pending, &state, workspace_id)
+                        other => {
+                            if push_stream_message(
+                                &control,
+                                workspace_id,
+                                session_id,
+                                "event_secure",
+                                WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: other },
+                            )
                             .await
                             .is_err()
-                        {
-                            break;
+                            {
+                                if reset_queued {
+                                    continue;
+                                }
+                                control.clear().await;
+                                head_buffer.clear().await;
+                                if queue_reset_required(&control, &state, workspace_id)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                reset_queued = true;
+                                send_control.set_disconnect_after_flush();
+                            }
                         }
-                        reset_queued = true;
-                        send_control.set_disconnect_after_flush();
                     }
                 }
             }
@@ -353,7 +469,7 @@ async fn handle_mobile_secure_ws(
     let (send_task, recv_result) = crate::async_util::race_join_handle(send_task, recv_loop).await;
 
     send_control.set_disconnect_after_flush();
-    pending.notify.notify_one();
+    control.notify.notify_one();
     if let Some(send_task) = send_task {
         let _ = send_task.await;
     }
@@ -630,6 +746,9 @@ pub(super) async fn workspace_active_snapshot_stream_ws(
 const SESSION_REPLAY_MAX_EVENTS: usize = 2000;
 const WORKSPACE_STREAM_QUEUE_LIMIT: usize = 256;
 const WORKSPACE_STREAM_QUEUE_MAX_AGE: Duration = Duration::from_secs(10);
+const HEAD_BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(25);
+const HEAD_BATCH_SESSION_LIMIT: usize = 200;
+const HEAD_BATCH_TOTAL_LIMIT: usize = 1000;
 
 struct StreamQueueEntry<T> {
     enqueued_at: Instant,
@@ -647,6 +766,87 @@ struct StreamQueue<T> {
     notify: Notify,
     limit: usize,
     max_age: Duration,
+}
+
+struct HeadBatchState {
+    snapshot_rev: i64,
+    total_len: usize,
+    deltas: HashMap<SessionId, Vec<SessionHeadDelta>>,
+}
+
+struct HeadBatchBuffer {
+    state: Mutex<HeadBatchState>,
+    notify: Notify,
+}
+
+#[derive(Debug)]
+enum HeadBatchPushError {
+    SessionLimit { session_id: SessionId, limit: usize },
+    TotalLimit { limit: usize },
+}
+
+impl HeadBatchBuffer {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(HeadBatchState {
+                snapshot_rev: 0,
+                total_len: 0,
+                deltas: HashMap::new(),
+            }),
+            notify: Notify::new(),
+        }
+    }
+
+    async fn push(
+        &self,
+        snapshot_rev: i64,
+        delta: SessionHeadDelta,
+    ) -> Result<(), HeadBatchPushError> {
+        let mut state = self.state.lock().await;
+        let session_id = delta.session_id;
+        state.snapshot_rev = state.snapshot_rev.max(snapshot_rev);
+        if state.total_len >= HEAD_BATCH_TOTAL_LIMIT {
+            return Err(HeadBatchPushError::TotalLimit {
+                limit: HEAD_BATCH_TOTAL_LIMIT,
+            });
+        }
+        {
+            let entry = state.deltas.entry(session_id).or_default();
+            if entry.len() >= HEAD_BATCH_SESSION_LIMIT {
+                return Err(HeadBatchPushError::SessionLimit {
+                    session_id,
+                    limit: HEAD_BATCH_SESSION_LIMIT,
+                });
+            }
+            entry.push(delta);
+        }
+        state.total_len += 1;
+        self.notify.notify_one();
+        Ok(())
+    }
+
+    async fn take(&self) -> (i64, Vec<SessionHeadDelta>) {
+        let mut state = self.state.lock().await;
+        if state.deltas.is_empty() {
+            state.total_len = 0;
+            return (state.snapshot_rev, Vec::new());
+        }
+        let snapshot_rev = state.snapshot_rev;
+        let mut deltas = Vec::with_capacity(state.total_len);
+        for (_, mut per_session) in state.deltas.drain() {
+            deltas.append(&mut per_session);
+        }
+        state.total_len = 0;
+        state.snapshot_rev = 0;
+        (snapshot_rev, deltas)
+    }
+
+    async fn clear(&self) {
+        let mut state = self.state.lock().await;
+        state.deltas.clear();
+        state.total_len = 0;
+        state.snapshot_rev = 0;
+    }
 }
 
 impl<T> StreamQueue<T> {
@@ -718,10 +918,7 @@ fn log_stream_queue_push_error(
                 "workspace stream queue full ({context})",
             );
         }
-        StreamQueuePushError::QueueStale {
-            age_ms,
-            max_age_ms,
-        } => {
+        StreamQueuePushError::QueueStale { age_ms, max_age_ms } => {
             tracing::error!(
                 target: "ctx_http.ws_active_snapshot",
                 workspace_id = %workspace_id.0,
@@ -729,6 +926,32 @@ fn log_stream_queue_push_error(
                 oldest_age_ms = *age_ms,
                 max_age_ms = *max_age_ms,
                 "workspace stream queue stale ({context})",
+            );
+        }
+    }
+}
+
+fn log_head_batch_push_error(
+    context: &'static str,
+    workspace_id: WorkspaceId,
+    err: &HeadBatchPushError,
+) {
+    match err {
+        HeadBatchPushError::SessionLimit { session_id, limit } => {
+            tracing::error!(
+                target: "ctx_http.ws_active_snapshot",
+                workspace_id = %workspace_id.0,
+                session_id = %session_id.0,
+                limit = *limit,
+                "workspace head batch session limit exceeded ({context})",
+            );
+        }
+        HeadBatchPushError::TotalLimit { limit } => {
+            tracing::error!(
+                target: "ctx_http.ws_active_snapshot",
+                workspace_id = %workspace_id.0,
+                limit = *limit,
+                "workspace head batch total limit exceeded ({context})",
             );
         }
     }
@@ -752,12 +975,14 @@ async fn push_stream_message(
 
 struct StreamSendControl {
     disconnect_after_flush: AtomicBool,
+    hydrating: AtomicBool,
 }
 
 impl StreamSendControl {
     fn new() -> Self {
         Self {
             disconnect_after_flush: AtomicBool::new(false),
+            hydrating: AtomicBool::new(false),
         }
     }
 
@@ -771,6 +996,18 @@ impl StreamSendControl {
 
     fn should_disconnect_after_flush(&self) -> bool {
         self.disconnect_after_flush.load(Ordering::Relaxed)
+    }
+
+    fn set_hydrating(&self) {
+        self.hydrating.store(true, Ordering::Relaxed);
+    }
+
+    fn clear_hydrating(&self) {
+        self.hydrating.store(false, Ordering::Relaxed);
+    }
+
+    fn is_hydrating(&self) -> bool {
+        self.hydrating.load(Ordering::Relaxed)
     }
 }
 
@@ -799,6 +1036,15 @@ fn with_stream_rev(
                 event,
             }
         }
+        WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+            snapshot_rev,
+            deltas,
+            ..
+        } => WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+            rev: stream_rev,
+            snapshot_rev,
+            deltas,
+        },
         WorkspaceActiveSnapshotStreamMessage::ResetRequired { latest_rev } => {
             WorkspaceActiveSnapshotStreamMessage::ResetRequired { latest_rev }
         }
@@ -902,8 +1148,11 @@ where
                 };
                 crate::fault_injection::maybe_fail("ctx_http.replay_session_events_active.send")
                     .map_err(|_| ())?;
-                emit(WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: wrapped })
-                    .await?;
+                emit(WorkspaceActiveSnapshotStreamMessage::Event {
+                    rev: 0,
+                    event: wrapped,
+                })
+                .await?;
             }
             Ok(ReplayOutcome::Replay { last_sent })
         }
@@ -1009,10 +1258,11 @@ async fn handle_workspace_active_snapshot_ws(
     workspace_id: WorkspaceId,
 ) {
     let (sender, mut receiver) = socket.split();
-    let pending = Arc::new(StreamQueue::new(
+    let control = Arc::new(StreamQueue::new(
         WORKSPACE_STREAM_QUEUE_LIMIT,
         WORKSPACE_STREAM_QUEUE_MAX_AGE,
     ));
+    let head_buffer = Arc::new(HeadBatchBuffer::new());
     let send_control = Arc::new(StreamSendControl::new());
     let mut rx = state
         .workspace_active_snapshot
@@ -1029,11 +1279,14 @@ async fn handle_workspace_active_snapshot_ws(
         archived_rev,
     };
     if push_stream_message(
-        &pending,
+        &control,
         workspace_id,
         None,
         "ready",
-        WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: ready },
+        WorkspaceActiveSnapshotStreamMessage::Event {
+            rev: 0,
+            event: ready,
+        },
     )
     .await
     .is_err()
@@ -1042,14 +1295,20 @@ async fn handle_workspace_active_snapshot_ws(
     }
 
     let send_task = {
-        let pending = pending.clone();
+        let control = control.clone();
+        let head_buffer = head_buffer.clone();
         let send_control = send_control.clone();
         tokio::spawn(async move {
             let mut sender = sender;
             let mut stream_seq: i64 = 0;
+            let mut tick = tokio::time::interval(HEAD_BATCH_FLUSH_INTERVAL);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                let notified = pending.notify.notified();
-                if let Some(message) = pending.pop().await {
+                if let Some(message) = control.pop().await {
+                    let is_snapshot = matches!(
+                        message,
+                        WorkspaceActiveSnapshotStreamMessage::Snapshot { .. }
+                    );
                     let message = match message {
                         WorkspaceActiveSnapshotStreamMessage::ResetRequired { .. } => message,
                         other => {
@@ -1063,7 +1322,10 @@ async fn handle_workspace_active_snapshot_ws(
                     if sender.send(WsMessage::Text(text)).await.is_err() {
                         break;
                     }
-                    if send_control.should_disconnect_after_flush() && pending.is_empty().await {
+                    if is_snapshot {
+                        send_control.clear_hydrating();
+                    }
+                    if send_control.should_disconnect_after_flush() && control.is_empty().await {
                         break;
                     }
                     continue;
@@ -1071,7 +1333,31 @@ async fn handle_workspace_active_snapshot_ws(
                 if send_control.should_disconnect_after_flush() {
                     break;
                 }
-                notified.await;
+
+                if !send_control.is_hydrating() {
+                    let (snapshot_rev, deltas) = head_buffer.take().await;
+                    if !deltas.is_empty() {
+                        stream_seq += 1;
+                        let message = WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                            rev: stream_seq,
+                            snapshot_rev,
+                            deltas,
+                        };
+                        let Ok(text) = serde_json::to_string(&message) else {
+                            break;
+                        };
+                        if sender.send(WsMessage::Text(text)).await.is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+                }
+
+                tokio::select! {
+                    _ = control.notify.notified() => {},
+                    _ = head_buffer.notify.notified() => {},
+                    _ = tick.tick() => {},
+                }
             }
         })
     };
@@ -1108,8 +1394,9 @@ async fn handle_workspace_active_snapshot_ws(
                                             workspace_id = %workspace_id.0,
                                             "workspace stream subscribe resolution failed",
                                         );
-                                        pending.clear().await;
-                                        if queue_reset_required(&pending, &state, workspace_id)
+                                        control.clear().await;
+                                        head_buffer.clear().await;
+                                        if queue_reset_required(&control, &state, workspace_id)
                                             .await
                                             .is_err()
                                         {
@@ -1121,58 +1408,95 @@ async fn handle_workspace_active_snapshot_ws(
                                     }
                                 };
 
-                                pending.clear().await;
+                                control.clear().await;
+                                head_buffer.clear().await;
                                 reset_queued = false;
                                 send_control.clear_disconnect_after_flush();
                                 if include_active_heads {
-                                    if queue_snapshot_payload(&pending, &state, workspace_id)
+                                    send_control.set_hydrating();
+                                }
+                                if include_active_heads
+                                    && queue_snapshot_payload(&control, &state, workspace_id)
                                         .await
                                         .is_err()
-                                    {
-                                        break;
-                                    }
+                                {
+                                    break;
                                 }
 
-                                let mut next_map = HashMap::new();
-                                let mut replay_failed = false;
-                                for sub in next {
-                                    let after_seq = sub.after_seq.unwrap_or(0);
-                                    let replay = replay_session_events_active(
-                                        &state,
-                                        workspace_id,
-                                        sub.session_id,
-                                        after_seq,
-                                        |event| {
-                                            push_stream_message(
-                                                &pending,
-                                                workspace_id,
-                                                Some(sub.session_id),
-                                                "replay",
-                                                event,
-                                            )
-                                        },
-                                    )
-                                    .await;
-                                    match replay {
-                                        Ok(ReplayOutcome::Replay { last_sent }) => {
-                                            next_map.insert(sub.session_id, SessionCursor { last_sent });
-                                        }
-                                        Ok(ReplayOutcome::ResetRequired) | Err(_) => {
-                                            tracing::error!(
-                                                target: "ctx_http.ws_active_snapshot",
-                                                workspace_id = %workspace_id.0,
-                                                session_id = %sub.session_id.0,
-                                                after_seq,
-                                                "workspace stream replay failed",
-                                            );
+                                    let mut next_map = HashMap::new();
+                                    let mut replay_failed = false;
+                                    for sub in next {
+                                        let after_seq = sub.after_seq.unwrap_or(0);
+                                        let control = control.clone();
+                                        let head_buffer = head_buffer.clone();
+                                        let session_id = sub.session_id;
+                                        let replay = replay_session_events_active(
+                                            &state,
+                                            workspace_id,
+                                            session_id,
+                                            after_seq,
+                                            move |event| {
+                                                let control = control.clone();
+                                                let head_buffer = head_buffer.clone();
+                                                async move {
+                                                    match event {
+                                                        WorkspaceActiveSnapshotStreamMessage::Event {
+                                                            event:
+                                                                WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                                                    snapshot_rev,
+                                                                    delta,
+                                                                    ..
+                                                                },
+                                                            ..
+                                                        } => {
+                                                            if let Err(err) =
+                                                                head_buffer.push(snapshot_rev, *delta).await
+                                                            {
+                                                                log_head_batch_push_error(
+                                                                    "replay",
+                                                                    workspace_id,
+                                                                    &err,
+                                                                );
+                                                                return Err(());
+                                                            }
+                                                            Ok(())
+                                                        }
+                                                        other => {
+                                                            push_stream_message(
+                                                                &control,
+                                                                workspace_id,
+                                                                Some(session_id),
+                                                                "replay",
+                                                                other,
+                                                            )
+                                                            .await
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                        )
+                                        .await;
+                                        match replay {
+                                            Ok(ReplayOutcome::Replay { last_sent }) => {
+                                                next_map.insert(session_id, SessionCursor { last_sent });
+                                            }
+                                            Ok(ReplayOutcome::ResetRequired) | Err(_) => {
+                                                tracing::error!(
+                                                    target: "ctx_http.ws_active_snapshot",
+                                                    workspace_id = %workspace_id.0,
+                                                    session_id = %session_id.0,
+                                                    after_seq,
+                                                    "workspace stream replay failed",
+                                                );
                                             replay_failed = true;
                                             break;
                                         }
                                     };
                                 }
                                 if replay_failed {
-                                    pending.clear().await;
-                                    if queue_reset_required(&pending, &state, workspace_id)
+                                    control.clear().await;
+                                    head_buffer.clear().await;
+                                    if queue_reset_required(&control, &state, workspace_id)
                                         .await
                                         .is_err()
                                     {
@@ -1214,8 +1538,9 @@ async fn handle_workspace_active_snapshot_ws(
                                                 workspace_id = %workspace_id.0,
                                                 "workspace stream subscribe resolution failed (binary)",
                                             );
-                                            pending.clear().await;
-                                            if queue_reset_required(&pending, &state, workspace_id)
+                                            control.clear().await;
+                                            head_buffer.clear().await;
+                                            if queue_reset_required(&control, &state, workspace_id)
                                                 .await
                                                 .is_err()
                                             {
@@ -1227,47 +1552,83 @@ async fn handle_workspace_active_snapshot_ws(
                                         }
                                     };
 
-                                    pending.clear().await;
+                                    control.clear().await;
+                                    head_buffer.clear().await;
                                     reset_queued = false;
                                     send_control.clear_disconnect_after_flush();
                                     if include_active_heads {
-                                        if queue_snapshot_payload(&pending, &state, workspace_id)
+                                        send_control.set_hydrating();
+                                    }
+                                    if include_active_heads
+                                        && queue_snapshot_payload(&control, &state, workspace_id)
                                             .await
                                             .is_err()
-                                        {
-                                            break;
-                                        }
+                                    {
+                                        break;
                                     }
 
                                     let mut next_map = HashMap::new();
                                     let mut replay_failed = false;
                                     for sub in next {
                                         let after_seq = sub.after_seq.unwrap_or(0);
+                                        let control = control.clone();
+                                        let head_buffer = head_buffer.clone();
+                                        let session_id = sub.session_id;
                                         let replay = replay_session_events_active(
                                             &state,
                                             workspace_id,
-                                            sub.session_id,
+                                            session_id,
                                             after_seq,
-                                            |event| {
-                                                push_stream_message(
-                                                    &pending,
-                                                    workspace_id,
-                                                    Some(sub.session_id),
-                                                    "replay_binary",
-                                                    event,
-                                                )
+                                            move |event| {
+                                                let control = control.clone();
+                                                let head_buffer = head_buffer.clone();
+                                                async move {
+                                                    match event {
+                                                        WorkspaceActiveSnapshotStreamMessage::Event {
+                                                            event:
+                                                                WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                                                    snapshot_rev,
+                                                                    delta,
+                                                                    ..
+                                                                },
+                                                            ..
+                                                        } => {
+                                                            if let Err(err) =
+                                                                head_buffer.push(snapshot_rev, *delta).await
+                                                            {
+                                                                log_head_batch_push_error(
+                                                                    "replay_binary",
+                                                                    workspace_id,
+                                                                    &err,
+                                                                );
+                                                                return Err(());
+                                                            }
+                                                            Ok(())
+                                                        }
+                                                        other => {
+                                                            push_stream_message(
+                                                                &control,
+                                                                workspace_id,
+                                                                Some(session_id),
+                                                                "replay_binary",
+                                                                other,
+                                                            )
+                                                            .await
+                                                        }
+                                                    }
+                                                }
                                             },
                                         )
                                         .await;
                                         match replay {
                                             Ok(ReplayOutcome::Replay { last_sent }) => {
-                                                next_map.insert(sub.session_id, SessionCursor { last_sent });
+                                                next_map.insert(session_id, SessionCursor { last_sent });
                                             }
                                             Ok(ReplayOutcome::ResetRequired) | Err(_) => {
                                                 tracing::error!(
                                                     target: "ctx_http.ws_active_snapshot",
                                                     workspace_id = %workspace_id.0,
-                                                    session_id = %sub.session_id.0,
+                                                    session_id = %session_id.0,
                                                     after_seq,
                                                     "workspace stream replay failed (binary)",
                                                 );
@@ -1277,8 +1638,9 @@ async fn handle_workspace_active_snapshot_ws(
                                         };
                                     }
                                     if replay_failed {
-                                        pending.clear().await;
-                                        if queue_reset_required(&pending, &state, workspace_id)
+                                        control.clear().await;
+                                        head_buffer.clear().await;
+                                        if queue_reset_required(&control, &state, workspace_id)
                                             .await
                                             .is_err()
                                         {
@@ -1311,8 +1673,9 @@ async fn handle_workspace_active_snapshot_ws(
                                 lagged,
                                 "workspace stream lagged",
                             );
-                            pending.clear().await;
-                            if queue_reset_required(&pending, &state, workspace_id)
+                            control.clear().await;
+                            head_buffer.clear().await;
+                            if queue_reset_required(&control, &state, workspace_id)
                                 .await
                                 .is_err()
                             {
@@ -1356,28 +1719,61 @@ async fn handle_workspace_active_snapshot_ws(
                         }
                         _ => None,
                     };
-                    if push_stream_message(
-                        &pending,
-                        workspace_id,
-                        session_id,
-                        "event",
-                        WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event },
-                    )
-                    .await
-                    .is_err()
-                    {
-                        if reset_queued {
-                            continue;
+                    match event {
+                        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                            snapshot_rev,
+                            delta,
+                            ..
+                        } => {
+                            if let Err(err) =
+                                head_buffer.push(snapshot_rev, *delta).await
+                            {
+                                log_head_batch_push_error(
+                                    "event",
+                                    workspace_id,
+                                    &err,
+                                );
+                                if reset_queued {
+                                    continue;
+                                }
+                                control.clear().await;
+                                head_buffer.clear().await;
+                                if queue_reset_required(&control, &state, workspace_id)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                reset_queued = true;
+                                send_control.set_disconnect_after_flush();
+                            }
                         }
-                        pending.clear().await;
-                        if queue_reset_required(&pending, &state, workspace_id)
+                        other => {
+                            if push_stream_message(
+                                &control,
+                                workspace_id,
+                                session_id,
+                                "event",
+                                WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: other },
+                            )
                             .await
                             .is_err()
-                        {
-                            break;
+                            {
+                                if reset_queued {
+                                    continue;
+                                }
+                                control.clear().await;
+                                head_buffer.clear().await;
+                                if queue_reset_required(&control, &state, workspace_id)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                reset_queued = true;
+                                send_control.set_disconnect_after_flush();
+                            }
                         }
-                        reset_queued = true;
-                        send_control.set_disconnect_after_flush();
                     }
                 }
             }
@@ -1387,7 +1783,7 @@ async fn handle_workspace_active_snapshot_ws(
     let (send_task, _recv_result) = crate::async_util::race_join_handle(send_task, recv_loop).await;
 
     send_control.set_disconnect_after_flush();
-    pending.notify.notify_one();
+    control.notify.notify_one();
     if let Some(send_task) = send_task {
         let _ = send_task.await;
     }
@@ -1425,8 +1821,11 @@ where
                     snapshot_rev,
                     delta: Box::new(delta),
                 };
-                emit(WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: wrapped })
-                    .await?;
+                emit(WorkspaceActiveSnapshotStreamMessage::Event {
+                    rev: 0,
+                    event: wrapped,
+                })
+                .await?;
             }
             Ok(ReplayOutcome::Replay { last_sent })
         }

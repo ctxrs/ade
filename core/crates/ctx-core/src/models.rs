@@ -868,6 +868,12 @@ pub enum WorkspaceActiveSnapshotStreamMessage {
         rev: i64,
         event: WorkspaceActiveSnapshotEvent,
     },
+    HeadsBatch {
+        rev: i64,
+        snapshot_rev: i64,
+        #[serde(default)]
+        deltas: Vec<SessionHeadDelta>,
+    },
     ResetRequired {
         latest_rev: i64,
     },

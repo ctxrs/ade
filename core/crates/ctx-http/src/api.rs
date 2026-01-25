@@ -377,6 +377,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             delete(delete_workspace).get(get_workspace),
         )
         .route(
+            "/api/workspaces/:id/active_snapshot",
+            get(get_workspace_active_snapshot),
+        )
+        .route(
+            "/api/workspaces/:id/active_heads",
+            get(get_workspace_active_heads),
+        )
+        .route(
             "/api/workspaces/:id/terminals",
             get(list_workspace_terminals).post(create_workspace_terminal),
         )
@@ -6354,6 +6362,42 @@ async fn get_workspace(
         }
         None => Err(StatusCode::NOT_FOUND),
     }
+}
+
+async fn get_workspace_active_snapshot(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkspaceActiveSnapshot>, StatusCode> {
+    let workspace_id =
+        WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    state
+        .ensure_workspace_active_snapshot_hydrated(workspace_id)
+        .await;
+    let snapshot = state
+        .workspace_active_snapshot
+        .active_snapshot(workspace_id, i64::MAX)
+        .await;
+    state
+        .cache_workspace_active_snapshot(snapshot.clone())
+        .await;
+    Ok(Json(snapshot))
+}
+
+async fn get_workspace_active_heads(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkspaceActiveHeadBatch>, StatusCode> {
+    let workspace_id =
+        WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    state
+        .ensure_workspace_active_snapshot_hydrated(workspace_id)
+        .await;
+    let heads = state
+        .workspace_active_snapshot
+        .active_heads(workspace_id)
+        .await;
+    state.cache_workspace_active_heads(heads.clone()).await;
+    Ok(Json(heads))
 }
 
 async fn list_workspace_terminals(
