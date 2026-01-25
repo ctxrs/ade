@@ -312,6 +312,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private archivedLoaded = false;
   private archivedCursor: WorkspaceIndexCursor | null = null;
   private ws: WebSocket | null = null;
+  private connecting = false;
   private reconnectTimer: number | null = null;
   private reconnectDelayMs = 1000;
   private snapshotRev = 0;
@@ -322,6 +323,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private liveSnapshotApplied = false;
   private snapshotWaitTimer: number | null = null;
   private cachePersistTimer: number | null = null;
+  private streamQueue: Promise<void> = Promise.resolve();
   private destroyed = false;
 
   constructor(private workspaceId: string) {
@@ -367,9 +369,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   };
 
   setSubscribedSessionIds = (sessionIds: string[]) => {
+    const activeSet = new Set(this.activeSessionIds);
     const next = sessionIds
       .map((id) => String(id || "").trim())
-      .filter((id) => id.length > 0);
+      .filter((id) => id.length > 0 && !activeSet.has(id));
     const deduped = Array.from(new Set(next));
     if (deduped.join("|") === this.subscribedSessionIds.join("|")) return;
     this.subscribedSessionIds = deduped;
@@ -752,21 +755,27 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   }
 
   private async connectStream() {
-    if (this.destroyed || this.ws) return;
+    if (this.destroyed || this.ws || this.connecting) return;
+    this.connecting = true;
     this.snapshot.connection = "connecting";
     this.publish();
-    const urls = await this.resolveWsUrls();
-    for (const url of urls) {
-      try {
-        await this.openWebSocket(url);
-        return;
-      } catch {
-        continue;
+    try {
+      const urls = await this.resolveWsUrls();
+      if (this.destroyed) return;
+      for (const url of urls) {
+        try {
+          await this.openWebSocket(url);
+          return;
+        } catch {
+          continue;
+        }
       }
+      this.snapshot.connection = "disconnected";
+      this.publish();
+      this.scheduleReconnect();
+    } finally {
+      this.connecting = false;
     }
-    this.snapshot.connection = "disconnected";
-    this.publish();
-    this.scheduleReconnect();
   }
 
   private async resolveWsUrls(): Promise<string[]> {
@@ -802,6 +811,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private openWebSocket(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url);
+      this.ws = ws;
       let opened = false;
       const timeoutId = window.setTimeout(() => {
         if (opened) return;
@@ -810,13 +820,27 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         } catch {
           // ignore
         }
+        if (this.ws === ws) {
+          this.ws = null;
+        }
         reject(new Error("workspace active snapshot ws timeout"));
       }, 4000);
 
       ws.onopen = () => {
         opened = true;
         window.clearTimeout(timeoutId);
-        this.ws = ws;
+        if (this.destroyed) {
+          try {
+            ws.close();
+          } catch {
+            // ignore
+          }
+          if (this.ws === ws) {
+            this.ws = null;
+          }
+          resolve();
+          return;
+        }
         this.reconnectDelayMs = 1000;
         this.lastStreamSeq = 0;
         this.snapshot.connection = "connected";
@@ -826,18 +850,23 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       };
 
       ws.onmessage = (event) => {
-        this.handleStreamMessage(event.data);
+        this.enqueueStreamMessage(event.data);
       };
 
       ws.onerror = () => {
         window.clearTimeout(timeoutId);
         if (!opened) {
+          if (this.ws === ws) {
+            this.ws = null;
+          }
           reject(new Error("workspace active snapshot ws error"));
         }
       };
 
       ws.onclose = () => {
-        this.ws = null;
+        if (this.ws === ws) {
+          this.ws = null;
+        }
         this.snapshot.connection = "disconnected";
         this.publish();
         this.scheduleReconnect();
@@ -853,6 +882,12 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.reconnectTimer = null;
       this.connectStream().catch(() => {});
     }, delay);
+  }
+
+  private enqueueStreamMessage(data: unknown) {
+    this.streamQueue = this.streamQueue
+      .then(() => this.handleStreamMessage(data))
+      .catch(() => {});
   }
 
   private async handleStreamMessage(data: unknown) {
@@ -951,13 +986,13 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         break;
       case "active_task_upsert":
         this.upsertActiveSummary(evt.task);
+        this.activeSessionIds = this.collectActiveSessionIds();
         this.publish();
-        this.refreshActiveSessionSubscriptions("active_task_upsert");
         break;
       case "active_task_delete":
         this.removeTask(idToString(evt.task_id), { adjustCounts: true });
+        this.activeSessionIds = this.collectActiveSessionIds();
         this.publish();
-        this.refreshActiveSessionSubscriptions("active_task_delete");
         break;
       case "archived_task_upsert": {
         const head = evt.snapshot?.head ?? null;
