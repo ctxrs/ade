@@ -11,6 +11,12 @@ export type { WorkspaceActiveSnapshotEventSource, WorkspaceActiveSnapshotItem, W
 
 const WorkspaceActiveSnapshotContext = createContext<WorkspaceActiveSnapshotStoreImpl | null>(null);
 
+const shouldExposeE2E = (): boolean => {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  return params.get("ctxE2E") === "1";
+};
+
 export function WorkspaceActiveSnapshotProvider({
   workspaceId,
   children,
@@ -29,6 +35,27 @@ export function WorkspaceActiveSnapshotProvider({
   useEffect(() => {
     storeRef.current?.init();
     return () => storeRef.current?.destroy();
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!shouldExposeE2E()) return;
+    const store = storeRef.current;
+    if (!store) return;
+    const win = window as any;
+    win.__ctxE2E ??= {};
+    win.__ctxE2E.getSessionHeadMessages = (sessionId: string) => {
+      const head = storeRef.current?.getSessionHeadSnapshot(sessionId);
+      return head?.messages?.map((message) => message.content) ?? [];
+    };
+    win.__ctxE2E.getSessionLastEventSeq = (sessionId: string) => {
+      const head = storeRef.current?.getSessionHeadSnapshot(sessionId);
+      return head?.last_event_seq ?? null;
+    };
+    return () => {
+      if (!win.__ctxE2E) return;
+      delete win.__ctxE2E.getSessionHeadMessages;
+      delete win.__ctxE2E.getSessionLastEventSeq;
+    };
   }, [workspaceId]);
 
   return (
