@@ -429,6 +429,12 @@ export type WorkspaceActiveSnapshotEvent =
       delta: SessionHeadDelta;
     }
   | {
+      type: "session_head_reset";
+      workspace_id: { 0: string } | string;
+      snapshot_rev: number;
+      head: SessionHeadSnapshot;
+    }
+  | {
       type: "session_gap";
       workspace_id: { 0: string } | string;
       snapshot_rev: number;

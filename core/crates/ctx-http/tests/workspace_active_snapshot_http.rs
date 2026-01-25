@@ -669,7 +669,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         .await
         .unwrap();
 
-    let mut seen_gap = false;
+    let mut seen_reset = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -685,18 +685,18 @@ async fn workspace_stream_emits_gap_on_large_replay() {
                 if matches!(
                     message,
                     ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                        event: ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap { .. },
+                        event: ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadReset { .. },
                         ..
                     }
                 ) {
-                    seen_gap = true;
+                    seen_reset = true;
                     break;
                 }
             }
         }
     }
 
-    assert!(seen_gap, "expected session_gap for large replay");
+    assert!(seen_reset, "expected session_head_reset for large replay");
 }
 
 #[tokio::test]

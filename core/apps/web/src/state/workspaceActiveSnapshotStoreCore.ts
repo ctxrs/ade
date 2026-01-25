@@ -1017,6 +1017,12 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
           this.schedulePersistCache();
         }
         break;
+      case "session_head_reset":
+        if (this.applySessionHeadReset(evt.head)) {
+          this.publish();
+          this.schedulePersistCache();
+        }
+        break;
       case "session_gap": {
         this.flushSubscriptions("session_gap");
         break;
@@ -1253,6 +1259,36 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         ...item,
         primarySessionId: primaryId || headSessionId || null,
         primarySessionHead: next,
+      };
+      this.tasks.set(taskId, nextItem);
+      changed = true;
+    }
+    return changed;
+  }
+
+  private applySessionHeadReset(head: SessionHeadSnapshot | null | undefined): boolean {
+    if (!head) return false;
+    const sessionId = idToString((head as any)?.session?.id ?? "");
+    if (!sessionId) return false;
+    const sanitized = sanitizeHeadSnapshot(head);
+    const prev = this.sessionHeadsById.get(sessionId);
+    if (!this.shouldReplaceHead(prev, sanitized)) return false;
+    this.sessionHeadsById.set(sessionId, sanitized);
+    let changed = true;
+    const headTaskId = idToString(sanitized.session?.task_id ?? "");
+    const headSessionId = idToString(sanitized.session?.id ?? "");
+    for (const [taskId, item] of this.tasks.entries()) {
+      const primaryId =
+        item.primarySessionId ||
+        idToString(item.task.primary_session_id ?? "");
+      const matchesSession = primaryId ? primaryId === headSessionId : false;
+      const matchesTask = headTaskId ? headTaskId === taskId : false;
+      if (!matchesSession && !matchesTask) continue;
+      if (primaryId && !matchesSession) continue;
+      const nextItem: WorkspaceActiveSnapshotItem = {
+        ...item,
+        primarySessionId: primaryId || headSessionId || null,
+        primarySessionHead: sanitized,
       };
       this.tasks.set(taskId, nextItem);
       changed = true;

@@ -255,6 +255,10 @@ impl ShellView {
                 snapshot_rev: next_rev,
                 ..
             }
+            | WorkspaceActiveSnapshotEvent::SessionHeadReset {
+                snapshot_rev: next_rev,
+                ..
+            }
             | WorkspaceActiveSnapshotEvent::SessionGap {
                 snapshot_rev: next_rev,
                 ..
@@ -300,6 +304,9 @@ impl ShellView {
             }
             WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
                 self.apply_session_head_delta(*delta, cx);
+            }
+            WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. } => {
+                self.handle_session_gap(head.session.id, head.last_event_seq, cx);
             }
             WorkspaceActiveSnapshotEvent::SessionGap {
                 session_id,

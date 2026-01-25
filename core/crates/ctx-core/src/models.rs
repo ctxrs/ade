@@ -828,6 +828,11 @@ pub enum WorkspaceActiveSnapshotEvent {
         snapshot_rev: i64,
         delta: Box<SessionHeadDelta>,
     },
+    SessionHeadReset {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        head: Box<SessionHeadSnapshot>,
+    },
     SessionGap {
         workspace_id: WorkspaceId,
         snapshot_rev: i64,

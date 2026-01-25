@@ -41,15 +41,18 @@ struct SessionReplayState {
 
 impl SessionReplayState {
     fn record(&mut self, delta: &SessionHeadDelta) {
-        if let Some(event) = delta.event.as_ref() {
-            if event.seq >= 0 {
-                self.events.push_back(SessionReplayEntry {
-                    seq: event.seq,
-                    delta: delta.clone(),
-                });
-                while self.events.len() > SESSION_REPLAY_BUFFER_LIMIT {
-                    self.events.pop_front();
-                }
+        let seq = delta
+            .event
+            .as_ref()
+            .map(|event| event.seq)
+            .unwrap_or(delta.last_event_seq);
+        if seq >= 0 {
+            self.events.push_back(SessionReplayEntry {
+                seq,
+                delta: delta.clone(),
+            });
+            while self.events.len() > SESSION_REPLAY_BUFFER_LIMIT {
+                self.events.pop_front();
             }
         }
         self.last_event_seq = self.last_event_seq.max(delta.last_event_seq);
@@ -95,7 +98,13 @@ impl SessionReplayState {
         }
         let last_sent = deltas
             .last()
-            .and_then(|delta| delta.event.as_ref().map(|event| event.seq))
+            .map(|delta| {
+                delta
+                    .event
+                    .as_ref()
+                    .map(|event| event.seq)
+                    .unwrap_or(delta.last_event_seq)
+            })
             .unwrap_or(after_seq);
         SessionReplayResult::Replay { deltas, last_sent }
     }
@@ -944,5 +953,43 @@ fn apply_head_delta(head: &mut SessionHeadSnapshot, delta: &SessionHeadDelta) {
     if changed {
         strip_snapshot_partials(&mut head.turns, &mut head.events);
         trim_head_window(head);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replay_records_delta_without_event() {
+        let session_id = SessionId(uuid::Uuid::nil());
+        let delta = SessionHeadDelta {
+            session_id,
+            last_event_seq: 5,
+            state_rev: 0,
+            event: None,
+            turn: None,
+            message: None,
+        };
+        let delta_next = SessionHeadDelta {
+            session_id,
+            last_event_seq: 6,
+            state_rev: 0,
+            event: None,
+            turn: None,
+            message: None,
+        };
+        let mut state = SessionReplayState::default();
+        state.record(&delta);
+        state.record(&delta_next);
+
+        match state.replay(5, 10) {
+            SessionReplayResult::Replay { deltas, last_sent } => {
+                assert_eq!(last_sent, 6);
+                assert_eq!(deltas.len(), 1);
+                assert_eq!(deltas[0].last_event_seq, 6);
+            }
+            other => panic!("expected replay, got {other:?}"),
+        }
     }
 }

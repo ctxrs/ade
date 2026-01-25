@@ -424,6 +424,14 @@ export class SessionReplicaCore {
       if (delta) this.applyHeadDelta(delta);
       return;
     }
+    if (evtType === "session_head_reset") {
+      const head = (evt as { head?: SessionHeadSnapshot }).head;
+      const sessionId = normalizeId(head?.session?.id ?? "");
+      if (!head || !sessionId) return;
+      const entry = this.ensureEntry(sessionId);
+      this.applyHead(entry, head);
+      return;
+    }
     if (evtType === "session_gap") {
       const sessionId = normalizeId((evt as { session_id?: unknown }).session_id);
       const afterSeq = typeof (evt as { after_seq?: number }).after_seq === "number" ? (evt as { after_seq?: number }).after_seq : undefined;
@@ -437,6 +445,9 @@ export class SessionReplicaCore {
           entry.lastEventSeq = afterSeq;
           this.emitPatch("append", sessionId, { lastEventSeq: afterSeq });
         }
+      }
+      if (entry.refCount > 0) {
+        void this.ensureLoaded(sessionId, { force: true, silent: true });
       }
       return;
     }

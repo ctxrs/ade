@@ -455,6 +455,7 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
     case activeTaskDelete(workspaceId: CtxID, snapshotRev: Int, taskId: CtxID)
     case sessionSummary(workspaceId: CtxID, snapshotRev: Int, summary: SessionSnapshotSummary)
     case sessionHeadDelta(workspaceId: CtxID, snapshotRev: Int, delta: SessionHeadDelta)
+    case sessionHeadReset(workspaceId: CtxID, snapshotRev: Int, head: SessionHeadSnapshot)
     case sessionGap(workspaceId: CtxID, snapshotRev: Int, sessionId: CtxID, afterSeq: Int, reason: String?)
     case worktreeBootstrap(workspaceId: CtxID, snapshotRev: Int, notice: WorktreeBootstrapNotice)
     case archivedTaskUpsert(workspaceId: CtxID, archivedRev: Int, task: WorkspaceArchivedTaskSummaryPayload, snapshot: SessionSnapshot?)
@@ -466,6 +467,7 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
         case activeTaskDelete = "active_task_delete"
         case sessionSummary = "session_summary"
         case sessionHeadDelta = "session_head_delta"
+        case sessionHeadReset = "session_head_reset"
         case sessionGap = "session_gap"
         case worktreeBootstrap = "worktree_bootstrap"
         case archivedTaskUpsert = "archived_task_upsert"
@@ -481,6 +483,7 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
         case taskId
         case summary
         case delta
+        case head
         case sessionId
         case afterSeq
         case reason
@@ -509,6 +512,9 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
         case .sessionHeadDelta:
             let delta = try container.decode(SessionHeadDelta.self, forKey: .delta)
             self = .sessionHeadDelta(workspaceId: workspaceId, snapshotRev: snapshotRev, delta: delta)
+        case .sessionHeadReset:
+            let head = try container.decode(SessionHeadSnapshot.self, forKey: .head)
+            self = .sessionHeadReset(workspaceId: workspaceId, snapshotRev: snapshotRev, head: head)
         case .sessionGap:
             let sessionId = try container.decode(CtxID.self, forKey: .sessionId)
             let afterSeq = try container.decode(Int.self, forKey: .afterSeq)
@@ -555,6 +561,11 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
             try container.encode(workspaceId, forKey: .workspaceId)
             try container.encode(snapshotRev, forKey: .snapshotRev)
             try container.encode(delta, forKey: .delta)
+        case .sessionHeadReset(let workspaceId, let snapshotRev, let head):
+            try container.encode(EventType.sessionHeadReset, forKey: .type)
+            try container.encode(workspaceId, forKey: .workspaceId)
+            try container.encode(snapshotRev, forKey: .snapshotRev)
+            try container.encode(head, forKey: .head)
         case .sessionGap(let workspaceId, let snapshotRev, let sessionId, let afterSeq, let reason):
             try container.encode(EventType.sessionGap, forKey: .type)
             try container.encode(workspaceId, forKey: .workspaceId)

@@ -4564,6 +4564,19 @@ final class ChatViewModel: ObservableObject {
                     await refreshArtifacts()
                 }
             }
+        case .sessionHeadReset(_, _, let head):
+            if head.session.id.stringValue == currentSessionId {
+                lastEventSeq = head.last_event_seq
+                sessionStateRev = nil
+                streamingAssistantState = nil
+                updateWorkingState()
+                _Concurrency.Task {
+                    await primeStreamCursor(force: true)
+                    _ = await refreshMessages()
+                    await refreshQueue()
+                    await refreshArtifacts()
+                }
+            }
         case .sessionGap(_, _, let sessionId, let afterSeq, _):
             if sessionId.stringValue == currentSessionId {
                 lastEventSeq = afterSeq

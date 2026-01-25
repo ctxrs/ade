@@ -1154,6 +1154,10 @@ struct WorkbenchShellView: View {
             snapshotRev = rev
             archivedRev = nil
             isReady = false
+        case .sessionHeadReset(_, let rev, _):
+            snapshotRev = rev
+            archivedRev = nil
+            isReady = false
         case .sessionGap(_, let rev, _, _, _):
             snapshotRev = rev
             archivedRev = nil
@@ -1210,6 +1214,8 @@ struct WorkbenchShellView: View {
             applySessionSummary(summary)
         case .sessionHeadDelta(_, _, let delta):
             _Concurrency.Task { await ATSHeadCache.shared.apply(delta: delta) }
+        case .sessionHeadReset(_, _, let head):
+            _Concurrency.Task { await ATSHeadCache.shared.store(head: head) }
         case .sessionGap:
             _Concurrency.Task { await loadTasks() }
         case .archivedTaskUpsert(_, _, let task, _):

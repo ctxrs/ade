@@ -477,25 +477,40 @@ async fn handle_mobile_secure_ws(
                         }
                     }
 
-                    if let WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } = &event {
-                        let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
-                            continue;
-                        };
-                        if let Some(ev) = &delta.event {
-                            if ev.seq <= cursor.last_sent {
+                    match &event {
+                        WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
+                            let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
+                                continue;
+                            };
+                            if let Some(ev) = &delta.event {
+                                if ev.seq <= cursor.last_sent {
+                                    continue;
+                                }
+                                cursor.last_sent = ev.seq;
+                            } else if delta.last_event_seq <= cursor.last_sent {
+                                continue;
+                            } else {
+                                cursor.last_sent = delta.last_event_seq;
+                            }
+                        }
+                        WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. } => {
+                            let Some(cursor) = subscriptions.get_mut(&head.session.id) else {
+                                continue;
+                            };
+                            if head.last_event_seq <= cursor.last_sent {
                                 continue;
                             }
-                            cursor.last_sent = ev.seq;
-                        } else if delta.last_event_seq <= cursor.last_sent {
-                            continue;
-                        } else {
-                            cursor.last_sent = delta.last_event_seq;
+                            cursor.last_sent = head.last_event_seq;
                         }
+                        _ => {}
                     }
 
                     let session_id = match &event {
                         WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
                             Some(delta.session_id)
+                        }
+                        WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. } => {
+                            Some(head.session.id)
                         }
                         WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => {
                             Some(*session_id)
@@ -646,6 +661,7 @@ fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option<i64> {
         | WorkspaceActiveSnapshotEvent::ActiveTaskDelete { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionSummary { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionHeadDelta { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::SessionHeadReset { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionGap { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::WorktreeBootstrap { snapshot_rev, .. } => {
             Some(*snapshot_rev)
@@ -1208,6 +1224,36 @@ async fn queue_reset_required(
     .await
 }
 
+async fn load_session_head_reset(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+) -> Result<Option<SessionHeadSnapshot>, ()> {
+    if let Some(head) = state
+        .workspace_active_snapshot
+        .get_session_head(session_id)
+        .await
+    {
+        return Ok(Some(head));
+    }
+    let store = state.store_for_session(session_id).await.map_err(|_| ())?;
+    match store
+        .get_session_head_snapshot(session_id, u32::MAX, false)
+        .await
+    {
+        Ok(Some(mut head)) => {
+            head.events.clear();
+            head.head_window.event_count = 0;
+            state
+                .workspace_active_snapshot
+                .update_session_head(head.clone())
+                .await;
+            Ok(Some(head))
+        }
+        Ok(None) => Ok(None),
+        Err(_) => Err(()),
+    }
+}
+
 async fn queue_snapshot_payload(
     pending: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
     state: &Arc<AppState>,
@@ -1299,6 +1345,21 @@ where
             last_known_seq,
             reason,
         } => {
+            if let Some(head) = load_session_head_reset(state, session_id).await? {
+                let reset = WorkspaceActiveSnapshotEvent::SessionHeadReset {
+                    workspace_id,
+                    snapshot_rev,
+                    head: Box::new(head.clone()),
+                };
+                emit(WorkspaceActiveSnapshotStreamMessage::Event {
+                    rev: 0,
+                    event: reset,
+                })
+                .await?;
+                return Ok(ReplayOutcome::Replay {
+                    last_sent: head.last_event_seq.max(after_seq),
+                });
+            }
             let gap = WorkspaceActiveSnapshotEvent::SessionGap {
                 workspace_id,
                 snapshot_rev,
@@ -1974,27 +2035,42 @@ async fn handle_workspace_active_snapshot_ws(
                         }
                     }
 
-                    if let WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } = &event {
-                        let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
-                            continue;
-                        };
-                        if let Some(ev) = &delta.event {
-                            if ev.seq >= 0 {
-                                if ev.seq <= cursor.last_sent {
-                                    continue;
+                    match &event {
+                        WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
+                            let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
+                                continue;
+                            };
+                            if let Some(ev) = &delta.event {
+                                if ev.seq >= 0 {
+                                    if ev.seq <= cursor.last_sent {
+                                        continue;
+                                    }
+                                    cursor.last_sent = ev.seq;
                                 }
-                                cursor.last_sent = ev.seq;
+                            } else if delta.last_event_seq <= cursor.last_sent {
+                                continue;
+                            } else {
+                                cursor.last_sent = delta.last_event_seq;
                             }
-                        } else if delta.last_event_seq <= cursor.last_sent {
-                            continue;
-                        } else {
-                            cursor.last_sent = delta.last_event_seq;
                         }
+                        WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. } => {
+                            let Some(cursor) = subscriptions.get_mut(&head.session.id) else {
+                                continue;
+                            };
+                            if head.last_event_seq <= cursor.last_sent {
+                                continue;
+                            }
+                            cursor.last_sent = head.last_event_seq;
+                        }
+                        _ => {}
                     }
 
                     let session_id = match &event {
                         WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
                             Some(delta.session_id)
+                        }
+                        WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. } => {
+                            Some(head.session.id)
                         }
                         WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => {
                             Some(*session_id)
@@ -2115,6 +2191,21 @@ where
             last_known_seq,
             reason,
         } => {
+            if let Some(head) = load_session_head_reset(state, session_id).await? {
+                let reset = WorkspaceActiveSnapshotEvent::SessionHeadReset {
+                    workspace_id,
+                    snapshot_rev,
+                    head: Box::new(head.clone()),
+                };
+                emit(WorkspaceActiveSnapshotStreamMessage::Event {
+                    rev: 0,
+                    event: reset,
+                })
+                .await?;
+                return Ok(ReplayOutcome::Replay {
+                    last_sent: head.last_event_seq.max(after_seq),
+                });
+            }
             let gap = WorkspaceActiveSnapshotEvent::SessionGap {
                 workspace_id,
                 snapshot_rev,
