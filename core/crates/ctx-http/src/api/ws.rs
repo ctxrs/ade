@@ -162,7 +162,7 @@ async fn handle_mobile_secure_ws(
                             ),
                             _ => (0, 0),
                         };
-                        tracing::error!(
+                        tracing::info!(
                             target: "ctx_http.ws_active_snapshot",
                             workspace_id = %workspace_id.0,
                             snapshot_bytes = payload_bytes,
@@ -1382,7 +1382,7 @@ async fn queue_snapshot_payload(
         },
     )
     .await?;
-    tracing::error!(
+    tracing::info!(
         target: "ctx_http.ws_active_snapshot",
         workspace_id = %workspace_id.0,
         snapshot_rev,
@@ -1663,7 +1663,7 @@ async fn handle_workspace_active_snapshot_ws(
                             ),
                             _ => (0, 0),
                         };
-                        tracing::error!(
+                        tracing::info!(
                             target: "ctx_http.ws_active_snapshot",
                             workspace_id = %workspace_id.0,
                             snapshot_bytes = payload_bytes,
