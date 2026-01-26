@@ -13,6 +13,7 @@ export type UsePinnedScrollManagerArgs = {
   bottomThresholdPx: number;
   userIntentWindowMs: number;
   itemsLength: number;
+  firstItemIndex: number;
   scrollStateStickToBottom: boolean | null | undefined;
   syncKey: string;
   restoreInProgress: boolean;
@@ -55,6 +56,7 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     bottomThresholdPx,
     userIntentWindowMs,
     itemsLength,
+    firstItemIndex,
     scrollStateStickToBottom,
     syncKey,
     restoreInProgress,
@@ -85,17 +87,17 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
   const initialTopMostItemIndex = useMemo<IndexLocationWithAlign | number | undefined>(() => {
     if (scrollStateStickToBottom === false) return undefined;
     if (itemsLength === 0) return undefined;
-    return { index: itemsLength - 1, align: "end" };
-  }, [itemsLength, scrollStateStickToBottom]);
+    return { index: firstItemIndex + itemsLength - 1, align: "end" };
+  }, [firstItemIndex, itemsLength, scrollStateStickToBottom]);
 
   const scrollToBottomNow = useCallback(() => {
     if (itemsLength === 0) return;
     const handle = virtuosoRef.current;
     const el = scrollerRef.current;
     if (handle || el) markAutoScroll();
-    handle?.scrollToIndex({ index: itemsLength - 1, align: "end" });
+    handle?.scrollToIndex({ index: firstItemIndex + itemsLength - 1, align: "end" });
     if (el) el.scrollTop = el.scrollHeight;
-  }, [itemsLength, markAutoScroll, scrollerRef, virtuosoRef]);
+  }, [firstItemIndex, itemsLength, markAutoScroll, scrollerRef, virtuosoRef]);
 
   const syncAtBottom = useCallback(() => {
     if (sentinelMeasuredRef.current) {

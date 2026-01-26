@@ -2645,6 +2645,7 @@
   box-sizing: border-box;
   padding-inline: 0;
   overflow-x: hidden;
+  overflow-anchor: none;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }

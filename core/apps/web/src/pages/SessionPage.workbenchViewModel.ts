@@ -687,6 +687,24 @@ export function buildWorkbenchThreadViewModelFromTurns(
   const debugEvents: SessionEvent[] = [];
   const groups: SortableThreadGroup[] = [];
   const customStatusByTurnId = buildCustomStatusByTurnId(events);
+  const sortedTurns = turns.slice().sort((a, b) => {
+    const aSeq = Number(a.start_seq ?? Number.NaN);
+    const bSeq = Number(b.start_seq ?? Number.NaN);
+    if (Number.isFinite(aSeq) && Number.isFinite(bSeq) && aSeq !== bSeq) return aSeq - bSeq;
+    if (Number.isFinite(aSeq) && !Number.isFinite(bSeq)) return -1;
+    if (!Number.isFinite(aSeq) && Number.isFinite(bSeq)) return 1;
+    const aEnd = Number(a.end_seq ?? Number.NaN);
+    const bEnd = Number(b.end_seq ?? Number.NaN);
+    if (Number.isFinite(aEnd) && Number.isFinite(bEnd) && aEnd !== bEnd) return aEnd - bEnd;
+    if (Number.isFinite(aEnd) && !Number.isFinite(bEnd)) return -1;
+    if (!Number.isFinite(aEnd) && Number.isFinite(bEnd)) return 1;
+    const aStart = String(a.started_at ?? a.created_at ?? "");
+    const bStart = String(b.started_at ?? b.created_at ?? "");
+    if (aStart !== bStart) return aStart.localeCompare(bStart);
+    const aId = idToString(a.turn_id) ?? "";
+    const bId = idToString(b.turn_id) ?? "";
+    return aId.localeCompare(bId);
+  });
 
   const messageById = new Map<string, Message>();
   const messagesByTurnId = new Map<string, Message[]>();
@@ -710,7 +728,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
     eventsByTurnId.set(turnId, list);
   }
 
-  for (const turn of turns) {
+  for (const turn of sortedTurns) {
     const turnId = idToString(turn.turn_id) || `turn-${turn.started_at}`;
     const userMessageId = turn.user_message_id ? idToString(turn.user_message_id) : "";
 

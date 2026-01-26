@@ -38,6 +38,7 @@ import type { ThreadItem, WorkbenchListItem, WorkbenchTurnHeader } from "./Sessi
 type WorkbenchThreadStackProps = {
   virtuosoStyle: CSSProperties;
   data: WorkbenchListItem[];
+  firstItemIndex: number;
   virtuosoRef: MutableRefObject<VirtuosoHandle | null>;
   initialTopMostItemIndex?: IndexLocationWithAlign | number;
   restoreStateFrom?: StateSnapshot;
@@ -64,6 +65,7 @@ type WorkbenchThreadStackProps = {
 export const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
   virtuosoStyle,
   data,
+  firstItemIndex,
   virtuosoRef,
   initialTopMostItemIndex,
   restoreStateFrom,
@@ -91,6 +93,7 @@ export const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
       <Virtuoso
         style={virtuosoStyle}
         data={data}
+        firstItemIndex={firstItemIndex}
         ref={(node) => {
           virtuosoRef.current = node;
         }}

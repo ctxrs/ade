@@ -179,6 +179,7 @@ export function SessionView({
   const id = sessionId;
   const supervisor = useSessionSupervisor();
   const workbenchStore = useWorkbenchStore();
+  const initialVirtuosoIndex = 100000;
   const showDebug = useMemo(() => {
     try {
       return new URLSearchParams(window.location.search).get("debug") === "1";
@@ -1123,13 +1124,76 @@ export function SessionView({
     return out;
   }, [wbGroups]);
 
+  const [renderItems, setRenderItems] = useState<WorkbenchListItem[]>(wbListItems);
+  const [firstItemIndex, setFirstItemIndex] = useState(initialVirtuosoIndex);
+  const prevSessionForIndexRef = useRef(id);
+
+  useLayoutEffect(() => {
+    if (prevSessionForIndexRef.current !== id) {
+      prevSessionForIndexRef.current = id;
+      setFirstItemIndex(initialVirtuosoIndex);
+      setRenderItems(wbListItems);
+      return;
+    }
+    if (wbListItems.length === 0) {
+      setFirstItemIndex(initialVirtuosoIndex);
+      setRenderItems(wbListItems);
+      return;
+    }
+    if (wbListItems === renderItems) return;
+    if (renderItems.length === 0) {
+      setFirstItemIndex(initialVirtuosoIndex);
+      setRenderItems(wbListItems);
+      return;
+    }
+    let indexShift: number | null = null;
+    const anchorId =
+      latestAnchorIdRef.current ?? renderItems[0]?.id ?? renderItems[renderItems.length - 1]?.id;
+    if (anchorId) {
+      const prevIndex = renderItems.findIndex((item) => item.id === anchorId);
+      const nextIndex = wbListItems.findIndex((item) => item.id === anchorId);
+      if (prevIndex >= 0 && nextIndex >= 0) {
+        indexShift = nextIndex - prevIndex;
+      }
+    }
+    if (indexShift == null && wbListItems.length > renderItems.length) {
+      const prevFirstId = renderItems[0]?.id;
+      if (prevFirstId) {
+        const startIndex = wbListItems.findIndex((item) => item.id === prevFirstId);
+        if (startIndex >= 0) {
+          indexShift = startIndex;
+        }
+      }
+      if (indexShift == null) {
+        const prevLastId = renderItems[renderItems.length - 1]?.id;
+        if (prevLastId) {
+          const endIndex = wbListItems.findIndex((item) => item.id === prevLastId);
+          if (endIndex >= 0) {
+            const startIndex = endIndex - (renderItems.length - 1);
+            if (startIndex >= 0) {
+              indexShift = startIndex;
+            }
+          }
+        }
+      }
+      if (indexShift == null) {
+        indexShift = wbListItems.length - renderItems.length;
+      }
+    }
+    if (indexShift != null && indexShift !== 0) {
+      setFirstItemIndex((prev) => prev - indexShift);
+    }
+    setRenderItems(wbListItems);
+  }, [id, initialVirtuosoIndex, renderItems, wbListItems]);
+
   useEffect(() => {
     scheduleScrollbarUpdate();
-  }, [scheduleScrollbarUpdate, wbListItems.length]);
+  }, [scheduleScrollbarUpdate, renderItems.length]);
 
   useLayoutEffect(() => {
     updateScrollbar();
-  }, [updateScrollbar, wbListItems.length]);
+  }, [updateScrollbar, renderItems.length]);
+
 
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
@@ -1148,7 +1212,8 @@ export function SessionView({
     preserveScrollOnFocus,
     bottomThresholdPx,
     userIntentWindowMs,
-    itemsLength: wbListItems.length,
+    itemsLength: renderItems.length,
+    firstItemIndex,
     scrollStateStickToBottom: scrollState?.stickToBottom,
     syncKey: scrollSyncKey,
     restoreInProgress,
@@ -1250,7 +1315,7 @@ export function SessionView({
 
   useLayoutEffect(() => {
     if (!isActive) return;
-    const items = wbListItems;
+    const items = renderItems;
     if (items.length === 0) return;
     if (scrollState?.virtuosoState && !preserveScrollOnFocus && scrollState?.stickToBottom === false) {
       restorePendingRef.current = false;
@@ -1302,16 +1367,18 @@ export function SessionView({
         }
       } else if (restoreAnchorId) {
         const idx = items.findIndex((it) => it?.id === restoreAnchorId);
+        const lastIndex = firstItemIndex + items.length - 1;
         if (idx >= 0) {
           markAutoScroll();
-          handle?.scrollToIndex({ index: idx, align: "start" });
+          handle?.scrollToIndex({ index: firstItemIndex + idx, align: "start" });
         } else {
           markAutoScroll();
-          handle?.scrollToIndex({ index: items.length - 1, align: "end" });
+          handle?.scrollToIndex({ index: lastIndex, align: "end" });
         }
       } else {
+        const lastIndex = firstItemIndex + items.length - 1;
         markAutoScroll();
-        handle?.scrollToIndex({ index: items.length - 1, align: "end" });
+        handle?.scrollToIndex({ index: lastIndex, align: "end" });
       }
       finalizeRestore();
     };
@@ -1329,7 +1396,8 @@ export function SessionView({
     scrollState?.scrollTop,
     scrollState?.virtuosoState,
     initialTopMostItemIndex,
-    wbListItems.length,
+    firstItemIndex,
+    renderItems.length,
   ]);
 
   const authUi = useMemo(() => deriveAuthUi(events), [eventsKey]);
@@ -1413,12 +1481,12 @@ export function SessionView({
   }, [acpCurrentModelId, modelOptionIds, session?.model_id]);
 
   const restoreStateFrom =
-    preserveScrollOnFocus || scrollState?.stickToBottom !== false
+    preserveScrollOnFocus || scrollState?.stickToBottom !== false || !restorePendingRef.current
       ? undefined
       : (scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined;
 
   const jumpToLatestWorkbench = useCallback(() => {
-    if (wbListItems.length > 0) {
+    if (renderItems.length > 0) {
       stickToBottomRef.current = true;
       setStickToBottom(true);
       setAtBottom(true);
@@ -1427,7 +1495,7 @@ export function SessionView({
       persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
       scheduleAutoScroll();
     }
-  }, [persistScroll, scheduleAutoScroll, wbListItems.length]);
+  }, [persistScroll, scheduleAutoScroll, renderItems.length]);
 
   useEffect(() => {
     if (!pendingScrollToBottomRef.current) return;
@@ -1444,19 +1512,20 @@ export function SessionView({
       }
     }
     if (preserveScrollOnFocus && !isActive) return;
-    if (wbListItems.length === 0) return;
+    if (renderItems.length === 0) return;
     pendingScrollToBottomRef.current = false;
     jumpToLatestWorkbench();
-  }, [stickToBottom, restoreInProgress, preserveScrollOnFocus, isActive, wbListItems.length, jumpToLatestWorkbench]);
+  }, [stickToBottom, restoreInProgress, preserveScrollOnFocus, isActive, renderItems.length, jumpToLatestWorkbench]);
   const handleWorkbenchRangeChanged = useCallback(
     (range: { startIndex: number }) => {
       if (restoringScrollRef.current) return;
       if (atBottom) return;
-      const item = wbListItems[range.startIndex];
+      const dataIndex = range.startIndex - firstItemIndex;
+      const item = renderItems[dataIndex];
       if (!item) return;
       latestAnchorIdRef.current = item.id ?? null;
     },
-    [atBottom, wbListItems],
+    [atBottom, firstItemIndex, renderItems],
   );
 
   const handleStartReached = useCallback(() => {
@@ -1913,22 +1982,29 @@ export function SessionView({
   const workbenchItemContent = useCallback(
     (_: number, item: WorkbenchListItem) => {
       if (!item) return <div style={{ height: 1 }} />;
-      if ((item as any).kind === "turn_header") {
+      const itemId = item.id;
+      if (item.kind === "turn_header") {
         const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
         const plainText = header.plain_text ?? markdownToPlainText(header.content ?? "");
         const isLong = plainText.split("\n").length > 4 || plainText.length > 280;
         const expanded = expandedTurnHeaders[header.id] ?? !isLong;
         return (
-          <WorkbenchTurnHeaderView
-            header={header}
-            plainText={plainText}
-            expanded={expanded}
-            onToggle={() => setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }))}
-          />
+          <div data-thread-item-id={itemId} style={{ display: "contents" }}>
+            <WorkbenchTurnHeaderView
+              header={header}
+              plainText={plainText}
+              expanded={expanded}
+              onToggle={() => setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }))}
+            />
+          </div>
         );
       }
       const content = renderThreadItem(item as ThreadItem);
-      return <div className="wb-thread-indent">{content}</div>;
+      return (
+        <div className="wb-thread-indent" data-thread-item-id={itemId}>
+          {content}
+        </div>
+      );
     },
     [expandedTurnHeaders, renderThreadItem],
   );
@@ -2092,7 +2168,7 @@ export function SessionView({
       ref={dropScopeRef}
       data-testid="session-view"
       data-session-id={id}
-      data-thread-count={wbListItems.length}
+      data-thread-count={renderItems.length}
     >
       {dropActive && (
         <div className="ctx-drop-overlay" aria-hidden="true">
@@ -2167,7 +2243,7 @@ export function SessionView({
         )}
         {showDebug && (
           <div className="wb-muted" style={{ fontFamily: "var(--mono)" }}>
-            debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} items={wbListItems.length}
+            debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} items={renderItems.length}
           </div>
         )}
         {(authUi.status === "required" || authUi.status === "failed") && (
@@ -2296,7 +2372,8 @@ export function SessionView({
 
         <WorkbenchThreadStack
           virtuosoStyle={virtuosoStyle}
-          data={wbListItems}
+          data={renderItems}
+          firstItemIndex={firstItemIndex}
           virtuosoRef={virtuosoRef}
           initialTopMostItemIndex={initialTopMostItemIndex}
           restoreStateFrom={restoreStateFrom}
