@@ -667,10 +667,29 @@ export function SessionView({
   const queue: Message[] = entry?.queue ?? [];
   const subagentInvocations: SubagentInvocation[] = entry?.subagentInvocations ?? [];
   const subagentInvocationsLoading = entry?.subagentInvocationsLoading ?? false;
-  const showQueuePanel = queue.length > 0;
   const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
+  const queueForPanel = useMemo(() => {
+    if (queue.length === 0) return [];
+    if (turns.length === 0) return queue;
+
+    const statusByUserMessageId = new Map<string, string>();
+    for (const turn of turns) {
+      const mid = turn.user_message_id ? idToString(turn.user_message_id) : "";
+      if (!mid) continue;
+      statusByUserMessageId.set(mid, turn.status);
+    }
+
+    return queue.filter((message) => {
+      const mid = idToString(message.id);
+      if (!mid) return true;
+      const status = statusByUserMessageId.get(mid);
+      if (!status) return true;
+      return status === "queued";
+    });
+  }, [queue, turnsKey]);
+  const showQueuePanel = queueForPanel.length > 0;
   useEffect(() => {
     if (pendingMessages.length === 0) return;
     const realIds = new Set(messages.map((m) => idToString(m.id)));
@@ -1476,22 +1495,28 @@ export function SessionView({
     const text = (dictationRecording ? await stopDictation({ awaitFinal: true }) : input).trim();
     if (!text) return;
     const attachmentsToSend = draftAttachments;
-    const optimisticId = createClientMessageId();
-    const optimisticMessage: Message = {
-      id: optimisticId,
-      session_id: id,
-      task_id: session?.task_id ?? "",
-      turn_id: null,
-      turn_sequence: null,
-      role: "user",
-      content: text,
-      attachments: attachmentsToSend,
-      delivery: "queued",
-      created_at: new Date().toISOString(),
-    };
+    const shouldQueue = hasActiveTurn;
+    const optimisticId = shouldQueue ? null : createClientMessageId();
+    const optimisticMessage: Message | null =
+      optimisticId == null
+        ? null
+        : {
+            id: optimisticId,
+            session_id: id,
+            task_id: session?.task_id ?? "",
+            turn_id: null,
+            turn_sequence: null,
+            role: "user",
+            content: text,
+            attachments: attachmentsToSend,
+            delivery: "immediate",
+            created_at: new Date().toISOString(),
+          };
     setSendBusy(true);
     setSendError(null);
-    setPendingMessages((prev) => [...prev, { clientId: optimisticId, message: optimisticMessage }]);
+    if (optimisticMessage && optimisticId) {
+      setPendingMessages((prev) => [...prev, { clientId: optimisticId, message: optimisticMessage }]);
+    }
     stickToBottomRef.current = true;
     setStickToBottom(true);
     liveScrollTopRef.current = null;
@@ -1499,10 +1524,12 @@ export function SessionView({
     setInput("");
     setDraftAttachments([]);
     try {
-      const posted = await postMessage(id, text, undefined, attachmentsToSend);
-      setPendingMessages((prev) =>
-        prev.map((entry) => (entry.clientId === optimisticId ? { ...entry, message: posted } : entry)),
-      );
+      const posted = await postMessage(id, text, shouldQueue ? "queued" : undefined, attachmentsToSend);
+      if (optimisticId) {
+        setPendingMessages((prev) =>
+          prev.map((entry) => (entry.clientId === optimisticId ? { ...entry, message: posted } : entry)),
+        );
+      }
       // Refresh Messages immediately so user turns render without waiting for a `done` event.
       supervisor.refreshQueue(id);
       supervisor.refreshSession(id, { watchDiff: true });
@@ -1512,7 +1539,9 @@ export function SessionView({
         // best-effort
       }
     } catch (e: any) {
-      setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== optimisticId));
+      if (optimisticId) {
+        setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== optimisticId));
+      }
       setInput(text);
       setDraftAttachments(attachmentsToSend);
       setSendError(e?.message ? String(e.message) : String(e));
@@ -2300,10 +2329,10 @@ export function SessionView({
           <div className="queue-panel card" aria-label="Queued messages">
             <div className="queue-header">
               <ChevronDown size={14} aria-hidden="true" />
-              <span className="queue-header-title">{queue.length} Queued</span>
+              <span className="queue-header-title">{queueForPanel.length} Queued</span>
             </div>
             <ul className="queue-list" role="list">
-              {queue.map((m, index) => {
+              {queueForPanel.map((m, index) => {
                 const messageId = idToString(m.id);
                 const rowKey = messageId || `queued-${index}`;
                 const attachments = getQueuedAttachments(m);
