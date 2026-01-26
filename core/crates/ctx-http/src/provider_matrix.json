@@ -187,9 +187,9 @@
         },
         {
           "version": "0.0.0",
-          "status": "supported",
+          "status": "blocked",
           "context_min": "0.1.0",
-          "notes": "Local codex-crp development build"
+          "notes": "Local codex-crp development build (not supported for managed installs)"
         }
       ]
     },
