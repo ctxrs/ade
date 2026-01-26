@@ -33,10 +33,12 @@ const SESSION_HEAD_EVENT_LIMIT: usize = 200;
 const SESSION_HEAD_BYTE_LIMIT: usize = 1_500_000;
 const ACTIVE_SNAPSHOT_HEAD_LIMIT: u32 = 5;
 const SESSION_HEAD_ARCHIVED_TURN_LIMIT: u32 = 50;
-static STREAM_ONLY_EVENT_SEQ: AtomicI64 = AtomicI64::new(-1);
+// Keep stream-only seq values within JS safe integer range.
+const STREAM_ONLY_EVENT_SEQ_START: i64 = -(1_i64 << 52);
+static STREAM_ONLY_EVENT_SEQ: AtomicI64 = AtomicI64::new(STREAM_ONLY_EVENT_SEQ_START);
 
 fn next_stream_only_event_seq() -> i64 {
-    STREAM_ONLY_EVENT_SEQ.fetch_sub(1, Ordering::Relaxed)
+    STREAM_ONLY_EVENT_SEQ.fetch_add(1, Ordering::Relaxed)
 }
 
 const DEFAULT_EVENT_LOG_FLUSH_MS: u64 = 250;
