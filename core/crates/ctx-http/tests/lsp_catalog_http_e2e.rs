@@ -78,7 +78,6 @@ async fn lsp_catalog_install_from_file_url_updates_config() {
         "http://127.0.0.1:4399".to_string(),
         None,
     ));
-    state.start_workspace_active_snapshot_listener();
     let app = api::router(state.clone());
 
     // List catalog.

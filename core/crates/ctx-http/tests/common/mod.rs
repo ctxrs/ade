@@ -155,15 +155,13 @@ pub fn build_state(
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
     base_url: impl Into<String>,
 ) -> Arc<AppState> {
-    let state = Arc::new(AppState::new(
+    Arc::new(AppState::new(
         data_root.into(),
         stores,
         providers,
         base_url.into(),
         None,
-    ));
-    state.start_workspace_active_snapshot_listener();
-    state
+    ))
 }
 
 pub async fn spawn_http_server(app: axum::Router) -> TestServer {

@@ -142,9 +142,9 @@ async fn jj_worktree_create_remove() {
         .await
         .unwrap();
     assert!(tokio::fs::metadata(&worktree_path).await.is_ok());
-    let path_str = worktree_path.to_string_lossy();
     let root = run_jj(&worktree_path, &["root"]).await;
-    assert_eq!(root.trim(), path_str.as_ref());
+    let expected = tokio::fs::canonicalize(&worktree_path).await.unwrap();
+    assert_eq!(root.trim(), expected.to_string_lossy().as_ref());
 
     remove_worktree(repo.path(), &worktree_path).await.unwrap();
     assert!(tokio::fs::metadata(&worktree_path).await.is_err());

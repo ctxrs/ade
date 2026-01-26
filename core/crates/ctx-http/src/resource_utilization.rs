@@ -249,10 +249,9 @@ impl ResourceSampler {
         providers: &[ProviderProcessInfo],
     ) -> Vec<ProviderMemorySample> {
         for provider in providers {
-            let _ = self.system.refresh_process_specifics(
-                Pid::from_u32(provider.pid),
-                memory_refresh_kind(),
-            );
+            let _ = self
+                .system
+                .refresh_process_specifics(Pid::from_u32(provider.pid), memory_refresh_kind());
         }
         // Limit to provider PIDs to avoid expensive full-process refreshes.
         let children = HashMap::new();

@@ -72,7 +72,6 @@ async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, axum::Router) {
         },
         false,
     ));
-    state.start_workspace_active_snapshot_listener();
     let app = api::router(state.clone());
     (data_dir, state, app)
 }

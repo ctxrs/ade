@@ -54,15 +54,13 @@ async fn build_state_with_real_providers(
     providers.insert("claude".into(), Arc::new(Tier1AcpAdapter::claude()));
     providers.insert("gemini".into(), Arc::new(Tier1AcpAdapter::gemini()));
 
-    let state = Arc::new(AppState::new(
+    Arc::new(AppState::new(
         data_root,
         stores,
         providers,
         "http://127.0.0.1:4399".to_string(),
         None,
-    ));
-    state.start_workspace_active_snapshot_listener();
-    state
+    ))
 }
 
 async fn setup_state_with_real_providers() -> (tempfile::TempDir, Arc<AppState>) {

@@ -121,7 +121,6 @@ mod tests {
             "http://127.0.0.1:4399".to_string(),
             None,
         ));
-        state.start_workspace_active_snapshot_listener();
         let app = api::router(state.clone());
 
         // create workspace
@@ -222,7 +221,6 @@ mod tests {
             "http://127.0.0.1:4399".to_string(),
             None,
         ));
-        state.start_workspace_active_snapshot_listener();
         {
             let mut statuses = HashMap::new();
             statuses.insert(
