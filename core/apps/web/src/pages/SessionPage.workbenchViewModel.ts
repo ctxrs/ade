@@ -338,6 +338,64 @@ export function mergeMessagesForView(messages: Message[], pending: PendingMessag
   return Array.from(byId.values()).sort(compareMessageOrder);
 }
 
+export function mergeQueuedMessagesForPanel(
+  queue: Message[],
+  pending: PendingMessageEntry[],
+): Message[] {
+  if (queue.length === 0 && pending.length === 0) return [];
+  if (pending.length === 0) return queue.slice();
+  const byId = new Map<string, Message>();
+  const pendingNoId: Message[] = [];
+  for (const msg of queue) {
+    const id = idToString(msg.id);
+    if (id) byId.set(id, msg);
+  }
+  for (const entry of pending) {
+    const msg = entry.message;
+    const id = idToString(msg.id);
+    if (!id) {
+      pendingNoId.push(msg);
+      continue;
+    }
+    if (!byId.has(id)) byId.set(id, msg);
+  }
+  const merged = [...byId.values(), ...pendingNoId];
+  merged.sort(compareMessageOrder);
+  return merged;
+}
+
+export function filterQueuedMessagesForPanel(
+  queue: Message[],
+  turns: SessionTurn[],
+): Message[] {
+  if (queue.length === 0 || turns.length === 0) return queue;
+  const statusByUserMessageId = new Map<string, string>();
+  for (const turn of turns) {
+    const mid = turn.user_message_id ? idToString(turn.user_message_id) : "";
+    if (!mid) continue;
+    statusByUserMessageId.set(mid, turn.status);
+  }
+  return queue.filter((message) => {
+    const mid = idToString(message.id);
+    if (!mid) return true;
+    const status = statusByUserMessageId.get(mid);
+    if (!status) return true;
+    return status === "queued";
+  });
+}
+
+export function filterTurnsForQueuedMessages(
+  turns: SessionTurn[],
+  queuedMessageIds: Set<string>,
+): SessionTurn[] {
+  if (queuedMessageIds.size === 0) return turns;
+  return turns.filter((turn) => {
+    const mid = turn.user_message_id ? idToString(turn.user_message_id) : "";
+    if (!mid) return true;
+    return !queuedMessageIds.has(mid);
+  });
+}
+
 export function buildPendingTurns(turns: SessionTurn[], messages: Message[]): SessionTurn[] {
   if (messages.length === 0) return [];
   const turnIds = new Set<string>();

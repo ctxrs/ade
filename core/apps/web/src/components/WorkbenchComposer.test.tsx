@@ -111,6 +111,74 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(textarea.style.height).toBe("380px");
   });
 
+  it("avoids zeroing the textarea height during resize", async () => {
+    const ActiveHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+
+      return (
+        <WorkbenchComposer
+          variant="activeSession"
+          value={value}
+          setValue={setValue}
+          placeholder="Ask follow-ups"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          recording={false}
+          harnessLabel="Codex"
+          availableModels={[{ id: "o3", name: "o3" }]}
+          currentModelId="o3"
+          onSetModelId={vi.fn()}
+        />
+      );
+    };
+
+    render(<ActiveHarness />);
+    const textarea = screen.getByPlaceholderText("Ask follow-ups") as HTMLTextAreaElement;
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    const heights: string[] = [];
+    const style = textarea.style;
+    const originalHeightDescriptor = Object.getOwnPropertyDescriptor(style, "height");
+    let storedHeight = style.height;
+    Object.defineProperty(style, "height", {
+      configurable: true,
+      get() {
+        return storedHeight;
+      },
+      set(value) {
+        const next = String(value);
+        heights.push(next);
+        storedHeight = next;
+      },
+    });
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: "line 1\nline 2\nline 3" } });
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    if (originalHeightDescriptor) {
+      Object.defineProperty(style, "height", originalHeightDescriptor);
+    }
+
+    expect(heights).not.toContain("0px");
+  });
+
   it("keeps the textarea scrolled to bottom while recording", async () => {
     const ActiveHarness = () => {
       const [value, setValue] = useState(Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join("\n"));

@@ -107,6 +107,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const lastTextareaHeightRef = useRef<number | null>(null);
 
   const harnessTriggerRef = useRef<HTMLButtonElement | null>(null);
   const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -132,9 +133,14 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     const minHeightPx = variant === "newSession" ? 88 : 28;
     const maxHeightPx = variant === "newSession" ? 380 : 220;
 
-    el.style.height = "0px";
     const next = Math.min(maxHeightPx, Math.max(minHeightPx, el.scrollHeight));
-    el.style.height = `${next}px`;
+    const prev =
+      lastTextareaHeightRef.current ??
+      Number.parseFloat(el.style.height || "0");
+    if (!Number.isFinite(prev) || Math.abs(prev - next) > 0.5) {
+      el.style.height = `${next}px`;
+      lastTextareaHeightRef.current = next;
+    }
 
     if (recording) el.scrollTop = el.scrollHeight;
   }, [recording, variant]);

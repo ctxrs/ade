@@ -160,7 +160,7 @@ describe("buildWorkbenchThreadViewModel", () => {
 
     const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
     const statusItem = out.groups[0]?.items.find((it: any) => it.kind === "turn_status") as any;
-    expect(statusItem?.status_text).toBe("Preparing specs");
+    expect(statusItem?.custom_status).toBe("Preparing specs");
   }, 10000);
 
   it("prefers tool harness status updates for turn status rows", async () => {
@@ -227,7 +227,7 @@ describe("buildWorkbenchThreadViewModel", () => {
 
     const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
     const statusItem = out.groups[0]?.items.find((it: any) => it.kind === "turn_status") as any;
-    expect(statusItem?.status_text).toBe("Searching alpha");
+    expect(statusItem?.custom_status).toBe("Searching alpha");
   }, 10000);
 
   it("produces a messagesKey that changes when message content changes with same length", async () => {
@@ -245,5 +245,115 @@ describe("buildWorkbenchThreadViewModel", () => {
     const k1 = deriveMessagesKey([{ ...base, content: "hello" }] as any);
     const k2 = deriveMessagesKey([{ ...base, content: "world" }] as any);
     expect(k1).not.toBe(k2);
+  }, 10000);
+
+  it("merges optimistic queued messages into the queue panel list", async () => {
+    const { mergeQueuedMessagesForPanel } = await import("./SessionPage.workbenchViewModel");
+
+    const pending = [
+      {
+        clientId: "client-1",
+        message: {
+          id: "client-1",
+          session_id: "s1",
+          task_id: "t1",
+          role: "user",
+          content: "queued",
+          delivery: "queued",
+          created_at: "2025-12-15T00:00:00.000Z",
+        },
+      },
+    ];
+
+    const merged = mergeQueuedMessagesForPanel([] as any, pending as any);
+    expect(merged).toHaveLength(1);
+    expect(String(merged[0]?.id)).toBe("client-1");
+  }, 10000);
+
+  it("filters queued panel items once a turn starts running", async () => {
+    const { filterQueuedMessagesForPanel } = await import("./SessionPage.workbenchViewModel");
+
+    const queue = [
+      {
+        id: "m1",
+        session_id: "s1",
+        task_id: "t1",
+        role: "user",
+        content: "queued",
+        delivery: "queued",
+        created_at: "2025-12-15T00:00:00.000Z",
+      },
+    ];
+
+    const turns = [
+      {
+        turn_id: "t1",
+        session_id: "s1",
+        user_message_id: "m1",
+        status: "running",
+        started_at: "2025-12-15T00:00:01.000Z",
+        updated_at: "2025-12-15T00:00:02.000Z",
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ];
+
+    const filtered = filterQueuedMessagesForPanel(queue as any, turns as any);
+    expect(filtered).toEqual([]);
+  }, 10000);
+
+  it("drops queued turns from the thread list when message ids are hidden", async () => {
+    const { buildWorkbenchThreadViewModelFromTurns, filterTurnsForQueuedMessages } =
+      await import("./SessionPage.workbenchViewModel");
+
+    const turns = [
+      {
+        turn_id: "t-queued",
+        session_id: "s1",
+        user_message_id: "m-queued",
+        status: "queued",
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+      {
+        turn_id: "t-live",
+        session_id: "s1",
+        user_message_id: "m-live",
+        status: "running",
+        started_at: "2025-12-15T00:00:02.000Z",
+        updated_at: "2025-12-15T00:00:03.000Z",
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ];
+
+    const messages = [
+      {
+        id: "m-live",
+        session_id: "s1",
+        role: "user",
+        content: "hello",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:02.000Z",
+        turn_id: "t-live",
+      },
+    ];
+
+    const filteredTurns = filterTurnsForQueuedMessages(turns as any, new Set(["m-queued"]));
+    const out = buildWorkbenchThreadViewModelFromTurns(filteredTurns as any, messages as any, {}, [], new Map());
+    expect(out.groups.length).toBe(1);
+    expect(out.groups[0]?.header?.id).toBe("m-live");
   }, 10000);
 });

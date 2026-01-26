@@ -81,8 +81,11 @@ import {
   deriveProviderGuardNotice,
   deriveSessionError,
   deriveTurnsKey,
+  filterQueuedMessagesForPanel,
+  filterTurnsForQueuedMessages,
   filterThreadItemsForVerbosity,
   mergeMessagesForView,
+  mergeQueuedMessagesForPanel,
   normalizeContextWindowMetrics,
 } from "./SessionPage.workbenchViewModel";
 
@@ -206,6 +209,7 @@ export function SessionView({
   const [sendError, setSendError] = useState<string | null>(null);
   const [queueActionBusyId, setQueueActionBusyId] = useState<string | null>(null);
   const [pendingMessages, setPendingMessages] = useState<PendingMessageEntry[]>([]);
+  const [pendingQueueMessages, setPendingQueueMessages] = useState<PendingMessageEntry[]>([]);
   const [fileOpenError, setFileOpenError] = useState<string | null>(null);
   const [modifierDown, setModifierDown] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
@@ -671,26 +675,24 @@ export function SessionView({
   const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
-  const queueForPanel = useMemo(() => {
-    if (queue.length === 0) return [];
-    if (turns.length === 0) return queue;
-
-    const statusByUserMessageId = new Map<string, string>();
-    for (const turn of turns) {
-      const mid = turn.user_message_id ? idToString(turn.user_message_id) : "";
-      if (!mid) continue;
-      statusByUserMessageId.set(mid, turn.status);
-    }
-
-    return queue.filter((message) => {
-      const mid = idToString(message.id);
-      if (!mid) return true;
-      const status = statusByUserMessageId.get(mid);
-      if (!status) return true;
-      return status === "queued";
-    });
-  }, [queue, turnsKey]);
+  const mergedQueueForPanel = useMemo(
+    () => mergeQueuedMessagesForPanel(queue, pendingQueueMessages),
+    [queue, pendingQueueMessages],
+  );
+  const queueForPanel = useMemo(
+    () => filterQueuedMessagesForPanel(mergedQueueForPanel, turns),
+    [mergedQueueForPanel, turnsKey],
+  );
   const showQueuePanel = queueForPanel.length > 0;
+  const queuedMessageIdsForThread = useMemo(() => {
+    if (queueForPanel.length === 0) return new Set<string>();
+    const ids = new Set<string>();
+    for (const message of queueForPanel) {
+      const mid = idToString(message.id);
+      if (mid) ids.add(mid);
+    }
+    return ids;
+  }, [queueForPanel]);
   useEffect(() => {
     if (pendingMessages.length === 0) return;
     const realIds = new Set(messages.map((m) => idToString(m.id)));
@@ -703,6 +705,18 @@ export function SessionView({
       return next.length === prev.length ? prev : next;
     });
   }, [messagesKey, pendingMessages.length, messages]);
+  useEffect(() => {
+    if (pendingQueueMessages.length === 0) return;
+    const realIds = new Set(queue.map((m) => idToString(m.id)));
+    setPendingQueueMessages((prev) => {
+      if (prev.length === 0) return prev;
+      const next = prev.filter((entry) => {
+        const pid = idToString(entry.message.id);
+        return pid ? !realIds.has(pid) : true;
+      });
+      return next.length === prev.length ? prev : next;
+    });
+  }, [queue, pendingQueueMessages.length]);
 
   const displayMessages = useMemo(
     () => mergeMessagesForView(messages, pendingMessages),
@@ -724,6 +738,14 @@ export function SessionView({
   const coalescedDisplayMessagesKey = useRafCoalesced(displayMessagesKey);
   const coalescedDisplayTurns = useRafCoalesced(displayTurns);
   const coalescedDisplayTurnsKey = useRafCoalesced(displayTurnsKey);
+  const displayTurnsForThread = useMemo(
+    () => filterTurnsForQueuedMessages(coalescedDisplayTurns, queuedMessageIdsForThread),
+    [coalescedDisplayTurnsKey, queuedMessageIdsForThread],
+  );
+  const displayTurnsForThreadKey = useMemo(
+    () => deriveTurnsKey(displayTurnsForThread),
+    [displayTurnsForThread],
+  );
   const computedContextWindow = useMemo<ContextWindowInfo | null>(() => {
     for (let i = turns.length - 1; i >= 0; i -= 1) {
       const metrics = turns[i]?.metrics_json;
@@ -1083,11 +1105,11 @@ export function SessionView({
   }, [perfEnabled, entry?.loading, entry?.events.length, entry?.diff]);
 
   const workbenchThreadView = useMemo(() => {
-    if (coalescedDisplayTurns.length === 0) {
+    if (displayTurnsForThread.length === 0) {
       return { groups: [], debugEvents: [] };
     }
     return buildWorkbenchThreadViewModelFromTurns(
-      coalescedDisplayTurns,
+      displayTurnsForThread,
       coalescedDisplayMessages,
       toolSummariesReady ? turnToolsByTurnId : {},
       coalescedEvents,
@@ -1096,11 +1118,11 @@ export function SessionView({
     // messages are canonical for turn headers; include in memo key
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    coalescedDisplayTurnsKey,
+    displayTurnsForThreadKey,
     coalescedDisplayMessagesKey,
     toolSummariesReady ? turnToolsByTurnId : null,
     coalescedEventsKey,
-    coalescedDisplayTurns.length,
+    displayTurnsForThread.length,
     askUserQuestionAnswers,
   ]);
 
@@ -1565,25 +1587,24 @@ export function SessionView({
     if (!text) return;
     const attachmentsToSend = draftAttachments;
     const shouldQueue = hasActiveTurn;
-    const optimisticId = shouldQueue ? null : createClientMessageId();
-    const optimisticMessage: Message | null =
-      optimisticId == null
-        ? null
-        : {
-            id: optimisticId,
-            session_id: id,
-            task_id: session?.task_id ?? "",
-            turn_id: null,
-            turn_sequence: null,
-            role: "user",
-            content: text,
-            attachments: attachmentsToSend,
-            delivery: "immediate",
-            created_at: new Date().toISOString(),
-          };
+    const optimisticId = createClientMessageId();
+    const optimisticMessage: Message = {
+      id: optimisticId,
+      session_id: id,
+      task_id: session?.task_id ?? "",
+      turn_id: null,
+      turn_sequence: null,
+      role: "user",
+      content: text,
+      attachments: attachmentsToSend,
+      delivery: shouldQueue ? "queued" : "immediate",
+      created_at: new Date().toISOString(),
+    };
     setSendBusy(true);
     setSendError(null);
-    if (optimisticMessage && optimisticId) {
+    if (shouldQueue) {
+      setPendingQueueMessages((prev) => [...prev, { clientId: optimisticId, message: optimisticMessage }]);
+    } else {
       setPendingMessages((prev) => [...prev, { clientId: optimisticId, message: optimisticMessage }]);
     }
     stickToBottomRef.current = true;
@@ -1594,7 +1615,11 @@ export function SessionView({
     setDraftAttachments([]);
     try {
       const posted = await postMessage(id, text, shouldQueue ? "queued" : undefined, attachmentsToSend);
-      if (optimisticId) {
+      if (shouldQueue) {
+        setPendingQueueMessages((prev) =>
+          prev.map((entry) => (entry.clientId === optimisticId ? { ...entry, message: posted } : entry)),
+        );
+      } else {
         setPendingMessages((prev) =>
           prev.map((entry) => (entry.clientId === optimisticId ? { ...entry, message: posted } : entry)),
         );
@@ -1605,7 +1630,9 @@ export function SessionView({
         // best-effort
       }
     } catch (e: any) {
-      if (optimisticId) {
+      if (shouldQueue) {
+        setPendingQueueMessages((prev) => prev.filter((entry) => entry.clientId !== optimisticId));
+      } else {
         setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== optimisticId));
       }
       setInput(text);
@@ -1624,6 +1651,9 @@ export function SessionView({
     setSendError(null);
     try {
       await deleteMessage(messageId);
+      setPendingQueueMessages((prev) =>
+        prev.filter((entry) => idToString(entry.message.id) !== messageId),
+      );
     } catch (e: any) {
       setSendError(e?.message ? String(e.message) : String(e));
     } finally {
@@ -1643,6 +1673,9 @@ export function SessionView({
     setSendError(null);
     try {
       await deleteMessage(mid);
+      setPendingQueueMessages((prev) =>
+        prev.filter((entry) => idToString(entry.message.id) !== mid),
+      );
     } catch (e: any) {
       setSendError(e?.message ? String(e.message) : String(e));
     } finally {
@@ -1668,6 +1701,9 @@ export function SessionView({
     }
     try {
       await deleteMessage(mid);
+      setPendingQueueMessages((prev) =>
+        prev.filter((entry) => idToString(entry.message.id) !== mid),
+      );
     } catch (e: any) {
       setSendError(e?.message ? String(e.message) : String(e));
       setQueueActionBusyId(null);
@@ -2410,7 +2446,9 @@ export function SessionView({
                 const attachments = getQueuedAttachments(m);
                 const preview = formatQueuedPreview(m, attachments);
                 const attachmentMeta = formatQueuedAttachmentMeta(attachments);
-                const canSendNow = index === 0 && !!messageId;
+                const isPending = !!messageId && messageId.startsWith("client-");
+                const canInteract = !!messageId && !isPending;
+                const canSendNow = index === 0 && canInteract;
                 return (
                   <li key={rowKey} className="queue-item">
                     <span className="queue-item-dot" aria-hidden="true" />
@@ -2443,7 +2481,7 @@ export function SessionView({
                       <button
                         type="button"
                         className="queue-action"
-                        disabled={queueActionBusy || !messageId}
+                        disabled={queueActionBusy || !canInteract}
                         onClick={() => onEditQueued(m)}
                         aria-label="Edit queued message"
                         title="Edit"
@@ -2453,7 +2491,7 @@ export function SessionView({
                       <button
                         type="button"
                         className="queue-action"
-                        disabled={queueActionBusy || !messageId}
+                        disabled={queueActionBusy || !canInteract}
                         onClick={() => onRemoveQueued(messageId)}
                         aria-label="Cancel queued message"
                         title="Cancel"
