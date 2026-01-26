@@ -715,17 +715,20 @@ async fn start_turn(
                         if let Some(update) =
                             build_turn_tool_update_from_payload(&event_type, &raw_payload)
                         {
-                            let prev = if let Some(cached) =
-                                tool_cache.get(&update.tool_call_id).cloned()
-                            {
-                                Some(cached)
-                            } else {
-                                store
-                                    .get_session_turn_tool(session_id, &update.tool_call_id)
-                                    .await
-                                    .ok()
-                                    .flatten()
-                            };
+                            let prev =
+                                if matches!(event.event_type, SessionEventType::ToolCallUpdate) {
+                                    tool_cache.get(&update.tool_call_id).cloned()
+                                } else if let Some(cached) =
+                                    tool_cache.get(&update.tool_call_id).cloned()
+                                {
+                                    Some(cached)
+                                } else {
+                                    store
+                                        .get_session_turn_tool(session_id, &update.tool_call_id)
+                                        .await
+                                        .ok()
+                                        .flatten()
+                                };
                             let merged = merge_tool_update(
                                 prev.as_ref(),
                                 update,
@@ -733,36 +736,40 @@ async fn start_turn(
                                 turn_id,
                                 event.created_at,
                             );
-                            let (
-                                delta_total,
-                                delta_pending,
-                                delta_running,
-                                delta_completed,
-                                delta_failed,
-                            ) = tool_count_deltas(prev.as_ref(), &merged);
-                            let _ = store.upsert_session_turn_tool(merged.clone()).await;
-                            if delta_total != 0
-                                || delta_pending != 0
-                                || delta_running != 0
-                                || delta_completed != 0
-                                || delta_failed != 0
-                            {
-                                let _ = store
-                                    .update_session_turn_tool_counts(
-                                        session_id,
-                                        turn_id,
-                                        SessionTurnToolCountDeltas {
-                                            total: delta_total,
-                                            pending: delta_pending,
-                                            running: delta_running,
-                                            completed: delta_completed,
-                                            failed: delta_failed,
-                                        },
-                                        event.created_at,
-                                    )
-                                    .await;
+                            if matches!(event.event_type, SessionEventType::ToolCallUpdate) {
+                                tool_cache.insert(merged.tool_call_id.clone(), merged);
+                            } else {
+                                let (
+                                    delta_total,
+                                    delta_pending,
+                                    delta_running,
+                                    delta_completed,
+                                    delta_failed,
+                                ) = tool_count_deltas(prev.as_ref(), &merged);
+                                let _ = store.upsert_session_turn_tool(merged.clone()).await;
+                                if delta_total != 0
+                                    || delta_pending != 0
+                                    || delta_running != 0
+                                    || delta_completed != 0
+                                    || delta_failed != 0
+                                {
+                                    let _ = store
+                                        .update_session_turn_tool_counts(
+                                            session_id,
+                                            turn_id,
+                                            SessionTurnToolCountDeltas {
+                                                total: delta_total,
+                                                pending: delta_pending,
+                                                running: delta_running,
+                                                completed: delta_completed,
+                                                failed: delta_failed,
+                                            },
+                                            event.created_at,
+                                        )
+                                        .await;
+                                }
+                                tool_cache.insert(merged.tool_call_id.clone(), merged);
                             }
-                            tool_cache.insert(merged.tool_call_id.clone(), merged);
                         }
                     }
                     SessionEventType::AssistantComplete => {

@@ -1406,10 +1406,16 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         .unwrap_or_default();
     let stores = StoreManager::open_with_config(&data_root, store_config).await?;
 
-    // Hard-coded retention policy (no config surface yet):
-    // - Keep tool summaries and final thoughts for 30 days.
+    // Retention policy (configurable via env):
+    // - Keep tool summaries and final thoughts for archived tasks for N days.
     // - Do not retain thought chunk events (handled at ingestion time).
-    const SESSION_RETENTION_DAYS: u64 = 30;
+    const DEFAULT_TOOL_SUMMARY_RETENTION_DAYS: u64 = 30;
+    fn tool_summary_retention_days() -> u64 {
+        std::env::var("CTX_TOOL_SUMMARY_RETENTION_DAYS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_TOOL_SUMMARY_RETENTION_DAYS)
+    }
     {
         let stores = stores.clone();
         tokio::spawn(async move {
@@ -1417,15 +1423,14 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
             loop {
                 let today = Utc::now().format("%Y-%m-%d").to_string();
                 if last_cleanup.as_deref() != Some(&today) {
+                    let retention_days = tool_summary_retention_days();
                     match stores.global().list_workspaces().await {
                         Ok(workspaces) => {
                             for workspace in workspaces {
                                 match stores.workspace(workspace.id).await {
                                     Ok(store) => {
                                         match store
-                                            .prune_session_data_older_than_days(
-                                                SESSION_RETENTION_DAYS,
-                                            )
+                                            .prune_session_data_older_than_days(retention_days)
                                             .await
                                         {
                                             Ok(stats) => {
@@ -1435,14 +1440,14 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
                                                         .tool_summaries_deleted,
                                                     turn_thoughts_cleared = stats
                                                         .turn_thoughts_cleared,
-                                                    retention_days = SESSION_RETENTION_DAYS,
-                                                    "pruned old session data",
+                                                    retention_days,
+                                                    "pruned archived session data",
                                                 );
                                             }
                                             Err(err) => {
                                                 tracing::warn!(
                                                     workspace_id = %workspace.id.0,
-                                                    retention_days = SESSION_RETENTION_DAYS,
+                                                    retention_days,
                                                     "failed to prune old session data: {err:#}",
                                                 );
                                             }
@@ -1459,7 +1464,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
                         }
                         Err(err) => {
                             tracing::warn!(
-                                retention_days = SESSION_RETENTION_DAYS,
+                                retention_days,
                                 "failed to list workspaces for pruning: {err:#}",
                             );
                         }

@@ -1222,7 +1222,13 @@ impl Store {
         } else {
             self.query(
                 r#"DELETE FROM session_turn_tools
-               WHERE updated_at < ?"#,
+               WHERE session_id IN (
+                   SELECT s.id
+                   FROM sessions s
+                   JOIN tasks t ON t.id = s.task_id
+                   WHERE t.archived_at IS NOT NULL
+                     AND t.archived_at < ?
+               )"#,
             )
             .bind(&cutoff_str)
             .execute(&self.pool)
@@ -1235,8 +1241,14 @@ impl Store {
             .query(
                 r#"UPDATE session_turns
                SET thought_partial = NULL
-               WHERE updated_at < ?
-                 AND thought_partial IS NOT NULL"#,
+               WHERE thought_partial IS NOT NULL
+                 AND session_id IN (
+                     SELECT s.id
+                     FROM sessions s
+                     JOIN tasks t ON t.id = s.task_id
+                     WHERE t.archived_at IS NOT NULL
+                       AND t.archived_at < ?
+                 )"#,
             )
             .bind(&cutoff_str)
             .execute(&self.pool)
@@ -6695,7 +6707,9 @@ impl Store {
         };
         if matches!(
             event.event_type,
-            SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
+            SessionEventType::AssistantChunk
+                | SessionEventType::ThoughtChunk
+                | SessionEventType::ToolCallUpdate
         ) {
             event.seq = next_stream_only_event_seq();
             event.transient = true;
@@ -7937,6 +7951,9 @@ fn is_transient_session_event(
     event_type: &SessionEventType,
     payload_json: &serde_json::Value,
 ) -> bool {
+    if matches!(event_type, SessionEventType::ToolCallUpdate) {
+        return true;
+    }
     if matches!(event_type, SessionEventType::AuthRequired) {
         return true;
     }
