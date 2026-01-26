@@ -10,18 +10,20 @@ use tokio_tungstenite::{
     tungstenite::{Message as WsMessage, Utf8Bytes},
 };
 
-use ctx_core::ids::{SessionId, WorkspaceId};
+use ctx_core::ids::{MessageId, SessionId, WorkspaceId};
 use ctx_core::models::{
-    SessionEvent, SessionEventType, SessionHeadDelta, SessionSnapshotSummary,
+    MessageDelivery, SessionEvent, SessionEventType, SessionHeadDelta, SessionSnapshotSummary,
+    SessionTurn, SessionTurnStatus,
     WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotClientMessage,
     WorkspaceActiveSnapshotSessionSubscription, WorkspaceActiveSnapshotStreamMessage,
 };
+use serde_json::Value;
 
 use super::ShellView;
 use super::session::{
     clear_placeholder_messages_in, is_partial_event, strip_partial_turn, SessionThreadCache,
 };
-use super::super::models::{message_item_from_model, session_info_from_summary};
+use super::super::models::{message_item_from_model, session_info_from_summary, MessageItem};
 
 #[derive(Clone)]
 pub(crate) enum StreamStatus {
@@ -66,6 +68,104 @@ fn push_session_event_with_limit(events: &mut Vec<SessionEvent>, event: SessionE
     }
 }
 
+fn turn_status_from_payload(event: &SessionEvent) -> Option<SessionTurnStatus> {
+    let raw = event.payload_json.get("status").and_then(Value::as_str)?;
+    match raw {
+        "queued" => Some(SessionTurnStatus::Queued),
+        "running" => Some(SessionTurnStatus::Running),
+        "completed" => Some(SessionTurnStatus::Completed),
+        "interrupted" => Some(SessionTurnStatus::Interrupted),
+        "failed" => Some(SessionTurnStatus::Failed),
+        _ => None,
+    }
+}
+
+fn turn_status_from_event(event: &SessionEvent) -> Option<SessionTurnStatus> {
+    if let Some(status) = turn_status_from_payload(event) {
+        return Some(status);
+    }
+    match event.event_type {
+        SessionEventType::TurnQueued => Some(SessionTurnStatus::Queued),
+        SessionEventType::TurnStarted => Some(SessionTurnStatus::Running),
+        SessionEventType::TurnFinished => Some(SessionTurnStatus::Completed),
+        SessionEventType::TurnInterrupted => Some(SessionTurnStatus::Interrupted),
+        SessionEventType::Done | SessionEventType::AssistantComplete => {
+            Some(SessionTurnStatus::Completed)
+        }
+        SessionEventType::Error => Some(SessionTurnStatus::Failed),
+        _ => None,
+    }
+}
+
+fn apply_turn_event_to_turns(turns: &mut Vec<SessionTurn>, event: &SessionEvent) -> bool {
+    let Some(turn_id) = event.turn_id else {
+        return false;
+    };
+    let Some(turn) = turns.iter_mut().find(|turn| turn.turn_id == turn_id) else {
+        return false;
+    };
+    let mut changed = false;
+    if let Some(status) = turn_status_from_event(event) {
+        turn.status = status;
+        changed = true;
+    }
+    if let Some(metrics) = event.payload_json.get("context_window") {
+        turn.metrics_json = Some(metrics.clone());
+        changed = true;
+    }
+    if changed {
+        turn.updated_at = event.created_at;
+    }
+    changed
+}
+
+fn message_id_from_event(event: &SessionEvent) -> Option<MessageId> {
+    let id = event.payload_json.get("message_id").and_then(Value::as_str)?;
+    uuid::Uuid::parse_str(id).ok().map(MessageId)
+}
+
+fn apply_queue_event_to_messages(messages: &mut Vec<MessageItem>, event: &SessionEvent) -> bool {
+    let Some(message_id) = message_id_from_event(event) else {
+        return false;
+    };
+    match event.event_type {
+        SessionEventType::MessageQueueAdded => {
+            if let Some(msg) = messages.iter_mut().find(|msg| msg.id == Some(message_id)) {
+                if !matches!(msg.delivery, MessageDelivery::Queued) {
+                    msg.delivery = MessageDelivery::Queued;
+                    return true;
+                }
+            }
+            false
+        }
+        SessionEventType::MessageQueueUpdated => {
+            if let Some(msg) = messages.iter_mut().find(|msg| msg.id == Some(message_id)) {
+                if !matches!(msg.delivery, MessageDelivery::Queued) {
+                    msg.delivery = MessageDelivery::Queued;
+                    return true;
+                }
+                return true;
+            }
+            false
+        }
+        SessionEventType::MessageQueuePromoted => {
+            if let Some(msg) = messages.iter_mut().find(|msg| msg.id == Some(message_id)) {
+                if matches!(msg.delivery, MessageDelivery::Queued) {
+                    msg.delivery = MessageDelivery::Immediate;
+                    return true;
+                }
+            }
+            false
+        }
+        SessionEventType::MessageQueueRemoved => {
+            let before = messages.len();
+            messages.retain(|msg| msg.id != Some(message_id));
+            before != messages.len()
+        }
+        _ => false,
+    }
+}
+
 fn apply_delta_to_cache(cache: &mut SessionThreadCache, delta: SessionHeadDelta) {
     if let Some(turn) = delta.turn {
         let turn = strip_partial_turn(&turn);
@@ -87,8 +187,10 @@ fn apply_delta_to_cache(cache: &mut SessionThreadCache, delta: SessionHeadDelta)
 
     if let Some(event) = delta.event {
         if !is_partial_event(&event) {
-            push_session_event_with_limit(&mut cache.session_events, event);
+            push_session_event_with_limit(&mut cache.session_events, event.clone());
         }
+        apply_turn_event_to_turns(&mut cache.session_turns, &event);
+        apply_queue_event_to_messages(&mut cache.messages, &event);
     }
 
     if let Some(message) = delta.message {
@@ -421,6 +523,8 @@ impl ShellView {
             if matches!(event.event_type, SessionEventType::ArtifactsSet) {
                 self.apply_artifacts_set_event(session_id, &event, cx);
             }
+            apply_turn_event_to_turns(&mut self.session_turns, &event);
+            apply_queue_event_to_messages(&mut self.messages, &event);
             self.push_session_event(event);
         }
 

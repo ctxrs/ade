@@ -1365,6 +1365,9 @@ export class SessionSupervisor {
       if (this.applyEventToTurns(entry, ev)) {
         changed = true;
       }
+      if (this.applyQueueEvent(entry, ev)) {
+        changed = true;
+      }
       if (this.applyArtifactsEvent(entry, ev)) {
         changed = true;
       }
@@ -1395,12 +1398,12 @@ export class SessionSupervisor {
     const existing = entry.turns.find((t) => idToString(t.turn_id) === turnId);
     if (existing) return existing;
     const createdAt = event.created_at ?? new Date().toISOString();
-    const status = deriveTurnStatusFromEvent(String(event.event_type ?? ""));
+    const status = deriveTurnStatusFromEvent(event);
     const turn: SessionTurn = {
       turn_id: event.turn_id ?? turnId,
       session_id: event.session_id,
       run_id: event.run_id ?? null,
-      user_message_id: event.payload_json?.user_message_id ?? null,
+      user_message_id: event.payload_json?.user_message_id ?? event.payload_json?.message_id ?? null,
       status,
       start_seq: event.seq ?? null,
       end_seq: null,
@@ -1463,6 +1466,26 @@ export class SessionSupervisor {
         changed = true;
         break;
       }
+      case "turn_queued": {
+        turn.status = "queued";
+        changed = true;
+        break;
+      }
+      case "turn_started": {
+        turn.status = "running";
+        changed = true;
+        break;
+      }
+      case "turn_finished": {
+        const payloadStatus = readTurnStatusFromPayload(event);
+        if (payloadStatus) {
+          turn.status = payloadStatus;
+        } else if (turn.status !== "interrupted" && turn.status !== "failed") {
+          turn.status = "completed";
+        }
+        changed = true;
+        break;
+      }
       case "turn_interrupted": {
         turn.status = "interrupted";
         changed = true;
@@ -1504,6 +1527,57 @@ export class SessionSupervisor {
     turn.updated_at = event.created_at ?? turn.updated_at;
     entry.turns[idx] = { ...turn };
     return true;
+  }
+
+  private applyQueueEvent(entry: InternalEntry, event: SessionEvent): boolean {
+    const messageId = idToString(event.payload_json?.message_id ?? "");
+    if (!messageId) return false;
+    switch (String(event.event_type)) {
+      case "message_queue_added": {
+        const idx = entry.messages.findIndex((msg) => idToString(msg.id) === messageId);
+        if (idx < 0) return false;
+        const msg = entry.messages[idx];
+        if (msg.delivery === "queued") return false;
+        entry.messages[idx] = { ...msg, delivery: "queued" };
+        entry.queue = entry.messages.filter((m) => m.delivery === "queued");
+        return true;
+      }
+      case "message_queue_updated": {
+        if (!entry.queue.some((msg) => idToString(msg.id) === messageId)) {
+          return false;
+        }
+        entry.queue = entry.messages.filter((m) => m.delivery === "queued");
+        return true;
+      }
+      case "message_queue_removed": {
+        const prevMessages = entry.messages.length;
+        const prevQueue = entry.queue.length;
+        entry.messages = entry.messages.filter((msg) => idToString(msg.id) !== messageId);
+        entry.queue = entry.queue.filter((msg) => idToString(msg.id) !== messageId);
+        return entry.messages.length !== prevMessages || entry.queue.length !== prevQueue;
+      }
+      case "message_queue_promoted": {
+        let changed = false;
+        const idx = entry.messages.findIndex((msg) => idToString(msg.id) === messageId);
+        if (idx >= 0) {
+          const msg = entry.messages[idx];
+          if (msg.delivery === "queued") {
+            entry.messages[idx] = { ...msg, delivery: "immediate" };
+            changed = true;
+          }
+        }
+        if (entry.queue.some((msg) => idToString(msg.id) === messageId)) {
+          entry.queue = entry.queue.filter((msg) => idToString(msg.id) !== messageId);
+          changed = true;
+        }
+        if (changed) {
+          entry.queue = entry.messages.filter((m) => m.delivery === "queued");
+        }
+        return changed;
+      }
+      default:
+        return false;
+    }
   }
 
   private applyArtifactsEvent(entry: InternalEntry, event: SessionEvent): boolean {
@@ -1827,11 +1901,36 @@ const applyToolBucketDelta = (turn: SessionTurn, bucket: string | null, delta: n
   }
 };
 
-const deriveTurnStatusFromEvent = (eventType: string): SessionTurn["status"] => {
+const readTurnStatusFromPayload = (event: SessionEvent): SessionTurn["status"] | null => {
+  const raw = event.payload_json?.status;
+  if (typeof raw !== "string") return null;
+  const status = raw.trim();
+  switch (status) {
+    case "queued":
+    case "running":
+    case "completed":
+    case "interrupted":
+    case "failed":
+      return status;
+    default:
+      return null;
+  }
+};
+
+const deriveTurnStatusFromEvent = (event: SessionEvent): SessionTurn["status"] => {
+  const payloadStatus = readTurnStatusFromPayload(event);
+  if (payloadStatus) return payloadStatus;
+  const eventType = String(event.event_type ?? "");
   switch (eventType) {
     case "done":
     case "assistant_complete":
       return "completed";
+    case "turn_finished":
+      return "completed";
+    case "turn_queued":
+      return "queued";
+    case "turn_started":
+      return "running";
     case "turn_interrupted":
       return "interrupted";
     case "error":

@@ -7115,7 +7115,7 @@ impl Store {
         let row = self.query(
             r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                FROM session_events
-               WHERE session_id = ? AND run_id = ? AND event_type IN ('done', 'error', 'turn_interrupted')
+               WHERE session_id = ? AND run_id = ? AND event_type IN ('done', 'error', 'turn_interrupted', 'turn_finished')
                ORDER BY seq DESC
                LIMIT 1"#,
         )
@@ -7978,6 +7978,9 @@ fn session_event_type_to_str(event_type: &SessionEventType) -> &'static str {
         SessionEventType::Init => "init",
         SessionEventType::UserMessage => "user_message",
         SessionEventType::InputQueued => "input_queued",
+        SessionEventType::TurnQueued => "turn_queued",
+        SessionEventType::TurnStarted => "turn_started",
+        SessionEventType::TurnFinished => "turn_finished",
         SessionEventType::AuthRequired => "auth_required",
         SessionEventType::Notice => "notice",
         SessionEventType::AssistantChunk => "assistant_chunk",
@@ -7992,6 +7995,10 @@ fn session_event_type_to_str(event_type: &SessionEventType) -> &'static str {
         SessionEventType::Done => "done",
         SessionEventType::InterruptRequested => "interrupt_requested",
         SessionEventType::TurnInterrupted => "turn_interrupted",
+        SessionEventType::MessageQueueAdded => "message_queue_added",
+        SessionEventType::MessageQueueUpdated => "message_queue_updated",
+        SessionEventType::MessageQueueRemoved => "message_queue_removed",
+        SessionEventType::MessageQueuePromoted => "message_queue_promoted",
         SessionEventType::Error => "error",
     }
 }
@@ -8001,6 +8008,9 @@ fn parse_session_event_type(value: &str) -> SessionEventType {
         "init" => SessionEventType::Init,
         "user_message" => SessionEventType::UserMessage,
         "input_queued" => SessionEventType::InputQueued,
+        "turn_queued" => SessionEventType::TurnQueued,
+        "turn_started" => SessionEventType::TurnStarted,
+        "turn_finished" => SessionEventType::TurnFinished,
         "auth_required" => SessionEventType::AuthRequired,
         "notice" => SessionEventType::Notice,
         "assistant_chunk" => SessionEventType::AssistantChunk,
@@ -8015,6 +8025,10 @@ fn parse_session_event_type(value: &str) -> SessionEventType {
         "done" => SessionEventType::Done,
         "interrupt_requested" => SessionEventType::InterruptRequested,
         "turn_interrupted" => SessionEventType::TurnInterrupted,
+        "message_queue_added" => SessionEventType::MessageQueueAdded,
+        "message_queue_updated" => SessionEventType::MessageQueueUpdated,
+        "message_queue_removed" => SessionEventType::MessageQueueRemoved,
+        "message_queue_promoted" => SessionEventType::MessageQueuePromoted,
         "error" => SessionEventType::Error,
         _ => SessionEventType::Error,
     }
