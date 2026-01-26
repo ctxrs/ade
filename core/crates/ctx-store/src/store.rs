@@ -2112,6 +2112,79 @@ impl Store {
         }))
     }
 
+    pub async fn get_worktree_for_root(
+        &self,
+        workspace_id: WorkspaceId,
+        root_path: &str,
+    ) -> Result<Option<Worktree>> {
+        let row = self.query(
+            r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, vcs_kind, base_revision, vcs_ref, created_at,
+                      bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
+                      bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
+                      bootstrap_config_path, bootstrap_config_key, bootstrap_command, bootstrap_script_path
+               FROM worktrees
+               WHERE workspace_id = ? AND root_path = ?
+               ORDER BY created_at DESC
+               LIMIT 1"#,
+        )
+        .bind(workspace_id.0.to_string())
+        .bind(root_path)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| {
+            let id: String = r.try_get("id").ok()?;
+            let ws_id: String = r.try_get("workspace_id").ok()?;
+            let created_at: String = r.try_get("created_at").ok()?;
+            let bootstrap_status: Option<String> = r.try_get("bootstrap_status").ok()?;
+            let bootstrap_started_at: Option<String> = r.try_get("bootstrap_started_at").ok()?;
+            let bootstrap_finished_at: Option<String> = r.try_get("bootstrap_finished_at").ok()?;
+            let bootstrap_exit_code: Option<i64> = r.try_get("bootstrap_exit_code").ok()?;
+            let bootstrap_timeout_sec: Option<i64> = r.try_get("bootstrap_timeout_sec").ok()?;
+            let bootstrap_error: Option<String> = r.try_get("bootstrap_error").ok()?;
+            let bootstrap_log_path: Option<String> = r.try_get("bootstrap_log_path").ok()?;
+            let bootstrap_log_truncated: Option<i64> = r.try_get("bootstrap_log_truncated").ok()?;
+            let bootstrap_config_path: Option<String> = r.try_get("bootstrap_config_path").ok()?;
+            let bootstrap_config_key: Option<String> = r.try_get("bootstrap_config_key").ok()?;
+            let bootstrap_command: Option<String> = r.try_get("bootstrap_command").ok()?;
+            let bootstrap_script_path: Option<String> = r.try_get("bootstrap_script_path").ok()?;
+            let vcs_kind: Option<String> = r.try_get("vcs_kind").ok()?;
+            let base_revision: Option<String> = r.try_get("base_revision").ok()?;
+            let vcs_ref: Option<String> = r.try_get("vcs_ref").ok()?;
+            Some(Worktree {
+                id: WorktreeId(uuid::Uuid::parse_str(&id).ok()?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
+                root_path: r.try_get("root_path").ok()?,
+                base_commit_sha: r.try_get("base_commit_sha").ok()?,
+                git_branch: r.try_get("git_branch").ok()?,
+                vcs_kind: parse_vcs_kind(vcs_kind),
+                base_revision,
+                vcs_ref,
+                created_at: parse_dt(&created_at).ok()?,
+                bootstrap_status: parse_bootstrap_status(bootstrap_status),
+                bootstrap_started_at: bootstrap_started_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()
+                    .ok()?,
+                bootstrap_finished_at: bootstrap_finished_at
+                    .as_deref()
+                    .map(parse_dt)
+                    .transpose()
+                    .ok()?,
+                bootstrap_exit_code,
+                bootstrap_timeout_sec,
+                bootstrap_error,
+                bootstrap_log_path,
+                bootstrap_log_truncated: bootstrap_log_truncated.map(|v| v != 0),
+                bootstrap_config_path,
+                bootstrap_config_key,
+                bootstrap_command,
+                bootstrap_script_path,
+            })
+        }))
+    }
+
     pub async fn list_worktrees(&self, workspace_id: WorkspaceId) -> Result<Vec<Worktree>> {
         let rows = self.query(
             r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, vcs_kind, base_revision, vcs_ref, created_at,

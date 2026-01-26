@@ -131,6 +131,30 @@ async fn list_workspaces(client: &reqwest::Client, daemon_url: &str) -> Result<V
     Ok(Value::Array(mapped))
 }
 
+fn find_repo_root(start: &Path) -> Option<PathBuf> {
+    let mut current = start.to_path_buf();
+    loop {
+        if current.join(".git").exists() || current.join(".jj").exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+fn resolve_worktree_root() -> Option<String> {
+    if let Some(root) = ctx_env_opt("WORKTREE_ROOT") {
+        let trimmed = root.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    let cwd = std::env::current_dir().ok()?;
+    let root = find_repo_root(&cwd)?;
+    Some(root.to_string_lossy().to_string())
+}
+
 async fn merge_queue_submit_call(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -138,6 +162,7 @@ async fn merge_queue_submit_call(
 ) -> Result<Value> {
     let session_id =
         ctx_env_opt("SESSION_ID").context("missing session context for merge queue submit")?;
+    let worktree_id = ctx_env_opt("WORKTREE_ID");
     let target_branch = args
         .get("target_branch")
         .and_then(|v| v.as_str())
@@ -150,6 +175,15 @@ async fn merge_queue_submit_call(
     let mut body = json!({});
     if let Some(obj) = body.as_object_mut() {
         obj.insert("session_id".to_string(), Value::String(session_id));
+    }
+    if let Some(worktree_id) = worktree_id {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("worktree_id".to_string(), Value::String(worktree_id));
+        }
+    } else if let Some(worktree_root) = resolve_worktree_root() {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("worktree_root".to_string(), Value::String(worktree_root));
+        }
     }
     if let Some(target_branch) = target_branch {
         if let Some(obj) = body.as_object_mut() {

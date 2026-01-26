@@ -485,3 +485,73 @@ async fn merge_queue_isolation_and_canonical_sync() {
     let log_contents = tokio::fs::read_to_string(log_path).await.unwrap();
     assert!(log_contents.contains("canonical sync skipped"));
 }
+
+#[tokio::test]
+async fn merge_queue_submit_uses_worktree_root() {
+    let repo = common::init_git_repo(&[
+        ("note.txt", "base\n"),
+        (".gitignore", ".ctx/merge-queue\n.ctx/config.toml\n"),
+    ])
+    .await;
+    let target_branch = git_output(repo.path(), &["rev-parse", "--abbrev-ref", "HEAD"]).await;
+    write_merge_queue_config(repo.path(), &target_branch, "never").await;
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+    merge_queue::spawn_merge_queue_runner(state.clone());
+
+    let workspace = common::create_workspace(&app, repo.path(), "mq-root").await;
+    let task = common::create_task(&app, workspace.id.0, "mq-root").await;
+    let session = common::create_session(&app, task.id.0, "fake", "fake").await;
+
+    let worktree_root = tempfile::tempdir().unwrap();
+    let feature_path = worktree_root.path().join("feature-root");
+    common::run_git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            feature_path.to_str().unwrap(),
+            "-b",
+            "feature-root",
+        ],
+    )
+    .await;
+
+    append_file(&feature_path.join("note.txt"), "mq-root\n").await;
+    common::run_git(&feature_path, &["add", "note.txt"]).await;
+    common::run_git(&feature_path, &["commit", "-m", "mq-root"]).await;
+
+    let feature_head = git_output(&feature_path, &["rev-parse", "HEAD"]).await;
+    let worktree_root_str = feature_path.to_string_lossy().to_string();
+    let (status, entry): (StatusCode, MergeQueueEntry) = common::json_request(
+        &app,
+        Method::POST,
+        "/api/merge-queue/entries",
+        Some(json!({
+            "session_id": session.id.0.to_string(),
+            "worktree_root": worktree_root_str.clone(),
+            "message": "mq-root",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let entry = wait_for_entry(&state, entry.id).await;
+    assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
+    assert_eq!(
+        entry.head_commit_sha.as_deref(),
+        Some(feature_head.as_str())
+    );
+
+    let worktree_id = entry.worktree_id.expect("worktree id missing");
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let worktree = store.get_worktree(worktree_id).await.unwrap().unwrap();
+    assert_eq!(worktree.root_path, worktree_root_str);
+}

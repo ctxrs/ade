@@ -29,6 +29,7 @@ use crate::workspace_config::{load_merge_queue_config, MergeQueueCanonicalSync, 
 pub struct MergeQueueSubmitParams {
     pub session_id: Option<SessionId>,
     pub worktree_id: Option<WorktreeId>,
+    pub worktree_root: Option<String>,
     pub target_branch: Option<String>,
     pub message: Option<String>,
 }
@@ -75,8 +76,15 @@ pub async fn submit_merge_queue_entry(
     state: &Arc<AppState>,
     params: MergeQueueSubmitParams,
 ) -> Result<MergeQueueEntry> {
-    let (workspace, worktree) =
-        resolve_workspace_context(state, params.session_id, params.worktree_id).await?;
+    let context = resolve_merge_queue_context(
+        state,
+        params.session_id,
+        params.worktree_id,
+        params.worktree_root,
+    )
+    .await?;
+    let workspace = context.workspace;
+    let mut worktree = context.worktree;
     let config = load_merge_queue_config(Path::new(&workspace.root_path)).await?;
     if !config.enabled {
         bail!("merge queue is disabled for this workspace");
@@ -92,13 +100,10 @@ pub async fn submit_merge_queue_entry(
         bail!("target_branch is required");
     }
 
-    let worktree = worktree
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("worktree is required to submit to the merge queue"))?;
-    let vcs = vcs_driver_for_worktree(worktree);
-    let worktree_root = Path::new(&worktree.root_path);
-    vcs.assert_repo(worktree_root).await?;
-    let dirty = vcs.status_porcelain(worktree_root).await?;
+    let vcs = context.vcs;
+    let worktree_root = context.worktree_root;
+    vcs.assert_repo(worktree_root.as_path()).await?;
+    let dirty = vcs.status_porcelain(worktree_root.as_path()).await?;
     let dirty = if vcs.kind() == VcsKind::Jj {
         dirty
             .into_iter()
@@ -119,17 +124,61 @@ pub async fn submit_merge_queue_entry(
         );
     }
     let merge_base = vcs
-        .merge_base(worktree_root, &target_branch, "HEAD")
+        .merge_base(worktree_root.as_path(), &target_branch, "HEAD")
         .await?;
-    let worktree_patch = vcs.build_worktree_patch(worktree_root, &merge_base).await?;
+    let worktree_patch = vcs
+        .build_worktree_patch(worktree_root.as_path(), &merge_base)
+        .await?;
     if worktree_patch.patch.trim().is_empty() {
         bail!("no changes detected; nothing to submit");
+    }
+    if worktree.is_none() {
+        let worktree_id = WorktreeId::new();
+        let worktree_record = Worktree {
+            id: worktree_id,
+            workspace_id: workspace.id,
+            root_path: worktree_root.to_string_lossy().to_string(),
+            base_commit_sha: worktree_patch.base_revision.clone(),
+            git_branch: None,
+            vcs_kind: Some(vcs.kind()),
+            base_revision: Some(worktree_patch.base_revision.clone()),
+            vcs_ref: None,
+            created_at: Utc::now(),
+            bootstrap_status: None,
+            bootstrap_started_at: None,
+            bootstrap_finished_at: None,
+            bootstrap_exit_code: None,
+            bootstrap_timeout_sec: None,
+            bootstrap_error: None,
+            bootstrap_log_path: None,
+            bootstrap_log_truncated: None,
+            bootstrap_config_path: None,
+            bootstrap_config_key: None,
+            bootstrap_command: None,
+            bootstrap_script_path: None,
+        };
+        let store = state.store_for_workspace(workspace.id).await?;
+        store.insert_worktree(worktree_record.clone()).await?;
+        if let Err(err) = state
+            .global_store()
+            .upsert_workspace_worktree_index(worktree_id, workspace.id)
+            .await
+        {
+            tracing::warn!(
+                worktree_id = %worktree_id.0,
+                "failed to update worktree index: {err:?}"
+            );
+        }
+        worktree = Some(worktree_record);
     }
     let patch_source = MergeQueuePatchSource::Generated;
     let base_commit_sha = Some(worktree_patch.base_revision);
     let head_commit_sha = Some(worktree_patch.head_revision);
     let patch_text = worktree_patch.patch;
 
+    let worktree = worktree
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("worktree is required to submit to the merge queue"))?;
     let entry_id = MergeQueueEntryId::new();
     let patch_path =
         write_patch_file(Path::new(&workspace.root_path), entry_id, &patch_text).await?;
@@ -648,11 +697,19 @@ async fn run_entry_inner(
     result
 }
 
-async fn resolve_workspace_context(
+struct MergeQueueWorktreeContext {
+    workspace: Workspace,
+    worktree: Option<Worktree>,
+    worktree_root: PathBuf,
+    vcs: Arc<dyn VcsDriver>,
+}
+
+async fn resolve_merge_queue_context(
     state: &Arc<AppState>,
     session_id: Option<SessionId>,
     worktree_id: Option<WorktreeId>,
-) -> Result<(Workspace, Option<Worktree>)> {
+    worktree_root: Option<String>,
+) -> Result<MergeQueueWorktreeContext> {
     if let Some(worktree_id) = worktree_id {
         let store = state.store_for_worktree(worktree_id).await?;
         let worktree = store
@@ -664,7 +721,14 @@ async fn resolve_workspace_context(
             .get_workspace(worktree.workspace_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
-        return Ok((workspace, Some(worktree)));
+        let vcs = vcs_driver_for_worktree(&worktree);
+        let worktree_root = PathBuf::from(&worktree.root_path);
+        return Ok(MergeQueueWorktreeContext {
+            workspace,
+            worktree: Some(worktree),
+            worktree_root,
+            vcs,
+        });
     }
 
     let session_id = session_id.ok_or_else(|| anyhow::anyhow!("session_id is required"))?;
@@ -678,8 +742,47 @@ async fn resolve_workspace_context(
         .get_workspace(session.workspace_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
-    let worktree = store.get_worktree(session.worktree_id).await?;
-    Ok((workspace, worktree))
+
+    if let Some(root) = worktree_root {
+        let root_path = PathBuf::from(root.trim());
+        if !root_path.is_absolute() {
+            bail!("worktree_root must be an absolute path");
+        }
+        let root_string = root_path.to_string_lossy().to_string();
+        if let Some(worktree) = store
+            .get_worktree_for_root(workspace.id, &root_string)
+            .await?
+        {
+            let vcs = vcs_driver_for_worktree(&worktree);
+            let worktree_root = PathBuf::from(&worktree.root_path);
+            return Ok(MergeQueueWorktreeContext {
+                workspace,
+                worktree: Some(worktree),
+                worktree_root,
+                vcs,
+            });
+        }
+        let vcs = vcs::driver_for_path(&root_path).await?;
+        return Ok(MergeQueueWorktreeContext {
+            workspace,
+            worktree: None,
+            worktree_root: root_path,
+            vcs,
+        });
+    }
+
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("worktree not found"))?;
+    let vcs = vcs_driver_for_worktree(&worktree);
+    let worktree_root = PathBuf::from(&worktree.root_path);
+    Ok(MergeQueueWorktreeContext {
+        workspace,
+        worktree: Some(worktree),
+        worktree_root,
+        vcs,
+    })
 }
 
 fn merge_queue_root(workspace_root: &Path) -> PathBuf {

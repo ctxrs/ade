@@ -634,10 +634,19 @@ async fn submit_merge_queue_entry(
         })?)),
         None => None,
     };
+    let worktree_root = req.worktree_root.and_then(|root| {
+        let trimmed = root.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
 
     let params = merge_queue::MergeQueueSubmitParams {
         session_id,
         worktree_id,
+        worktree_root,
         target_branch: req.target_branch,
         message: req.message,
     };
@@ -775,6 +784,8 @@ struct MergeQueueSubmitReq {
     session_id: Option<String>,
     #[serde(default)]
     worktree_id: Option<String>,
+    #[serde(default)]
+    worktree_root: Option<String>,
     #[serde(default)]
     target_branch: Option<String>,
     #[serde(default)]
