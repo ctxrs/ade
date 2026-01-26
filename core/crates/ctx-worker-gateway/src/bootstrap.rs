@@ -301,7 +301,7 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("  local url=\"\"\n");
     script.push_str("  case \"$arch\" in\n");
     script.push_str("    x86_64|amd64)\n");
-    script.push_str("      url=\"https://github.com/ctxrs/codex-acp/releases/download/v0.8.2-ctx.4/codex-acp-0.8.2-ctx.4-x86_64-unknown-linux-gnu.tar.gz\"\n");
+    script.push_str("      url=\"https://github.com/ctxrs/codex-acp/releases/download/v0.9.0-ctx.2/codex-acp-0.9.0-ctx.2-x86_64-unknown-linux-gnu.tar.gz\"\n");
     script.push_str("      ;;\n");
     script.push_str("    aarch64|arm64)\n");
     script.push_str("      url=\"https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.4/codex-acp-0.7.4-ctx.4-aarch64-unknown-linux-gnu.tar.gz\"\n");
