@@ -169,6 +169,15 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     stickToBottomRef,
   ]);
 
+  const pinToBottomOnResize = useCallback(() => {
+    const node = scrollerRef.current;
+    if (!node) return;
+    const remaining = node.scrollHeight - (node.scrollTop + node.clientHeight);
+    if (remaining <= bottomThresholdPx) return;
+    markAutoScroll();
+    node.scrollTop = node.scrollHeight;
+  }, [bottomThresholdPx, markAutoScroll, scrollerRef]);
+
   useLayoutEffect(() => {
     if (preserveScrollOnFocus && !isActive) return;
     const nearBottom = syncAtBottom();
@@ -260,11 +269,11 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     if (!node) return;
     const observer = new ResizeObserver(() => {
       if (!stickToBottomRef.current) return;
-      scheduleAutoScroll();
+      pinToBottomOnResize();
     });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [scheduleAutoScroll, scrollerRef, stickToBottomRef]);
+  }, [pinToBottomOnResize, scrollerRef, stickToBottomRef]);
 
   useEffect(() => {
     const node = listRef.current;

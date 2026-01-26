@@ -322,13 +322,15 @@ const compareMessageOrder = (a: Message, b: Message): number => {
 };
 
 export function mergeMessagesForView(messages: Message[], pending: PendingMessageEntry[]): Message[] {
-  if (pending.length === 0) return messages;
+  const filteredMessages = messages.filter((message) => message.delivery !== "queued");
+  const filteredPending = pending.filter((entry) => entry.message.delivery !== "queued");
+  if (filteredPending.length === 0) return filteredMessages;
   const byId = new Map<string, Message>();
-  for (const m of messages) {
+  for (const m of filteredMessages) {
     const id = idToString(m.id);
     if (id) byId.set(id, m);
   }
-  for (const entry of pending) {
+  for (const entry of filteredPending) {
     const id = idToString(entry.message.id);
     if (!id || byId.has(id)) continue;
     byId.set(id, entry.message);

@@ -1878,6 +1878,9 @@ export function SessionView({
       return <WorkbenchTurnStatusRow item={item} nowMs={nowMs} />;
     }
     if (item.kind === "assistant") {
+      if (!item.is_complete && item.content.trim().length === 0) {
+        return null;
+      }
       return (
         <AssistantEntry
           content={item.content}
