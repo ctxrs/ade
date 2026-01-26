@@ -126,145 +126,160 @@ const respondJson = async (route, body, status = 200) => {
   });
 };
 
-const buildWorkerShim = (events, passthroughUrl) => {
+const buildWorkerAppend = (events) => {
   const payload = JSON.stringify(events ?? []);
   const safePayload = JSON.stringify(payload).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-  const passthrough = JSON.stringify(passthroughUrl);
   return `
-const __CTX_LOAD_TEST_EVENTS__ = JSON.parse(${safePayload});
-self.__CTX_LOAD_TEST__ = true;
-self.__CTX_LOAD_TEST_EVENTS__ = __CTX_LOAD_TEST_EVENTS__;
+;(() => {
+  const __CTX_LOAD_TEST_EVENTS__ = JSON.parse(${safePayload});
+  self.__CTX_LOAD_TEST__ = true;
+  self.__CTX_LOAD_TEST_EVENTS__ = __CTX_LOAD_TEST_EVENTS__;
 
-const OriginalWebSocket = self.WebSocket;
-const matchesReplay = (url) => {
-  const u = String(url ?? "");
-  return u.includes("/api/workspaces/") && u.includes("/active_snapshot/stream");
-};
+  const OriginalWebSocket = self.WebSocket;
+  const matchesReplay = (url) => {
+    const u = String(url ?? "");
+    return u.includes("/api/workspaces/") && u.includes("/active_snapshot/stream");
+  };
 
-class ReplayWebSocket {
-  static CONNECTING = 0;
-  static OPEN = 1;
-  static CLOSING = 2;
-  static CLOSED = 3;
+  class ReplayWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSING = 2;
+    static CLOSED = 3;
 
-  constructor(url, protocols) {
-    if (!matchesReplay(url)) {
-      return new OriginalWebSocket(url, protocols);
+    constructor(url, protocols) {
+      if (!matchesReplay(url)) {
+        return new OriginalWebSocket(url, protocols);
+      }
+      this.url = String(url ?? "");
+      this.readyState = ReplayWebSocket.CONNECTING;
+      this.protocol = "";
+      this.extensions = "";
+      this.binaryType = "blob";
+      this.bufferedAmount = 0;
+      this.onopen = null;
+      this.onmessage = null;
+      this.onerror = null;
+      this.onclose = null;
+      this._listeners = new Map();
+      this._timers = [];
+      this._closed = false;
+
+      const openTimer = self.setTimeout(() => {
+        if (this._closed) return;
+        this.readyState = ReplayWebSocket.OPEN;
+        this._emit("open");
+        this._startReplay();
+      }, 0);
+      this._timers.push(openTimer);
     }
-    this.url = String(url ?? "");
-    this.readyState = ReplayWebSocket.CONNECTING;
-    this.protocol = "";
-    this.extensions = "";
-    this.binaryType = "blob";
-    this.bufferedAmount = 0;
-    this.onopen = null;
-    this.onmessage = null;
-    this.onerror = null;
-    this.onclose = null;
-    this._listeners = new Map();
-    this._timers = [];
-    this._closed = false;
 
-    const openTimer = self.setTimeout(() => {
+    addEventListener(type, listener) {
+      const list = this._listeners.get(type) || [];
+      list.push(listener);
+      this._listeners.set(type, list);
+    }
+
+    removeEventListener(type, listener) {
+      const list = this._listeners.get(type);
+      if (!list) return;
+      const next = list.filter((item) => item !== listener);
+      if (next.length === 0) {
+        this._listeners.delete(type);
+      } else {
+        this._listeners.set(type, next);
+      }
+    }
+
+    dispatchEvent(event) {
+      const list = this._listeners.get(event.type) || [];
+      for (const listener of list) {
+        if (typeof listener === "function") {
+          listener.call(this, event);
+        } else if (listener && typeof listener.handleEvent === "function") {
+          listener.handleEvent.call(listener, event);
+        }
+      }
+      return true;
+    }
+
+    send() {
+      // Ignore client messages; replay is one-way.
+    }
+
+    close() {
       if (this._closed) return;
-      this.readyState = ReplayWebSocket.OPEN;
-      this._emit("open");
-      this._startReplay();
-    }, 0);
-    this._timers.push(openTimer);
-  }
-
-  addEventListener(type, listener) {
-    const list = this._listeners.get(type) || [];
-    list.push(listener);
-    this._listeners.set(type, list);
-  }
-
-  removeEventListener(type, listener) {
-    const list = this._listeners.get(type);
-    if (!list) return;
-    const next = list.filter((item) => item !== listener);
-    if (next.length === 0) {
-      this._listeners.delete(type);
-    } else {
-      this._listeners.set(type, next);
-    }
-  }
-
-  dispatchEvent(event) {
-    const list = this._listeners.get(event.type) || [];
-    for (const listener of list) {
-      if (typeof listener === "function") {
-        listener.call(this, event);
-      } else if (listener && typeof listener.handleEvent === "function") {
-        listener.handleEvent.call(listener, event);
+      this.readyState = ReplayWebSocket.CLOSED;
+      this._closed = true;
+      for (const timer of this._timers) {
+        self.clearTimeout(timer);
       }
+      this._timers = [];
+      this._emit("close");
     }
-    return true;
-  }
 
-  send() {
-    // Ignore client messages; replay is one-way.
-  }
-
-  close() {
-    if (this._closed) return;
-    this.readyState = ReplayWebSocket.CLOSED;
-    this._closed = true;
-    for (const timer of this._timers) {
-      self.clearTimeout(timer);
-    }
-    this._timers = [];
-    this._emit("close");
-  }
-
-  _emit(type, data) {
-    let evt;
-    if (type === "message") {
-      if (typeof MessageEvent !== "undefined") {
-        evt = new MessageEvent("message", { data });
+    _emit(type, data) {
+      let evt;
+      if (type === "message") {
+        if (typeof MessageEvent !== "undefined") {
+          evt = new MessageEvent("message", { data });
+        } else {
+          evt = new Event("message");
+          evt.data = data;
+        }
+      } else if (type === "close") {
+        if (typeof CloseEvent !== "undefined") {
+          evt = new CloseEvent("close", { code: 1000, reason: "replay complete", wasClean: true });
+        } else {
+          evt = new Event("close");
+        }
       } else {
-        evt = new Event("message");
-        evt.data = data;
+        evt = new Event(type);
       }
-    } else if (type === "close") {
-      if (typeof CloseEvent !== "undefined") {
-        evt = new CloseEvent("close", { code: 1000, reason: "replay complete", wasClean: true });
-      } else {
-        evt = new Event("close");
+
+      const handler = this[\`on\${type}\`];
+      if (typeof handler === "function") {
+        handler.call(this, evt);
       }
-    } else {
-      evt = new Event(type);
+      this.dispatchEvent(evt);
     }
 
-    const handler = this[\`on\${type}\`];
-    if (typeof handler === "function") {
-      handler.call(this, evt);
+    _startReplay() {
+      const events = self.__CTX_LOAD_TEST_EVENTS__ || [];
+      for (const item of events) {
+        const delay = Math.max(0, Number(item?.delay_ms ?? 0));
+        const timer = self.setTimeout(() => {
+          if (this._closed || this.readyState !== ReplayWebSocket.OPEN) return;
+          this._emit("message", JSON.stringify(item.event));
+        }, delay);
+        this._timers.push(timer);
+      }
     }
-    this.dispatchEvent(evt);
   }
 
-  _startReplay() {
-    const events = self.__CTX_LOAD_TEST_EVENTS__ || [];
-    for (const item of events) {
-      const delay = Math.max(0, Number(item?.delay_ms ?? 0));
-      const timer = self.setTimeout(() => {
-        if (this._closed || this.readyState !== ReplayWebSocket.OPEN) return;
-        this._emit("message", JSON.stringify(item.event));
-      }, delay);
-      this._timers.push(timer);
-    }
-  }
-}
-
-self.WebSocket = ReplayWebSocket;
-import(${passthrough});
+  self.WebSocket = ReplayWebSocket;
+})();
 `;
 };
 
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext();
 const page = await context.newPage();
+const debug = process.env.CTX_LOADTEST_DEBUG === "1";
+if (debug) {
+  page.on("console", (msg) => {
+    if (msg.type() === "error") {
+      console.log("page console error:", msg.text());
+    }
+  });
+  page.on("requestfailed", (req) => {
+    const failure = req.failure();
+    console.log("page request failed:", req.url(), failure?.errorText ?? "unknown");
+  });
+  page.on("pageerror", (err) => {
+    console.log("page error:", err?.message ?? String(err));
+  });
+}
 
 await page.addInitScript((events) => {
   window.__CTX_LOAD_TEST__ = true;
@@ -396,16 +411,16 @@ await page.addInitScript((events) => {
 }, streamEvents);
 
 await page.route("**/*workspaceActiveSnapshot.worker*", async (route) => {
-  const url = route.request().url();
-  if (url.includes("ctx_replay_passthrough=1")) {
-    await route.continue();
-    return;
+  if (debug) {
+    console.log("worker route shim:", route.request().url());
   }
-  const passthroughUrl = `${url}${url.includes("?") ? "&" : "?"}ctx_replay_passthrough=1`;
+  const response = await route.fetch();
+  const body = await response.text();
   await route.fulfill({
-    status: 200,
+    status: response.status(),
+    headers: response.headers(),
     contentType: "application/javascript",
-    body: buildWorkerShim(streamEvents, passthroughUrl),
+    body: `${body}\n${buildWorkerAppend(streamEvents)}`,
   });
 });
 
@@ -524,7 +539,18 @@ await page.route("**/api/**", async (route) => {
 
 try {
   await page.goto(`${baseUrl}/workspaces/${workspaceId}?loadtest=1`, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.querySelectorAll(".wb-task-row").length >= 2, null, { timeout: 15000 });
+  try {
+    await page.waitForFunction(() => document.querySelectorAll(".wb-task-row").length >= 2, null, { timeout: 15000 });
+  } catch (err) {
+    const taskCount = await page.evaluate(() => document.querySelectorAll(".wb-task-row").length);
+    console.log(`task rows after timeout: ${taskCount}`);
+    if (debug) {
+      const snapshotPath = path.join(os.tmpdir(), "ctx-web-loadtest-timeout.png");
+      await page.screenshot({ path: snapshotPath, fullPage: true });
+      console.log(`wrote timeout screenshot to ${snapshotPath}`);
+    }
+    throw err;
+  }
   await page.evaluate(() => window.__ctxLoadTestTelemetry?.reset?.());
 
   const rows = page.locator(".wb-task-row");
