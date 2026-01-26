@@ -1,6 +1,23 @@
 // File extension to icon mapping, based on Zed's icon system
 // Maps file extensions to icon names (without .svg extension)
 
+const FILE_ICON_SVGS = import.meta.glob("../assets/file-icons/*.svg", {
+  eager: true,
+  as: "raw",
+}) as Record<string, string>;
+
+const svgToDataUrl = (svg: string) => `data:image/svg+xml,${encodeURIComponent(svg)}`;
+
+const FILE_ICON_DATA_URLS: Record<string, string> = {};
+
+for (const [path, svg] of Object.entries(FILE_ICON_SVGS)) {
+  const name = path.split("/").pop()?.replace(/\.svg$/, "");
+  if (!name) continue;
+  FILE_ICON_DATA_URLS[name] = svgToDataUrl(svg);
+}
+
+const FALLBACK_ICON_URL = FILE_ICON_DATA_URLS.file ?? "";
+
 const FILE_EXTENSION_TO_ICON: Record<string, string> = {
   // astro
   astro: "astro",
@@ -413,7 +430,7 @@ export function getFileIcon(path: string): string {
  * @param path - File path or filename
  * @returns Path to the icon SVG file
  */
-export function getFileIconPath(path: string): string {
+export function getFileIconSrc(path: string): string {
   const iconName = getFileIcon(path);
-  return `/file-icons/${iconName}.svg`;
+  return FILE_ICON_DATA_URLS[iconName] ?? FALLBACK_ICON_URL;
 }

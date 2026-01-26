@@ -1,4 +1,4 @@
-import { getFileIconPath } from "../utils/fileIcons";
+import { getFileIconSrc } from "../utils/fileIcons";
 
 interface FileIconProps {
   path: string;
@@ -7,11 +7,11 @@ interface FileIconProps {
 }
 
 export function FileIcon({ path, size = 16, className = "" }: FileIconProps) {
-  const iconPath = getFileIconPath(path);
+  const iconSrc = getFileIconSrc(path);
 
   return (
     <img
-      src={iconPath}
+      src={iconSrc}
       alt=""
       width={size}
       height={size}

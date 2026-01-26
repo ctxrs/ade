@@ -63,3 +63,18 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "cody", label: "Cody", logoSrc: codyLogo },
   { id: "junie", label: "JetBrains Junie", logoSrc: junieLogo },
 ];
+
+export const HARNESS_LOGO_SRCS = Array.from(
+  new Set(HARNESS_CATALOG.map((entry) => entry.logoSrc).filter(Boolean)),
+);
+
+let harnessLogosPreloaded = false;
+
+export function preloadHarnessLogos() {
+  if (harnessLogosPreloaded || typeof Image === "undefined") return;
+  harnessLogosPreloaded = true;
+  HARNESS_LOGO_SRCS.forEach((src) => {
+    const img = new Image();
+    img.src = src;
+  });
+}

@@ -12,6 +12,7 @@ import DiagnosticsPage from "./pages/DiagnosticsPage";
 import SettingsPage from "./pages/SettingsPage";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
 import { SettingsStoreProvider } from "./state/settingsStore";
+import { preloadHarnessLogos } from "./utils/harnessCatalog";
 
 export default function App() {
   useEffect(() => {
@@ -43,6 +44,10 @@ export default function App() {
 
   useEffect(() => {
     appendDesktopLog("ui: app loaded").catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    preloadHarnessLogos();
   }, []);
 
   return (
