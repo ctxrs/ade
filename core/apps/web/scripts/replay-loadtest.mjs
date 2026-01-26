@@ -20,6 +20,13 @@ let maxSessionSwitchP95 = null;
 let maxSessionSwitchP99 = null;
 let maxLongTaskMs = null;
 let maxLongTaskCount = null;
+let synthesizeDeltas = null;
+let synthesizeIntervalMs = 1;
+let synthesizeStartDelayMs = 200;
+let synthesizeMessageBytes = null;
+let synthesizeSessionIds = null;
+let waitTimeoutMs = null;
+let skipWaitForSynth = false;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -62,11 +69,51 @@ for (let i = 0; i < args.length; i++) {
     i += 1;
     continue;
   }
+  if (arg === "--synthesize-deltas") {
+    synthesizeDeltas = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--synthesize-interval-ms") {
+    synthesizeIntervalMs = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--synthesize-start-delay-ms") {
+    synthesizeStartDelayMs = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--synthesize-message-bytes") {
+    synthesizeMessageBytes = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--synthesize-session-ids") {
+    synthesizeSessionIds = (args[i + 1] || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    i += 1;
+    continue;
+  }
+  if (arg === "--wait-timeout-ms") {
+    waitTimeoutMs = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--no-wait-for-synth") {
+    skipWaitForSynth = true;
+    continue;
+  }
   if (arg === "--help" || arg === "-h") {
     console.log(
       "Usage: node ./scripts/replay-loadtest.mjs [--fixture path] [--out path] [--base-url url] " +
         "[--check] [--max-session-switch-p95 ms] [--max-session-switch-p99 ms] " +
-        "[--max-long-task-ms ms] [--max-long-task-count n]\n",
+        "[--max-long-task-ms ms] [--max-long-task-count n] " +
+        "[--synthesize-deltas n] [--synthesize-interval-ms ms] [--synthesize-start-delay-ms ms] " +
+        "[--synthesize-message-bytes n] [--synthesize-session-ids id1,id2] " +
+        "[--wait-timeout-ms ms] [--no-wait-for-synth]\n",
     );
     process.exit(0);
   }
@@ -118,6 +165,117 @@ if (!hasSnapshotEvent && fixture.active_snapshot) {
   ];
 }
 
+const baseDeltaEvent = streamEvents.find((item) => item?.event?.type === "session_head_delta")?.event ?? null;
+const baseDelta = baseDeltaEvent?.delta ?? {};
+const baseTurn = baseDelta?.turn ?? null;
+const baseMessage = baseDelta?.message ?? null;
+const baseSnapshotRev =
+  baseDeltaEvent?.snapshot_rev ??
+  fixture.active_snapshot?.snapshot_rev ??
+  0;
+const baseDelayMs = streamEvents.reduce((acc, item) => Math.max(acc, Number(item?.delay_ms ?? 0)), 0);
+
+const resolveSessionIds = () => {
+  if (Array.isArray(synthesizeSessionIds) && synthesizeSessionIds.length > 0) return synthesizeSessionIds;
+  const fromSnapshot = Object.keys(snapshotBySession || {});
+  if (fromSnapshot.length > 0) return fromSnapshot;
+  const fallback = typeof baseDelta?.session_id === "string" ? [baseDelta.session_id] : [];
+  return fallback;
+};
+
+const buildMessageContent = (sessionId, seq) => {
+  const base = `Load test reply ${sessionId} ${seq}`;
+  if (!Number.isFinite(synthesizeMessageBytes) || synthesizeMessageBytes <= base.length) {
+    return base;
+  }
+  return `${base}${".".repeat(Math.max(0, synthesizeMessageBytes - base.length))}`;
+};
+
+const readSessionMeta = (sessionId) => {
+  const snapshot = snapshotBySession?.[sessionId];
+  const summary = snapshot?.summary ?? {};
+  const head = snapshot?.head ?? {};
+  const session = summary?.session ?? head?.session ?? {};
+  const taskId = session?.task_id ?? baseMessage?.task_id ?? baseDelta?.task_id ?? "";
+  const lastSeq =
+    (typeof summary?.last_event_seq === "number" ? summary.last_event_seq : null) ??
+    (typeof head?.last_event_seq === "number" ? head.last_event_seq : null) ??
+    (typeof baseDelta?.last_event_seq === "number" ? baseDelta.last_event_seq : null) ??
+    0;
+  return { taskId, lastSeq };
+};
+
+let waitForSessionId = null;
+let waitForLastSeq = null;
+if (Number.isFinite(synthesizeDeltas) && synthesizeDeltas > 0) {
+  const sessionIds = resolveSessionIds();
+  if (sessionIds.length === 0) {
+    throw new Error("No session ids available for synthesized deltas.");
+  }
+  const perSession = new Map();
+  for (const sessionId of sessionIds) {
+    perSession.set(sessionId, readSessionMeta(sessionId));
+  }
+  const startDelay = Math.max(0, baseDelayMs + (Number.isFinite(synthesizeStartDelayMs) ? synthesizeStartDelayMs : 0));
+  const interval = Math.max(0, Number.isFinite(synthesizeIntervalMs) ? synthesizeIntervalMs : 0);
+  for (let i = 0; i < synthesizeDeltas; i++) {
+    const sessionId = sessionIds[i % sessionIds.length];
+    const meta = perSession.get(sessionId) ?? { taskId: "", lastSeq: 0 };
+    const seq = meta.lastSeq + 1;
+    meta.lastSeq = seq;
+    perSession.set(sessionId, meta);
+    const turnId = `turn-${sessionId}-${seq}`;
+    const turn = {
+      ...(baseTurn && typeof baseTurn === "object" ? baseTurn : {}),
+      turn_id: turnId,
+      session_id: sessionId,
+      user_message_id: `msg-${sessionId}-user-${seq}`,
+      status: baseTurn?.status ?? "completed",
+      start_seq: seq,
+      end_seq: seq,
+      started_at: baseTurn?.started_at ?? new Date().toISOString(),
+      updated_at: baseTurn?.updated_at ?? new Date().toISOString(),
+      assistant_partial: null,
+      thought_partial: null,
+    };
+    const message = {
+      ...(baseMessage && typeof baseMessage === "object" ? baseMessage : {}),
+      id: `msg-${sessionId}-assistant-${seq}`,
+      session_id: sessionId,
+      task_id: meta.taskId,
+      turn_id: turnId,
+      role: baseMessage?.role ?? "assistant",
+      content: buildMessageContent(sessionId, seq),
+      delivery: baseMessage?.delivery ?? "immediate",
+      created_at: baseMessage?.created_at ?? new Date().toISOString(),
+    };
+    streamEvents.push({
+      delay_ms: startDelay + i * interval,
+      event: {
+        type: "session_head_delta",
+        workspace_id: workspaceId,
+        snapshot_rev: baseSnapshotRev,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: seq,
+          turn,
+          message,
+        },
+      },
+    });
+  }
+
+  if (!skipWaitForSynth) {
+    const firstSession = sessionIds[0];
+    const meta = perSession.get(firstSession);
+    waitForSessionId = firstSession;
+    waitForLastSeq = meta?.lastSeq ?? null;
+    if (!Number.isFinite(waitTimeoutMs)) {
+      waitTimeoutMs = startDelay + synthesizeDeltas * interval + 10000;
+    }
+  }
+}
+
 const respondJson = async (route, body, status = 200) => {
   await route.fulfill({
     status,
@@ -126,145 +284,160 @@ const respondJson = async (route, body, status = 200) => {
   });
 };
 
-const buildWorkerShim = (events, passthroughUrl) => {
+const buildWorkerAppend = (events) => {
   const payload = JSON.stringify(events ?? []);
   const safePayload = JSON.stringify(payload).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-  const passthrough = JSON.stringify(passthroughUrl);
   return `
-const __CTX_LOAD_TEST_EVENTS__ = JSON.parse(${safePayload});
-self.__CTX_LOAD_TEST__ = true;
-self.__CTX_LOAD_TEST_EVENTS__ = __CTX_LOAD_TEST_EVENTS__;
+;(() => {
+  const __CTX_LOAD_TEST_EVENTS__ = JSON.parse(${safePayload});
+  self.__CTX_LOAD_TEST__ = true;
+  self.__CTX_LOAD_TEST_EVENTS__ = __CTX_LOAD_TEST_EVENTS__;
 
-const OriginalWebSocket = self.WebSocket;
-const matchesReplay = (url) => {
-  const u = String(url ?? "");
-  return u.includes("/api/workspaces/") && u.includes("/active_snapshot/stream");
-};
+  const OriginalWebSocket = self.WebSocket;
+  const matchesReplay = (url) => {
+    const u = String(url ?? "");
+    return u.includes("/api/workspaces/") && u.includes("/active_snapshot/stream");
+  };
 
-class ReplayWebSocket {
-  static CONNECTING = 0;
-  static OPEN = 1;
-  static CLOSING = 2;
-  static CLOSED = 3;
+  class ReplayWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSING = 2;
+    static CLOSED = 3;
 
-  constructor(url, protocols) {
-    if (!matchesReplay(url)) {
-      return new OriginalWebSocket(url, protocols);
+    constructor(url, protocols) {
+      if (!matchesReplay(url)) {
+        return new OriginalWebSocket(url, protocols);
+      }
+      this.url = String(url ?? "");
+      this.readyState = ReplayWebSocket.CONNECTING;
+      this.protocol = "";
+      this.extensions = "";
+      this.binaryType = "blob";
+      this.bufferedAmount = 0;
+      this.onopen = null;
+      this.onmessage = null;
+      this.onerror = null;
+      this.onclose = null;
+      this._listeners = new Map();
+      this._timers = [];
+      this._closed = false;
+
+      const openTimer = self.setTimeout(() => {
+        if (this._closed) return;
+        this.readyState = ReplayWebSocket.OPEN;
+        this._emit("open");
+        this._startReplay();
+      }, 0);
+      this._timers.push(openTimer);
     }
-    this.url = String(url ?? "");
-    this.readyState = ReplayWebSocket.CONNECTING;
-    this.protocol = "";
-    this.extensions = "";
-    this.binaryType = "blob";
-    this.bufferedAmount = 0;
-    this.onopen = null;
-    this.onmessage = null;
-    this.onerror = null;
-    this.onclose = null;
-    this._listeners = new Map();
-    this._timers = [];
-    this._closed = false;
 
-    const openTimer = self.setTimeout(() => {
+    addEventListener(type, listener) {
+      const list = this._listeners.get(type) || [];
+      list.push(listener);
+      this._listeners.set(type, list);
+    }
+
+    removeEventListener(type, listener) {
+      const list = this._listeners.get(type);
+      if (!list) return;
+      const next = list.filter((item) => item !== listener);
+      if (next.length === 0) {
+        this._listeners.delete(type);
+      } else {
+        this._listeners.set(type, next);
+      }
+    }
+
+    dispatchEvent(event) {
+      const list = this._listeners.get(event.type) || [];
+      for (const listener of list) {
+        if (typeof listener === "function") {
+          listener.call(this, event);
+        } else if (listener && typeof listener.handleEvent === "function") {
+          listener.handleEvent.call(listener, event);
+        }
+      }
+      return true;
+    }
+
+    send() {
+      // Ignore client messages; replay is one-way.
+    }
+
+    close() {
       if (this._closed) return;
-      this.readyState = ReplayWebSocket.OPEN;
-      this._emit("open");
-      this._startReplay();
-    }, 0);
-    this._timers.push(openTimer);
-  }
-
-  addEventListener(type, listener) {
-    const list = this._listeners.get(type) || [];
-    list.push(listener);
-    this._listeners.set(type, list);
-  }
-
-  removeEventListener(type, listener) {
-    const list = this._listeners.get(type);
-    if (!list) return;
-    const next = list.filter((item) => item !== listener);
-    if (next.length === 0) {
-      this._listeners.delete(type);
-    } else {
-      this._listeners.set(type, next);
-    }
-  }
-
-  dispatchEvent(event) {
-    const list = this._listeners.get(event.type) || [];
-    for (const listener of list) {
-      if (typeof listener === "function") {
-        listener.call(this, event);
-      } else if (listener && typeof listener.handleEvent === "function") {
-        listener.handleEvent.call(listener, event);
+      this.readyState = ReplayWebSocket.CLOSED;
+      this._closed = true;
+      for (const timer of this._timers) {
+        self.clearTimeout(timer);
       }
+      this._timers = [];
+      this._emit("close");
     }
-    return true;
-  }
 
-  send() {
-    // Ignore client messages; replay is one-way.
-  }
-
-  close() {
-    if (this._closed) return;
-    this.readyState = ReplayWebSocket.CLOSED;
-    this._closed = true;
-    for (const timer of this._timers) {
-      self.clearTimeout(timer);
-    }
-    this._timers = [];
-    this._emit("close");
-  }
-
-  _emit(type, data) {
-    let evt;
-    if (type === "message") {
-      if (typeof MessageEvent !== "undefined") {
-        evt = new MessageEvent("message", { data });
+    _emit(type, data) {
+      let evt;
+      if (type === "message") {
+        if (typeof MessageEvent !== "undefined") {
+          evt = new MessageEvent("message", { data });
+        } else {
+          evt = new Event("message");
+          evt.data = data;
+        }
+      } else if (type === "close") {
+        if (typeof CloseEvent !== "undefined") {
+          evt = new CloseEvent("close", { code: 1000, reason: "replay complete", wasClean: true });
+        } else {
+          evt = new Event("close");
+        }
       } else {
-        evt = new Event("message");
-        evt.data = data;
+        evt = new Event(type);
       }
-    } else if (type === "close") {
-      if (typeof CloseEvent !== "undefined") {
-        evt = new CloseEvent("close", { code: 1000, reason: "replay complete", wasClean: true });
-      } else {
-        evt = new Event("close");
+
+      const handler = this[\`on\${type}\`];
+      if (typeof handler === "function") {
+        handler.call(this, evt);
       }
-    } else {
-      evt = new Event(type);
+      this.dispatchEvent(evt);
     }
 
-    const handler = this[\`on\${type}\`];
-    if (typeof handler === "function") {
-      handler.call(this, evt);
+    _startReplay() {
+      const events = self.__CTX_LOAD_TEST_EVENTS__ || [];
+      for (const item of events) {
+        const delay = Math.max(0, Number(item?.delay_ms ?? 0));
+        const timer = self.setTimeout(() => {
+          if (this._closed || this.readyState !== ReplayWebSocket.OPEN) return;
+          this._emit("message", JSON.stringify(item.event));
+        }, delay);
+        this._timers.push(timer);
+      }
     }
-    this.dispatchEvent(evt);
   }
 
-  _startReplay() {
-    const events = self.__CTX_LOAD_TEST_EVENTS__ || [];
-    for (const item of events) {
-      const delay = Math.max(0, Number(item?.delay_ms ?? 0));
-      const timer = self.setTimeout(() => {
-        if (this._closed || this.readyState !== ReplayWebSocket.OPEN) return;
-        this._emit("message", JSON.stringify(item.event));
-      }, delay);
-      this._timers.push(timer);
-    }
-  }
-}
-
-self.WebSocket = ReplayWebSocket;
-import(${passthrough});
+  self.WebSocket = ReplayWebSocket;
+})();
 `;
 };
 
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext();
 const page = await context.newPage();
+const debug = process.env.CTX_LOADTEST_DEBUG === "1";
+if (debug) {
+  page.on("console", (msg) => {
+    if (msg.type() === "error") {
+      console.log("page console error:", msg.text());
+    }
+  });
+  page.on("requestfailed", (req) => {
+    const failure = req.failure();
+    console.log("page request failed:", req.url(), failure?.errorText ?? "unknown");
+  });
+  page.on("pageerror", (err) => {
+    console.log("page error:", err?.message ?? String(err));
+  });
+}
 
 await page.addInitScript((events) => {
   window.__CTX_LOAD_TEST__ = true;
@@ -396,16 +569,16 @@ await page.addInitScript((events) => {
 }, streamEvents);
 
 await page.route("**/*workspaceActiveSnapshot.worker*", async (route) => {
-  const url = route.request().url();
-  if (url.includes("ctx_replay_passthrough=1")) {
-    await route.continue();
-    return;
+  if (debug) {
+    console.log("worker route shim:", route.request().url());
   }
-  const passthroughUrl = `${url}${url.includes("?") ? "&" : "?"}ctx_replay_passthrough=1`;
+  const response = await route.fetch();
+  const body = await response.text();
   await route.fulfill({
-    status: 200,
+    status: response.status(),
+    headers: response.headers(),
     contentType: "application/javascript",
-    body: buildWorkerShim(streamEvents, passthroughUrl),
+    body: `${body}\n${buildWorkerAppend(streamEvents)}`,
   });
 });
 
@@ -523,22 +696,60 @@ await page.route("**/api/**", async (route) => {
 });
 
 try {
-  await page.goto(`${baseUrl}/workspaces/${workspaceId}?loadtest=1`, { waitUntil: "domcontentloaded" });
+  const url = new URL(`${baseUrl}/workspaces/${workspaceId}`);
+  url.searchParams.set("loadtest", "1");
+  if (waitForSessionId) {
+    url.searchParams.set("ctxE2E", "1");
+  }
+  await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
+  try {
   await page.waitForFunction(() => document.querySelectorAll(".wb-task-row").length >= 2, null, { timeout: 15000 });
+  } catch (err) {
+    const taskCount = await page.evaluate(() => document.querySelectorAll(".wb-task-row").length);
+    console.log(`task rows after timeout: ${taskCount}`);
+    if (debug) {
+      const snapshotPath = path.join(os.tmpdir(), "ctx-web-loadtest-timeout.png");
+      await page.screenshot({ path: snapshotPath, fullPage: true });
+      console.log(`wrote timeout screenshot to ${snapshotPath}`);
+    }
+    throw err;
+  }
   await page.evaluate(() => window.__ctxLoadTestTelemetry?.reset?.());
 
   const rows = page.locator(".wb-task-row");
-  await rows.nth(0).click();
-  await page.waitForTimeout(300);
-  await rows.nth(1).click();
-  await page.waitForTimeout(400);
-  await rows.nth(0).click();
+  const useDirectClicks = Number.isFinite(synthesizeDeltas) && synthesizeDeltas > 0;
+  if (useDirectClicks) {
+    await page.evaluate(() => document.querySelectorAll(".wb-task-row")[0]?.click());
+    await page.waitForTimeout(300);
+    await page.evaluate(() => document.querySelectorAll(".wb-task-row")[1]?.click());
+    await page.waitForTimeout(400);
+    await page.evaluate(() => document.querySelectorAll(".wb-task-row")[0]?.click());
+  } else {
+    await rows.nth(0).click();
+    await page.waitForTimeout(300);
+    await rows.nth(1).click();
+    await page.waitForTimeout(400);
+    await rows.nth(0).click();
+  }
 
   await page.waitForFunction(
     () => (window.__ctxLoadTestTelemetry?.getSnapshot?.().session_switches?.length ?? 0) >= 2,
     null,
     { timeout: 15000 },
   );
+
+  if (waitForSessionId && Number.isFinite(waitForLastSeq)) {
+    await page.waitForFunction(
+      ({ sessionId, lastSeq }) => {
+        const getSeq = window.__ctxE2E?.getSessionLastEventSeq;
+        if (typeof getSeq !== "function") return false;
+        const current = getSeq(sessionId);
+        return typeof current === "number" && current >= lastSeq;
+      },
+      { sessionId: waitForSessionId, lastSeq: waitForLastSeq },
+      { timeout: Number.isFinite(waitTimeoutMs) ? waitTimeoutMs : 30000 },
+    );
+  }
 
   const telemetry = await page.evaluate(() => window.__ctxLoadTestTelemetry?.getSnapshot?.());
   if (check) {
