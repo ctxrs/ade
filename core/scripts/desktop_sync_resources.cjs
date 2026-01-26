@@ -14,6 +14,12 @@ const destWebDistDir = path.join(desktopTauriRoot, "web", "dist");
 const isWindows = process.platform === "win32";
 const binExt = isWindows ? ".exe" : "";
 
+const resolveCargoTargetDir = () => {
+  const env = process.env.CARGO_TARGET_DIR;
+  if (env && String(env).trim()) return String(env).trim();
+  return path.join(coreRoot, "target");
+};
+
 const copyDirRecursive = (srcDir, destDir) => {
   fs.mkdirSync(destDir, { recursive: true });
   for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
@@ -55,7 +61,7 @@ const resolveHostTarget = () => {
 };
 
 const copySidecar = (name) => {
-  const src = path.join(coreRoot, "target", profile, `${name}${binExt}`);
+  const src = path.join(resolveCargoTargetDir(), profile, `${name}${binExt}`);
   const dest = path.join(destBinDir, `${name}${binExt}`);
   const target = resolveHostTarget();
   const destTarget = target ? path.join(destBinDir, `${name}-${target}${binExt}`) : null;

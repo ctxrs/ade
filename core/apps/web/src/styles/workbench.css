@@ -10,11 +10,12 @@
 }
 
 .wb-root {
+  --wb-topbar-height: 46px;
   height: 100vh;
   position: relative;
   display: grid;
   grid-template-columns: var(--wb-sidebar-width, 260px) 1fr;
-  grid-template-rows: 36px 1fr auto;
+  grid-template-rows: var(--wb-topbar-height) 1fr auto;
   grid-template-areas:
     "topbar topbar"
     "sidebar main"
@@ -57,7 +58,7 @@
 
 .wb-sidebar-resizer {
   position: absolute;
-  top: 36px;
+  top: var(--wb-topbar-height);
   bottom: var(--wb-terminal-offset, 0px);
   left: calc(var(--wb-sidebar-width, 260px) - 3px);
   width: 6px;
@@ -632,18 +633,117 @@
 
 .wb-topbar {
   grid-area: topbar;
-  height: 36px;
+  height: 46px;
   display: flex;
   align-items: stretch;
-  gap: 10px;
-  padding: 0 8px;
+  gap: 0;
+  padding: 0;
   position: relative;
+  border-bottom: 1px solid #323639;
+  background: #202124;
+}
+
+.wb-topbar.wb-topbar-chrome {
+  background: #202124;
   border-bottom: 0;
-  background: rgba(255, 255, 255, 0.02);
-  background-image: linear-gradient(var(--border), var(--border));
-  background-size: 100% 1px;
-  background-repeat: no-repeat;
-  background-position: bottom;
+}
+
+.wb-titlebar-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.wb-titlebar-tabs .chrome-tabs {
+  border-radius: 0;
+}
+
+.wb-topbar.wb-topbar-chrome .chrome-tabs {
+  background: #181818;
+}
+
+.wb-topbar.wb-topbar-chrome .chrome-tabs.chrome-tabs-dark-theme .chrome-tab .chrome-tab-background > svg .chrome-tab-geometry {
+  fill: #181818;
+}
+
+.wb-topbar.wb-topbar-chrome .chrome-tabs.chrome-tabs-dark-theme .chrome-tab[active] .chrome-tab-background > svg .chrome-tab-geometry {
+  fill: var(--bg);
+}
+
+.wb-topbar.wb-topbar-chrome .chrome-tabs.chrome-tabs-dark-theme .chrome-tabs-bottom-bar {
+  background: var(--bg);
+}
+
+.wb-titlebar-add {
+  width: 28px;
+  height: 28px;
+  margin: 9px 8px 0 0;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: #9ca1a7;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.wb-titlebar-add:hover {
+  background: #3c4043;
+  color: #f1f3f4;
+}
+
+.wb-titlebar-add:active {
+  background: #5f6368;
+}
+
+.wb-titlebar-spacer {
+  flex: 0 0 6px;
+}
+
+.wb-titlebar-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px 0 0;
+}
+
+.wb-win-controls {
+  display: inline-flex;
+  align-items: stretch;
+  height: 46px;
+  flex: 0 0 auto;
+}
+
+.wb-win-btn {
+  width: 46px;
+  height: 46px;
+  border: 0;
+  background: transparent;
+  color: #c9ccd1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.wb-win-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+.wb-win-btn:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.wb-win-btn-close:hover {
+  background: #e81123;
+  color: #ffffff;
+}
+
+.wb-win-btn-close:active {
+  background: #c50f1f;
+  color: #ffffff;
 }
 
 .wb-topbar-tabs {

@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader, ErrorKind};
+use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -52,6 +52,7 @@ fn main() {
         ])
         .setup(|app| {
             open_main_window(&app.handle())?;
+            schedule_startup_workspaces(app.handle().clone());
             setup_deep_link_listener(&app.handle());
             Ok(())
         })
@@ -67,6 +68,90 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn schedule_startup_workspaces(app: tauri::AppHandle) {
+    let Ok(raw) = std::env::var("CTX_DESKTOP_START_WORKSPACE_PATHS") else {
+        return;
+    };
+    let raw = raw.trim().to_string();
+    if raw.is_empty() {
+        return;
+    }
+    eprintln!("CTX_DESKTOP_START_WORKSPACE_PATHS detected: {raw}");
+
+    // This is used for dev/headless UX verification. We intentionally schedule it after the app
+    // starts so `app_data_dir()` and other platform services are ready.
+    std::thread::spawn(move || {
+        // Give the window time to initialize.
+        for _ in 0..30 {
+            if app.get_webview_window("main").is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let state = app.state::<ConnectionManager>();
+        if let Err(e) = ensure_local_connection(&app, &state) {
+            eprintln!("CTX_DESKTOP_START_WORKSPACE_PATHS: failed to ensure local daemon: {e:#}");
+            return;
+        }
+        // Give the daemon a moment to finish bringing up workspace services even after `/health`
+        // responds.
+        std::thread::sleep(Duration::from_millis(300));
+
+        let mut workspace_ids = Vec::new();
+        for part in raw.split(';') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            let Ok(path) = validate_absolute_path(part) else {
+                eprintln!(
+                    "CTX_DESKTOP_START_WORKSPACE_PATHS: skipping invalid path (must be absolute): {part}"
+                );
+                continue;
+            };
+            let workspace_id = match resolve_or_create_workspace_id(&state, &path) {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!(
+                        "CTX_DESKTOP_START_WORKSPACE_PATHS: failed to resolve/create workspace for {path}: {e:#}"
+                    );
+                    continue;
+                }
+            };
+            if workspace_id.trim().is_empty() {
+                eprintln!(
+                    "CTX_DESKTOP_START_WORKSPACE_PATHS: daemon returned empty workspace id for {path}"
+                );
+                continue;
+            };
+            if !workspace_ids.contains(&workspace_id) {
+                workspace_ids.push(workspace_id);
+            }
+        }
+        if workspace_ids.is_empty() {
+            eprintln!("CTX_DESKTOP_START_WORKSPACE_PATHS: no workspaces resolved; leaving window on launcher.");
+            return;
+        }
+
+        let first = workspace_ids[0].clone();
+        let tabs = workspace_ids
+            .into_iter()
+            .map(|id| urlencoding::encode(&id).into_owned())
+            .collect::<Vec<_>>()
+            .join(",");
+        let url = format!("/workspaces/{}?ctxTabs={tabs}", urlencoding::encode(&first));
+        if let Some(window) = app.get_webview_window("main") {
+            eprintln!("CTX_DESKTOP_START_WORKSPACE_PATHS: navigating to {url}");
+            let js = format!(
+                "window.location.href = {};",
+                serde_json::to_string(&url).unwrap_or_else(|_| "\"/workspaces\"".to_string())
+            );
+            let _ = window.eval(&js);
+        }
+    });
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -561,9 +646,10 @@ fn desktop_open_workspace_in_new_window(
 
     let label = format!("workbench:{}", uuid::Uuid::new_v4());
     let url = format!("/workspaces/{workspace_id}");
-    let window = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
+    let builder = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
         .title("ctx")
-        .inner_size(1200.0, 900.0)
+        .inner_size(1200.0, 900.0);
+    let window = apply_workbench_titlebar(builder)
         .build()
         .map_err(|e| format!("creating window failed: {e}"))?;
     let _ = window.show();
@@ -1309,7 +1395,7 @@ fn resolve_or_create_workspace_id(state: &ConnectionManager, root_path: &str) ->
         method: "POST".to_string(),
         path: "/api/workspaces".to_string(),
         body: Some(body.to_string()),
-        headers: vec![],
+        headers: vec![("content-type".to_string(), "application/json".to_string())],
     })?;
     if resp.status != 200 && resp.status != 201 {
         anyhow::bail!("failed to create workspace ({status}): {body}", status = resp.status, body = resp.body);
@@ -1498,13 +1584,34 @@ fn reveal_in_file_manager(path: &Path) -> Result<()> {
     }
 }
 
+fn apply_workbench_titlebar<'a, R: tauri::Runtime, M: tauri::Manager<R>>(
+    builder: tauri::WebviewWindowBuilder<'a, R, M>,
+) -> tauri::WebviewWindowBuilder<'a, R, M> {
+    #[cfg(target_os = "macos")]
+    {
+        return builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        return builder.decorations(false);
+    }
+}
+
 fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
     if app.get_webview_window("main").is_some() {
         return Ok(());
     }
-    tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
+    let start_url = match std::env::var("CTX_DESKTOP_START_PATH") {
+        Ok(v) if v.trim().starts_with('/') => tauri::WebviewUrl::App(v.trim().into()),
+        _ => tauri::WebviewUrl::App("index.html".into()),
+    };
+    let builder = tauri::WebviewWindowBuilder::new(app, "main", start_url)
         .title("ctx")
-        .inner_size(1200.0, 900.0)
+        .inner_size(1200.0, 900.0);
+    let builder = apply_workbench_titlebar(builder);
+    builder
         .build()
         .context("creating window")?;
     Ok(())
@@ -2066,6 +2173,8 @@ fn pick_unused_local_port() -> Result<u16> {
 const SSH_TUNNEL_LOG_BYTES: usize = 4096;
 const SSH_TUNNEL_HEALTH_RETRIES: usize = 12;
 const SSH_TUNNEL_HEALTH_BASE_DELAY_MS: u64 = 150;
+const LOCAL_DAEMON_HEALTH_RETRIES: usize = 20;
+const LOCAL_DAEMON_HEALTH_BASE_DELAY_MS: u64 = 100;
 
 fn start_ssh_tunnel(
     host: &str,
@@ -2222,9 +2331,10 @@ fn read_daemon_auth_with_retry(data_dir: &Path) -> Result<DaemonAuthFile> {
                 last_err = Some(anyhow!("daemon auth file not found at {}", path.display()));
             }
             Err(err) => {
-                last_err = Some(
-                    err.context(format!("reading daemon auth file {}", path.display())),
-                );
+                last_err = Some(anyhow::Error::new(err).context(format!(
+                    "reading daemon auth file {}",
+                    path.display()
+                )));
             }
         }
         if Instant::now() > deadline {
@@ -2304,6 +2414,19 @@ fn probe_daemon_health(base_url: &str) -> Result<()> {
     Ok(())
 }
 
+fn probe_local_daemon_health_with_retry(base_url: &str) -> Result<()> {
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 0..LOCAL_DAEMON_HEALTH_RETRIES {
+        match probe_daemon_health(base_url) {
+            Ok(()) => return Ok(()),
+            Err(err) => last_err = Some(err),
+        }
+        let delay = LOCAL_DAEMON_HEALTH_BASE_DELAY_MS.saturating_mul((attempt + 1) as u64);
+        std::thread::sleep(Duration::from_millis(delay));
+    }
+    Err(last_err.unwrap_or_else(|| anyhow!("requesting /api/health failed")))
+}
+
 fn probe_daemon_health_with_retry(
     base_url: &str,
     local_port: u16,
@@ -2377,9 +2500,6 @@ fn resource_bin(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(res) = app.path().resource_dir().ok() {
         let bin_ext = if cfg!(target_os = "windows") { ".exe" } else { "" };
-        candidates.push(res.join("bin").join(format!("{name}{bin_ext}")));
-        candidates.push(res.join(format!("{name}{bin_ext}")));
-
         let arch = current_arch_token();
         let prefix = format!("{name}-{arch}");
         for base in [res.join("bin"), res.clone()] {
@@ -2404,10 +2524,14 @@ fn resource_bin(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
                 candidates.push(p);
             }
         }
+
+        // Fall back to generic names only after we try arch-specific candidates.
+        candidates.push(res.join("bin").join(format!("{name}{bin_ext}")));
+        candidates.push(res.join(format!("{name}{bin_ext}")));
     }
 
     for c in candidates {
-        if c.exists() {
+        if c.exists() && path_matches_current_platform_binary(&c) {
             return Some(c);
         }
     }
@@ -2415,16 +2539,70 @@ fn resource_bin(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
 }
 
 fn dev_bin(name: &str) -> Option<PathBuf> {
+    let bin_ext = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        let candidate = PathBuf::from(target_dir)
+            .join("debug")
+            .join(format!("{name}{bin_ext}"));
+        if candidate.exists() && path_matches_current_platform_binary(&candidate) {
+            return Some(candidate);
+        }
+    }
+
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())
         .and_then(|p| p.parent())?
         .to_path_buf(); // core/
-    let candidate = root.join("target").join("debug").join(name);
-    if candidate.exists() {
+    let candidate = root.join("target").join("debug").join(format!("{name}{bin_ext}"));
+    if candidate.exists() && path_matches_current_platform_binary(&candidate) {
         return Some(candidate);
     }
     None
+}
+
+fn manifest_bin(name: &str) -> Option<PathBuf> {
+    let bin_ext = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin");
+    for candidate in [
+        base.join(format!("{name}-{arch}{bin_ext}", arch = current_arch_token())),
+        base.join(format!("{name}{bin_ext}")),
+    ] {
+        if candidate.exists() && path_matches_current_platform_binary(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn path_matches_current_platform_binary(path: &Path) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut header = [0u8; 4];
+    if file.read_exact(&mut header).is_err() {
+        return false;
+    }
+
+    if cfg!(target_os = "linux") {
+        header == [0x7f, b'E', b'L', b'F']
+    } else if cfg!(target_os = "windows") {
+        header[0..2] == [b'M', b'Z']
+    } else if cfg!(target_os = "macos") {
+        matches!(
+            header,
+            // Mach-O 32-bit / 64-bit
+            [0xFE, 0xED, 0xFA, 0xCE]
+                | [0xCE, 0xFA, 0xED, 0xFE]
+                | [0xFE, 0xED, 0xFA, 0xCF]
+                | [0xCF, 0xFA, 0xED, 0xFE]
+                // Fat (universal) binaries
+                | [0xCA, 0xFE, 0xBA, 0xBE]
+                | [0xBE, 0xBA, 0xFE, 0xCA]
+        )
+    } else {
+        true
+    }
 }
 
 fn dev_web_dist() -> Option<PathBuf> {
@@ -2482,11 +2660,33 @@ fn stop_systemd_scope() {
 }
 
 fn spawn_daemon(app: &tauri::AppHandle, data_dir: &Path) -> Result<(String, Child, bool)> {
+    let prefer_systemd_scope = should_use_systemd_scope();
+    if prefer_systemd_scope {
+        match spawn_daemon_with_mode(app, data_dir, true) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                // Fall back to a direct child process when systemd user services are unavailable
+                // (common in headless/dev environments).
+                return spawn_daemon_with_mode(app, data_dir, false)
+                    .with_context(|| format!("spawning ctx daemon via systemd-run failed: {e:#}"));
+            }
+        }
+    }
+    spawn_daemon_with_mode(app, data_dir, false)
+}
+
+fn spawn_daemon_with_mode(
+    app: &tauri::AppHandle,
+    data_dir: &Path,
+    use_systemd_scope: bool,
+) -> Result<(String, Child, bool)> {
     let ctx_bin = resource_bin(app, "ctx")
+        .or_else(|| manifest_bin("ctx"))
         .or_else(|| dev_bin("ctx"))
         .unwrap_or_else(|| PathBuf::from("ctx"));
 
     let mcp_bin = resource_bin(app, "ctx-mcp")
+        .or_else(|| manifest_bin("ctx-mcp"))
         .or_else(|| dev_bin("ctx-mcp"));
 
     let web_dist = app
@@ -2499,7 +2699,9 @@ fn spawn_daemon(app: &tauri::AppHandle, data_dir: &Path) -> Result<(String, Chil
         })
         .or_else(dev_web_dist);
 
-    let use_systemd_scope = should_use_systemd_scope();
+    let local_port = pick_unused_local_port()?;
+    let base_url = format!("http://127.0.0.1:{local_port}");
+
     if use_systemd_scope {
         stop_systemd_scope();
     }
@@ -2540,37 +2742,16 @@ fn spawn_daemon(app: &tauri::AppHandle, data_dir: &Path) -> Result<(String, Chil
 
     cmd.arg("serve")
         .arg("--bind")
-        .arg("127.0.0.1:0")
+        .arg(format!("127.0.0.1:{local_port}"))
         .arg("--data-dir")
         .arg(data_dir.to_string_lossy().to_string())
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::inherit());
 
-    let mut child = cmd.spawn().context("spawning ctx daemon")?;
-    let stdout = child.stdout.take().context("capturing daemon stdout")?;
-    let mut reader = BufReader::new(stdout).lines();
-
-    let mut url: Option<String> = None;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
-    while std::time::Instant::now() < deadline {
-        if let Some(line) = reader.next() {
-            let line = line?;
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
-                if v.get("event").and_then(|e| e.as_str()) == Some("listening") {
-                    if let Some(u) = v.get("url").and_then(|u| u.as_str()) {
-                        url = Some(u.to_string());
-                        break;
-                    }
-                }
-            }
-        } else {
-            break;
-        }
-    }
-
-    let url = url.context("daemon did not emit listening URL")?;
-    Ok((url, child, use_systemd_scope))
+    let child = cmd.spawn().context("spawning ctx daemon")?;
+    probe_local_daemon_health_with_retry(&base_url).context("waiting for daemon health")?;
+    Ok((base_url, child, use_systemd_scope))
 }
 
 #[allow(dead_code)]

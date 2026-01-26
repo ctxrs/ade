@@ -26,15 +26,18 @@ export default function App() {
         window.location.hash;
       window.history.replaceState({}, "", next);
     }
-    if (import.meta.env.DEV) {
-      const envToken = import.meta.env.VITE_CTX_AUTH_TOKEN;
-      const envDaemonUrl = import.meta.env.VITE_CTX_DAEMON_URL;
-      if (envToken && !sessionStorage.getItem("ctxAuthToken")) {
-        sessionStorage.setItem("ctxAuthToken", envToken);
-      }
-      if (envDaemonUrl && !getDaemonBaseUrl()) {
-        setDaemonBaseUrl(envDaemonUrl, true);
-      }
+    const envToken = import.meta.env.VITE_CTX_AUTH_TOKEN;
+    const envDaemonUrl = import.meta.env.VITE_CTX_DAEMON_URL;
+    if (!envToken && !envDaemonUrl) return;
+    const host = typeof window === "undefined" ? "" : String(window.location.hostname ?? "").toLowerCase();
+    const loopback = host === "localhost" || host === "::1" || host.startsWith("127.");
+    if (!loopback) return;
+
+    if (envToken && !sessionStorage.getItem("ctxAuthToken")) {
+      sessionStorage.setItem("ctxAuthToken", envToken);
+    }
+    if (envDaemonUrl && !getDaemonBaseUrl()) {
+      setDaemonBaseUrl(envDaemonUrl, true);
     }
   }, []);
 
