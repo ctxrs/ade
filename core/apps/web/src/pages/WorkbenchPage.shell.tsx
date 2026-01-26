@@ -2821,7 +2821,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             supervisor.setSession(session);
           }
 
-          supervisor.refreshSession(sessionId, { watchDiff: true });
           const posted = await postMessage(sessionId, prompt, "immediate", attachmentsToSend);
           if (sessionId === currentSessionId) {
             supervisor.replaceMessage(sessionId, optimisticMessageId, posted);
@@ -2834,7 +2833,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               ),
             );
           }
-          supervisor.refreshSession(sessionId, { watchDiff: true });
         } catch (e: any) {
           const message = e?.message ?? String(e);
           if (!primaryMessagePosted) throw e;
