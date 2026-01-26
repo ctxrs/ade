@@ -759,7 +759,8 @@ impl AppState {
         {
             if let Some(turn_id) = event.turn_id {
                 if let Ok(store) = self.store_for_session(event.session_id).await {
-                    if let Ok(Some(fetched)) = store.get_session_turn(event.session_id, turn_id).await
+                    if let Ok(Some(fetched)) =
+                        store.get_session_turn(event.session_id, turn_id).await
                     {
                         turn = Some(fetched);
                     }
