@@ -943,9 +943,14 @@ pub(super) fn merge_tool_update(
     update: TurnToolUpdate,
     session_id: ctx_core::ids::SessionId,
     turn_id: ctx_core::ids::TurnId,
+    event_seq: i64,
     now: chrono::DateTime<chrono::Utc>,
 ) -> SessionTurnTool {
     let created_at = prev.map(|t| t.created_at).unwrap_or(now);
+    let first_event_seq = match prev.and_then(|t| t.first_event_seq) {
+        Some(prev_seq) => Some(prev_seq.min(event_seq)),
+        None => Some(event_seq),
+    };
     let tool_kind = update
         .tool_kind
         .or_else(|| prev.and_then(|t| t.tool_kind.clone()));
@@ -996,6 +1001,7 @@ pub(super) fn merge_tool_update(
         status,
         input_json,
         output_text,
+        first_event_seq,
         input_truncated,
         input_original_bytes,
         output_truncated,

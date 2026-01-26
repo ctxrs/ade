@@ -135,6 +135,29 @@
       ]
     },
     {
+      "id": "codex-crp",
+      "display_name": "Codex CRP",
+      "tier": "tier2",
+      "command": {
+        "command": "codex-crp",
+        "args": []
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "0.0.0",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Local codex-crp development build"
+        }
+      ]
+    },
+    {
       "id": "claude",
       "display_name": "Claude Code",
       "tier": "tier1",

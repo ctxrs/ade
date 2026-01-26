@@ -25,6 +25,7 @@ DEV_ACP_HEAP_PROFILE_LG_INTERVAL ?= 30
 DEV_ACP_HEAP_PROFILE_LG_SAMPLE ?= 19
 DEV_RESOURCE_TELEMETRY_INTERVAL_MS ?= 5000
 DEV_RESOURCE_TELEMETRY_LOCAL_MAX_BYTES ?= 209715200
+DEV_ENABLE_CODEX_CRP ?= 1
 
 DEV_LOG_ENV := $(if $(filter 1,$(DEV_LOG)),\
 	RUST_LOG=$(if $(RUST_LOG),$(RUST_LOG),$(DEV_RUST_LOG)) \
@@ -56,6 +57,8 @@ DEV_DEBUG_SETENV := $(if $(filter 1,$(DEV_DEBUG)),\
 	--setenv CTX_RESOURCE_TELEMETRY_INTERVAL_MS=$(if $(CTX_RESOURCE_TELEMETRY_INTERVAL_MS),$(CTX_RESOURCE_TELEMETRY_INTERVAL_MS),$(DEV_RESOURCE_TELEMETRY_INTERVAL_MS)) \
 	--setenv CTX_RESOURCE_TELEMETRY_LOCAL_MAX_BYTES=$(if $(CTX_RESOURCE_TELEMETRY_LOCAL_MAX_BYTES),$(CTX_RESOURCE_TELEMETRY_LOCAL_MAX_BYTES),$(DEV_RESOURCE_TELEMETRY_LOCAL_MAX_BYTES)) \
 )
+DEV_CRP_ENV := CTX_ENABLE_CODEX_CRP=$(if $(CTX_ENABLE_CODEX_CRP),$(CTX_ENABLE_CODEX_CRP),$(DEV_ENABLE_CODEX_CRP))
+DEV_CRP_SETENV := --setenv CTX_ENABLE_CODEX_CRP=$(if $(CTX_ENABLE_CODEX_CRP),$(CTX_ENABLE_CODEX_CRP),$(DEV_ENABLE_CODEX_CRP))
 export CARGO_TARGET_DIR
 
 ifeq ($(SUPABASE_PROD),1)
@@ -88,13 +91,14 @@ ifeq ($(shell uname -s),Linux)
 		systemd-run --user --scope --unit $(CTX_DAEMON_UNIT) --same-dir --collect \
 			$(DEV_LOG_SETENV) \
 			$(DEV_DEBUG_SETENV) \
+			$(DEV_CRP_SETENV) \
 			--setenv CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) \
 			cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
 	else \
-		$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
+		$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
 	fi
 else
-	$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
+	$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
 endif
 
 dev-preflight:

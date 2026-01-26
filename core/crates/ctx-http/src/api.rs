@@ -5813,6 +5813,51 @@ async fn get_provider_options(
         }
     }
 
+    if provider_status
+        .as_ref()
+        .and_then(|st| st.capabilities.as_ref())
+        .is_some_and(|caps| !caps.supports_acp)
+    {
+        let mut raw_resp = serde_json::json!({
+            "provider_id": provider_id,
+            "workspace_id": ws_id.0,
+            "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
+            "probe_ok": true,
+            "supports_load": false,
+            "auth_required": false,
+            "probed_at": chrono::Utc::now().to_rfc3339(),
+        });
+        if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
+            if let Some(models) = cached_models {
+                raw_resp["models"] = models;
+            }
+        }
+        if raw_resp.get("modes").is_none() || raw_resp.get("modes").is_some_and(|v| v.is_null()) {
+            if let Some(modes) = cached_modes {
+                raw_resp["modes"] = modes;
+            }
+        }
+
+        let resp = redact_json_value(raw_resp);
+        state.provider_options_cache.lock().await.insert(
+            cache_key,
+            crate::daemon::CachedProviderOptions {
+                cached_at: std::time::Instant::now(),
+                value: resp.clone(),
+            },
+        );
+
+        let mut out = resp;
+        if let Some((verify_at, verify)) = verify_entry.as_ref() {
+            if verify_at.elapsed() < VERIFY_TTL {
+                if let Some(obj) = out.as_object_mut() {
+                    obj.insert("verify".to_string(), verify.clone());
+                }
+            }
+        }
+        return Ok(Json(out));
+    }
+
     let ws = state
         .global_store()
         .get_workspace(ws_id)
@@ -8245,6 +8290,18 @@ async fn load_provider_model_catalog(
                 return Ok(Some(catalog));
             }
         }
+    }
+
+    let supports_acp = {
+        let statuses = state.provider_statuses.lock().await;
+        statuses
+            .get(provider_id)
+            .and_then(|status| status.capabilities.as_ref())
+            .map(|caps| caps.supports_acp)
+            .unwrap_or(true)
+    };
+    if !supports_acp {
+        return Ok(None);
     }
 
     let cfg = installer::load_agent_server_config(&state.data_root)

@@ -376,7 +376,7 @@ async fn start_turn(
     if let Ok(v) = std::env::var("CTX_MCP_DISABLED") {
         provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
     }
-    if session.provider_id == "codex" {
+    if session.provider_id == "codex" || session.provider_id == "codex-crp" {
         if let Ok(env) = provider_accounts::codex_env_for_active_account(&state.data_root).await {
             for (key, value) in env {
                 provider_env.insert(key, value);
@@ -508,6 +508,7 @@ async fn start_turn(
     let store = store.clone();
     let session_id = session.id;
     let task_id = session.task_id;
+    let workspace_id = session.workspace_id;
     let worktree_id = session.worktree_id;
     let provider_id = session.provider_id.clone();
     let model_id = session.model_id.clone();
@@ -552,7 +553,12 @@ async fn start_turn(
                     .await;
             }
             if matches!(ev.event_type, SessionEventType::Init) {
-                if let Some(ps) = payload.get("acp_session_id").and_then(Value::as_str) {
+                let provider_session_id = payload
+                    .get("provider_session_id")
+                    .or_else(|| payload.get("crp_session_id"))
+                    .or_else(|| payload.get("acp_session_id"))
+                    .and_then(Value::as_str);
+                if let Some(ps) = provider_session_id {
                     provider_session_ref = Some(ps.to_string());
                     let _ = store
                         .update_session_provider_session_ref(session_id, Some(ps.to_string()))
@@ -576,7 +582,7 @@ async fn start_turn(
             if matches!(ev.event_type, SessionEventType::Done) {
                 if let Some(obj) = payload.as_object_mut() {
                     if obj.get("context_window").is_none() {
-                        let metrics = if provider_id == "codex" {
+                        let metrics = if provider_id == "codex" || provider_id == "codex-crp" {
                             provider_session_ref
                                 .as_deref()
                                 .and_then(read_codex_context_window_metrics)
@@ -702,6 +708,24 @@ async fn start_turn(
                             }
                         }
                     }
+                    SessionEventType::Notice => {
+                        if event
+                            .payload_json
+                            .get("kind")
+                            .and_then(Value::as_str)
+                            .is_some_and(|kind| kind == "session_gap")
+                        {
+                            let reason = event
+                                .payload_json
+                                .get("reason")
+                                .and_then(Value::as_str)
+                                .map(|value| value.to_string());
+                            state_for_events
+                                .workspace_active_snapshot
+                                .publish_session_gap(workspace_id, session_id, event.seq, reason)
+                                .await;
+                        }
+                    }
                     SessionEventType::ToolCall
                     | SessionEventType::ToolCallUpdate
                     | SessionEventType::ToolResult => {
@@ -760,6 +784,7 @@ async fn start_turn(
                                 update,
                                 session_id,
                                 turn_id,
+                                event.seq,
                                 event.created_at,
                             );
                             if matches!(event.event_type, SessionEventType::ToolCallUpdate) {

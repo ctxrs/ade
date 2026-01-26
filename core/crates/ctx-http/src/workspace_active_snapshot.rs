@@ -564,6 +564,30 @@ impl WorkspaceActiveSnapshotHub {
         });
     }
 
+    pub async fn publish_session_gap(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        after_seq: i64,
+        reason: Option<String>,
+    ) {
+        let (tx, snapshot_rev) = {
+            let mut guard = self.inner.lock().await;
+            let entry = guard
+                .entry(workspace_id)
+                .or_insert_with(WorkspaceActiveSnapshotEntry::new);
+            entry.snapshot_rev += 1;
+            (entry.tx.clone(), entry.snapshot_rev)
+        };
+        let _ = tx.send(WorkspaceActiveSnapshotEvent::SessionGap {
+            workspace_id,
+            snapshot_rev,
+            session_id,
+            after_seq,
+            reason,
+        });
+    }
+
     pub async fn publish_worktree_bootstrap(
         &self,
         workspace_id: WorkspaceId,

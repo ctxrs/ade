@@ -27,6 +27,7 @@ use ctx_lsp::{LspManager, LspManagerConfig};
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::adapters::ProviderStatus;
 use ctx_providers::ask_user_question::AskUserQuestionBroker;
+use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_providers::tier1::Tier1AcpAdapter;
 use ctx_store::{Store, StoreManager, StoreManagerConfig};
@@ -1626,6 +1627,21 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     providers.insert("kimi".into(), kimi_adapter.clone());
     providers.insert("auggie".into(), auggie_adapter.clone());
     providers.insert("cagent".into(), cagent_adapter.clone());
+
+    let enable_codex_crp = std::env::var("CTX_ENABLE_CODEX_CRP")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if enable_codex_crp {
+        let codex_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(
+            agent_cfg
+                .providers
+                .get("codex-crp")
+                .map(|c| Tier1CrpAdapter::from_raw("codex-crp", c.command.clone(), c.args.clone()))
+                .unwrap_or_else(Tier1CrpAdapter::codex),
+        );
+        providers.insert("codex-crp".into(), codex_crp_adapter);
+    }
 
     if std::env::var("CTX_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1") {
         providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));

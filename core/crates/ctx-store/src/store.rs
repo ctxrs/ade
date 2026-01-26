@@ -6084,7 +6084,7 @@ impl Store {
                     tool_summaries.push(summarize_session_turn_tool(&tool));
                 }
             }
-            tool_summaries.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+            tool_summaries.sort_by(compare_tool_summary_order);
         }
         let last_status = out.last().map(|t| t.status.clone());
         let has_running_turn = out
@@ -6371,8 +6371,8 @@ impl Store {
         let rows = self
             .query(
                 r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
-                      output_text, input_truncated, input_original_bytes, output_truncated,
-                      output_original_bytes, created_at, updated_at
+                      output_text, first_event_seq, input_truncated, input_original_bytes,
+                      output_truncated, output_original_bytes, created_at, updated_at
                FROM session_turn_tools
                WHERE session_id = ? AND turn_id = ?
                ORDER BY created_at ASC"#,
@@ -6388,6 +6388,7 @@ impl Store {
                     out.push(tool);
                 }
             }
+            out.sort_by(compare_tool_order);
             return Ok(out);
         }
 
@@ -6411,8 +6412,8 @@ impl Store {
         }
         let mut sql = String::from(
             r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
-                      output_text, input_truncated, input_original_bytes, output_truncated,
-                      output_original_bytes, created_at, updated_at
+                      output_text, first_event_seq, input_truncated, input_original_bytes,
+                      output_truncated, output_original_bytes, created_at, updated_at
                FROM session_turn_tools
                WHERE session_id = ? AND turn_id IN ("#,
         );
@@ -6435,6 +6436,7 @@ impl Store {
                 out.push(tool);
             }
         }
+        out.sort_by(compare_tool_summary_order);
         Ok(out)
     }
 
@@ -6446,8 +6448,8 @@ impl Store {
         let row = self
             .query(
                 r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
-                      output_text, input_truncated, input_original_bytes, output_truncated,
-                      output_original_bytes, created_at, updated_at
+                      output_text, first_event_seq, input_truncated, input_original_bytes,
+                      output_truncated, output_original_bytes, created_at, updated_at
                FROM session_turn_tools
                WHERE session_id = ? AND tool_call_id = ?"#,
             )
@@ -6482,6 +6484,7 @@ impl Store {
             + bytes_opt_str(tool.status.as_deref())
             + bytes_opt_str(input_json.as_deref())
             + bytes_opt_str(tool.output_text.as_deref())
+            + bytes_opt_i64(tool.first_event_seq)
             + if input_truncated.is_some() {
                 BOOL_BYTES
             } else {
@@ -6499,10 +6502,10 @@ impl Store {
         let result = self.query(
             r#"INSERT INTO session_turn_tools (
                     session_id, tool_call_id, turn_id, tool_kind, title, status,
-                    input_json, output_text, input_truncated, input_original_bytes,
+                    input_json, output_text, first_event_seq, input_truncated, input_original_bytes,
                     output_truncated, output_original_bytes, created_at, updated_at
                )
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(session_id, tool_call_id) DO UPDATE SET
                    turn_id = excluded.turn_id,
                    tool_kind = COALESCE(excluded.tool_kind, session_turn_tools.tool_kind),
@@ -6510,6 +6513,7 @@ impl Store {
                    status = COALESCE(excluded.status, session_turn_tools.status),
                    input_json = COALESCE(excluded.input_json, session_turn_tools.input_json),
                    output_text = COALESCE(excluded.output_text, session_turn_tools.output_text),
+                   first_event_seq = COALESCE(session_turn_tools.first_event_seq, excluded.first_event_seq),
                    input_truncated = COALESCE(excluded.input_truncated, session_turn_tools.input_truncated),
                    input_original_bytes = COALESCE(excluded.input_original_bytes, session_turn_tools.input_original_bytes),
                    output_truncated = COALESCE(excluded.output_truncated, session_turn_tools.output_truncated),
@@ -6524,6 +6528,7 @@ impl Store {
         .bind(tool.status.as_deref())
         .bind(input_json)
         .bind(tool.output_text.as_deref())
+        .bind(tool.first_event_seq)
         .bind(input_truncated)
         .bind(tool.input_original_bytes)
         .bind(output_truncated)
@@ -8207,6 +8212,7 @@ fn build_session_turn_tool_from_row(r: SqliteRow) -> Result<SessionTurnTool> {
     let input_json = input_json
         .as_deref()
         .and_then(|s| serde_json::from_str::<Value>(s).ok());
+    let first_event_seq: Option<i64> = r.try_get("first_event_seq")?;
     let input_truncated: Option<i64> = r.try_get("input_truncated")?;
     let input_original_bytes: Option<i64> = r.try_get("input_original_bytes")?;
     let output_truncated: Option<i64> = r.try_get("output_truncated")?;
@@ -8221,6 +8227,7 @@ fn build_session_turn_tool_from_row(r: SqliteRow) -> Result<SessionTurnTool> {
         status: r.try_get("status")?,
         input_json,
         output_text: r.try_get("output_text")?,
+        first_event_seq,
         input_truncated: input_truncated.map(|value| value != 0),
         input_original_bytes,
         output_truncated: output_truncated.map(|value| value != 0),
@@ -8241,6 +8248,7 @@ fn build_session_turn_tool_summary_from_row(r: SqliteRow) -> Result<SessionTurnT
         .as_deref()
         .and_then(|s| serde_json::from_str::<Value>(s).ok());
     let output_text: Option<String> = r.try_get("output_text")?;
+    let first_event_seq: Option<i64> = r.try_get("first_event_seq")?;
     let input_truncated: Option<i64> = r.try_get("input_truncated")?;
     let input_original_bytes: Option<i64> = r.try_get("input_original_bytes")?;
     let output_truncated: Option<i64> = r.try_get("output_truncated")?;
@@ -8256,6 +8264,7 @@ fn build_session_turn_tool_summary_from_row(r: SqliteRow) -> Result<SessionTurnT
         status: r.try_get("status")?,
         input_preview,
         output_preview: output_text,
+        first_event_seq,
         input_truncated: input_truncated.map(|value| value != 0),
         input_original_bytes,
         output_truncated: output_truncated.map(|value| value != 0),
@@ -8275,6 +8284,7 @@ fn summarize_session_turn_tool(tool: &SessionTurnTool) -> SessionTurnToolSummary
         status: tool.status.clone(),
         input_preview: tool_input_preview_from_value(tool.input_json.as_ref()),
         output_preview: tool.output_text.clone(),
+        first_event_seq: tool.first_event_seq,
         input_truncated: tool.input_truncated,
         input_original_bytes: tool.input_original_bytes,
         output_truncated: tool.output_truncated,
@@ -8282,6 +8292,27 @@ fn summarize_session_turn_tool(tool: &SessionTurnTool) -> SessionTurnToolSummary
         created_at: tool.created_at,
         updated_at: tool.updated_at,
     }
+}
+
+fn tool_seq_sort_key(seq: Option<i64>) -> i64 {
+    seq.unwrap_or(i64::MAX)
+}
+
+fn compare_tool_summary_order(
+    a: &SessionTurnToolSummary,
+    b: &SessionTurnToolSummary,
+) -> std::cmp::Ordering {
+    tool_seq_sort_key(a.first_event_seq)
+        .cmp(&tool_seq_sort_key(b.first_event_seq))
+        .then_with(|| a.created_at.cmp(&b.created_at))
+        .then_with(|| a.tool_call_id.cmp(&b.tool_call_id))
+}
+
+fn compare_tool_order(a: &SessionTurnTool, b: &SessionTurnTool) -> std::cmp::Ordering {
+    tool_seq_sort_key(a.first_event_seq)
+        .cmp(&tool_seq_sort_key(b.first_event_seq))
+        .then_with(|| a.created_at.cmp(&b.created_at))
+        .then_with(|| a.tool_call_id.cmp(&b.tool_call_id))
 }
 
 const TOOL_PREVIEW_MAX_LINES: usize = 5;
@@ -8669,6 +8700,7 @@ fn build_turn_tool_from_event(event: &SessionEvent, turn_id: TurnId) -> Option<S
         status,
         input_json: input_meta.preview,
         output_text: output_meta.as_ref().map(|preview| preview.preview.clone()),
+        first_event_seq: Some(event.seq),
         input_truncated,
         input_original_bytes,
         output_truncated,
@@ -8791,6 +8823,7 @@ fn build_turn_tools_from_events(
         output_original_bytes: Option<i64>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
+        first_event_seq: Option<i64>,
         initialized: bool,
     }
 
@@ -8814,9 +8847,14 @@ fn build_turn_tools_from_events(
         if !entry.initialized {
             entry.created_at = ev.created_at;
             entry.updated_at = ev.created_at;
+            entry.first_event_seq = Some(ev.seq);
             entry.initialized = true;
         }
         entry.updated_at = ev.created_at;
+        entry.first_event_seq = Some(match entry.first_event_seq {
+            Some(prev) => prev.min(ev.seq),
+            None => ev.seq,
+        });
 
         if let Some(kind) = update
             .get("kind")
@@ -8933,10 +8971,11 @@ fn build_turn_tools_from_events(
             output_original_bytes: agg.output_original_bytes,
             created_at: agg.created_at,
             updated_at: agg.updated_at,
+            first_event_seq: agg.first_event_seq,
         })
         .collect();
 
-    out.sort_by_key(|t| t.created_at);
+    out.sort_by(compare_tool_order);
     out
 }
 
