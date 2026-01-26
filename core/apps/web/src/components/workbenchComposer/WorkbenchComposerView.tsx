@@ -125,20 +125,36 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     slashCommands,
   });
 
+  const lastValueRef = useRef(value);
+
   const resizeTextarea = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
 
     const minHeightPx = variant === "newSession" ? 88 : 28;
     const maxHeightPx = variant === "newSession" ? 380 : 220;
+    const prevValue = lastValueRef.current;
+    const nextValue = value;
+    const prevLines = prevValue.split("\n").length;
+    const nextLines = nextValue.split("\n").length;
+    const shouldMeasureShrink = nextValue.length < prevValue.length || nextLines < prevLines;
+    const inlineHeight = el.style.height;
+    const hasInlineHeight = inlineHeight !== "" && inlineHeight !== "auto";
+    const currentHeight =
+      Number.parseFloat(inlineHeight || "") || el.getBoundingClientRect().height || minHeightPx;
 
-    // Reset to min height so scrollHeight reflects content without collapsing to 0.
-    el.style.height = `${minHeightPx}px`;
+    if (shouldMeasureShrink) {
+      el.style.height = "auto";
+    }
+
     const next = Math.min(maxHeightPx, Math.max(minHeightPx, el.scrollHeight));
-    el.style.height = `${next}px`;
+    if (shouldMeasureShrink || !hasInlineHeight || Math.abs(next - currentHeight) > 0.5) {
+      el.style.height = `${next}px`;
+    }
 
     if (recording) el.scrollTop = el.scrollHeight;
-  }, [recording, variant]);
+    lastValueRef.current = nextValue;
+  }, [recording, value, variant]);
 
   useLayoutEffect(() => {
     resizeTextarea();
