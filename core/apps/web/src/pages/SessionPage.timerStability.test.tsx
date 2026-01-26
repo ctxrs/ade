@@ -1,0 +1,256 @@
+import React, { useEffect, useState } from "react";
+import { act, render } from "@testing-library/react";
+import { VirtuosoMockContext } from "react-virtuoso";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { SessionView } from "./SessionPage";
+
+vi.mock("react-virtuoso", () => ({
+  Virtuoso: ({ data = [], itemContent }: { data?: any[]; itemContent: (index: number, item: any) => React.ReactNode }) => (
+    <div data-testid="virtuoso">
+      {data.map((item, index) => (
+        <div key={item?.id ?? index}>{itemContent(index, item)}</div>
+      ))}
+    </div>
+  ),
+  VirtuosoMockContext: {
+    Provider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  },
+}));
+
+const sessionEntries = vi.hoisted(() => ({ map: {} as Record<string, any> }));
+const focusTaskSpy = vi.hoisted(() => vi.fn());
+const updateSettingsSpy = vi.hoisted(() => vi.fn());
+
+vi.mock("../api/client", () => ({
+  deleteMessage: vi.fn(async () => ({})),
+  resolveDaemonWsBaseUrl: vi.fn(() => "ws://localhost"),
+  postMessage: vi.fn(async () => ({})),
+  setSessionModel: vi.fn(async () => ({})),
+  authenticateSession: vi.fn(async () => ({})),
+  getSettings: vi.fn(async () => ({ dictation: { enabled: false } })),
+  idToString: (id: any) => (typeof id === "string" ? id : id?.["0"]),
+  interruptSession: vi.fn(async () => ({})),
+  submitAskUserQuestion: vi.fn(async () => ({})),
+  uploadBlob: vi.fn(async () => ({ blob_id: "blob-1" })),
+}));
+
+vi.mock("../state/sessionSupervisor", () => ({
+  useSessionSupervisor: () => ({
+    refreshQueue: vi.fn(async () => {}),
+    refreshSession: vi.fn(async () => {}),
+    loadMoreTurns: vi.fn(),
+    loadTurnTools: vi.fn(),
+    setSession: vi.fn(),
+  }),
+  useSessionEntry: (id: string) => sessionEntries.map[id] ?? null,
+  useOpenSession: () => {},
+}));
+
+vi.mock("../state/settingsStore", () => ({
+  useSettingsStore: () => ({ update: updateSettingsSpy }),
+  useSettingsSnapshot: () => ({ settings: null }),
+}));
+
+vi.mock("../state/uiStateStore", () => ({
+  loadSessionViewPrefsV1: vi.fn(async () => null),
+  saveSessionViewPrefsV1: vi.fn(async () => {}),
+}));
+
+vi.mock("../components/AskUserQuestionCard", () => ({
+  AskUserQuestionCard: () => null,
+}));
+
+vi.mock("../components/WorkbenchComposer", () => ({
+  WorkbenchComposer: () => null,
+}));
+
+vi.mock("../utils/dragDropScopes", () => ({
+  registerDropScope: () => () => {},
+}));
+
+vi.mock("../workbench/store", () => ({
+  useWorkbenchStore: () => ({
+    focusTask: focusTaskSpy,
+  }),
+}));
+
+const workspaceId = "ws-1";
+const taskIdA = "task-1";
+const taskIdB = "task-2";
+const sessionIdA = "session-1";
+const sessionIdB = "session-2";
+
+const baseIso = "2025-01-01T00:00:00.000Z";
+const baseMs = Date.parse(baseIso);
+
+const buildSessionEntry = (sessionId: string, taskId: string, startedAtMs: number) => ({
+  sessionId,
+  session: {
+    id: sessionId,
+    task_id: taskId,
+    provider_id: "codex",
+    status: "active",
+    created_at: baseIso,
+  },
+  turns: [
+    {
+      turn_id: `${sessionId}-turn-1`,
+      session_id: sessionId,
+      run_id: null,
+      user_message_id: null,
+      status: "running",
+      start_seq: null,
+      end_seq: null,
+      started_at: new Date(startedAtMs).toISOString(),
+      updated_at: new Date(startedAtMs).toISOString(),
+      assistant_partial: "",
+      thought_partial: "",
+      metrics_json: null,
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    },
+  ],
+  turnToolsByTurnId: {},
+  turnToolsLoading: [],
+  toolSummariesReady: true,
+  hasMoreTurns: false,
+  events: [],
+  messages: [],
+  artifacts: [],
+  artifactsLoading: false,
+  subagentInvocations: [],
+  subagentInvocationsLoading: false,
+  stateLoaded: true,
+  stateLoading: false,
+  queue: [],
+  loading: false,
+  subscribed: true,
+  updatedAtMs: 0,
+});
+
+beforeAll(() => {
+  if (typeof (globalThis as any).localStorage?.getItem !== "function") {
+    const store = new Map<string, string>();
+    (globalThis as any).localStorage = {
+      getItem: (key: string) => (store.has(key) ? store.get(key) ?? null : null),
+      setItem: (key: string, value: string) => {
+        store.set(key, String(value));
+      },
+      removeItem: (key: string) => {
+        store.delete(key);
+      },
+      clear: () => {
+        store.clear();
+      },
+    };
+  }
+  if (!("ResizeObserver" in globalThis)) {
+    class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    (globalThis as any).ResizeObserver = ResizeObserver;
+  }
+  if (!("IntersectionObserver" in globalThis)) {
+    class IntersectionObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    (globalThis as any).IntersectionObserver = IntersectionObserver;
+  }
+});
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(baseIso));
+  sessionEntries.map = {
+    [sessionIdA]: buildSessionEntry(sessionIdA, taskIdA, baseMs - 12_000),
+    [sessionIdB]: buildSessionEntry(sessionIdB, taskIdB, baseMs - 4_000),
+  };
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  focusTaskSpy.mockClear();
+  updateSettingsSpy.mockClear();
+});
+
+describe("SessionPage timer stability", () => {
+  it("keeps elapsed time aligned when mounting sessions at different times", async () => {
+    const sharedStartMs = baseMs - 12_000;
+    sessionEntries.map = {
+      [sessionIdA]: buildSessionEntry(sessionIdA, taskIdA, sharedStartMs),
+      [sessionIdB]: buildSessionEntry(sessionIdB, taskIdB, sharedStartMs),
+    };
+
+    const DualSessionHarness = ({
+      firstId,
+      secondId,
+      delayMs,
+    }: {
+      firstId: string;
+      secondId: string;
+      delayMs: number;
+    }) => {
+      const [showSecond, setShowSecond] = useState(false);
+      useEffect(() => {
+        const timer = window.setTimeout(() => setShowSecond(true), delayMs);
+        return () => window.clearTimeout(timer);
+      }, [delayMs]);
+      return (
+        <>
+          <div data-testid="session-a">
+            <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
+              <SessionView sessionId={firstId} isActive autoOpenSession={false} />
+            </VirtuosoMockContext.Provider>
+          </div>
+          {showSecond && (
+            <div data-testid="session-b">
+              <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
+                <SessionView sessionId={secondId} isActive autoOpenSession={false} />
+              </VirtuosoMockContext.Provider>
+            </div>
+          )}
+        </>
+      );
+    };
+
+    const { queryByTestId } = render(
+      <DualSessionHarness firstId={sessionIdA} secondId={sessionIdB} delayMs={500} />,
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+    });
+    let times = Array.from(document.querySelectorAll(".wb-turn-status-time")).map(
+      (node) => node.textContent,
+    );
+    expect(times).toEqual(["12s"]);
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+    });
+
+    expect(queryByTestId("session-b")).toBeTruthy();
+    times = Array.from(document.querySelectorAll(".wb-turn-status-time")).map((node) => node.textContent);
+    expect(times).toHaveLength(2);
+
+    await act(async () => {
+      vi.advanceTimersByTime(750);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+    });
+
+    times = Array.from(document.querySelectorAll(".wb-turn-status-time")).map((node) => node.textContent);
+    expect(new Set(times)).toEqual(new Set(["13s"]));
+  });
+});
