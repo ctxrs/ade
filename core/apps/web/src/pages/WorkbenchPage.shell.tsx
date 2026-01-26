@@ -1083,29 +1083,45 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     for (const summary of Object.values(tasksForLiveInfo)) {
       if (!summary) continue;
       const taskId = summary.id;
-      for (const sessionSummary of summary.sessions) {
-        const sessionId = idToString(sessionSummary.session.id);
-        const entry = sessionId ? entryBySessionId.get(sessionId) : undefined;
-        const isWorking = sessionSummary.activity?.is_working === true;
+      const primarySessionId = summary.task.primary_session_id
+        ? idToString(summary.task.primary_session_id)
+        : "";
+      // Left nav status must reflect the primary session only (subagents are ignored).
+      const primarySessionSummary = primarySessionId
+        ? summary.sessions.find((sessionSummary) => idToString(sessionSummary.session.id) === primarySessionId)
+        : undefined;
+      const primaryEntry = primarySessionId ? entryBySessionId.get(primarySessionId) : undefined;
+
+      if (primarySessionSummary) {
+        const isWorking = primarySessionSummary.activity?.is_working === true;
         if (isWorking) workingByTask.add(taskId);
 
-        const status = entry?.session?.status ?? sessionSummary.session.status;
+        const status = primaryEntry?.session?.status ?? primarySessionSummary.session.status;
         if (status === "failed" || status === "cancelled") {
           errorByTask.add(taskId);
         }
 
-        const liveMs = entry ? lastAssistantMessageMs(entry.messages) : null;
-        const summaryMs = parseMs(sessionSummary.last_message_at ?? null);
+        const liveMs = primaryEntry ? lastAssistantMessageMs(primaryEntry.messages) : null;
+        const summaryMs = parseMs(primarySessionSummary.last_message_at ?? null);
         const ms =
           liveMs !== null && summaryMs !== null ? Math.max(liveMs, summaryMs) : liveMs ?? summaryMs;
+        if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
+      } else if (primaryEntry?.session) {
+        const status = primaryEntry.session.status;
+        if (status === "failed" || status === "cancelled") {
+          errorByTask.add(taskId);
+        }
+        const ms = lastAssistantMessageMs(primaryEntry.messages);
         if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
       }
     }
 
     for (const entry of Object.values(sessionSnap.sessions)) {
-      const taskId = entry.session ? idToString(entry.session.task_id) : "";
+      const session = entry.session;
+      const taskId = session ? idToString(session.task_id) : "";
       if (!taskId || tasksForLiveInfo[taskId]) continue;
-      const status = entry.session?.status;
+      if (session?.parent_session_id || session?.relationship === "sub_agent") continue;
+      const status = session?.status;
       if (status === "failed" || status === "cancelled") errorByTask.add(taskId);
       const ms = lastAssistantMessageMs(entry.messages);
       if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
