@@ -3019,10 +3019,11 @@
 
 .wb-turn-status {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
   padding: 0 2px 4px;
   font-size: 12px;
+  line-height: 1;
   font-style: italic;
   font-family: inherit;
   color: var(--muted);
@@ -3036,6 +3037,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  align-self: center;
   padding: 0;
   border: none;
   background: none;
