@@ -22,7 +22,10 @@ use ctx_fs::worktrees::{create_worktree, remove_worktree};
 
 use crate::daemon::AppState;
 use crate::ops_events::OpsEvent;
+#[cfg(target_os = "linux")]
 use crate::tool_cgroup::TOOL_SLICE_UNIT;
+#[cfg(not(target_os = "linux"))]
+const TOOL_SLICE_UNIT: &str = "ctx-tools.slice";
 use crate::workspace_config::{load_merge_queue_config, MergeQueueCanonicalSync, MergeQueueConfig};
 
 #[derive(Debug, Clone)]
