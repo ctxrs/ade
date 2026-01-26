@@ -106,7 +106,7 @@ async fn sample_once(
     let (system, cache_age_ms, processes, provider_memory_rollups) = {
         let mut sampler = state.resource_sampler.lock().await;
         let (system, _disks, cache_age_ms) = sampler.system_snapshot();
-        let processes = sampler.processes_snapshot(std::process::id(), &provider_processes);
+        let processes = sampler.processes_snapshot_light(std::process::id(), &provider_processes);
         let provider_memory_rollups = sampler.provider_memory_rollups(&provider_processes);
         (system, cache_age_ms, processes, provider_memory_rollups)
     };

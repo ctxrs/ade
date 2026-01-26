@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use serde::Serialize;
-use sysinfo::{Disk, Disks, Pid, System};
+use sysinfo::{Disk, Disks, Pid, ProcessRefreshKind, System};
 
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
@@ -171,7 +171,6 @@ impl ResourceSampler {
         if should_refresh {
             self.system.refresh_cpu();
             self.system.refresh_memory();
-            self.system.refresh_processes();
             if self.disks.list().is_empty() {
                 self.disks.refresh_list();
             }
@@ -195,10 +194,12 @@ impl ResourceSampler {
     }
 
     pub fn processes_snapshot(
-        &self,
+        &mut self,
         daemon_pid: u32,
         providers: &[ProviderProcessInfo],
     ) -> ResourceProcesses {
+        self.system
+            .refresh_processes_specifics(process_refresh_kind());
         let children = build_process_children(&self.system);
 
         let daemon = aggregate_process(&self.system, &children, daemon_pid, "ctx daemon");
@@ -213,11 +214,48 @@ impl ResourceSampler {
         ResourceProcesses { daemon, providers }
     }
 
+    pub fn processes_snapshot_light(
+        &mut self,
+        daemon_pid: u32,
+        providers: &[ProviderProcessInfo],
+    ) -> ResourceProcesses {
+        let mut pids = Vec::with_capacity(1 + providers.len());
+        pids.push(Pid::from_u32(daemon_pid));
+        for provider in providers {
+            pids.push(Pid::from_u32(provider.pid));
+        }
+        for pid in pids {
+            let _ = self
+                .system
+                .refresh_process_specifics(pid, process_refresh_kind());
+        }
+        // Skip child aggregation to avoid full process table scans in telemetry.
+        let children = HashMap::new();
+
+        let daemon = aggregate_process(&self.system, &children, daemon_pid, "ctx daemon");
+        let providers = providers
+            .iter()
+            .filter_map(|p| {
+                let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
+                aggregate_process(&self.system, &children, p.pid, &label)
+            })
+            .collect();
+
+        ResourceProcesses { daemon, providers }
+    }
+
     pub fn provider_memory_snapshot(
-        &self,
+        &mut self,
         providers: &[ProviderProcessInfo],
     ) -> Vec<ProviderMemorySample> {
-        let children = build_process_children(&self.system);
+        for provider in providers {
+            let _ = self.system.refresh_process_specifics(
+                Pid::from_u32(provider.pid),
+                memory_refresh_kind(),
+            );
+        }
+        // Limit to provider PIDs to avoid expensive full-process refreshes.
+        let children = HashMap::new();
         providers
             .iter()
             .filter_map(|p| {
@@ -407,6 +445,14 @@ fn aggregate_process(
         children: child_processes,
         children_truncated,
     })
+}
+
+fn process_refresh_kind() -> ProcessRefreshKind {
+    ProcessRefreshKind::new().with_memory().with_cpu()
+}
+
+fn memory_refresh_kind() -> ProcessRefreshKind {
+    ProcessRefreshKind::new().with_memory()
 }
 
 fn aggregate_provider_memory(
