@@ -1,6 +1,15 @@
 /// <reference types="vite/client" />
 /// <reference types="vitest/globals" />
 
+interface ImportMetaEnv {
+  readonly VITE_CTX_WAL_MODE?: string;
+  readonly VITE_CTX_WAL_ENDPOINT?: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+
 declare module "*.png" {
   const src: string;
   export default src;

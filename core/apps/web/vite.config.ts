@@ -2,6 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { defineConfig } from "vite";
+import type { Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import mkcert from "vite-plugin-mkcert";
 
@@ -24,6 +25,105 @@ const httpsHosts = String(process.env.CTX_DEV_HTTPS_HOSTS ?? "")
   .split(",")
   .map((host) => host.trim())
   .filter(Boolean);
+
+const WAL_ROUTE = "/__ctx_wal__";
+const WAL_MAX_BYTES = 5 * 1024 * 1024;
+
+const walPlugin = (enabled: boolean): Plugin => ({
+  name: "ctx-web-wal",
+  configureServer(server) {
+    if (!enabled) return;
+    const walDir = process.env.CTX_WEB_WAL_DIR ?? path.join(os.tmpdir(), "ctx-web-wal");
+    fs.mkdirSync(walDir, { recursive: true });
+    const sessions = new Map<
+      string,
+      { path: string; stream: fs.WriteStream; bytes: number; lastWriteMs: number }
+    >();
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+    const getSession = (sessionId: string) => {
+      const existing = sessions.get(sessionId);
+      if (existing) return existing;
+      const filePath = path.join(walDir, `ctx-web-wal-${stamp}-${sessionId}.jsonl`);
+      const stream = fs.createWriteStream(filePath, { flags: "a" });
+      const session = { path: filePath, stream, bytes: 0, lastWriteMs: 0 };
+      sessions.set(sessionId, session);
+      server.config.logger.info(`[ctx] web wal (${sessionId}): ${filePath}`);
+      return session;
+    };
+
+    server.config.logger.info(`[ctx] web wal dir: ${walDir}`);
+
+    server.middlewares.use((req, res, next) => {
+      const rawUrl = req.url ?? "";
+      if (!rawUrl.startsWith(WAL_ROUTE)) return next();
+      const url = new URL(rawUrl, "http://localhost");
+
+      if (req.method === "GET" && url.pathname === `${WAL_ROUTE}/status`) {
+        const sessionId = url.searchParams.get("session") ?? "";
+        if (!sessionId) {
+          res.statusCode = 400;
+          res.end("missing session");
+          return;
+        }
+        const session = sessions.get(sessionId);
+        res.setHeader("content-type", "application/json");
+        res.statusCode = 200;
+        res.end(
+          JSON.stringify({
+            ok: Boolean(session),
+            session: sessionId,
+            path: session?.path ?? null,
+            bytes: session?.bytes ?? 0,
+            last_write_ms: session?.lastWriteMs ?? 0,
+          }),
+        );
+        return;
+      }
+
+      if (req.method !== "POST") {
+        res.statusCode = 405;
+        res.end("method not allowed");
+        return;
+      }
+
+      const sessionId = url.searchParams.get("session") ?? String(req.headers["x-ctx-wal-session"] ?? "");
+      if (!sessionId) {
+        res.statusCode = 400;
+        res.end("missing session");
+        return;
+      }
+
+      let size = 0;
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => {
+        size += chunk.length;
+        if (size > WAL_MAX_BYTES) {
+          res.statusCode = 413;
+          res.end("payload too large");
+          req.destroy();
+          return;
+        }
+        body += chunk;
+      });
+      req.on("end", () => {
+        const session = getSession(sessionId);
+        session.stream.write(body);
+        session.bytes += Buffer.byteLength(body);
+        session.lastWriteMs = Date.now();
+        res.statusCode = 204;
+        res.end();
+      });
+    });
+
+    server.httpServer?.once("close", () => {
+      for (const session of sessions.values()) {
+        session.stream.end();
+      }
+    });
+  },
+});
 
 export default defineConfig(({ command }) => {
   const isTest = process.env.VITEST === "true" || process.env.NODE_ENV === "test";
@@ -60,6 +160,7 @@ export default defineConfig(({ command }) => {
   return {
     plugins: [
       react(),
+      walPlugin(command === "serve" && !isTest),
       ...(command === "serve" && useHttps && !isTest
         ? [mkcert(httpsHosts.length > 0 ? { hosts: httpsHosts } : undefined)]
         : []),

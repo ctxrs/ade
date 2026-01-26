@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { applyContextTheme } from "@ctx/design/web";
 import App from "./App";
 import { initLoadTestTelemetry } from "./utils/loadTestTelemetry";
+import { initWalRecorder } from "./utils/walRecorder";
 import { getDaemonBaseUrl, setDaemonBaseUrl } from "./api/client";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
@@ -35,9 +36,14 @@ const primeAuthSession = () => {
 primeAuthSession();
 applyContextTheme();
 initLoadTestTelemetry();
+const wal = initWalRecorder();
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
+const app = wal?.onRender ? (
+  <React.Profiler id="App" onRender={wal.onRender}>
     <App />
-  </React.StrictMode>,
+  </React.Profiler>
+) : (
+  <App />
 );
+
+ReactDOM.createRoot(document.getElementById("root")!).render(<React.StrictMode>{app}</React.StrictMode>);
