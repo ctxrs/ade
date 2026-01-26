@@ -102,6 +102,9 @@ pub(crate) fn session_event_type_label(event_type: &SessionEventType) -> &'stati
         SessionEventType::Init => "init",
         SessionEventType::UserMessage => "user_message",
         SessionEventType::InputQueued => "input_queued",
+        SessionEventType::TurnQueued => "turn_queued",
+        SessionEventType::TurnStarted => "turn_started",
+        SessionEventType::TurnFinished => "turn_finished",
         SessionEventType::AuthRequired => "auth_required",
         SessionEventType::Notice => "notice",
         SessionEventType::AssistantChunk => "assistant_chunk",
@@ -116,6 +119,10 @@ pub(crate) fn session_event_type_label(event_type: &SessionEventType) -> &'stati
         SessionEventType::Done => "done",
         SessionEventType::InterruptRequested => "interrupt_requested",
         SessionEventType::TurnInterrupted => "turn_interrupted",
+        SessionEventType::MessageQueueAdded => "message_queue_added",
+        SessionEventType::MessageQueueUpdated => "message_queue_updated",
+        SessionEventType::MessageQueueRemoved => "message_queue_removed",
+        SessionEventType::MessageQueuePromoted => "message_queue_promoted",
         SessionEventType::Error => "error",
     }
 }

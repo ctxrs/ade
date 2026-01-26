@@ -527,13 +527,55 @@ export type MessageAttachment =
       name?: string | null;
     };
 
+export type SessionEventType =
+  | "init"
+  | "user_message"
+  | "input_queued"
+  | "turn_queued"
+  | "turn_started"
+  | "turn_finished"
+  | "message_queue_added"
+  | "message_queue_updated"
+  | "message_queue_removed"
+  | "message_queue_promoted"
+  | "auth_required"
+  | "notice"
+  | "assistant_chunk"
+  | "thought_chunk"
+  | "assistant_complete"
+  | "assistant_message_inserted"
+  | "tool_call"
+  | "tool_call_update"
+  | "tool_result"
+  | "plan"
+  | "artifacts_set"
+  | "done"
+  | "interrupt_requested"
+  | "turn_interrupted"
+  | "error";
+
+export type TurnLifecycleEventPayload = {
+  message_id?: string;
+  queue_position?: number | null;
+  status?: SessionTurnStatus;
+  reason?: string;
+  provider_cancelled?: boolean;
+};
+
+export type MessageQueueEventPayload = {
+  message_id: string;
+  queue_position?: number | null;
+  previous_position?: number | null;
+  reason?: string;
+};
+
 export type SessionEvent = {
   seq: number;
   id: { 0: string } | string;
   session_id: { 0: string } | string;
   run_id?: { 0: string } | string | null;
   turn_id?: { 0: string } | string | null;
-  event_type: string;
+  event_type: SessionEventType;
   payload_json: any;
   transient?: boolean;
   created_at: string;

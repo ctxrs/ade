@@ -1075,7 +1075,14 @@ impl AppState {
                         | SessionEventType::AssistantMessageInserted
                         | SessionEventType::AssistantComplete
                         | SessionEventType::Done
+                        | SessionEventType::TurnQueued
+                        | SessionEventType::TurnStarted
+                        | SessionEventType::TurnFinished
                         | SessionEventType::TurnInterrupted
+                        | SessionEventType::MessageQueueAdded
+                        | SessionEventType::MessageQueueUpdated
+                        | SessionEventType::MessageQueueRemoved
+                        | SessionEventType::MessageQueuePromoted
                         | SessionEventType::Error
                 );
                 if update_task {
@@ -1092,7 +1099,23 @@ impl AppState {
                 } else {
                     None
                 };
-                let turn = turn_from_event(&event, message.as_ref());
+                let mut turn = turn_from_event(&event, message.as_ref());
+                if turn.is_none()
+                    && matches!(
+                        event.event_type,
+                        SessionEventType::TurnStarted | SessionEventType::TurnFinished
+                    )
+                {
+                    if let Some(turn_id) = event.turn_id {
+                        if let Ok(store) = state.store_for_session(event.session_id).await {
+                            if let Ok(Some(fetched)) =
+                                store.get_session_turn(event.session_id, turn_id).await
+                            {
+                                turn = Some(fetched);
+                            }
+                        }
+                    }
+                }
 
                 let last_event_seq = if stream_only {
                     state

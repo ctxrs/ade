@@ -48,7 +48,10 @@ const normalizeId = (value: unknown): string => {
   return String(idToString(value as { 0?: string } | string) || "").trim();
 };
 
-const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk", "thought_chunk"]);
+const PARTIAL_EVENT_TYPES: Set<SessionEvent["event_type"]> = new Set([
+  "assistant_chunk",
+  "thought_chunk",
+]);
 
 const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
   if (!event) return false;

@@ -932,6 +932,9 @@ pub enum SessionEventType {
     Init,
     UserMessage,
     InputQueued,
+    TurnQueued,
+    TurnStarted,
+    TurnFinished,
     AuthRequired,
     Notice,
     AssistantChunk,
@@ -946,6 +949,10 @@ pub enum SessionEventType {
     Done,
     InterruptRequested,
     TurnInterrupted,
+    MessageQueueAdded,
+    MessageQueueUpdated,
+    MessageQueueRemoved,
+    MessageQueuePromoted,
     Error,
 }
 

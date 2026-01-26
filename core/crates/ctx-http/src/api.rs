@@ -6940,6 +6940,20 @@ async fn delete_message(
     if let Some(turn_id) = msg.turn_id {
         let _ = store.delete_session_turn(msg.session_id, turn_id).await;
     }
+    let removed = store
+        .append_session_event(
+            msg.session_id,
+            msg.run_id,
+            msg.turn_id,
+            SessionEventType::MessageQueueRemoved,
+            serde_json::json!({
+                "message_id": msg.id.0,
+                "reason": "user_delete",
+            }),
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state.publish_event(removed).await;
 
     if let Some(tx) = state.scheduler_sender(msg.session_id).await {
         let _ = tx.send(SchedulerCommand::RemoveQueued(msg_id)).await;
@@ -7297,6 +7311,47 @@ async fn post_message(
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         state.publish_event(queued).await;
+
+        let queue_position = store
+            .list_queued_messages_for_session(session_id)
+            .await
+            .ok()
+            .and_then(|messages| {
+                messages
+                    .iter()
+                    .position(|message| message.id == saved.id)
+                    .map(|idx| idx as i64)
+            });
+
+        let queue_added = store
+            .append_session_event(
+                session_id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::MessageQueueAdded,
+                serde_json::json!({
+                    "message_id": saved.id.0,
+                    "queue_position": queue_position,
+                }),
+            )
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        state.publish_event(queue_added).await;
+
+        let turn_queued = store
+            .append_session_event(
+                session_id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::TurnQueued,
+                serde_json::json!({
+                    "message_id": saved.id.0,
+                    "queue_position": queue_position,
+                }),
+            )
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        state.publish_event(turn_queued).await;
     }
 
     let tx = state.ensure_scheduler(session.clone()).await;
@@ -8282,6 +8337,7 @@ async fn wait_for_run_terminal_event(
                         SessionEventType::Done
                             | SessionEventType::Error
                             | SessionEventType::TurnInterrupted
+                            | SessionEventType::TurnFinished
                     )
                 {
                     return Ok(event.event_type);
@@ -8371,7 +8427,7 @@ async fn run_subagent_child(
         .ok_or_else(|| "subagent run_id missing".to_string())?;
     let terminal = wait_for_run_terminal_event(state, child.child_session_id, run_id).await;
     let status = match terminal {
-        Ok(SessionEventType::Done) => "completed",
+        Ok(SessionEventType::Done) | Ok(SessionEventType::TurnFinished) => "completed",
         Ok(SessionEventType::TurnInterrupted) => "interrupted",
         Ok(SessionEventType::Error) => "failed",
         Ok(_) => "completed",
@@ -9263,7 +9319,7 @@ async fn mcp_agent_reply(
     let (run_id, _message) = enqueue_subagent_prompt(&state, &child, prompt).await?;
     let terminal = wait_for_run_terminal_event(&state, child.id, run_id).await;
     let status = match terminal {
-        Ok(SessionEventType::Done) => "completed",
+        Ok(SessionEventType::Done) | Ok(SessionEventType::TurnFinished) => "completed",
         Ok(SessionEventType::TurnInterrupted) => "interrupted",
         Ok(SessionEventType::Error) => "failed",
         Ok(_) => "completed",

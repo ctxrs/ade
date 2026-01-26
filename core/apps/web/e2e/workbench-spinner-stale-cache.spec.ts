@@ -99,7 +99,7 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
   expect(snapshot).not.toBeNull();
   const head = snapshot?.head ?? {};
 
-  const doneLike = new Set(["done", "assistant_complete", "turn_interrupted"]);
+  const doneLike = new Set(["done", "assistant_complete", "turn_finished", "turn_interrupted"]);
   const staleEvents = Array.isArray(head.events)
     ? head.events.filter((ev: any) => !doneLike.has(String(ev?.event_type ?? "")))
     : [];

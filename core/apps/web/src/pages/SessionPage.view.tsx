@@ -1531,7 +1531,6 @@ export function SessionView({
         );
       }
       // Refresh Messages immediately so user turns render without waiting for a `done` event.
-      supervisor.refreshQueue(id);
       supervisor.refreshSession(id, { watchDiff: true });
       try {
         await onDraftPersistNow?.();
@@ -1562,7 +1561,6 @@ export function SessionView({
       setSendError(e?.message ? String(e.message) : String(e));
     } finally {
       setQueueActionBusyId(null);
-      supervisor.refreshQueue(id);
     }
   };
 
@@ -1582,7 +1580,6 @@ export function SessionView({
       setSendError(e?.message ? String(e.message) : String(e));
     } finally {
       setQueueActionBusyId(null);
-      supervisor.refreshQueue(id);
     }
   };
 
@@ -1607,10 +1604,8 @@ export function SessionView({
     } catch (e: any) {
       setSendError(e?.message ? String(e.message) : String(e));
       setQueueActionBusyId(null);
-      supervisor.refreshQueue(id);
       return;
     }
-    supervisor.refreshQueue(id);
     setSendBusy(true);
 
     const optimisticId = createClientMessageId();

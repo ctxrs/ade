@@ -129,6 +129,20 @@ pub async fn session_worker(
                     }
                     _ => session.clone(),
                 };
+                if matches!(msg.message.delivery, MessageDelivery::Queued) {
+                    let _ = emit_event(
+                        &state,
+                        session.id,
+                        msg.message.run_id,
+                        msg.message.turn_id,
+                        SessionEventType::MessageQueuePromoted,
+                        json!({
+                            "message_id": msg.message.id.0,
+                            "previous_position": 0,
+                        }),
+                    )
+                    .await;
+                }
                 match start_turn(&state, &session_for_turn, &workdir, &env_target, msg).await {
                     Ok(turn) => {
                         state.set_running(session.id, true).await;
@@ -167,14 +181,14 @@ pub async fn session_worker(
                     }
                     Some(SchedulerCommand::Cancel) => {
                         if let Some(turn) = running.take() {
-                            let _ = turn.adapter.cancel(turn.handle).await;
-                            if !send_turn_interrupted(
+                            let sent = send_turn_interrupted(
                                 &turn.event_tx,
                                 "user_cancel",
                                 true,
                             )
-                            .await
-                            {
+                            .await;
+                            let _ = turn.adapter.cancel(turn.handle).await;
+                            if !sent {
                                 let _ = reconcile_turn_terminal_state(
                                     &state,
                                     session.id,
@@ -197,14 +211,14 @@ pub async fn session_worker(
                                 SessionEventType::InterruptRequested,
                                 json!({"by":"user"}),
                             ).await;
-                            let _ = turn.adapter.cancel(turn.handle).await;
-                            if !send_turn_interrupted(
+                            let sent = send_turn_interrupted(
                                 &turn.event_tx,
                                 "user_interrupt",
                                 true,
                             )
-                            .await
-                            {
+                            .await;
+                            let _ = turn.adapter.cancel(turn.handle).await;
+                            if !sent {
                                 let _ = reconcile_turn_terminal_state(
                                     &state,
                                     session.id,
@@ -256,6 +270,7 @@ async fn start_turn(
     };
 
     let mut message = queued.message;
+    let message_id = message.id;
     let perf_run_id = queued.run_id.clone();
     let queue_wait_ms = queued.enqueued_at.elapsed().as_millis() as u64;
     let mut queue_labels = HashMap::new();
@@ -306,6 +321,17 @@ async fn start_turn(
             Utc::now(),
         )
         .await;
+    let _ = emit_event(
+        state,
+        session.id,
+        Some(run_id),
+        Some(turn_id),
+        SessionEventType::TurnStarted,
+        json!({
+            "message_id": message.id.0,
+        }),
+    )
+    .await;
 
     let prompt = message.content.clone();
     let mut provider_session_ref = session.provider_session_ref.clone();
@@ -902,6 +928,18 @@ async fn start_turn(
                                 &[SessionEventType::ThoughtChunk],
                             )
                             .await;
+                        let _ = emit_event(
+                            &state_for_events,
+                            session_id,
+                            Some(run_id),
+                            Some(turn_id),
+                            SessionEventType::TurnFinished,
+                            json!({
+                                "message_id": message_id.0,
+                                "status": "completed",
+                            }),
+                        )
+                        .await;
                     }
                     SessionEventType::TurnInterrupted => {
                         if !telemetry_emitted {
@@ -965,8 +1003,25 @@ async fn start_turn(
                                 ],
                             )
                             .await;
+                        let _ = emit_event(
+                            &state_for_events,
+                            session_id,
+                            Some(run_id),
+                            Some(turn_id),
+                            SessionEventType::TurnFinished,
+                            json!({
+                                "message_id": message_id.0,
+                                "status": "interrupted",
+                                "reason": event.payload_json.get("reason").cloned(),
+                                "provider_cancelled": event.payload_json.get("provider_cancelled").cloned(),
+                            }),
+                        )
+                        .await;
                     }
                     SessionEventType::Error => {
+                        if matches!(terminal_status, Some(SessionTurnStatus::Interrupted)) {
+                            continue;
+                        }
                         if !telemetry_emitted {
                             telemetry_emitted = true;
                             let duration_ms = run_started_at.elapsed().as_millis() as u64;
@@ -1028,6 +1083,18 @@ async fn start_turn(
                                 ],
                             )
                             .await;
+                        let _ = emit_event(
+                            &state_for_events,
+                            session_id,
+                            Some(run_id),
+                            Some(turn_id),
+                            SessionEventType::TurnFinished,
+                            json!({
+                                "message_id": message_id.0,
+                                "status": "failed",
+                            }),
+                        )
+                        .await;
                     }
                     _ => {}
                 }
@@ -1054,7 +1121,8 @@ async fn send_turn_interrupted(
             event_type: SessionEventType::TurnInterrupted,
             payload_json: json!({
                 "reason": reason,
-                "provider_cancelled": provider_cancelled
+                "provider_cancelled": provider_cancelled,
+                "status": "interrupted",
             }),
         })
         .await
@@ -1086,7 +1154,10 @@ pub async fn reconcile_turn_terminal_state(
     if let Some(event) = events.iter().rev().find(|ev| {
         matches!(
             ev.event_type,
-            SessionEventType::Done | SessionEventType::Error | SessionEventType::TurnInterrupted
+            SessionEventType::Done
+                | SessionEventType::Error
+                | SessionEventType::TurnInterrupted
+                | SessionEventType::TurnFinished
         )
     }) {
         match event.event_type {
@@ -1099,6 +1170,18 @@ pub async fn reconcile_turn_terminal_state(
                         SessionTurnStatus::Completed,
                         Some(event.seq),
                         metrics,
+                        event.created_at,
+                    )
+                    .await;
+            }
+            SessionEventType::TurnFinished => {
+                let _ = store
+                    .update_session_turn_status(
+                        session_id,
+                        turn_id,
+                        SessionTurnStatus::Completed,
+                        Some(event.seq),
+                        None,
                         event.created_at,
                     )
                     .await;
@@ -1151,6 +1234,19 @@ pub async fn reconcile_turn_terminal_state(
             event.created_at,
         )
         .await;
+    let _ = emit_event(
+        state,
+        session_id,
+        run_id,
+        Some(turn_id),
+        SessionEventType::TurnFinished,
+        json!({
+            "message_id": turn.user_message_id.map(|id| id.0),
+            "status": "interrupted",
+            "reason": fallback_reason,
+        }),
+    )
+    .await;
     Ok(())
 }
 

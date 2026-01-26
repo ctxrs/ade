@@ -465,14 +465,43 @@ impl WorkspaceActiveSnapshotHub {
         workspace_id: WorkspaceId,
         summary: SessionSnapshotSummary,
     ) {
-        let (tx, snapshot_rev) = {
+        let session_id = summary.session.id;
+        let task_id = summary.session.task_id;
+        let summary_for_task = summary.clone();
+        let (tx, snapshot_rev, task_update) = {
             let mut guard = self.inner.lock().await;
             let entry = guard
                 .entry(workspace_id)
                 .or_insert_with(WorkspaceActiveSnapshotEntry::new);
             entry.snapshot_rev += 1;
-            (entry.tx.clone(), entry.snapshot_rev)
+            let mut update = None;
+            if let Some(active_task) = entry.active_tasks.get_mut(&task_id) {
+                let mut changed = false;
+                if active_task.primary_session.session.id == session_id {
+                    active_task.primary_session = summary_for_task.clone();
+                    changed = true;
+                }
+                if let Some(idx) = active_task
+                    .sessions
+                    .iter()
+                    .position(|session| session.session.id == session_id)
+                {
+                    active_task.sessions[idx] = summary_for_task;
+                    changed = true;
+                }
+                if changed {
+                    update = Some(active_task.clone());
+                }
+            }
+            (entry.tx.clone(), entry.snapshot_rev, update)
         };
+        if let Some(task) = task_update {
+            let _ = tx.send(WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+                workspace_id,
+                snapshot_rev,
+                task: Box::new(task),
+            });
+        }
         let _ = tx.send(WorkspaceActiveSnapshotEvent::SessionSummary {
             workspace_id,
             snapshot_rev,
