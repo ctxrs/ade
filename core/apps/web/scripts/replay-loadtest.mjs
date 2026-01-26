@@ -86,8 +86,37 @@ if (!workspaceId) {
   throw new Error("Fixture missing workspace id.");
 }
 
-const streamEvents = Array.isArray(fixture.stream) ? fixture.stream : [];
+let streamEvents = Array.isArray(fixture.stream) ? fixture.stream : [];
 const snapshotBySession = fixture.session_snapshots || {};
+const activeHeads = Array.isArray(fixture.active_heads?.heads)
+  ? fixture.active_heads.heads
+  : Object.values(snapshotBySession)
+      .map((snapshot) => snapshot?.head)
+      .filter(Boolean);
+const activeHeadsBatch = {
+  workspace_id: workspaceId,
+  snapshot_rev: fixture.active_snapshot?.snapshot_rev ?? 0,
+  heads: activeHeads,
+};
+const hasSnapshotEvent = streamEvents.some((item) => {
+  const event = item?.event;
+  return Boolean(
+    event?.type === "snapshot" || event?.snapshot || event?.active_snapshot || event?.activeSnapshot,
+  );
+});
+if (!hasSnapshotEvent && fixture.active_snapshot) {
+  streamEvents = [
+    {
+      delay_ms: 0,
+      event: {
+        type: "snapshot",
+        snapshot: fixture.active_snapshot,
+        active_heads: activeHeadsBatch,
+      },
+    },
+    ...streamEvents,
+  ];
+}
 
 const respondJson = async (route, body, status = 200) => {
   await route.fulfill({
@@ -95,6 +124,142 @@ const respondJson = async (route, body, status = 200) => {
     contentType: "application/json",
     body: JSON.stringify(body ?? null),
   });
+};
+
+const buildWorkerShim = (events, passthroughUrl) => {
+  const payload = JSON.stringify(events ?? []);
+  const safePayload = JSON.stringify(payload).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  const passthrough = JSON.stringify(passthroughUrl);
+  return `
+const __CTX_LOAD_TEST_EVENTS__ = JSON.parse(${safePayload});
+self.__CTX_LOAD_TEST__ = true;
+self.__CTX_LOAD_TEST_EVENTS__ = __CTX_LOAD_TEST_EVENTS__;
+
+const OriginalWebSocket = self.WebSocket;
+const matchesReplay = (url) => {
+  const u = String(url ?? "");
+  return u.includes("/api/workspaces/") && u.includes("/active_snapshot/stream");
+};
+
+class ReplayWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+
+  constructor(url, protocols) {
+    if (!matchesReplay(url)) {
+      return new OriginalWebSocket(url, protocols);
+    }
+    this.url = String(url ?? "");
+    this.readyState = ReplayWebSocket.CONNECTING;
+    this.protocol = "";
+    this.extensions = "";
+    this.binaryType = "blob";
+    this.bufferedAmount = 0;
+    this.onopen = null;
+    this.onmessage = null;
+    this.onerror = null;
+    this.onclose = null;
+    this._listeners = new Map();
+    this._timers = [];
+    this._closed = false;
+
+    const openTimer = self.setTimeout(() => {
+      if (this._closed) return;
+      this.readyState = ReplayWebSocket.OPEN;
+      this._emit("open");
+      this._startReplay();
+    }, 0);
+    this._timers.push(openTimer);
+  }
+
+  addEventListener(type, listener) {
+    const list = this._listeners.get(type) || [];
+    list.push(listener);
+    this._listeners.set(type, list);
+  }
+
+  removeEventListener(type, listener) {
+    const list = this._listeners.get(type);
+    if (!list) return;
+    const next = list.filter((item) => item !== listener);
+    if (next.length === 0) {
+      this._listeners.delete(type);
+    } else {
+      this._listeners.set(type, next);
+    }
+  }
+
+  dispatchEvent(event) {
+    const list = this._listeners.get(event.type) || [];
+    for (const listener of list) {
+      if (typeof listener === "function") {
+        listener.call(this, event);
+      } else if (listener && typeof listener.handleEvent === "function") {
+        listener.handleEvent.call(listener, event);
+      }
+    }
+    return true;
+  }
+
+  send() {
+    // Ignore client messages; replay is one-way.
+  }
+
+  close() {
+    if (this._closed) return;
+    this.readyState = ReplayWebSocket.CLOSED;
+    this._closed = true;
+    for (const timer of this._timers) {
+      self.clearTimeout(timer);
+    }
+    this._timers = [];
+    this._emit("close");
+  }
+
+  _emit(type, data) {
+    let evt;
+    if (type === "message") {
+      if (typeof MessageEvent !== "undefined") {
+        evt = new MessageEvent("message", { data });
+      } else {
+        evt = new Event("message");
+        evt.data = data;
+      }
+    } else if (type === "close") {
+      if (typeof CloseEvent !== "undefined") {
+        evt = new CloseEvent("close", { code: 1000, reason: "replay complete", wasClean: true });
+      } else {
+        evt = new Event("close");
+      }
+    } else {
+      evt = new Event(type);
+    }
+
+    const handler = this[\`on\${type}\`];
+    if (typeof handler === "function") {
+      handler.call(this, evt);
+    }
+    this.dispatchEvent(evt);
+  }
+
+  _startReplay() {
+    const events = self.__CTX_LOAD_TEST_EVENTS__ || [];
+    for (const item of events) {
+      const delay = Math.max(0, Number(item?.delay_ms ?? 0));
+      const timer = self.setTimeout(() => {
+        if (this._closed || this.readyState !== ReplayWebSocket.OPEN) return;
+        this._emit("message", JSON.stringify(item.event));
+      }, delay);
+      this._timers.push(timer);
+    }
+  }
+}
+
+self.WebSocket = ReplayWebSocket;
+import(${passthrough});
+`;
 };
 
 const browser = await chromium.launch({ headless: true });
@@ -230,11 +395,29 @@ await page.addInitScript((events) => {
   window.WebSocket = ReplayWebSocket;
 }, streamEvents);
 
+await page.route("**/*workspaceActiveSnapshot.worker*", async (route) => {
+  const url = route.request().url();
+  if (url.includes("ctx_replay_passthrough=1")) {
+    await route.continue();
+    return;
+  }
+  const passthroughUrl = `${url}${url.includes("?") ? "&" : "?"}ctx_replay_passthrough=1`;
+  await route.fulfill({
+    status: 200,
+    contentType: "application/javascript",
+    body: buildWorkerShim(streamEvents, passthroughUrl),
+  });
+});
+
 await page.route("**/api/**", async (route) => {
   const request = route.request();
   const url = new URL(request.url());
   const method = request.method().toUpperCase();
   const pathname = url.pathname;
+  if (!pathname.startsWith("/api/")) {
+    await route.continue();
+    return;
+  }
 
   if (method === "OPTIONS") {
     await route.fulfill({ status: 204 });
@@ -251,6 +434,11 @@ await page.route("**/api/**", async (route) => {
     return;
   }
 
+  if (pathname === "/api/workspaces") {
+    await respondJson(route, fixture.workspace ? [fixture.workspace] : []);
+    return;
+  }
+
   if (pathname === `/api/workspaces/${workspaceId}`) {
     await respondJson(route, fixture.workspace);
     return;
@@ -258,6 +446,11 @@ await page.route("**/api/**", async (route) => {
 
   if (pathname === `/api/workspaces/${workspaceId}/active_snapshot`) {
     await respondJson(route, fixture.active_snapshot);
+    return;
+  }
+
+  if (pathname === `/api/workspaces/${workspaceId}/active_heads`) {
+    await respondJson(route, activeHeadsBatch);
     return;
   }
 
@@ -325,6 +518,7 @@ await page.route("**/api/**", async (route) => {
     return;
   }
 
+  console.log("Fixture miss:", method, pathname);
   await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "fixture miss" }) });
 });
 

@@ -278,6 +278,10 @@ async fn handle_mobile_secure_ws(
                                     continue;
                                 }
                             };
+                            let ResolvedWorkspaceActiveSubscriptions {
+                                sessions: resolved_sessions,
+                                state: next_state,
+                            } = resolved;
 
                             control.clear().await;
                             head_buffer.clear().await;
@@ -295,15 +299,15 @@ async fn handle_mobile_secure_ws(
                             }
 
                             let mut skip_replay_sessions = HashSet::new();
-                            if include_active_heads && resolved.state.active_scope {
-                                for session_id in resolved.state.active_task_sessions.values() {
+                            if include_active_heads && next_state.active_scope {
+                                for session_id in next_state.active_task_sessions.values() {
                                     skip_replay_sessions.insert(*session_id);
                                 }
                             }
 
                             let mut next_map = HashMap::new();
                             let mut replay_failed = false;
-                            for sub in resolved.sessions {
+                            for sub in resolved_sessions {
                                 let after_seq = sub.after_seq.unwrap_or(0);
                                 let session_id = sub.session_id;
                                 if include_active_heads
@@ -319,6 +323,8 @@ async fn handle_mobile_secure_ws(
                                 }
                                 let control = control.clone();
                                 let head_buffer = head_buffer.clone();
+                                let foreground_session_ids =
+                                    next_state.foreground_session_ids.clone();
                                 let replay = replay_session_events_secure(
                                     &state,
                                     workspace_id,
@@ -327,6 +333,8 @@ async fn handle_mobile_secure_ws(
                                     move |event| {
                                         let control = control.clone();
                                         let head_buffer = head_buffer.clone();
+                                        let foreground_session_ids =
+                                            foreground_session_ids.clone();
                                         async move {
                                             match event {
                                                 WorkspaceActiveSnapshotStreamMessage::Event {
@@ -338,8 +346,13 @@ async fn handle_mobile_secure_ws(
                                                         },
                                                     ..
                                                 } => {
+                                                    let delta =
+                                                        filter_partial_delta_for_foreground(
+                                                            *delta,
+                                                            &foreground_session_ids,
+                                                        );
                                                     if let Err(err) =
-                                                        head_buffer.push(snapshot_rev, *delta).await
+                                                        head_buffer.push(snapshot_rev, delta).await
                                                     {
                                                         log_head_batch_push_error(
                                                             "replay_secure",
@@ -396,7 +409,7 @@ async fn handle_mobile_secure_ws(
                                 continue;
                             }
                             subscriptions = next_map;
-                            subscription_state = resolved.state;
+                            subscription_state = next_state;
                         }
                         Some(Ok(WsMessage::Close(_))) => break,
                         Some(Ok(_)) => {}
@@ -478,6 +491,42 @@ async fn handle_mobile_secure_ws(
                         }
                     }
 
+                    if let Some(foreground_task_id) = subscription_state.foreground_task_id {
+                        match &event {
+                            WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. }
+                                if task.task.id == foreground_task_id =>
+                            {
+                                subscription_state.foreground_session_ids =
+                                    Some(session_ids_for_active_task_summary(task));
+                            }
+                            WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. }
+                                if *task_id == foreground_task_id =>
+                            {
+                                subscription_state.foreground_session_ids =
+                                    Some(HashSet::new());
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionSummary { summary, .. }
+                                if summary.session.task_id == foreground_task_id =>
+                            {
+                                if let Some(ids) =
+                                    subscription_state.foreground_session_ids.as_mut()
+                                {
+                                    ids.insert(summary.session.id);
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. }
+                                if head.session.task_id == foreground_task_id =>
+                            {
+                                if let Some(ids) =
+                                    subscription_state.foreground_session_ids.as_mut()
+                                {
+                                    ids.insert(head.session.id);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
                     match &event {
                         WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
                             let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
@@ -524,8 +573,12 @@ async fn handle_mobile_secure_ws(
                             delta,
                             ..
                         } => {
+                            let delta = filter_partial_delta_for_foreground(
+                                *delta,
+                                &subscription_state.foreground_session_ids,
+                            );
                             if let Err(err) =
-                                head_buffer.push(snapshot_rev, *delta).await
+                                head_buffer.push(snapshot_rev, delta).await
                             {
                                 log_head_batch_push_error(
                                     "event_secure",
@@ -600,6 +653,8 @@ struct WorkspaceActiveSubscriptionState {
     active_scope: bool,
     explicit_sessions: HashSet<SessionId>,
     active_task_sessions: HashMap<TaskId, SessionId>,
+    foreground_task_id: Option<TaskId>,
+    foreground_session_ids: Option<HashSet<SessionId>>,
 }
 
 struct ResolvedWorkspaceActiveSubscriptions {
@@ -943,6 +998,30 @@ fn is_partial_event(event: &SessionEvent) -> bool {
         event.event_type,
         SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
     )
+}
+
+fn allows_partial_for_foreground(
+    foreground_session_ids: &Option<HashSet<SessionId>>,
+    session_id: SessionId,
+) -> bool {
+    match foreground_session_ids {
+        None => true,
+        Some(ids) => ids.contains(&session_id),
+    }
+}
+
+fn filter_partial_delta_for_foreground(
+    mut delta: SessionHeadDelta,
+    foreground_session_ids: &Option<HashSet<SessionId>>,
+) -> SessionHeadDelta {
+    if let Some(event) = delta.event.as_ref() {
+        if is_partial_event(event)
+            && !allows_partial_for_foreground(foreground_session_ids, delta.session_id)
+        {
+            delta.event = None;
+        }
+    }
+    delta
 }
 
 fn is_same_partial_type(prev: &SessionEvent, next: &SessionEvent) -> bool {
@@ -1477,6 +1556,37 @@ fn primary_session_id_for_active_task(task: &WorkspaceActiveTaskSummary) -> Sess
         .unwrap_or(task.primary_session.session.id)
 }
 
+fn session_ids_for_active_task_summary(task: &WorkspaceActiveTaskSummary) -> HashSet<SessionId> {
+    let mut sessions = HashSet::new();
+    sessions.insert(task.primary_session.session.id);
+    for summary in &task.sessions {
+        sessions.insert(summary.session.id);
+    }
+    sessions
+}
+
+async fn resolve_foreground_task_sessions(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    task_id: TaskId,
+) -> HashSet<SessionId> {
+    if let Some(summary) = state
+        .workspace_active_snapshot
+        .active_task_summary(workspace_id, task_id)
+        .await
+    {
+        return session_ids_for_active_task_summary(&summary);
+    }
+    let store = match state.store_for_workspace(workspace_id).await {
+        Ok(store) => store,
+        Err(_) => return HashSet::new(),
+    };
+    match store.get_workspace_active_task_summary(task_id).await {
+        Ok(Some(summary)) => session_ids_for_active_task_summary(&summary),
+        _ => HashSet::new(),
+    }
+}
+
 async fn resolve_workspace_active_snapshot_subscriptions(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
@@ -1488,6 +1598,7 @@ async fn resolve_workspace_active_snapshot_subscriptions(
             session_ids,
             sessions,
             task_ids,
+            foreground_task_id,
             scope,
             ..
         } => {
@@ -1496,6 +1607,7 @@ async fn resolve_workspace_active_snapshot_subscriptions(
             let mut explicit_sessions = HashSet::new();
             let mut active_task_sessions = HashMap::new();
             let mut active_scope = false;
+            let mut foreground_session_ids = None;
             for sub in sessions {
                 after_map.insert(sub.session_id, sub.after_seq);
                 resolved.insert(sub.session_id);
@@ -1536,6 +1648,10 @@ async fn resolve_workspace_active_snapshot_subscriptions(
                     }
                 }
             }
+            if let Some(task_id) = foreground_task_id {
+                let sessions = resolve_foreground_task_sessions(state, workspace_id, task_id).await;
+                foreground_session_ids = Some(sessions);
+            }
 
             let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = resolved
                 .into_iter()
@@ -1564,6 +1680,8 @@ async fn resolve_workspace_active_snapshot_subscriptions(
                     active_scope,
                     explicit_sessions,
                     active_task_sessions,
+                    foreground_task_id,
+                    foreground_session_ids,
                 },
             })
         }
@@ -1764,6 +1882,10 @@ async fn handle_workspace_active_snapshot_ws(
                                         continue;
                                     }
                                 };
+                                let ResolvedWorkspaceActiveSubscriptions {
+                                    sessions: resolved_sessions,
+                                    state: next_state,
+                                } = resolved;
 
                                 control.clear().await;
                                 head_buffer.clear().await;
@@ -1781,15 +1903,15 @@ async fn handle_workspace_active_snapshot_ws(
                                 }
 
                                 let mut skip_replay_sessions = HashSet::new();
-                                if include_active_heads && resolved.state.active_scope {
-                                    for session_id in resolved.state.active_task_sessions.values() {
+                                if include_active_heads && next_state.active_scope {
+                                    for session_id in next_state.active_task_sessions.values() {
                                         skip_replay_sessions.insert(*session_id);
                                     }
                                 }
 
                                 let mut next_map = HashMap::new();
                                 let mut replay_failed = false;
-                                for sub in resolved.sessions {
+                                for sub in resolved_sessions {
                                     let after_seq = sub.after_seq.unwrap_or(0);
                                     let session_id = sub.session_id;
                                     if include_active_heads
@@ -1805,6 +1927,8 @@ async fn handle_workspace_active_snapshot_ws(
                                     }
                                     let control = control.clone();
                                     let head_buffer = head_buffer.clone();
+                                    let foreground_session_ids =
+                                        next_state.foreground_session_ids.clone();
                                     let replay = replay_session_events_active(
                                         &state,
                                         workspace_id,
@@ -1813,23 +1937,30 @@ async fn handle_workspace_active_snapshot_ws(
                                         move |event| {
                                             let control = control.clone();
                                             let head_buffer = head_buffer.clone();
+                                            let foreground_session_ids =
+                                                foreground_session_ids.clone();
                                             async move {
                                                 match event {
-                                                    WorkspaceActiveSnapshotStreamMessage::Event {
-                                                        event:
-                                                            WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                                                                snapshot_rev,
-                                                                delta,
-                                                                ..
-                                                            },
-                                                        ..
-                                                    } => {
-                                                        if let Err(err) =
-                                                            head_buffer.push(snapshot_rev, *delta).await
-                                                        {
-                                                            log_head_batch_push_error(
-                                                                "replay",
-                                                                workspace_id,
+                                                        WorkspaceActiveSnapshotStreamMessage::Event {
+                                                            event:
+                                                                WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                                                    snapshot_rev,
+                                                                    delta,
+                                                                    ..
+                                                                },
+                                                            ..
+                                                        } => {
+                                                            let delta =
+                                                                filter_partial_delta_for_foreground(
+                                                                    *delta,
+                                                                    &foreground_session_ids,
+                                                                );
+                                                            if let Err(err) =
+                                                                head_buffer.push(snapshot_rev, delta).await
+                                                            {
+                                                                log_head_batch_push_error(
+                                                                    "replay",
+                                                                    workspace_id,
                                                                 &err,
                                                             );
                                                             return Err(());
@@ -1882,7 +2013,7 @@ async fn handle_workspace_active_snapshot_ws(
                                     continue;
                                 }
                                 subscriptions = next_map;
-                                subscription_state = resolved.state;
+                                subscription_state = next_state;
                             }
                         }
                         Some(Ok(WsMessage::Binary(bytes))) => {
@@ -1928,6 +2059,10 @@ async fn handle_workspace_active_snapshot_ws(
                                             continue;
                                         }
                                     };
+                                    let ResolvedWorkspaceActiveSubscriptions {
+                                        sessions: resolved_sessions,
+                                        state: next_state,
+                                    } = resolved;
 
                                     control.clear().await;
                                     head_buffer.clear().await;
@@ -1945,15 +2080,15 @@ async fn handle_workspace_active_snapshot_ws(
                                     }
 
                                     let mut skip_replay_sessions = HashSet::new();
-                                    if include_active_heads && resolved.state.active_scope {
-                                        for session_id in resolved.state.active_task_sessions.values() {
+                                    if include_active_heads && next_state.active_scope {
+                                        for session_id in next_state.active_task_sessions.values() {
                                             skip_replay_sessions.insert(*session_id);
                                         }
                                     }
 
                                     let mut next_map = HashMap::new();
                                     let mut replay_failed = false;
-                                    for sub in resolved.sessions {
+                                    for sub in resolved_sessions {
                                         let after_seq = sub.after_seq.unwrap_or(0);
                                         let session_id = sub.session_id;
                                         if include_active_heads
@@ -1969,6 +2104,8 @@ async fn handle_workspace_active_snapshot_ws(
                                         }
                                         let control = control.clone();
                                         let head_buffer = head_buffer.clone();
+                                        let foreground_session_ids =
+                                            next_state.foreground_session_ids.clone();
                                         let replay = replay_session_events_active(
                                             &state,
                                             workspace_id,
@@ -1977,23 +2114,30 @@ async fn handle_workspace_active_snapshot_ws(
                                             move |event| {
                                                 let control = control.clone();
                                                 let head_buffer = head_buffer.clone();
+                                                let foreground_session_ids =
+                                                    foreground_session_ids.clone();
                                                 async move {
                                                     match event {
-                                                        WorkspaceActiveSnapshotStreamMessage::Event {
-                                                            event:
-                                                                WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                                                                    snapshot_rev,
-                                                                    delta,
-                                                                    ..
-                                                                },
-                                                            ..
-                                                        } => {
-                                                            if let Err(err) =
-                                                                head_buffer.push(snapshot_rev, *delta).await
-                                                            {
-                                                                log_head_batch_push_error(
-                                                                    "replay_binary",
-                                                                    workspace_id,
+                                                            WorkspaceActiveSnapshotStreamMessage::Event {
+                                                                event:
+                                                                    WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                                                        snapshot_rev,
+                                                                        delta,
+                                                                        ..
+                                                                    },
+                                                                ..
+                                                            } => {
+                                                                let delta =
+                                                                    filter_partial_delta_for_foreground(
+                                                                        *delta,
+                                                                        &foreground_session_ids,
+                                                                    );
+                                                                if let Err(err) =
+                                                                    head_buffer.push(snapshot_rev, delta).await
+                                                                {
+                                                                    log_head_batch_push_error(
+                                                                        "replay_binary",
+                                                                        workspace_id,
                                                                     &err,
                                                                 );
                                                                 return Err(());
@@ -2046,7 +2190,7 @@ async fn handle_workspace_active_snapshot_ws(
                                         continue;
                                     }
                                     subscriptions = next_map;
-                                    subscription_state = resolved.state;
+                                    subscription_state = next_state;
                                 }
                             }
                         }
@@ -2130,6 +2274,42 @@ async fn handle_workspace_active_snapshot_ws(
                         }
                     }
 
+                    if let Some(foreground_task_id) = subscription_state.foreground_task_id {
+                        match &event {
+                            WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. }
+                                if task.task.id == foreground_task_id =>
+                            {
+                                subscription_state.foreground_session_ids =
+                                    Some(session_ids_for_active_task_summary(task));
+                            }
+                            WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. }
+                                if *task_id == foreground_task_id =>
+                            {
+                                subscription_state.foreground_session_ids =
+                                    Some(HashSet::new());
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionSummary { summary, .. }
+                                if summary.session.task_id == foreground_task_id =>
+                            {
+                                if let Some(ids) =
+                                    subscription_state.foreground_session_ids.as_mut()
+                                {
+                                    ids.insert(summary.session.id);
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. }
+                                if head.session.task_id == foreground_task_id =>
+                            {
+                                if let Some(ids) =
+                                    subscription_state.foreground_session_ids.as_mut()
+                                {
+                                    ids.insert(head.session.id);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
                     match &event {
                         WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
                             let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
@@ -2178,8 +2358,12 @@ async fn handle_workspace_active_snapshot_ws(
                             delta,
                             ..
                         } => {
+                            let delta = filter_partial_delta_for_foreground(
+                                *delta,
+                                &subscription_state.foreground_session_ids,
+                            );
                             if let Err(err) =
-                                head_buffer.push(snapshot_rev, *delta).await
+                                head_buffer.push(snapshot_rev, delta).await
                             {
                                 log_head_batch_push_error(
                                     "event",

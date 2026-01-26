@@ -195,6 +195,7 @@ async fn hot_endpoints_use_cache_when_db_unavailable() {
         session_ids: vec![session.id],
         sessions: Vec::new(),
         task_ids: Vec::new(),
+        foreground_task_id: None,
         scope: None,
         include_active_heads: true,
     };

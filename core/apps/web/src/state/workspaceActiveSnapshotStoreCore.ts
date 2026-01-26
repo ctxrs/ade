@@ -16,6 +16,8 @@ import type {
   WorkspaceTaskSummary,
 } from "@ctx/types";
 import {
+  resolveDaemonBaseUrl,
+  resolveDaemonWsBaseUrl,
   getDaemonBaseUrl,
   getHealth,
   idToString,
@@ -29,6 +31,11 @@ import {
   type PersistedWorkspaceActiveTaskSummaryV1,
 } from "./uiStateStore";
 import { parseWsJson } from "../utils/wsJson";
+import type {
+  WorkspaceActiveSnapshotCommand,
+  WorkspaceActiveSnapshotPatch,
+  WorkspaceActiveSnapshotWorkerMessage,
+} from "./workspaceActiveSnapshotProtocol";
 
 export type WorkspaceActiveSnapshotItem = {
   id: string;
@@ -67,10 +74,24 @@ export type WorkspaceActiveSnapshotEventSource = {
   getSessionHeadSnapshot: (sessionId: string) => SessionHeadSnapshot | null;
   getWorktreeRoot: (worktreeId: string) => string | null;
   setSubscribedSessionIds?: (sessionIds: string[]) => void;
+  setForegroundTaskId?: (taskId: string | null) => void;
+};
+
+type WorkspaceActiveSnapshotStoreOptions = {
+  disableCache?: boolean;
+  disableWorker?: boolean;
+  onPersistRequested?: () => void;
+  onPatch?: (patch: WorkspaceActiveSnapshotPatch) => void;
+  patchFlushMs?: number;
+  authToken?: string | null;
+  wsBaseUrl?: string | null;
+  listWorkspaceArchivedTaskSummaries?: typeof listWorkspaceArchivedTaskSummaries;
 };
 
 const ACTIVE_PAGE_SIZE = 50;
 const SNAPSHOT_WAIT_MS = 1200;
+const FOREGROUND_TASK_DEBOUNCE_MS = 150;
+const WORKSPACE_PATCH_FLUSH_MS = 50;
 const shouldRequestSnapshot = (reason: string): boolean => {
   switch (reason) {
     case "ws_open":
@@ -101,6 +122,21 @@ const dedupeUrls = (urls: string[]): string[] => {
     out.push(url);
   }
   return out;
+};
+
+const toWsBaseUrl = (base: string): string => {
+  const trimmed = base.replace(/\/+$/, "");
+  if (trimmed.startsWith("ws://") || trimmed.startsWith("wss://")) return trimmed;
+  if (trimmed.startsWith("https://")) return trimmed.replace(/^https:\/\//, "wss://");
+  if (trimmed.startsWith("http://")) return trimmed.replace(/^http:\/\//, "ws://");
+  return trimmed;
+};
+
+const toHttpBaseUrl = (base: string): string => {
+  const trimmed = base.replace(/\/+$/, "");
+  if (trimmed.startsWith("ws://")) return trimmed.replace(/^ws:\/\//, "http://");
+  if (trimmed.startsWith("wss://")) return trimmed.replace(/^wss:\/\//, "https://");
+  return trimmed;
 };
 
 const sortSessionSummaries = (summaries: SessionSnapshotSummary[]): SessionSnapshotSummary[] => {
@@ -168,6 +204,14 @@ const readWorkspaceHeadsBatchPayload = (
 
 const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk", "thought_chunk"]);
 const HEAD_EVENT_BUFFER_LIMIT = 800;
+
+const shouldUseWorker = (): boolean => {
+  if (typeof Worker === "undefined") return false;
+  const metaEnv =
+    typeof import.meta !== "undefined" ? (import.meta as { env?: { MODE?: string } }).env : undefined;
+  if (metaEnv?.MODE === "test") return false;
+  return true;
+};
 
 const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
   if (!event) return false;
@@ -301,8 +345,24 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private tasks = new Map<string, WorkspaceActiveSnapshotItem>();
   private sessionHeadsById = new Map<string, SessionHeadSnapshot>();
   private worktreeRootsById = new Map<string, string>();
+  private worker: Worker | null = null;
+  private useWorker = false;
+  private disableCache = false;
+  private disableWorker = false;
+  private persistNotifier: (() => void) | null = null;
+  private workerPatchEmitter: ((patch: WorkspaceActiveSnapshotPatch) => void) | null = null;
+  private workerPatchTimer: number | null = null;
+  private workerPatchPendingEvents: WorkspaceActiveSnapshotEvent[] = [];
+  private workerPatchPendingPersist = false;
+  private workerPatchDirty = false;
+  private workerPatchFlushMs = WORKSPACE_PATCH_FLUSH_MS;
+  private authTokenOverride: string | null = null;
+  private wsBaseUrlOverride: string | null = null;
+  private listWorkspaceArchivedTaskSummariesFn: typeof listWorkspaceArchivedTaskSummaries;
   private subscribedSessionIds: string[] = [];
   private activeSessionIds: string[] = [];
+  private foregroundTaskId: string | null = null;
+  private foregroundTaskTimer: number | null = null;
   private activeOrder: string[] = [];
   private archivedOrder: string[] = [];
   private totalActive = 0;
@@ -321,12 +381,22 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private allowSnapshotReset = false;
   private cacheHydrated = false;
   private liveSnapshotApplied = false;
+  private pendingWorkerCache: PersistedWorkspaceActiveSnapshotV1 | null = null;
   private snapshotWaitTimer: number | null = null;
   private cachePersistTimer: number | null = null;
   private streamQueue: Promise<void> = Promise.resolve();
   private destroyed = false;
 
-  constructor(private workspaceId: string) {
+  constructor(private workspaceId: string, opts?: WorkspaceActiveSnapshotStoreOptions) {
+    this.disableCache = opts?.disableCache ?? false;
+    this.disableWorker = opts?.disableWorker ?? false;
+    this.persistNotifier = opts?.onPersistRequested ?? null;
+    this.workerPatchEmitter = opts?.onPatch ?? null;
+    this.workerPatchFlushMs = opts?.patchFlushMs ?? WORKSPACE_PATCH_FLUSH_MS;
+    this.authTokenOverride = opts?.authToken ?? null;
+    this.wsBaseUrlOverride = opts?.wsBaseUrl ?? null;
+    this.listWorkspaceArchivedTaskSummariesFn =
+      opts?.listWorkspaceArchivedTaskSummaries ?? listWorkspaceArchivedTaskSummaries;
     this.snapshot = {
       workspaceId,
       initialized: false,
@@ -342,6 +412,11 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       hasMoreArchived: false,
       archivedLoaded: false,
     };
+  }
+
+  private shouldUseWorker() {
+    if (this.disableWorker) return false;
+    return shouldUseWorker();
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -368,6 +443,24 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     return this.worktreeRootsById.get(id) ?? null;
   };
 
+  getSessionHeadsSnapshot = (): Record<string, SessionHeadSnapshot> => {
+    const out: Record<string, SessionHeadSnapshot> = {};
+    for (const [id, head] of this.sessionHeadsById.entries()) {
+      out[id] = head;
+    }
+    return out;
+  };
+
+  getWorktreeRootsSnapshot = (): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const [id, root] of this.worktreeRootsById.entries()) {
+      out[id] = root;
+    }
+    return out;
+  };
+
+  getSnapshotRev = (): number => this.snapshotRev;
+
   setSubscribedSessionIds = (sessionIds: string[]) => {
     const activeSet = new Set(this.activeSessionIds);
     const next = sessionIds
@@ -376,17 +469,109 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     const deduped = Array.from(new Set(next));
     if (deduped.join("|") === this.subscribedSessionIds.join("|")) return;
     this.subscribedSessionIds = deduped;
+    if (this.worker) {
+      this.postWorkerCommand({ type: "set_subscribed_session_ids", sessionIds: deduped });
+      return;
+    }
     this.flushSubscriptions("session_ids");
+  };
+
+  setForegroundTaskId = (taskId: string | null) => {
+    const normalized = typeof taskId === "string" ? taskId.trim() : "";
+    const next = normalized ? normalized : null;
+    if (next === this.foregroundTaskId) return;
+    this.foregroundTaskId = next;
+    if (this.worker) {
+      this.postWorkerCommand({ type: "set_foreground_task_id", taskId: next });
+      return;
+    }
+    this.scheduleForegroundTaskFlush();
   };
 
   init = () => {
     this.destroyed = false;
-    void this.hydrateFromCache();
+    const cachePromise = this.disableCache ? Promise.resolve() : this.hydrateFromCache();
+    if (this.shouldUseWorker()) {
+      cachePromise.finally(() => {
+        if (!this.destroyed) {
+          this.startWorker();
+        }
+      });
+      return;
+    }
     this.connectStream().catch(() => {});
   };
 
+  private startWorker() {
+    if (this.worker || this.destroyed) return;
+    this.useWorker = true;
+    this.worker = new Worker(new URL("../workers/workspaceActiveSnapshot.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    this.worker.onmessage = (event: MessageEvent<WorkspaceActiveSnapshotWorkerMessage>) => {
+      const msg = event.data;
+      if (msg?.type !== "patch") return;
+      this.applyWorkerPatch(msg.patch);
+    };
+    const auth = this.authTokenOverride ?? authToken();
+    const wsBaseUrl = this.wsBaseUrlOverride ?? resolveDaemonWsBaseUrl();
+    const baseUrl = resolveDaemonBaseUrl() ?? (wsBaseUrl ? toHttpBaseUrl(wsBaseUrl) : null);
+    this.postWorkerCommand({
+      type: "init",
+      workspaceId: this.workspaceId,
+      authToken: auth,
+      baseUrl,
+      wsBaseUrl: wsBaseUrl || null,
+    });
+    if (this.subscribedSessionIds.length > 0) {
+      this.postWorkerCommand({ type: "set_subscribed_session_ids", sessionIds: this.subscribedSessionIds.slice() });
+    }
+    if (this.foregroundTaskId) {
+      this.postWorkerCommand({ type: "set_foreground_task_id", taskId: this.foregroundTaskId });
+    }
+    if (this.pendingWorkerCache) {
+      this.postWorkerCommand({ type: "seed_cache", snapshot: this.pendingWorkerCache });
+      this.pendingWorkerCache = null;
+    }
+  }
+
+  private postWorkerCommand(cmd: WorkspaceActiveSnapshotCommand) {
+    if (!this.worker) return;
+    this.worker.postMessage(cmd);
+  }
+
+  private applyWorkerPatch(patch: WorkspaceActiveSnapshotPatch) {
+    if (this.destroyed) return;
+    this.snapshot = patch.snapshot;
+    this.tasks = new Map(Object.entries(patch.snapshot.tasksById));
+    this.activeOrder = patch.snapshot.activeIds.slice();
+    this.archivedOrder = patch.snapshot.archivedIds.slice();
+    this.totalActive = patch.snapshot.totalActive;
+    this.totalArchived = patch.snapshot.totalArchived;
+    this.archivedRev = patch.snapshot.archivedRev;
+    this.hasMoreActive = patch.snapshot.hasMoreActive;
+    this.hasMoreArchived = patch.snapshot.hasMoreArchived;
+    this.archivedLoaded = patch.snapshot.archivedLoaded;
+    this.activeSessionIds = patch.activeSessionIds.slice();
+    this.sessionHeadsById = new Map(Object.entries(patch.sessionHeads));
+    this.worktreeRootsById = new Map(Object.entries(patch.worktreeRoots));
+    this.snapshotRev = patch.snapshotRev;
+    this.archivedRev = patch.archivedRev;
+    this.publish();
+    if (patch.persist) {
+      this.schedulePersistCache();
+    }
+    for (const event of patch.events) {
+      this.notifyEventListeners(event);
+    }
+  }
+
   destroy = () => {
     this.destroyed = true;
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
     if (this.ws) {
       try {
         this.ws.close();
@@ -396,14 +581,25 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.ws = null;
     }
     if (this.reconnectTimer) {
-      window.clearTimeout(this.reconnectTimer);
+      globalThis.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
     this.clearSnapshotWarning();
+    if (this.foregroundTaskTimer) {
+      globalThis.clearTimeout(this.foregroundTaskTimer);
+      this.foregroundTaskTimer = null;
+    }
     if (this.cachePersistTimer) {
-      window.clearTimeout(this.cachePersistTimer);
+      globalThis.clearTimeout(this.cachePersistTimer);
       this.cachePersistTimer = null;
     }
+    if (this.workerPatchTimer) {
+      globalThis.clearTimeout(this.workerPatchTimer);
+      this.workerPatchTimer = null;
+    }
+    this.workerPatchPendingEvents = [];
+    this.workerPatchPendingPersist = false;
+    this.workerPatchDirty = false;
     this.listeners.clear();
     this.eventListeners.clear();
   };
@@ -414,15 +610,27 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   ensureArchivedLoaded = () => {
     if (this.archivedLoaded || this.snapshot.fetchState.archived === "loading") return;
+    if (this.worker) {
+      this.postWorkerCommand({ type: "ensure_archived_loaded" });
+      return;
+    }
     this.fetchArchivedPage(true).catch(() => {});
   };
 
   loadMoreArchived = () => {
     if (!this.hasMoreArchived || this.snapshot.fetchState.archived === "loading") return;
+    if (this.worker) {
+      this.postWorkerCommand({ type: "load_more_archived" });
+      return;
+    }
     this.fetchArchivedPage(false).catch(() => {});
   };
 
   applyTaskUpdate(task: Task) {
+    if (this.worker) {
+      this.postWorkerCommand({ type: "apply_task_update", task });
+      return;
+    }
     const id = idToString(task.id);
     if (!id) return;
     const existing = this.tasks.get(id);
@@ -449,6 +657,11 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.schedulePersistCache();
   }
 
+  seedCachedSnapshot(cached: PersistedWorkspaceActiveSnapshotV1) {
+    if (!cached || this.destroyed) return;
+    this.applyCachedActiveSnapshot(cached);
+  }
+
   private async hydrateFromCache() {
     if (this.cacheHydrated) return;
     this.cacheHydrated = true;
@@ -456,6 +669,11 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       const cached = await loadWorkspaceActiveSnapshotV1(this.workspaceId);
       if (!cached || this.destroyed || this.liveSnapshotApplied) return;
       this.applyCachedActiveSnapshot(cached);
+      if (this.worker) {
+        this.postWorkerCommand({ type: "seed_cache", snapshot: cached });
+      } else if (this.shouldUseWorker()) {
+        this.pendingWorkerCache = cached;
+      }
     } catch {
       // ignore cache errors
     }
@@ -514,9 +732,9 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       return;
     }
     if (this.snapshotWaitTimer) {
-      window.clearTimeout(this.snapshotWaitTimer);
+      globalThis.clearTimeout(this.snapshotWaitTimer);
     }
-    this.snapshotWaitTimer = window.setTimeout(() => {
+    this.snapshotWaitTimer = globalThis.setTimeout(() => {
       this.snapshotWaitTimer = null;
       if (this.destroyed) return;
       console.error(
@@ -532,16 +750,55 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   private clearSnapshotWarning() {
     if (!this.snapshotWaitTimer) return;
-    window.clearTimeout(this.snapshotWaitTimer);
+    globalThis.clearTimeout(this.snapshotWaitTimer);
     this.snapshotWaitTimer = null;
   }
 
   private schedulePersistCache() {
+    if (this.workerPatchEmitter) {
+      this.workerPatchPendingPersist = true;
+      this.scheduleWorkerPatchFlush();
+      return;
+    }
     if (this.destroyed || this.cachePersistTimer) return;
-    this.cachePersistTimer = window.setTimeout(() => {
+    this.cachePersistTimer = globalThis.setTimeout(() => {
       this.cachePersistTimer = null;
       this.persistCache().catch(() => {});
     }, 300);
+  }
+
+  private scheduleWorkerPatchFlush() {
+    if (!this.workerPatchEmitter || this.workerPatchTimer) return;
+    this.workerPatchTimer = globalThis.setTimeout(() => {
+      this.workerPatchTimer = null;
+      this.flushWorkerPatch();
+    }, this.workerPatchFlushMs);
+  }
+
+  private flushWorkerPatch() {
+    if (!this.workerPatchEmitter) return;
+    if (
+      !this.workerPatchDirty &&
+      !this.workerPatchPendingPersist &&
+      this.workerPatchPendingEvents.length === 0
+    ) {
+      return;
+    }
+    const events = this.workerPatchPendingEvents.slice();
+    this.workerPatchPendingEvents = [];
+    const patch: WorkspaceActiveSnapshotPatch = {
+      snapshot: this.snapshot,
+      sessionHeads: this.getSessionHeadsSnapshot(),
+      worktreeRoots: this.getWorktreeRootsSnapshot(),
+      events,
+      snapshotRev: this.snapshotRev,
+      archivedRev: this.archivedRev,
+      activeSessionIds: this.activeSessionIds.slice(),
+      persist: this.workerPatchPendingPersist,
+    };
+    this.workerPatchDirty = false;
+    this.workerPatchPendingPersist = false;
+    this.workerPatchEmitter(patch);
   }
 
   private async persistCache() {
@@ -728,7 +985,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     }
     this.setFetchState("archived", "loading");
     try {
-      const page = await listWorkspaceArchivedTaskSummaries(this.workspaceId, {
+      const page = await this.listWorkspaceArchivedTaskSummariesFn(this.workspaceId, {
         limit: ACTIVE_PAGE_SIZE,
         cursor: this.archivedCursor ?? undefined,
       });
@@ -779,26 +1036,30 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   }
 
   private async resolveWsUrls(): Promise<string[]> {
-    const token = authToken();
+    const token = this.authTokenOverride ?? authToken();
     const qs = token ? `?token=${encodeURIComponent(token)}` : "";
     const urls: string[] = [];
-    const sameOrigin = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`;
-    urls.push(sameOrigin);
+    const wsBaseOverride = this.wsBaseUrlOverride ? toWsBaseUrl(this.wsBaseUrlOverride) : "";
+    if (wsBaseOverride) {
+      urls.push(`${wsBaseOverride}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`);
+    }
+
+    const location = typeof globalThis.location === "object" ? globalThis.location : null;
+    if (location?.host) {
+      const sameOrigin = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`;
+      urls.push(sameOrigin);
+    }
 
     const configured = getDaemonBaseUrl();
     if (configured) {
-      const wsBase = configured.startsWith("https://")
-        ? configured.replace(/^https:\/\//, "wss://")
-        : configured.replace(/^http:\/\//, "ws://");
+      const wsBase = toWsBaseUrl(configured);
       urls.push(`${wsBase}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`);
-    } else {
+    } else if (!wsBaseOverride) {
       try {
         const health = await getHealth();
         const base = String(health.daemon_url || "").trim();
         if (base) {
-          const wsBase = base.startsWith("https://")
-            ? base.replace(/^https:\/\//, "wss://")
-            : base.replace(/^http:\/\//, "ws://");
+          const wsBase = toWsBaseUrl(base);
           urls.push(`${wsBase}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`);
         }
       } catch {
@@ -813,7 +1074,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       const ws = new WebSocket(url);
       this.ws = ws;
       let opened = false;
-      const timeoutId = window.setTimeout(() => {
+      const timeoutId = globalThis.setTimeout(() => {
         if (opened) return;
         try {
           ws.close();
@@ -828,7 +1089,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
       ws.onopen = () => {
         opened = true;
-        window.clearTimeout(timeoutId);
+        globalThis.clearTimeout(timeoutId);
         if (this.destroyed) {
           try {
             ws.close();
@@ -854,7 +1115,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       };
 
       ws.onerror = () => {
-        window.clearTimeout(timeoutId);
+        globalThis.clearTimeout(timeoutId);
         if (!opened) {
           if (this.ws === ws) {
             this.ws = null;
@@ -878,7 +1139,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (this.reconnectTimer || this.destroyed) return;
     const delay = this.reconnectDelayMs;
     this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, 15000);
-    this.reconnectTimer = window.setTimeout(() => {
+    this.reconnectTimer = globalThis.setTimeout(() => {
       this.reconnectTimer = null;
       this.connectStream().catch(() => {});
     }, delay);
@@ -1056,6 +1317,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     for (const listener of this.eventListeners) {
       listener(evt);
     }
+    if (this.workerPatchEmitter) {
+      this.workerPatchPendingEvents.push(evt);
+      this.scheduleWorkerPatchFlush();
+    }
   }
 
   private flushSubscriptions(reason = "subscribe") {
@@ -1070,6 +1335,9 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       scope: "active",
       include_active_heads: requestSnapshot,
     };
+    if (this.foregroundTaskId) {
+      message.foreground_task_id = this.foregroundTaskId;
+    }
     if (this.subscribedSessionIds.length > 0) {
       message.session_ids = this.subscribedSessionIds.slice();
     }
@@ -1095,6 +1363,16 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (next.join("|") === this.activeSessionIds.join("|")) return;
     this.activeSessionIds = next;
     this.flushSubscriptions(reason);
+  }
+
+  private scheduleForegroundTaskFlush() {
+    if (this.foregroundTaskTimer) {
+      globalThis.clearTimeout(this.foregroundTaskTimer);
+    }
+    this.foregroundTaskTimer = globalThis.setTimeout(() => {
+      this.foregroundTaskTimer = null;
+      this.flushSubscriptions("foreground_task");
+    }, FOREGROUND_TASK_DEBOUNCE_MS);
   }
 
   private removeTask(taskId: string | undefined, opts?: { adjustCounts?: boolean }) {
@@ -1552,6 +1830,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       hasMoreArchived: this.hasMoreArchived,
       archivedLoaded: this.archivedLoaded,
     };
+    if (this.workerPatchEmitter) {
+      this.workerPatchDirty = true;
+      this.scheduleWorkerPatchFlush();
+    }
     for (const l of this.listeners) l();
   }
 }

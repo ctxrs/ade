@@ -920,6 +920,8 @@ pub enum WorkspaceActiveSnapshotClientMessage {
         #[serde(default)]
         task_ids: Vec<TaskId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        foreground_task_id: Option<TaskId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         scope: Option<WorkspaceActiveSnapshotSubscribeScope>,
         #[serde(default, skip_serializing_if = "is_false")]
         include_active_heads: bool,
