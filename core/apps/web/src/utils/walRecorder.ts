@@ -360,7 +360,19 @@ const installHooks = (recorder: WalRecorder, getMode: () => WalMode) => {
         });
       }
     }
-    Object.assign(WrappedWebSocket, OriginalWebSocket);
+    const wsConstants = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"] as const;
+    for (const key of wsConstants) {
+      if (Object.prototype.hasOwnProperty.call(WrappedWebSocket, key)) continue;
+      try {
+        Object.defineProperty(WrappedWebSocket, key, {
+          value: OriginalWebSocket[key],
+          writable: false,
+          configurable: true,
+        });
+      } catch {
+        // Ignore if the runtime forbids redefining the static constant.
+      }
+    }
     (window as unknown as { WebSocket: typeof WebSocket }).WebSocket = WrappedWebSocket;
 
     window.setInterval(() => {
