@@ -10,6 +10,6 @@
     "node-pre-gyp": "^0.17.0",
     "playwright": "^1.49.1",
     "ws": "^8.16.0",
-    "wrtc": "^0.4.7"
+    "wrtc": "npm:@koush/wrtc@0.5.3"
   }
 }

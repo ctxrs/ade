@@ -25,6 +25,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "icon": ["icons/icon.icns", "icons/icon.png"],
     "resources": ["bin/*", "web/dist/**/*"],
     "externalBin": ["bin/ctx", "bin/ctx-mcp"],
     "macOS": {

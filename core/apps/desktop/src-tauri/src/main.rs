@@ -1607,9 +1607,16 @@ fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
         Ok(v) if v.trim().starts_with('/') => tauri::WebviewUrl::App(v.trim().into()),
         _ => tauri::WebviewUrl::App("index.html".into()),
     };
-    let builder = tauri::WebviewWindowBuilder::new(app, "main", start_url)
-        .title("ctx")
-        .inner_size(1200.0, 900.0);
+    let mut builder = tauri::WebviewWindowBuilder::new(app, "main", start_url)
+        .title("ctx");
+    if let Ok(Some(monitor)) = app.primary_monitor() {
+        let size = monitor.size();
+        let width = (size.width as f64 * 0.9).round().max(1200.0);
+        let height = (size.height as f64 * 0.9).round().max(900.0);
+        builder = builder.inner_size(width, height);
+    } else {
+        builder = builder.inner_size(1200.0, 900.0);
+    }
     let builder = apply_workbench_titlebar(builder);
     builder
         .build()
@@ -2247,17 +2254,24 @@ fn start_remote_daemon_over_ssh(
         _ => host.to_string(),
     };
 
-    let data_dir = remote_data_dir.unwrap_or("~/.ctx");
+    let data_dir = remote_data_dir
+        .filter(|d| !d.trim().is_empty())
+        .unwrap_or("~/.ctx");
+    let log_dir = format!("{}/logs", data_dir.trim_end_matches('/'));
+    let log_dir_expr = remote_path_expr(&log_dir);
     let exec_cmd = format!(
         "if command -v ctx >/dev/null 2>&1; then ctx serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not found on PATH' >&2; exit 127; fi",
         dir = remote_path_expr(data_dir),
     );
-    let log_cmd = format!("{exec_cmd} > ~/.ctx/logs/daemon.log 2>&1");
+    let log_cmd = format!(
+        "mkdir -p {log_dir} && {exec_cmd} > {log_dir}/daemon.log 2>&1",
+        log_dir = log_dir_expr
+    );
     let systemd_cmd = format!(
         "systemd-run --user --scope --unit ctx-daemon --no-block /bin/sh -lc {}",
         shell_escape(&log_cmd)
     );
-    let nohup_cmd = format!("nohup {log_cmd} &");
+    let nohup_cmd = format!("nohup /bin/sh -lc {} >/dev/null 2>&1 &", shell_escape(&log_cmd));
     let remote_cmd = format!(
         "if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then {}; else {}; fi",
         systemd_cmd, nohup_cmd
