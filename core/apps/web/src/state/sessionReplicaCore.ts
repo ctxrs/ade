@@ -207,7 +207,7 @@ export class SessionReplicaCore {
         this.closeSession(cmd.sessionId);
         return;
       case "refresh_session":
-        this.openSession(cmd.sessionId, { force: true, silent: true }).catch(() => {});
+        this.openSession(cmd.sessionId, { force: true, silent: true, emitOp: "append" }).catch(() => {});
         return;
       case "seed_head":
         this.seedHead(cmd.sessionId, cmd.head);
@@ -313,7 +313,11 @@ export class SessionReplicaCore {
     if (id) this.entries.delete(id);
   }
 
-  private applyHead(entry: SessionReplicaEntry, head: SessionHead | SessionHeadSnapshot) {
+  private applyHead(
+    entry: SessionReplicaEntry,
+    head: SessionHead | SessionHeadSnapshot,
+    emitOp: "append" | "replace" = "replace",
+  ) {
     const data = headToData(head);
     let turns = data.turns ?? [];
     let messages = data.messages ?? [];
@@ -358,12 +362,12 @@ export class SessionReplicaCore {
     if (entry.stateRev !== undefined) {
       patch.stateRev = entry.stateRev;
     }
-    this.emitPatch("replace", entry.sessionId, patch);
+    this.emitPatch(emitOp, entry.sessionId, patch);
   }
 
   private async openSession(
     sessionId: string,
-    opts?: { force?: boolean; silent?: boolean; minEventSeq?: number; skipCache?: boolean },
+    opts?: { force?: boolean; silent?: boolean; minEventSeq?: number; skipCache?: boolean; emitOp?: "append" | "replace" },
   ) {
     const id = normalizeId(sessionId);
     if (!id) return;
@@ -382,7 +386,7 @@ export class SessionReplicaCore {
       const cached = await loadSessionHeadV1(id).catch(() => null);
       if (token !== entry.requestToken) return;
       if (cached?.head && (minSeq === undefined || cached.head.last_event_seq >= minSeq)) {
-        this.applyHead(entry, cached.head);
+        this.applyHead(entry, cached.head, opts?.emitOp);
       }
     }
     if (!opts?.force && entry.hydrated) {
@@ -401,7 +405,7 @@ export class SessionReplicaCore {
       if (token !== entry.requestToken) return;
       if (head) {
         const persisted = snapshotToHead(head);
-        this.applyHead(entry, persisted);
+        this.applyHead(entry, persisted, opts?.emitOp);
         await saveSessionHeadV1(id, sanitizeHeadForCache(persisted)).catch(() => {});
       }
       entry.loading = false;
