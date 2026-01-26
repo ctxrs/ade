@@ -1629,6 +1629,7 @@ struct WorkspaceSwitchView: View {
     @EnvironmentObject private var connection: ConnectionStore
     @EnvironmentObject private var workspaceSelection: WorkspaceSelectionStore
     @EnvironmentObject private var workbenchSelection: WorkbenchSelectionStore
+    @EnvironmentObject private var workspaceVisibility: WorkspaceVisibilityStore
     @EnvironmentObject private var rootNavigation: RootNavigationStore
     @Environment(\.dismiss) private var dismiss
 
@@ -1703,9 +1704,9 @@ struct WorkspaceSwitchView: View {
         .alert(item: $deleteAlert) { alert in
             Alert(
                 title: Text("Remove Workspace"),
-                message: Text("Remove \"\(alert.name)\"? This deletes the workspace and its worktrees."),
+                message: Text("Remove \"\(alert.name)\" from this device? This does not delete the workspace."),
                 primaryButton: .destructive(Text("Remove")) {
-                    _Concurrency.Task { await deleteWorkspace(alert.workspace) }
+                    _Concurrency.Task { await removeWorkspace(alert.workspace) }
                 },
                 secondaryButton: .cancel()
             )
@@ -1728,7 +1729,11 @@ struct WorkspaceSwitchView: View {
         isLoading = true
         errorMessage = nil
         do {
+            let daemonKey = connection.baseURLText
+            workspaceVisibility.load(daemonKey: daemonKey)
+            let hiddenIds = workspaceVisibility.hiddenWorkspaceIds
             workspaces = try await client.listWorkspaces()
+            workspaces = workspaces.filter { !hiddenIds.contains($0.id) }
         } catch {
             workspaces = []
             errorMessage = daemonErrorMessage(error, fallback: "Failed to load workspaces.")
@@ -1744,24 +1749,17 @@ struct WorkspaceSwitchView: View {
     }
 
     @MainActor
-    private func deleteWorkspace(_ workspace: WorkspaceSummary) async {
-        guard let client = connection.apiClient else {
-            errorMessage = "Connect to a daemon to manage workspaces."
-            return
-        }
+    private func removeWorkspace(_ workspace: WorkspaceSummary) async {
         if deleteInFlight.contains(workspace.id) { return }
         deleteInFlight.insert(workspace.id)
         defer { deleteInFlight.remove(workspace.id) }
-        do {
-            try await client.deleteWorkspace(workspaceId: workspace.id)
-            await loadWorkspaces()
-            if workspace.id == workspaceSelection.workspaceId {
-                workspaceSelection.clear(daemonKey: connection.baseURLText)
-                workbenchSelection.setContext(daemonKey: connection.baseURLText, workspaceId: nil)
-                workbenchSelection.clearSelection()
-            }
-        } catch {
-            errorMessage = "Failed to remove workspace."
+        let daemonKey = connection.baseURLText
+        workspaceVisibility.hide(workspaceId: workspace.id, daemonKey: daemonKey)
+        await loadWorkspaces()
+        if workspace.id == workspaceSelection.workspaceId {
+            workspaceSelection.clear(daemonKey: daemonKey)
+            workbenchSelection.setContext(daemonKey: daemonKey, workspaceId: nil)
+            workbenchSelection.clearSelection()
         }
     }
 }
@@ -1918,5 +1916,6 @@ private struct SettingsNavigationRowView: View {
         .environmentObject(PushNotificationManager.shared)
         .environmentObject(WorkspaceSelectionStore())
         .environmentObject(WorkbenchSelectionStore())
+        .environmentObject(WorkspaceVisibilityStore())
         .environmentObject(RootNavigationStore())
 }
