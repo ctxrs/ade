@@ -104,6 +104,66 @@ describe("buildWorkbenchThreadViewModel", () => {
     expect(items.map((it: any) => it.kind)).toEqual(["tool", "thought", "tool", "turn_status"]);
   }, 10000);
 
+  it("orders tool activity by ascending negative seq values", async () => {
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+
+    const turns = [
+      {
+        turn_id: "t1",
+        session_id: "s1",
+        status: "running",
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:05.000Z",
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ];
+
+    const messages = [
+      {
+        id: "m1",
+        session_id: "s1",
+        role: "user",
+        content: "hello",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        turn_id: "t1",
+      },
+    ];
+
+    const seqBase = -(2 ** 52);
+    const events = [
+      {
+        seq: seqBase,
+        id: "e1",
+        session_id: "s1",
+        run_id: "r1",
+        turn_id: "t1",
+        event_type: "tool_call",
+        payload_json: { tool_call_id: "tool-1", acp_update: { toolCallId: "tool-1", title: "first" } },
+        created_at: "2025-12-15T00:00:01.000Z",
+      },
+      {
+        seq: seqBase + 1,
+        id: "e2",
+        session_id: "s1",
+        run_id: "r1",
+        turn_id: "t1",
+        event_type: "tool_call",
+        payload_json: { tool_call_id: "tool-2", acp_update: { toolCallId: "tool-2", title: "second" } },
+        created_at: "2025-12-15T00:00:02.000Z",
+      },
+    ];
+
+    const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
+    const tools = (out.groups[0]?.items ?? []).filter((it: any) => it.kind === "tool");
+    expect(tools.map((it: any) => it.tool_call_id)).toEqual(["tool-1", "tool-2"]);
+  }, 10000);
+
   it("uses the latest status update text per turn", async () => {
     const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
 
