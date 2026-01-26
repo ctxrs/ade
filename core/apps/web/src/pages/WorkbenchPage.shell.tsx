@@ -23,6 +23,7 @@ import {
 import {
   DictationSettings,
   InstallInfo,
+  type ArchiveTaskResponse,
   type GitStatusSummary,
   type Message,
   MessageAttachment,
@@ -375,6 +376,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [archiveConfirmDontRemind, setArchiveConfirmDontRemind] = useState(false);
   const [archiveConfirmDismissed, setArchiveConfirmDismissed] = useState(false);
   const [archivePendingById, setArchivePendingById] = useState<Record<string, "archive" | "unarchive">>({});
+  const [archiveCleanupNotice, setArchiveCleanupNotice] = useState(false);
   const archiveConfirmRef = useRef<HTMLDivElement | null>(null);
   const [taskMenu, setTaskMenu] = useState<{ taskId: string; style: React.CSSProperties } | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1255,6 +1257,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         const updated = nextArchived ? await archiveTask(taskId) : await unarchiveTask(taskId);
         workspaceSnapshotStore.applyTaskUpdate(updated);
         if (nextArchived) {
+          const cleanupFailed = (updated as ArchiveTaskResponse).cleanup_failed;
+          if (cleanupFailed) {
+            setArchiveCleanupNotice(true);
+          }
           const activeTab = workbenchStore.getActiveTab();
           const activeTaskIdNow = activeTab?.kind === "task" ? activeTab.ref.taskId : null;
           if (activeTaskIdNow === taskId && workbenchStore.getNavToken() === startNavToken) {
@@ -1313,6 +1319,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setArchiveConfirm(null);
   }, []);
 
+  const dismissArchiveCleanupNotice = useCallback(() => {
+    setArchiveCleanupNotice(false);
+  }, []);
+
   const archiveConfirmStyle = useMemo(() => {
     if (!archiveConfirm) return null;
     const rect = archiveConfirm.anchor;
@@ -1324,6 +1334,20 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const top = clampNum(rect.bottom + 10, margin, viewportH - 180);
     return { left, top, width };
   }, [archiveConfirm]);
+
+  const archiveCleanupSnackbar = archiveCleanupNotice ? (
+    <div className="wb-snackbar" role="status" aria-live="polite">
+      <div className="wb-snackbar-body">
+        <div className="wb-snackbar-title">Archived, but cleanup failed.</div>
+        <div className="wb-snackbar-subtitle">
+          Some worktree files could not be removed. Fix permissions and delete them manually if needed.
+        </div>
+      </div>
+      <button type="button" className="wb-snackbar-close" onClick={dismissArchiveCleanupNotice} aria-label="Dismiss">
+        X
+      </button>
+    </div>
+  ) : null;
 
   const openTaskMenu = useCallback((taskId: string, opts: { triggerEl: HTMLElement } | { x: number; y: number }) => {
     const baseLeft =
@@ -3575,6 +3599,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         style={rootStyle}
       >
         <WorktreeBootstrapSnackbar />
+        {archiveCleanupSnackbar}
         {topbar}
         <div className="wb-main">
           <div className="wb-center">
@@ -3593,6 +3618,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       style={rootStyle}
     >
       <WorktreeBootstrapSnackbar />
+      {archiveCleanupSnackbar}
       {topbar}
 
       {workbenchSnap.warnings.length > 0 && (

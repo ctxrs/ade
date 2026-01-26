@@ -184,8 +184,10 @@ export const updateTaskTitle = (taskId: string, title: string) =>
 export const deleteTask = (taskId: string) =>
   apiAny<void>(`/api/tasks/${taskId}`, { method: "DELETE" });
 
+export type ArchiveTaskResponse = Task & { cleanup_failed?: boolean };
+
 export const archiveTask = (taskId: string) =>
-  apiAny<Task>(`/api/tasks/${taskId}/archive`, { method: "POST" });
+  apiAny<ArchiveTaskResponse>(`/api/tasks/${taskId}/archive`, { method: "POST" });
 
 export const unarchiveTask = (taskId: string) =>
   apiAny<Task>(`/api/tasks/${taskId}/unarchive`, { method: "POST" });

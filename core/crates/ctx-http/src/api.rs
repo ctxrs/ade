@@ -11181,10 +11181,17 @@ async fn is_git_worktree(worktree_path: impl AsRef<StdPath>) -> anyhow::Result<b
     Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
 }
 
+#[derive(Debug, Serialize)]
+struct ArchiveTaskResponse {
+    #[serde(flatten)]
+    task: Task,
+    cleanup_failed: bool,
+}
+
 async fn archive_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<Task>, StatusCode> {
+) -> Result<Json<ArchiveTaskResponse>, StatusCode> {
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let store = state
         .store_for_task(task_id)
@@ -11307,8 +11314,9 @@ async fn archive_task(
             errors.push(err);
         }
     }
-    if !errors.is_empty() {
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    let cleanup_failed = !errors.is_empty();
+    if cleanup_failed {
+        tracing::warn!(task_id = %task_id.0, "archive cleanup had errors; task will still be archived");
     }
 
     let updated = store
@@ -11329,7 +11337,10 @@ async fn archive_task(
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
         tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
     }
-    Ok(Json(task))
+    Ok(Json(ArchiveTaskResponse {
+        task,
+        cleanup_failed,
+    }))
 }
 
 async fn unarchive_task(
