@@ -132,7 +132,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
       heads: [head],
     };
 
-    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
     await (store as any).handleStreamMessage(
       JSON.stringify({
         type: "snapshot",
@@ -156,7 +156,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStore");
     const { getWorkspaceActiveSnapshot } = await import("../api/client");
 
-    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
     const ws = mkOpenWs();
     (store as any).ws = ws;
     await (store as any).handleStreamMessage(JSON.stringify({ type: "reset_required", latest_rev: 5 }));
@@ -172,7 +172,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     (getSessionHead as any).mockResolvedValue(null);
 
-    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
     await (store as any).handleStreamMessage(
       JSON.stringify({
         type: "event",
@@ -195,7 +195,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStore");
     const { getWorkspaceActiveSnapshot } = await import("../api/client");
 
-    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
     const ws = mkOpenWs();
     (store as any).ws = ws;
     await (store as any).handleStreamMessage(

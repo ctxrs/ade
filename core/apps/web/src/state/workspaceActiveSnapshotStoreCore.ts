@@ -205,14 +205,6 @@ const readWorkspaceHeadsBatchPayload = (
 const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk", "thought_chunk"]);
 const HEAD_EVENT_BUFFER_LIMIT = 800;
 
-const shouldUseWorker = (): boolean => {
-  if (typeof Worker === "undefined") return false;
-  const metaEnv =
-    typeof import.meta !== "undefined" ? (import.meta as { env?: { MODE?: string } }).env : undefined;
-  if (metaEnv?.MODE === "test") return false;
-  return true;
-};
-
 const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
   if (!event) return false;
   return PARTIAL_EVENT_TYPES.has(String(event.event_type ?? ""));
@@ -414,9 +406,11 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     };
   }
 
-  private shouldUseWorker() {
-    if (this.disableWorker) return false;
-    return shouldUseWorker();
+  private ensureWorkerAvailable() {
+    if (this.disableWorker) return;
+    if (typeof Worker === "undefined") {
+      throw new Error("Workspace active snapshot requires Worker support.");
+    }
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -491,15 +485,16 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   init = () => {
     this.destroyed = false;
     const cachePromise = this.disableCache ? Promise.resolve() : this.hydrateFromCache();
-    if (this.shouldUseWorker()) {
-      cachePromise.finally(() => {
-        if (!this.destroyed) {
-          this.startWorker();
-        }
-      });
+    if (this.disableWorker) {
+      this.connectStream().catch(() => {});
       return;
     }
-    this.connectStream().catch(() => {});
+    this.ensureWorkerAvailable();
+    cachePromise.finally(() => {
+      if (!this.destroyed) {
+        this.startWorker();
+      }
+    });
   };
 
   private startWorker() {
@@ -671,7 +666,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.applyCachedActiveSnapshot(cached);
       if (this.worker) {
         this.postWorkerCommand({ type: "seed_cache", snapshot: cached });
-      } else if (this.shouldUseWorker()) {
+      } else if (!this.disableWorker) {
         this.pendingWorkerCache = cached;
       }
     } catch {

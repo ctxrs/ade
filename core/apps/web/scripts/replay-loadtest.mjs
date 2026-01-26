@@ -20,6 +20,13 @@ let maxSessionSwitchP95 = null;
 let maxSessionSwitchP99 = null;
 let maxLongTaskMs = null;
 let maxLongTaskCount = null;
+let synthesizeDeltas = null;
+let synthesizeIntervalMs = 1;
+let synthesizeStartDelayMs = 200;
+let synthesizeMessageBytes = null;
+let synthesizeSessionIds = null;
+let waitTimeoutMs = null;
+let skipWaitForSynth = false;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -62,11 +69,51 @@ for (let i = 0; i < args.length; i++) {
     i += 1;
     continue;
   }
+  if (arg === "--synthesize-deltas") {
+    synthesizeDeltas = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--synthesize-interval-ms") {
+    synthesizeIntervalMs = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--synthesize-start-delay-ms") {
+    synthesizeStartDelayMs = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--synthesize-message-bytes") {
+    synthesizeMessageBytes = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--synthesize-session-ids") {
+    synthesizeSessionIds = (args[i + 1] || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    i += 1;
+    continue;
+  }
+  if (arg === "--wait-timeout-ms") {
+    waitTimeoutMs = Number(args[i + 1]);
+    i += 1;
+    continue;
+  }
+  if (arg === "--no-wait-for-synth") {
+    skipWaitForSynth = true;
+    continue;
+  }
   if (arg === "--help" || arg === "-h") {
     console.log(
       "Usage: node ./scripts/replay-loadtest.mjs [--fixture path] [--out path] [--base-url url] " +
         "[--check] [--max-session-switch-p95 ms] [--max-session-switch-p99 ms] " +
-        "[--max-long-task-ms ms] [--max-long-task-count n]\n",
+        "[--max-long-task-ms ms] [--max-long-task-count n] " +
+        "[--synthesize-deltas n] [--synthesize-interval-ms ms] [--synthesize-start-delay-ms ms] " +
+        "[--synthesize-message-bytes n] [--synthesize-session-ids id1,id2] " +
+        "[--wait-timeout-ms ms] [--no-wait-for-synth]\n",
     );
     process.exit(0);
   }
@@ -116,6 +163,117 @@ if (!hasSnapshotEvent && fixture.active_snapshot) {
     },
     ...streamEvents,
   ];
+}
+
+const baseDeltaEvent = streamEvents.find((item) => item?.event?.type === "session_head_delta")?.event ?? null;
+const baseDelta = baseDeltaEvent?.delta ?? {};
+const baseTurn = baseDelta?.turn ?? null;
+const baseMessage = baseDelta?.message ?? null;
+const baseSnapshotRev =
+  baseDeltaEvent?.snapshot_rev ??
+  fixture.active_snapshot?.snapshot_rev ??
+  0;
+const baseDelayMs = streamEvents.reduce((acc, item) => Math.max(acc, Number(item?.delay_ms ?? 0)), 0);
+
+const resolveSessionIds = () => {
+  if (Array.isArray(synthesizeSessionIds) && synthesizeSessionIds.length > 0) return synthesizeSessionIds;
+  const fromSnapshot = Object.keys(snapshotBySession || {});
+  if (fromSnapshot.length > 0) return fromSnapshot;
+  const fallback = typeof baseDelta?.session_id === "string" ? [baseDelta.session_id] : [];
+  return fallback;
+};
+
+const buildMessageContent = (sessionId, seq) => {
+  const base = `Load test reply ${sessionId} ${seq}`;
+  if (!Number.isFinite(synthesizeMessageBytes) || synthesizeMessageBytes <= base.length) {
+    return base;
+  }
+  return `${base}${".".repeat(Math.max(0, synthesizeMessageBytes - base.length))}`;
+};
+
+const readSessionMeta = (sessionId) => {
+  const snapshot = snapshotBySession?.[sessionId];
+  const summary = snapshot?.summary ?? {};
+  const head = snapshot?.head ?? {};
+  const session = summary?.session ?? head?.session ?? {};
+  const taskId = session?.task_id ?? baseMessage?.task_id ?? baseDelta?.task_id ?? "";
+  const lastSeq =
+    (typeof summary?.last_event_seq === "number" ? summary.last_event_seq : null) ??
+    (typeof head?.last_event_seq === "number" ? head.last_event_seq : null) ??
+    (typeof baseDelta?.last_event_seq === "number" ? baseDelta.last_event_seq : null) ??
+    0;
+  return { taskId, lastSeq };
+};
+
+let waitForSessionId = null;
+let waitForLastSeq = null;
+if (Number.isFinite(synthesizeDeltas) && synthesizeDeltas > 0) {
+  const sessionIds = resolveSessionIds();
+  if (sessionIds.length === 0) {
+    throw new Error("No session ids available for synthesized deltas.");
+  }
+  const perSession = new Map();
+  for (const sessionId of sessionIds) {
+    perSession.set(sessionId, readSessionMeta(sessionId));
+  }
+  const startDelay = Math.max(0, baseDelayMs + (Number.isFinite(synthesizeStartDelayMs) ? synthesizeStartDelayMs : 0));
+  const interval = Math.max(0, Number.isFinite(synthesizeIntervalMs) ? synthesizeIntervalMs : 0);
+  for (let i = 0; i < synthesizeDeltas; i++) {
+    const sessionId = sessionIds[i % sessionIds.length];
+    const meta = perSession.get(sessionId) ?? { taskId: "", lastSeq: 0 };
+    const seq = meta.lastSeq + 1;
+    meta.lastSeq = seq;
+    perSession.set(sessionId, meta);
+    const turnId = `turn-${sessionId}-${seq}`;
+    const turn = {
+      ...(baseTurn && typeof baseTurn === "object" ? baseTurn : {}),
+      turn_id: turnId,
+      session_id: sessionId,
+      user_message_id: `msg-${sessionId}-user-${seq}`,
+      status: baseTurn?.status ?? "completed",
+      start_seq: seq,
+      end_seq: seq,
+      started_at: baseTurn?.started_at ?? new Date().toISOString(),
+      updated_at: baseTurn?.updated_at ?? new Date().toISOString(),
+      assistant_partial: null,
+      thought_partial: null,
+    };
+    const message = {
+      ...(baseMessage && typeof baseMessage === "object" ? baseMessage : {}),
+      id: `msg-${sessionId}-assistant-${seq}`,
+      session_id: sessionId,
+      task_id: meta.taskId,
+      turn_id: turnId,
+      role: baseMessage?.role ?? "assistant",
+      content: buildMessageContent(sessionId, seq),
+      delivery: baseMessage?.delivery ?? "immediate",
+      created_at: baseMessage?.created_at ?? new Date().toISOString(),
+    };
+    streamEvents.push({
+      delay_ms: startDelay + i * interval,
+      event: {
+        type: "session_head_delta",
+        workspace_id: workspaceId,
+        snapshot_rev: baseSnapshotRev,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: seq,
+          turn,
+          message,
+        },
+      },
+    });
+  }
+
+  if (!skipWaitForSynth) {
+    const firstSession = sessionIds[0];
+    const meta = perSession.get(firstSession);
+    waitForSessionId = firstSession;
+    waitForLastSeq = meta?.lastSeq ?? null;
+    if (!Number.isFinite(waitTimeoutMs)) {
+      waitTimeoutMs = startDelay + synthesizeDeltas * interval + 10000;
+    }
+  }
 }
 
 const respondJson = async (route, body, status = 200) => {
@@ -538,9 +696,14 @@ await page.route("**/api/**", async (route) => {
 });
 
 try {
-  await page.goto(`${baseUrl}/workspaces/${workspaceId}?loadtest=1`, { waitUntil: "domcontentloaded" });
+  const url = new URL(`${baseUrl}/workspaces/${workspaceId}`);
+  url.searchParams.set("loadtest", "1");
+  if (waitForSessionId) {
+    url.searchParams.set("ctxE2E", "1");
+  }
+  await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
   try {
-    await page.waitForFunction(() => document.querySelectorAll(".wb-task-row").length >= 2, null, { timeout: 15000 });
+  await page.waitForFunction(() => document.querySelectorAll(".wb-task-row").length >= 2, null, { timeout: 15000 });
   } catch (err) {
     const taskCount = await page.evaluate(() => document.querySelectorAll(".wb-task-row").length);
     console.log(`task rows after timeout: ${taskCount}`);
@@ -554,17 +717,39 @@ try {
   await page.evaluate(() => window.__ctxLoadTestTelemetry?.reset?.());
 
   const rows = page.locator(".wb-task-row");
-  await rows.nth(0).click();
-  await page.waitForTimeout(300);
-  await rows.nth(1).click();
-  await page.waitForTimeout(400);
-  await rows.nth(0).click();
+  const useDirectClicks = Number.isFinite(synthesizeDeltas) && synthesizeDeltas > 0;
+  if (useDirectClicks) {
+    await page.evaluate(() => document.querySelectorAll(".wb-task-row")[0]?.click());
+    await page.waitForTimeout(300);
+    await page.evaluate(() => document.querySelectorAll(".wb-task-row")[1]?.click());
+    await page.waitForTimeout(400);
+    await page.evaluate(() => document.querySelectorAll(".wb-task-row")[0]?.click());
+  } else {
+    await rows.nth(0).click();
+    await page.waitForTimeout(300);
+    await rows.nth(1).click();
+    await page.waitForTimeout(400);
+    await rows.nth(0).click();
+  }
 
   await page.waitForFunction(
     () => (window.__ctxLoadTestTelemetry?.getSnapshot?.().session_switches?.length ?? 0) >= 2,
     null,
     { timeout: 15000 },
   );
+
+  if (waitForSessionId && Number.isFinite(waitForLastSeq)) {
+    await page.waitForFunction(
+      ({ sessionId, lastSeq }) => {
+        const getSeq = window.__ctxE2E?.getSessionLastEventSeq;
+        if (typeof getSeq !== "function") return false;
+        const current = getSeq(sessionId);
+        return typeof current === "number" && current >= lastSeq;
+      },
+      { sessionId: waitForSessionId, lastSeq: waitForLastSeq },
+      { timeout: Number.isFinite(waitTimeoutMs) ? waitTimeoutMs : 30000 },
+    );
+  }
 
   const telemetry = await page.evaluate(() => window.__ctxLoadTestTelemetry?.getSnapshot?.());
   if (check) {
