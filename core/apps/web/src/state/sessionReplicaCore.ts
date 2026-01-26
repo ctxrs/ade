@@ -191,6 +191,7 @@ const snapshotToHead = (head: SessionHeadSnapshot): SessionHead => ({
 export class SessionReplicaCore {
   private entries = new Map<string, SessionReplicaEntry>();
   private config: SessionReplicaConfig = { eventBufferLimit: 800, headLimit: 60 };
+  private gapAlertedSessionIds = new Set<string>();
   constructor(private deps: { api: SessionReplicaApi; emit: (patches: SessionReplicaPatch[]) => void }) {}
 
   handleCommand = (cmd: SessionReplicaCommand) => {
@@ -439,6 +440,23 @@ export class SessionReplicaCore {
       const sessionId = normalizeId((evt as { session_id?: unknown }).session_id);
       const afterSeq = typeof (evt as { after_seq?: number }).after_seq === "number" ? (evt as { after_seq?: number }).after_seq : undefined;
       if (!sessionId) return;
+      if (typeof window !== "undefined" && import.meta.env.DEV) {
+        const prevSeq = this.entries.get(sessionId)?.lastEventSeq;
+        const message = [
+          "ctx session_gap detected.",
+          `session_id=${sessionId}`,
+          `after_seq=${afterSeq ?? "unknown"}`,
+          `last_event_seq=${prevSeq ?? "unknown"}`,
+        ].join("\n");
+        if (!this.gapAlertedSessionIds.has(sessionId)) {
+          this.gapAlertedSessionIds.add(sessionId);
+          try {
+            window.alert(message);
+          } catch {}
+        }
+        // eslint-disable-next-line no-console
+        console.warn(message);
+      }
       const entry = this.entries.get(sessionId);
       if (!entry) return;
       entry.hydrated = false;
