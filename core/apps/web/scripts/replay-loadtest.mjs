@@ -86,8 +86,37 @@ if (!workspaceId) {
   throw new Error("Fixture missing workspace id.");
 }
 
-const streamEvents = Array.isArray(fixture.stream) ? fixture.stream : [];
+let streamEvents = Array.isArray(fixture.stream) ? fixture.stream : [];
 const snapshotBySession = fixture.session_snapshots || {};
+const activeHeads = Array.isArray(fixture.active_heads?.heads)
+  ? fixture.active_heads.heads
+  : Object.values(snapshotBySession)
+      .map((snapshot) => snapshot?.head)
+      .filter(Boolean);
+const activeHeadsBatch = {
+  workspace_id: workspaceId,
+  snapshot_rev: fixture.active_snapshot?.snapshot_rev ?? 0,
+  heads: activeHeads,
+};
+const hasSnapshotEvent = streamEvents.some((item) => {
+  const event = item?.event;
+  return Boolean(
+    event?.type === "snapshot" || event?.snapshot || event?.active_snapshot || event?.activeSnapshot,
+  );
+});
+if (!hasSnapshotEvent && fixture.active_snapshot) {
+  streamEvents = [
+    {
+      delay_ms: 0,
+      event: {
+        type: "snapshot",
+        snapshot: fixture.active_snapshot,
+        active_heads: activeHeadsBatch,
+      },
+    },
+    ...streamEvents,
+  ];
+}
 
 const respondJson = async (route, body, status = 200) => {
   await route.fulfill({
@@ -235,6 +264,10 @@ await page.route("**/api/**", async (route) => {
   const url = new URL(request.url());
   const method = request.method().toUpperCase();
   const pathname = url.pathname;
+  if (!pathname.startsWith("/api/")) {
+    await route.continue();
+    return;
+  }
 
   if (method === "OPTIONS") {
     await route.fulfill({ status: 204 });
@@ -251,6 +284,11 @@ await page.route("**/api/**", async (route) => {
     return;
   }
 
+  if (pathname === "/api/workspaces") {
+    await respondJson(route, fixture.workspace ? [fixture.workspace] : []);
+    return;
+  }
+
   if (pathname === `/api/workspaces/${workspaceId}`) {
     await respondJson(route, fixture.workspace);
     return;
@@ -258,6 +296,11 @@ await page.route("**/api/**", async (route) => {
 
   if (pathname === `/api/workspaces/${workspaceId}/active_snapshot`) {
     await respondJson(route, fixture.active_snapshot);
+    return;
+  }
+
+  if (pathname === `/api/workspaces/${workspaceId}/active_heads`) {
+    await respondJson(route, activeHeadsBatch);
     return;
   }
 
@@ -325,6 +368,7 @@ await page.route("**/api/**", async (route) => {
     return;
   }
 
+  console.log("Fixture miss:", method, pathname);
   await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "fixture miss" }) });
 });
 
