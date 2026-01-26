@@ -1599,8 +1599,6 @@ export function SessionView({
           prev.map((entry) => (entry.clientId === optimisticId ? { ...entry, message: posted } : entry)),
         );
       }
-      // Refresh Messages immediately so user turns render without waiting for a `done` event.
-      supervisor.refreshSession(id, { watchDiff: true });
       try {
         await onDraftPersistNow?.();
       } catch {
@@ -1701,7 +1699,6 @@ export function SessionView({
       setPendingMessages((prev) =>
         prev.map((entry) => (entry.clientId === optimisticId ? { ...entry, message: posted } : entry)),
       );
-      supervisor.refreshSession(id, { watchDiff: true });
     } catch (e: any) {
       setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== optimisticId));
       setSendError(e?.message ? String(e.message) : String(e));
@@ -1881,6 +1878,9 @@ export function SessionView({
       return <WorkbenchTurnStatusRow item={item} nowMs={nowMs} />;
     }
     if (item.kind === "assistant") {
+      if (!item.is_complete && item.content.trim().length === 0) {
+        return null;
+      }
       return (
         <AssistantEntry
           content={item.content}
