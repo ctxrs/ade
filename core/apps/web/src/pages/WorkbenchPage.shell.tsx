@@ -1011,6 +1011,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [supervisor, activeTaskSessionIds]);
 
   useEffect(() => {
+    workspaceSnapshotStore.setForegroundTaskId?.(activeTaskId ?? null);
+  }, [workspaceSnapshotStore, activeTaskId]);
+
+  useEffect(() => {
     supervisor.setWarmSessionIds(warmSessionIds);
   }, [supervisor, warmSessionIds]);
 

@@ -477,6 +477,7 @@ export type WorkspaceActiveSnapshotClientMessage =
       session_ids?: ({ 0: string } | string)[];
       sessions?: WorkspaceActiveSnapshotSessionSubscription[];
       task_ids?: ({ 0: string } | string)[];
+      foreground_task_id?: { 0: string } | string;
       scope?: WorkspaceActiveSnapshotSubscribeScope | null;
       include_active_heads?: boolean;
     };

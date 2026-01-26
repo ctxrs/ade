@@ -297,6 +297,17 @@ impl WorkspaceActiveSnapshotHub {
         }
     }
 
+    pub async fn active_task_summary(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+    ) -> Option<WorkspaceActiveTaskSummary> {
+        let guard = self.inner.lock().await;
+        guard
+            .get(&workspace_id)
+            .and_then(|entry| entry.active_tasks.get(&task_id).cloned())
+    }
+
     pub async fn active_heads(&self, workspace_id: WorkspaceId) -> WorkspaceActiveHeadBatch {
         let (snapshot_rev, mut heads) = {
             let guard = self.inner.lock().await;

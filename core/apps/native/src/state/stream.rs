@@ -188,6 +188,7 @@ impl ShellView {
             session_ids: Vec::new(),
             sessions,
             task_ids: Vec::new(),
+            foreground_task_id: None,
             scope: None,
             include_active_heads: false,
         }

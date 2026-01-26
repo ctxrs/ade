@@ -187,6 +187,7 @@ type InternalEntry = SessionCacheEntry & {
   warmUntilMs: number;
   acpMetaUpdatedAtMs?: number;
   seqSet: Set<number>;
+  startedTurnIds: Set<string>;
   turnsHydrated: boolean;
   oldestTurnSeq?: number;
   toolStatusByKey: Map<string, string>;
@@ -722,6 +723,7 @@ export class SessionSupervisor {
       warmUntilMs: Date.now() + WARM_TTL_MS,
       acpMetaUpdatedAtMs: undefined,
       seqSet: new Set<number>(),
+      startedTurnIds: new Set<string>(),
       turnsHydrated: false,
       oldestTurnSeq: undefined,
       toolStatusByKey: new Map(),
@@ -1231,6 +1233,10 @@ export class SessionSupervisor {
     for (const t of incoming) {
       const id = idToString(t.turn_id);
       if (!id) continue;
+      const startSeq = typeof t.start_seq === "number" ? t.start_seq : Number.NaN;
+      if (Number.isFinite(startSeq) && startSeq >= 0) {
+        entry.startedTurnIds.add(id);
+      }
       const prev = byId.get(id);
       byId.set(id, prev ? mergeTurn(prev, t) : t);
     }
@@ -1289,8 +1295,20 @@ export class SessionSupervisor {
     const trimmed = next.length > EVENT_BUFFER_LIMIT ? next.slice(-EVENT_BUFFER_LIMIT) : next;
     entry.events = trimmed;
     entry.seqSet = new Set(trimmed.map((ev) => ev.seq));
+    for (const ev of incoming) {
+      const turnId = idToString(ev.turn_id);
+      if (!turnId) continue;
+      const seq = typeof ev.seq === "number" ? ev.seq : Number.NaN;
+      if (Number.isFinite(seq) && seq >= 0) {
+        entry.startedTurnIds.add(turnId);
+      }
+    }
     let changed = false;
     for (const ev of newEvents) {
+      const turnId = idToString(ev.turn_id);
+      if (isPartialEvent(ev) && (!turnId || !entry.startedTurnIds.has(turnId))) {
+        continue;
+      }
       this.ensureTurnFromEvent(entry, ev);
       if (this.applyEventToTurns(entry, ev)) {
         changed = true;
@@ -1568,6 +1586,7 @@ export class SessionSupervisor {
     entry.toolStatusByKey.clear();
     entry.toolIdsByTurn.clear();
     entry.seqSet.clear();
+    entry.startedTurnIds.clear();
     entry.turnsHydrated = false;
     entry.toolSummariesReady = false;
     entry.hasMoreTurns = true;

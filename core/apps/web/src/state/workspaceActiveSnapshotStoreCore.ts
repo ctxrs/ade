@@ -67,10 +67,12 @@ export type WorkspaceActiveSnapshotEventSource = {
   getSessionHeadSnapshot: (sessionId: string) => SessionHeadSnapshot | null;
   getWorktreeRoot: (worktreeId: string) => string | null;
   setSubscribedSessionIds?: (sessionIds: string[]) => void;
+  setForegroundTaskId?: (taskId: string | null) => void;
 };
 
 const ACTIVE_PAGE_SIZE = 50;
 const SNAPSHOT_WAIT_MS = 1200;
+const FOREGROUND_TASK_DEBOUNCE_MS = 150;
 const shouldRequestSnapshot = (reason: string): boolean => {
   switch (reason) {
     case "ws_open":
@@ -303,6 +305,8 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private worktreeRootsById = new Map<string, string>();
   private subscribedSessionIds: string[] = [];
   private activeSessionIds: string[] = [];
+  private foregroundTaskId: string | null = null;
+  private foregroundTaskTimer: number | null = null;
   private activeOrder: string[] = [];
   private archivedOrder: string[] = [];
   private totalActive = 0;
@@ -379,6 +383,14 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.flushSubscriptions("session_ids");
   };
 
+  setForegroundTaskId = (taskId: string | null) => {
+    const normalized = typeof taskId === "string" ? taskId.trim() : "";
+    const next = normalized ? normalized : null;
+    if (next === this.foregroundTaskId) return;
+    this.foregroundTaskId = next;
+    this.scheduleForegroundTaskFlush();
+  };
+
   init = () => {
     this.destroyed = false;
     void this.hydrateFromCache();
@@ -400,6 +412,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.reconnectTimer = null;
     }
     this.clearSnapshotWarning();
+    if (this.foregroundTaskTimer) {
+      window.clearTimeout(this.foregroundTaskTimer);
+      this.foregroundTaskTimer = null;
+    }
     if (this.cachePersistTimer) {
       window.clearTimeout(this.cachePersistTimer);
       this.cachePersistTimer = null;
@@ -1070,6 +1086,9 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       scope: "active",
       include_active_heads: requestSnapshot,
     };
+    if (this.foregroundTaskId) {
+      message.foreground_task_id = this.foregroundTaskId;
+    }
     if (this.subscribedSessionIds.length > 0) {
       message.session_ids = this.subscribedSessionIds.slice();
     }
@@ -1095,6 +1114,16 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (next.join("|") === this.activeSessionIds.join("|")) return;
     this.activeSessionIds = next;
     this.flushSubscriptions(reason);
+  }
+
+  private scheduleForegroundTaskFlush() {
+    if (this.foregroundTaskTimer) {
+      window.clearTimeout(this.foregroundTaskTimer);
+    }
+    this.foregroundTaskTimer = window.setTimeout(() => {
+      this.foregroundTaskTimer = null;
+      this.flushSubscriptions("foreground_task");
+    }, FOREGROUND_TASK_DEBOUNCE_MS);
   }
 
   private removeTask(taskId: string | undefined, opts?: { adjustCounts?: boolean }) {
