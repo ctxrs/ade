@@ -122,7 +122,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
   });
 
   it("hydrates from stream snapshot without HTTP", async () => {
-    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStore");
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
     const { getWorkspaceActiveHeads, getWorkspaceActiveSnapshot } = await import("../api/client");
 
     const now = new Date().toISOString();
@@ -165,7 +165,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
   });
 
   it("requests snapshot on reset_required", async () => {
-    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStore");
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
     const { getWorkspaceActiveSnapshot } = await import("../api/client");
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
@@ -178,13 +178,12 @@ describe("WorkspaceActiveSnapshotStore", () => {
     store.destroy();
   });
 
-  it("refreshes session head on session_gap", async () => {
-    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStore");
-    const { getSessionHead } = await import("../api/client");
-
-    (getSessionHead as any).mockResolvedValue(null);
+  it("resubscribes on session_gap", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    (store as any).ws = ws;
     await (store as any).handleStreamMessage(
       JSON.stringify({
         type: "event",
@@ -199,12 +198,11 @@ describe("WorkspaceActiveSnapshotStore", () => {
       }),
     );
 
-    await waitForCondition(() => (getSessionHead as any).mock.calls.length === 1);
-    expect(getSessionHead).toHaveBeenCalledWith("session-1", undefined, true);
+    expect(ws.send).toHaveBeenCalledTimes(1);
   });
 
   it("requests snapshot on stream seq gap", async () => {
-    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStore");
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
     const { getWorkspaceActiveSnapshot } = await import("../api/client");
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
@@ -218,7 +216,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
       }),
     );
     expect(getWorkspaceActiveSnapshot).not.toHaveBeenCalled();
-    expect(ws.send).toHaveBeenCalled();
+    expect(ws.send).not.toHaveBeenCalled();
 
     (getWorkspaceActiveSnapshot as any).mockClear();
     ws.send.mockClear();

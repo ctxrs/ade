@@ -24,6 +24,7 @@ tauri-plugin-deep-link = "2.4.5"
 tauri-plugin-dialog = "2.4.2"
 tauri-plugin-notification = "2.3.3"
 tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }
+tauri-plugin-stt = "0.1"
 tokio = { version = "1", features = ["sync"] }
 url = "2"
 urlencoding = "2"

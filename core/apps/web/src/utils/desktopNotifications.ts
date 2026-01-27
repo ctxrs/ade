@@ -8,7 +8,8 @@ export type DesktopNotificationPayload = {
 export async function ensureDesktopNotificationPermission(): Promise<boolean> {
   if (!isDesktopApp()) return false;
   try {
-    const mod = await import("@tauri-apps/plugin-notification");
+    const moduleId = "@tauri-apps/plugin-notification";
+    const mod = await import(/* @vite-ignore */ moduleId);
     const granted = await mod.isPermissionGranted();
     if (granted) return true;
     const res = await mod.requestPermission();
@@ -22,7 +23,8 @@ export async function ensureDesktopNotificationPermission(): Promise<boolean> {
 export async function sendDesktopNotification(payload: DesktopNotificationPayload): Promise<void> {
   if (!isDesktopApp()) return;
   try {
-    const mod = await import("@tauri-apps/plugin-notification");
+    const moduleId = "@tauri-apps/plugin-notification";
+    const mod = await import(/* @vite-ignore */ moduleId);
     const granted = await mod.isPermissionGranted();
     if (!granted) return;
     mod.sendNotification({ title: payload.title, body: payload.body });

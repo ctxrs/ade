@@ -159,6 +159,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.0
         version: 4.0.1
+      tauri-plugin-stt-api:
+        specifier: ^0.1.0
+        version: 0.1.0
     devDependencies:
       '@testing-library/jest-dom':
         specifier: ^6.6.3
@@ -4249,6 +4252,7 @@ packages:
   tar@4.4.19:
     resolution: {integrity: sha512-a20gEsvHnWe0ygBY8JbxoM4w3SJdhc7ZAuxkLqh+nvNQN2IOt0B5lLgM490X5Hl8FF0dl0tOf2ewFYAlIFgzVA==}
     engines: {node: '>=4.5'}
+    deprecated: Old versions of tar are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exhorbitant rates) by contacting i@izs.me
 
   tar@6.2.1:
     resolution: {integrity: sha512-DZ4yORTwrbTj/7MZYq2w+/ZFdI6OZ/f9SFHR+71gIVUZhOQPHzVCLpvRnPgyaMpfWxxk/4ONva3GQSyNIKRv6A==}
@@ -4258,6 +4262,9 @@ packages:
   tar@7.5.6:
     resolution: {integrity: sha512-xqUeu2JAIJpXyvskvU3uvQW8PAmHrtXp2KDuMJwQqW8Sqq0CaZBAQ+dKS3RBXVhU4wC5NjAdKrmh84241gO9cA==}
     engines: {node: '>=18'}
+
+  tauri-plugin-stt-api@0.1.0:
+    resolution: {integrity: sha512-JM8fBLVp+t/pLmtdRPmyZXu821HF10abEBofwrccp9Rn/N42ug7o9Q7iKTZtd8rc2QUj2xZe+pgmIzrUEvDKcg==}
 
   temp-dir@2.0.0:
     resolution: {integrity: sha512-aoBAniQmmwtcKp/7BzsH8Cxzv8OL736p7v1ihGb5e9DJ9kTwGWHrQrVB5+lfVDzfGrdRzXch+ig7LHaY1JTOrg==}
@@ -9605,6 +9612,10 @@ snapshots:
       minipass: 7.1.2
       minizlib: 3.1.0
       yallist: 5.0.0
+
+  tauri-plugin-stt-api@0.1.0:
+    dependencies:
+      '@tauri-apps/api': 2.9.1
 
   temp-dir@2.0.0: {}
 

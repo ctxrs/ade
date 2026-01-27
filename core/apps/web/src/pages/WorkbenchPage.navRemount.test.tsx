@@ -146,6 +146,7 @@ vi.mock("../api/client", () => ({
   resolveDaemonWsBaseUrl: vi.fn(() => "ws://localhost:4399"),
   getInstall: vi.fn(async () => ({})),
   getProviderOptions: vi.fn(async () => ({})),
+  getSessionGitStatusSummary: vi.fn(async () => null),
   getSettings: vi.fn(async () => ({ dictation: { enabled: false } })),
   getWorktree: vi.fn(async () => ({})),
   getWorkspace: vi.fn(async () => ({ id: workspaceId, name: "Mock Workspace", root_path: "/tmp/mock" })),
@@ -153,6 +154,7 @@ vi.mock("../api/client", () => ({
   installAllProviders: vi.fn(async () => ({})),
   installProvider: vi.fn(async () => ({ install_id: "install-1" })),
   listProviders: vi.fn(async () => []),
+  listWorkspaces: vi.fn(async () => []),
   markTaskRead: vi.fn(async () => ({})),
   markTaskUnread: vi.fn(async () => ({})),
   postMessage: vi.fn(async () => ({})),
@@ -310,6 +312,15 @@ describe("WorkbenchPage task rename selection", () => {
 
 describe("WorkbenchPage archive navigation", () => {
   it("does not refocus new task after navigation during archive", async () => {
+    const getTaskRow = (title: string) => {
+      const row = screen
+        .getAllByText(title)
+        .map((node) => node.closest(".wb-task-row"))
+        .find((node): node is HTMLElement => Boolean(node));
+      if (!row) throw new Error(`Missing task row for ${title}`);
+      return row;
+    };
+
     workspaceSnapshotSnap = {
       ...workspaceSnapshotSnap,
       tasksById: {
@@ -364,9 +375,8 @@ describe("WorkbenchPage archive navigation", () => {
 
     render(ui);
 
-    const starterRow = screen.getByText("Starter task").closest(".wb-task-row");
-    expect(starterRow).not.toBeNull();
-    const archiveButton = within(starterRow as HTMLElement).getByRole("button", { name: "Archive" });
+    const starterRow = getTaskRow("Starter task");
+    const archiveButton = within(starterRow).getByRole("button", { name: "Archive" });
     fireEvent.click(archiveButton);
 
     const dialog = await screen.findByRole("dialog", { name: "Archive confirmation" });
@@ -374,8 +384,8 @@ describe("WorkbenchPage archive navigation", () => {
 
     await waitFor(() => expect(archiveTask).toHaveBeenCalledTimes(1));
 
-    fireEvent.click(screen.getByText("Second task"));
-    fireEvent.click(screen.getByText("Starter task"));
+    fireEvent.click(within(getTaskRow("Second task")).getByText("Second task"));
+    fireEvent.click(within(getTaskRow("Starter task")).getByText("Starter task"));
 
     archiveDeferred.resolve({ id: taskId, archived_at: baseIso });
 

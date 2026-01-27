@@ -70,6 +70,7 @@ import {
   isDesktopApp,
 } from "../utils/desktop";
 import { ensureDesktopNotificationPermission } from "../utils/desktopNotifications";
+import { useTauriSttModelStatus } from "../utils/useTauriSttModelStatus";
 import { HARNESS_CATALOG, type HarnessCatalogEntry } from "../utils/harnessCatalog";
 import {
   ENTITLEMENTS_CACHE_KEY,
@@ -102,6 +103,7 @@ import {
   formatResetLabel,
   guessAttachmentName,
   isLinuxPlatform,
+  clampPct,
   parseGiB,
   saveTextFile,
   sectionFromHash,
@@ -200,12 +202,19 @@ export default function SettingsPage() {
   const [telemetryEndpoint, setTelemetryEndpoint] = useState("");
 
   const [dictationEnabled, setDictationEnabled] = useState(true);
+  const [dictationProvider, setDictationProvider] =
+    useState<DictationSettings["provider"]>("livekit_inference");
   const [model, setModel] = useState("auto");
   const [language, setLanguage] = useState("en");
   const [baseUrl, setBaseUrl] = useState("https://agent-gateway.livekit.cloud/v1");
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [apiSecretSet, setApiSecretSet] = useState(false);
+  const { modelStatus: tauriModelStatus, startModelDownload: startTauriModelDownload } =
+    useTauriSttModelStatus({
+      provider: dictationProvider,
+      language,
+    });
 
   const [titleGenMode, setTitleGenMode] = useState<TitleGenerationSettings["mode"]>("remote");
   const [titleGenBaseUrl, setTitleGenBaseUrl] = useState("https://openrouter.ai/api/v1");
@@ -519,6 +528,8 @@ export default function SettingsPage() {
             return v;
           };
 
+          const provider = d.provider ?? "livekit_inference";
+          setDictationProvider(provider === "disabled" ? "livekit_inference" : provider);
           setDictationEnabled(d.enabled);
           setModel(normalizeModel(d.livekit?.model ?? "auto"));
           setLanguage(d.livekit?.language ?? "en");
@@ -631,7 +642,7 @@ export default function SettingsPage() {
   const dictationPayload = useMemo((): DictationSettings => {
     return {
       enabled: dictationEnabled,
-      provider: dictationEnabled ? "livekit_inference" : "disabled",
+      provider: dictationProvider,
       livekit: {
         base_url: baseUrl.trim(),
         api_key: apiKey.trim(),
@@ -640,7 +651,7 @@ export default function SettingsPage() {
         language: language.trim() || "en",
       },
     };
-  }, [apiKey, apiSecret, baseUrl, dictationEnabled, language, model]);
+  }, [apiKey, apiSecret, baseUrl, dictationEnabled, dictationProvider, language, model]);
 
   const titleGenerationPayload = useMemo((): TitleGenerationSettings => {
     return {
@@ -703,10 +714,11 @@ export default function SettingsPage() {
 
   const dictationCanSave = useMemo(() => {
     if (!dictationEnabled) return true;
+    if (dictationProvider !== "livekit_inference") return true;
     if (!apiKey.trim()) return false;
     if (!apiSecretSet && !apiSecret.trim()) return false;
     return true;
-  }, [apiKey, apiSecret, apiSecretSet, dictationEnabled]);
+  }, [apiKey, apiSecret, apiSecretSet, dictationEnabled, dictationProvider]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -2756,12 +2768,60 @@ export default function SettingsPage() {
     }
 
     if (active === "dictation") {
+      const tauriStatusLabel = (() => {
+        switch (tauriModelStatus.status) {
+          case "ready":
+            return "Installed";
+          case "missing":
+            return "Not installed";
+          case "downloading":
+            return "Downloading";
+          case "checking":
+            return "Checking";
+          case "error":
+            return "Error";
+          default:
+            return "Unavailable";
+        }
+      })();
+      const tauriStatusClass = (() => {
+        switch (tauriModelStatus.status) {
+          case "ready":
+            return "settings-pill-ok";
+          case "missing":
+          case "downloading":
+            return "settings-pill-warn";
+          case "error":
+            return "settings-pill-err";
+          default:
+            return "";
+        }
+      })();
+      const tauriDownloadPct =
+        tauriModelStatus.status === "downloading" && tauriModelStatus.progress !== null
+          ? clampPct(tauriModelStatus.progress)
+          : null;
+      const tauriDownloadLabel = (() => {
+        if (tauriModelStatus.status === "downloading") {
+          return tauriDownloadPct !== null ? `Downloading ${Math.round(tauriDownloadPct)}%` : "Downloading...";
+        }
+        if (tauriModelStatus.status === "error") return "Retry download";
+        return "Download model";
+      })();
+      const showTauriDownload = dictationProvider === "tauri_stt" && isDesktopApp();
+      const tauriDownloadDisabled =
+        !dictationEnabled ||
+        tauriModelStatus.status === "checking" ||
+        tauriModelStatus.status === "downloading" ||
+        tauriModelStatus.status === "ready";
+      const tauriStatusTitle = tauriModelStatus.error ?? tauriModelStatus.detail ?? undefined;
+
       return (
         <>
           <Card>
             <Row
               title="Enable dictation"
-              description="LiveKit Inference STT streams transcription while you speak."
+              description="Enable speech-to-text dictation in the composer."
               control={
                 <Toggle
                   checked={dictationEnabled}
@@ -2772,26 +2832,50 @@ export default function SettingsPage() {
               }
             />
             <Row
-              title="Model"
-              description="Transcription model used by the provider."
+              title="Provider"
+              description="Choose the dictation backend."
               control={
                 <select
                   className="settings-control settings-select"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
+                  value={dictationProvider}
+                  onChange={(e) => setDictationProvider(e.target.value as DictationSettings["provider"])}
                   disabled={!dictationEnabled}
                 >
-                  {MODEL_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
+                  <option value="livekit_inference">LiveKit Inference (cloud)</option>
+                  <option value="tauri_stt">Desktop STT (Tauri)</option>
                 </select>
               }
             />
+            {dictationProvider === "tauri_stt" && !isDesktopApp() ? (
+              <div className="settings-banner">Desktop STT requires the ctx desktop app.</div>
+            ) : null}
+            {dictationProvider === "livekit_inference" ? (
+              <Row
+                title="Model"
+                description="Transcription model used by LiveKit."
+                control={
+                  <select
+                    className="settings-control settings-select"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    disabled={!dictationEnabled}
+                  >
+                    {MODEL_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
+            ) : null}
             <Row
               title="Language"
-              description="BCP-47 code (e.g. en, es, multi)."
+              description={
+                dictationProvider === "tauri_stt"
+                  ? "Locale code for desktop dictation (e.g. en-US, es-ES)."
+                  : "BCP-47 code (e.g. en, es, multi)."
+              }
               control={
                 <input
                   className="settings-control"
@@ -2802,48 +2886,82 @@ export default function SettingsPage() {
                 />
               }
             />
-            <Row
-              title="Inference base URL"
-              description="LiveKit Agent Gateway endpoint."
-              control={
-                <input
-                  className="settings-control settings-control-wide"
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  disabled={!dictationEnabled}
-                  placeholder="https://agent-gateway.livekit.cloud/v1"
+            {dictationProvider === "livekit_inference" ? (
+              <>
+                <Row
+                  title="Inference base URL"
+                  description="LiveKit Agent Gateway endpoint."
+                  control={
+                    <input
+                      className="settings-control settings-control-wide"
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                      disabled={!dictationEnabled}
+                      placeholder="https://agent-gateway.livekit.cloud/v1"
+                    />
+                  }
                 />
-              }
-            />
-            <Row
-              title="LiveKit API key"
-              description="Stored locally in your ctx data dir."
-              control={
-                <input
-                  className="settings-control settings-control-wide"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  disabled={!dictationEnabled}
-                  placeholder="APIK…"
+                <Row
+                  title="LiveKit API key"
+                  description="Stored locally in your ctx data dir."
+                  control={
+                    <input
+                      className="settings-control settings-control-wide"
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      disabled={!dictationEnabled}
+                      placeholder="APIK…"
+                    />
+                  }
                 />
-              }
-            />
-            <Row
-              title="LiveKit API secret"
-              description={apiSecretSet ? "Secret is stored; enter a new value to rotate." : "Required."}
-              control={
-                <input
-                  className="settings-control settings-control-wide"
-                  value={apiSecret}
-                  onChange={(e) => setApiSecret(e.target.value)}
-                  disabled={!dictationEnabled}
-                  placeholder={apiSecretSet ? "(set)" : "MAB…"}
-                  type="password"
+                <Row
+                  title="LiveKit API secret"
+                  description={apiSecretSet ? "Secret is stored; enter a new value to rotate." : "Required."}
+                  control={
+                    <input
+                      className="settings-control settings-control-wide"
+                      value={apiSecret}
+                      onChange={(e) => setApiSecret(e.target.value)}
+                      disabled={!dictationEnabled}
+                      placeholder={apiSecretSet ? "(set)" : "MAB…"}
+                      type="password"
+                    />
+                  }
                 />
-              }
-            />
+              </>
+            ) : (
+              <Row
+                title="Desktop models"
+                description="Download the Vosk model for the selected language."
+                control={
+                  <div className="row" style={{ gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <span className={`settings-pill ${tauriStatusClass}`} title={tauriStatusTitle}>
+                      {tauriStatusLabel}
+                    </span>
+                    {showTauriDownload ? (
+                      <button
+                        type="button"
+                        className="settings-btn settings-btn-secondary"
+                        onClick={() => startTauriModelDownload().catch(() => {})}
+                        disabled={tauriDownloadDisabled}
+                        style={
+                          tauriDownloadPct !== null
+                            ? ({ ["--settings-install-pct" as any]: `${tauriDownloadPct}%` } as any)
+                            : undefined
+                        }
+                      >
+                        {tauriDownloadLabel}
+                      </button>
+                    ) : null}
+                  </div>
+                }
+              />
+            )}
           </Card>
-          {!dictationCanSave && dictationEnabled ? (
+          {dictationProvider === "tauri_stt" && tauriModelStatus.error ? (
+            <div className="settings-banner settings-banner-error">{tauriModelStatus.error}</div>
+          ) : null}
+          {!dictationCanSave && dictationEnabled && dictationProvider === "livekit_inference" ? (
             <div className="settings-banner settings-banner-error">Enter an API key and secret to enable dictation.</div>
           ) : null}
         </>

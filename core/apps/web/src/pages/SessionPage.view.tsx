@@ -14,8 +14,6 @@ import { ChevronDown, CornerUpRight, Pencil, Trash2 } from "lucide-react";
 import type { StateSnapshot, VirtuosoHandle } from "react-virtuoso";
 import {
   deleteMessage,
-  DictationSettings,
-  resolveDaemonWsBaseUrl,
   Message,
   type MessageAttachment,
   postMessage,
@@ -41,12 +39,11 @@ import {
   type ContextWindowInfo,
   type WorkbenchModeId,
 } from "../components/WorkbenchComposer";
-import { startMicPcmStream } from "../utils/micPcmStream";
-import { parseWsJson } from "../utils/wsJson";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { useRelativeNowMs } from "../utils/useRelativeNowMs";
 import { useStatsigGate } from "../utils/statsig";
+import { useDictationController } from "../utils/useDictationController";
 import { usePinnedScrollManager } from "./usePinnedScrollManager";
 import { useWorkbenchStore } from "../workbench/store";
 import {
@@ -629,29 +626,17 @@ export function SessionView({
     };
   }, [id, onScrollStateChange, persistScroll, bottomThresholdPx]);
 
-  const [dictationSettings, setDictationSettings] = useState<DictationSettings | null>(null);
-  const [dictationRecording, setDictationRecording] = useState(false);
-  const [dictationError, setDictationError] = useState<string | null>(null);
-  const dictationWsRef = useRef<WebSocket | null>(null);
-  const dictationMicRef = useRef<{ stop: () => Promise<void> } | null>(null);
-  const dictationBaseRef = useRef<string>("");
-  const dictationCommittedRef = useRef<string>("");
-  const dictationInterimRef = useRef<string>("");
-  const dictationDebugEnabled = useMemo(() => {
-    try {
-      return new URLSearchParams(window.location.search).get("dictation_debug") === "1";
-    } catch {
-      return false;
-    }
-  }, []);
-  const [dictationDebugText, setDictationDebugText] = useState<string | null>(null);
-  const dictationAudioBytesRef = useRef(0);
-  const dictationAudioChunksRef = useRef(0);
-  const dictationReadyRef = useRef(false);
-  const dictationAudioStartedRef = useRef(false);
-  const dictationTranscriptMsgsRef = useRef(0);
-  const dictationFinalizeWaiterRef = useRef<{ promise: Promise<void>; resolve: () => void } | null>(null);
-  const dictationSuppressUpdatesRef = useRef(false);
+  const {
+    dictationRecording,
+    dictationError,
+    dictationDebugText,
+    startDictation,
+    stopDictation,
+  } = useDictationController({
+    text: input,
+    setText: setInput,
+    appendSegment,
+  });
 
   const entry = useSessionEntry(id ?? "");
   const session: Session | null = entry?.session ?? null;
@@ -930,220 +915,6 @@ export function SessionView({
   const disableProviderGuard = useCallback(async () => {
     await applyProviderGuardSettings({ enabled: false });
   }, [applyProviderGuardSettings]);
-
-  const stopDictation = useCallback(async (opts?: { awaitFinal?: boolean }): Promise<string> => {
-    const awaitFinal = opts?.awaitFinal === true;
-    const ws = dictationWsRef.current;
-    const mic = dictationMicRef.current;
-    const base = dictationBaseRef.current;
-    const committed = dictationCommittedRef.current;
-    const interim = dictationInterimRef.current;
-
-    const hasActiveDictation =
-      dictationRecording || !!mic || (ws ? ws.readyState !== WebSocket.CLOSED : false) || !!base || !!committed || !!interim;
-
-    if (!hasActiveDictation) return input;
-
-    setDictationRecording(false);
-    dictationMicRef.current = null;
-
-    try {
-      await mic?.stop();
-    } catch { }
-
-    let finalizeWaiter = dictationFinalizeWaiterRef.current;
-    if (ws && ws.readyState !== WebSocket.CLOSED) {
-      if (!finalizeWaiter) {
-        let resolve: () => void = () => { };
-        const promise = new Promise<void>((res) => {
-          resolve = res;
-        });
-        finalizeWaiter = { promise, resolve };
-        dictationFinalizeWaiterRef.current = finalizeWaiter;
-      }
-    }
-
-    try {
-      ws?.send(JSON.stringify({ type: "stop" }));
-    } catch { }
-
-    if (awaitFinal && finalizeWaiter) {
-      await Promise.race([
-        finalizeWaiter.promise,
-        new Promise<void>((resolve) => window.setTimeout(resolve, 8000)),
-      ]);
-    }
-
-    const next = appendSegment(
-      appendSegment(dictationBaseRef.current, dictationCommittedRef.current),
-      dictationInterimRef.current,
-    );
-    if (next !== input) setInput(next);
-    if (awaitFinal) {
-      dictationSuppressUpdatesRef.current = true;
-      dictationBaseRef.current = "";
-      dictationCommittedRef.current = "";
-      dictationInterimRef.current = "";
-    }
-    dictationInterimRef.current = "";
-    dictationReadyRef.current = false;
-    dictationAudioStartedRef.current = false;
-
-    return next;
-  }, [dictationRecording, input, setInput]);
-
-  const startDictation = useCallback(async () => {
-    setDictationError(null);
-
-    let settings = dictationSettings;
-    if (!settings) {
-      try {
-        const s = await getSettings();
-        settings = s.dictation ?? null;
-        setDictationSettings(settings);
-      } catch (e: any) {
-        setDictationError(e?.message ?? "Failed to load dictation settings.");
-        return;
-      }
-    }
-
-    const enabled = Boolean(settings?.enabled) && settings?.provider === "livekit_inference";
-    if (!enabled) {
-      setDictationError("Dictation is disabled. Configure it in Settings.");
-      return;
-    }
-    const existing = dictationWsRef.current;
-    if (existing && existing.readyState !== WebSocket.CLOSED) return;
-    if (dictationRecording) return;
-
-    const token = (() => {
-      try {
-        return sessionStorage.getItem("ctxAuthToken");
-      } catch {
-        return null;
-      }
-    })();
-    const wsBase = resolveDaemonWsBaseUrl();
-    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
-    const ws = new WebSocket(`${wsBase}/api/dictation/livekit/stream${qs}`);
-    ws.binaryType = "arraybuffer";
-    dictationWsRef.current = ws;
-    dictationFinalizeWaiterRef.current = null;
-    dictationSuppressUpdatesRef.current = false;
-
-    dictationBaseRef.current = input;
-    dictationCommittedRef.current = "";
-    dictationInterimRef.current = "";
-    dictationAudioBytesRef.current = 0;
-    dictationAudioChunksRef.current = 0;
-    dictationReadyRef.current = false;
-    dictationAudioStartedRef.current = false;
-    dictationTranscriptMsgsRef.current = 0;
-
-    const openPromise = new Promise<void>((resolve, reject) => {
-      ws.addEventListener("open", () => resolve(), { once: true });
-      ws.addEventListener("error", () => reject(new Error("Failed to connect to dictation stream.")), { once: true });
-    });
-
-    ws.addEventListener("message", (ev) => {
-      void parseWsJson((ev as MessageEvent).data).then((data) => {
-        if (!data) return;
-        const t = String(data.type ?? "");
-        if (t === "ready") {
-          dictationReadyRef.current = true;
-          return;
-        } else if (t === "audio_started") {
-          dictationAudioStartedRef.current = true;
-          return;
-        } else if (t === "interim") {
-          dictationTranscriptMsgsRef.current += 1;
-          dictationInterimRef.current = String(data.text ?? "");
-        } else if (t === "final") {
-          dictationTranscriptMsgsRef.current += 1;
-          dictationCommittedRef.current = appendSegment(dictationCommittedRef.current, String(data.text ?? ""));
-          dictationInterimRef.current = "";
-        } else if (t === "done") {
-          dictationFinalizeWaiterRef.current?.resolve();
-          dictationFinalizeWaiterRef.current = null;
-          try {
-            ws.close();
-          } catch { }
-          return;
-        } else if (t === "error") {
-          setDictationError(String(data.message ?? "Dictation error"));
-          dictationFinalizeWaiterRef.current?.resolve();
-          dictationFinalizeWaiterRef.current = null;
-          stopDictation().catch(() => { });
-          return;
-        } else {
-          return;
-        }
-
-        if (dictationSuppressUpdatesRef.current) return;
-        const base = dictationBaseRef.current;
-        const committed = dictationCommittedRef.current;
-        const interim = dictationInterimRef.current;
-        setInput(appendSegment(appendSegment(base, committed), interim));
-      });
-    });
-
-    ws.addEventListener("close", () => {
-      dictationWsRef.current = null;
-      setDictationRecording(false);
-      dictationFinalizeWaiterRef.current?.resolve();
-      dictationFinalizeWaiterRef.current = null;
-    });
-
-    try {
-      await openPromise;
-      setDictationRecording(true);
-      dictationMicRef.current = await startMicPcmStream({
-        onPcmChunk: (pcm16) => {
-          dictationAudioChunksRef.current += 1;
-          dictationAudioBytesRef.current += pcm16.byteLength;
-          if (ws.readyState === WebSocket.OPEN) ws.send(pcm16);
-        },
-        onError: (err) => {
-          setDictationError(err.message);
-          stopDictation().catch(() => { });
-        },
-      });
-    } catch (e: any) {
-      setDictationError(e?.message ?? String(e));
-      try {
-        ws.close();
-      } catch { }
-      dictationWsRef.current = null;
-      setDictationRecording(false);
-    }
-  }, [dictationSettings, dictationRecording, input, stopDictation]);
-
-  const stopDictationRef = useRef(stopDictation);
-  useEffect(() => {
-    stopDictationRef.current = stopDictation;
-  }, [stopDictation]);
-
-  useEffect(() => {
-    return () => {
-      stopDictationRef.current().catch(() => { });
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!dictationDebugEnabled) return;
-    if (!dictationRecording) {
-      setDictationDebugText(null);
-      return;
-    }
-    const timer = window.setInterval(() => {
-      const ws = dictationWsRef.current;
-      const wsState = ws ? ws.readyState : -1;
-      setDictationDebugText(
-        `Dictation debug\nws_state=${wsState} ready=${dictationReadyRef.current} audio_started=${dictationAudioStartedRef.current}\naudio_chunks=${dictationAudioChunksRef.current} audio_bytes=${dictationAudioBytesRef.current} transcript_msgs=${dictationTranscriptMsgsRef.current}`,
-      );
-    }, 500);
-    return () => window.clearInterval(timer);
-  }, [dictationDebugEnabled, dictationRecording]);
 
   useEffect(() => {
     if (!perfEnabled) return;

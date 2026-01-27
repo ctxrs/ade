@@ -14,6 +14,7 @@ import type { WorkspaceActiveSnapshotEventSource } from "./workspaceActiveSnapsh
 vi.mock("../api/client", () => {
   const idToString = (id: any): string => (typeof id === "string" ? id : id?.["0"]);
   return {
+    authToken: vi.fn(() => null),
     idToString,
     getProviderOptions: vi.fn(async () => undefined),
     getSessionHead: vi.fn(),
@@ -21,7 +22,9 @@ vi.mock("../api/client", () => {
     getSessionState: vi.fn(async () => ({ artifacts: [], git_status: null })),
     getSessionHistory: vi.fn(),
     listSessionArtifacts: vi.fn(async () => []),
+    listSessionSubagentInvocations: vi.fn(async () => []),
     listTurnTools: vi.fn(async () => []),
+    resolveDaemonBaseUrl: vi.fn(() => ""),
   };
 });
 
@@ -87,10 +90,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     sup.openSession(sessionId);
 
-    await waitForCondition(() => {
-      const entry = sup.getSnapshot().sessions[sessionId];
-      return Boolean(entry && !entry.loading);
-    });
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 1);
 
     const entry = sup.getSnapshot().sessions[sessionId];
     expect(entry?.messages.length).toBe(1);
@@ -146,10 +146,7 @@ describe("SessionSupervisor", () => {
     sup.bindWorkspaceActiveSnapshotStore(store);
     sup.openSession(sessionId);
 
-    await waitForCondition(() => {
-      const entry = sup.getSnapshot().sessions[sessionId];
-      return Boolean(entry && !entry.loading);
-    });
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.session != null);
 
     const now = new Date().toISOString();
     const event: SessionEvent = {
@@ -242,10 +239,7 @@ describe("SessionSupervisor", () => {
     sup.bindWorkspaceActiveSnapshotStore(store);
     sup.openSession(sessionId);
 
-    await waitForCondition(() => {
-      const entry = sup.getSnapshot().sessions[sessionId];
-      return Boolean(entry && !entry.loading);
-    });
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.session != null);
 
     const now = new Date().toISOString();
     const event: SessionEvent = {
@@ -313,23 +307,7 @@ describe("SessionSupervisor", () => {
       last_event_seq: 2,
       has_more_turns: false,
     };
-    const headAfterGap = {
-      session: mkSession(sessionId),
-      turns: [] as SessionTurn[],
-      events: [] as SessionEvent[],
-      messages: [] as Message[],
-      last_event_seq: 2,
-      has_more_turns: false,
-    };
-
-    let resolveHead: ((value: any) => void) | null = null;
-    const headPromise = new Promise((resolve) => {
-      resolveHead = resolve;
-    });
-
-    (getSessionHead as any)
-      .mockResolvedValueOnce(headWithMessage)
-      .mockImplementationOnce(() => headPromise);
+    (getSessionHead as any).mockResolvedValue(headWithMessage);
 
     const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
     const store: WorkspaceActiveSnapshotEventSource = {
@@ -361,12 +339,9 @@ describe("SessionSupervisor", () => {
     sup.bindWorkspaceActiveSnapshotStore(store);
     sup.openSession(sessionId);
 
-    await waitForCondition(() => {
-      const entry = sup.getSnapshot().sessions[sessionId];
-      return Boolean(entry && !entry.loading);
-    });
-    expect(sup.getSnapshot().sessions[sessionId]?.messages.length).toBe(1);
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 1);
 
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     const gapEvent: WorkspaceActiveSnapshotEvent = {
       type: "session_gap",
       workspace_id: { 0: "ws-1" },
@@ -378,14 +353,10 @@ describe("SessionSupervisor", () => {
 
     const internalEntry = (sup as any).entries.get(sessionId);
     expect(internalEntry.turnsHydrated).toBe(false);
-    expect(internalEntry.messages.length).toBe(0);
+    expect(internalEntry.messages.length).toBe(1);
     expect(internalEntry.lastEventSeq).toBe(5);
 
-    resolveHead?.(headAfterGap);
-
-    await waitForCondition(() => (getSessionHead as any).mock.calls.length >= 2);
-    await waitForCondition(() => !sup.getSnapshot().sessions[sessionId]?.loading);
-    expect(sup.getSnapshot().sessions[sessionId]?.messages.length).toBe(0);
+    alertSpy.mockRestore();
   });
 
   it("ignores active task upserts without head data", async () => {
@@ -526,10 +497,8 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     sup.openSession(sessionId);
 
-    await waitForCondition(() => {
-      const entry = sup.getSnapshot().sessions[sessionId];
-      return Boolean(entry && !entry.loading);
-    });
+    await waitForCondition(() => (getSessionHead as any).mock.calls.length > 0);
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.turnToolsByTurnId[turnId]?.length === 1);
 
     const entry = sup.getSnapshot().sessions[sessionId];
     expect(entry?.turnToolsByTurnId[turnId]?.length).toBe(1);

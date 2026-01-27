@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { StatsigClient, type StatsigUser } from "@statsig/js-client";
 import { randomUuid } from "./randomUuid";
 
 const CLIENT_KEY = import.meta.env.VITE_STATSIG_CLIENT_KEY as string | undefined;
@@ -7,7 +6,22 @@ const USER_ID_KEY = "ctx-statsig-user-id";
 
 let initPromise: Promise<void> | null = null;
 let initDone = false;
-let client: StatsigClient | null = null;
+let client: StatsigClientLike | null = null;
+
+type StatsigClientLike = {
+  initializeAsync: () => Promise<void>;
+  checkGate: (gate: string) => boolean;
+};
+type StatsigUser = {
+  userID: string;
+};
+
+const loadStatsigClient = async (): Promise<{
+  StatsigClient: new (clientKey: string, user: StatsigUser) => StatsigClientLike;
+}> => {
+  const moduleId = "@statsig/js-client";
+  return import(/* @vite-ignore */ moduleId);
+};
 
 type FeatureFlagOverrides = Record<string, boolean>;
 
@@ -50,9 +64,11 @@ export const initStatsig = (): Promise<void> | null => {
   if (!CLIENT_KEY) return null;
   if (typeof window === "undefined") return null;
   if (initPromise) return initPromise;
-  client = new StatsigClient(CLIENT_KEY, buildUser());
-  initPromise = client
-    .initializeAsync()
+  initPromise = loadStatsigClient()
+    .then((mod) => {
+      client = new mod.StatsigClient(CLIENT_KEY, buildUser());
+      return client.initializeAsync();
+    })
     .then(() => {
       initDone = true;
     })

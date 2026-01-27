@@ -28,6 +28,7 @@ fn main() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_stt::init())
         .invoke_handler(tauri::generate_handler![
             desktop_get_connection,
             desktop_disconnect,

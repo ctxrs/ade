@@ -62,6 +62,8 @@ pub enum DictationProvider {
     Disabled,
     #[serde(rename = "livekit_inference")]
     LiveKitInference,
+    #[serde(rename = "tauri_stt")]
+    TauriStt,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

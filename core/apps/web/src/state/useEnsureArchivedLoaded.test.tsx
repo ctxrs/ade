@@ -1,6 +1,6 @@
 import React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render } from "@testing-library/react";
 
 import { useEnsureArchivedLoaded } from "./useEnsureArchivedLoaded";
 
@@ -8,6 +8,9 @@ type HarnessProps = {
   archivedCollapsed: boolean;
   archivedLoaded: boolean;
   fetchState: "idle" | "loading" | "error";
+  activeInitialized: boolean;
+  activeFetchState: "idle" | "loading" | "error";
+  prefetchAfterActive?: boolean;
   ensureArchivedLoaded: () => void;
 };
 
@@ -16,7 +19,15 @@ function Harness(props: HarnessProps) {
   return null;
 }
 
-afterEach(() => cleanup());
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  cleanup();
+});
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
 
 describe("useEnsureArchivedLoaded", () => {
   it("loads archived items when expanded and not loaded", () => {
@@ -26,9 +37,14 @@ describe("useEnsureArchivedLoaded", () => {
         archivedCollapsed={false}
         archivedLoaded={false}
         fetchState="idle"
+        activeInitialized
+        activeFetchState="idle"
         ensureArchivedLoaded={ensureArchivedLoaded}
       />,
     );
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
     expect(ensureArchivedLoaded).toHaveBeenCalledTimes(1);
   });
 
@@ -39,17 +55,27 @@ describe("useEnsureArchivedLoaded", () => {
         archivedCollapsed
         archivedLoaded={false}
         fetchState="idle"
+        activeInitialized
+        activeFetchState="idle"
         ensureArchivedLoaded={ensureArchivedLoaded}
       />,
     );
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
     rerender(
       <Harness
         archivedCollapsed={false}
         archivedLoaded={false}
         fetchState="loading"
+        activeInitialized
+        activeFetchState="idle"
         ensureArchivedLoaded={ensureArchivedLoaded}
       />,
     );
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
     expect(ensureArchivedLoaded).toHaveBeenCalledTimes(0);
   });
 
@@ -60,9 +86,14 @@ describe("useEnsureArchivedLoaded", () => {
         archivedCollapsed={false}
         archivedLoaded={false}
         fetchState="error"
+        activeInitialized
+        activeFetchState="idle"
         ensureArchivedLoaded={ensureArchivedLoaded}
       />,
     );
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
     expect(ensureArchivedLoaded).toHaveBeenCalledTimes(1);
   });
 
@@ -73,17 +104,27 @@ describe("useEnsureArchivedLoaded", () => {
         archivedCollapsed={false}
         archivedLoaded
         fetchState="idle"
+        activeInitialized
+        activeFetchState="idle"
         ensureArchivedLoaded={ensureArchivedLoaded}
       />,
     );
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
     rerender(
       <Harness
         archivedCollapsed={false}
         archivedLoaded={false}
         fetchState="idle"
+        activeInitialized
+        activeFetchState="idle"
         ensureArchivedLoaded={ensureArchivedLoaded}
       />,
     );
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
     expect(ensureArchivedLoaded).toHaveBeenCalledTimes(1);
   });
 });

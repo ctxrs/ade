@@ -63,7 +63,7 @@ export type LiveKitDictationSettings = {
 
 export type DictationSettings = {
   enabled: boolean;
-  provider: "disabled" | "livekit_inference";
+  provider: "disabled" | "livekit_inference" | "tauri_stt";
   livekit?: LiveKitDictationSettings | null;
 };
 

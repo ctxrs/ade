@@ -19,5 +19,7 @@
     </array>
     <key>NSMicrophoneUsageDescription</key>
     <string>ctx needs microphone access for dictation.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>ctx uses speech recognition to transcribe dictation.</string>
   </dict>
 </plist>
