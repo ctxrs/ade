@@ -40,7 +40,6 @@ export const SECTIONS: Array<{
   navHidden?: boolean;
 }> = [
   { id: "general", label: "General", group: "main" },
-  { id: "privacy", label: "Privacy", group: "main" },
   { id: "agent_harnesses", label: "Agent Harnesses", group: "main" },
   { id: "harness_subscriptions", label: "Harness Subscriptions", group: "main" },
   { id: "models_routing", label: "Models & Routing", group: "main", navHidden: true },
@@ -53,6 +52,7 @@ export const SECTIONS: Array<{
   { id: "resource_governance", label: "Resource Limits", group: "main" },
   { id: "mobile_access", label: "Mobile Access", group: "main", navHidden: true },
   { id: "resource_utilization", label: "Resource Utilization", group: "main", navHidden: true },
+  { id: "privacy", label: "Privacy", group: "main" },
   { id: "dictation", label: "Dictation", group: "advanced" },
   { id: "title_generation", label: "Title Generation", group: "advanced" },
   { id: "billing", label: "Billing", group: "advanced", navHidden: true },
