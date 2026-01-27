@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 
 type RelativeNowStore = {
   subscribe: (listener: () => void) => () => void;
@@ -59,9 +59,6 @@ function createStore(intervalMs: number): RelativeNowStore {
       };
     },
     getSnapshot() {
-      if (timer === null) {
-        nowMs = Date.now();
-      }
       return nowMs;
     },
   };
@@ -76,6 +73,7 @@ function getStore(intervalMs: number): RelativeNowStore {
 
 export function useRelativeNowMs(intervalMs = 60_000, enabled = true): number {
   const store = useMemo(() => getStore(intervalMs), [intervalMs]);
+  const frozenNowRef = useRef<number | null>(null);
   const subscribe = useCallback(
     (listener: () => void) => {
       if (!enabled) return () => {};
@@ -83,5 +81,13 @@ export function useRelativeNowMs(intervalMs = 60_000, enabled = true): number {
     },
     [enabled, store],
   );
-  return useSyncExternalStore(subscribe, store.getSnapshot, store.getSnapshot);
+  const snapshot = useSyncExternalStore(subscribe, store.getSnapshot, store.getSnapshot);
+  if (enabled) {
+    frozenNowRef.current = snapshot;
+    return snapshot;
+  }
+  if (frozenNowRef.current === null) {
+    frozenNowRef.current = snapshot;
+  }
+  return frozenNowRef.current;
 }

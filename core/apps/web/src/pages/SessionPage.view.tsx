@@ -778,7 +778,7 @@ export function SessionView({
   const needsNowMs =
     hasActiveTurn || (providerGuardCountdownTarget != null && providerGuardCountdownTarget > Date.now());
   const nowMs = useRelativeNowMs(1000, needsNowMs);
-  const displayNowMs = needsNowMs ? nowMs : Date.now();
+  const displayNowMs = nowMs;
 
   const providerGuardNoticeKey = providerGuardNotice
     ? `${providerGuardNotice.kind}:${providerGuardNotice.stage}:${providerGuardNotice.pid ?? ""}:${providerGuardNotice.killAtMs ?? ""}`
