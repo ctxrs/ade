@@ -47,7 +47,7 @@ actor DaemonAPIClient {
         let diff: String
     }
 
-    struct SessionGitStatusResponse: Codable, Sendable {
+    struct SessionGitStatusResponse: Decodable, Sendable {
         let summary: String
         let staged: Int?
         let unstaged: Int?
@@ -173,7 +173,7 @@ actor DaemonAPIClient {
         }
     }
 
-    struct SessionGitDiffSummaryResponse: Codable, Sendable {
+    struct SessionGitDiffSummaryResponse: Decodable, Sendable {
         let fileCount: Int
         let additions: Int
         let deletions: Int
@@ -186,22 +186,18 @@ actor DaemonAPIClient {
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            let fileCount = try container.decodeIfPresent(Int.self, forKey: .fileCount)
-                ?? container.decodeIfPresent(Int.self, forKey: .files)
-                ?? container.decodeIfPresent(Int.self, forKey: .fileCountSnake)
-                ?? container.decodeIfPresent(Int.self, forKey: .changedFiles)
-                ?? container.decodeIfPresent(Int.self, forKey: .filesChanged)
-                ?? 0
-            let additions = try container.decodeIfPresent(Int.self, forKey: .additions)
-                ?? container.decodeIfPresent(Int.self, forKey: .lineAdditions)
-                ?? container.decodeIfPresent(Int.self, forKey: .added)
-                ?? container.decodeIfPresent(Int.self, forKey: .insertions)
-                ?? 0
-            let deletions = try container.decodeIfPresent(Int.self, forKey: .deletions)
-                ?? container.decodeIfPresent(Int.self, forKey: .lineDeletions)
-                ?? container.decodeIfPresent(Int.self, forKey: .deleted)
-                ?? container.decodeIfPresent(Int.self, forKey: .removed)
-                ?? 0
+            func decodeFirstInt(_ keys: [CodingKeys]) throws -> Int? {
+                for key in keys {
+                    if let value = try container.decodeIfPresent(Int.self, forKey: key) {
+                        return value
+                    }
+                }
+                return nil
+            }
+
+            let fileCount = try decodeFirstInt([.fileCount, .files, .fileCountSnake, .changedFiles, .filesChanged]) ?? 0
+            let additions = try decodeFirstInt([.additions, .lineAdditions, .added, .insertions]) ?? 0
+            let deletions = try decodeFirstInt([.deletions, .lineDeletions, .deleted, .removed]) ?? 0
             self.fileCount = fileCount
             self.additions = additions
             self.deletions = deletions

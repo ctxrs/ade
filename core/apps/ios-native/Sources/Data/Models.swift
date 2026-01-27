@@ -455,7 +455,7 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
     case activeTaskDelete(workspaceId: CtxID, snapshotRev: Int, taskId: CtxID)
     case sessionSummary(workspaceId: CtxID, snapshotRev: Int, summary: SessionSnapshotSummary)
     case sessionHeadDelta(workspaceId: CtxID, snapshotRev: Int, delta: SessionHeadDelta)
-    case sessionHeadReset(workspaceId: CtxID, snapshotRev: Int, head: SessionHeadSnapshot)
+    case sessionHeadReset(workspaceId: CtxID, snapshotRev: Int, head: SessionHead)
     case sessionGap(workspaceId: CtxID, snapshotRev: Int, sessionId: CtxID, afterSeq: Int, reason: String?)
     case worktreeBootstrap(workspaceId: CtxID, snapshotRev: Int, notice: WorktreeBootstrapNotice)
     case archivedTaskUpsert(workspaceId: CtxID, archivedRev: Int, task: WorkspaceArchivedTaskSummaryPayload, snapshot: SessionSnapshot?)
@@ -513,7 +513,7 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
             let delta = try container.decode(SessionHeadDelta.self, forKey: .delta)
             self = .sessionHeadDelta(workspaceId: workspaceId, snapshotRev: snapshotRev, delta: delta)
         case .sessionHeadReset:
-            let head = try container.decode(SessionHeadSnapshot.self, forKey: .head)
+            let head = try container.decode(SessionHead.self, forKey: .head)
             self = .sessionHeadReset(workspaceId: workspaceId, snapshotRev: snapshotRev, head: head)
         case .sessionGap:
             let sessionId = try container.decode(CtxID.self, forKey: .sessionId)

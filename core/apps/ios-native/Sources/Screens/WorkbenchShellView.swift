@@ -90,6 +90,7 @@ struct WorkbenchShellView: View {
                     isLoadingTasks: isLoadingTasks,
                     taskError: taskError,
                     selectedSession: resolvedSession,
+                    selectedTask: selectedTask,
                     activePanel: $activePanel,
                     artifactsCount: $artifactsCount,
                     hasTaskSelection: workbenchSelection.taskId != nil,
@@ -988,9 +989,10 @@ struct WorkbenchShellView: View {
         if normalizedKey == streamSubscriptionKey { return }
         let includeActiveHeads = streamSubscriptionKey.isEmpty
         streamSubscriptionKey = normalizedKey
-        let message = WorkspaceActiveSnapshotClientMessage(
+        let workspaceId = selectedWorkspace.map { CtxID($0.id) }
+        let message: WorkspaceActiveSnapshotClientMessage = WorkspaceActiveSnapshotClientMessage(
             type: "subscribe",
-            workspaceId: selectedWorkspace?.id,
+            workspaceId: workspaceId,
             fromRev: lastStreamWorkspaceRev > 0 ? lastStreamWorkspaceRev : nil,
             includeActiveHeads: includeActiveHeads,
             sessionIds: [],
@@ -1349,6 +1351,7 @@ private struct WorkbenchHomeView: View {
     let isLoadingTasks: Bool
     let taskError: String?
     let selectedSession: SessionSummary?
+    let selectedTask: WorkspaceTaskSummary?
     @Binding var activePanel: WorkbenchPanel?
     @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
@@ -1364,6 +1367,7 @@ private struct WorkbenchHomeView: View {
                 isLoadingTasks: isLoadingTasks,
                 taskError: taskError,
                 selectedSession: selectedSession,
+                selectedTask: selectedTask,
                 activePanel: $activePanel,
                 artifactsCount: $artifactsCount,
                 hasTaskSelection: hasTaskSelection,
@@ -1701,11 +1705,6 @@ struct WorkbenchTaskListPreviewView: View {
         workspaces.first
     }
 
-    private var taskRowIndicators: [String: TaskRowIndicators] {
-        let tasks = activeTasks + archivedTasks
-        return Dictionary(uniqueKeysWithValues: tasks.map { ($0.task.id.stringValue, TaskRowIndicators(task: $0)) })
-    }
-
     var body: some View {
         ZStack(alignment: .leading) {
             CtxBackgroundView()
@@ -1720,7 +1719,6 @@ struct WorkbenchTaskListPreviewView: View {
                 isRefreshingTasks: false,
                 taskError: nil,
                 activeTaskId: activeTasks.first?.task.id.stringValue,
-                taskRowIndicators: taskRowIndicators,
                 taskQuery: $taskQuery,
                 drawerWidth: drawerWidth,
                 onRefresh: {},
@@ -1837,6 +1835,7 @@ private struct WorkbenchNavigationFlowView: View {
     let isLoadingTasks: Bool
     let taskError: String?
     let selectedSession: SessionSummary?
+    let selectedTask: WorkspaceTaskSummary?
     @Binding var activePanel: WorkbenchPanel?
     @Binding var artifactsCount: Int
     let hasTaskSelection: Bool
@@ -2415,6 +2414,28 @@ private struct WorkbenchNewTaskView: View {
         let shortId = String(UUID().uuidString.prefix(8))
         return "photo-\(shortId)\(suffix)"
     }
+}
+
+@ViewBuilder
+private func newTaskMenuLabel(_ label: String) -> some View {
+    let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+    let display = trimmed.isEmpty ? "Select" : trimmed
+    HStack(spacing: 6) {
+        Text(display)
+            .font(.caption.weight(.semibold))
+            .foregroundColor(trimmed.isEmpty ? .ctxTextMuted : .ctxTextPrimary)
+            .lineLimit(1)
+        Image(systemName: "chevron.down")
+            .font(.caption2.weight(.semibold))
+            .foregroundColor(.ctxTextSecondary)
+    }
+    .padding(.vertical, 8)
+    .padding(.horizontal, 12)
+    .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    .overlay(
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .stroke(Color.ctxLine, lineWidth: 1)
+    )
 }
 
 struct WorkbenchNewTaskPreviewView: View {
