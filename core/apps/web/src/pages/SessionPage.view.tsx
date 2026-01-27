@@ -1169,8 +1169,6 @@ export function SessionView({
       prevItemsRef.current = wbListItems;
       return;
     }
-      return;
-    }
     let indexShift: number | null = null;
     const anchorId =
       latestAnchorIdRef.current ?? prevItems[0]?.id ?? prevItems[prevItems.length - 1]?.id;
