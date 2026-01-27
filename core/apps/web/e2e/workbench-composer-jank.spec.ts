@@ -37,6 +37,24 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
   await scroller.evaluate((el) => {
     el.scrollTop = el.scrollHeight;
   });
+  const layout = await page.evaluate(() => {
+    const threadStack = document.querySelector(".wb-thread-stack") as HTMLElement | null;
+    const composer = document.querySelector(".wb-session textarea.wb-active-textarea") as HTMLTextAreaElement | null;
+    if (!threadStack || !composer) return null;
+    const stackRect = threadStack.getBoundingClientRect();
+    const composerRect = composer.getBoundingClientRect();
+    return {
+      stackBottom: stackRect.bottom,
+      composerTop: composerRect.top,
+      composerBottom: composerRect.bottom,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(layout).not.toBeNull();
+  if (layout) {
+    expect(layout.stackBottom).toBeLessThanOrEqual(layout.composerTop + 1);
+    expect(layout.composerBottom).toBeLessThanOrEqual(layout.viewportHeight + 1);
+  }
   await expect
     .poll(async () => scroller.evaluate((el) => el.scrollHeight - (el.scrollTop + el.clientHeight)), {
       timeout: 10000,
@@ -130,4 +148,49 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
   expect(metrics.maxDelta).toBeLessThanOrEqual(2);
   expect(metrics.clsTotal).toBeLessThan(0.02);
   expect(metrics.clsNoInput).toBeLessThan(0.001);
+});
+
+test("workbench: composer stays visible when expanding long messages", async ({ page, request }) => {
+  test.setTimeout(120000);
+  await page.setViewportSize({ width: 1400, height: 900 });
+
+  const seed = await seedDummyWorkspace(request, {
+    tasks: 1,
+    sessionsPerTask: 1,
+    turnsPerSession: 6,
+    messageBytes: { min: 2000, max: 2200 },
+    messagePrefix: "composer-expand",
+  });
+
+  await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
+  const rows = page.locator(".wb-task-row");
+  await expect(rows).toHaveCount(1, { timeout: 20000 });
+  await rows.first().click();
+
+  const composer = page.locator(".wb-session textarea.wb-active-textarea");
+  await expect(composer).toBeVisible({ timeout: 20000 });
+
+  const collapsedHeader = page.locator(".wb-turn-header[aria-expanded=\"false\"]").first();
+  await expect(collapsedHeader).toBeVisible({ timeout: 20000 });
+  await collapsedHeader.click();
+
+  const layout = await page.evaluate(() => {
+    const threadStack = document.querySelector(".wb-thread-stack") as HTMLElement | null;
+    const composer = document.querySelector(".wb-session textarea.wb-active-textarea") as HTMLTextAreaElement | null;
+    if (!threadStack || !composer) return null;
+    const stackRect = threadStack.getBoundingClientRect();
+    const composerRect = composer.getBoundingClientRect();
+    return {
+      stackBottom: stackRect.bottom,
+      composerTop: composerRect.top,
+      composerBottom: composerRect.bottom,
+      viewportHeight: window.innerHeight,
+    };
+  });
+
+  expect(layout).not.toBeNull();
+  if (layout) {
+    expect(layout.stackBottom).toBeLessThanOrEqual(layout.composerTop + 1);
+    expect(layout.composerBottom).toBeLessThanOrEqual(layout.viewportHeight + 1);
+  }
 });
