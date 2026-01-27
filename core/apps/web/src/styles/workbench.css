@@ -2829,6 +2829,13 @@
   border-radius: 10px 10px 0 0;
 }
 
+.wb-session-view .wb-thread-stack {
+  max-width: none;
+  width: calc(100% + (var(--wb-session-padding-inline) * 2));
+  margin-left: calc(var(--wb-session-padding-inline) * -1);
+  margin-right: calc(var(--wb-session-padding-inline) * -1);
+}
+
 .wb-session-bottom {
   display: flex;
   flex-direction: column;
@@ -2854,6 +2861,7 @@
   max-width: calc(var(--wb-thread-max-width) + (var(--wb-session-padding-inline) * 2));
   margin-left: auto;
   margin-right: auto;
+  padding: 0 var(--wb-session-padding-inline) 8px;
   box-sizing: border-box;
 }
 
