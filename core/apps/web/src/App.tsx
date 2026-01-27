@@ -13,6 +13,7 @@ import SettingsPage from "./pages/SettingsPage";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
 import { SettingsStoreProvider } from "./state/settingsStore";
 import { preloadHarnessLogos } from "./utils/harnessCatalog";
+import { initStatsig } from "./utils/statsig";
 
 export default function App() {
   useEffect(() => {
@@ -48,6 +49,10 @@ export default function App() {
 
   useEffect(() => {
     preloadHarnessLogos();
+  }, []);
+
+  useEffect(() => {
+    initStatsig();
   }, []);
 
   return (

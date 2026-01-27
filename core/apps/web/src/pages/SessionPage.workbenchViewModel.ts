@@ -321,9 +321,18 @@ const compareMessageOrder = (a: Message, b: Message): number => {
   return String(idToString(a.id)).localeCompare(String(idToString(b.id)));
 };
 
-export function mergeMessagesForView(messages: Message[], pending: PendingMessageEntry[]): Message[] {
-  const filteredMessages = messages.filter((message) => message.delivery !== "queued");
-  const filteredPending = pending.filter((entry) => entry.message.delivery !== "queued");
+export function mergeMessagesForView(
+  messages: Message[],
+  pending: PendingMessageEntry[],
+  includeQueuedMessageIds: Set<string> = new Set(),
+): Message[] {
+  const shouldInclude = (message: Message) => {
+    if (message.delivery !== "queued") return true;
+    const mid = idToString(message.id);
+    return !!mid && includeQueuedMessageIds.has(mid);
+  };
+  const filteredMessages = messages.filter(shouldInclude);
+  const filteredPending = pending.filter((entry) => shouldInclude(entry.message));
   if (filteredPending.length === 0) return filteredMessages;
   const byId = new Map<string, Message>();
   for (const m of filteredMessages) {

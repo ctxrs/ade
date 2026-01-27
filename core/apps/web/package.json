@@ -21,6 +21,7 @@
     "@ctx/design": "workspace:*",
     "@ctx/types": "workspace:*",
     "@monaco-editor/react": "^4.6.0",
+    "@statsig/js-client": "^3.31.2",
     "@supabase/supabase-js": "^2.49.1",
     "@tauri-apps/api": "^2.9.1",
     "@xterm/addon-fit": "^0.10.0",

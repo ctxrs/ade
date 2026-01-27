@@ -46,6 +46,7 @@ import { parseWsJson } from "../utils/wsJson";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { useRelativeNowMs } from "../utils/useRelativeNowMs";
+import { useStatsigGate } from "../utils/statsig";
 import { usePinnedScrollManager } from "./usePinnedScrollManager";
 import { useWorkbenchStore } from "../workbench/store";
 import {
@@ -211,6 +212,7 @@ export function SessionView({
   const [queueActionBusyId, setQueueActionBusyId] = useState<string | null>(null);
   const [pendingMessages, setPendingMessages] = useState<PendingMessageEntry[]>([]);
   const [pendingQueueMessages, setPendingQueueMessages] = useState<PendingMessageEntry[]>([]);
+  const [optimisticQueueRemovalIds, setOptimisticQueueRemovalIds] = useState<string[]>([]);
   const [fileOpenError, setFileOpenError] = useState<string | null>(null);
   const [modifierDown, setModifierDown] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
@@ -228,6 +230,8 @@ export function SessionView({
 
   useEffect(() => {
     setPendingMessages([]);
+    setPendingQueueMessages([]);
+    setOptimisticQueueRemovalIds([]);
     setDraftAttachments([]);
     setSendError(null);
     setFileOpenError(null);
@@ -675,24 +679,83 @@ export function SessionView({
   const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
   const turnsKey = deriveTurnsKey(turns);
   const messagesKey = deriveMessagesKey(messages);
+  const optimisticQueueRemovalSet = useMemo(
+    () => new Set(optimisticQueueRemovalIds),
+    [optimisticQueueRemovalIds],
+  );
+  const markQueueOptimisticallyRemoved = useCallback((messageId: string) => {
+    if (!messageId) return;
+    setOptimisticQueueRemovalIds((prev) => (prev.includes(messageId) ? prev : [...prev, messageId]));
+  }, []);
+  const rollbackOptimisticQueueRemoval = useCallback((messageId: string) => {
+    if (!messageId) return;
+    setOptimisticQueueRemovalIds((prev) => prev.filter((id) => id !== messageId));
+  }, []);
+  const shouldKeepQueueRemovalOnError = (error: unknown) => {
+    const msg = String((error as any)?.message ?? "");
+    return msg.startsWith("400") || msg.startsWith("404");
+  };
   const mergedQueueForPanel = useMemo(
     () => mergeQueuedMessagesForPanel(queue, pendingQueueMessages),
     [queue, pendingQueueMessages],
   );
   const queueForPanel = useMemo(
-    () => filterQueuedMessagesForPanel(mergedQueueForPanel, turns),
-    [mergedQueueForPanel, turnsKey],
+    () => {
+      const filtered = filterQueuedMessagesForPanel(mergedQueueForPanel, turns);
+      if (optimisticQueueRemovalIds.length === 0) return filtered;
+      return filtered.filter((message) => {
+        const mid = idToString(message.id);
+        return !mid || !optimisticQueueRemovalSet.has(mid);
+      });
+    },
+    [mergedQueueForPanel, turnsKey, optimisticQueueRemovalIds.length, optimisticQueueRemovalSet],
   );
+  useEffect(() => {
+    if (optimisticQueueRemovalIds.length === 0) return;
+    const liveIds = new Set(
+      mergedQueueForPanel.map((message) => idToString(message.id)).filter((id): id is string => !!id),
+    );
+    setOptimisticQueueRemovalIds((prev) => {
+      const next = prev.filter((id) => liveIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [mergedQueueForPanel, optimisticQueueRemovalIds.length]);
   const showQueuePanel = queueForPanel.length > 0;
   const queuedMessageIdsForThread = useMemo(() => {
-    if (queueForPanel.length === 0) return new Set<string>();
     const ids = new Set<string>();
     for (const message of queueForPanel) {
       const mid = idToString(message.id);
       if (mid) ids.add(mid);
     }
+    if (optimisticQueueRemovalIds.length > 0) {
+      for (const mid of optimisticQueueRemovalIds) {
+        ids.add(mid);
+      }
+    }
     return ids;
-  }, [queueForPanel]);
+  }, [queueForPanel, optimisticQueueRemovalIds]);
+  const turnStatusByUserMessageId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const turn of turns) {
+      const mid = turn.user_message_id ? idToString(turn.user_message_id) : "";
+      if (!mid) continue;
+      map.set(mid, String(turn.status));
+    }
+    return map;
+  }, [turnsKey]);
+  const queuedMessageIdsToShow = useMemo(() => {
+    const ids = new Set<string>();
+    for (const message of messages) {
+      if (message.delivery !== "queued") continue;
+      const mid = idToString(message.id);
+      if (!mid) continue;
+      const status = turnStatusByUserMessageId.get(mid);
+      if (status && status !== "queued") {
+        ids.add(mid);
+      }
+    }
+    return ids;
+  }, [messagesKey, turnStatusByUserMessageId]);
   useEffect(() => {
     if (pendingMessages.length === 0) return;
     const realIds = new Set(messages.map((m) => idToString(m.id)));
@@ -719,8 +782,8 @@ export function SessionView({
   }, [queue, pendingQueueMessages.length]);
 
   const displayMessages = useMemo(
-    () => mergeMessagesForView(messages, pendingMessages),
-    [messagesKey, pendingMessages],
+    () => mergeMessagesForView(messages, pendingMessages, queuedMessageIdsToShow),
+    [messagesKey, pendingMessages, queuedMessageIdsToShow],
   );
   const displayMessagesKey = deriveMessagesKey(displayMessages);
   const pendingTurns = useMemo(
@@ -766,6 +829,7 @@ export function SessionView({
     () => turns.some((turn) => turn.status === "running" || turn.status === "queued"),
     [turnsKey],
   );
+  const queuedMessagesEnabled = useStatsigGate("queued_messages_enabled", false);
   const sessionError = useMemo(
     () => deriveSessionError(turns, events),
     [turnsKey, eventsKey],
@@ -1587,10 +1651,14 @@ export function SessionView({
   const sendNow = async () => {
     if (!id) return;
     if (sendBusy) return;
+    if (hasActiveTurn && !queuedMessagesEnabled) {
+      // Temporarily disabled: queued messages are gated off while a turn is running.
+      return;
+    }
     const text = (dictationRecording ? await stopDictation({ awaitFinal: true }) : input).trim();
     if (!text) return;
     const attachmentsToSend = draftAttachments;
-    const shouldQueue = hasActiveTurn;
+    const shouldQueue = hasActiveTurn && queuedMessagesEnabled;
     const optimisticId = createClientMessageId();
     const optimisticMessage: Message = {
       id: optimisticId,
@@ -1651,6 +1719,7 @@ export function SessionView({
     if (!id) return;
     if (!messageId) return;
     if (queueActionBusy) return;
+    markQueueOptimisticallyRemoved(messageId);
     setQueueActionBusyId(messageId);
     setSendError(null);
     try {
@@ -1659,6 +1728,9 @@ export function SessionView({
         prev.filter((entry) => idToString(entry.message.id) !== messageId),
       );
     } catch (e: any) {
+      if (!shouldKeepQueueRemovalOnError(e)) {
+        rollbackOptimisticQueueRemoval(messageId);
+      }
       setSendError(e?.message ? String(e.message) : String(e));
     } finally {
       setQueueActionBusyId(null);
@@ -1673,6 +1745,7 @@ export function SessionView({
     const attachments = getQueuedAttachments(message);
     setInput(message.content ?? "");
     setDraftAttachments(attachments);
+    markQueueOptimisticallyRemoved(mid);
     setQueueActionBusyId(mid);
     setSendError(null);
     try {
@@ -1681,6 +1754,9 @@ export function SessionView({
         prev.filter((entry) => idToString(entry.message.id) !== mid),
       );
     } catch (e: any) {
+      if (!shouldKeepQueueRemovalOnError(e)) {
+        rollbackOptimisticQueueRemoval(mid);
+      }
       setSendError(e?.message ? String(e.message) : String(e));
     } finally {
       setQueueActionBusyId(null);
@@ -1694,11 +1770,13 @@ export function SessionView({
     if (!mid) return;
     const attachments = getQueuedAttachments(message);
     const content = message.content ?? "";
+    markQueueOptimisticallyRemoved(mid);
     setQueueActionBusyId(mid);
     setSendError(null);
     try {
       await interruptSession(id);
     } catch (e: any) {
+      rollbackOptimisticQueueRemoval(mid);
       setSendError(e?.message ? String(e.message) : String(e));
       setQueueActionBusyId(null);
       return;
@@ -1709,6 +1787,9 @@ export function SessionView({
         prev.filter((entry) => idToString(entry.message.id) !== mid),
       );
     } catch (e: any) {
+      if (!shouldKeepQueueRemovalOnError(e)) {
+        rollbackOptimisticQueueRemoval(mid);
+      }
       setSendError(e?.message ? String(e.message) : String(e));
       setQueueActionBusyId(null);
       return;
