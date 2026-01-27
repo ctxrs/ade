@@ -1140,40 +1140,40 @@ export function SessionView({
     return out;
   }, [wbGroups]);
 
-  const [renderItems, setRenderItems] = useState<WorkbenchListItem[]>(wbListItems);
   const [firstItemIndex, setFirstItemIndex] = useState(initialVirtuosoIndex);
   const prevSessionForIndexRef = useRef(id);
+  const prevItemsRef = useRef<WorkbenchListItem[]>(wbListItems);
 
   useLayoutEffect(() => {
     if (prevSessionForIndexRef.current !== id) {
       prevSessionForIndexRef.current = id;
       setFirstItemIndex(initialVirtuosoIndex);
-      setRenderItems(wbListItems);
+      prevItemsRef.current = wbListItems;
       return;
     }
     if (wbListItems.length === 0) {
       setFirstItemIndex(initialVirtuosoIndex);
-      setRenderItems(wbListItems);
+      prevItemsRef.current = wbListItems;
       return;
     }
-    if (wbListItems === renderItems) return;
-    if (renderItems.length === 0) {
+    const prevItems = prevItemsRef.current;
+    if (prevItems.length === 0) {
       setFirstItemIndex(initialVirtuosoIndex);
-      setRenderItems(wbListItems);
+      prevItemsRef.current = wbListItems;
       return;
     }
     let indexShift: number | null = null;
     const anchorId =
-      latestAnchorIdRef.current ?? renderItems[0]?.id ?? renderItems[renderItems.length - 1]?.id;
+      latestAnchorIdRef.current ?? prevItems[0]?.id ?? prevItems[prevItems.length - 1]?.id;
     if (anchorId) {
-      const prevIndex = renderItems.findIndex((item) => item.id === anchorId);
+      const prevIndex = prevItems.findIndex((item) => item.id === anchorId);
       const nextIndex = wbListItems.findIndex((item) => item.id === anchorId);
       if (prevIndex >= 0 && nextIndex >= 0) {
         indexShift = nextIndex - prevIndex;
       }
     }
-    if (indexShift == null && wbListItems.length > renderItems.length) {
-      const prevFirstId = renderItems[0]?.id;
+    if (indexShift == null && wbListItems.length > prevItems.length) {
+      const prevFirstId = prevItems[0]?.id;
       if (prevFirstId) {
         const startIndex = wbListItems.findIndex((item) => item.id === prevFirstId);
         if (startIndex >= 0) {
@@ -1181,11 +1181,11 @@ export function SessionView({
         }
       }
       if (indexShift == null) {
-        const prevLastId = renderItems[renderItems.length - 1]?.id;
+        const prevLastId = prevItems[prevItems.length - 1]?.id;
         if (prevLastId) {
           const endIndex = wbListItems.findIndex((item) => item.id === prevLastId);
           if (endIndex >= 0) {
-            const startIndex = endIndex - (renderItems.length - 1);
+            const startIndex = endIndex - (prevItems.length - 1);
             if (startIndex >= 0) {
               indexShift = startIndex;
             }
@@ -1193,22 +1193,22 @@ export function SessionView({
         }
       }
       if (indexShift == null) {
-        indexShift = wbListItems.length - renderItems.length;
+        indexShift = wbListItems.length - prevItems.length;
       }
     }
     if (indexShift != null && indexShift !== 0) {
       setFirstItemIndex((prev) => prev - indexShift);
     }
-    setRenderItems(wbListItems);
-  }, [id, initialVirtuosoIndex, renderItems, wbListItems]);
+    prevItemsRef.current = wbListItems;
+  }, [id, initialVirtuosoIndex, wbListItems]);
 
   useEffect(() => {
     scheduleScrollbarUpdate();
-  }, [scheduleScrollbarUpdate, renderItems.length]);
+  }, [scheduleScrollbarUpdate, wbListItems.length]);
 
   useLayoutEffect(() => {
     updateScrollbar();
-  }, [updateScrollbar, renderItems.length]);
+  }, [updateScrollbar, wbListItems.length]);
 
 
   const isActiveRef = useRef(isActive);
@@ -1228,7 +1228,7 @@ export function SessionView({
     preserveScrollOnFocus,
     bottomThresholdPx,
     userIntentWindowMs,
-    itemsLength: renderItems.length,
+    itemsLength: wbListItems.length,
     firstItemIndex,
     scrollStateStickToBottom: scrollState?.stickToBottom,
     syncKey: scrollSyncKey,
@@ -1331,7 +1331,7 @@ export function SessionView({
 
   useLayoutEffect(() => {
     if (!isActive) return;
-    const items = renderItems;
+    const items = wbListItems;
     if (items.length === 0) return;
     if (scrollState?.virtuosoState && !preserveScrollOnFocus && scrollState?.stickToBottom === false) {
       restorePendingRef.current = false;
@@ -1413,7 +1413,7 @@ export function SessionView({
     scrollState?.virtuosoState,
     initialTopMostItemIndex,
     firstItemIndex,
-    renderItems.length,
+    wbListItems.length,
   ]);
 
   const authUi = useMemo(() => deriveAuthUi(events), [eventsKey]);
@@ -1502,7 +1502,7 @@ export function SessionView({
       : (scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined;
 
   const jumpToLatestWorkbench = useCallback(() => {
-    if (renderItems.length > 0) {
+    if (wbListItems.length > 0) {
       stickToBottomRef.current = true;
       setStickToBottom(true);
       setAtBottom(true);
@@ -1511,7 +1511,7 @@ export function SessionView({
       persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
       scheduleAutoScroll();
     }
-  }, [persistScroll, scheduleAutoScroll, renderItems.length]);
+  }, [persistScroll, scheduleAutoScroll, wbListItems.length]);
 
   useEffect(() => {
     if (!pendingScrollToBottomRef.current) return;
@@ -1528,20 +1528,20 @@ export function SessionView({
       }
     }
     if (preserveScrollOnFocus && !isActive) return;
-    if (renderItems.length === 0) return;
+    if (wbListItems.length === 0) return;
     pendingScrollToBottomRef.current = false;
     jumpToLatestWorkbench();
-  }, [stickToBottom, restoreInProgress, preserveScrollOnFocus, isActive, renderItems.length, jumpToLatestWorkbench]);
+  }, [stickToBottom, restoreInProgress, preserveScrollOnFocus, isActive, wbListItems.length, jumpToLatestWorkbench]);
   const handleWorkbenchRangeChanged = useCallback(
     (range: { startIndex: number }) => {
       if (restoringScrollRef.current) return;
       if (atBottom) return;
       const dataIndex = range.startIndex - firstItemIndex;
-      const item = renderItems[dataIndex];
+      const item = wbListItems[dataIndex];
       if (!item) return;
       latestAnchorIdRef.current = item.id ?? null;
     },
-    [atBottom, firstItemIndex, renderItems],
+    [atBottom, firstItemIndex, wbListItems],
   );
 
   const handleStartReached = useCallback(() => {
@@ -2197,7 +2197,7 @@ export function SessionView({
       ref={dropScopeRef}
       data-testid="session-view"
       data-session-id={id}
-      data-thread-count={renderItems.length}
+      data-thread-count={wbListItems.length}
     >
       {dropActive && (
         <div className="ctx-drop-overlay" aria-hidden="true">
@@ -2272,7 +2272,7 @@ export function SessionView({
         )}
         {showDebug && (
           <div className="wb-muted" style={{ fontFamily: "var(--mono)" }}>
-            debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} items={renderItems.length}
+            debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} items={wbListItems.length}
           </div>
         )}
         {(authUi.status === "required" || authUi.status === "failed") && (
@@ -2401,7 +2401,7 @@ export function SessionView({
 
         <WorkbenchThreadStack
           virtuosoStyle={virtuosoStyle}
-          data={renderItems}
+          data={wbListItems}
           firstItemIndex={firstItemIndex}
           virtuosoRef={virtuosoRef}
           initialTopMostItemIndex={initialTopMostItemIndex}
