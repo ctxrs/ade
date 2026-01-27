@@ -49,8 +49,6 @@ type WorkbenchThreadStackProps = {
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
   showJumpToLatest: boolean;
   onJumpToLatest: () => void;
-  followOutput?: boolean | "auto" | "smooth" | ((isAtBottom: boolean) => boolean | "auto" | "smooth");
-  onAtBottomStateChange?: (atBottom: boolean) => void;
   scrollbarActive: boolean;
   scrollbarDragging: boolean;
   scrollbarNeeded: boolean;
@@ -78,8 +76,6 @@ export const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
   itemContent,
   showJumpToLatest,
   onJumpToLatest,
-  followOutput,
-  onAtBottomStateChange,
   scrollbarActive,
   scrollbarDragging,
   scrollbarNeeded,
@@ -108,8 +104,6 @@ export const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
         restoreStateFrom={restoreStateFrom}
         startReached={onStartReached}
         rangeChanged={onRangeChanged}
-        followOutput={followOutput}
-        atBottomStateChange={onAtBottomStateChange}
         components={components}
         itemContent={itemContent}
       />

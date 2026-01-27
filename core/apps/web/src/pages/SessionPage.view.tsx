@@ -1140,47 +1140,40 @@ export function SessionView({
     return out;
   }, [wbGroups]);
 
+  const [renderItems, setRenderItems] = useState<WorkbenchListItem[]>(wbListItems);
   const [firstItemIndex, setFirstItemIndex] = useState(initialVirtuosoIndex);
   const prevSessionForIndexRef = useRef(id);
-  const prevItemsRef = useRef<WorkbenchListItem[]>(wbListItems);
 
   useLayoutEffect(() => {
     if (prevSessionForIndexRef.current !== id) {
       prevSessionForIndexRef.current = id;
       setFirstItemIndex(initialVirtuosoIndex);
-      prevItemsRef.current = wbListItems;
+      setRenderItems(wbListItems);
       return;
     }
     if (wbListItems.length === 0) {
       setFirstItemIndex(initialVirtuosoIndex);
-      prevItemsRef.current = wbListItems;
+      setRenderItems(wbListItems);
       return;
     }
-    const prevItems = prevItemsRef.current;
-    if (prevItems.length === 0) {
+    if (wbListItems === renderItems) return;
+    if (renderItems.length === 0) {
       setFirstItemIndex(initialVirtuosoIndex);
-      prevItemsRef.current = wbListItems;
-      return;
-    }
-    const idsUnchanged =
-      prevItems.length === wbListItems.length &&
-      prevItems.every((item, index) => item.id === wbListItems[index]?.id);
-    if (idsUnchanged) {
-      prevItemsRef.current = wbListItems;
+      setRenderItems(wbListItems);
       return;
     }
     let indexShift: number | null = null;
     const anchorId =
-      latestAnchorIdRef.current ?? prevItems[0]?.id ?? prevItems[prevItems.length - 1]?.id;
+      latestAnchorIdRef.current ?? renderItems[0]?.id ?? renderItems[renderItems.length - 1]?.id;
     if (anchorId) {
-      const prevIndex = prevItems.findIndex((item) => item.id === anchorId);
+      const prevIndex = renderItems.findIndex((item) => item.id === anchorId);
       const nextIndex = wbListItems.findIndex((item) => item.id === anchorId);
       if (prevIndex >= 0 && nextIndex >= 0) {
         indexShift = nextIndex - prevIndex;
       }
     }
-    if (indexShift == null && wbListItems.length > prevItems.length) {
-      const prevFirstId = prevItems[0]?.id;
+    if (indexShift == null && wbListItems.length > renderItems.length) {
+      const prevFirstId = renderItems[0]?.id;
       if (prevFirstId) {
         const startIndex = wbListItems.findIndex((item) => item.id === prevFirstId);
         if (startIndex >= 0) {
@@ -1188,11 +1181,11 @@ export function SessionView({
         }
       }
       if (indexShift == null) {
-        const prevLastId = prevItems[prevItems.length - 1]?.id;
+        const prevLastId = renderItems[renderItems.length - 1]?.id;
         if (prevLastId) {
           const endIndex = wbListItems.findIndex((item) => item.id === prevLastId);
           if (endIndex >= 0) {
-            const startIndex = endIndex - (prevItems.length - 1);
+            const startIndex = endIndex - (renderItems.length - 1);
             if (startIndex >= 0) {
               indexShift = startIndex;
             }
@@ -1200,22 +1193,22 @@ export function SessionView({
         }
       }
       if (indexShift == null) {
-        indexShift = wbListItems.length - prevItems.length;
+        indexShift = wbListItems.length - renderItems.length;
       }
     }
     if (indexShift != null && indexShift !== 0) {
       setFirstItemIndex((prev) => prev - indexShift);
     }
-    prevItemsRef.current = wbListItems;
-  }, [id, initialVirtuosoIndex, wbListItems]);
+    setRenderItems(wbListItems);
+  }, [id, initialVirtuosoIndex, renderItems, wbListItems]);
 
   useEffect(() => {
     scheduleScrollbarUpdate();
-  }, [scheduleScrollbarUpdate, wbListItems.length]);
+  }, [scheduleScrollbarUpdate, renderItems.length]);
 
   useLayoutEffect(() => {
     updateScrollbar();
-  }, [updateScrollbar, wbListItems.length]);
+  }, [updateScrollbar, renderItems.length]);
 
 
   const isActiveRef = useRef(isActive);
@@ -1235,7 +1228,7 @@ export function SessionView({
     preserveScrollOnFocus,
     bottomThresholdPx,
     userIntentWindowMs,
-    itemsLength: wbListItems.length,
+    itemsLength: renderItems.length,
     firstItemIndex,
     scrollStateStickToBottom: scrollState?.stickToBottom,
     syncKey: scrollSyncKey,
@@ -1338,7 +1331,7 @@ export function SessionView({
 
   useLayoutEffect(() => {
     if (!isActive) return;
-    const items = wbListItems;
+    const items = renderItems;
     if (items.length === 0) return;
     if (scrollState?.virtuosoState && !preserveScrollOnFocus && scrollState?.stickToBottom === false) {
       restorePendingRef.current = false;
@@ -1381,15 +1374,12 @@ export function SessionView({
       if (restoreScrollTop !== null) {
         const target = Math.max(0, restoreScrollTop);
         markAutoScroll();
-        if (handle) {
-          handle.scrollTo({ top: target });
-        } else if (el) {
-          el.scrollTop = target;
-          if (Math.abs(el.scrollTop - target) > 2 && restoreRetryRef.current < 3) {
-            restoreRetryRef.current += 1;
-            requestAnimationFrame(attemptRestore);
-            return;
-          }
+        handle?.scrollTo({ top: target });
+        if (el) el.scrollTop = target;
+        if (el && Math.abs(el.scrollTop - target) > 2 && restoreRetryRef.current < 3) {
+          restoreRetryRef.current += 1;
+          requestAnimationFrame(attemptRestore);
+          return;
         }
       } else if (restoreAnchorId) {
         const idx = items.findIndex((it) => it?.id === restoreAnchorId);
@@ -1423,7 +1413,7 @@ export function SessionView({
     scrollState?.virtuosoState,
     initialTopMostItemIndex,
     firstItemIndex,
-    wbListItems.length,
+    renderItems.length,
   ]);
 
   const authUi = useMemo(() => deriveAuthUi(events), [eventsKey]);
@@ -1512,7 +1502,7 @@ export function SessionView({
       : (scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined;
 
   const jumpToLatestWorkbench = useCallback(() => {
-    if (wbListItems.length > 0) {
+    if (renderItems.length > 0) {
       stickToBottomRef.current = true;
       setStickToBottom(true);
       setAtBottom(true);
@@ -1521,7 +1511,7 @@ export function SessionView({
       persistScroll({ stickToBottom: true, anchorItemId: null, scrollTop: null });
       scheduleAutoScroll();
     }
-  }, [persistScroll, scheduleAutoScroll, wbListItems.length]);
+  }, [persistScroll, scheduleAutoScroll, renderItems.length]);
 
   useEffect(() => {
     if (!pendingScrollToBottomRef.current) return;
@@ -1538,20 +1528,20 @@ export function SessionView({
       }
     }
     if (preserveScrollOnFocus && !isActive) return;
-    if (wbListItems.length === 0) return;
+    if (renderItems.length === 0) return;
     pendingScrollToBottomRef.current = false;
     jumpToLatestWorkbench();
-  }, [stickToBottom, restoreInProgress, preserveScrollOnFocus, isActive, wbListItems.length, jumpToLatestWorkbench]);
+  }, [stickToBottom, restoreInProgress, preserveScrollOnFocus, isActive, renderItems.length, jumpToLatestWorkbench]);
   const handleWorkbenchRangeChanged = useCallback(
     (range: { startIndex: number }) => {
       if (restoringScrollRef.current) return;
       if (atBottom) return;
       const dataIndex = range.startIndex - firstItemIndex;
-      const item = wbListItems[dataIndex];
+      const item = renderItems[dataIndex];
       if (!item) return;
       latestAnchorIdRef.current = item.id ?? null;
     },
-    [atBottom, firstItemIndex, wbListItems],
+    [atBottom, firstItemIndex, renderItems],
   );
 
   const handleStartReached = useCallback(() => {
@@ -1791,13 +1781,6 @@ export function SessionView({
 
   const virtuosoStyle = useMemo(() => ({ flex: 1, minHeight: 0 } as const), []);
   const workbenchViewportBy = useMemo(() => ({ top: 1000, bottom: 1000 }), []);
-  const followOutput = useCallback(
-    (_isAtBottom: boolean) => {
-      if (!isActive) return false;
-      return stickToBottomRef.current ? "auto" : false;
-    },
-    [isActive],
-  );
 
   const wrapperClass = "wb-session-view";
   const leftClass = "wb-session-left";
@@ -2214,7 +2197,7 @@ export function SessionView({
       ref={dropScopeRef}
       data-testid="session-view"
       data-session-id={id}
-      data-thread-count={wbListItems.length}
+      data-thread-count={renderItems.length}
     >
       {dropActive && (
         <div className="ctx-drop-overlay" aria-hidden="true">
@@ -2289,7 +2272,7 @@ export function SessionView({
         )}
         {showDebug && (
           <div className="wb-muted" style={{ fontFamily: "var(--mono)" }}>
-            debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} items={wbListItems.length}
+            debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} items={renderItems.length}
           </div>
         )}
         {(authUi.status === "required" || authUi.status === "failed") && (
@@ -2418,7 +2401,7 @@ export function SessionView({
 
         <WorkbenchThreadStack
           virtuosoStyle={virtuosoStyle}
-          data={wbListItems}
+          data={renderItems}
           firstItemIndex={firstItemIndex}
           virtuosoRef={virtuosoRef}
           initialTopMostItemIndex={initialTopMostItemIndex}
@@ -2430,8 +2413,6 @@ export function SessionView({
           itemContent={workbenchItemContent}
           showJumpToLatest={!atBottom}
           onJumpToLatest={jumpToLatestWorkbench}
-          followOutput={followOutput}
-          onAtBottomStateChange={setAtBottom}
           scrollbarActive={scrollbarActive}
           scrollbarDragging={scrollbarDragging}
           scrollbarNeeded={scrollbarNeeded}
@@ -2444,124 +2425,123 @@ export function SessionView({
           onScrollbarThumbPointerUp={handleScrollbarThumbPointerUp}
           scheduleScrollbarUpdate={scheduleScrollbarUpdate}
         />
-        <div className="wb-session-bottom">
-          {showQueuePanel && (
-            <div className="queue-panel card" aria-label="Queued messages">
-              <div className="queue-header">
-                <ChevronDown size={14} aria-hidden="true" />
-                <span className="queue-header-title">{queueForPanel.length} Queued</span>
-              </div>
-              <ul className="queue-list" role="list">
-                {queueForPanel.map((m, index) => {
-                  const messageId = idToString(m.id);
-                  const rowKey = messageId || `queued-${index}`;
-                  const attachments = getQueuedAttachments(m);
-                  const preview = formatQueuedPreview(m, attachments);
-                  const attachmentMeta = formatQueuedAttachmentMeta(attachments);
-                  const isPending = !!messageId && messageId.startsWith("client-");
-                  const canInteract = !!messageId && !isPending;
-                  const canSendNow = index === 0 && canInteract;
-                  return (
-                    <li key={rowKey} className="queue-item">
-                      <span className="queue-item-dot" aria-hidden="true" />
-                      <div className="queue-item-body">
-                        <div className="queue-item-content" title={preview}>
-                          {preview}
-                        </div>
-                        {attachmentMeta && (
-                          <div className="queue-item-meta" title={attachmentMeta.title}>
-                            <span>{attachmentMeta.label}</span>
-                            {attachmentMeta.detail && (
-                              <span className="queue-item-meta-detail">{attachmentMeta.detail}</span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      <div className="queue-item-actions">
-                        {canSendNow && (
-                          <button
-                            type="button"
-                            className="queue-action"
-                            disabled={queueActionBusy || sendBusy}
-                            onClick={() => onSendQueuedNow(m)}
-                            aria-label="Send now"
-                            title="Send now"
-                          >
-                            <CornerUpRight size={14} aria-hidden="true" />
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="queue-action"
-                          disabled={queueActionBusy || !canInteract}
-                          onClick={() => onEditQueued(m)}
-                          aria-label="Edit queued message"
-                          title="Edit"
-                        >
-                          <Pencil size={14} aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          className="queue-action"
-                          disabled={queueActionBusy || !canInteract}
-                          onClick={() => onRemoveQueued(messageId)}
-                          aria-label="Cancel queued message"
-                          title="Cancel"
-                        >
-                          <Trash2 size={14} aria-hidden="true" />
-                        </button>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
 
-          <UnifiedWorkbenchComposer
-            variant="activeSession"
-            value={input}
-            setValue={setInput}
-            placeholder="@ for context, / for commands"
-            inputDisabled={dictationRecording}
-            sessionIdForAutocomplete={id ?? null}
-            slashCommands={slashCommands}
-            attachments={draftAttachments}
-            setAttachments={setDraftAttachments}
-            onSend={sendNow}
-            sendDisabled={sendBusy || !hasDraftContent}
-            sendDisabledReason={sendBusy ? "Sending..." : !hasDraftContent ? "Enter a message." : null}
-            onInterrupt={id ? () => interruptSession(id) : null}
-            isWorking={hasActiveTurn}
-            verbosity={verbosity}
-            onSetVerbosity={setVerbosityPref}
-            modeId={workbenchMode}
-            setModeId={setWorkbenchMode}
-            contextWindow={contextWindow}
-            recording={dictationRecording}
-            onToggleRecording={() => {
-              if (dictationRecording) stopDictation().catch(() => { });
-              else startDictation().catch(() => { });
-            }}
-            harnessLabel={
-              HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.label ??
-              (session?.provider_id ?? "Provider")
-            }
-            harnessLogoSrc={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.logoSrc}
-            harnessLogoInvert={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInDark}
-            availableModels={modelOptions}
-            currentModelId={currentModelId}
-            onSetModelId={async (next) => {
-              if (!id) return;
-              const updated = await setSessionModel(id, next);
-              supervisor.setSession(updated);
-            }}
-          />
-          {sendError && <div className="wb-banner">{sendError}</div>}
-          {fileOpenError && <div className="wb-banner">{fileOpenError}</div>}
-          {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
-          {dictationError && <div className="wb-banner">{dictationError}</div>}
-        </div>
+        {showQueuePanel && (
+          <div className="queue-panel card" aria-label="Queued messages">
+            <div className="queue-header">
+              <ChevronDown size={14} aria-hidden="true" />
+              <span className="queue-header-title">{queueForPanel.length} Queued</span>
+            </div>
+            <ul className="queue-list" role="list">
+              {queueForPanel.map((m, index) => {
+                const messageId = idToString(m.id);
+                const rowKey = messageId || `queued-${index}`;
+                const attachments = getQueuedAttachments(m);
+                const preview = formatQueuedPreview(m, attachments);
+                const attachmentMeta = formatQueuedAttachmentMeta(attachments);
+                const isPending = !!messageId && messageId.startsWith("client-");
+                const canInteract = !!messageId && !isPending;
+                const canSendNow = index === 0 && canInteract;
+                return (
+                  <li key={rowKey} className="queue-item">
+                    <span className="queue-item-dot" aria-hidden="true" />
+                    <div className="queue-item-body">
+                      <div className="queue-item-content" title={preview}>
+                        {preview}
+                      </div>
+                      {attachmentMeta && (
+                        <div className="queue-item-meta" title={attachmentMeta.title}>
+                          <span>{attachmentMeta.label}</span>
+                          {attachmentMeta.detail && (
+                            <span className="queue-item-meta-detail">{attachmentMeta.detail}</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="queue-item-actions">
+                      {canSendNow && (
+                        <button
+                          type="button"
+                          className="queue-action"
+                          disabled={queueActionBusy || sendBusy}
+                          onClick={() => onSendQueuedNow(m)}
+                          aria-label="Send now"
+                          title="Send now"
+                        >
+                          <CornerUpRight size={14} aria-hidden="true" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="queue-action"
+                        disabled={queueActionBusy || !canInteract}
+                        onClick={() => onEditQueued(m)}
+                        aria-label="Edit queued message"
+                        title="Edit"
+                      >
+                        <Pencil size={14} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        className="queue-action"
+                        disabled={queueActionBusy || !canInteract}
+                        onClick={() => onRemoveQueued(messageId)}
+                        aria-label="Cancel queued message"
+                        title="Cancel"
+                      >
+                        <Trash2 size={14} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        <UnifiedWorkbenchComposer
+          variant="activeSession"
+          value={input}
+          setValue={setInput}
+          placeholder="@ for context, / for commands"
+          inputDisabled={dictationRecording}
+          sessionIdForAutocomplete={id ?? null}
+          slashCommands={slashCommands}
+          attachments={draftAttachments}
+          setAttachments={setDraftAttachments}
+          onSend={sendNow}
+          sendDisabled={sendBusy || !hasDraftContent}
+          sendDisabledReason={sendBusy ? "Sending..." : !hasDraftContent ? "Enter a message." : null}
+          onInterrupt={id ? () => interruptSession(id) : null}
+          isWorking={hasActiveTurn}
+          verbosity={verbosity}
+          onSetVerbosity={setVerbosityPref}
+          modeId={workbenchMode}
+          setModeId={setWorkbenchMode}
+          contextWindow={contextWindow}
+          recording={dictationRecording}
+          onToggleRecording={() => {
+            if (dictationRecording) stopDictation().catch(() => { });
+            else startDictation().catch(() => { });
+          }}
+          harnessLabel={
+            HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.label ??
+            (session?.provider_id ?? "Provider")
+          }
+          harnessLogoSrc={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.logoSrc}
+          harnessLogoInvert={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInDark}
+          availableModels={modelOptions}
+          currentModelId={currentModelId}
+          onSetModelId={async (next) => {
+            if (!id) return;
+            const updated = await setSessionModel(id, next);
+            supervisor.setSession(updated);
+          }}
+        />
+        {sendError && <div className="wb-banner">{sendError}</div>}
+        {fileOpenError && <div className="wb-banner">{fileOpenError}</div>}
+        {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
+        {dictationError && <div className="wb-banner">{dictationError}</div>}
 
         <div className="sr-only" aria-live="polite">
           {session && (atBottom ? "Agent output updating." : "New agent activity.")}

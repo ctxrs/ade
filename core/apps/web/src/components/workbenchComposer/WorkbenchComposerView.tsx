@@ -107,8 +107,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const mirrorRef = useRef<HTMLDivElement | null>(null);
-  const lastHeightRef = useRef<number>(0);
 
   const harnessTriggerRef = useRef<HTMLButtonElement | null>(null);
   const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -127,43 +125,35 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     slashCommands,
   });
 
+  const lastValueRef = useRef(value);
+
   const resizeTextarea = useCallback(() => {
     const el = textareaRef.current;
-    const mirror = mirrorRef.current;
-    if (!el || !mirror) return;
+    if (!el) return;
 
     const minHeightPx = variant === "newSession" ? 88 : 28;
     const maxHeightPx = variant === "newSession" ? 380 : 220;
-
-    mirror.style.width = `${el.clientWidth}px`;
-    mirror.textContent = value.length > 0 ? `${value}\n` : "\n";
-    let measured = mirror.scrollHeight;
-    if (!measured) {
-      const styles = window.getComputedStyle(el);
-      const lineHeight = Number.parseFloat(styles.lineHeight || "") || 20;
-      const paddingTop = Number.parseFloat(styles.paddingTop || "") || 0;
-      const paddingBottom = Number.parseFloat(styles.paddingBottom || "") || 0;
-      const lines = Math.max(1, value.split("\n").length);
-      measured = Math.ceil(lines * lineHeight + paddingTop + paddingBottom);
-    }
-    if (!measured) {
-      measured = el.scrollHeight;
-    }
-    const next = Math.min(maxHeightPx, Math.max(minHeightPx, measured));
+    const prevValue = lastValueRef.current;
+    const nextValue = value;
+    const prevLines = prevValue.split("\n").length;
+    const nextLines = nextValue.split("\n").length;
+    const shouldMeasureShrink = nextValue.length < prevValue.length || nextLines < prevLines;
+    const inlineHeight = el.style.height;
+    const hasInlineHeight = inlineHeight !== "" && inlineHeight !== "auto";
     const currentHeight =
-      lastHeightRef.current ||
-      Number.parseFloat(el.style.height || "0") ||
-      el.getBoundingClientRect().height ||
-      minHeightPx;
-    const hasInlineHeight = el.style.height !== "";
-    if (!hasInlineHeight || !Number.isFinite(currentHeight) || Math.abs(next - currentHeight) > 0.5) {
+      Number.parseFloat(inlineHeight || "") || el.getBoundingClientRect().height || minHeightPx;
+
+    if (shouldMeasureShrink) {
+      el.style.height = "auto";
+    }
+
+    const next = Math.min(maxHeightPx, Math.max(minHeightPx, el.scrollHeight));
+    if (shouldMeasureShrink || !hasInlineHeight || Math.abs(next - currentHeight) > 0.5) {
       el.style.height = `${next}px`;
-      lastHeightRef.current = next;
-    } else {
-      lastHeightRef.current = currentHeight;
     }
 
     if (recording) el.scrollTop = el.scrollHeight;
+    lastValueRef.current = nextValue;
   }, [recording, value, variant]);
 
   useLayoutEffect(() => {
@@ -1149,11 +1139,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         onKeyUp={() => autocomplete.syncFromDom()}
         onClick={() => autocomplete.syncFromDom()}
         onSelect={() => autocomplete.syncFromDom()}
-      />
-      <div
-        ref={mirrorRef}
-        className="wb-composer-textarea wb-composer-mirror"
-        aria-hidden="true"
       />
 
       <ComposerAutocompleteMenu

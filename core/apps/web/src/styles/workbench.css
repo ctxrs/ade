@@ -1019,21 +1019,6 @@
   overflow-y: auto;
 }
 
-.wb-composer-mirror {
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: auto;
-  min-height: 0;
-  max-height: none;
-  border: 0;
-  overflow: hidden;
-  white-space: pre-wrap;
-  word-break: break-word;
-  visibility: hidden;
-  pointer-events: none;
-}
-
 .wb-composer-textarea::placeholder {
   color: rgba(255, 255, 255, 0.35);
 }
@@ -2805,7 +2790,6 @@
   flex-direction: column;
   min-height: 0;
   overflow-x: hidden;
-  overflow-anchor: none;
   padding-left: var(--wb-session-padding-inline);
   padding-right: var(--wb-session-padding-inline);
   padding-bottom: 12px;
@@ -2821,8 +2805,8 @@
 }
 
 .wb-session-view .queue-panel {
-  width: 100%;
-  max-width: var(--wb-thread-max-width);
+  width: calc(100% - 24px);
+  max-width: calc(var(--wb-thread-max-width) - 32px);
   margin-left: auto;
   margin-right: auto;
   margin-bottom: 0;
@@ -2834,12 +2818,6 @@
   width: calc(100% + (var(--wb-session-padding-inline) * 2));
   margin-left: calc(var(--wb-session-padding-inline) * -1);
   margin-right: calc(var(--wb-session-padding-inline) * -1);
-}
-
-.wb-session-bottom {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 .wb-thread-scroller {
@@ -3647,7 +3625,6 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  position: relative;
 }
 
 .ctx-drop-scope {
