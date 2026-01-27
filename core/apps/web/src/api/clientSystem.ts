@@ -110,11 +110,48 @@ export type SubagentSettings = {
   max_per_call?: number | null;
 };
 
-export type TitleGenerationSettings = {
+export type TitleGenerationMode = "remote" | "local";
+
+export type TitleGenerationRemoteSettings = {
   base_url: string;
   api_key: string;
   model: string;
   use_json: boolean;
+};
+
+export type TitleGenerationLocalSettings = {
+  model_id: string;
+  use_json: boolean;
+};
+
+export type TitleGenerationSettings = {
+  mode: TitleGenerationMode;
+  remote: TitleGenerationRemoteSettings;
+  local: TitleGenerationLocalSettings;
+};
+
+export type TitleGenerationLocalRuntimeStatus = {
+  version: string;
+  installed: boolean;
+  path?: string | null;
+};
+
+export type TitleGenerationLocalModelStatus = {
+  model_id: string;
+  file_name: string;
+  installed: boolean;
+  version?: string | null;
+  sha256?: string | null;
+  size_bytes?: number | null;
+  installed_at?: string | null;
+};
+
+export type TitleGenerationLocalStatus = {
+  ready: boolean;
+  runtime: TitleGenerationLocalRuntimeStatus;
+  model: TitleGenerationLocalModelStatus;
+  install_id?: string | null;
+  install_running?: boolean;
 };
 
 export type Settings = {
@@ -135,6 +172,12 @@ export const updateSettings = (settings: Settings) =>
     method: "POST",
     body: JSON.stringify(settings),
   });
+
+export const getTitleGenerationLocalStatus = () =>
+  apiAny<TitleGenerationLocalStatus>("/api/title_generation/local/status");
+
+export const installTitleGenerationLocal = () =>
+  apiAny<{ install_id: string }>("/api/title_generation/local/install", { method: "POST" });
 
 export const getDiagnostics = () => apiAny<Diagnostics>(`/api/diagnostics`);
 

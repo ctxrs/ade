@@ -74,13 +74,106 @@ pub struct LiveKitDictationSettings {
     pub language: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TitleGenerationSettings {
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleGenerationMode {
+    #[default]
+    Remote,
+    Local,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TitleGenerationRemoteSettings {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
     #[serde(default)]
     pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TitleGenerationLocalSettings {
+    pub model_id: String,
+    #[serde(default)]
+    pub use_json: bool,
+}
+
+impl Default for TitleGenerationLocalSettings {
+    fn default() -> Self {
+        Self {
+            model_id: crate::title_generation_local::LOCAL_MODEL_ID.to_string(),
+            use_json: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TitleGenerationSettings {
+    pub mode: TitleGenerationMode,
+    pub remote: TitleGenerationRemoteSettings,
+    pub local: TitleGenerationLocalSettings,
+}
+
+impl Default for TitleGenerationSettings {
+    fn default() -> Self {
+        Self {
+            mode: TitleGenerationMode::Remote,
+            remote: TitleGenerationRemoteSettings::default(),
+            local: TitleGenerationLocalSettings::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TitleGenerationSettingsLegacy {
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    #[serde(default)]
+    pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TitleGenerationSettingsSplit {
+    #[serde(default)]
+    pub mode: TitleGenerationMode,
+    #[serde(default)]
+    pub remote: TitleGenerationRemoteSettings,
+    #[serde(default)]
+    pub local: TitleGenerationLocalSettings,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum TitleGenerationSettingsWire {
+    Legacy(TitleGenerationSettingsLegacy),
+    Split(TitleGenerationSettingsSplit),
+}
+
+impl<'de> Deserialize<'de> for TitleGenerationSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = TitleGenerationSettingsWire::deserialize(deserializer)?;
+        Ok(match wire {
+            TitleGenerationSettingsWire::Legacy(legacy) => TitleGenerationSettings {
+                mode: TitleGenerationMode::Remote,
+                remote: TitleGenerationRemoteSettings {
+                    base_url: legacy.base_url,
+                    api_key: legacy.api_key,
+                    model: legacy.model,
+                    use_json: legacy.use_json,
+                },
+                local: TitleGenerationLocalSettings::default(),
+            },
+            TitleGenerationSettingsWire::Split(split) => TitleGenerationSettings {
+                mode: split.mode,
+                remote: split.remote,
+                local: split.local,
+            },
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -440,10 +533,9 @@ pub struct PublicTelemetrySettings {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PublicTitleGenerationSettings {
-    pub base_url: String,
-    pub api_key: String,
-    pub model: String,
-    pub use_json: bool,
+    pub mode: TitleGenerationMode,
+    pub remote: TitleGenerationRemoteSettings,
+    pub local: TitleGenerationLocalSettings,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -607,12 +699,62 @@ pub struct UpdateTelemetrySettingsReq {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct UpdateTitleGenerationSettingsReq {
+struct UpdateTitleGenerationSettingsLegacy {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
     #[serde(default)]
     pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UpdateTitleGenerationSettingsSplit {
+    #[serde(default)]
+    pub mode: TitleGenerationMode,
+    #[serde(default)]
+    pub remote: TitleGenerationRemoteSettings,
+    #[serde(default)]
+    pub local: TitleGenerationLocalSettings,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum UpdateTitleGenerationSettingsWire {
+    Legacy(UpdateTitleGenerationSettingsLegacy),
+    Split(UpdateTitleGenerationSettingsSplit),
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateTitleGenerationSettingsReq {
+    pub mode: TitleGenerationMode,
+    pub remote: TitleGenerationRemoteSettings,
+    pub local: TitleGenerationLocalSettings,
+}
+
+impl<'de> Deserialize<'de> for UpdateTitleGenerationSettingsReq {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = UpdateTitleGenerationSettingsWire::deserialize(deserializer)?;
+        Ok(match wire {
+            UpdateTitleGenerationSettingsWire::Legacy(legacy) => UpdateTitleGenerationSettingsReq {
+                mode: TitleGenerationMode::Remote,
+                remote: TitleGenerationRemoteSettings {
+                    base_url: legacy.base_url,
+                    api_key: legacy.api_key,
+                    model: legacy.model,
+                    use_json: legacy.use_json,
+                },
+                local: TitleGenerationLocalSettings::default(),
+            },
+            UpdateTitleGenerationSettingsWire::Split(split) => UpdateTitleGenerationSettingsReq {
+                mode: split.mode,
+                remote: split.remote,
+                local: split.local,
+            },
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -934,10 +1076,9 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
             .title_generation
             .as_ref()
             .map(|t| PublicTitleGenerationSettings {
-                base_url: t.base_url.clone(),
-                api_key: t.api_key.clone(),
-                model: t.model.clone(),
-                use_json: t.use_json,
+                mode: t.mode.clone(),
+                remote: t.remote.clone(),
+                local: t.local.clone(),
             });
     let oracle = settings.oracle.as_ref().map(|o| PublicOracleSettings {
         enabled: o.enabled,
@@ -1046,16 +1187,10 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
         current.telemetry = Some(next);
     }
     if let Some(t) = req.title_generation {
-        let mut next = current.title_generation.unwrap_or(TitleGenerationSettings {
-            base_url: String::new(),
-            api_key: String::new(),
-            model: String::new(),
-            use_json: false,
-        });
-        next.base_url = t.base_url;
-        next.api_key = t.api_key;
-        next.model = t.model;
-        next.use_json = t.use_json;
+        let mut next = current.title_generation.unwrap_or_default();
+        next.mode = t.mode;
+        next.remote = t.remote;
+        next.local = t.local;
         current.title_generation = Some(next);
     }
     if let Some(o) = req.oracle {

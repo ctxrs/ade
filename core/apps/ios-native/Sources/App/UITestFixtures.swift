@@ -25,10 +25,17 @@ enum UITestFixtures {
             endpoint: "https://telemetry.ctx.dev"
         ),
         titleGeneration: TitleGenerationSettings(
-            baseUrl: "https://api.openai.com",
-            apiKey: "sk-test-key",
-            model: "gpt-4.1-mini",
-            useJson: true
+            mode: "remote",
+            remote: TitleGenerationRemoteSettings(
+                baseUrl: "https://api.openai.com",
+                apiKey: "sk-test-key",
+                model: "gpt-4.1-mini",
+                useJson: true
+            ),
+            local: TitleGenerationLocalSettings(
+                modelId: "ggml-org/Qwen3-1.7B-GGUF",
+                useJson: true
+            )
         ),
         resourceGovernance: ResourceGovernanceSettings(
             enabled: true,

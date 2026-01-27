@@ -10,6 +10,9 @@ struct SettingsView: View {
     @State private var settings: PublicSettings?
     @State private var isLoadingSettings = false
     @State private var settingsError: String?
+    @State private var titleGenerationLocalStatus: TitleGenerationLocalStatus?
+    @State private var titleGenerationLocalStatusLoading = false
+    @State private var titleGenerationLocalStatusError: String?
     @State private var telemetryEnabled = true
     @State private var telemetryReady = false
     @State private var telemetrySaving = false
@@ -297,10 +300,22 @@ struct SettingsView: View {
         guard let titleGeneration = settings?.titleGeneration else {
             return settingsFallbackLabel
         }
-        if titleGeneration.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if titleGeneration.mode.lowercased() == "local" {
+            if titleGenerationLocalStatusLoading {
+                return "Local - checking"
+            }
+            if titleGenerationLocalStatusError != nil {
+                return "Local - status unavailable"
+            }
+            if let status = titleGenerationLocalStatus {
+                return status.ready ? "Local - installed" : "Local - not installed"
+            }
+            return "Local - unknown"
+        }
+        if titleGeneration.remote.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return "Missing API key"
         }
-        return titleGeneration.model.isEmpty ? "Configured" : "Configured - \(titleGeneration.model)"
+        return titleGeneration.remote.model.isEmpty ? "Configured" : "Configured - \(titleGeneration.remote.model)"
     }
 
     private var resourceGovernanceLabel: String {
@@ -543,13 +558,41 @@ struct SettingsView: View {
             let next = try await client.getSettings()
             settings = next
             telemetryEnabled = next.telemetry?.enabled ?? true
+            if next.titleGeneration?.mode.lowercased() == "local" {
+                await refreshTitleGenerationLocalStatus()
+            } else {
+                titleGenerationLocalStatus = nil
+                titleGenerationLocalStatusError = nil
+                titleGenerationLocalStatusLoading = false
+            }
             telemetryReady = true
         } catch {
             settings = nil
             telemetryReady = false
             settingsError = "Unable to load settings."
+            titleGenerationLocalStatus = nil
+            titleGenerationLocalStatusLoading = false
         }
         isLoadingSettings = false
+    }
+
+    @MainActor
+    private func refreshTitleGenerationLocalStatus() async {
+        guard let client = connection.apiClient else {
+            titleGenerationLocalStatus = nil
+            titleGenerationLocalStatusError = nil
+            titleGenerationLocalStatusLoading = false
+            return
+        }
+        titleGenerationLocalStatusLoading = true
+        titleGenerationLocalStatusError = nil
+        do {
+            titleGenerationLocalStatus = try await client.getTitleGenerationLocalStatus()
+        } catch {
+            titleGenerationLocalStatus = nil
+            titleGenerationLocalStatusError = "Unable to load local title status."
+        }
+        titleGenerationLocalStatusLoading = false
     }
 
     @MainActor

@@ -671,6 +671,26 @@ impl Client {
         self.request_json(Method::GET, &path, None::<&()>).await
     }
 
+    pub async fn get_title_generation_local_status(&self) -> Result<TitleGenerationLocalStatus> {
+        self.request_json(
+            Method::GET,
+            "/api/title_generation/local/status",
+            None::<&()>,
+        )
+        .await
+    }
+
+    pub async fn install_title_generation_local(
+        &self,
+    ) -> Result<TitleGenerationLocalInstallResponse> {
+        self.request_json(
+            Method::POST,
+            "/api/title_generation/local/install",
+            None::<&()>,
+        )
+        .await
+    }
+
     pub async fn cancel_session(&self, session_id: SessionId) -> Result<()> {
         let path = format!("/api/sessions/{}/cancel", session_id.0);
         self.request_empty(Method::POST, &path, None::<&()>).await

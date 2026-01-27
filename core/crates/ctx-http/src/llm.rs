@@ -33,12 +33,15 @@ impl OpenAiClient {
         req: &ChatCompletionRequest,
     ) -> Result<ChatCompletionResponse> {
         let mut headers = HeaderMap::new();
-        let auth = format!("Bearer {}", self.api_key.trim());
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&auth).context("invalid authorization header")?,
-        );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let api_key = self.api_key.trim();
+        if !api_key.is_empty() {
+            let auth = format!("Bearer {}", api_key);
+            headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&auth).context("invalid authorization header")?,
+            );
+        }
 
         let base = self.base_url.trim_end_matches('/');
         let url = format!("{}/chat/completions", base);
@@ -90,12 +93,15 @@ impl OpenAiResponsesClient {
 
     pub async fn create_response(&self, req: &ResponsesRequest) -> Result<serde_json::Value> {
         let mut headers = HeaderMap::new();
-        let auth = format!("Bearer {}", self.api_key.trim());
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&auth).context("invalid authorization header")?,
-        );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let api_key = self.api_key.trim();
+        if !api_key.is_empty() {
+            let auth = format!("Bearer {}", api_key);
+            headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&auth).context("invalid authorization header")?,
+            );
+        }
 
         let base = self.base_url.trim_end_matches('/');
         let url = format!("{}/responses", base);

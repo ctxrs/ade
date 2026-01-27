@@ -299,12 +299,32 @@ pub struct PublicTelemetrySettings {
     pub endpoint: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct PublicTitleGenerationSettings {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleGenerationMode {
+    Remote,
+    Local,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TitleGenerationRemoteSettings {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
     pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TitleGenerationLocalSettings {
+    pub model_id: String,
+    pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicTitleGenerationSettings {
+    pub mode: TitleGenerationMode,
+    pub remote: TitleGenerationRemoteSettings,
+    pub local: TitleGenerationLocalSettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -448,11 +468,9 @@ pub struct UpdateTelemetrySettingsRequest {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateTitleGenerationSettingsRequest {
-    pub base_url: String,
-    pub api_key: String,
-    pub model: String,
-    #[serde(default)]
-    pub use_json: bool,
+    pub mode: TitleGenerationMode,
+    pub remote: TitleGenerationRemoteSettings,
+    pub local: TitleGenerationLocalSettings,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -701,6 +719,45 @@ pub struct ProviderAuthCheck {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstallStartResponse {
     pub provider_id: String,
+    pub install_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TitleGenerationLocalRuntimeStatus {
+    pub version: String,
+    pub installed: bool,
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TitleGenerationLocalModelStatus {
+    pub model_id: String,
+    pub file_name: String,
+    pub installed: bool,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub sha256: Option<String>,
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
+    #[serde(default)]
+    pub installed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TitleGenerationLocalStatus {
+    pub ready: bool,
+    pub runtime: TitleGenerationLocalRuntimeStatus,
+    pub model: TitleGenerationLocalModelStatus,
+    #[serde(default)]
+    pub install_id: Option<String>,
+    #[serde(default)]
+    pub install_running: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TitleGenerationLocalInstallResponse {
     pub install_id: String,
 }
 

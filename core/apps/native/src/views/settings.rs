@@ -8,7 +8,10 @@ use gpui_component::scroll::ScrollableElement;
 use qrcode::{Color as QrColor, QrCode};
 
 use crate::automation_tree;
-use ctx_client::{MobileTunnelState, ResourceGovernanceMode, ResourceGovernanceStatusState};
+use ctx_client::{
+    InstallStateKind, MobileTunnelState, ResourceGovernanceMode, ResourceGovernanceStatusState,
+    TitleGenerationMode,
+};
 use ctx_core::models::WorkspaceAttachmentKind;
 use ctx_providers::adapters::ProviderHealth;
 
@@ -29,6 +32,8 @@ enum PillVariant {
     Warn,
     Err,
 }
+
+const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
 
 fn rgba_u8(r: u8, g: u8, b: u8, a: f32) -> Rgba {
     Rgba {
@@ -2924,6 +2929,29 @@ impl SettingsState {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let colors = self.colors;
+        let mode_options = vec![
+            LabeledOption {
+                value: "remote".to_string(),
+                label: "Remote".to_string(),
+            },
+            LabeledOption {
+                value: "local".to_string(),
+                label: "Local".to_string(),
+            },
+        ];
+        let mode_value = match self.title_mode {
+            TitleGenerationMode::Local => "local".to_string(),
+            TitleGenerationMode::Remote => "remote".to_string(),
+        };
+        let mode_select = Self::ensure_select_state(
+            &mut self.title_mode_select,
+            mode_options,
+            Some(mode_value),
+            super::super::state::SettingsSelectKind::TitleMode,
+            &mut self.input_subscriptions,
+            window,
+            cx,
+        );
         let base_url_input = Self::ensure_input_state(
             &mut self.title_base_url_input,
             "https://openrouter.ai/api/v1",
@@ -2951,75 +2979,219 @@ impl SettingsState {
             window,
             cx,
         );
+        let local_model_input = Self::ensure_input_state(
+            &mut self.title_local_model_input,
+            "ggml-org/Qwen3-1.7B-GGUF",
+            super::super::state::SettingsInputKind::TitleLocalModel,
+            &mut self.input_subscriptions,
+            window,
+            cx,
+        );
 
         let title_disabled = !self.settings.is_some();
-        let toggle = settings_toggle(self.title_use_json, title_disabled)
+        let remote_toggle = settings_toggle(self.title_use_json, title_disabled)
             .id("settings-title-json-toggle")
             .when(!title_disabled, |this| {
                 this.on_click(cx.listener(|view, _, _window, cx| {
                     view.set_title_use_json(!view.title_use_json, cx);
                 }))
             });
+        let local_toggle = settings_toggle(self.title_local_use_json, title_disabled)
+            .id("settings-title-json-local-toggle")
+            .when(!title_disabled, |this| {
+                this.on_click(cx.listener(|view, _, _window, cx| {
+                    view.set_title_local_use_json(!view.title_local_use_json, cx);
+                }))
+            });
 
-        let rows = vec![
-            settings_row(
-                "Base URL",
-                Some("OpenAI-compatible endpoint for title generation (best-effort; falls back to truncating the prompt)."),
-                Input::new(&base_url_input)
-                    .appearance(true)
-                    .bg(white(0.06))
-                    .border_color(white(0.08))
-                    .rounded(px(8.0))
-                    .h(px(30.0))
-                    .px(px(10.0))
-                    .text_size(px(13.0))
-                    .w(relative(0.48))
-                    .max_w(px(460.0)),
-                true,
-            )
-            .into_any_element(),
-            settings_row(
-                "API key",
-                Some("Stored locally in your ctx data dir."),
-                Input::new(&api_key_input)
-                    .appearance(true)
-                    .bg(white(0.06))
-                    .border_color(white(0.08))
-                    .rounded(px(8.0))
-                    .h(px(30.0))
-                    .px(px(10.0))
-                    .text_size(px(13.0))
-                    .w(relative(0.48))
-                    .max_w(px(460.0)),
-                false,
-            )
-            .into_any_element(),
-            settings_row(
-                "Model",
-                Some("Model used for generating session titles."),
-                Input::new(&model_input)
-                    .appearance(true)
-                    .bg(white(0.06))
-                    .border_color(white(0.08))
-                    .rounded(px(8.0))
-                    .h(px(30.0))
-                    .px(px(10.0))
-                    .text_size(px(13.0))
-                    .w(relative(0.48))
-                    .max_w(px(460.0)),
-                false,
-            )
-            .into_any_element(),
-            settings_row(
-                "Structured output (JSON)",
-                Some("Enable when the model supports JSON schema output."),
-                toggle,
-                false,
-            )
-            .into_any_element(),
-        ];
+        let mode_control = div().child(
+            Select::new(&mode_select)
+                .appearance(true)
+                .bg(white(0.06))
+                .border_color(white(0.08))
+                .rounded(px(8.0))
+                .h(px(30.0))
+                .px(px(10.0))
+                .text_size(px(13.0))
+                .disabled(title_disabled),
+        );
 
-        settings_card(colors, None, settings_rows(rows)).into_any_element()
+        let mut rows = vec![settings_row(
+            "Mode",
+            Some("Choose between remote API or local model for session titles."),
+            mode_control,
+            true,
+        )
+        .into_any_element()];
+
+        if matches!(self.title_mode, TitleGenerationMode::Remote) {
+            rows.extend(vec![
+                settings_row(
+                    "Base URL",
+                    Some(
+                        "OpenAI-compatible endpoint for title generation (best-effort; falls back to truncating the prompt).",
+                    ),
+                    Input::new(&base_url_input)
+                        .appearance(true)
+                        .bg(white(0.06))
+                        .border_color(white(0.08))
+                        .rounded(px(8.0))
+                        .h(px(30.0))
+                        .px(px(10.0))
+                        .text_size(px(13.0))
+                        .w(relative(0.48))
+                        .max_w(px(460.0)),
+                    false,
+                )
+                .into_any_element(),
+                settings_row(
+                    "API key",
+                    Some("Stored locally in your ctx data dir."),
+                    Input::new(&api_key_input)
+                        .appearance(true)
+                        .bg(white(0.06))
+                        .border_color(white(0.08))
+                        .rounded(px(8.0))
+                        .h(px(30.0))
+                        .px(px(10.0))
+                        .text_size(px(13.0))
+                        .w(relative(0.48))
+                        .max_w(px(460.0)),
+                    false,
+                )
+                .into_any_element(),
+                settings_row(
+                    "Model",
+                    Some("Model used for generating session titles."),
+                    Input::new(&model_input)
+                        .appearance(true)
+                        .bg(white(0.06))
+                        .border_color(white(0.08))
+                        .rounded(px(8.0))
+                        .h(px(30.0))
+                        .px(px(10.0))
+                        .text_size(px(13.0))
+                        .w(relative(0.48))
+                        .max_w(px(460.0)),
+                    false,
+                )
+                .into_any_element(),
+                settings_row(
+                    "Structured output (JSON)",
+                    Some("Enable when the model supports JSON schema output."),
+                    remote_toggle,
+                    false,
+                )
+                .into_any_element(),
+            ]);
+        } else {
+            let install_ui = self.installs.get(TITLE_GENERATION_LOCAL_INSTALL_KEY);
+            let install_progress = install_ui.and_then(|session| session.pct);
+            let install_running = install_ui
+                .map(|session| matches!(session.state, InstallStateKind::Running))
+                .unwrap_or(false)
+                || self
+                    .title_local_status
+                    .as_ref()
+                    .map(|s| s.install_running)
+                    .unwrap_or(false);
+            let installed = self
+                .title_local_status
+                .as_ref()
+                .map(|s| s.ready)
+                .unwrap_or(false);
+            let status_label = if self.title_local_status_loading {
+                "Loading…".to_string()
+            } else if self.title_local_status_error.is_some() {
+                "Status unavailable".to_string()
+            } else if install_running {
+                "Installing…".to_string()
+            } else if installed {
+                "Installed".to_string()
+            } else {
+                "Not installed".to_string()
+            };
+            let status_variant = if self.title_local_status_error.is_some() {
+                PillVariant::Err
+            } else if installed {
+                PillVariant::Ok
+            } else {
+                PillVariant::Warn
+            };
+            let install_label = if install_running && install_progress.is_some() {
+                format!("{}%", clamp_pct(install_progress.unwrap_or(0)))
+            } else if install_running {
+                "Installing…".to_string()
+            } else if installed {
+                "Installed".to_string()
+            } else {
+                "Install".to_string()
+            };
+            let install_disabled =
+                title_disabled || install_running || installed || self.title_local_install_busy;
+
+            let install_button = settings_button(
+                &install_label,
+                ButtonVariant::Secondary,
+                install_disabled,
+                install_progress,
+            )
+            .id("settings-title-generation-local-install")
+            .when(!install_disabled, |this| {
+                this.on_click(cx.listener(|view, _, _window, cx| {
+                    view.install_title_generation_local(cx);
+                }))
+            });
+            let install_control = div()
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .child(settings_pill(&status_label, status_variant, false))
+                .child(install_button);
+
+            rows.extend(vec![
+                settings_row(
+                    "Local model id",
+                    Some("Model id for the local title generator."),
+                    Input::new(&local_model_input)
+                        .appearance(true)
+                        .bg(white(0.06))
+                        .border_color(white(0.08))
+                        .rounded(px(8.0))
+                        .h(px(30.0))
+                        .px(px(10.0))
+                        .text_size(px(13.0))
+                        .w(relative(0.48))
+                        .max_w(px(460.0)),
+                    false,
+                )
+                .into_any_element(),
+                settings_row(
+                    "Structured output (JSON)",
+                    Some("Enable when the model supports JSON schema output."),
+                    local_toggle,
+                    false,
+                )
+                .into_any_element(),
+                settings_row(
+                    "Local install",
+                    Some("Downloads the llama.cpp runtime and Qwen3 1.7B model to the daemon host."),
+                    install_control,
+                    false,
+                )
+                .into_any_element(),
+            ]);
+        }
+
+        let mut content = div()
+            .grid()
+            .gap(px(14.0))
+            .child(settings_card(colors, None, settings_rows(rows)));
+        if let Some(err) = self.title_local_status_error.as_ref() {
+            content = content.child(settings_banner(err, true));
+        }
+
+        content.into_any_element()
     }
 
     fn render_billing(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {

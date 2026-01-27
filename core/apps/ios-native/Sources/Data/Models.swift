@@ -914,10 +914,45 @@ struct TelemetrySettings: Codable, Sendable {
 }
 
 struct TitleGenerationSettings: Codable, Sendable {
+    let mode: String
+    let remote: TitleGenerationRemoteSettings
+    let local: TitleGenerationLocalSettings
+}
+
+struct TitleGenerationRemoteSettings: Codable, Sendable {
     let baseUrl: String
     let apiKey: String
     let model: String
     let useJson: Bool
+}
+
+struct TitleGenerationLocalSettings: Codable, Sendable {
+    let modelId: String
+    let useJson: Bool
+}
+
+struct TitleGenerationLocalStatus: Codable, Sendable {
+    let ready: Bool
+    let runtime: TitleGenerationLocalRuntimeStatus
+    let model: TitleGenerationLocalModelStatus
+    let installId: String?
+    let installRunning: Bool?
+}
+
+struct TitleGenerationLocalRuntimeStatus: Codable, Sendable {
+    let version: String
+    let installed: Bool
+    let path: String?
+}
+
+struct TitleGenerationLocalModelStatus: Codable, Sendable {
+    let modelId: String
+    let fileName: String
+    let installed: Bool
+    let version: String?
+    let sha256: String?
+    let sizeBytes: Int?
+    let installedAt: String?
 }
 
 struct ResourceGovernanceSettings: Codable, Sendable {

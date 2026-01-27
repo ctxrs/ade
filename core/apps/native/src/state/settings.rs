@@ -26,10 +26,10 @@ use ctx_client::{
     EnableMobileAccessResponse, InstallInfo, InstallProgressEvent, InstallStateKind,
     MobileAccessStatus, ProviderOptions, PublicResourceGovernanceLimits,
     PublicResourceGovernanceStatus, PublicSettings, ResourceGovernanceMode,
-ResourceUtilizationSnapshot,
-    UpdateDictationSettingsRequest, UpdateLiveKitDictationSettingsRequest,
-    UpdateResourceGovernanceSettingsRequest, UpdateSettingsRequest,
-    UpdateTelemetrySettingsRequest, UpdateTitleGenerationSettingsRequest,
+    ResourceUtilizationSnapshot, TitleGenerationLocalSettings, TitleGenerationLocalStatus,
+    TitleGenerationMode, TitleGenerationRemoteSettings, UpdateDictationSettingsRequest,
+    UpdateLiveKitDictationSettingsRequest, UpdateResourceGovernanceSettingsRequest,
+    UpdateSettingsRequest, UpdateTelemetrySettingsRequest, UpdateTitleGenerationSettingsRequest,
 };
 use gpui_component::input::{InputEvent, InputState};
 use gpui_component::select::{SelectEvent, SelectState, SearchableVec};
@@ -61,6 +61,8 @@ impl Default for DesktopEditorSettings {
         }
     }
 }
+
+const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -177,6 +179,7 @@ pub(crate) enum SettingsInputKind {
     TitleBaseUrl,
     TitleApiKey,
     TitleModel,
+    TitleLocalModel,
     BillingEmail,
     BillingPassword,
 }
@@ -187,6 +190,7 @@ pub(crate) enum SettingsSelectKind {
     Workspace,
     ResourceMode,
     DictationModel,
+    TitleMode,
 }
 
 pub(crate) struct SettingsState {
@@ -261,10 +265,17 @@ pub(crate) struct SettingsState {
     pub(crate) dictation_language: String,
     pub(crate) dictation_model: String,
     pub(crate) dictation_save_seq: u64,
+    pub(crate) title_mode: TitleGenerationMode,
     pub(crate) title_base_url: String,
     pub(crate) title_api_key: String,
     pub(crate) title_model: String,
     pub(crate) title_use_json: bool,
+    pub(crate) title_local_model: String,
+    pub(crate) title_local_use_json: bool,
+    pub(crate) title_local_status: Option<TitleGenerationLocalStatus>,
+    pub(crate) title_local_status_loading: bool,
+    pub(crate) title_local_status_error: Option<String>,
+    pub(crate) title_local_install_busy: bool,
     pub(crate) title_save_seq: u64,
     pub(crate) resource_mode: ResourceGovernanceMode,
     pub(crate) resource_enabled: bool,
@@ -296,12 +307,14 @@ pub(crate) struct SettingsState {
     pub(crate) title_base_url_input: Option<Entity<InputState>>,
     pub(crate) title_api_key_input: Option<Entity<InputState>>,
     pub(crate) title_model_input: Option<Entity<InputState>>,
+    pub(crate) title_local_model_input: Option<Entity<InputState>>,
     pub(crate) billing_email_input: Option<Entity<InputState>>,
     pub(crate) billing_password_input: Option<Entity<InputState>>,
     pub(crate) editor_target_select: Option<Entity<SelectState<SearchableVec<LabeledOption>>>>,
     pub(crate) workspace_select: Option<Entity<SelectState<SearchableVec<LabeledOption>>>>,
     pub(crate) resource_mode_select: Option<Entity<SelectState<SearchableVec<LabeledOption>>>>,
     pub(crate) dictation_model_select: Option<Entity<SelectState<SearchableVec<LabeledOption>>>>,
+    pub(crate) title_mode_select: Option<Entity<SelectState<SearchableVec<LabeledOption>>>>,
     pub(crate) input_subscriptions: Vec<Subscription>,
 }
 
@@ -378,10 +391,17 @@ impl SettingsState {
             dictation_language: "en".to_string(),
             dictation_model: "auto".to_string(),
             dictation_save_seq: 0,
+            title_mode: TitleGenerationMode::Remote,
             title_base_url: "https://openrouter.ai/api/v1".to_string(),
             title_api_key: String::new(),
             title_model: "google/gemini-3-flash-preview".to_string(),
             title_use_json: false,
+            title_local_model: "ggml-org/Qwen3-1.7B-GGUF".to_string(),
+            title_local_use_json: true,
+            title_local_status: None,
+            title_local_status_loading: false,
+            title_local_status_error: None,
+            title_local_install_busy: false,
             title_save_seq: 0,
             resource_mode: ResourceGovernanceMode::Auto,
             resource_enabled: false,
@@ -413,12 +433,14 @@ impl SettingsState {
             title_base_url_input: None,
             title_api_key_input: None,
             title_model_input: None,
+            title_local_model_input: None,
             billing_email_input: None,
             billing_password_input: None,
             editor_target_select: None,
             workspace_select: None,
             resource_mode_select: None,
             dictation_model_select: None,
+            title_mode_select: None,
             input_subscriptions: Vec::new(),
         }
     }
@@ -540,10 +562,66 @@ impl SettingsState {
                 match result {
                     Ok(settings) => {
                         view.apply_settings_snapshot(settings);
+                        if matches!(view.title_mode, TitleGenerationMode::Local) {
+                            view.refresh_title_generation_status(cx);
+                        } else {
+                            view.title_local_status = None;
+                        }
                     }
                     Err(err) => {
                         view.settings = None;
                         view.settings_error = Some(err.to_string());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub(crate) fn refresh_title_generation_status(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.title_mode, TitleGenerationMode::Local) {
+            self.title_local_status = None;
+            self.title_local_status_error = None;
+            return;
+        }
+        if self.title_local_status_loading {
+            return;
+        }
+        self.title_local_status_loading = true;
+        self.title_local_status_error = None;
+        cx.notify();
+
+        let task = Tokio::spawn_result(cx, async move {
+            let client = Client::from_env()?;
+            let status = client.get_title_generation_local_status().await?;
+            Ok(status)
+        });
+
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            let result = task.await;
+            this.update(cx, |view, cx| {
+                view.title_local_status_loading = false;
+                match result {
+                    Ok(status) => {
+                        view.title_local_status = Some(status);
+                        if let Some(id) = view
+                            .title_local_status
+                            .as_ref()
+                            .and_then(|s| s.install_id.clone())
+                            .filter(|_| {
+                                view.title_local_status
+                                    .as_ref()
+                                    .map(|s| s.install_running)
+                                    .unwrap_or(false)
+                            })
+                        {
+                            view.attach_install(TITLE_GENERATION_LOCAL_INSTALL_KEY.to_string(), id, cx);
+                        }
+                    }
+                    Err(err) => {
+                        view.title_local_status_error = Some(err.to_string());
                     }
                 }
                 cx.notify();
@@ -837,10 +915,17 @@ impl SettingsState {
 
     fn title_payload(&self) -> UpdateTitleGenerationSettingsRequest {
         UpdateTitleGenerationSettingsRequest {
-            base_url: self.title_base_url.trim().to_string(),
-            api_key: self.title_api_key.trim().to_string(),
-            model: self.title_model.trim().to_string(),
-            use_json: self.title_use_json,
+            mode: self.title_mode.clone(),
+            remote: TitleGenerationRemoteSettings {
+                base_url: self.title_base_url.trim().to_string(),
+                api_key: self.title_api_key.trim().to_string(),
+                model: self.title_model.trim().to_string(),
+                use_json: self.title_use_json,
+            },
+            local: TitleGenerationLocalSettings {
+                model_id: self.title_local_model.trim().to_string(),
+                use_json: self.title_local_use_json,
+            },
         }
     }
 
@@ -926,6 +1011,15 @@ impl SettingsState {
             return;
         }
         self.title_use_json = enabled;
+        self.schedule_title_save(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn set_title_local_use_json(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.title_local_use_json == enabled {
+            return;
+        }
+        self.title_local_use_json = enabled;
         self.schedule_title_save(cx);
         cx.notify();
     }
@@ -1022,19 +1116,26 @@ impl SettingsState {
         }
 
         if let Some(title) = settings.title_generation.as_ref() {
+            self.title_mode = title.mode.clone();
             self.title_base_url = title
+                .remote
                 .base_url
                 .as_str()
                 .trim()
                 .to_string();
-            self.title_api_key = title.api_key.as_str().trim().to_string();
-            self.title_model = title.model.as_str().trim().to_string();
-            self.title_use_json = title.use_json;
+            self.title_api_key = title.remote.api_key.as_str().trim().to_string();
+            self.title_model = title.remote.model.as_str().trim().to_string();
+            self.title_use_json = title.remote.use_json;
+            self.title_local_model = title.local.model_id.as_str().trim().to_string();
+            self.title_local_use_json = title.local.use_json;
         } else {
+            self.title_mode = TitleGenerationMode::Remote;
             self.title_base_url = "https://openrouter.ai/api/v1".to_string();
             self.title_api_key.clear();
             self.title_model = "google/gemini-3-flash-preview".to_string();
             self.title_use_json = false;
+            self.title_local_model = "ggml-org/Qwen3-1.7B-GGUF".to_string();
+            self.title_local_use_json = true;
         }
 
         if let Some(resource) = settings.resource_governance.as_ref() {
@@ -1153,6 +1254,11 @@ impl SettingsState {
         if let Some(input) = self.title_model_input.as_ref() {
             input.update(cx, |state, cx| {
                 state.set_value(self.title_model.clone(), window, cx);
+            });
+        }
+        if let Some(input) = self.title_local_model_input.as_ref() {
+            input.update(cx, |state, cx| {
+                state.set_value(self.title_local_model.clone(), window, cx);
             });
         }
         if let Some(input) = self.billing_email_input.as_ref() {
@@ -1305,6 +1411,13 @@ impl SettingsState {
                 self.title_model = value;
                 self.schedule_title_save(cx);
             }
+            SettingsInputKind::TitleLocalModel => {
+                if self.title_local_model == value {
+                    return;
+                }
+                self.title_local_model = value;
+                self.schedule_title_save(cx);
+            }
             SettingsInputKind::BillingEmail => {
                 if self.billing_email == value {
                     return;
@@ -1359,6 +1472,24 @@ impl SettingsState {
                 }
                 self.dictation_model = value.clone();
                 self.schedule_dictation_save(cx);
+            }
+            SettingsSelectKind::TitleMode => {
+                let mode = match value.as_str() {
+                    "local" => TitleGenerationMode::Local,
+                    _ => TitleGenerationMode::Remote,
+                };
+                if self.title_mode == mode {
+                    return;
+                }
+                self.title_mode = mode;
+                self.schedule_title_save(cx);
+                if matches!(self.title_mode, TitleGenerationMode::Local) {
+                    self.refresh_title_generation_status(cx);
+                } else {
+                    self.title_local_status = None;
+                    self.title_local_status_error = None;
+                    self.title_local_status_loading = false;
+                }
             }
         }
         cx.notify();
@@ -1612,6 +1743,39 @@ impl SettingsState {
         .detach();
     }
 
+    pub(crate) fn install_title_generation_local(&mut self, cx: &mut Context<Self>) {
+        if self.title_local_install_busy {
+            return;
+        }
+        self.title_local_install_busy = true;
+        self.title_local_status_error = None;
+        cx.notify();
+
+        let task = Tokio::spawn_result(cx, async move {
+            let client = Client::from_env()?;
+            let resp = client.install_title_generation_local().await?;
+            Ok(resp)
+        });
+
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            let result = task.await;
+            this.update(cx, |view, cx| {
+                view.title_local_install_busy = false;
+                match result {
+                    Ok(resp) => {
+                        view.attach_install(TITLE_GENERATION_LOCAL_INSTALL_KEY.to_string(), resp.install_id, cx);
+                    }
+                    Err(err) => {
+                        view.title_local_status_error = Some(err.to_string());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     pub(crate) fn install_all_providers(&mut self, cx: &mut Context<Self>) {
         if self.install_busy.is_some() {
             return;
@@ -1722,7 +1886,11 @@ impl SettingsState {
                             view.update_install_state(&provider_id, info);
                             if !running {
                                 view.install_polling.remove(&provider_id);
-                                view.refresh_providers(cx);
+                                if provider_id == TITLE_GENERATION_LOCAL_INSTALL_KEY {
+                                    view.refresh_title_generation_status(cx);
+                                } else {
+                                    view.refresh_providers(cx);
+                                }
                             }
                             cx.notify();
                         })
@@ -1810,6 +1978,11 @@ impl SettingsState {
         }
         if section == SettingsSection::MobileAccess {
             self.refresh_mobile_access_status(cx);
+        }
+        if section == SettingsSection::TitleGeneration
+            && matches!(self.title_mode, TitleGenerationMode::Local)
+        {
+            self.refresh_title_generation_status(cx);
         }
         cx.notify();
     }

@@ -81,6 +81,7 @@ use crate::settings as user_settings;
 use crate::telemetry::{TelemetryConfig, TelemetryEvent};
 use crate::terminals::TerminalCreateRequest;
 use crate::title_generation;
+use crate::title_generation_local;
 use crate::tool_cgroup;
 use crate::updates;
 use crate::web_sessions::{
@@ -197,6 +198,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
     let api = axum::Router::new()
         .route("/api/health", get(health))
         .route("/api/settings", get(get_settings).post(update_settings))
+        .route(
+            "/api/title_generation/local/status",
+            get(get_title_generation_local_status),
+        )
+        .route(
+            "/api/title_generation/local/install",
+            post(install_title_generation_local),
+        )
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/resource_utilization", get(resource_utilization))
         .route("/api/telemetry/summary", get(get_telemetry_summary))
@@ -1197,6 +1206,62 @@ async fn update_settings(
     public.resource_governance = resource_governance::build_public_settings(&state, &next).await;
     public.tool_limits = tool_cgroup::build_public_settings(&state, &next).await;
     Ok(Json(public))
+}
+
+const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
+
+#[derive(Debug, Serialize)]
+struct TitleGenerationLocalStatusResponse {
+    pub ready: bool,
+    pub runtime: title_generation_local::TitleGenerationLocalRuntimeStatus,
+    pub model: title_generation_local::TitleGenerationLocalModelStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub install_id: Option<InstallId>,
+    pub install_running: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct TitleGenerationLocalInstallResponse {
+    pub install_id: InstallId,
+}
+
+async fn get_title_generation_local_status(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<TitleGenerationLocalStatusResponse>, StatusCode> {
+    let status = title_generation_local::local_status(&state.data_root)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let install_id = state
+        .find_running_install(TITLE_GENERATION_LOCAL_INSTALL_KEY)
+        .await;
+    Ok(Json(TitleGenerationLocalStatusResponse {
+        ready: status.ready,
+        runtime: status.runtime,
+        model: status.model,
+        install_id,
+        install_running: install_id.is_some(),
+    }))
+}
+
+async fn install_title_generation_local(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<TitleGenerationLocalInstallResponse>, StatusCode> {
+    let (install_id, started_new) = state
+        .start_install(TITLE_GENERATION_LOCAL_INSTALL_KEY.to_string())
+        .await;
+    if started_new {
+        let state2 = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) =
+                installer::install_title_generation_local_with_progress(state2.clone(), install_id)
+                    .await
+            {
+                tracing::error!("local title generation install failed: {e:#}");
+            }
+        });
+    }
+
+    Ok(Json(TitleGenerationLocalInstallResponse { install_id }))
 }
 
 #[derive(Debug, Serialize)]
@@ -7238,6 +7303,7 @@ async fn configured_title_generation_settings(
 async fn generate_title_for_prompt(
     cfg: Option<&user_settings::TitleGenerationSettings>,
     prompt: &str,
+    data_root: &StdPath,
 ) -> anyhow::Result<TitleGenerationOutcome> {
     let fallback = title_generation::fallback_title_from_prompt(prompt);
     if fallback.trim().is_empty() {
@@ -7245,7 +7311,7 @@ async fn generate_title_for_prompt(
     }
 
     if let Some(cfg) = cfg.filter(|c| title_generation::is_configured(c)) {
-        match title_generation::generate_title(cfg, prompt).await {
+        match title_generation::generate_title(cfg, prompt, data_root).await {
             Ok(title) => {
                 return Ok(TitleGenerationOutcome {
                     title,
@@ -7346,7 +7412,7 @@ async fn maybe_generate_session_title(
         return Ok(None);
     }
 
-    let outcome = generate_title_for_prompt(cfg.as_ref(), &prompt).await?;
+    let outcome = generate_title_for_prompt(cfg.as_ref(), &prompt, &state.data_root).await?;
     apply_session_title_update(&state, &session, outcome.clone()).await?;
     Ok(Some(outcome))
 }
@@ -13413,6 +13479,36 @@ mod tests {
         let updated = store.get_session(session.id).await.unwrap().unwrap();
         let expected = title_generation::fallback_title_from_prompt(prompt);
         assert_eq!(updated.title, expected);
+    }
+
+    #[tokio::test]
+    async fn generate_title_falls_back_when_local_runtime_missing() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let model_path = title_generation_local::model_path(data_dir.path());
+        if let Some(parent) = model_path.parent() {
+            tokio::fs::create_dir_all(parent).await.unwrap();
+        }
+        tokio::fs::write(&model_path, b"stub").await.unwrap();
+
+        let cfg = user_settings::TitleGenerationSettings {
+            mode: user_settings::TitleGenerationMode::Local,
+            local: user_settings::TitleGenerationLocalSettings {
+                model_id: title_generation_local::LOCAL_MODEL_ID.to_string(),
+                use_json: true,
+            },
+            ..Default::default()
+        };
+
+        let prompt = "make the title this: hello world";
+        let outcome = generate_title_for_prompt(Some(&cfg), prompt, data_dir.path())
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome.source, TitleGenerationSource::Fallback));
+        assert_eq!(
+            outcome.title,
+            title_generation::fallback_title_from_prompt(prompt)
+        );
     }
 }
 

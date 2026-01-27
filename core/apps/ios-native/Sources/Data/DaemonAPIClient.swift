@@ -510,6 +510,10 @@ actor DaemonAPIClient {
         try await request("/api/settings", method: .post, body: update)
     }
 
+    func getTitleGenerationLocalStatus() async throws -> TitleGenerationLocalStatus {
+        try await request("/api/title_generation/local/status")
+    }
+
     func getDiagnostics() async throws -> Diagnostics {
         try await request("/api/diagnostics")
     }

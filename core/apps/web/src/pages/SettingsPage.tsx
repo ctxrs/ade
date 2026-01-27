@@ -20,6 +20,7 @@ import {
   SubagentSystemPromptConfig,
   TelemetrySettings,
   TitleGenerationSettings,
+  TitleGenerationLocalStatus,
   MergeQueueEntry,
   WorkspaceAttachment,
   cancelMergeQueueEntry,
@@ -35,6 +36,7 @@ import {
   getMergeQueueEntryLogs,
   getMobileAccessStatus,
   getCodexAccountUsage,
+  getTitleGenerationLocalStatus,
   Workspace,
   authenticateProviderForWorkspace,
   getInstall,
@@ -43,6 +45,7 @@ import {
   getSettings,
   idToString,
   installAllProviders,
+  installTitleGenerationLocal,
   installProvider,
   installStreamUrl,
   listMergeQueueEntries,
@@ -204,10 +207,18 @@ export default function SettingsPage() {
   const [apiSecret, setApiSecret] = useState("");
   const [apiSecretSet, setApiSecretSet] = useState(false);
 
+  const [titleGenMode, setTitleGenMode] = useState<TitleGenerationSettings["mode"]>("remote");
   const [titleGenBaseUrl, setTitleGenBaseUrl] = useState("https://openrouter.ai/api/v1");
   const [titleGenApiKey, setTitleGenApiKey] = useState("");
   const [titleGenModel, setTitleGenModel] = useState("google/gemini-3-flash-preview");
   const [titleGenUseJson, setTitleGenUseJson] = useState(true);
+  const [titleGenLocalModelId, setTitleGenLocalModelId] = useState("ggml-org/Qwen3-1.7B-GGUF");
+  const [titleGenLocalUseJson, setTitleGenLocalUseJson] = useState(true);
+  const [titleGenLocalStatus, setTitleGenLocalStatus] = useState<TitleGenerationLocalStatus | null>(null);
+  const [titleGenLocalStatusBusy, setTitleGenLocalStatusBusy] = useState(false);
+  const [titleGenLocalStatusError, setTitleGenLocalStatusError] = useState<string | null>(null);
+  const [titleGenLocalInstallBusy, setTitleGenLocalInstallBusy] = useState(false);
+  const titleGenInstallKey = "title_generation_local";
   const resourceGovernanceHydrated = useRef(false);
   const sandboxingHydrated = useRef(false);
   const [resourceGovernanceEnabled, setResourceGovernanceEnabled] = useState(true);
@@ -518,10 +529,13 @@ export default function SettingsPage() {
 
         const tg = s.title_generation ?? null;
         if (tg) {
-          setTitleGenBaseUrl(tg.base_url ?? "https://openrouter.ai/api/v1");
-          setTitleGenApiKey(tg.api_key ?? "");
-          setTitleGenModel(tg.model ?? "google/gemini-3-flash-preview");
-          setTitleGenUseJson(Boolean(tg.use_json));
+          setTitleGenMode(tg.mode ?? "remote");
+          setTitleGenBaseUrl(tg.remote?.base_url ?? "https://openrouter.ai/api/v1");
+          setTitleGenApiKey(tg.remote?.api_key ?? "");
+          setTitleGenModel(tg.remote?.model ?? "google/gemini-3-flash-preview");
+          setTitleGenUseJson(Boolean(tg.remote?.use_json));
+          setTitleGenLocalModelId(tg.local?.model_id ?? "ggml-org/Qwen3-1.7B-GGUF");
+          setTitleGenLocalUseJson(Boolean(tg.local?.use_json));
         }
 
         const rg = s.resource_governance ?? null;
@@ -630,12 +644,27 @@ export default function SettingsPage() {
 
   const titleGenerationPayload = useMemo((): TitleGenerationSettings => {
     return {
-      base_url: titleGenBaseUrl.trim(),
-      api_key: titleGenApiKey.trim(),
-      model: titleGenModel.trim(),
-      use_json: titleGenUseJson,
+      mode: titleGenMode,
+      remote: {
+        base_url: titleGenBaseUrl.trim(),
+        api_key: titleGenApiKey.trim(),
+        model: titleGenModel.trim(),
+        use_json: titleGenUseJson,
+      },
+      local: {
+        model_id: titleGenLocalModelId.trim(),
+        use_json: titleGenLocalUseJson,
+      },
     };
-  }, [titleGenApiKey, titleGenBaseUrl, titleGenModel, titleGenUseJson]);
+  }, [
+    titleGenApiKey,
+    titleGenBaseUrl,
+    titleGenLocalModelId,
+    titleGenLocalUseJson,
+    titleGenMode,
+    titleGenModel,
+    titleGenUseJson,
+  ]);
 
   const sandboxingPayload = useMemo((): SandboxingSettings => {
     return {
@@ -1308,7 +1337,11 @@ export default function SettingsPage() {
             window.clearTimeout(t);
             delete pollTimeoutsRef.current[providerId];
           }
-          await refreshProviders();
+          if (providerId === titleGenInstallKey) {
+            refreshTitleGenLocalStatus({ silent: true }).catch(() => {});
+          } else {
+            await refreshProviders();
+          }
           return;
         }
       } catch {
@@ -1318,6 +1351,40 @@ export default function SettingsPage() {
     };
     poll();
   };
+
+  const refreshTitleGenLocalStatus = async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setTitleGenLocalStatusBusy(true);
+    }
+    setTitleGenLocalStatusError(null);
+    try {
+      const status = await getTitleGenerationLocalStatus();
+      setTitleGenLocalStatus(status);
+      if (status.install_running && status.install_id) {
+        attachInstall(titleGenInstallKey, status.install_id);
+      }
+    } catch (e: any) {
+      setTitleGenLocalStatusError(e?.message ?? String(e));
+    } finally {
+      if (!opts?.silent) {
+        setTitleGenLocalStatusBusy(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (titleGenMode !== "local") return;
+    refreshTitleGenLocalStatus().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, titleGenMode]);
+
+  useEffect(() => {
+    if (active !== "title_generation") return;
+    if (titleGenMode !== "local") return;
+    refreshTitleGenLocalStatus().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, titleGenMode]);
 
   const ensureProviderOpts = async (providerId: string, opts?: { force?: boolean }) => {
     if (!workspaceId) return;
@@ -1372,6 +1439,19 @@ export default function SettingsPage() {
       setProviderError(e?.message ?? String(e));
     } finally {
       setInstallBusy(null);
+    }
+  };
+
+  const onInstallTitleGenerationLocal = async () => {
+    setTitleGenLocalInstallBusy(true);
+    setTitleGenLocalStatusError(null);
+    try {
+      const { install_id } = await installTitleGenerationLocal();
+      await attachInstall(titleGenInstallKey, install_id);
+    } catch (e: any) {
+      setTitleGenLocalStatusError(e?.message ?? String(e));
+    } finally {
+      setTitleGenLocalInstallBusy(false);
     }
   };
 
@@ -2771,59 +2851,152 @@ export default function SettingsPage() {
     }
 
     if (active === "title_generation") {
+      const localInstall = installs[titleGenInstallKey];
+      const localInstallRunning =
+        localInstall?.state === "running" || titleGenLocalStatus?.install_running === true;
+      const localInstalled = titleGenLocalStatus?.ready === true;
+      const localStatusLabel = titleGenLocalStatusBusy
+        ? "Loading…"
+        : titleGenLocalStatusError
+          ? "Status unavailable"
+          : localInstallRunning
+            ? "Installing…"
+            : localInstalled
+              ? "Installed"
+              : "Not installed";
+      const localStatusClass = titleGenLocalStatusError
+        ? "settings-pill settings-pill-err"
+        : localInstallRunning
+          ? "settings-pill settings-pill-warn"
+          : localInstalled
+            ? "settings-pill settings-pill-ok"
+            : "settings-pill settings-pill-warn";
+      const installLabel =
+        localInstallRunning && localInstall?.pct != null
+          ? `${clampPct(localInstall.pct)}%`
+          : localInstallRunning
+            ? "Installing…"
+            : localInstalled
+              ? "Installed"
+              : "Install";
       return (
         <>
           <Card>
             <Row
-              title="Base URL"
-              description="OpenAI-compatible endpoint for title generation (best-effort; falls back to truncating the prompt)."
+              title="Mode"
+              description="Choose between remote API or local model for session titles."
               control={
-                <input
-                  className="settings-control settings-control-wide"
-                  value={titleGenBaseUrl}
-                  onChange={(e) => setTitleGenBaseUrl(e.target.value)}
-                  placeholder="https://openrouter.ai/api/v1"
-                />
+                <select
+                  className="settings-control settings-select"
+                  value={titleGenMode}
+                  onChange={(e) => setTitleGenMode(e.target.value as TitleGenerationSettings["mode"])}
+                >
+                  <option value="remote">Remote</option>
+                  <option value="local">Local</option>
+                </select>
               }
             />
-            <Row
-              title="API key"
-              description="Stored locally in your ctx data dir."
-              control={
-                <input
-                  className="settings-control settings-control-wide"
-                  value={titleGenApiKey}
-                  onChange={(e) => setTitleGenApiKey(e.target.value)}
-                  placeholder="sk-..."
-                  type="password"
+            {titleGenMode === "remote" ? (
+              <>
+                <Row
+                  title="Base URL"
+                  description="OpenAI-compatible endpoint for title generation (best-effort; falls back to truncating the prompt)."
+                  control={
+                    <input
+                      className="settings-control settings-control-wide"
+                      value={titleGenBaseUrl}
+                      onChange={(e) => setTitleGenBaseUrl(e.target.value)}
+                      placeholder="https://openrouter.ai/api/v1"
+                    />
+                  }
                 />
-              }
-            />
-            <Row
-              title="Model"
-              description="Model used for generating session titles."
-              control={
-                <input
-                  className="settings-control settings-control-wide"
-                  value={titleGenModel}
-                  onChange={(e) => setTitleGenModel(e.target.value)}
-                  placeholder="google/gemini-3-flash-preview"
+                <Row
+                  title="API key"
+                  description="Stored locally in your ctx data dir."
+                  control={
+                    <input
+                      className="settings-control settings-control-wide"
+                      value={titleGenApiKey}
+                      onChange={(e) => setTitleGenApiKey(e.target.value)}
+                      placeholder="sk-..."
+                      type="password"
+                    />
+                  }
                 />
-              }
-            />
-            <Row
-              title="Structured output (JSON)"
-              description="Enable when the model supports JSON schema output."
-              control={
-                <Toggle
-                  checked={titleGenUseJson}
-                  disabled={!loaded}
-                  onChange={setTitleGenUseJson}
-                  ariaLabel="Structured output"
+                <Row
+                  title="Model"
+                  description="Model used for generating session titles."
+                  control={
+                    <input
+                      className="settings-control settings-control-wide"
+                      value={titleGenModel}
+                      onChange={(e) => setTitleGenModel(e.target.value)}
+                      placeholder="google/gemini-3-flash-preview"
+                    />
+                  }
                 />
-              }
-            />
+                <Row
+                  title="Structured output (JSON)"
+                  description="Enable when the model supports JSON schema output."
+                  control={
+                    <Toggle
+                      checked={titleGenUseJson}
+                      disabled={!loaded}
+                      onChange={setTitleGenUseJson}
+                      ariaLabel="Structured output"
+                    />
+                  }
+                />
+              </>
+            ) : (
+              <>
+                <Row
+                  title="Local model id"
+                  description="Model id for the local title generator."
+                  control={
+                    <input
+                      className="settings-control settings-control-wide"
+                      value={titleGenLocalModelId}
+                      onChange={(e) => setTitleGenLocalModelId(e.target.value)}
+                      placeholder="ggml-org/Qwen3-1.7B-GGUF"
+                    />
+                  }
+                />
+                <Row
+                  title="Structured output (JSON)"
+                  description="Enable when the model supports JSON schema output."
+                  control={
+                    <Toggle
+                      checked={titleGenLocalUseJson}
+                      disabled={!loaded}
+                      onChange={setTitleGenLocalUseJson}
+                      ariaLabel="Structured output"
+                    />
+                  }
+                />
+                <Row
+                  title="Local install"
+                  description="Downloads the llama.cpp runtime and Qwen3 1.7B model to the daemon host."
+                  control={
+                    <>
+                      <div className={localStatusClass}>{localStatusLabel}</div>
+                      <button
+                        type="button"
+                        className="settings-btn"
+                        onClick={onInstallTitleGenerationLocal}
+                        disabled={titleGenLocalInstallBusy || localInstallRunning || localInstalled}
+                      >
+                        {installLabel}
+                      </button>
+                    </>
+                  }
+                />
+              </>
+            )}
           </Card>
+          {titleGenMode === "local" && titleGenLocalStatusError ? (
+            <div className="settings-banner settings-banner-error">{titleGenLocalStatusError}</div>
+          ) : null}
         </>
       );
     }

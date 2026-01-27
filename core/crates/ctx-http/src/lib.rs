@@ -33,6 +33,7 @@ pub mod settings;
 pub mod telemetry;
 pub mod terminals;
 pub mod title_generation;
+pub mod title_generation_local;
 pub mod tool_cgroup;
 pub mod updates;
 pub mod web_sessions;
