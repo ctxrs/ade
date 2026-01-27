@@ -69,7 +69,8 @@ pub(super) fn extract_model_entries(models: &serde_json::Value) -> Vec<(String, 
             continue;
         };
         let id = obj
-            .get("id")
+            .get("modelId")
+            .or_else(|| obj.get("id"))
             .or_else(|| obj.get("model_id"))
             .or_else(|| obj.get("model"))
             .or_else(|| obj.get("name"))
@@ -87,4 +88,30 @@ pub(super) fn extract_model_entries(models: &serde_json::Value) -> Vec<(String, 
         out.push((id, name));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_model_entries;
+    use serde_json::json;
+
+    #[test]
+    fn extracts_model_id_from_model_id_field() {
+        let models = json!({
+            "availableModels": [
+                {
+                    "modelId": "gpt-5.2-codex/high",
+                    "name": "gpt-5.2-codex (high)"
+                }
+            ]
+        });
+        let entries = extract_model_entries(&models);
+        assert_eq!(
+            entries,
+            vec![(
+                "gpt-5.2-codex/high".to_string(),
+                Some("gpt-5.2-codex (high)".to_string())
+            )]
+        );
+    }
 }
