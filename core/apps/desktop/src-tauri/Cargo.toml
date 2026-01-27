@@ -22,6 +22,7 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 tauri = { version = "2.9.5", features = [] }
 tauri-plugin-deep-link = "2.4.5"
 tauri-plugin-dialog = "2.4.2"
+tauri-plugin-notification = "2.3.3"
 tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }
 tokio = { version = "1", features = ["sync"] }
 url = "2"

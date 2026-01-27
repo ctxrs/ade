@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import type { User } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
@@ -66,6 +66,7 @@ import {
   desktopUpdateEditorSettings,
   isDesktopApp,
 } from "../utils/desktop";
+import { ensureDesktopNotificationPermission } from "../utils/desktopNotifications";
 import { HARNESS_CATALOG, type HarnessCatalogEntry } from "../utils/harnessCatalog";
 import {
   ENTITLEMENTS_CACHE_KEY,
@@ -75,6 +76,12 @@ import {
   writeCachedValue,
 } from "../utils/entitlementsCache";
 import { getSupabaseClient } from "../utils/supabaseClient";
+import {
+  getClientSettingsState,
+  loadClientSettings,
+  subscribeClientSettings,
+  updateClientSettings,
+} from "../state/clientSettings";
 import {
   AGENT_PROMPT_DEFAULT,
   EDITOR_OPTIONS,
@@ -222,6 +229,14 @@ export default function SettingsPage() {
   const [editorSaving, setEditorSaving] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
   const editorHydrated = useRef(false);
+
+  const clientSettingsState = useSyncExternalStore(
+    subscribeClientSettings,
+    getClientSettingsState,
+    getClientSettingsState,
+  );
+  const [clientSettingsSaving, setClientSettingsSaving] = useState(false);
+  const [clientSettingsError, setClientSettingsError] = useState<string | null>(null);
 
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -558,6 +573,13 @@ export default function SettingsPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (clientSettingsState.loaded) return;
+    loadClientSettings().catch((err) => {
+      setClientSettingsError(err?.message ?? String(err));
+    });
+  }, [clientSettingsState.loaded]);
 
   const savePatch = async (patch: Partial<Settings>) => {
     setSaveError(null);
@@ -1563,7 +1585,7 @@ export default function SettingsPage() {
     }
   }, [workspaceFromQuery, workspaceId]);
 
-  const anySaving = saving || editorSaving || agentPromptSaving || subagentPromptSaving;
+  const anySaving = saving || editorSaving || agentPromptSaving || subagentPromptSaving || clientSettingsSaving;
 
   const vscodeRemoteTargets: DesktopEditorSettings["target"][] = [
     "vscode",
@@ -1573,6 +1595,30 @@ export default function SettingsPage() {
     "antigravity",
   ];
   const showRemoteAuthority = vscodeRemoteTargets.includes(editorSettings.target);
+  const desktopTurnNotifications = clientSettingsState.settings.desktopNotifications.turnCompleted;
+
+  const handleToggleTurnNotifications = useCallback(
+    async (next: boolean) => {
+      if (clientSettingsSaving) return;
+      setClientSettingsSaving(true);
+      setClientSettingsError(null);
+      try {
+        if (next && isDesktopApp()) {
+          const granted = await ensureDesktopNotificationPermission();
+          if (!granted) {
+            setClientSettingsError("Notification permission denied.");
+            return;
+          }
+        }
+        await updateClientSettings({ desktopNotifications: { turnCompleted: next } });
+      } catch (err: any) {
+        setClientSettingsError(err?.message ?? String(err));
+      } finally {
+        setClientSettingsSaving(false);
+      }
+    },
+    [clientSettingsSaving],
+  );
 
   const renderMain = () => {
     if (!loaded) return <div className="settings-empty">Loading…</div>;
@@ -1637,6 +1683,25 @@ export default function SettingsPage() {
             ) : null}
           </Card>
           {editorError ? <div className="settings-banner settings-banner-error">{editorError}</div> : null}
+          <Card title="Notifications">
+            <Row
+              title="Turn completed"
+              description={
+                isDesktopApp()
+                  ? "Send a system notification when a turn completes and the app is not focused."
+                  : "Available in the desktop app."
+              }
+              control={
+                <Toggle
+                  checked={desktopTurnNotifications}
+                  disabled={!isDesktopApp() || !clientSettingsState.loaded || clientSettingsSaving}
+                  onChange={handleToggleTurnNotifications}
+                  ariaLabel="Turn completed notifications"
+                />
+              }
+            />
+          </Card>
+          {clientSettingsError ? <div className="settings-banner settings-banner-error">{clientSettingsError}</div> : null}
         </>
       );
     }

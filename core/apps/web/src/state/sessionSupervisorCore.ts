@@ -35,8 +35,11 @@ import {
   saveSessionHeadV1,
   saveSessionHistoryPageV1,
 } from "./uiStateStore";
+import { getClientSettings } from "./clientSettings";
 import { SessionReplicaBridge } from "./sessionReplicaBridge";
 import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
+import { sendDesktopNotification } from "../utils/desktopNotifications";
+import { isAppInForeground } from "../utils/windowFocus";
 
 const readTunableInt = (key: string, fallback: number) => {
   try {
@@ -652,7 +655,7 @@ export class SessionSupervisor {
         entry.queue = entry.messages.filter((message) => message.delivery === "queued");
       }
       if (data.events && data.events.length > 0) {
-        this.mergeEvents(entry, data.events);
+        this.mergeEvents(entry, data.events, { notify: patch.op !== "replace" });
       }
       if (data.toolSummaries && data.toolSummaries.length > 0) {
         this.applyToolSummaries(entry, data.toolSummaries);
@@ -1106,7 +1109,7 @@ export class SessionSupervisor {
       entry.stateRev = headStateRev;
     }
     this.mergeTurns(entry, head.turns ?? []);
-    this.mergeEvents(entry, head.events ?? []);
+    this.mergeEvents(entry, head.events ?? [], { notify: false });
     this.mergeMessages(entry, head.messages ?? []);
     this.applyAcpMetaFromEvents(entry, head.events ?? []);
     this.applyGitStatusSnapshotFromEvents(entry, head.events ?? []);
@@ -1323,8 +1326,9 @@ export class SessionSupervisor {
     entry.queue = next.filter((m) => m.delivery === "queued");
   }
 
-  private mergeEvents(entry: InternalEntry, incoming: SessionEvent[]) {
+  private mergeEvents(entry: InternalEntry, incoming: SessionEvent[], opts?: { notify?: boolean }) {
     if (incoming.length === 0) return;
+    const shouldNotify = opts?.notify ?? true;
     const existingSeqs = entry.seqSet;
     const newEvents: SessionEvent[] = [];
     for (const ev of incoming) {
@@ -1362,7 +1366,7 @@ export class SessionSupervisor {
         continue;
       }
       this.ensureTurnFromEvent(entry, ev);
-      if (this.applyEventToTurns(entry, ev)) {
+      if (this.applyEventToTurns(entry, ev, { notify: shouldNotify })) {
         changed = true;
       }
       if (this.applyQueueEvent(entry, ev)) {
@@ -1423,13 +1427,14 @@ export class SessionSupervisor {
     return turn;
   }
 
-  private applyEventToTurns(entry: InternalEntry, event: SessionEvent): boolean {
+  private applyEventToTurns(entry: InternalEntry, event: SessionEvent, opts?: { notify?: boolean }): boolean {
     const turnId = idToString(event.turn_id);
     if (!turnId) return false;
     const idx = entry.turns.findIndex((t) => idToString(t.turn_id) === turnId);
     if (idx < 0) return false;
 
     const turn = entry.turns[idx];
+    const prevStatus = turn.status;
     let changed = false;
     switch (String(event.event_type)) {
       case "assistant_chunk": {
@@ -1526,7 +1531,18 @@ export class SessionSupervisor {
     if (!changed) return false;
     turn.updated_at = event.created_at ?? turn.updated_at;
     entry.turns[idx] = { ...turn };
+    if ((opts?.notify ?? true) && prevStatus !== "completed" && turn.status === "completed") {
+      this.notifyTurnCompleted(entry);
+    }
     return true;
+  }
+
+  private notifyTurnCompleted(entry: InternalEntry) {
+    if (isAppInForeground()) return;
+    if (!getClientSettings().desktopNotifications.turnCompleted) return;
+    const title = "Turn completed";
+    const body = entry.session?.title ? String(entry.session.title) : undefined;
+    void sendDesktopNotification({ title, body });
   }
 
   private applyQueueEvent(entry: InternalEntry, event: SessionEvent): boolean {

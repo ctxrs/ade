@@ -10,6 +10,7 @@ import CursorDiffDemoPage from "./pages/CursorDiffDemoPage";
 import ProvidersPage from "./pages/ProvidersPage";
 import DiagnosticsPage from "./pages/DiagnosticsPage";
 import SettingsPage from "./pages/SettingsPage";
+import { loadClientSettings } from "./state/clientSettings";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
 import { SettingsStoreProvider } from "./state/settingsStore";
 import { preloadHarnessLogos } from "./utils/harnessCatalog";
@@ -53,6 +54,10 @@ export default function App() {
 
   useEffect(() => {
     initStatsig();
+  }, []);
+
+  useEffect(() => {
+    loadClientSettings().catch(() => {});
   }, []);
 
   return (
