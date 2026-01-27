@@ -1172,7 +1172,7 @@ struct WorkbenchShellView: View {
             snapshotRev = rev
             archivedRev = nil
             isReady = false
-        case .archivedTaskUpsert(_, let archived, _, _):
+        case .archivedTaskUpsert(_, let archived, _):
             snapshotRev = nil
             archivedRev = archived
             isReady = false
@@ -1224,7 +1224,7 @@ struct WorkbenchShellView: View {
             _Concurrency.Task { await ATSHeadCache.shared.store(head: head) }
         case .sessionGap:
             _Concurrency.Task { await loadTasks() }
-        case .archivedTaskUpsert(_, _, let task, _):
+        case .archivedTaskUpsert(_, _, let task):
             upsertArchivedTaskSummary(task)
         case .archivedTaskDelete(_, _, let taskId):
             removeTask(taskId: taskId.stringValue)

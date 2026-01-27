@@ -418,8 +418,8 @@ impl ShellView {
             } => {
                 self.handle_session_gap(session_id, after_seq, cx);
             }
-            WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert { task, snapshot, .. } => {
-                self.upsert_archived_task_summary(*task, snapshot.map(|snapshot| *snapshot), cx);
+            WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert { task, .. } => {
+                self.upsert_archived_task_summary(*task, cx);
                 cx.notify();
             }
             WorkspaceActiveSnapshotEvent::ArchivedTaskDelete { task_id, .. } => {

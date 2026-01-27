@@ -459,7 +459,6 @@ export type WorkspaceActiveSnapshotEvent =
       snapshot_rev?: number;
       archived_rev: number;
       task: WorkspaceTaskSummary;
-      snapshot?: SessionSnapshot | null;
     }
   | {
       type: "archived_task_delete";

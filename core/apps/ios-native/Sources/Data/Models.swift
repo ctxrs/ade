@@ -458,7 +458,7 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
     case sessionHeadReset(workspaceId: CtxID, snapshotRev: Int, head: SessionHead)
     case sessionGap(workspaceId: CtxID, snapshotRev: Int, sessionId: CtxID, afterSeq: Int, reason: String?)
     case worktreeBootstrap(workspaceId: CtxID, snapshotRev: Int, notice: WorktreeBootstrapNotice)
-    case archivedTaskUpsert(workspaceId: CtxID, archivedRev: Int, task: WorkspaceArchivedTaskSummaryPayload, snapshot: SessionSnapshot?)
+    case archivedTaskUpsert(workspaceId: CtxID, archivedRev: Int, task: WorkspaceArchivedTaskSummaryPayload)
     case archivedTaskDelete(workspaceId: CtxID, archivedRev: Int, taskId: CtxID)
 
     private enum EventType: String, Codable {
@@ -488,7 +488,6 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
         case afterSeq
         case reason
         case notice
-        case snapshot
     }
 
     init(from decoder: Decoder) throws {
@@ -525,8 +524,7 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
             self = .worktreeBootstrap(workspaceId: workspaceId, snapshotRev: snapshotRev, notice: notice)
         case .archivedTaskUpsert:
             let task = try container.decode(WorkspaceArchivedTaskSummaryPayload.self, forKey: .task)
-            let snapshot = try container.decodeIfPresent(SessionSnapshot.self, forKey: .snapshot)
-            self = .archivedTaskUpsert(workspaceId: workspaceId, archivedRev: archivedRev, task: task, snapshot: snapshot)
+            self = .archivedTaskUpsert(workspaceId: workspaceId, archivedRev: archivedRev, task: task)
         case .archivedTaskDelete:
             let taskId = try container.decode(CtxID.self, forKey: .taskId)
             self = .archivedTaskDelete(workspaceId: workspaceId, archivedRev: archivedRev, taskId: taskId)
@@ -578,12 +576,11 @@ enum WorkspaceActiveSnapshotEvent: Codable, Sendable {
             try container.encode(workspaceId, forKey: .workspaceId)
             try container.encode(snapshotRev, forKey: .snapshotRev)
             try container.encode(notice, forKey: .notice)
-        case .archivedTaskUpsert(let workspaceId, let archivedRev, let task, let snapshot):
+        case .archivedTaskUpsert(let workspaceId, let archivedRev, let task):
             try container.encode(EventType.archivedTaskUpsert, forKey: .type)
             try container.encode(workspaceId, forKey: .workspaceId)
             try container.encode(archivedRev, forKey: .archivedRev)
             try container.encode(task, forKey: .task)
-            try container.encodeIfPresent(snapshot, forKey: .snapshot)
         case .archivedTaskDelete(let workspaceId, let archivedRev, let taskId):
             try container.encode(EventType.archivedTaskDelete, forKey: .type)
             try container.encode(workspaceId, forKey: .workspaceId)

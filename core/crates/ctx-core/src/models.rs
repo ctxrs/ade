@@ -866,8 +866,6 @@ pub enum WorkspaceActiveSnapshotEvent {
         workspace_id: WorkspaceId,
         archived_rev: i64,
         task: Box<WorkspaceTaskSummary>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        snapshot: Option<Box<SessionSnapshot>>,
     },
     ArchivedTaskDelete {
         workspace_id: WorkspaceId,

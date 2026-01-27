@@ -297,7 +297,7 @@ actor WorkspaceArchivedSnapshotCache {
 
     func apply(event: WorkspaceActiveSnapshotEvent) async {
         switch event {
-        case .archivedTaskUpsert(let workspaceId, let archivedRev, let task, _):
+        case .archivedTaskUpsert(let workspaceId, let archivedRev, let task):
             await update(workspaceId: workspaceId.stringValue, archivedRev: archivedRev) { cached in
                 let summary = CachedWorkspaceTaskSummary(summary: task.toTaskSummary())
                 let taskId = summary.task.id.stringValue

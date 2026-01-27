@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use chrono::Utc;
@@ -1073,6 +1073,123 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
         }
     }
     assert!(saw_upsert);
+}
+
+#[tokio::test]
+async fn workspace_stream_archived_task_upsert_has_no_snapshot_payload() {
+    let (repo, _data_dir, _state, server) = setup().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
+        .json(&json!({"title":"archive me"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let _session: ctx_core::models::Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let ready_msg = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    if let WsMessage::Text(txt) = ready_msg {
+        let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
+            serde_json::from_str(&txt).unwrap();
+        match message {
+            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                event: ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. },
+                ..
+            } => {}
+            other => panic!("expected ready, got {other:?}"),
+        }
+    } else {
+        panic!("expected ready text frame");
+    }
+
+    let subscribe = json!({ "type": "subscribe" }).to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let resp = client
+        .post(format!("{base}/api/tasks/{}/archive", task.id.0))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    let task_id = task.id.0.to_string();
+    let mut archived_event: Option<Value> = None;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            let value: Value = serde_json::from_str(&txt).unwrap();
+            let event = match value.get("event") {
+                Some(event) => event,
+                None => continue,
+            };
+            if event.get("type").and_then(|value| value.as_str()) != Some("archived_task_upsert") {
+                continue;
+            }
+            let event_task_id = event
+                .get("task")
+                .and_then(|value| value.get("task"))
+                .and_then(|value| value.get("id"))
+                .and_then(|value| value.as_str());
+            if event_task_id == Some(task_id.as_str()) {
+                archived_event = Some(value);
+                break;
+            }
+        }
+    }
+
+    let archived_event = archived_event.expect("expected archived_task_upsert event");
+    assert_eq!(
+        archived_event.get("type").and_then(|value| value.as_str()),
+        Some("event")
+    );
+    assert!(archived_event.get("active_snapshot").is_none());
+    assert!(archived_event.get("active_heads").is_none());
+    let event = archived_event.get("event").expect("missing event");
+    assert_eq!(
+        event.get("type").and_then(|value| value.as_str()),
+        Some("archived_task_upsert")
+    );
+    assert!(event.get("snapshot_rev").is_none());
+    assert!(event.get("snapshot").is_none());
 }
 
 #[tokio::test]

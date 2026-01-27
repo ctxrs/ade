@@ -1251,8 +1251,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         this.publish();
         break;
       case "archived_task_upsert": {
-        const head = evt.snapshot?.head ?? null;
-        const item = this.buildArchivedItem(evt.task, head);
+        const item = this.buildArchivedItem(evt.task, null);
         if (item) {
           this.upsertArchivedItem(item);
           this.publish();

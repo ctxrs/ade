@@ -8,7 +8,7 @@ use tokio::sync::{broadcast, Mutex};
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
     Message, Session, SessionActivityState, SessionEvent, SessionEventType, SessionHeadDelta,
-    SessionHeadSnapshot, SessionMetadata, SessionSnapshot, SessionSnapshotSummary, SessionTurn,
+    SessionHeadSnapshot, SessionMetadata, SessionSnapshotSummary, SessionTurn,
     SessionTurnToolSummary, WorkspaceActiveHeadBatch, WorkspaceActivePage, WorkspaceActiveSnapshot,
     WorkspaceActiveSnapshotEvent, WorkspaceActiveTaskSummary, WorkspaceTaskSummary,
     WorktreeBootstrapNotice,
@@ -612,7 +612,6 @@ impl WorkspaceActiveSnapshotHub {
         &self,
         workspace_id: WorkspaceId,
         task: WorkspaceTaskSummary,
-        snapshot: Option<SessionSnapshot>,
     ) {
         let (tx, archived_rev) = {
             let mut guard = self.inner.lock().await;
@@ -626,7 +625,6 @@ impl WorkspaceActiveSnapshotHub {
             workspace_id,
             archived_rev,
             task: Box::new(task),
-            snapshot: snapshot.map(Box::new),
         });
     }
 

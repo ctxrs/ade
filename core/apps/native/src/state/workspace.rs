@@ -7,7 +7,7 @@ use gpui_tokio::Tokio;
 
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
-    MessageRole, SessionHeadSnapshot, SessionSnapshot, SessionSnapshotSummary, Task,
+    MessageRole, SessionHeadSnapshot, SessionSnapshotSummary, Task,
     WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, WorkspaceActiveTaskSummary,
     WorkspaceTaskSummary,
 };
@@ -946,7 +946,6 @@ impl ShellView {
     pub(crate) fn upsert_archived_task_summary(
         &mut self,
         summary: WorkspaceTaskSummary,
-        _snapshot: Option<SessionSnapshot>,
         _cx: &mut Context<Self>,
     ) {
         let fallback_worktree_id = summary.task.primary_worktree_id;

@@ -18,9 +18,8 @@ use crate::edit_plans::{EditPlan, EditPlanId};
 use ctx_core::ids::{MessageId, SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Message, MessageAttachment, MessageDelivery, MessageRole, Session, SessionEvent,
-    SessionEventType, SessionHeadDelta, SessionHeadSnapshot, SessionSnapshot, SessionTurn,
-    SessionTurnStatus, Task, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
-    WorkspaceTaskSummary, Worktree,
+    SessionEventType, SessionHeadDelta, SessionHeadSnapshot, SessionTurn, SessionTurnStatus, Task,
+    WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, Worktree,
 };
 use ctx_lsp::Language as LspLanguage;
 use ctx_lsp::{LspManager, LspManagerConfig};
@@ -55,7 +54,6 @@ use crate::tool_cgroup;
 use crate::web_sessions::WebSessionManager;
 use crate::workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 
-const ARCHIVED_SNAPSHOT_HEAD_LIMIT: u32 = 50;
 const ACTIVE_HEAD_PROJECTION_DEBOUNCE_MS: u64 = 200;
 const ACTIVE_HEAD_PROJECTION_MAX_FLUSH_MS: u64 = 1500;
 const ACTIVE_TASK_REFRESH_DEBOUNCE_MS: u64 = 250;
@@ -1135,21 +1133,11 @@ impl AppState {
             return Ok(());
         }
 
-        let primary_session_id = select_primary_session_id(&summary);
-        let snapshot: Option<SessionSnapshot> = match primary_session_id {
-            Some(session_id) => {
-                let session_store = self.store_for_session(session_id).await?;
-                session_store
-                    .get_session_snapshot(session_id, ARCHIVED_SNAPSHOT_HEAD_LIMIT, false)
-                    .await?
-            }
-            None => None,
-        };
         let _ = store
             .bump_workspace_archived_snapshot_rev(task.workspace_id)
             .await?;
         self.workspace_active_snapshot
-            .publish_archived_task_upsert(task.workspace_id, summary, snapshot)
+            .publish_archived_task_upsert(task.workspace_id, summary)
             .await;
         Ok(())
     }
@@ -1360,24 +1348,6 @@ impl AppState {
         st.error = error;
         st.finished_at = Some(Utc::now());
     }
-}
-
-fn select_primary_session_id(summary: &WorkspaceTaskSummary) -> Option<SessionId> {
-    if let Some(primary_id) = summary.task.primary_session_id {
-        if summary
-            .sessions
-            .iter()
-            .any(|session| session.id == primary_id)
-        {
-            return Some(primary_id);
-        }
-    }
-    summary
-        .sessions
-        .iter()
-        .find(|session| session.parent_session_id.is_none())
-        .map(|session| session.id)
-        .or_else(|| summary.sessions.first().map(|session| session.id))
 }
 
 async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
