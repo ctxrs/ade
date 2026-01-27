@@ -2,6 +2,7 @@ import type { InstallInfo } from "../api/client";
 
 export type SectionId =
   | "general"
+  | "privacy"
   | "agent_harnesses"
   | "harness_subscriptions"
   | "models_routing"

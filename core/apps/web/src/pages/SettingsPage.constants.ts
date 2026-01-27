@@ -40,6 +40,7 @@ export const SECTIONS: Array<{
   navHidden?: boolean;
 }> = [
   { id: "general", label: "General", group: "main" },
+  { id: "privacy", label: "Privacy", group: "main" },
   { id: "agent_harnesses", label: "Agent Harnesses", group: "main" },
   { id: "harness_subscriptions", label: "Harness Subscriptions", group: "main" },
   { id: "models_routing", label: "Models & Routing", group: "main", navHidden: true },

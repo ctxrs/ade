@@ -1583,13 +1583,6 @@ export default function SettingsPage() {
         <>
           <Card>
             <Row
-              title="Telemetry"
-              description="Share anonymous usage metrics (no code, prompts, or file paths)."
-              control={
-                <Toggle checked={telemetryEnabled} disabled={!loaded} onChange={setTelemetryEnabled} ariaLabel="Telemetry" />
-              }
-            />
-            <Row
               title="Default IDE"
               description={isDesktopApp() ? "Used for open-in-editor links." : "Available in the desktop app."}
               control={
@@ -1645,6 +1638,20 @@ export default function SettingsPage() {
           </Card>
           {editorError ? <div className="settings-banner settings-banner-error">{editorError}</div> : null}
         </>
+      );
+    }
+
+    if (active === "privacy") {
+      return (
+        <Card>
+          <Row
+            title="Telemetry"
+            description="Share anonymous usage metrics (no code, prompts, or file paths)."
+            control={
+              <Toggle checked={telemetryEnabled} disabled={!loaded} onChange={setTelemetryEnabled} ariaLabel="Telemetry" />
+            }
+          />
+        </Card>
       );
     }
 
