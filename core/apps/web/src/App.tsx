@@ -10,11 +10,11 @@ import CursorDiffDemoPage from "./pages/CursorDiffDemoPage";
 import ProvidersPage from "./pages/ProvidersPage";
 import DiagnosticsPage from "./pages/DiagnosticsPage";
 import SettingsPage from "./pages/SettingsPage";
-import { loadClientSettings } from "./state/clientSettings";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
 import { SettingsStoreProvider } from "./state/settingsStore";
 import { preloadHarnessLogos } from "./utils/harnessCatalog";
 import { initStatsig } from "./utils/statsig";
+import { refreshUpdateCheck } from "./utils/updateNotice";
 
 export default function App() {
   useEffect(() => {
@@ -57,7 +57,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    loadClientSettings().catch(() => {});
+    refreshUpdateCheck().catch(() => {});
   }, []);
 
   return (

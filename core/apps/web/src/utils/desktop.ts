@@ -119,6 +119,11 @@ export const desktopReadFile = async (args: {
 export const desktopGetDeepLinkToken = async (): Promise<DesktopDeepLinkToken> =>
   invoke<DesktopDeepLinkToken>("desktop_get_deep_link_token");
 
+export const desktopGetVersion = async (): Promise<string> => {
+  const mod = await import("@tauri-apps/api/app");
+  return mod.getVersion();
+};
+
 export const desktopOpenFile = async (req: DesktopOpenFileReq): Promise<void> =>
   invoke<void>("desktop_open_file", { req });
 

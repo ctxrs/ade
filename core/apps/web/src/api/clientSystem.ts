@@ -3,10 +3,16 @@ import { apiAny } from "./clientBase";
 
 export type Health = {
   version: string;
+  daemon_version: string;
   pid: number;
   data_root: string;
   daemon_url: string;
   auth_required: boolean;
+  compatibility: {
+    desktop_exact_version: string;
+    mobile_api_min: number;
+    mobile_api_max: number;
+  };
 };
 
 export type UpdateCheck = {

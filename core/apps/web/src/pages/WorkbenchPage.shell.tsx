@@ -76,6 +76,7 @@ import { DiffReviewPane } from "../components/DiffReviewPane";
 import { SessionsPane } from "../components/SessionsPane";
 import { TerminalPanel, type TerminalPanelHandle } from "../components/TerminalPanel";
 import { WorktreeBootstrapSnackbar } from "../components/WorktreeBootstrapSnackbar";
+import UpdateNoticeBanner from "../components/UpdateNoticeBanner";
 import { buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchModeId } from "../components/WorkbenchComposer";
@@ -3620,6 +3621,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       <WorktreeBootstrapSnackbar />
       {archiveCleanupSnackbar}
       {topbar}
+
+      <UpdateNoticeBanner />
 
       {workbenchSnap.warnings.length > 0 && (
         <div className="banner" style={{ margin: "8px 12px 0" }}>

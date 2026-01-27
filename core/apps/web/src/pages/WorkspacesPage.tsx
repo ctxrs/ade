@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { createWorkspace, idToString, listProviders, listWorkspaces, ProviderStatus, Workspace } from "../api/client";
+import UpdateNoticeBanner from "../components/UpdateNoticeBanner";
 
 export default function WorkspacesPage() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -49,6 +50,7 @@ export default function WorkspacesPage() {
           Some harnesses are not ready. <Link to="/settings#agent_harnesses">Install or update harnesses</Link>.
         </div>
       )}
+      <UpdateNoticeBanner />
 
       <form onSubmit={onCreate} className="card">
         <label>

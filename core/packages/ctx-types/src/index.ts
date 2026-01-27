@@ -669,10 +669,16 @@ export type InstallProgressEvent = {
 export type Diagnostics = {
   daemon: {
     version: string;
+    daemon_version: string;
     pid: number;
     data_root: string;
     daemon_url: string;
     auth_required: boolean;
+    compatibility: {
+      desktop_exact_version: string;
+      mobile_api_min: number;
+      mobile_api_max: number;
+    };
   };
   platform: { os: string; arch: string };
   logs: { dir: string; files: { name: string; bytes: number; modified_utc?: string | null }[] };

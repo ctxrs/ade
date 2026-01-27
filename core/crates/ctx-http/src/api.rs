@@ -779,13 +779,25 @@ async fn get_merge_queue_entry_logs(
     Ok(resp)
 }
 
+const MOBILE_API_MIN_VERSION: i64 = 1;
+const MOBILE_API_MAX_VERSION: i64 = 1;
+
+#[derive(Debug, Serialize)]
+struct HealthCompatibility {
+    desktop_exact_version: String,
+    mobile_api_min: i64,
+    mobile_api_max: i64,
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResp {
     version: String,
+    daemon_version: String,
     pid: u32,
     data_root: String,
     daemon_url: String,
     auth_required: bool,
+    compatibility: HealthCompatibility,
 }
 
 #[derive(Debug, Deserialize)]
@@ -871,12 +883,19 @@ struct BlobUploadResp {
 }
 
 async fn health(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp>, StatusCode> {
+    let version = env!("CARGO_PKG_VERSION").to_string();
     Ok(Json(HealthResp {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: version.clone(),
+        daemon_version: version.clone(),
         pid: std::process::id(),
         data_root: state.data_root.to_string_lossy().to_string(),
         daemon_url: state.daemon_url.clone(),
         auth_required: state.auth_token.is_some(),
+        compatibility: HealthCompatibility {
+            desktop_exact_version: version,
+            mobile_api_min: MOBILE_API_MIN_VERSION,
+            mobile_api_max: MOBILE_API_MAX_VERSION,
+        },
     }))
 }
 
@@ -1304,13 +1323,20 @@ async fn diagnostics(
         .unwrap_or_else(|e| serde_json::json!({"error": logs::redact_sensitive(&e.to_string())}));
     let managed_installs = redact_json_value(managed_installs);
 
+    let version = env!("CARGO_PKG_VERSION").to_string();
     Ok(Json(DiagnosticsResp {
         daemon: HealthResp {
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            version: version.clone(),
+            daemon_version: version.clone(),
             pid: std::process::id(),
             data_root: state.data_root.to_string_lossy().to_string(),
             daemon_url: state.daemon_url.clone(),
             auth_required: state.auth_token.is_some(),
+            compatibility: HealthCompatibility {
+                desktop_exact_version: version,
+                mobile_api_min: MOBILE_API_MIN_VERSION,
+                mobile_api_max: MOBILE_API_MAX_VERSION,
+            },
         },
         platform: serde_json::json!({
             "os": std::env::consts::OS,

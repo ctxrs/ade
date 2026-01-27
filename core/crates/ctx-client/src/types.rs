@@ -12,10 +12,19 @@ use ctx_core::models::{
 #[derive(Debug, Clone, Deserialize)]
 pub struct Health {
     pub version: String,
+    pub daemon_version: String,
     pub pid: i64,
     pub data_root: String,
     pub daemon_url: String,
     pub auth_required: bool,
+    pub compatibility: HealthCompatibility,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HealthCompatibility {
+    pub desktop_exact_version: String,
+    pub mobile_api_min: i64,
+    pub mobile_api_max: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

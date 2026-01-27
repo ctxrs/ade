@@ -126,10 +126,22 @@ vi.mock("../api/client", () => ({
   getDaemonBaseUrl: vi.fn(() => ""),
   getHealth: vi.fn(async () => ({
     version: "0.0.0",
+    daemon_version: "0.0.0",
     pid: 1,
     data_root: "/tmp/ctx",
     daemon_url: "",
     auth_required: false,
+    compatibility: {
+      desktop_exact_version: "0.0.0",
+      mobile_api_min: 1,
+      mobile_api_max: 1,
+    },
+  })),
+  checkUpdates: vi.fn(async () => ({
+    channel: "stable",
+    base_url: "https://example.test",
+    current_version: "0.0.0",
+    update_available: false,
   })),
   resolveDaemonWsBaseUrl: vi.fn(() => "ws://localhost:4399"),
   getInstall: vi.fn(async () => ({})),
