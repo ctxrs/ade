@@ -539,7 +539,7 @@ button.linklike:hover {
 .new-activity-overlay {
   position: absolute;
   left: 50%;
-  bottom: 10px;
+  bottom: calc(10px + var(--wb-composer-height, 0px));
   transform: translateX(-50%);
   width: 34px;
   height: 34px;

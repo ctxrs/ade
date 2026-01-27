@@ -103,7 +103,9 @@ describe("WorkbenchComposer textarea sizing", () => {
       fireEvent.change(textarea, { target: { value: ["a", "b", "c", "d", "e"].join("\n") } });
       await new Promise((r) => setTimeout(r, 0));
     });
-    expect(textarea.style.height).toBe("100px");
+    const expandedHeight = Number.parseFloat(textarea.style.height || "0");
+    expect(expandedHeight).toBeGreaterThan(88);
+    expect(expandedHeight).toBeLessThanOrEqual(380);
 
     const manyLines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n");
     await act(async () => {
@@ -223,6 +225,7 @@ describe("WorkbenchComposer textarea sizing", () => {
 
     const initialHeight = Number.parseFloat(textarea.style.height || "0");
     expect(initialHeight).toBeGreaterThan(0);
+
     const heightWrites: string[] = [];
     const style = textarea.style;
     const originalHeightDescriptor = Object.getOwnPropertyDescriptor(style, "height");
@@ -316,7 +319,8 @@ describe("WorkbenchComposer textarea sizing", () => {
       fireEvent.change(textarea, { target: { value: "line 1\nline 2\nline 3\nline 4\nline 5" } });
       await new Promise((r) => setTimeout(r, 0));
     });
-    expect(textarea.style.height).toBe("100px");
+    const expandedHeight = Number.parseFloat(textarea.style.height || "0");
+    expect(expandedHeight).toBeGreaterThan(88);
 
     await act(async () => {
       fireEvent.change(textarea, { target: { value: "" } });

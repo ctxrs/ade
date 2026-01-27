@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, type MutableRefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type MutableRefObject } from "react";
 import type { IndexLocationWithAlign, VirtuosoHandle } from "react-virtuoso";
 
 export type PinnedScrollPersistState = {
@@ -94,9 +94,15 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     if (itemsLength === 0) return;
     const handle = virtuosoRef.current;
     const el = scrollerRef.current;
-    if (handle || el) markAutoScroll();
-    handle?.scrollToIndex({ index: firstItemIndex + itemsLength - 1, align: "end" });
-    if (el) el.scrollTop = el.scrollHeight;
+    if (handle) {
+      markAutoScroll();
+      handle.scrollToIndex({ index: firstItemIndex + itemsLength - 1, align: "end" });
+      return;
+    }
+    if (el) {
+      markAutoScroll();
+      el.scrollTop = el.scrollHeight;
+    }
   }, [firstItemIndex, itemsLength, markAutoScroll, scrollerRef, virtuosoRef]);
 
   const syncAtBottom = useCallback(() => {
@@ -169,15 +175,6 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     stickToBottomRef,
   ]);
 
-  const pinToBottomOnResize = useCallback(() => {
-    const node = scrollerRef.current;
-    if (!node) return;
-    const remaining = node.scrollHeight - (node.scrollTop + node.clientHeight);
-    if (remaining <= bottomThresholdPx) return;
-    markAutoScroll();
-    node.scrollTop = node.scrollHeight;
-  }, [bottomThresholdPx, markAutoScroll, scrollerRef]);
-
   useLayoutEffect(() => {
     if (preserveScrollOnFocus && !isActive) return;
     const nearBottom = syncAtBottom();
@@ -232,7 +229,6 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
           return;
         }
         if (preserveScrollOnFocus && !isActive) return;
-        scheduleAutoScroll();
       },
       {
         root: scroller,
@@ -263,28 +259,6 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     userIntentWindowMs,
     userScrollIntentRef,
   ]);
-
-  useEffect(() => {
-    const node = scrollerRef.current;
-    if (!node) return;
-    const observer = new ResizeObserver(() => {
-      if (!stickToBottomRef.current) return;
-      pinToBottomOnResize();
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [pinToBottomOnResize, scrollerRef, stickToBottomRef]);
-
-  useEffect(() => {
-    const node = listRef.current;
-    if (!node) return;
-    const observer = new ResizeObserver(() => {
-      if (!stickToBottomRef.current) return;
-      scheduleAutoScroll();
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [listRef, scheduleAutoScroll, stickToBottomRef]);
 
   return {
     initialTopMostItemIndex,
