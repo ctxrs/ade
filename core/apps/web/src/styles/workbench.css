@@ -2800,7 +2800,6 @@
   --wb-thread-max-width: 820px;
   --wb-scrollbar-width: 6px;
   --wb-session-padding-inline: 12px;
-  --wb-composer-height: 0px;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -2822,31 +2821,18 @@
 }
 
 .wb-session-view .queue-panel {
-  width: calc(100% - 24px);
-  max-width: calc(var(--wb-thread-max-width) - 32px);
+  width: 100%;
+  max-width: var(--wb-thread-max-width);
   margin-left: auto;
   margin-right: auto;
   margin-bottom: 0;
   border-radius: 10px 10px 0 0;
 }
 
-.wb-session-view .wb-thread-stack {
-  max-width: none;
-  width: calc(100% + (var(--wb-session-padding-inline) * 2));
-  margin-left: calc(var(--wb-session-padding-inline) * -1);
-  margin-right: calc(var(--wb-session-padding-inline) * -1);
-}
-
 .wb-session-bottom {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: var(--bg);
-  z-index: 2;
 }
 
 .wb-thread-scroller {
@@ -2874,7 +2860,7 @@
 .wb-scrollbar {
   position: absolute;
   top: 0;
-  bottom: var(--wb-composer-height, 0px);
+  bottom: 0;
   right: 2px;
   width: var(--wb-scrollbar-width);
   opacity: 0;

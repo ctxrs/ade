@@ -1803,32 +1803,6 @@ export function SessionView({
   const leftClass = "wb-session-left";
 
   const dropScopeRef = useRef<HTMLDivElement | null>(null);
-  const composerStackRef = useRef<HTMLDivElement | null>(null);
-  const composerHeightRef = useRef<string | null>(null);
-
-  useLayoutEffect(() => {
-    const root = dropScopeRef.current;
-    const stack = composerStackRef.current;
-    if (!root || !stack) return;
-    const updateComposerHeight = () => {
-      const nextHeightPx = stack.offsetHeight;
-      const prevHeightPx =
-        composerHeightRef.current != null ? Number.parseFloat(composerHeightRef.current) : null;
-      if (prevHeightPx != null && Math.abs(nextHeightPx - prevHeightPx) < 2) return;
-      const nextHeight = `${nextHeightPx}px`;
-      if (composerHeightRef.current === nextHeight) return;
-      composerHeightRef.current = nextHeight;
-      root.style.setProperty("--wb-composer-height", nextHeight);
-    };
-    updateComposerHeight();
-    const observer = new ResizeObserver(() => updateComposerHeight());
-    observer.observe(stack);
-    return () => {
-      observer.disconnect();
-      composerHeightRef.current = null;
-      root.style.removeProperty("--wb-composer-height");
-    };
-  }, []);
 
   const onDropFiles = useCallback(
     async (files: File[]) => {
@@ -2195,34 +2169,18 @@ export function SessionView({
           }}
         />
       )),
-      List: forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>((props, ref) => {
-        const rawPaddingBottom = props.style?.paddingBottom;
-        const basePaddingBottom =
-          rawPaddingBottom == null || rawPaddingBottom === ""
-            ? "0px"
-            : typeof rawPaddingBottom === "number"
-              ? `${rawPaddingBottom}px`
-              : String(rawPaddingBottom);
-        const listPaddingBottom = `calc(${basePaddingBottom} + 8px + var(--wb-composer-height, 0px))`;
-        return (
-          <div
-            {...props}
-            ref={(node) => {
-              listRef.current = node;
-              if (typeof ref === "function") ref(node);
-              else if (ref) (ref as MutableRefObject<HTMLDivElement | null>).current = node;
-            }}
-            role="list"
-            className={`wb-thread-list ${props.className ?? ""}`}
-            style={{
-              ...props.style,
-              paddingLeft: "var(--wb-session-padding-inline)",
-              paddingRight: "var(--wb-session-padding-inline)",
-              paddingBottom: listPaddingBottom,
-            }}
-          />
-        );
-      }),
+      List: forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>((props, ref) => (
+        <div
+          {...props}
+          ref={(node) => {
+            listRef.current = node;
+            if (typeof ref === "function") ref(node);
+            else if (ref) (ref as MutableRefObject<HTMLDivElement | null>).current = node;
+          }}
+          role="list"
+          className={`wb-thread-list ${props.className ?? ""}`}
+        />
+      )),
       Footer: forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>((props, ref) => (
         <div
           {...props}
@@ -2486,7 +2444,7 @@ export function SessionView({
           onScrollbarThumbPointerUp={handleScrollbarThumbPointerUp}
           scheduleScrollbarUpdate={scheduleScrollbarUpdate}
         />
-        <div className="wb-session-bottom" ref={composerStackRef}>
+        <div className="wb-session-bottom">
           {showQueuePanel && (
             <div className="queue-panel card" aria-label="Queued messages">
               <div className="queue-header">
