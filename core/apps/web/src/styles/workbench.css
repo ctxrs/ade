@@ -1019,6 +1019,21 @@
   overflow-y: auto;
 }
 
+.wb-composer-mirror {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  border: 0;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .wb-composer-textarea::placeholder {
   color: rgba(255, 255, 255, 0.35);
 }
@@ -2785,11 +2800,13 @@
   --wb-thread-max-width: 820px;
   --wb-scrollbar-width: 6px;
   --wb-session-padding-inline: 12px;
+  --wb-composer-height: 0px;
   height: 100%;
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow-x: hidden;
+  overflow-anchor: none;
   padding-left: var(--wb-session-padding-inline);
   padding-right: var(--wb-session-padding-inline);
   padding-bottom: 12px;
@@ -2820,6 +2837,18 @@
   margin-right: calc(var(--wb-session-padding-inline) * -1);
 }
 
+.wb-session-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg);
+  z-index: 2;
+}
+
 .wb-thread-scroller {
   box-sizing: border-box;
   padding-inline: 0;
@@ -2839,14 +2868,13 @@
   max-width: calc(var(--wb-thread-max-width) + (var(--wb-session-padding-inline) * 2));
   margin-left: auto;
   margin-right: auto;
-  padding: 0 var(--wb-session-padding-inline) 8px;
   box-sizing: border-box;
 }
 
 .wb-scrollbar {
   position: absolute;
   top: 0;
-  bottom: 0;
+  bottom: var(--wb-composer-height, 0px);
   right: 2px;
   width: var(--wb-scrollbar-width);
   opacity: 0;
@@ -3625,6 +3653,7 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 
 .ctx-drop-scope {
