@@ -1507,7 +1507,7 @@ export default function SettingsPage() {
 
   const sidebarSections = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const all = [...SECTIONS];
+    const all = SECTIONS.filter((section) => !section.navHidden);
     if (!q) return all;
     return all.filter((s) => s.label.toLowerCase().includes(q));
   }, [query]);

@@ -37,23 +37,24 @@ export const SECTIONS: Array<{
   id: SectionId;
   label: string;
   group?: "main" | "advanced";
+  navHidden?: boolean;
 }> = [
   { id: "general", label: "General", group: "main" },
   { id: "agent_harnesses", label: "Agent Harnesses", group: "main" },
   { id: "harness_subscriptions", label: "Harness Subscriptions", group: "main" },
-  { id: "models_routing", label: "Models & Routing", group: "main" },
-  { id: "sandboxing", label: "Sandboxing", group: "main" },
+  { id: "models_routing", label: "Models & Routing", group: "main", navHidden: true },
+  { id: "sandboxing", label: "Sandboxing", group: "main", navHidden: true },
   { id: "worktree_bootstrap", label: "Worktree Bootstrap", group: "main" },
   { id: "agent_system_prompt", label: "Agent System Prompt", group: "main" },
   { id: "workspace_attachments", label: "Workspace Attachments", group: "main" },
   { id: "merge_queue", label: "Merge Queue", group: "main" },
-  { id: "context_pack", label: "ctx pack", group: "main" },
+  { id: "context_pack", label: "ctx pack", group: "main", navHidden: true },
   { id: "resource_governance", label: "Resource Limits", group: "main" },
-  { id: "mobile_access", label: "Mobile Access", group: "main" },
-  { id: "resource_utilization", label: "Resource Utilization", group: "main" },
+  { id: "mobile_access", label: "Mobile Access", group: "main", navHidden: true },
+  { id: "resource_utilization", label: "Resource Utilization", group: "main", navHidden: true },
   { id: "dictation", label: "Dictation", group: "advanced" },
   { id: "title_generation", label: "Title Generation", group: "advanced" },
-  { id: "billing", label: "Billing", group: "advanced" },
-  { id: "team_enterprise", label: "Team & Enterprise", group: "advanced" },
-  { id: "usage_analytics", label: "Usage Analytics", group: "advanced" },
+  { id: "billing", label: "Billing", group: "advanced", navHidden: true },
+  { id: "team_enterprise", label: "Team & Enterprise", group: "advanced", navHidden: true },
+  { id: "usage_analytics", label: "Usage Analytics", group: "advanced", navHidden: true },
 ];
