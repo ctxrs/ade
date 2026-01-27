@@ -8,9 +8,10 @@ use async_trait::async_trait;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
 use ctx_core::models::SessionEventType;
@@ -23,6 +24,7 @@ use crate::events::NormalizedEvent;
 
 const CRP_VERSION: u32 = 1;
 const DEFAULT_CTX_MCP_TOOL_TIMEOUT_SECS: u64 = 2 * 60 * 60;
+const CRP_MODEL_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub struct Tier1CrpAdapter {
@@ -540,12 +542,21 @@ enum CrpCommand {
         session_id: Option<String>,
         turn_id: Option<String>,
     },
+    #[serde(rename = "models.list")]
+    ModelsList {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        config: Option<CrpSessionConfig>,
+    },
 }
 
 #[derive(Debug, Serialize)]
 struct CrpSessionConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     cwd: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_trace_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -562,6 +573,19 @@ struct CrpMcpServerConfig {
     env: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_timeout_sec: Option<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CrpModelInfo {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CrpModelsProbe {
+    pub models: Vec<CrpModelInfo>,
+    pub current_model_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -663,6 +687,12 @@ enum CrpEvent {
         output: Option<Value>,
         #[serde(default)]
         error: Option<String>,
+    },
+    #[serde(rename = "models.list")]
+    ModelsList {
+        models: Vec<CrpModelInfo>,
+        #[serde(default)]
+        current_model_id: Option<String>,
     },
     #[serde(rename = "turn.completed")]
     TurnCompleted {
@@ -861,6 +891,10 @@ fn map_crp_event(
                 done: true,
             }
         }
+        CrpEvent::ModelsList { .. } => MappedCrpEvent {
+            events: Vec::new(),
+            done: false,
+        },
         CrpEvent::SessionGap { reason, .. } => MappedCrpEvent {
             events: vec![NormalizedEvent {
                 event_type: SessionEventType::Notice,
@@ -973,7 +1007,7 @@ fn event_turn_id(event: &CrpEvent) -> Option<&str> {
         | CrpEvent::ToolOutputDelta { turn_id, .. }
         | CrpEvent::ToolCompleted { turn_id, .. }
         | CrpEvent::TurnCompleted { turn_id, .. } => Some(turn_id.as_str()),
-        CrpEvent::SessionOpened { .. } => None,
+        CrpEvent::SessionOpened { .. } | CrpEvent::ModelsList { .. } => None,
     }
 }
 
@@ -990,6 +1024,7 @@ fn event_matches_session(event: &CrpEvent, session_id: &str) -> bool {
         | CrpEvent::ToolCompleted { session_id: id, .. }
         | CrpEvent::TurnCompleted { session_id: id, .. }
         | CrpEvent::SessionGap { session_id: id, .. } => id == session_id,
+        CrpEvent::ModelsList { .. } => false,
     }
 }
 
@@ -1041,9 +1076,109 @@ fn build_crp_session_config(env: &HashMap<String, String>, workdir: &Path) -> Cr
 
     CrpSessionConfig {
         cwd: Some(workdir.to_path_buf()),
+        model: env.get("CTX_MODEL_ID").cloned(),
+        model_provider: None,
         reasoning_trace_enabled: Some(true),
         mcp_servers,
     }
+}
+
+fn build_crp_model_probe_config(env: &HashMap<String, String>, workdir: &Path) -> CrpSessionConfig {
+    CrpSessionConfig {
+        cwd: Some(workdir.to_path_buf()),
+        model: env.get("CTX_MODEL_ID").cloned(),
+        model_provider: None,
+        reasoning_trace_enabled: None,
+        mcp_servers: None,
+    }
+}
+
+pub async fn probe_crp_models(
+    provider_id: &str,
+    command: String,
+    args: Vec<String>,
+    workdir: PathBuf,
+    env: HashMap<String, String>,
+) -> Result<CrpModelsProbe> {
+    let mut cmd = Command::new(&command);
+    cmd.args(&args);
+    cmd.current_dir(&workdir);
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    for (k, v) in &env {
+        cmd.env(k, v);
+    }
+
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("spawning CRP runtime {provider_id} ({command})"))?;
+    let stdin = child.stdin.take().context("capturing CRP stdin")?;
+    let stdout = child.stdout.take().context("capturing CRP stdout")?;
+    let stderr = child.stderr.take().context("capturing CRP stderr")?;
+
+    let stderr_provider = provider_id.to_string();
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            tracing::debug!(
+                provider_id = %stderr_provider,
+                "crp stderr: {}",
+                trimmed
+            );
+        }
+    });
+
+    let mut stdin = BufWriter::new(stdin);
+    let mut stdout_reader = BufReader::new(stdout).lines();
+    let config = build_crp_model_probe_config(&env, &workdir);
+    let envelope = CrpCommandEnvelope {
+        v: CRP_VERSION,
+        command: CrpCommand::ModelsList {
+            config: Some(config),
+        },
+    };
+    let line = serde_json::to_string(&envelope)?;
+    stdin.write_all(line.as_bytes()).await?;
+    stdin.write_all(b"\n").await?;
+    stdin.flush().await?;
+
+    let result = timeout(CRP_MODEL_PROBE_TIMEOUT, async {
+        loop {
+            let Some(line) = stdout_reader.next_line().await? else {
+                anyhow::bail!("crp runtime closed before models.list response");
+            };
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let env = match serde_json::from_str::<CrpEventEnvelope>(trimmed) {
+                Ok(env) => env,
+                Err(_) => continue,
+            };
+            if let CrpEvent::ModelsList {
+                models,
+                current_model_id,
+            } = env.event
+            {
+                return Ok(CrpModelsProbe {
+                    models,
+                    current_model_id,
+                });
+            }
+        }
+    })
+    .await
+    .context("CRP models.list probe timed out")??;
+
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+
+    Ok(result)
 }
 
 async fn build_prompt_items(

@@ -97,6 +97,7 @@ use ctx_providers::{
         AcpClientConfig,
     },
     ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome},
+    crp::probe_crp_models,
 };
 
 fn is_sensitive_key(key: &str) -> bool {
@@ -5813,20 +5814,134 @@ async fn get_provider_options(
         }
     }
 
-    if provider_status
+    let supports_acp = provider_status
         .as_ref()
         .and_then(|st| st.capabilities.as_ref())
-        .is_some_and(|caps| !caps.supports_acp)
-    {
-        let mut raw_resp = serde_json::json!({
-            "provider_id": provider_id,
-            "workspace_id": ws_id.0,
-            "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
-            "probe_ok": true,
-            "supports_load": false,
-            "auth_required": false,
-            "probed_at": chrono::Utc::now().to_rfc3339(),
-        });
+        .map(|caps| caps.supports_acp)
+        .unwrap_or(true);
+    if !supports_acp {
+        if provider_id != "codex-crp" {
+            let mut raw_resp = serde_json::json!({
+                "provider_id": provider_id,
+                "workspace_id": ws_id.0,
+                "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
+                "probe_ok": true,
+                "supports_load": false,
+                "auth_required": false,
+                "probed_at": chrono::Utc::now().to_rfc3339(),
+            });
+            if raw_resp.get("models").is_none()
+                || raw_resp.get("models").is_some_and(|v| v.is_null())
+            {
+                if let Some(models) = cached_models {
+                    raw_resp["models"] = models;
+                }
+            }
+            if raw_resp.get("modes").is_none() || raw_resp.get("modes").is_some_and(|v| v.is_null())
+            {
+                if let Some(modes) = cached_modes {
+                    raw_resp["modes"] = modes;
+                }
+            }
+
+            let resp = redact_json_value(raw_resp);
+            state.provider_options_cache.lock().await.insert(
+                cache_key,
+                crate::daemon::CachedProviderOptions {
+                    cached_at: std::time::Instant::now(),
+                    value: resp.clone(),
+                },
+            );
+
+            let mut out = resp;
+            if let Some((verify_at, verify)) = verify_entry.as_ref() {
+                if verify_at.elapsed() < VERIFY_TTL {
+                    if let Some(obj) = out.as_object_mut() {
+                        obj.insert("verify".to_string(), verify.clone());
+                    }
+                }
+            }
+            return Ok(Json(out));
+        }
+
+        let ws = state
+            .global_store()
+            .get_workspace(ws_id)
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: "failed to load workspace".to_string(),
+                    }),
+                )
+            })?
+            .ok_or((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "workspace not found".to_string(),
+                }),
+            ))?;
+
+        let cfg = installer::load_agent_server_config(&state.data_root)
+            .await
+            .unwrap_or_default();
+        let matrix = crate::provider_matrix::load_matrix_cached(
+            &state.data_root,
+            &state.provider_matrix_cache,
+        )
+        .await;
+        let (command, args) = cfg
+            .providers
+            .get(&provider_id)
+            .map(|c| (c.command.clone(), c.args.clone()))
+            .or_else(|| default_agent_server_command(&matrix, &state.data_root, &provider_id))
+            .ok_or((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "unknown provider id".to_string(),
+                }),
+            ))?;
+
+        let mut env = std::collections::HashMap::new();
+        env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
+        if let Some(token) = state.auth_token.as_ref() {
+            env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
+        }
+
+        let probe = probe_crp_models(
+            &provider_id,
+            command,
+            args,
+            PathBuf::from(&ws.root_path),
+            env,
+        )
+        .await;
+
+        let mut raw_resp = match probe {
+            Ok(probe) => serde_json::json!({
+                "provider_id": provider_id,
+                "workspace_id": ws_id.0,
+                "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
+                "probe_ok": true,
+                "supports_load": false,
+                "auth_required": false,
+                "models": {
+                    "models": probe.models,
+                    "current_model_id": probe.current_model_id,
+                },
+                "probed_at": chrono::Utc::now().to_rfc3339(),
+            }),
+            Err(e) => serde_json::json!({
+                "provider_id": provider_id,
+                "workspace_id": ws_id.0,
+                "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(false),
+                "probe_ok": false,
+                "probe_error": logs::redact_sensitive(&e.to_string()),
+                "probed_at": chrono::Utc::now().to_rfc3339(),
+            }),
+        };
+
         if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
             if let Some(models) = cached_models {
                 raw_resp["models"] = models;
@@ -8300,7 +8415,7 @@ async fn load_provider_model_catalog(
             .map(|caps| caps.supports_acp)
             .unwrap_or(true)
     };
-    if !supports_acp {
+    if !supports_acp && provider_id != "codex-crp" {
         return Ok(None);
     }
 
@@ -8316,6 +8431,62 @@ async fn load_provider_model_catalog(
         .map(|c| (c.command.clone(), c.args.clone()))
         .or_else(|| default_agent_server_command(&matrix, &state.data_root, provider_id))
         .ok_or_else(|| "unknown provider id".to_string())?;
+
+    if !supports_acp {
+        let mut env = std::collections::HashMap::new();
+        env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
+        if let Some(token) = state.auth_token.as_ref() {
+            env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
+        }
+
+        let probe = match probe_crp_models(
+            provider_id,
+            command,
+            args,
+            PathBuf::from(&workspace.root_path),
+            env,
+        )
+        .await
+        {
+            Ok(probe) => probe,
+            Err(e) => {
+                tracing::warn!(
+                    provider_id = provider_id,
+                    "provider options probe failed: {}",
+                    logs::redact_sensitive(&e.to_string())
+                );
+                return Ok(None);
+            }
+        };
+
+        let models_value = serde_json::json!({
+            "models": probe.models,
+            "current_model_id": probe.current_model_id,
+        });
+        if let Some(models) = build_model_catalog(&models_value) {
+            let mut value = serde_json::json!({
+                "provider_id": provider_id,
+                "workspace_id": workspace.id.0,
+                "installed": true,
+                "probe_ok": true,
+                "supports_load": false,
+                "auth_required": false,
+                "models": models_value,
+                "probed_at": chrono::Utc::now().to_rfc3339(),
+            });
+            value = redact_json_value(value);
+            state.provider_options_cache.lock().await.insert(
+                cache_key,
+                crate::daemon::CachedProviderOptions {
+                    cached_at: std::time::Instant::now(),
+                    value,
+                },
+            );
+            return Ok(Some(models));
+        }
+
+        return Ok(None);
+    }
 
     let agent = AcpAgentConfig {
         provider_id: provider_id.to_string(),

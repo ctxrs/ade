@@ -41,7 +41,19 @@ pub(super) fn extract_workspace_edit_from_command(
 }
 
 pub(super) fn extract_model_entries(models: &serde_json::Value) -> Vec<(String, Option<String>)> {
-    let Some(list) = models.as_array() else {
+    let list = if let Some(list) = models.as_array() {
+        list
+    } else if let Some(obj) = models.as_object() {
+        let Some(list) = obj
+            .get("availableModels")
+            .or_else(|| obj.get("available_models"))
+            .or_else(|| obj.get("models"))
+            .and_then(|value| value.as_array())
+        else {
+            return Vec::new();
+        };
+        list
+    } else {
         return Vec::new();
     };
     let mut out = Vec::new();
