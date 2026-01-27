@@ -98,7 +98,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-right: 24px;
+  padding-right: 28px;
 }
 
 .wb-sidebar-title {
@@ -134,7 +134,7 @@
 
 .wb-sidebar-tab {
   position: absolute;
-  top: 48px;
+  top: calc(var(--wb-topbar-height) + 12px + 0.5px);
   width: 28px;
   height: 28px;
   border: 1px solid var(--border);
@@ -148,7 +148,7 @@
 }
 
 .wb-sidebar-tab-open {
-  left: calc(var(--wb-sidebar-width, 260px) - 28px);
+  left: calc(var(--wb-sidebar-width, 260px) - 29px);
   border-radius: 8px 0 0 8px;
   border-right: 0;
 }

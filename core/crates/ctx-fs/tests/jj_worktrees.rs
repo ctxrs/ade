@@ -147,7 +147,19 @@ async fn jj_worktree_create_remove() {
     let actual_root = tokio::fs::canonicalize(Path::new(root.trim()))
         .await
         .unwrap();
-    assert_eq!(actual_root, expected_root);
+    if actual_root != expected_root {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            let expected_meta = tokio::fs::metadata(&expected_root).await.unwrap();
+            let actual_meta = tokio::fs::metadata(&actual_root).await.unwrap();
+            assert_eq!(expected_meta.dev(), actual_meta.dev());
+            assert_eq!(expected_meta.ino(), actual_meta.ino());
+        }
+        #[cfg(not(unix))]
+        assert_eq!(actual_root, expected_root);
+    }
 
     remove_worktree(repo.path(), &worktree_path).await.unwrap();
     assert!(tokio::fs::metadata(&worktree_path).await.is_err());
