@@ -94,7 +94,14 @@ pub async fn emit_git_status_snapshot_for_worktree(
         return Ok(());
     }
     let snapshot = load_git_status_snapshot(worktree).await?;
-    emit_git_status_snapshot_for_sessions(state, &active_session_ids, worktree.id, &snapshot).await;
+    emit_git_status_snapshot_for_sessions(
+        state,
+        &active_session_ids,
+        worktree.id,
+        &snapshot,
+        false,
+    )
+    .await;
     Ok(())
 }
 
@@ -103,6 +110,7 @@ pub async fn emit_git_status_snapshot_for_sessions(
     session_ids: &[SessionId],
     worktree_id: WorktreeId,
     snapshot: &GitStatusSnapshot,
+    force_emit: bool,
 ) {
     if session_ids.is_empty() {
         return;
@@ -151,19 +159,22 @@ pub async fn emit_git_status_snapshot_for_sessions(
         });
         let is_first = entry.payload.is_empty();
         if entry.payload == payload_raw {
-            return;
+            if !force_emit {
+                return;
+            }
+        } else {
+            let since_change = now.duration_since(entry.last_change_at);
+            entry.payload = payload_raw;
+            entry.last_change_at = now;
+            let since_emit = now.duration_since(entry.emitted_at);
+            if !is_first
+                && since_emit < Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS)
+                && since_change < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS)
+            {
+                return;
+            }
+            entry.emitted_at = now;
         }
-        let since_change = now.duration_since(entry.last_change_at);
-        entry.payload = payload_raw;
-        entry.last_change_at = now;
-        let since_emit = now.duration_since(entry.emitted_at);
-        if !is_first
-            && since_emit < Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS)
-            && since_change < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS)
-        {
-            return;
-        }
-        entry.emitted_at = now;
     }
 
     for session_id in session_ids {

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -6,11 +7,49 @@ use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use chrono::Utc;
-use ctx_core::ids::TurnId;
+use ctx_core::ids::{SessionId, TurnId};
 use ctx_core::models::{SessionEventType, SessionTurn, SessionTurnStatus};
 use ctx_http::daemon::AppState;
 
 mod common;
+
+fn git_status_untracked_count(event: &ctx_core::models::SessionEvent) -> Option<i64> {
+    if !matches!(event.event_type, SessionEventType::Notice) {
+        return None;
+    }
+    let kind = event.payload_json.get("kind")?.as_str()?;
+    if kind != "git_status_snapshot" {
+        return None;
+    }
+    event
+        .payload_json
+        .get("summary")
+        .and_then(|value| value.get("untracked"))
+        .and_then(|value| value.as_i64())
+}
+
+fn git_status_untracked_from_message(
+    message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
+    session_id: SessionId,
+) -> Option<i64> {
+    match message {
+        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+            event: ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. },
+            ..
+        } => {
+            if delta.session_id != session_id {
+                None
+            } else {
+                delta.event.as_ref().and_then(git_status_untracked_count)
+            }
+        }
+        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch { deltas, .. } => deltas
+            .into_iter()
+            .filter(|delta| delta.session_id == session_id)
+            .find_map(|delta| delta.event.as_ref().and_then(git_status_untracked_count)),
+        _ => None,
+    }
+}
 
 async fn setup() -> (
     tempfile::TempDir,
@@ -589,6 +628,256 @@ async fn workspace_stream_replays_tool_events() {
     assert!(saw_call, "expected tool_call event replay");
     assert!(saw_result, "expected tool_result event replay");
     assert!(ev1.seq < ev2.seq && ev2.seq < ev3.seq);
+}
+
+#[tokio::test]
+async fn workspace_stream_emits_git_status_snapshot_on_change() {
+    let (repo, _data_dir, state, server) = setup().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
+        .json(&json!({"title":"git-status"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let session: ctx_core::models::Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    state.remember_session_meta(&session).await;
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe = json!({
+        "type": "subscribe",
+        "sessions": [{
+            "session_id": session.id.0,
+        }],
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let mut saw_clean_snapshot = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(message) =
+                serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
+            {
+                if let Some(untracked) = git_status_untracked_from_message(message, session.id) {
+                    if untracked == 0 {
+                        saw_clean_snapshot = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        saw_clean_snapshot,
+        "expected initial clean git status snapshot"
+    );
+
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+    let file_path = Path::new(&worktree.root_path).join("git-status-live.txt");
+    tokio::fs::write(&file_path, "change\n").await.unwrap();
+
+    let mut saw_untracked = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(message) =
+                serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
+            {
+                if let Some(untracked) = git_status_untracked_from_message(message, session.id) {
+                    if untracked >= 1 {
+                        saw_untracked = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        saw_untracked,
+        "expected git status update after file change"
+    );
+}
+
+#[tokio::test]
+async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
+    let (repo, _data_dir, state, server) = setup().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
+        .json(&json!({"title":"git-status-new-subscriber"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let session_one: ctx_core::models::Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    state.remember_session_meta(&session_one).await;
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket_one, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket_one.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe_one = json!({
+        "type": "subscribe",
+        "sessions": [{
+            "session_id": session_one.id.0,
+        }],
+    })
+    .to_string();
+    socket_one
+        .send(WsMessage::Text(subscribe_one.into()))
+        .await
+        .unwrap();
+
+    let mut saw_initial = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket_one.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(message) =
+                serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
+            {
+                if let Some(untracked) = git_status_untracked_from_message(message, session_one.id)
+                {
+                    if untracked == 0 {
+                        saw_initial = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    assert!(saw_initial, "expected initial git status snapshot");
+
+    let session_two: ctx_core::models::Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    state.remember_session_meta(&session_two).await;
+
+    let (mut socket_two, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket_two.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe_two = json!({
+        "type": "subscribe",
+        "sessions": [{
+            "session_id": session_two.id.0,
+        }],
+    })
+    .to_string();
+    socket_two
+        .send(WsMessage::Text(subscribe_two.into()))
+        .await
+        .unwrap();
+
+    let mut saw_second = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket_two.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(message) =
+                serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
+            {
+                if let Some(untracked) = git_status_untracked_from_message(message, session_two.id)
+                {
+                    if untracked == 0 {
+                        saw_second = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        saw_second,
+        "expected git status snapshot for new subscriber"
+    );
 }
 
 #[tokio::test]

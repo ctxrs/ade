@@ -17,6 +17,7 @@ use ctx_core::ids::*;
 use ctx_core::models::*;
 
 use crate::daemon::AppState;
+use crate::git_status::{emit_git_status_snapshot_for_sessions, load_git_status_snapshot};
 use crate::terminals::{TerminalClientMessage, TerminalServerMessage};
 use crate::web_sessions::WebSessionManager;
 use crate::workspace_active_snapshot::SessionReplayResult;
@@ -307,7 +308,7 @@ async fn handle_mobile_secure_ws(
 
                             let mut next_map = HashMap::new();
                             let mut replay_failed = false;
-                            for sub in resolved_sessions {
+                            for sub in &resolved_sessions {
                                 let after_seq = sub.after_seq.unwrap_or(0);
                                 let session_id = sub.session_id;
                                 if include_active_heads
@@ -410,6 +411,12 @@ async fn handle_mobile_secure_ws(
                             }
                             subscriptions = next_map;
                             subscription_state = next_state;
+                            let git_status_session_ids: Vec<SessionId> = resolved_sessions
+                                .iter()
+                                .map(|sub| sub.session_id)
+                                .collect();
+                            ensure_git_status_watchers_for_sessions(&state, &git_status_session_ids)
+                                .await;
                         }
                         Some(Ok(WsMessage::Close(_))) => break,
                         Some(Ok(_)) => {}
@@ -1688,6 +1695,43 @@ async fn resolve_workspace_active_snapshot_subscriptions(
     }
 }
 
+async fn ensure_git_status_watchers_for_sessions(state: &Arc<AppState>, session_ids: &[SessionId]) {
+    if session_ids.is_empty() {
+        return;
+    }
+    let mut worktree_sessions: HashMap<WorktreeId, (Worktree, Vec<SessionId>)> = HashMap::new();
+    for session_id in session_ids {
+        let store = match state.store_for_session(*session_id).await {
+            Ok(store) => store,
+            Err(_) => continue,
+        };
+        let session = match store.get_session(*session_id).await {
+            Ok(Some(session)) => session,
+            _ => continue,
+        };
+        let worktree = match store.get_worktree(session.worktree_id).await {
+            Ok(Some(worktree)) => worktree,
+            _ => continue,
+        };
+        let entry = worktree_sessions
+            .entry(worktree.id)
+            .or_insert_with(|| (worktree, Vec::new()));
+        entry.1.push(*session_id);
+    }
+
+    for (worktree_id, (worktree, sessions)) in worktree_sessions {
+        state.ensure_git_status_watcher(worktree.clone()).await;
+        let snapshot = match load_git_status_snapshot(&worktree).await {
+            Ok(snapshot) => snapshot,
+            Err(err) => {
+                tracing::warn!(worktree_id = %worktree_id.0, "git status snapshot failed: {err:#}");
+                continue;
+            }
+        };
+        emit_git_status_snapshot_for_sessions(state, &sessions, worktree_id, &snapshot, true).await;
+    }
+}
+
 async fn handle_workspace_active_snapshot_ws(
     socket: WebSocket,
     state: Arc<AppState>,
@@ -1911,7 +1955,7 @@ async fn handle_workspace_active_snapshot_ws(
 
                                 let mut next_map = HashMap::new();
                                 let mut replay_failed = false;
-                                for sub in resolved_sessions {
+                                for sub in &resolved_sessions {
                                     let after_seq = sub.after_seq.unwrap_or(0);
                                     let session_id = sub.session_id;
                                     if include_active_heads
@@ -2014,6 +2058,15 @@ async fn handle_workspace_active_snapshot_ws(
                                 }
                                 subscriptions = next_map;
                                 subscription_state = next_state;
+                                let git_status_session_ids: Vec<SessionId> = resolved_sessions
+                                    .iter()
+                                    .map(|sub| sub.session_id)
+                                    .collect();
+                                ensure_git_status_watchers_for_sessions(
+                                    &state,
+                                    &git_status_session_ids,
+                                )
+                                .await;
                             }
                         }
                         Some(Ok(WsMessage::Binary(bytes))) => {
@@ -2088,7 +2141,7 @@ async fn handle_workspace_active_snapshot_ws(
 
                                     let mut next_map = HashMap::new();
                                     let mut replay_failed = false;
-                                    for sub in resolved_sessions {
+                                    for sub in &resolved_sessions {
                                         let after_seq = sub.after_seq.unwrap_or(0);
                                         let session_id = sub.session_id;
                                         if include_active_heads
@@ -2189,8 +2242,17 @@ async fn handle_workspace_active_snapshot_ws(
                                         send_control.set_disconnect_after_flush();
                                         continue;
                                     }
-                                    subscriptions = next_map;
-                                    subscription_state = next_state;
+                                subscriptions = next_map;
+                                subscription_state = next_state;
+                                let git_status_session_ids: Vec<SessionId> = resolved_sessions
+                                    .iter()
+                                    .map(|sub| sub.session_id)
+                                    .collect();
+                                ensure_git_status_watchers_for_sessions(
+                                    &state,
+                                    &git_status_session_ids,
+                                )
+                                .await;
                                 }
                             }
                         }
