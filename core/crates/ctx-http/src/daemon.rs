@@ -263,7 +263,7 @@ pub struct AppState {
     pub workspace_active_heads_cache: Mutex<HashMap<WorkspaceId, WorkspaceActiveHeadCacheEntry>>,
     pub session_head_cache:
         Mutex<HashMap<SessionId, HashMap<SessionHeadCacheKey, SessionHeadSnapshot>>>,
-    pub terminals: TerminalManager,
+    pub terminals: Arc<TerminalManager>,
     pub mobile_tunnel: MobileTunnelManager,
     pub web_sessions: Arc<WebSessionManager>,
     pub merge_queue_notify: Arc<Notify>,
@@ -452,7 +452,7 @@ impl AppState {
             workspace_active_snapshot_cache: Mutex::new(HashMap::new()),
             workspace_active_heads_cache: Mutex::new(HashMap::new()),
             session_head_cache: Mutex::new(HashMap::new()),
-            terminals: TerminalManager::default(),
+            terminals: Arc::new(TerminalManager::default()),
             mobile_tunnel: MobileTunnelManager::default(),
             web_sessions,
             merge_queue_notify,
@@ -1710,6 +1710,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         lsp_cfg,
     ));
     state.web_sessions.clone().start_reaper().await;
+    state.terminals.clone().start_reaper().await;
     if let Err(err) = reconcile_running_turns(&state).await {
         tracing::warn!(err = %err, "failed to reconcile running turns on startup");
     }

@@ -1,4 +1,5 @@
 import { expect } from "playwright/test";
+import fs from "fs";
 import path from "path";
 
 type CreateWorkspaceArgs = {
@@ -16,8 +17,18 @@ const readId = (v: any): string => {
   return "";
 };
 
+const normalizePath = (value: string): string => {
+  if (!value) return "";
+  try {
+    return fs.realpathSync(value);
+  } catch {
+    return path.resolve(value);
+  }
+};
+
 export async function createWorkspaceAndOpenWorkbench(opts: CreateWorkspaceArgs): Promise<string> {
   const { page, request, repo, workspaceName, token } = opts;
+  const repoPath = normalizePath(repo);
 
   const url = token ? `/workspaces?token=${encodeURIComponent(token)}&desktop_ui=1` : "/workspaces";
   await page.goto(url);
@@ -34,7 +45,9 @@ export async function createWorkspaceAndOpenWorkbench(opts: CreateWorkspaceArgs)
         });
         if (!workspacesResp.ok()) return "";
         const workspaces = (await workspacesResp.json()) as any[];
-        const ws = workspaces.find((w) => path.resolve(String(w?.root_path ?? "")) === path.resolve(repo));
+        const ws = workspaces.find(
+          (w) => normalizePath(String(w?.root_path ?? "")) === repoPath,
+        );
         workspaceId = readId(ws?.id);
         return workspaceId;
       },

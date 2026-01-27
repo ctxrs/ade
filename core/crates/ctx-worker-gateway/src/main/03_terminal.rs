@@ -21,6 +21,7 @@ async fn handle_terminal_data_socket(
     let (mut sender, mut receiver) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
     let tx_for_pending = tx.clone();
+    let tx_for_ping = tx.clone();
     let pending = {
         let mut relay_guard = relay.lock().await;
         let entry = relay_guard
@@ -62,8 +63,12 @@ async fn handle_terminal_data_socket(
 
     while let Some(Ok(msg)) = receiver.next().await {
         let mut msg = match msg {
+            Message::Ping(payload) => {
+                let _ = tx_for_ping.send(Message::Pong(payload));
+                None
+            }
+            Message::Pong(_) => None,
             Message::Text(_) | Message::Binary(_) | Message::Close(_) => Some(msg),
-            Message::Ping(_) | Message::Pong(_) => None,
         };
         let other_tx = {
             let mut relay_guard = relay.lock().await;

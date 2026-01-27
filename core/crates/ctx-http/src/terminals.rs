@@ -26,12 +26,30 @@ const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 pub(crate) const DEFAULT_OUTPUT_TAIL_BYTES: usize = 20 * 1024;
+const TERMINAL_PING_INTERVAL: Duration = Duration::from_secs(25);
+const TERMINAL_RECONNECT_BASE_MS: u64 = 500;
+const TERMINAL_RECONNECT_MAX_MS: u64 = 10_000;
+const TERMINAL_REAPER_INTERVAL: Duration = Duration::from_secs(60);
+
+fn terminal_idle_timeout() -> Option<Duration> {
+    let raw = std::env::var("CTX_TERMINAL_IDLE_TIMEOUT_SECS").ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let secs = trimmed.parse::<u64>().ok()?;
+    if secs == 0 {
+        return None;
+    }
+    Some(Duration::from_secs(secs))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TerminalClientMessage {
     Resize { cols: u16, rows: u16 },
     Input { data: String },
+    Ping,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +59,7 @@ pub enum TerminalServerMessage {
         status: TerminalStatus,
         exit_code: Option<i32>,
     },
+    Pong,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +94,8 @@ struct TerminalRuntime {
     status: TerminalStatus,
     exit_code: Option<i32>,
     updated_at: chrono::DateTime<chrono::Utc>,
+    last_activity: chrono::DateTime<chrono::Utc>,
+    connected_clients: usize,
 }
 
 enum RemoteTerminalOutgoing {
@@ -114,6 +135,25 @@ impl TerminalSessionHandle {
         }
     }
 
+    fn touch_activity(&self) {
+        let mut runtime = self.runtime.lock().expect("terminal runtime lock");
+        runtime.last_activity = Utc::now();
+        runtime.updated_at = runtime.last_activity;
+    }
+
+    pub fn mark_client_connected(&self) {
+        let mut runtime = self.runtime.lock().expect("terminal runtime lock");
+        runtime.connected_clients = runtime.connected_clients.saturating_add(1);
+        runtime.last_activity = Utc::now();
+        runtime.updated_at = runtime.last_activity;
+    }
+
+    pub fn mark_client_disconnected(&self) {
+        let mut runtime = self.runtime.lock().expect("terminal runtime lock");
+        runtime.connected_clients = runtime.connected_clients.saturating_sub(1);
+        runtime.updated_at = Utc::now();
+    }
+
     pub fn output_receiver(&self) -> broadcast::Receiver<Vec<u8>> {
         self.output_tx.subscribe()
     }
@@ -138,6 +178,7 @@ impl TerminalSessionHandle {
     }
 
     pub fn send_input(&self, data: Vec<u8>) {
+        self.touch_activity();
         match &self.backend {
             TerminalBackend::Local { input_tx, .. } => {
                 let _ = input_tx.send(data);
@@ -149,6 +190,7 @@ impl TerminalSessionHandle {
     }
 
     pub fn resize(&self, cols: u16, rows: u16) -> Result<()> {
+        self.touch_activity();
         match &self.backend {
             TerminalBackend::Local { master, .. } => {
                 let master = master.lock().expect("terminal master lock");
@@ -188,6 +230,7 @@ impl TerminalSessionHandle {
         runtime.status = TerminalStatus::Exited;
         runtime.exit_code = exit_code;
         runtime.updated_at = Utc::now();
+        runtime.last_activity = runtime.updated_at;
         let _ = self.status_tx.send(TerminalStatusEvent {
             status: TerminalStatus::Exited,
             exit_code,
@@ -208,6 +251,21 @@ impl TerminalManager {
             .filter(|sess| sess.info.workspace_id == workspace_id)
             .map(|sess| sess.snapshot())
             .collect()
+    }
+
+    pub async fn start_reaper(self: Arc<Self>) {
+        let Some(idle_for) = terminal_idle_timeout() else {
+            return;
+        };
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(TERMINAL_REAPER_INTERVAL);
+            loop {
+                interval.tick().await;
+                if let Err(err) = self.reap_idle(idle_for).await {
+                    tracing::warn!("terminal reap failed: {err:#}");
+                }
+            }
+        });
     }
 
     pub async fn has_running(&self) -> bool {
@@ -248,8 +306,18 @@ impl TerminalManager {
         let (input_tx, mut input_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         let output_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(8192)));
 
+        let now = Utc::now();
+        let runtime = Arc::new(Mutex::new(TerminalRuntime {
+            status: TerminalStatus::Running,
+            exit_code: None,
+            updated_at: now,
+            last_activity: now,
+            connected_clients: 0,
+        }));
+
         let output_buffer_clone = output_buffer.clone();
         let output_tx_clone = output_tx.clone();
+        let runtime_output = runtime.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 8192];
             loop {
@@ -257,18 +325,12 @@ impl TerminalManager {
                     Ok(0) => break,
                     Ok(n) => {
                         let bytes = &buf[..n];
-                        {
-                            let mut buffer = output_buffer_clone
-                                .lock()
-                                .expect("terminal output buffer lock");
-                            for b in bytes {
-                                buffer.push_back(*b);
-                            }
-                            while buffer.len() > MAX_OUTPUT_BYTES {
-                                buffer.pop_front();
-                            }
-                        }
-                        let _ = output_tx_clone.send(bytes.to_vec());
+                        push_output(
+                            &output_buffer_clone,
+                            &output_tx_clone,
+                            &runtime_output,
+                            bytes,
+                        );
                     }
                     Err(_) => break,
                 }
@@ -284,11 +346,6 @@ impl TerminalManager {
             }
         });
 
-        let runtime = Arc::new(Mutex::new(TerminalRuntime {
-            status: TerminalStatus::Running,
-            exit_code: None,
-            updated_at: Utc::now(),
-        }));
         let runtime_clone = runtime.clone();
         let status_tx_clone = status_tx.clone();
         let child_arc = Arc::new(Mutex::new(child));
@@ -305,6 +362,7 @@ impl TerminalManager {
                 runtime.status = TerminalStatus::Exited;
                 runtime.exit_code = exit_code;
                 runtime.updated_at = Utc::now();
+                runtime.last_activity = runtime.updated_at;
                 let _ = status_tx_clone.send(TerminalStatusEvent {
                     status: TerminalStatus::Exited,
                     exit_code,
@@ -369,12 +427,15 @@ impl TerminalManager {
         let (output_tx, _) = broadcast::channel(1024);
         let (status_tx, _) = broadcast::channel(16);
         let output_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(8192)));
-        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<RemoteTerminalOutgoing>();
+        let (outbound_tx, outbound_rx) = mpsc::unbounded_channel::<RemoteTerminalOutgoing>();
 
+        let now = Utc::now();
         let runtime = Arc::new(Mutex::new(TerminalRuntime {
             status: TerminalStatus::Running,
             exit_code: None,
-            updated_at: Utc::now(),
+            updated_at: now,
+            last_activity: now,
+            connected_clients: 0,
         }));
 
         let info = TerminalSession {
@@ -403,62 +464,101 @@ impl TerminalManager {
             },
         });
 
-        let ws_stream = connect_terminal_gateway(&remote).await?;
-        let (mut ws_write, mut ws_read) = ws_stream.split();
-
-        tokio::spawn(async move {
-            while let Some(msg) = outbound_rx.recv().await {
-                let send_result = match msg {
-                    RemoteTerminalOutgoing::Binary(data) => {
-                        ws_write.send(Message::Binary(data.into())).await
-                    }
-                    RemoteTerminalOutgoing::Text(text) => {
-                        ws_write.send(Message::Text(text.into())).await
-                    }
-                    RemoteTerminalOutgoing::Close => ws_write.send(Message::Close(None)).await,
-                };
-                if send_result.is_err() {
-                    break;
-                }
-            }
-        });
-
+        let remote_clone = remote.clone();
         let output_buffer_clone = output_buffer.clone();
         let output_tx_clone = output_tx.clone();
         let status_tx_clone = status_tx.clone();
         let runtime_clone = runtime.clone();
+
         tokio::spawn(async move {
-            while let Some(msg) = ws_read.next().await {
-                let msg = match msg {
-                    Ok(msg) => msg,
-                    Err(_) => break,
-                };
-                match msg {
-                    Message::Binary(data) => {
-                        push_output(&output_buffer_clone, &output_tx_clone, &data);
+            let mut outbound_rx = outbound_rx;
+            let mut backoff = Duration::from_millis(TERMINAL_RECONNECT_BASE_MS);
+            loop {
+                let ws_stream = match connect_terminal_gateway(&remote_clone).await {
+                    Ok(stream) => {
+                        backoff = Duration::from_millis(TERMINAL_RECONNECT_BASE_MS);
+                        stream
                     }
-                    Message::Text(text) => {
-                        if let Ok(parsed) =
-                            serde_json::from_str::<TerminalServerMessage>(text.as_str())
-                        {
-                            match parsed {
-                                TerminalServerMessage::Status { status, exit_code } => {
-                                    let mut runtime =
-                                        runtime_clone.lock().expect("terminal runtime lock");
-                                    runtime.status = status.clone();
-                                    runtime.exit_code = exit_code;
-                                    runtime.updated_at = Utc::now();
-                                    let _ = status_tx_clone
-                                        .send(TerminalStatusEvent { status, exit_code });
+                    Err(err) => {
+                        tracing::warn!(error = %err, "terminal gateway connection failed");
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff + backoff)
+                            .min(Duration::from_millis(TERMINAL_RECONNECT_MAX_MS));
+                        continue;
+                    }
+                };
+
+                let (mut ws_write, mut ws_read) = ws_stream.split();
+                let mut ping = tokio::time::interval(TERMINAL_PING_INTERVAL);
+                ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+                loop {
+                    tokio::select! {
+                        outbound = outbound_rx.recv() => {
+                            let Some(outbound) = outbound else {
+                                return;
+                            };
+                            let send_result = match outbound {
+                                RemoteTerminalOutgoing::Binary(data) => {
+                                    ws_write.send(Message::Binary(data.into())).await
                                 }
+                                RemoteTerminalOutgoing::Text(text) => {
+                                    ws_write.send(Message::Text(text.into())).await
+                                }
+                                RemoteTerminalOutgoing::Close => ws_write.send(Message::Close(None)).await,
+                            };
+                            if send_result.is_err() {
+                                break;
                             }
-                        } else {
-                            push_output(&output_buffer_clone, &output_tx_clone, text.as_bytes());
+                        }
+                        msg = ws_read.next() => {
+                            let msg = match msg {
+                                Some(Ok(msg)) => msg,
+                                Some(Err(_)) | None => break,
+                            };
+                            match msg {
+                                Message::Binary(data) => {
+                                    push_output(&output_buffer_clone, &output_tx_clone, &runtime_clone, &data);
+                                }
+                                Message::Text(text) => {
+                                    if let Ok(parsed) =
+                                        serde_json::from_str::<TerminalServerMessage>(text.as_str())
+                                    {
+                                        match parsed {
+                                            TerminalServerMessage::Status { status, exit_code } => {
+                                                let mut runtime =
+                                                    runtime_clone.lock().expect("terminal runtime lock");
+                                                runtime.status = status.clone();
+                                                runtime.exit_code = exit_code;
+                                                runtime.updated_at = Utc::now();
+                                                runtime.last_activity = runtime.updated_at;
+                                                let _ = status_tx_clone
+                                                    .send(TerminalStatusEvent { status, exit_code });
+                                            }
+                                            TerminalServerMessage::Pong => {}
+                                        }
+                                    } else {
+                                        push_output(&output_buffer_clone, &output_tx_clone, &runtime_clone, text.as_bytes());
+                                    }
+                                }
+                                Message::Ping(payload) => {
+                                    let _ = ws_write.send(Message::Pong(payload)).await;
+                                }
+                                Message::Pong(_) => {}
+                                Message::Close(_) => break,
+                                Message::Frame(_) => {}
+                            }
+                        }
+                        _ = ping.tick() => {
+                            if ws_write.send(Message::Ping(Vec::new().into())).await.is_err() {
+                                break;
+                            }
                         }
                     }
-                    Message::Close(_) => break,
-                    Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
                 }
+
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff + backoff).min(Duration::from_millis(TERMINAL_RECONNECT_MAX_MS));
             }
         });
 
@@ -471,11 +571,43 @@ impl TerminalManager {
         let mut sessions = self.sessions.lock().await;
         sessions.remove(&id)
     }
+
+    async fn reap_idle(&self, idle_for: Duration) -> Result<()> {
+        let handles = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .iter()
+                .map(|(id, handle)| (*id, handle.clone()))
+                .collect::<Vec<_>>()
+        };
+        let mut to_close = Vec::new();
+        for (id, handle) in handles {
+            let runtime = handle.runtime.lock().expect("terminal runtime lock");
+            if !matches!(runtime.status, TerminalStatus::Running) {
+                continue;
+            }
+            if runtime.connected_clients > 0 {
+                continue;
+            }
+            let idle = Utc::now() - runtime.last_activity;
+            if idle.to_std().unwrap_or_default() > idle_for {
+                to_close.push(id);
+            }
+        }
+        for id in to_close {
+            if let Some(handle) = self.remove(id).await {
+                let _ = handle.kill();
+                handle.mark_exited(None);
+            }
+        }
+        Ok(())
+    }
 }
 
 fn push_output(
     output_buffer: &Arc<Mutex<VecDeque<u8>>>,
     output_tx: &broadcast::Sender<Vec<u8>>,
+    runtime: &Arc<Mutex<TerminalRuntime>>,
     bytes: &[u8],
 ) {
     {
@@ -486,6 +618,11 @@ fn push_output(
         while buffer.len() > MAX_OUTPUT_BYTES {
             buffer.pop_front();
         }
+    }
+    {
+        let mut runtime = runtime.lock().expect("terminal runtime lock");
+        runtime.last_activity = Utc::now();
+        runtime.updated_at = runtime.last_activity;
     }
     let _ = output_tx.send(bytes.to_vec());
 }

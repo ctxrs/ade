@@ -2555,6 +2555,39 @@
   box-shadow: inset 0 0 0 1px rgba(78, 163, 255, 0.35);
 }
 
+.wb-terminal-host {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.wb-terminal-status {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
+  color: var(--text);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.wb-terminal-status-reconnecting {
+  color: var(--text);
+}
+
+.wb-terminal-status-disconnected {
+  color: var(--muted);
+}
+
+.wb-terminal-status-exited {
+  color: var(--muted);
+}
+
 .wb-terminal-view .xterm {
   height: 100%;
   padding: 6px 8px 6px 20px;

@@ -1,5 +1,10 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
+const TERMINAL_PING_INTERVAL: Duration = Duration::from_secs(25);
+const TERMINAL_RECONNECT_BASE_MS: u64 = 500;
+const TERMINAL_RECONNECT_MAX_MS: u64 = 10_000;
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -175,38 +180,8 @@ async fn run_terminal_session(
         args.worker_id,
         spec.terminal_id
     );
-    debug!(terminal_id = %spec.terminal_id, url = %url, "connecting terminal session");
-    let mut req = url
-        .as_str()
-        .into_client_request()
-        .context("building terminal websocket")?;
-    if let Some(token) = args.gateway_token.as_deref() {
-        req.headers_mut().insert(
-            "x-ctx-gateway-token",
-            token.parse().context("parsing gateway token")?,
-        );
-    }
-    let (ws_stream, _) = if let Some(pem) = args.gateway_ca_pem.as_deref() {
-        let connector = gateway_ws_connector(pem)?;
-        connect_async_tls_with_config(req, None, false, Some(connector))
-            .await
-            .context("connecting to gateway terminal relay")?
-    } else {
-        connect_async(req)
-            .await
-            .context("connecting to gateway terminal relay")?
-    };
-    debug!(terminal_id = %spec.terminal_id, "terminal session connected");
-    let (mut ws_write, mut ws_read) = ws_stream.split();
 
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
-    let send_task = tokio::spawn(async move {
-        while let Some(msg) = out_rx.recv().await {
-            if ws_write.send(msg).await.is_err() {
-                break;
-            }
-        }
-    });
 
     let out_tx_clone = out_tx.clone();
     std::thread::spawn(move || {
@@ -232,8 +207,12 @@ async fn run_terminal_session(
         }
     });
 
+    let exit_code = Arc::new(StdMutex::new(None));
+    let exited = Arc::new(AtomicBool::new(false));
     let out_tx_status = out_tx.clone();
     let child_for_status = child_arc.clone();
+    let exit_code_status = exit_code.clone();
+    let exited_status = exited.clone();
     std::thread::spawn(move || loop {
         let exit: Option<portable_pty::ExitStatus> = {
             let mut child = child_for_status.lock().expect("terminal child lock");
@@ -241,6 +220,11 @@ async fn run_terminal_session(
         };
         if let Some(status) = exit {
             let exit_code = i32::try_from(status.exit_code()).ok();
+            {
+                let mut guard = exit_code_status.lock().expect("exit code lock");
+                *guard = exit_code;
+            }
+            exited_status.store(true, Ordering::Relaxed);
             let payload = serde_json::to_string(&TerminalServerMessage::Status {
                 status: "exited".to_string(),
                 exit_code,
@@ -252,44 +236,126 @@ async fn run_terminal_session(
         std::thread::sleep(Duration::from_millis(250));
     });
 
-    loop {
-        tokio::select! {
-            Some(msg) = ws_read.next() => {
-                let msg = msg.context("reading terminal relay")?;
-                match msg {
-                    Message::Binary(data) => {
-                        let _ = input_tx.send(data.to_vec());
+    let mut backoff = Duration::from_millis(TERMINAL_RECONNECT_BASE_MS);
+    'outer: loop {
+        debug!(terminal_id = %spec.terminal_id, url = %url, "connecting terminal session");
+        let mut req = url
+            .as_str()
+            .into_client_request()
+            .context("building terminal websocket")?;
+        if let Some(token) = args.gateway_token.as_deref() {
+            req.headers_mut().insert(
+                "x-ctx-gateway-token",
+                token.parse().context("parsing gateway token")?,
+            );
+        }
+        let connect_result = if let Some(pem) = args.gateway_ca_pem.as_deref() {
+            let connector = gateway_ws_connector(pem)?;
+            connect_async_tls_with_config(req, None, false, Some(connector)).await
+        } else {
+            connect_async(req).await
+        };
+        let (ws_stream, _) = match connect_result {
+            Ok(result) => result,
+            Err(err) => {
+                warn!("terminal relay connect failed: {err:#}");
+                let sleep = tokio::time::sleep(backoff);
+                tokio::pin!(sleep);
+                tokio::select! {
+                    _ = &mut sleep => {},
+                    _ = shutdown_rx.recv() => break,
+                }
+                backoff =
+                    (backoff + backoff).min(Duration::from_millis(TERMINAL_RECONNECT_MAX_MS));
+                continue;
+            }
+        };
+        debug!(terminal_id = %spec.terminal_id, "terminal session connected");
+        backoff = Duration::from_millis(TERMINAL_RECONNECT_BASE_MS);
+        let (mut ws_write, mut ws_read) = ws_stream.split();
+
+        let (status, exit_code) = if exited.load(Ordering::Relaxed) {
+            let guard = exit_code.lock().expect("exit code lock");
+            ("exited".to_string(), *guard)
+        } else {
+            ("running".to_string(), None)
+        };
+        let payload = serde_json::to_string(&TerminalServerMessage::Status { status, exit_code })
+            .unwrap_or_else(|_| "{\"type\":\"status\",\"status\":\"running\"}".to_string());
+        let _ = ws_write.send(Message::Text(payload.into())).await;
+
+        let mut ping = tokio::time::interval(TERMINAL_PING_INTERVAL);
+        ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {
+                    let _ = ws_write.send(Message::Close(None)).await;
+                    break 'outer;
+                }
+                outbound = out_rx.recv() => {
+                    let Some(outbound) = outbound else {
+                        break 'outer;
+                    };
+                    if ws_write.send(outbound).await.is_err() {
+                        break;
                     }
-                    Message::Text(text) => {
-                        if let Ok(parsed) =
-                            serde_json::from_str::<TerminalClientMessage>(text.as_str())
-                        {
-                            match parsed {
-                                TerminalClientMessage::Resize { cols, rows } => {
-                                    let master = master.lock().expect("terminal master lock");
-                                    let _ = master.resize(PtySize {
-                                        rows,
-                                        cols,
-                                        pixel_width: 0,
-                                        pixel_height: 0,
-                                    });
-                                }
-                                TerminalClientMessage::Input { data } => {
-                                    let _ = input_tx.send(data.into_bytes());
-                                }
-                            }
-                        } else {
-                            let _ = input_tx.send(text.as_bytes().to_vec());
+                }
+                msg = ws_read.next() => {
+                    let msg = match msg {
+                        Some(msg) => msg.context("reading terminal relay")?,
+                        None => break,
+                    };
+                    match msg {
+                        Message::Binary(data) => {
+                            let _ = input_tx.send(data.to_vec());
                         }
+                        Message::Text(text) => {
+                            if let Ok(parsed) =
+                                serde_json::from_str::<TerminalClientMessage>(text.as_str())
+                            {
+                                match parsed {
+                                    TerminalClientMessage::Resize { cols, rows } => {
+                                        let master = master.lock().expect("terminal master lock");
+                                        let _ = master.resize(PtySize {
+                                            rows,
+                                            cols,
+                                            pixel_width: 0,
+                                            pixel_height: 0,
+                                        });
+                                    }
+                                    TerminalClientMessage::Input { data } => {
+                                        let _ = input_tx.send(data.into_bytes());
+                                    }
+                                }
+                            } else {
+                                let _ = input_tx.send(text.as_bytes().to_vec());
+                            }
+                        }
+                        Message::Ping(payload) => {
+                            let _ = ws_write.send(Message::Pong(payload)).await;
+                        }
+                        Message::Pong(_) => {}
+                        Message::Close(_) => break,
+                        Message::Frame(_) => {}
                     }
-                    Message::Close(_) => break,
-                    Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
+                }
+                _ = ping.tick() => {
+                    if ws_write.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        break;
+                    }
                 }
             }
-            _ = shutdown_rx.recv() => {
-                break;
-            }
         }
+
+        let sleep = tokio::time::sleep(backoff);
+        tokio::pin!(sleep);
+        tokio::select! {
+            _ = &mut sleep => {},
+            _ = shutdown_rx.recv() => break,
+        }
+        backoff =
+            (backoff + backoff).min(Duration::from_millis(TERMINAL_RECONNECT_MAX_MS));
     }
 
     {
@@ -299,7 +365,5 @@ async fn run_terminal_session(
 
     drop(input_tx);
     drop(out_tx);
-    let _ = send_task.await;
     Ok(())
 }
-

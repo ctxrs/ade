@@ -759,6 +759,7 @@ async fn handle_terminal_socket(
     session: Arc<crate::terminals::TerminalSessionHandle>,
     snapshot_tail: usize,
 ) {
+    session.mark_client_connected();
     let snapshot = session.snapshot();
     let status_payload = serde_json::to_string(&TerminalServerMessage::Status {
         status: snapshot.status.clone(),
@@ -779,6 +780,8 @@ async fn handle_terminal_socket(
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
     let event_tx_output = event_tx.clone();
     let event_tx_status = event_tx.clone();
+    let event_tx_input = event_tx.clone();
+    let event_tx_ping = event_tx.clone();
 
     let mut tasks = JoinSet::new();
     tasks.spawn(async move {
@@ -818,28 +821,48 @@ async fn handle_terminal_socket(
         }
     });
 
+    let session_input = session.clone();
     tasks.spawn(async move {
         while let Some(Ok(msg)) = ws_rx.next().await {
             match msg {
                 WsMessage::Binary(data) => {
-                    session.send_input(data);
+                    session_input.send_input(data);
                 }
                 WsMessage::Text(text) => {
                     if let Ok(parsed) = serde_json::from_str::<TerminalClientMessage>(&text) {
                         match parsed {
                             TerminalClientMessage::Resize { cols, rows } => {
-                                let _ = session.resize(cols, rows);
+                                let _ = session_input.resize(cols, rows);
                             }
                             TerminalClientMessage::Input { data } => {
-                                session.send_input(data.into_bytes());
+                                session_input.send_input(data.into_bytes());
+                            }
+                            TerminalClientMessage::Ping => {
+                                let payload = serde_json::to_string(&TerminalServerMessage::Pong)
+                                    .unwrap_or_else(|_| "{\"type\":\"pong\"}".to_string());
+                                let _ = event_tx_input.send(WsMessage::Text(payload));
                             }
                         }
                     } else {
-                        session.send_input(text.into_bytes());
+                        session_input.send_input(text.into_bytes());
                     }
                 }
                 WsMessage::Close(_) => break,
-                WsMessage::Ping(_) | WsMessage::Pong(_) => {}
+                WsMessage::Ping(payload) => {
+                    let _ = event_tx_input.send(WsMessage::Pong(payload));
+                }
+                WsMessage::Pong(_) => {}
+            }
+        }
+    });
+
+    tasks.spawn(async move {
+        let mut interval = tokio::time::interval(TERMINAL_PING_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            if event_tx_ping.send(WsMessage::Ping(Vec::new())).is_err() {
+                break;
             }
         }
     });
@@ -847,6 +870,7 @@ async fn handle_terminal_socket(
     let _ = tasks.join_next().await;
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
+    session.mark_client_disconnected();
 }
 
 pub(super) async fn web_session_signal(
@@ -964,6 +988,7 @@ const WORKSPACE_STREAM_QUEUE_MAX_AGE: Duration = Duration::from_secs(10);
 const HEAD_BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(25);
 const HEAD_BATCH_SESSION_LIMIT: usize = 200;
 const HEAD_BATCH_TOTAL_LIMIT: usize = 1000;
+const TERMINAL_PING_INTERVAL: Duration = Duration::from_secs(25);
 
 struct StreamQueueEntry<T> {
     enqueued_at: Instant,

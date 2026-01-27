@@ -1,8 +1,10 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type { TerminalSession } from "@ctx/types";
-import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { authToken, idToString, resolveDaemonWsBaseUrl } from "../api/client";
+
+export type TerminalConnectionStatus = "connected" | "reconnecting" | "disconnected";
 
 export type TerminalClient = {
   id: string;
@@ -11,6 +13,7 @@ export type TerminalClient = {
   element: HTMLElement | null;
   status: TerminalSession["status"];
   exitCode: number | null;
+  connectionStatus: TerminalConnectionStatus;
   attach: (el: HTMLElement) => void;
   fit: () => void;
   focus: () => void;
@@ -24,12 +27,19 @@ type TerminalStatusMessage = {
   exit_code?: number | null;
 };
 
+type TerminalPongMessage = {
+  type: "pong";
+};
+
+type TerminalControlMessage = TerminalStatusMessage | TerminalPongMessage;
+
 export function useTerminalClients(
   terminals: TerminalSession[],
   setTerminals: Dispatch<SetStateAction<TerminalSession[]>>,
   workspaceId: string,
 ) {
   const clientsRef = useRef<Map<string, TerminalClient>>(new Map());
+  const [, setConnectionVersion] = useState(0);
 
   useEffect(() => {
     const map = clientsRef.current;
@@ -56,6 +66,8 @@ export function useTerminalClients(
               : t,
           ),
         );
+      }, () => {
+        setConnectionVersion((prev) => prev + 1);
       });
       map.set(id, client);
     }
@@ -104,9 +116,16 @@ function terminalFontFamily() {
   return styles.getPropertyValue("--mono").trim() || "monospace";
 }
 
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS = 10_000;
+const DISCONNECTED_AFTER_ATTEMPTS = 3;
+const KEEPALIVE_INTERVAL_MS = 25_000;
+const KEEPALIVE_TIMEOUT_MS = 75_000;
+
 function createClient(
   terminal: TerminalSession,
   onStatus: (status: TerminalSession["status"], exitCode: number | null) => void,
+  onConnectionChange: () => void,
 ): TerminalClient {
   const id = idToString(terminal.id);
   const term = new Terminal({
@@ -120,8 +139,17 @@ function createClient(
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
 
+  let client: TerminalClient;
   let socket: WebSocket | null = null;
   let element: HTMLElement | null = null;
+  let reconnectTimer: number | null = null;
+  let keepaliveTimer: number | null = null;
+  let reconnectAttempts = 0;
+  let disposed = false;
+  let connectionStatus: TerminalConnectionStatus = "disconnected";
+  let status: TerminalSession["status"] = terminal.status;
+  let exitCode: number | null = terminal.exit_code ?? null;
+  let lastServerMessageAt = Date.now();
   const canFit = () => {
     if (!element || !element.isConnected) return false;
     if (element.closest(".wb-terminal-group-hidden")) return false;
@@ -141,21 +169,102 @@ function createClient(
     sendResize();
   };
 
+  const updateInputState = () => {
+    term.options.disableStdin = connectionStatus !== "connected" || status === "exited";
+  };
+
+  const clearReconnectTimer = () => {
+    if (reconnectTimer === null) return;
+    window.clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  };
+
+  const clearKeepaliveTimer = () => {
+    if (keepaliveTimer === null) return;
+    window.clearInterval(keepaliveTimer);
+    keepaliveTimer = null;
+  };
+
+  const startKeepalive = () => {
+    if (keepaliveTimer !== null) return;
+    keepaliveTimer = window.setInterval(() => {
+      if (disposed) return;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      const now = Date.now();
+      if (now - lastServerMessageAt > KEEPALIVE_TIMEOUT_MS) {
+        socket.close();
+        return;
+      }
+      socket.send(JSON.stringify({ type: "ping" }));
+    }, KEEPALIVE_INTERVAL_MS);
+  };
+
+  const setConnectionStatus = (next: TerminalConnectionStatus) => {
+    if (connectionStatus === next) return;
+    connectionStatus = next;
+    client.connectionStatus = next;
+    updateInputState();
+    onConnectionChange();
+  };
+
+  const scheduleReconnect = () => {
+    if (disposed) return;
+    if (status === "exited") {
+      setConnectionStatus("disconnected");
+      return;
+    }
+    clearReconnectTimer();
+    reconnectAttempts += 1;
+    const backoff = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** (reconnectAttempts - 1));
+    const jitter = 0.7 + Math.random() * 0.6;
+    const delay = Math.round(backoff * jitter);
+    const nextState =
+      reconnectAttempts > DISCONNECTED_AFTER_ATTEMPTS ? "disconnected" : "reconnecting";
+    setConnectionStatus(nextState);
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delay);
+  };
+
   const connect = () => {
-    if (socket && socket.readyState === WebSocket.OPEN) return;
+    if (disposed) return;
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+    const nextState =
+      reconnectAttempts > DISCONNECTED_AFTER_ATTEMPTS ? "disconnected" : "reconnecting";
+    setConnectionStatus(nextState);
     socket = new WebSocket(buildTerminalWsUrl(id));
     socket.binaryType = "arraybuffer";
     socket.addEventListener("open", () => {
+      reconnectAttempts = 0;
+      clearReconnectTimer();
+      lastServerMessageAt = Date.now();
+      setConnectionStatus("connected");
       sendResize();
+      startKeepalive();
     });
     socket.addEventListener("close", () => {
+      socket = null;
+      clearKeepaliveTimer();
+      scheduleReconnect();
     });
     socket.addEventListener("message", (ev) => {
+      lastServerMessageAt = Date.now();
       if (typeof ev.data === "string") {
         try {
-          const msg = JSON.parse(ev.data) as TerminalStatusMessage;
+          const msg = JSON.parse(ev.data) as TerminalControlMessage;
           if (msg.type === "status") {
-            onStatus(msg.status, msg.exit_code ?? null);
+            status = msg.status;
+            exitCode = msg.exit_code ?? null;
+            client.status = status;
+            client.exitCode = exitCode;
+            updateInputState();
+            onStatus(status, exitCode);
+            return;
+          }
+          if (msg.type === "pong") {
             return;
           }
         } catch {
@@ -176,18 +285,18 @@ function createClient(
 
   term.onData((data) => {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    if (connectionStatus !== "connected" || status === "exited") return;
     socket.send(data);
   });
 
-  connect();
-
-  return {
+  client = {
     id,
     terminal: term,
     fitAddon,
     element,
     status: terminal.status,
     exitCode: terminal.exit_code ?? null,
+    connectionStatus,
     attach: (el) => {
       if (element === el) return;
       element = el;
@@ -205,12 +314,24 @@ function createClient(
       term.focus();
     },
     dispose: () => {
+      disposed = true;
+      clearReconnectTimer();
+      clearKeepaliveTimer();
       socket?.close();
+      socket = null;
       term.dispose();
     },
     reconnect: () => {
+      reconnectAttempts = 0;
       socket?.close();
-      connect();
+      if (!socket) {
+        scheduleReconnect();
+      }
     },
   };
+
+  updateInputState();
+  connect();
+
+  return client;
 }

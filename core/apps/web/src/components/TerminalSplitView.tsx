@@ -102,9 +102,10 @@ function TerminalLeaf({
   clients: React.MutableRefObject<Map<string, TerminalClient>>;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalId = leaf.terminalId;
   useLayoutEffect(() => {
-    const el = containerRef.current;
+    const el = hostRef.current;
     if (!el) return;
     const client = clients.current.get(terminalId);
     if (!client) return;
@@ -114,11 +115,31 @@ function TerminalLeaf({
     return () => ro.disconnect();
   }, [clients, terminalId]);
 
+  const client = clients.current.get(terminalId);
+  const connectionStatus = client?.connectionStatus ?? "disconnected";
+  const exited = client?.status === "exited";
+  const statusText = exited
+    ? `Exited${client?.exitCode != null ? ` (${client.exitCode})` : ""}`
+    : connectionStatus === "reconnecting"
+      ? "Reconnecting..."
+      : "Disconnected";
+  const showStatus = exited || connectionStatus !== "connected";
+
   return (
     <div
       ref={containerRef}
       className={`wb-terminal-pane ${active ? "wb-terminal-pane-active" : ""}`}
       onMouseDown={() => onActivate(leaf.id, terminalId)}
-    />
+    >
+      <div ref={hostRef} className="wb-terminal-host" />
+      {showStatus && (
+        <div
+          className={`wb-terminal-status wb-terminal-status-${exited ? "exited" : connectionStatus}`}
+          role="status"
+        >
+          {statusText}
+        </div>
+      )}
+    </div>
   );
 }
