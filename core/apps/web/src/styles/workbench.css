@@ -2097,7 +2097,7 @@
   bottom: 16px;
   z-index: 1200;
   max-width: min(520px, calc(100vw - 32px));
-  background: rgba(30, 30, 30, 0.96);
+  background: var(--toast-bg);
   border: 1px solid var(--surface-strong);
   border-radius: 12px;
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);

@@ -98,6 +98,7 @@
   --tool-output-bg-strong: #05070d;
   --tool-output-text: #e5e7eb;
   --tool-output-border: rgba(255, 255, 255, 0.08);
+  --toast-bg: rgba(30, 30, 30, 0.96);
   --shadow-strong: 0 24px 60px rgba(0, 0, 0, 0.6);
   --window-control-close-hover: #e81123;
   --window-control-close-active: #c50f1f;
@@ -204,6 +205,7 @@
   --tool-output-bg-strong: var(--panel-3);
   --tool-output-text: var(--text);
   --tool-output-border: var(--border);
+  --toast-bg: var(--panel);
   --shadow-strong: 0 24px 60px rgba(15, 23, 42, 0.18);
   --window-control-close-hover: #e81123;
   --window-control-close-active: #c50f1f;
