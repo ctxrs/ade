@@ -3777,6 +3777,13 @@
   font-size: 13px;
 }
 
+:root[data-theme="light"] .ctx-drop-overlay-text {
+  background: var(--panel);
+  border-color: var(--border);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.14);
+  backdrop-filter: none;
+}
+
 .wb-session-view .composer {
   margin-top: 0;
   border-radius: 12px;
