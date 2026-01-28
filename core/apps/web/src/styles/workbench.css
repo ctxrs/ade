@@ -3797,7 +3797,7 @@
   position: relative;
   width: 6px;
   cursor: col-resize;
-  background: linear-gradient(to right, transparent 0 50%, var(--surface-hairline) 50% 100%);
+  background: var(--bg);
 }
 
 .wb-splitter::after {
