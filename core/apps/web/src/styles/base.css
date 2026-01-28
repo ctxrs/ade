@@ -776,6 +776,10 @@ button.linklike:hover {
   box-sizing: border-box;
 }
 
+:root[data-theme="light"] .codeblock {
+  background: color-mix(in srgb, var(--surface-sidebar) 50%, white 50%);
+}
+
 .codeblock-toolbar {
   position: absolute;
   top: 8px;
