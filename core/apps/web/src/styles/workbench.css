@@ -3611,6 +3611,13 @@
   box-sizing: border-box;
 }
 
+:root[data-theme="light"] .composer-ac {
+  background: var(--panel);
+  backdrop-filter: none;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.14);
+  border-color: var(--border);
+}
+
 .composer-ac-item {
   height: 30px;
   padding: 0 8px;
@@ -3666,6 +3673,13 @@
   padding: 10px 12px;
   overflow: hidden;
   pointer-events: none;
+}
+
+:root[data-theme="light"] .composer-ac-preview-popover {
+  background: var(--panel);
+  backdrop-filter: none;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.14);
+  border-color: var(--border);
 }
 
 .composer-ac-preview-tree {
