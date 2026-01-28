@@ -243,7 +243,7 @@ function ArtifactViewer({
   }, [isImage]);
 
   const onWheel = useCallback(
-    (event: WheelEvent) => {
+    (event: React.WheelEvent<HTMLDivElement>) => {
       if (!isImage) return;
       event.preventDefault();
       const delta = event.deltaY;
@@ -251,15 +251,6 @@ function ArtifactViewer({
     },
     [isImage, zoomBy],
   );
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    container.addEventListener("wheel", onWheel, { passive: false });
-    return () => {
-      container.removeEventListener("wheel", onWheel);
-    };
-  }, [onWheel]);
 
   const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -378,6 +369,7 @@ function ArtifactViewer({
         <div
           ref={containerRef}
           className={`wb-artifact-modal-body ${scale > baseScale ? "wb-artifact-zoomed" : ""}`}
+          onWheel={onWheel}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
