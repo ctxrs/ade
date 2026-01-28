@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import { mkdtempSync, writeFileSync } from "fs";
+import { mkdtempSync, realpathSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
@@ -12,6 +12,14 @@ async function createWorkspaceAndStartRun(opts: {
   prompt: string;
 }) {
   const { page, repo, workspaceName, prompt, request } = opts;
+  const resolvePath = (value: string) => {
+    try {
+      return typeof realpathSync.native === "function" ? realpathSync.native(value) : realpathSync(value);
+    } catch {
+      return path.resolve(value);
+    }
+  };
+  const repoPath = resolvePath(repo);
 
   await page.goto("/");
   await page.getByLabel("Root path").fill(repo);
@@ -48,7 +56,7 @@ async function createWorkspaceAndStartRun(opts: {
         const workspacesResp = await request.get("/api/workspaces");
         if (!workspacesResp.ok()) return "";
         const workspaces = (await workspacesResp.json()) as any[];
-        const ws = workspaces.find((w) => path.resolve(String(w?.root_path ?? "")) === path.resolve(repo));
+        const ws = workspaces.find((w) => resolvePath(String(w?.root_path ?? "")) === repoPath);
         workspaceId = readId(ws?.id);
         return workspaceId;
       },
