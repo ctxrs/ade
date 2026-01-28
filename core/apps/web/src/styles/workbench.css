@@ -15,8 +15,8 @@
   --wb-menu-tooltip-bg: rgba(34, 34, 34, 0.96);
   --wb-harness-input-bg: rgba(0, 0, 0, 0.18);
   --wb-track-field-bg: rgba(0, 0, 0, 0.15);
-  --wb-artifacts-bg: var(--bg);
-  --wb-artifacts-header-bg: var(--bg);
+  --wb-artifacts-bg: var(--surface-sidebar);
+  --wb-artifacts-header-bg: var(--surface-sidebar);
   --wb-artifact-preview-bg: rgba(0, 0, 0, 0.35);
   --wb-artifact-modal-bg: rgba(18, 18, 18, 0.96);
   --wb-artifact-modal-header-bg: rgba(12, 12, 12, 0.9);
@@ -40,8 +40,8 @@
   --wb-menu-tooltip-bg: color-mix(in srgb, var(--panel) 96%, transparent);
   --wb-harness-input-bg: var(--surface-soft);
   --wb-track-field-bg: var(--surface-soft);
-  --wb-artifacts-bg: var(--bg);
-  --wb-artifacts-header-bg: var(--bg);
+  --wb-artifacts-bg: var(--surface-sidebar);
+  --wb-artifacts-header-bg: var(--surface-sidebar);
   --wb-artifact-preview-bg: var(--surface-soft);
   --wb-artifact-modal-bg: var(--panel);
   --wb-artifact-modal-header-bg: var(--panel-2);
@@ -3848,6 +3848,7 @@
   min-height: 0;
   min-width: 0;
   border-left: 1px solid var(--border);
+  background: var(--surface-sidebar);
   box-sizing: border-box;
 }
 
@@ -3858,6 +3859,7 @@
   min-height: 0;
   min-width: 0;
   overflow: auto;
+  background: var(--surface-sidebar);
 }
 
 .wb-diff {
@@ -3865,7 +3867,7 @@
   height: 100%;
   min-width: 320px;
   max-width: 60vw;
-  background: var(--bg);
+  background: var(--surface-sidebar);
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -3877,7 +3879,7 @@
   height: 100%;
   min-width: 320px;
   max-width: 60vw;
-  background: var(--bg);
+  background: var(--surface-sidebar);
   min-height: 0;
   display: flex;
   flex-direction: column;
