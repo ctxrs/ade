@@ -141,7 +141,13 @@ importers:
       '@tauri-apps/plugin-notification':
         specifier: ^2.3.3
         version: 2.3.3
+      '@tauri-apps/plugin-shell':
+        specifier: 2.3.4
+        version: 2.3.4
       '@xterm/addon-fit':
+        specifier: ^0.10.0
+        version: 0.10.0(@xterm/xterm@5.5.0)
+      '@xterm/addon-web-links':
         specifier: ^0.10.0
         version: 0.10.0(@xterm/xterm@5.5.0)
       '@xterm/xterm':
@@ -1894,6 +1900,9 @@ packages:
   '@tauri-apps/plugin-notification@2.3.3':
     resolution: {integrity: sha512-Zw+ZH18RJb41G4NrfHgIuofJiymusqN+q8fGUIIV7vyCH+5sSn5coqRv/MWB9qETsUs97vmU045q7OyseCV3Qg==}
 
+  '@tauri-apps/plugin-shell@2.3.4':
+    resolution: {integrity: sha512-ktsRWf8wHLD17aZEyqE8c5x98eNAuTizR1FSX475zQ4TxaiJnhwksLygQz+AGwckJL5bfEP13nWrlTNQJUpKpA==}
+
   '@testing-library/dom@10.4.1':
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
     engines: {node: '>=18'}
@@ -2148,6 +2157,11 @@ packages:
 
   '@xterm/addon-fit@0.10.0':
     resolution: {integrity: sha512-UFYkDm4HUahf2lnEyHvio51TNGiLK66mqP2JoATy7hRZeXaGMRDr00JiSF7m63vR5WKATF605yEggJKsw0JpMQ==}
+    peerDependencies:
+      '@xterm/xterm': ^5.0.0
+
+  '@xterm/addon-web-links@0.10.0':
+    resolution: {integrity: sha512-QhrHCUr8w6ATGviyXwcAIM1qN3nD1hdxwMC8fsW7z/6aaQlb2nt7zmByJt4eOn7ZzrHOzczljqV5S2pkdQp2xw==}
     peerDependencies:
       '@xterm/xterm': ^5.0.0
 
@@ -7987,6 +8001,10 @@ snapshots:
     dependencies:
       '@tauri-apps/api': 2.9.1
 
+  '@tauri-apps/plugin-shell@2.3.4':
+    dependencies:
+      '@tauri-apps/api': 2.9.1
+
   '@testing-library/dom@10.4.1':
     dependencies:
       '@babel/code-frame': 7.28.6
@@ -8389,6 +8407,10 @@ snapshots:
   '@xmldom/xmldom@0.8.11': {}
 
   '@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0)':
+    dependencies:
+      '@xterm/xterm': 5.5.0
+
+  '@xterm/addon-web-links@0.10.0(@xterm/xterm@5.5.0)':
     dependencies:
       '@xterm/xterm': 5.5.0
 

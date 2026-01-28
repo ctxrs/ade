@@ -68,6 +68,7 @@ import {
   desktopGetEditorSettings,
   desktopUpdateEditorSettings,
   isDesktopApp,
+  openExternalLink,
 } from "../utils/desktop";
 import { ensureDesktopNotificationPermission } from "../utils/desktopNotifications";
 import {
@@ -1493,7 +1494,7 @@ export default function SettingsPage() {
 
   const openCodexAuthUrl = (url: string) => {
     if (!url) return;
-    window.open(url, "_blank", "noopener,noreferrer");
+    void openExternalLink(url);
   };
 
   const onCodexLogin = async () => {

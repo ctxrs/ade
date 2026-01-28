@@ -68,6 +68,25 @@ export const isDesktopApp = (): boolean => {
   }
 };
 
+export const openExternalLink = async (href: string): Promise<boolean> => {
+  if (!href) return false;
+  if (isDesktopApp()) {
+    try {
+      const mod = await import("@tauri-apps/plugin-shell");
+      await mod.open(href);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  try {
+    const win = window.open(href, "_blank", "noopener,noreferrer");
+    return Boolean(win);
+  } catch {
+    return false;
+  }
+};
+
 const invoke = async <T>(cmd: string, args?: any): Promise<T> => {
   const mod = await import("@tauri-apps/api/core");
   return mod.invoke<T>(cmd, args);

@@ -18,7 +18,7 @@ import {
   parseUrlToken,
   splitWhitespaceTokens,
 } from "../utils/codeTokenLinks";
-import { desktopOpenFile, desktopOpenPath, isDesktopApp } from "../utils/desktop";
+import { desktopOpenFile, desktopOpenPath, isDesktopApp, openExternalLink } from "../utils/desktop";
 
 type MdastNode = {
   type?: string;
@@ -109,7 +109,7 @@ const handleUrlTokenClick = (event: MouseEvent<HTMLElement>, href: string) => {
   }
   event.preventDefault();
   event.stopPropagation();
-  window.open(href, "_blank", "noopener,noreferrer");
+  void openExternalLink(href);
 };
 
 const buildCodeTokenNodes = (text: string, opts: CodeTokenOptions): ReactNode[] => {
@@ -358,8 +358,14 @@ export function Markdown({
             const isContextOpen =
               typeof href === "string" && href.startsWith("ctx://open?");
             if (!isContextOpen) {
+              const handleExternalClick = (event: MouseEvent<HTMLAnchorElement>) => {
+                if (!isDesktopApp()) return;
+                if (!href) return;
+                event.preventDefault();
+                void openExternalLink(href);
+              };
               return (
-                <a href={href} className={className} {...rest}>
+                <a href={href} className={className} onClick={handleExternalClick} {...rest}>
                   {children}
                 </a>
               );
