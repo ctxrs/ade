@@ -1,5 +1,5 @@
 import type { MobileConnectionProfile, MobileDeviceRegistration } from "@ctx/types";
-import { api } from "./clientBase";
+import { apiAny } from "./clientBase";
 
 export type CreateMobileProfileRequest = {
   label: string;
@@ -32,30 +32,30 @@ export type EnableMobileAccessResponse = {
 };
 
 export const listMobileConnectionProfiles = () =>
-  api<MobileConnectionProfile[]>(`/api/mobile/connection_profiles`);
+  apiAny<MobileConnectionProfile[]>(`/api/mobile/connection_profiles`);
 
 export const createMobileConnectionProfile = (payload: CreateMobileProfileRequest) =>
-  api<CreateMobileProfileResponse>(`/api/mobile/connection_profiles`, {
+  apiAny<CreateMobileProfileResponse>(`/api/mobile/connection_profiles`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
 
 export const deleteMobileConnectionProfile = (id: string) =>
-  api<void>(`/api/mobile/connection_profiles/${id}`, { method: "DELETE" });
+  apiAny<void>(`/api/mobile/connection_profiles/${id}`, { method: "DELETE" });
 
 export const listMobileDevicesForProfile = (profileId: string) =>
-  api<MobileDeviceRegistration[]>(`/api/mobile/connection_profiles/${profileId}/devices`);
+  apiAny<MobileDeviceRegistration[]>(`/api/mobile/connection_profiles/${profileId}/devices`);
 
-export const getMobileAccessStatus = () => api<MobileAccessStatus>(`/api/mobile/access/status`);
+export const getMobileAccessStatus = () => apiAny<MobileAccessStatus>(`/api/mobile/access/status`);
 
 export const enableMobileAccess = (supabase_token: string) =>
-  api<EnableMobileAccessResponse>(`/api/mobile/access/enable`, {
+  apiAny<EnableMobileAccessResponse>(`/api/mobile/access/enable`, {
     method: "POST",
     body: JSON.stringify({ supabase_token }),
   });
 
 export const disableMobileAccess = (supabase_token: string) =>
-  api<void>(`/api/mobile/access/disable`, {
+  apiAny<void>(`/api/mobile/access/disable`, {
     method: "POST",
     body: JSON.stringify({ supabase_token }),
   });
