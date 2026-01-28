@@ -38,6 +38,9 @@ import type {
 
 type OpenMenuId = "harness" | "model" | "effort" | "mode" | "verbosity";
 
+const logoClasses = (base: string, invertInDark?: boolean, invertInLight?: boolean) =>
+  [base, invertInDark ? "wb-invert" : "", invertInLight ? "wb-invert-light" : ""].filter(Boolean).join(" ");
+
 export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const {
     variant,
@@ -498,7 +501,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       return {
         label: as.harnessLabel,
         logoSrc: as.harnessLogoSrc,
-        invert: as.harnessLogoInvert,
+        invertInDark: as.harnessLogoInvert,
+        invertInLight: as.harnessLogoInvertInLight,
         locked: true,
       };
     }
@@ -508,7 +512,13 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     const providerId = primary?.providerId ?? ns.defaultProviderId;
     const info = ns.harnessCatalog.find((h) => h.id === providerId);
     const label = ns.draftTracks.length === 1 ? (info?.label ?? providerId) : `${ns.draftTracks.length} tracks`;
-    return { label, logoSrc: info?.logoSrc, invert: info?.invertInDark, locked: false };
+    return {
+      label,
+      logoSrc: info?.logoSrc,
+      invertInDark: info?.invertInDark,
+      invertInLight: info?.invertInLight,
+      locked: false,
+    };
   }, [props, variant]);
 
   const [harnessSearch, setHarnessSearch] = useState("");
@@ -806,7 +816,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                     </span>
                     {h.logoSrc ? (
                       <img
-                        className={`wb-harness-logo ${h.invertInDark ? "wb-invert" : ""}`}
+                        className={logoClasses("wb-harness-logo", h.invertInDark, h.invertInLight)}
                         src={h.logoSrc}
                         alt=""
                       />
@@ -1190,7 +1200,11 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               >
                 {harnessControl.logoSrc ? (
                   <img
-                    className={`wb-switcher-logo ${harnessControl.invert ? "wb-invert" : ""}`}
+                    className={logoClasses(
+                      "wb-switcher-logo",
+                      harnessControl.invertInDark,
+                      harnessControl.invertInLight,
+                    )}
                     src={harnessControl.logoSrc}
                     alt=""
                   />
@@ -1209,7 +1223,11 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               >
                 {harnessControl.logoSrc ? (
                   <img
-                    className={`wb-switcher-logo ${harnessControl.invert ? "wb-invert" : ""}`}
+                    className={logoClasses(
+                      "wb-switcher-logo",
+                      harnessControl.invertInDark,
+                      harnessControl.invertInLight,
+                    )}
                     src={harnessControl.logoSrc}
                     alt=""
                   />

@@ -3,6 +3,7 @@ import Editor from "@monaco-editor/react";
 import type { editor as MonacoEditor } from "monaco-editor";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { FileIcon } from "./FileIcon";
+import { useThemeVariant } from "../utils/theme";
 
 type DiffFile = {
   key: string;
@@ -101,6 +102,8 @@ const DiffReviewPane = memo(function DiffReviewPane({
   const [wrapLines, setWrapLines] = useState(true);
   const [files, setFiles] = useState<DiffFile[]>([]);
   const [parsing, setParsing] = useState(false);
+  const themeVariant = useThemeVariant();
+  const monacoTheme = themeVariant === "dark" ? "vs-dark" : "vs";
 
   useEffect(() => {
     setExpandedFiles({});
@@ -215,7 +218,7 @@ const DiffReviewPane = memo(function DiffReviewPane({
                       ) : (
                         <>
                           <div className="cursor-diff-editor-shell">
-                            <DecoratedDiffEditor file={f} wrapLines={wrapLines} />
+                            <DecoratedDiffEditor file={f} wrapLines={wrapLines} monacoTheme={monacoTheme} />
                           </div>
                         </>
                       )}
@@ -438,7 +441,15 @@ function fileAccentClass(file: DiffFile): string {
 const WRAP_BREAK_AFTER_CHARACTERS =
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_/-=+*.,:;|\\~!@#$%^&()[]{}<>?\"'";
 
-function DecoratedDiffEditor({ file, wrapLines }: { file: DiffFile; wrapLines: boolean }) {
+function DecoratedDiffEditor({
+  file,
+  wrapLines,
+  monacoTheme,
+}: {
+  file: DiffFile;
+  wrapLines: boolean;
+  monacoTheme: "vs" | "vs-dark";
+}) {
   const decorationIdsRef = useRef<string[]>([]);
   const [editorHeight, setEditorHeight] = useState(() => estimateDiffHeightPx(file));
   const [editorInstance, setEditorInstance] = useState<MonacoEditor.IStandaloneCodeEditor | null>(null);
@@ -467,7 +478,7 @@ function DecoratedDiffEditor({ file, wrapLines }: { file: DiffFile; wrapLines: b
       language="diff"
       path={modelPath}
       value={file.renderText}
-      theme="vs-dark"
+      theme={monacoTheme}
       options={{
         readOnly: true,
         minimap: { enabled: false },

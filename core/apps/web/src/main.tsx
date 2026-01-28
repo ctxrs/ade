@@ -4,6 +4,7 @@ import { applyContextTheme } from "@ctx/design/web";
 import App from "./App";
 import { initLoadTestTelemetry } from "./utils/loadTestTelemetry";
 import { initWalRecorder } from "./utils/walRecorder";
+import { initTheme } from "./utils/theme";
 import { getDaemonBaseUrl, setDaemonBaseUrl } from "./api/client";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
@@ -34,6 +35,7 @@ const primeAuthSession = () => {
 };
 
 primeAuthSession();
+initTheme();
 applyContextTheme();
 initLoadTestTelemetry();
 const wal = initWalRecorder();

@@ -30,12 +30,13 @@ export type HarnessCatalogEntry = {
   label: string;
   logoSrc: string;
   invertInDark?: boolean;
+  invertInLight?: boolean;
 };
 
 // Curated list of popular harnesses shown in the selector. Entries without a logo use the fallback slot.
 export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "claude", label: "Claude Code", logoSrc: claudeLogo },
-  { id: "codex", label: "Codex", logoSrc: codexLogo, invertInDark: true },
+  { id: "codex", label: "Codex", logoSrc: codexLogo, invertInLight: true },
   { id: "qwen", label: "Qwen Code", logoSrc: qwenLogo },
   { id: "cursor", label: "Cursor", logoSrc: cursorLogo, invertInDark: true },
   { id: "amp", label: "Amp", logoSrc: ampLogo },
@@ -55,7 +56,7 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
 
   // Additional harnesses from specs/21_harness_providers.md
   { id: "aider", label: "Aider", logoSrc: aiderLogo },
-  { id: "continue", label: "Continue", logoSrc: continueLogo },
+  { id: "continue", label: "Continue", logoSrc: continueLogo, invertInLight: true },
   { id: "openhands", label: "OpenHands", logoSrc: openhandsLogo },
   { id: "swe-agent", label: "SWE-agent", logoSrc: sweAgentLogo },
   { id: "cagent", label: "cagent", logoSrc: cagentLogo },

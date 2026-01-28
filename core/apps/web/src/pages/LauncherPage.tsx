@@ -22,6 +22,7 @@ import {
   isDesktopApp,
   type DesktopConnectionInfo,
 } from "../utils/desktop";
+import { readCssVar, useThemeVariant } from "../utils/theme";
 
 type RecentEntry =
   | {
@@ -119,6 +120,8 @@ export default function LauncherPage() {
   const [qrModal, setQrModal] = useState<CreateMobileProfileResponse | null>(null);
 
   const isDesktop = isDesktopApp();
+  const themeVariant = useThemeVariant();
+  const qrFgColor = readCssVar("--text", themeVariant === "dark" ? "#d4d4d4" : "#3b3b3b");
 
   useEffect(() => {
     if (!isDesktop) {
@@ -492,7 +495,7 @@ export default function LauncherPage() {
             Scan this QR in the ctx mobile app or copy the token below. Store it securely—it's only shown once.
           </p>
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
-            <QRCodeSVG value={JSON.stringify(qrModal.qr_payload)} size={220} bgColor="transparent" fgColor="#f5f7ff" />
+            <QRCodeSVG value={JSON.stringify(qrModal.qr_payload)} size={220} bgColor="transparent" fgColor={qrFgColor} />
           </div>
           <div className="mobile-token">{qrModal.token}</div>
           <div className="modal-actions" style={{ marginTop: 16 }}>

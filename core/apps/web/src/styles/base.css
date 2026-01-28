@@ -1,19 +1,212 @@
 :root {
-  /* Dark-only for now (Cursor-like). */
+  color-scheme: dark;
+  /* Dark (default) theme tokens. */
   --bg: #1e1e1e;
+  --bg-subtle: #181818;
   --panel: #252526;
   --panel-2: #2d2d2d;
+  --panel-3: #242424;
+  --surface: #252526;
+  --surface-sidebar: #181818;
+  --surface-topbar: #202124;
+  --surface-topbar-border: #323639;
+  --surface-contrast: #000;
   --border: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-emphasis: rgba(255, 255, 255, 0.12);
   --border-strong: rgba(255, 255, 255, 0.14);
+  --border-focus: rgba(78, 163, 255, 0.38);
   --text: #d4d4d4;
+  --text-strong: rgba(255, 255, 255, 0.92);
+  --text-muted: rgba(255, 255, 255, 0.7);
+  --text-subtle: rgba(255, 255, 255, 0.55);
+  --text-faint: rgba(255, 255, 255, 0.45);
+  --text-dim: rgba(255, 255, 255, 0.35);
+  --text-inverse: #ffffff;
+  --text-on-accent: #0a0a0a;
+  --link: var(--accent);
+  --link-hover: var(--accent-hover);
   --muted: rgba(212, 212, 212, 0.65);
   --shadow: none;
+  --surface-hairline: rgba(255, 255, 255, 0.01);
+  --surface-ghost: rgba(255, 255, 255, 0.02);
+  --surface-subtle: rgba(255, 255, 255, 0.03);
+  --surface-soft: rgba(255, 255, 255, 0.04);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --surface-active: rgba(255, 255, 255, 0.08);
+  --surface-selected: rgba(255, 255, 255, 0.1);
+  --surface-strong: rgba(255, 255, 255, 0.12);
+  --surface-stronger: rgba(255, 255, 255, 0.14);
+  --surface-strongest: rgba(255, 255, 255, 0.18);
+  --surface-peak: rgba(255, 255, 255, 0.25);
+  --overlay: rgba(0, 0, 0, 0.65);
+  --overlay-strong: rgba(0, 0, 0, 0.84);
+  --overlay-soft: rgba(0, 0, 0, 0.55);
+  --overlay-faint: rgba(0, 0, 0, 0.45);
+  --control-knob: rgba(255, 255, 255, 0.75);
+  --control-knob-active: rgba(255, 255, 255, 0.9);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.3);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.42);
   --accent: #3794ff;
+  --accent-hover: #4ea3ff;
+  --accent-muted: rgba(78, 163, 255, 0.35);
+  --accent-soft: rgba(78, 163, 255, 0.22);
+  --accent-strong: #4ea3ff;
+  --accent-bar: rgba(59, 130, 246, 0.8);
+  --state-success: #5ccf77;
+  --state-success-bright: #78ffa0;
+  --state-success-bright-alt: #78ffaa;
+  --state-warning-solid: #ffc45a;
+  --state-warning: color-mix(in srgb, var(--state-warning-solid) 40%, transparent);
+  --state-error: #ff453a;
+  --state-info: #78beff;
+  --state-info-strong: #78a0ff;
   --success: #22c55e;
+  --success-soft: rgba(34, 197, 94, 0.12);
+  --success-soft-strong: rgba(34, 197, 94, 0.35);
+  --success-border: rgba(34, 197, 94, 0.45);
+  --success-strong: rgba(34, 197, 94, 0.55);
+  --success-stronger: rgba(34, 197, 94, 0.65);
+  --success-bar: rgba(34, 197, 94, 0.8);
+  --success-contrast: rgba(34, 197, 94, 0.95);
   --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.12);
+  --warning-border: rgba(251, 191, 36, 0.45);
+  --warning-strong: rgba(251, 191, 36, 0.9);
+  --warning-contrast: rgba(251, 191, 36, 0.95);
   --error: #ef4444;
+  --error-soft: rgba(239, 68, 68, 0.08);
+  --error-soft-strong: rgba(239, 68, 68, 0.12);
+  --error-border: rgba(239, 68, 68, 0.3);
+  --error-strong: rgba(239, 68, 68, 0.35);
+  --error-stronger: rgba(239, 68, 68, 0.45);
+  --error-contrast: rgba(239, 68, 68, 0.9);
+  --error-contrast-strong: rgba(239, 68, 68, 0.95);
+  --error-text: #fca5a5;
+  --list-divider: #f0f0f0;
+  --diff-bg: #111;
+  --diff-text: #eee;
+  --diff-code-bg: #0b1020;
+  --diff-code-text: #e5e7eb;
+  --diff-add-text: #bbf7d0;
+  --diff-del-text: #fecaca;
+  --diff-h-text: #ddd6fe;
+  --diff-highlight-bg: rgba(139, 92, 246, 0.16);
+  --json-bg: #0f172a;
+  --json-text: #e2e8f0;
+  --tool-output-bg: #0b1020;
+  --tool-output-bg-strong: #05070d;
+  --tool-output-text: #e5e7eb;
+  --tool-output-border: rgba(255, 255, 255, 0.08);
+  --shadow-strong: 0 24px 60px rgba(0, 0, 0, 0.6);
+  --window-control-close-hover: #e81123;
+  --window-control-close-active: #c50f1f;
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
     "Courier New", monospace;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-subtle: #f8f8f8;
+  --panel: #f8f8f8;
+  --panel-2: #f8f8f8;
+  --panel-3: #e6e9ee;
+  --surface: #ffffff;
+  --surface-sidebar: var(--bg-subtle);
+  --surface-topbar: var(--bg-subtle);
+  --surface-topbar-border: var(--border);
+  --surface-contrast: #000;
+  --border: #e5e5e5;
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-emphasis: rgba(0, 0, 0, 0.12);
+  --border-strong: #cecece;
+  --border-focus: #005fb8;
+  --text: #3b3b3b;
+  --text-strong: rgba(20, 20, 20, 0.92);
+  --text-muted: #868686;
+  --text-subtle: #767676;
+  --text-faint: rgba(20, 20, 20, 0.45);
+  --text-dim: rgba(20, 20, 20, 0.35);
+  --text-inverse: #ffffff;
+  --text-on-accent: #0a0a0a;
+  --link: #005fb8;
+  --link-hover: #005fb8;
+  --muted: rgba(31, 35, 40, 0.65);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --surface-hairline: rgba(0, 0, 0, 0.01);
+  --surface-ghost: rgba(0, 0, 0, 0.02);
+  --surface-subtle: rgba(0, 0, 0, 0.03);
+  --surface-soft: rgba(0, 0, 0, 0.04);
+  --surface-hover: #f2f2f2;
+  --surface-active: #e8e8e8;
+  --surface-selected: rgba(0, 0, 0, 0.1);
+  --surface-strong: rgba(0, 0, 0, 0.12);
+  --surface-stronger: rgba(0, 0, 0, 0.14);
+  --surface-strongest: rgba(0, 0, 0, 0.18);
+  --surface-peak: rgba(0, 0, 0, 0.25);
+  --overlay: rgba(0, 0, 0, 0.45);
+  --overlay-strong: rgba(0, 0, 0, 0.7);
+  --overlay-soft: rgba(0, 0, 0, 0.35);
+  --overlay-faint: rgba(0, 0, 0, 0.25);
+  --control-knob: rgba(0, 0, 0, 0.55);
+  --control-knob-active: rgba(0, 0, 0, 0.75);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.25);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.35);
+  --accent: #005fb8;
+  --accent-hover: #0258a8;
+  --accent-muted: #bed6ed;
+  --accent-soft: color-mix(in srgb, var(--accent) 22%, transparent);
+  --accent-strong: var(--accent);
+  --accent-bar: color-mix(in srgb, var(--accent) 80%, transparent);
+  --state-success: #2ea043;
+  --state-success-bright: var(--state-success);
+  --state-success-bright-alt: var(--state-success);
+  --state-warning-solid: #bb8009;
+  --state-warning: #bb800966;
+  --state-error: #f85149;
+  --state-info: #005fb8;
+  --state-info-strong: var(--state-info);
+  --success: #2ea043;
+  --success-soft: color-mix(in srgb, var(--success) 12%, transparent);
+  --success-soft-strong: color-mix(in srgb, var(--success) 35%, transparent);
+  --success-border: color-mix(in srgb, var(--success) 45%, transparent);
+  --success-strong: color-mix(in srgb, var(--success) 55%, transparent);
+  --success-stronger: color-mix(in srgb, var(--success) 65%, transparent);
+  --success-bar: color-mix(in srgb, var(--success) 80%, transparent);
+  --success-contrast: color-mix(in srgb, var(--success) 95%, transparent);
+  --warning: #bb8009;
+  --warning-soft: color-mix(in srgb, var(--warning) 12%, transparent);
+  --warning-border: color-mix(in srgb, var(--warning) 45%, transparent);
+  --warning-strong: color-mix(in srgb, var(--warning) 90%, transparent);
+  --warning-contrast: color-mix(in srgb, var(--warning) 95%, transparent);
+  --error: #f85149;
+  --error-soft: color-mix(in srgb, var(--error) 8%, transparent);
+  --error-soft-strong: color-mix(in srgb, var(--error) 12%, transparent);
+  --error-border: color-mix(in srgb, var(--error) 30%, transparent);
+  --error-strong: color-mix(in srgb, var(--error) 35%, transparent);
+  --error-stronger: color-mix(in srgb, var(--error) 45%, transparent);
+  --error-contrast: color-mix(in srgb, var(--error) 90%, transparent);
+  --error-contrast-strong: color-mix(in srgb, var(--error) 95%, transparent);
+  --error-text: color-mix(in srgb, var(--error) 60%, white);
+  --list-divider: var(--border-subtle);
+  --diff-bg: var(--panel-2);
+  --diff-text: var(--text);
+  --diff-code-bg: var(--panel-3);
+  --diff-code-text: var(--text);
+  --diff-add-text: var(--success);
+  --diff-del-text: var(--error);
+  --diff-h-text: var(--accent);
+  --diff-highlight-bg: color-mix(in srgb, var(--accent) 16%, transparent);
+  --json-bg: var(--panel-3);
+  --json-text: var(--text);
+  --tool-output-bg: var(--panel-3);
+  --tool-output-bg-strong: var(--panel-3);
+  --tool-output-text: var(--text);
+  --tool-output-border: var(--border);
+  --shadow-strong: 0 24px 60px rgba(15, 23, 42, 0.18);
+  --window-control-close-hover: #e81123;
+  --window-control-close-active: #c50f1f;
 }
 
 *,
@@ -61,7 +254,7 @@ body,
 
 .card {
   border: 1px solid var(--border);
-  background: var(--panel);
+  background: var(--surface);
   padding: 12px;
   margin: 12px 0;
   border-radius: 8px;
@@ -77,7 +270,7 @@ body,
 
 .list li {
   padding: 8px 0;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--list-divider);
 }
 
 .sublist {
@@ -104,7 +297,7 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 6px;
   font: inherit;
-  background: var(--panel);
+  background: var(--surface);
   color: var(--text);
 }
 
@@ -113,7 +306,7 @@ select {
   border: 1px solid var(--border);
   border-radius: 6px;
   font: inherit;
-  background: var(--panel);
+  background: var(--surface);
   color: var(--text);
 }
 
@@ -133,7 +326,7 @@ button {
 button.linklike {
   border: none;
   background: transparent;
-  color: var(--accent);
+  color: var(--link);
   text-decoration: none;
   padding: 0;
 }
@@ -690,12 +883,16 @@ button.linklike:hover {
 .diff {
   white-space: pre-wrap;
   font-size: 12px;
-  background: #111;
-  color: #eee;
+  background: var(--diff-bg);
+  color: var(--diff-text);
   padding: 8px;
   border-radius: 6px;
   max-height: 70vh;
   overflow: auto;
+}
+
+:root[data-theme="light"] .diff-pane {
+  background: var(--panel);
 }
 
 .diff-pane h2 {
@@ -792,8 +989,8 @@ button.linklike:hover {
   line-height: 1.35;
   overflow: hidden;
   max-height: none;
-  background: #0b1020;
-  color: #e5e7eb;
+  background: var(--diff-code-bg);
+  color: var(--diff-code-text);
 }
 
 .diff-line {
@@ -804,18 +1001,18 @@ button.linklike:hover {
 }
 
 .diff-line.add {
-  background: rgba(34, 197, 94, 0.12);
-  color: #bbf7d0;
+  background: var(--success-soft);
+  color: var(--diff-add-text);
 }
 
 .diff-line.del {
-  background: rgba(239, 68, 68, 0.12);
-  color: #fecaca;
+  background: var(--error-soft-strong);
+  color: var(--diff-del-text);
 }
 
 .diff-line.h {
-  background: rgba(139, 92, 246, 0.16);
-  color: #ddd6fe;
+  background: var(--diff-highlight-bg);
+  color: var(--diff-h-text);
 }
 
 .cursor-diff {
@@ -851,6 +1048,23 @@ button.linklike:hover {
   color: rgba(255, 255, 255, 0.95);
 }
 
+:root[data-theme="light"] .cursor-diff-toggle {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+}
+
+:root[data-theme="light"] .cursor-diff-toggle:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+:root[data-theme="light"] .cursor-diff-toggle-active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border) 55%);
+  background: var(--accent-soft);
+  color: var(--text-strong);
+}
+
 .cursor-diff-list {
   display: grid;
   gap: 10px;
@@ -863,6 +1077,12 @@ button.linklike:hover {
   background: rgba(255, 255, 255, 0.02);
 }
 
+:root[data-theme="light"] .cursor-diff-file {
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
 .cursor-diff-file-header {
   display: flex;
   align-items: center;
@@ -870,6 +1090,10 @@ button.linklike:hover {
   padding: 8px 10px;
   position: relative;
   background: rgba(255, 255, 255, 0.02);
+}
+
+:root[data-theme="light"] .cursor-diff-file-header {
+  background: var(--panel-2);
 }
 
 .cursor-diff-chevron {
@@ -885,8 +1109,16 @@ button.linklike:hover {
   border-radius: 6px;
 }
 
+:root[data-theme="light"] .cursor-diff-chevron {
+  color: var(--text-subtle);
+}
+
 .cursor-diff-chevron:hover {
   background: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="light"] .cursor-diff-chevron:hover {
+  background: var(--surface-hover);
 }
 
 .cursor-diff-file-icon {
@@ -906,11 +1138,19 @@ button.linklike:hover {
   max-width: 360px;
 }
 
+:root[data-theme="light"] .cursor-diff-file-path {
+  color: var(--text);
+}
+
 .cursor-diff-summary {
   font-family: var(--mono);
   font-size: 12px;
   white-space: nowrap;
   opacity: 0.9;
+}
+
+:root[data-theme="light"] .cursor-diff-summary {
+  color: var(--text-subtle);
 }
 
 .cursor-diff-spacer {
@@ -934,6 +1174,16 @@ button.linklike:hover {
   color: rgba(248, 113, 113, 0.95);
 }
 
+:root[data-theme="light"] .cursor-diff-plus,
+:root[data-theme="light"] .cursor-diff-new {
+  color: var(--success);
+}
+
+:root[data-theme="light"] .cursor-diff-minus,
+:root[data-theme="light"] .cursor-diff-deleted {
+  color: var(--error);
+}
+
 .cursor-diff-file-actions {
   display: inline-flex;
   align-items: center;
@@ -954,9 +1204,18 @@ button.linklike:hover {
   border-radius: 6px;
 }
 
+:root[data-theme="light"] .cursor-diff-icon-btn {
+  color: var(--text-subtle);
+}
+
 .cursor-diff-icon-btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.88);
+}
+
+:root[data-theme="light"] .cursor-diff-icon-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .cursor-diff-icon-btn:disabled {
@@ -988,6 +1247,13 @@ button.linklike:hover {
   pointer-events: none;
 }
 
+:root[data-theme="light"] .cursor-diff-tooltip {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+}
+
 .cursor-diff-file-body {
   position: relative;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
@@ -996,8 +1262,17 @@ button.linklike:hover {
   border-radius: 0 0 10px 10px;
 }
 
+:root[data-theme="light"] .cursor-diff-file-body {
+  border-top-color: var(--border-subtle);
+  background: var(--panel);
+}
+
 .cursor-diff-file-new .cursor-diff-file-body {
   background: rgba(100, 116, 70, 0.38);
+}
+
+:root[data-theme="light"] .cursor-diff-file-new .cursor-diff-file-body {
+  background: color-mix(in srgb, var(--success) 12%, var(--panel) 88%);
 }
 
 .cursor-diff-file-new .monaco-editor,
@@ -1014,8 +1289,20 @@ button.linklike:hover {
   background: rgba(127, 29, 29, 0.45);
 }
 
+:root[data-theme="light"] .monaco-editor .cursor-diff-line-add {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+}
+
+:root[data-theme="light"] .monaco-editor .cursor-diff-line-del {
+  background: color-mix(in srgb, var(--error) 16%, transparent);
+}
+
 .cursor-diff-editor-shell {
   border-left: 2px solid rgba(255, 255, 255, 0.12);
+}
+
+:root[data-theme="light"] .cursor-diff-editor-shell {
+  border-left-color: var(--border);
 }
 
 .cursor-diff-file-new .cursor-diff-editor-shell {
@@ -1026,6 +1313,14 @@ button.linklike:hover {
   border-left-color: rgba(248, 113, 113, 0.35);
 }
 
+:root[data-theme="light"] .cursor-diff-file-new .cursor-diff-editor-shell {
+  border-left-color: color-mix(in srgb, var(--success) 55%, var(--border) 45%);
+}
+
+:root[data-theme="light"] .cursor-diff-file-deleted .cursor-diff-editor-shell {
+  border-left-color: color-mix(in srgb, var(--error) 55%, var(--border) 45%);
+}
+
 .cursor-diff-file-active.cursor-diff-file-new .cursor-diff-editor-shell,
 .cursor-diff-file-active.cursor-diff-file-modified .cursor-diff-editor-shell {
   border-left-color: rgba(34, 197, 94, 0.55);
@@ -1033,6 +1328,15 @@ button.linklike:hover {
 
 .cursor-diff-file-active.cursor-diff-file-deleted .cursor-diff-editor-shell {
   border-left-color: rgba(248, 113, 113, 0.55);
+}
+
+:root[data-theme="light"] .cursor-diff-file-active.cursor-diff-file-new .cursor-diff-editor-shell,
+:root[data-theme="light"] .cursor-diff-file-active.cursor-diff-file-modified .cursor-diff-editor-shell {
+  border-left-color: var(--success);
+}
+
+:root[data-theme="light"] .cursor-diff-file-active.cursor-diff-file-deleted .cursor-diff-editor-shell {
+  border-left-color: var(--error);
 }
 
 .cursor-diff-overlay {
@@ -1054,8 +1358,18 @@ button.linklike:hover {
   font-size: 13px;
 }
 
+:root[data-theme="light"] .cursor-diff-overlay-btn {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
 .cursor-diff-overlay-btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme="light"] .cursor-diff-overlay-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
 }
 
 .cursor-diff-overlay-btn-keep {
@@ -1077,7 +1391,7 @@ button.linklike:hover {
 .cursor-demo {
   min-height: 100vh;
   padding: 10px 12px;
-  background: #1e1e1e;
+  background: var(--bg);
 }
 
 .cursor-demo-top {
@@ -1102,8 +1416,16 @@ button.linklike:hover {
   border-radius: 8px;
 }
 
+:root[data-theme="light"] .cursor-demo-tab {
+  color: var(--text-subtle);
+}
+
 .cursor-demo-tab-active {
   color: rgba(255, 255, 255, 0.92);
+}
+
+:root[data-theme="light"] .cursor-demo-tab-active {
+  color: var(--text);
 }
 
 .cursor-demo-pill {
@@ -1113,6 +1435,12 @@ button.linklike:hover {
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.92);
+}
+
+:root[data-theme="light"] .cursor-demo-pill {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
 }
 
 .cursor-demo-actions {
@@ -1131,8 +1459,18 @@ button.linklike:hover {
   font-size: 13px;
 }
 
+:root[data-theme="light"] .cursor-demo-action {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
 .cursor-demo-action:hover {
   background: rgba(255, 255, 255, 0.05);
+}
+
+:root[data-theme="light"] .cursor-demo-action:hover {
+  background: var(--surface-hover);
 }
 
 .cursor-demo-action-primary {
@@ -1141,8 +1479,18 @@ button.linklike:hover {
   color: rgba(255, 255, 255, 0.96);
 }
 
+:root[data-theme="light"] .cursor-demo-action-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-inverse);
+}
+
 .cursor-demo-action-primary:hover {
   background: rgba(59, 130, 246, 0.9);
+}
+
+:root[data-theme="light"] .cursor-demo-action-primary:hover {
+  background: var(--accent-hover);
 }
 
 .cursor-demo-action-ghost {
@@ -1159,8 +1507,8 @@ button.linklike:hover {
 .json {
   white-space: pre-wrap;
   font-size: 12px;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--json-bg);
+  color: var(--json-text);
   padding: 10px;
   border-radius: 6px;
   overflow: auto;
@@ -1373,14 +1721,14 @@ button.linklike:hover {
 }
 
 .tool-output {
-  background: #0b1020;
-  color: #e5e7eb;
-  border-color: rgba(255, 255, 255, 0.08);
+  background: var(--tool-output-bg);
+  color: var(--tool-output-text);
+  border-color: var(--tool-output-border);
 }
 
 @media (prefers-color-scheme: dark) {
   .tool-output {
-    background: #05070d;
+    background: var(--tool-output-bg-strong);
   }
 }
 

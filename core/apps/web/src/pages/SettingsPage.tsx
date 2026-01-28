@@ -70,6 +70,14 @@ import {
   isDesktopApp,
 } from "../utils/desktop";
 import { ensureDesktopNotificationPermission } from "../utils/desktopNotifications";
+import {
+  applyTheme,
+  readCssVar,
+  resolveThemeMode,
+  setStoredTheme,
+  useThemeVariant,
+  type ThemeMode,
+} from "../utils/theme";
 import { useTauriSttModelStatus } from "../utils/useTauriSttModelStatus";
 import { HARNESS_CATALOG, type HarnessCatalogEntry } from "../utils/harnessCatalog";
 import {
@@ -93,7 +101,7 @@ import {
   SECTIONS,
   SUBAGENT_PROMPT_DEFAULT,
 } from "./SettingsPage.constants";
-import { Card, Metric, Row, Toggle } from "./SettingsPage.components";
+import { Card, Metric, Row } from "./SettingsPage.components";
 import type { InstallSession, SectionId } from "./SettingsPage.types";
 import {
   formatAge,
@@ -134,6 +142,9 @@ export default function SettingsPage() {
   const [active, setActive] = useState<SectionId>(() => sectionFromHash(window.location.hash) ?? "general");
   const [query, setQuery] = useState("");
   const supabase = useMemo(() => getSupabaseClient(), []);
+  const [theme, setTheme] = useState<ThemeMode>(() => resolveThemeMode());
+  const themeVariant = useThemeVariant();
+  const qrFgColor = readCssVar("--text", themeVariant === "dark" ? "#d4d4d4" : "#3b3b3b");
 
   const billingReturnPath = useMemo(() => {
     const params = new URLSearchParams(location.search);
@@ -1711,6 +1722,11 @@ export default function SettingsPage() {
     },
     [clientSettingsSaving],
   );
+  const onThemeChange = useCallback((next: ThemeMode) => {
+    setTheme(next);
+    applyTheme(next);
+    setStoredTheme(next);
+  }, []);
 
   const renderMain = () => {
     if (!loaded) return <div className="settings-empty">Loading…</div>;
@@ -1720,6 +1736,22 @@ export default function SettingsPage() {
       return (
         <>
           <Card>
+            <Row
+              title="Theme"
+              description="Match your system setting or force a mode."
+              control={
+                <select
+                  className="settings-control settings-select"
+                  value={theme}
+                  onChange={(event) => onThemeChange(event.target.value as ThemeMode)}
+                  aria-label="Theme mode"
+                >
+                  <option value="system">System</option>
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                </select>
+              }
+            />
             <Row
               title="Default IDE"
               description={isDesktopApp() ? "Used for open-in-editor links." : "Available in the desktop app."}
@@ -2531,7 +2563,7 @@ export default function SettingsPage() {
                   value={JSON.stringify(mobileQr.qr_payload)}
                   size={220}
                   bgColor="transparent"
-                  fgColor="#f5f7ff"
+                  fgColor={qrFgColor}
                 />
                 <div style={{ minWidth: 240 }}>
                   <div className="settings-row-title" style={{ marginBottom: 6 }}>Scan with ctx mobile</div>
@@ -3397,7 +3429,9 @@ export default function SettingsPage() {
                       <div className="settings-row-title settings-harness-title">
                         {h.logoSrc ? (
                           <img
-                            className={`settings-harness-logo ${h.invertInDark ? "wb-invert" : ""}`}
+                            className={`settings-harness-logo ${h.invertInDark ? "wb-invert" : ""} ${
+                              h.invertInLight ? "wb-invert-light" : ""
+                            }`}
                             src={h.logoSrc}
                             alt=""
                           />

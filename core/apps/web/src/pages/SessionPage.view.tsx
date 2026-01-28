@@ -2401,6 +2401,9 @@ export function SessionView({
             }
             harnessLogoSrc={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.logoSrc}
             harnessLogoInvert={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInDark}
+            harnessLogoInvertInLight={
+              HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInLight
+            }
             availableModels={modelOptions}
             currentModelId={currentModelId}
             onSetModelId={async (next) => {

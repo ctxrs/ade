@@ -3,6 +3,7 @@ import Editor from "@monaco-editor/react";
 import { useSessionEntry } from "../state/sessionSupervisor";
 import { daemonFetchRaw } from "../api/client";
 import { guessMonacoLanguage } from "../utils/monacoLanguage";
+import { useThemeVariant } from "../utils/theme";
 
 type OpenResp = {
   buffer_id: string;
@@ -59,6 +60,8 @@ export function FileBufferEditor({
   const [status, setStatus] = useState<SaveStatus>("loading");
   const [conflict, setConflict] = useState<ConflictResp | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  const themeVariant = useThemeVariant();
+  const monacoTheme = themeVariant === "dark" ? "vs-dark" : "vs";
 
   const saveLabel = useMemo(() => {
     if (status === "saving") return "Saving…";
@@ -278,13 +281,13 @@ export function FileBufferEditor({
         </div>
       )}
 
-      <div style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
         <Editor
           height={`${heightPx}px`}
           language={guessMonacoLanguage(path)}
           path={path}
           value={text}
-          theme="vs-dark"
+          theme={monacoTheme}
           options={{
             minimap: { enabled: false },
             fontSize: 12,

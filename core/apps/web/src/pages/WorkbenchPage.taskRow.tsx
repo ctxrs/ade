@@ -161,7 +161,9 @@ export const TaskRow = React.memo(function TaskRow({
           <LayersPlus className="wb-task-harness-multi" size={16} />
         ) : harnesses.length > 0 ? (
           <img
-            className={`wb-task-harness-logo ${harnesses[0].invertInDark ? "wb-invert" : ""}`}
+            className={`wb-task-harness-logo ${harnesses[0].invertInDark ? "wb-invert" : ""} ${
+              harnesses[0].invertInLight ? "wb-invert-light" : ""
+            }`}
             src={harnesses[0].logoSrc}
             alt=""
           />

@@ -82,6 +82,7 @@ export type ActiveSessionProps = SharedProps & {
   harnessLabel: string;
   harnessLogoSrc?: string;
   harnessLogoInvert?: boolean;
+  harnessLogoInvertInLight?: boolean;
 
   availableModels: Array<{ id: string; name?: string }>;
   currentModelId: string;

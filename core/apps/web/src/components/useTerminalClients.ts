@@ -3,6 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import type { TerminalSession } from "@ctx/types";
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { authToken, idToString, resolveDaemonWsBaseUrl } from "../api/client";
+import { readCssVar, useThemeVariant, withAlpha, type ThemeVariant } from "../utils/theme";
 
 export type TerminalConnectionStatus = "connected" | "reconnecting" | "disconnected";
 
@@ -40,6 +41,7 @@ export function useTerminalClients(
 ) {
   const clientsRef = useRef<Map<string, TerminalClient>>(new Map());
   const [, setConnectionVersion] = useState(0);
+  const themeVariant = useThemeVariant();
 
   useEffect(() => {
     const map = clientsRef.current;
@@ -54,7 +56,7 @@ export function useTerminalClients(
         client.exitCode = terminal.exit_code ?? null;
         continue;
       }
-      const client = createClient(terminal, (status, exitCode) => {
+      const client = createClient(terminal, themeVariant, (status, exitCode) => {
         setTerminals((prev) =>
           prev.map((t) =>
             idToString(t.id) === id
@@ -78,7 +80,7 @@ export function useTerminalClients(
         map.delete(id);
       }
     }
-  }, [setTerminals, terminals]);
+  }, [setTerminals, terminals, themeVariant]);
 
   useEffect(() => {
     return () => {
@@ -88,6 +90,13 @@ export function useTerminalClients(
       clientsRef.current.clear();
     };
   }, [workspaceId]);
+
+  useEffect(() => {
+    const theme = terminalTheme(themeVariant);
+    for (const client of clientsRef.current.values()) {
+      client.terminal.setOption("theme", theme);
+    }
+  }, [themeVariant]);
 
   return clientsRef;
 }
@@ -100,20 +109,25 @@ function buildTerminalWsUrl(terminalId: string): string {
   return `${baseUrl}?token=${encodeURIComponent(token)}`;
 }
 
-function terminalTheme() {
-  const styles = getComputedStyle(document.documentElement);
-  const read = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
+function terminalTheme(themeVariant: ThemeVariant) {
+  const read = (name: string, fallback: string) => readCssVar(name, fallback);
+  const accentFallback = themeVariant === "dark" ? "#3794ff" : "#005fb8";
+  const panelFallback = themeVariant === "dark" ? "#252526" : "#f8f8f8";
+  const textFallback = themeVariant === "dark" ? "#d4d4d4" : "#3b3b3b";
+  const accent = read("--accent", accentFallback);
+  const selectionFallback =
+    themeVariant === "dark" ? "rgba(255, 255, 255, 0.2)" : "rgba(0, 0, 0, 0.12)";
+  const selectionAlpha = themeVariant === "dark" ? 0.2 : 0.15;
   return {
-    background: read("--panel", "#252526"),
-    foreground: read("--text", "#d4d4d4"),
-    cursor: read("--text", "#d4d4d4"),
-    selectionBackground: "rgba(255, 255, 255, 0.2)",
+    background: read("--panel", panelFallback),
+    foreground: read("--text", textFallback),
+    cursor: read("--text", textFallback),
+    selectionBackground: withAlpha(accent, selectionAlpha, selectionFallback),
   };
 }
 
 function terminalFontFamily() {
-  const styles = getComputedStyle(document.documentElement);
-  return styles.getPropertyValue("--mono").trim() || "monospace";
+  return readCssVar("--mono", "monospace");
 }
 
 const RECONNECT_BASE_MS = 500;
@@ -124,6 +138,7 @@ const KEEPALIVE_TIMEOUT_MS = 75_000;
 
 function createClient(
   terminal: TerminalSession,
+  themeVariant: ThemeVariant,
   onStatus: (status: TerminalSession["status"], exitCode: number | null) => void,
   onConnectionChange: () => void,
 ): TerminalClient {
@@ -134,7 +149,7 @@ function createClient(
     lineHeight: 1.15,
     scrollback: 2000,
     cursorBlink: true,
-    theme: terminalTheme(),
+    theme: terminalTheme(themeVariant),
   });
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
