@@ -777,7 +777,7 @@ button.linklike:hover {
 }
 
 :root[data-theme="light"] .codeblock {
-  background: color-mix(in srgb, var(--surface-sidebar) 50%, white 50%);
+  background: color-mix(in srgb, var(--surface-sidebar) 20%, white 80%);
 }
 
 .codeblock-toolbar {
