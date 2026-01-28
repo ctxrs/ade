@@ -3603,7 +3603,7 @@
 .composer-ac {
   border-radius: 12px;
   border: 1px solid var(--surface-selected);
-  background: rgba(34, 34, 34, 0.92);
+  background: var(--wb-menu-bg);
   backdrop-filter: blur(10px);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
   overflow: hidden;
@@ -3660,7 +3660,7 @@
   z-index: 1001;
   border-radius: 12px;
   border: 1px solid var(--surface-selected);
-  background: rgba(34, 34, 34, 0.92);
+  background: var(--wb-menu-tooltip-bg);
   backdrop-filter: blur(10px);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
   padding: 10px 12px;
