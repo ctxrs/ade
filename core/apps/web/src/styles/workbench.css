@@ -3508,8 +3508,8 @@
   height: 18px;
   border-radius: 999px;
   border: 1px solid var(--surface-strongest);
-  background: rgba(0, 0, 0, 0.5);
-  color: var(--text-strong);
+  background: var(--overlay);
+  color: var(--text-inverse);
   font-size: 14px;
   line-height: 16px;
   padding: 0;
@@ -3517,7 +3517,7 @@
 }
 
 .wb-attach-thumb-remove:hover {
-  background: rgba(0, 0, 0, 0.65);
+  background: var(--overlay-strong);
 }
 
 .wb-attach-chip {
