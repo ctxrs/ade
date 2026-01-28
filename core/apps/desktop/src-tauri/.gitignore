@@ -2,5 +2,7 @@
 /Cargo.lock
 /bin/context*
 /bin/context-mcp*
+/bin/ctx*
+/bin/ctx-mcp*
 /web/dist/
 /gen/
