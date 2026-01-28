@@ -764,10 +764,10 @@ button.linklike:hover {
 }
 
 .codeblock {
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--surface-sidebar);
   border-radius: 10px;
   margin: 10px 0;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   position: relative;
   overflow: hidden;
   width: 100%;
