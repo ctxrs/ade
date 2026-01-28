@@ -3191,7 +3191,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const rootStyle = useMemo(() => {
     const max = Math.max(170, window.innerWidth - 240);
     const clamped = Math.min(max, Math.max(170, Math.round(sidebarWidth)));
-    const terminalOffset = terminalOpen ? terminalHeight + 6 : 0;
+    const terminalOffset = terminalOpen ? terminalHeight : 0;
     return {
       ["--wb-sidebar-width" as any]: `${clamped}px`,
       ["--wb-terminal-offset" as any]: `${terminalOffset}px`,

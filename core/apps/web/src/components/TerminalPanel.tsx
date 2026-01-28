@@ -693,7 +693,7 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
   const canUnsplit = contextGroupSize > 1;
 
   return (
-    <div className="wb-terminal-panel wb-terminal-panel-inner">
+    <div className="wb-terminal-panel-inner">
       <div className="wb-terminal-body" aria-hidden={!open}>
         <TerminalTabs
           orderedTerminals={orderedTerminals}
