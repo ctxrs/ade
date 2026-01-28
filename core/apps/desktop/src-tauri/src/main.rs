@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -9,8 +10,8 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Row, SqlitePool};
-use tauri::Manager;
 use tauri::Emitter;
+use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tokio::sync::OnceCell;
@@ -67,7 +68,7 @@ fn main() {
                 let registry = window.state::<WorkspaceWindowRegistry>();
                 registry.unregister_window(window.label());
             }
-        })
+        });
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -692,55 +693,67 @@ fn desktop_unregister_workspace_window(
 }
 
 #[tauri::command]
-fn desktop_git_clone(repo_url: String, dest_parent: String) -> Result<String, String> {
-    let repo_url = repo_url.trim().to_string();
-    if repo_url.is_empty() {
-        return Err("repo_url is required".to_string());
-    }
-    let dest_parent = PathBuf::from(dest_parent);
-    if !dest_parent.exists() {
-        return Err(format!(
-            "destination folder does not exist: {}",
-            dest_parent.display()
-        ));
-    }
+async fn desktop_git_clone(repo_url: String, dest_parent: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo_url = repo_url.trim().to_string();
+        if repo_url.is_empty() {
+            return Err("repo_url is required".to_string());
+        }
+        let dest_parent = PathBuf::from(dest_parent);
+        if !dest_parent.exists() {
+            return Err(format!(
+                "destination folder does not exist: {}",
+                dest_parent.display()
+            ));
+        }
 
-    let name = derive_repo_name(&repo_url).ok_or_else(|| "could not derive repo name".to_string())?;
-    let dest = dest_parent.join(&name);
-    if dest.exists() {
-        return Err(format!("destination already exists: {}", dest.display()));
-    }
+        let name =
+            derive_repo_name(&repo_url).ok_or_else(|| "could not derive repo name".to_string())?;
+        let dest = dest_parent.join(&name);
+        if dest.exists() {
+            return Err(format!("destination already exists: {}", dest.display()));
+        }
 
-    let output = Command::new("git")
-        .arg("clone")
-        .arg("--")
-        .arg(&repo_url)
-        .arg(&dest)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("failed to spawn git: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git clone failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(dest.to_string_lossy().to_string())
+        let output = Command::new("git")
+            .arg("clone")
+            .arg("--")
+            .arg(&repo_url)
+            .arg(&dest)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("failed to spawn git: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "git clone failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(dest.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("git clone failed: {e}"))?
 }
 
 #[tauri::command]
-fn desktop_connect_local(
-    app: tauri::AppHandle,
-    state: tauri::State<ConnectionManager>,
-) -> Result<DesktopConnectionInfo, String> {
-    state.disconnect();
-    let data_dir = daemon_data_dir(&app).map_err(to_err)?;
-    let (url, child, systemd_scope) = spawn_daemon(&app, &data_dir).map_err(to_err)?;
-    let auth = read_daemon_auth_with_retry(&data_dir).map_err(to_err)?;
-    state.set_local(url.clone(), auth.token.clone(), child, systemd_scope);
-    Ok(state.info())
+async fn desktop_connect_local(app: tauri::AppHandle) -> Result<DesktopConnectionInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ConnectionManager>();
+        state.disconnect();
+        if let Some((url, token)) = resolve_env_local_daemon(&app).map_err(to_err)? {
+            probe_daemon_health(&url).map_err(to_err)?;
+            state.set_local_external(url, token);
+            return Ok(state.info());
+        }
+        let data_dir = daemon_data_dir(&app).map_err(to_err)?;
+        let (url, child, systemd_scope) = spawn_daemon(&app, &data_dir, false).map_err(to_err)?;
+        let auth = read_daemon_auth_with_retry(&data_dir).map_err(to_err)?;
+        state.set_local(url.clone(), auth.token.clone(), child, systemd_scope);
+        Ok(state.info())
+    })
+    .await
+    .map_err(|e| format!("failed to connect to daemon: {e}"))?
 }
 
 #[tauri::command]
@@ -801,29 +814,44 @@ fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) ->
     if !matches!(state.info().kind, DesktopConnectionKind::None) {
         return Ok(());
     }
+    if let Some((url, token)) = resolve_env_local_daemon(app)? {
+        probe_daemon_health(&url)?;
+        state.set_local_external(url, token);
+        return Ok(());
+    }
     let data_dir = daemon_data_dir(app)?;
-    let (url, child, systemd_scope) = spawn_daemon(app, &data_dir)?;
+    let (url, child, systemd_scope) = spawn_daemon(app, &data_dir, true)?;
     let auth = read_daemon_auth_with_retry(&data_dir)?;
     state.set_local(url, auth.token, child, systemd_scope);
     Ok(())
 }
 
 #[tauri::command]
-fn desktop_daemon_request(
-    state: tauri::State<ConnectionManager>,
+async fn desktop_daemon_request(
+    app: tauri::AppHandle,
     req: DesktopDaemonRequest,
 ) -> Result<DesktopHttpResponse, String> {
-    state.daemon_request(req).map_err(to_err)
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ConnectionManager>();
+        state.daemon_request(req).map_err(to_err)
+    })
+    .await
+    .map_err(|e| format!("daemon request failed: {e}"))?
 }
 
 #[tauri::command]
-fn desktop_upload_blob(
-    state: tauri::State<ConnectionManager>,
+async fn desktop_upload_blob(
+    app: tauri::AppHandle,
     bytes: Vec<u8>,
     mime_type: String,
     name: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    state.upload_blob(bytes, mime_type, name).map_err(to_err)
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ConnectionManager>();
+        state.upload_blob(bytes, mime_type, name).map_err(to_err)
+    })
+    .await
+    .map_err(|e| format!("blob upload failed: {e}"))?
 }
 
 #[tauri::command]
@@ -1636,6 +1664,7 @@ struct ConnectionState {
 
 enum ActiveConnection {
     Local(LocalConnection),
+    LocalExternal(LocalExternalConnection),
     Ssh(SshConnection),
 }
 
@@ -1644,6 +1673,11 @@ struct LocalConnection {
     token: String,
     child: Child,
     systemd_scope: bool,
+}
+
+struct LocalExternalConnection {
+    base_url: String,
+    token: String,
 }
 
 struct SshConnection {
@@ -1661,6 +1695,11 @@ impl ConnectionManager {
         match &guard.active {
             None => DesktopConnectionInfo { kind: DesktopConnectionKind::None, base_url: None, token: None },
             Some(ActiveConnection::Local(c)) => DesktopConnectionInfo {
+                kind: DesktopConnectionKind::Local,
+                base_url: Some(c.base_url.clone()),
+                token: Some(c.token.clone()),
+            },
+            Some(ActiveConnection::LocalExternal(c)) => DesktopConnectionInfo {
                 kind: DesktopConnectionKind::Local,
                 base_url: Some(c.base_url.clone()),
                 token: Some(c.token.clone()),
@@ -1691,6 +1730,7 @@ impl ConnectionManager {
                     }
                     let _ = try_kill_child(c.child);
                 }
+                ActiveConnection::LocalExternal(_) => {}
                 ActiveConnection::Ssh(c) => {
                     let _ = try_kill_child(c.tunnel);
                 }
@@ -1706,6 +1746,11 @@ impl ConnectionManager {
             child,
             systemd_scope,
         }));
+    }
+
+    fn set_local_external(&self, base_url: String, token: String) {
+        let mut guard = self.0.lock().expect("connection manager lock");
+        guard.active = Some(ActiveConnection::LocalExternal(LocalExternalConnection { base_url, token }));
     }
 
     fn set_ssh(&self, base_url: String, token: Option<String>, tunnel: Child) {
@@ -1729,6 +1774,7 @@ impl ConnectionManager {
                 .ok_or_else(|| anyhow!("not connected (open a workspace first)"))?;
             match active {
                 ActiveConnection::Local(c) => (c.base_url.clone(), Some(c.token.clone())),
+                ActiveConnection::LocalExternal(c) => (c.base_url.clone(), Some(c.token.clone())),
                 ActiveConnection::Ssh(c) => (c.base_url.clone(), c.token.clone()),
             }
         };
@@ -1788,6 +1834,7 @@ impl ConnectionManager {
                 .ok_or_else(|| anyhow!("not connected (open a workspace first)"))?;
             match active {
                 ActiveConnection::Local(c) => (c.base_url.clone(), Some(c.token.clone())),
+                ActiveConnection::LocalExternal(c) => (c.base_url.clone(), Some(c.token.clone())),
                 ActiveConnection::Ssh(c) => (c.base_url.clone(), c.token.clone()),
             }
         };
@@ -2362,6 +2409,43 @@ fn read_daemon_auth_with_retry(data_dir: &Path) -> Result<DaemonAuthFile> {
     }
 }
 
+fn read_daemon_auth_if_present(data_dir: &Path) -> Result<Option<DaemonAuthFile>> {
+    let path = data_dir.join(DAEMON_AUTH_FILENAME);
+    match std::fs::read(&path) {
+        Ok(bytes) => Ok(Some(parse_daemon_auth(&bytes, &path)?)),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(anyhow::Error::new(err).context(format!(
+            "reading daemon auth file {}",
+            path.display()
+        ))),
+    }
+}
+
+fn resolve_env_local_daemon(app: &tauri::AppHandle) -> Result<Option<(String, String)>> {
+    let url = match std::env::var("CTX_DESKTOP_DAEMON_URL") {
+        Ok(v) => v.trim().to_string(),
+        Err(_) => return Ok(None),
+    };
+    if url.is_empty() {
+        return Ok(None);
+    }
+    let token = match std::env::var("CTX_DESKTOP_DAEMON_TOKEN") {
+        Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => {
+            let data_dir = daemon_data_dir(app)?;
+            match read_daemon_auth_if_present(&data_dir)? {
+                Some(auth) if auth.daemon_url.as_deref() == Some(url.as_str()) => auth.token,
+                _ => {
+                    anyhow::bail!(
+                        "CTX_DESKTOP_DAEMON_URL is set but no matching token found (set CTX_DESKTOP_DAEMON_TOKEN)"
+                    );
+                }
+            }
+        }
+    };
+    Ok(Some((url, token)))
+}
+
 fn read_remote_daemon_auth(
     host: &str,
     user: Option<&str>,
@@ -2491,6 +2575,40 @@ fn ssh_log_snippet(stderr_log: &std::sync::Arc<std::sync::Mutex<String>>) -> Str
         String::new()
     } else {
         snippet.to_string()
+    }
+}
+
+fn truncate_tail_chars(value: &str, max_chars: usize) -> String {
+    let total = value.chars().count();
+    if total <= max_chars {
+        return value.to_string();
+    }
+    let skip = total - max_chars;
+    let mut idx = 0;
+    let mut seen = 0;
+    for (i, _) in value.char_indices() {
+        if seen == skip {
+            idx = i;
+            break;
+        }
+        seen += 1;
+    }
+    value[idx..].to_string()
+}
+
+fn daemon_stderr_snippet(path: Option<&Path>) -> String {
+    let Some(path) = path else {
+        return String::new();
+    };
+    let Ok(bytes) = std::fs::read(path) else {
+        return String::new();
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        truncate_tail_chars(trimmed, 1200)
     }
 }
 
@@ -2675,26 +2793,31 @@ fn stop_systemd_scope() {
     }
 }
 
-fn spawn_daemon(app: &tauri::AppHandle, data_dir: &Path) -> Result<(String, Child, bool)> {
+fn spawn_daemon(
+    app: &tauri::AppHandle,
+    data_dir: &Path,
+    wait_for_health: bool,
+) -> Result<(String, Child, bool)> {
     let prefer_systemd_scope = should_use_systemd_scope();
     if prefer_systemd_scope {
-        match spawn_daemon_with_mode(app, data_dir, true) {
+        match spawn_daemon_with_mode(app, data_dir, true, wait_for_health) {
             Ok(v) => return Ok(v),
             Err(e) => {
                 // Fall back to a direct child process when systemd user services are unavailable
                 // (common in headless/dev environments).
-                return spawn_daemon_with_mode(app, data_dir, false)
+                return spawn_daemon_with_mode(app, data_dir, false, wait_for_health)
                     .with_context(|| format!("spawning ctx daemon via systemd-run failed: {e:#}"));
             }
         }
     }
-    spawn_daemon_with_mode(app, data_dir, false)
+    spawn_daemon_with_mode(app, data_dir, false, wait_for_health)
 }
 
 fn spawn_daemon_with_mode(
     app: &tauri::AppHandle,
     data_dir: &Path,
     use_systemd_scope: bool,
+    wait_for_health: bool,
 ) -> Result<(String, Child, bool)> {
     let ctx_bin = resource_bin(app, "ctx")
         .or_else(|| manifest_bin("ctx"))
@@ -2762,11 +2885,62 @@ fn spawn_daemon_with_mode(
         .arg("--data-dir")
         .arg(data_dir.to_string_lossy().to_string())
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit());
+        .stdout(Stdio::null());
 
-    let child = cmd.spawn().context("spawning ctx daemon")?;
-    probe_local_daemon_health_with_retry(&base_url).context("waiting for daemon health")?;
+    let mut stderr_path: Option<PathBuf> = None;
+    if use_systemd_scope {
+        cmd.stderr(Stdio::inherit());
+    } else {
+        let log_dir = data_dir.join("logs");
+        if let Err(err) = std::fs::create_dir_all(&log_dir) {
+            eprintln!("failed to create daemon log dir {}: {err}", log_dir.display());
+            cmd.stderr(Stdio::inherit());
+        } else {
+            let path = log_dir.join("desktop-daemon-stderr.log");
+            match OpenOptions::new().create(true).append(true).open(&path) {
+                Ok(file) => {
+                    stderr_path = Some(path);
+                    cmd.stderr(file);
+                }
+                Err(err) => {
+                    eprintln!("failed to open daemon stderr log: {err}");
+                    cmd.stderr(Stdio::inherit());
+                }
+            }
+        }
+    }
+
+    let mut child = cmd.spawn().context("spawning ctx daemon")?;
+    if wait_for_health {
+        if let Err(err) = probe_local_daemon_health_with_retry(&base_url) {
+            if let Ok(Some(status)) = child.try_wait() {
+                let stderr = daemon_stderr_snippet(stderr_path.as_deref());
+                let mut msg = format!("{err:#}; daemon exited ({status})");
+                if !stderr.is_empty() {
+                    msg.push_str(&format!("; stderr: {stderr}"));
+                }
+                return Err(anyhow!(msg));
+            }
+            let stderr = daemon_stderr_snippet(stderr_path.as_deref());
+            if !stderr.is_empty() {
+                return Err(anyhow!("{err:#}; stderr: {stderr}"));
+            }
+            return Err(err).context("waiting for daemon health");
+        }
+    } else {
+        let base_url = base_url.clone();
+        let stderr_path = stderr_path.clone();
+        std::thread::spawn(move || {
+            if let Err(err) = probe_local_daemon_health_with_retry(&base_url) {
+                let stderr = daemon_stderr_snippet(stderr_path.as_deref());
+                if stderr.is_empty() {
+                    eprintln!("ctx daemon health check failed after spawn: {err:#}");
+                } else {
+                    eprintln!("ctx daemon health check failed after spawn: {err:#}; stderr: {stderr}");
+                }
+            }
+        });
+    }
     Ok((base_url, child, use_systemd_scope))
 }
 
