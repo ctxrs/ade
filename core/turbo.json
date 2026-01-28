@@ -53,40 +53,6 @@
       ],
       "outputs": []
     },
-    "native:check": {
-      "inputs": [
-        "apps/native/**",
-        "crates/**"
-      ],
-      "outputs": []
-    },
-    "native:check:automation": {
-      "dependsOn": [
-        "native:check"
-      ],
-      "inputs": [
-        "apps/native/**",
-        "crates/**"
-      ],
-      "outputs": []
-    },
-    "native:test": {
-      "dependsOn": [
-        "native:check"
-      ],
-      "inputs": [
-        "apps/native/**",
-        "crates/**"
-      ],
-      "outputs": []
-    },
-    "native:test:automation": {
-      "inputs": [
-        "apps/native/**",
-        "crates/**"
-      ],
-      "outputs": []
-    },
     "ios-native:build": {
       "inputs": [
         "apps/ios-native/**"

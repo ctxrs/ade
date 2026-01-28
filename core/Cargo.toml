@@ -47,11 +47,6 @@ tokio-stream = "0.1"
 tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-gpui = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-gpui-component = { git = "https://github.com/ctxrs/gpui-component", rev = "b8c6941924cf1c02beea4d6e0d2dd136bbfa9833", version = "0.5.0" }
-gpui-component-macros = { git = "https://github.com/ctxrs/gpui-component", rev = "b8c6941924cf1c02beea4d6e0d2dd136bbfa9833", version = "0.5.0" }
-gpui-component-assets = { git = "https://github.com/ctxrs/gpui-component", rev = "b8c6941924cf1c02beea4d6e0d2dd136bbfa9833", version = "0.5.0" }
-gpui-macros = "0.2.2"
 sum-tree = { version = "0.2.0", package = "zed-sum-tree" }
 lsp-types = { version = "0.97.0", features = ["proposed"] }
 notify = "7.0.0"
@@ -65,19 +60,3 @@ smol = "2"
 log = "0.4"
 uuid = { version = "1", features = ["v4", "serde"] }
 sysinfo = "0.30"
-
-[patch."https://github.com/zed-industries/zed"]
-gpui = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-gpui_tokio = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-gpui_macros = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-collections = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-http_client = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-media = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-refineable = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-sum_tree = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-util = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-util_macros = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-zlog = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-ztracing = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-ztracing_macro = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
-perf = { git = "https://github.com/ctxrs/zed", rev = "0a53617e04a4a1a3efaa40d036e22a9026ef83f3" }
