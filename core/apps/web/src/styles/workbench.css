@@ -15,8 +15,8 @@
   --wb-menu-tooltip-bg: rgba(34, 34, 34, 0.96);
   --wb-harness-input-bg: rgba(0, 0, 0, 0.18);
   --wb-track-field-bg: rgba(0, 0, 0, 0.15);
-  --wb-artifacts-bg: rgba(14, 14, 14, 0.9);
-  --wb-artifacts-header-bg: rgba(20, 20, 20, 0.95);
+  --wb-artifacts-bg: var(--surface-sidebar);
+  --wb-artifacts-header-bg: var(--surface-sidebar);
   --wb-artifact-preview-bg: rgba(0, 0, 0, 0.35);
   --wb-artifact-modal-bg: rgba(18, 18, 18, 0.96);
   --wb-artifact-modal-header-bg: rgba(12, 12, 12, 0.9);
@@ -40,8 +40,8 @@
   --wb-menu-tooltip-bg: color-mix(in srgb, var(--panel) 96%, transparent);
   --wb-harness-input-bg: var(--surface-soft);
   --wb-track-field-bg: var(--surface-soft);
-  --wb-artifacts-bg: var(--panel);
-  --wb-artifacts-header-bg: var(--panel-2);
+  --wb-artifacts-bg: var(--surface-sidebar);
+  --wb-artifacts-header-bg: var(--surface-sidebar);
   --wb-artifact-preview-bg: var(--surface-soft);
   --wb-artifact-modal-bg: var(--panel);
   --wb-artifact-modal-header-bg: var(--panel-2);
@@ -3829,6 +3829,7 @@
 .wb-right-pane {
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 0;
   min-width: 0;
   overflow: auto;
@@ -4134,7 +4135,7 @@
   display: flex;
   flex-direction: column;
   background: var(--wb-artifacts-bg);
-  border-left: 1px solid var(--border);
+  border-left: none;
 }
 
 .wb-artifacts-top {
@@ -4142,8 +4143,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--border);
-  background: var(--wb-artifacts-header-bg);
+  border-bottom: none;
+  background: inherit;
 }
 
 .wb-artifacts-title {
