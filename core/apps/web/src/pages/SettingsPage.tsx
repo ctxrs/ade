@@ -101,7 +101,7 @@ import {
   SECTIONS,
   SUBAGENT_PROMPT_DEFAULT,
 } from "./SettingsPage.constants";
-import { Card, Metric, Row } from "./SettingsPage.components";
+import { Card, Metric, Row, Toggle } from "./SettingsPage.components";
 import type { InstallSession, SectionId } from "./SettingsPage.types";
 import {
   formatAge,
