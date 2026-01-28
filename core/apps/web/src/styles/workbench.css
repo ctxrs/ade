@@ -3309,6 +3309,7 @@
   align-items: baseline;
   gap: 6px;
   padding: 0 2px 4px;
+  margin-top: 2px;
   font-size: 12px;
   line-height: 1;
   font-style: italic;
