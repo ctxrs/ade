@@ -4,9 +4,17 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build"
+    "build": "tauri build",
+    "test:automation": "wdio run automation/wdio.conf.cjs"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.9.6"
+    "@crabnebula/tauri-driver": "^2.0.8",
+    "@crabnebula/test-runner-backend": "^0.1.18",
+    "@tauri-apps/cli": "^2.9.6",
+    "@wdio/cli": "^9.8.1",
+    "@wdio/local-runner": "^9.8.1",
+    "@wdio/mocha-framework": "^9.8.1",
+    "@wdio/spec-reporter": "^9.8.1",
+    "webdriverio": "^9.8.1"
   }
 }

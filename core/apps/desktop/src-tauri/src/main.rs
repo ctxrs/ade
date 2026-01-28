@@ -12,13 +12,15 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{Row, SqlitePool};
 use tauri::Emitter;
 use tauri::Manager;
+#[cfg(feature = "automation")]
+use tauri_plugin_automation::init as automation_init;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tokio::sync::OnceCell;
 use url::Url;
 
 fn main() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .manage(ConnectionManager::default())
         .manage(DeepLinkTokenStore::default())
         .manage(WorkspaceWindowRegistry::default())
@@ -69,6 +71,13 @@ fn main() {
                 registry.unregister_window(window.label());
             }
         });
+
+    #[cfg(feature = "automation")]
+    {
+        builder = builder.plugin(automation_init());
+    }
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
