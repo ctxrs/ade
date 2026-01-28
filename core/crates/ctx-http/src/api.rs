@@ -1159,6 +1159,10 @@ async fn get_artifact(
     );
     resp.headers_mut()
         .insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    resp.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=31536000, immutable"),
+    );
     if let Ok(value) = HeaderValue::from_str(&content_length.to_string()) {
         resp.headers_mut().insert(header::CONTENT_LENGTH, value);
     }
