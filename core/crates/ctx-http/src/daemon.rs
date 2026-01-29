@@ -36,7 +36,7 @@ use crate::installer;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
 use crate::mobile_tunnel::MobileTunnelManager;
 use crate::ops_events::OpsEvents;
-use crate::perf_telemetry::PerfTelemetry;
+use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::provider_accounts;
 use crate::provider_child_reclassifier;
 use crate::provider_debug::apply_acp_heap_profile_env;
@@ -165,7 +165,7 @@ fn turn_from_event(event: &SessionEvent, message: Option<&Message>) -> Option<Se
 }
 
 #[cfg(test)]
-mod tests {
+mod cache_sweep_tests {
     use super::{active_head_projection_should_flush, active_head_projection_wait_duration};
     use std::time::{Duration, Instant};
 
@@ -224,6 +224,29 @@ mod tests {
     }
 }
 
+#[derive(Debug)]
+pub struct TimedEntry<T> {
+    pub(crate) value: T,
+    pub(crate) last_access: Instant,
+}
+
+impl<T> TimedEntry<T> {
+    pub(crate) fn new(value: T) -> Self {
+        Self {
+            value,
+            last_access: Instant::now(),
+        }
+    }
+
+    pub(crate) fn touch(&mut self) {
+        self.last_access = Instant::now();
+    }
+
+    pub(crate) fn touch_at(&mut self, now: Instant) {
+        self.last_access = now;
+    }
+}
+
 pub struct AppState {
     pub data_root: PathBuf,
     pub tool_output_spool_enabled: bool,
@@ -234,9 +257,10 @@ pub struct AppState {
     pub provider_matrix_cache: Mutex<crate::provider_matrix::ProviderMatrixCache>,
     pub provider_options_cache: Mutex<HashMap<String, CachedProviderOptions>>,
     pub provider_verify_cache: Mutex<HashMap<String, CachedProviderVerify>>,
-    pub file_completions_cache: Mutex<HashMap<WorktreeId, CachedFileCompletions>>,
-    pub workspace_file_completions_cache: Mutex<HashMap<WorkspaceId, CachedFileCompletions>>,
-    pub git_status_snapshots: Mutex<HashMap<WorktreeId, GitStatusSnapshotCacheEntry>>,
+    pub file_completions_cache: Mutex<HashMap<WorktreeId, TimedEntry<CachedFileCompletions>>>,
+    pub workspace_file_completions_cache:
+        Mutex<HashMap<WorkspaceId, TimedEntry<CachedFileCompletions>>>,
+    pub git_status_snapshots: Mutex<HashMap<WorktreeId, TimedEntry<GitStatusSnapshotCacheEntry>>>,
     pub git_status_watchers: Mutex<HashSet<WorktreeId>>,
     pub daemon_url: String,
     pub auth_token: Option<String>,
@@ -257,17 +281,18 @@ pub struct AppState {
     pub resource_sampler: Mutex<ResourceSampler>,
     pub workspace_active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
     pub workspace_active_snapshot_cache:
-        Mutex<HashMap<WorkspaceId, WorkspaceActiveSnapshotCacheEntry>>,
-    pub workspace_active_heads_cache: Mutex<HashMap<WorkspaceId, WorkspaceActiveHeadCacheEntry>>,
+        Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveSnapshotCacheEntry>>>,
+    pub workspace_active_heads_cache:
+        Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveHeadCacheEntry>>>,
     pub session_head_cache:
-        Mutex<HashMap<SessionId, HashMap<SessionHeadCacheKey, SessionHeadSnapshot>>>,
+        Mutex<HashMap<SessionId, TimedEntry<HashMap<SessionHeadCacheKey, SessionHeadSnapshot>>>>,
     pub terminals: Arc<TerminalManager>,
     pub mobile_tunnel: MobileTunnelManager,
     pub web_sessions: Arc<WebSessionManager>,
     pub merge_queue_notify: Arc<Notify>,
-    schedulers: Mutex<HashMap<SessionId, mpsc::Sender<SchedulerCommand>>>,
-    broadcasters: Mutex<HashMap<SessionId, broadcast::Sender<SessionEvent>>>,
-    session_event_heads: Mutex<HashMap<SessionId, watch::Sender<i64>>>,
+    schedulers: Mutex<HashMap<SessionId, TimedEntry<mpsc::Sender<SchedulerCommand>>>>,
+    broadcasters: Mutex<HashMap<SessionId, TimedEntry<broadcast::Sender<SessionEvent>>>>,
+    session_event_heads: Mutex<HashMap<SessionId, TimedEntry<watch::Sender<i64>>>>,
     active_head_projections: Mutex<HashMap<SessionId, ActiveHeadProjectionEntry>>,
     active_task_refreshes: Mutex<HashMap<TaskId, ActiveTaskRefreshEntry>>,
     lsp_diag_broadcaster: broadcast::Sender<serde_json::Value>,
@@ -275,8 +300,8 @@ pub struct AppState {
     running_sessions: Mutex<HashSet<SessionId>>,
     installs: Mutex<HashMap<InstallId, InstallState>>,
     pub edit_plans: Mutex<HashMap<EditPlanId, EditPlan>>,
-    session_meta_cache: Mutex<HashMap<SessionId, Session>>,
-    worktree_bootstrap_gates: Mutex<HashMap<WorktreeId, WorktreeBootstrapGate>>,
+    session_meta_cache: Mutex<HashMap<SessionId, TimedEntry<Session>>>,
+    worktree_bootstrap_gates: Mutex<HashMap<WorktreeId, TimedEntry<WorktreeBootstrapGate>>>,
 }
 
 struct WorktreeBootstrapGate {
@@ -331,6 +356,72 @@ struct ActiveHeadProjectionEntry {
 
 struct ActiveTaskRefreshEntry {
     generation: u64,
+}
+
+const DEFAULT_SESSION_CACHE_TTL_HOURS: u64 = 24;
+const DEFAULT_WORKSPACE_CACHE_TTL_DAYS: u64 = 7;
+const DEFAULT_CACHE_SWEEP_INTERVAL_SECS: u64 = 60 * 60;
+
+#[derive(Clone, Copy, Debug)]
+struct CacheSweepConfig {
+    session_ttl: Duration,
+    workspace_ttl: Duration,
+    interval: Duration,
+}
+
+impl CacheSweepConfig {
+    fn from_env() -> Self {
+        let session_ttl_hours = std::env::var("CTX_SESSION_CACHE_TTL_HOURS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_SESSION_CACHE_TTL_HOURS);
+        let workspace_ttl_days = std::env::var("CTX_WORKSPACE_CACHE_TTL_DAYS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_WORKSPACE_CACHE_TTL_DAYS);
+        let interval_secs = std::env::var("CTX_CACHE_SWEEP_INTERVAL_SECS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_CACHE_SWEEP_INTERVAL_SECS);
+        Self {
+            session_ttl: Duration::from_secs(session_ttl_hours * 60 * 60),
+            workspace_ttl: Duration::from_secs(workspace_ttl_days * 24 * 60 * 60),
+            interval: Duration::from_secs(interval_secs.max(30)),
+        }
+    }
+}
+
+#[derive(Default, Debug)]
+struct CacheSweepStats {
+    session_head_evicted: usize,
+    session_meta_evicted: usize,
+    schedulers_evicted: usize,
+    broadcasters_evicted: usize,
+    session_event_heads_evicted: usize,
+    file_completions_evicted: usize,
+    workspace_file_completions_evicted: usize,
+    git_status_evicted: usize,
+    workspace_snapshot_evicted: usize,
+    workspace_heads_evicted: usize,
+    worktree_bootstrap_evicted: usize,
+    workspace_stores_evicted: usize,
+}
+
+impl CacheSweepStats {
+    fn total_evicted(&self) -> usize {
+        self.session_head_evicted
+            + self.session_meta_evicted
+            + self.schedulers_evicted
+            + self.broadcasters_evicted
+            + self.session_event_heads_evicted
+            + self.file_completions_evicted
+            + self.workspace_file_completions_evicted
+            + self.git_status_evicted
+            + self.workspace_snapshot_evicted
+            + self.workspace_heads_evicted
+            + self.worktree_bootstrap_evicted
+            + self.workspace_stores_evicted
+    }
 }
 
 impl AppState {
@@ -509,38 +600,54 @@ impl AppState {
         &self,
         workspace_id: WorkspaceId,
     ) -> Option<(i64, i64)> {
-        let cache = self.workspace_active_snapshot_cache.lock().await;
-        cache
-            .get(&workspace_id)
-            .map(|entry| (entry.snapshot.snapshot_rev, entry.snapshot.archived_rev))
+        let mut cache = self.workspace_active_snapshot_cache.lock().await;
+        cache.get_mut(&workspace_id).map(|entry| {
+            entry.touch();
+            (
+                entry.value.snapshot.snapshot_rev,
+                entry.value.snapshot.archived_rev,
+            )
+        })
     }
 
     pub async fn cached_workspace_active_snapshot(
         &self,
         workspace_id: WorkspaceId,
     ) -> Option<WorkspaceActiveSnapshot> {
-        let cache = self.workspace_active_snapshot_cache.lock().await;
-        cache.get(&workspace_id).map(|entry| entry.snapshot.clone())
+        let mut cache = self.workspace_active_snapshot_cache.lock().await;
+        cache.get_mut(&workspace_id).map(|entry| {
+            entry.touch();
+            entry.value.snapshot.clone()
+        })
     }
 
     pub async fn cache_workspace_active_snapshot(&self, snapshot: WorkspaceActiveSnapshot) {
         let workspace_id = snapshot.workspace_id;
         let mut cache = self.workspace_active_snapshot_cache.lock().await;
-        cache.insert(workspace_id, WorkspaceActiveSnapshotCacheEntry { snapshot });
+        cache.insert(
+            workspace_id,
+            TimedEntry::new(WorkspaceActiveSnapshotCacheEntry { snapshot }),
+        );
     }
 
     pub async fn cached_workspace_active_heads(
         &self,
         workspace_id: WorkspaceId,
     ) -> Option<WorkspaceActiveHeadBatch> {
-        let cache = self.workspace_active_heads_cache.lock().await;
-        cache.get(&workspace_id).map(|entry| entry.batch.clone())
+        let mut cache = self.workspace_active_heads_cache.lock().await;
+        cache.get_mut(&workspace_id).map(|entry| {
+            entry.touch();
+            entry.value.batch.clone()
+        })
     }
 
     pub async fn cache_workspace_active_heads(&self, batch: WorkspaceActiveHeadBatch) {
         let workspace_id = batch.workspace_id;
         let mut cache = self.workspace_active_heads_cache.lock().await;
-        cache.insert(workspace_id, WorkspaceActiveHeadCacheEntry { batch });
+        cache.insert(
+            workspace_id,
+            TimedEntry::new(WorkspaceActiveHeadCacheEntry { batch }),
+        );
     }
 
     pub async fn ensure_workspace_active_snapshot_hydrated(&self, workspace_id: WorkspaceId) {
@@ -618,11 +725,12 @@ impl AppState {
         limit: u32,
         include_events: bool,
     ) -> Option<SessionHeadSnapshot> {
-        let cache = self.session_head_cache.lock().await;
+        let mut cache = self.session_head_cache.lock().await;
         cache
-            .get(&session_id)
-            .and_then(|by_key| {
-                by_key.get(&SessionHeadCacheKey {
+            .get_mut(&session_id)
+            .and_then(|entry| {
+                entry.touch();
+                entry.value.get(&SessionHeadCacheKey {
                     limit,
                     include_events,
                 })
@@ -638,7 +746,11 @@ impl AppState {
         snapshot: SessionHeadSnapshot,
     ) {
         let mut cache = self.session_head_cache.lock().await;
-        cache.entry(session_id).or_insert_with(HashMap::new).insert(
+        let entry = cache
+            .entry(session_id)
+            .or_insert_with(|| TimedEntry::new(HashMap::new()));
+        entry.touch();
+        entry.value.insert(
             SessionHeadCacheKey {
                 limit,
                 include_events,
@@ -649,12 +761,12 @@ impl AppState {
 
     pub async fn get_broadcaster(&self, session_id: SessionId) -> broadcast::Sender<SessionEvent> {
         let mut map = self.broadcasters.lock().await;
-        map.entry(session_id)
-            .or_insert_with(|| {
-                let (tx, _) = broadcast::channel(256);
-                tx
-            })
-            .clone()
+        let entry = map.entry(session_id).or_insert_with(|| {
+            let (tx, _) = broadcast::channel(256);
+            TimedEntry::new(tx)
+        });
+        entry.touch();
+        entry.value.clone()
     }
 
     pub async fn subscribe_session_event_head(
@@ -662,11 +774,12 @@ impl AppState {
         session_id: SessionId,
     ) -> watch::Receiver<i64> {
         let mut map = self.session_event_heads.lock().await;
-        if let Some(tx) = map.get(&session_id) {
-            return tx.subscribe();
+        if let Some(entry) = map.get_mut(&session_id) {
+            entry.touch();
+            return entry.value.subscribe();
         }
         let (tx, rx) = watch::channel::<i64>(0);
-        map.insert(session_id, tx);
+        map.insert(session_id, TimedEntry::new(tx));
         rx
     }
 
@@ -680,9 +793,10 @@ impl AppState {
         let mut map = self.session_event_heads.lock().await;
         let sender = map.entry(event.session_id).or_insert_with(|| {
             let (tx, _rx) = watch::channel::<i64>(0);
-            tx
+            TimedEntry::new(tx)
         });
-        let _ = sender.send(event.seq);
+        sender.touch();
+        let _ = sender.value.send(event.seq);
         if !matches!(
             event.event_type,
             SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
@@ -696,8 +810,11 @@ impl AppState {
 
     async fn update_workspace_active_snapshot_for_event(self: &Arc<Self>, event: &SessionEvent) {
         let session = {
-            let cache = self.session_meta_cache.lock().await;
-            cache.get(&event.session_id).cloned()
+            let mut cache = self.session_meta_cache.lock().await;
+            cache.get_mut(&event.session_id).map(|entry| {
+                entry.touch();
+                entry.value.clone()
+            })
         };
         let session = match session {
             Some(session) => session,
@@ -972,7 +1089,7 @@ impl AppState {
 
     pub async fn remember_session_meta(&self, session: &Session) {
         let mut cache = self.session_meta_cache.lock().await;
-        cache.insert(session.id, session.clone());
+        cache.insert(session.id, TimedEntry::new(session.clone()));
     }
 
     pub async fn refresh_session_head_cache(&self, session_id: SessionId) {
@@ -1013,10 +1130,10 @@ impl AppState {
         let mut map = self.worktree_bootstrap_gates.lock().await;
         map.insert(
             worktree_id,
-            WorktreeBootstrapGate {
+            TimedEntry::new(WorktreeBootstrapGate {
                 wait_for_completion,
                 done_tx,
-            },
+            }),
         );
     }
 
@@ -1026,25 +1143,430 @@ impl AppState {
             map.remove(&worktree_id)
         };
         if let Some(gate) = gate {
-            let _ = gate.done_tx.send(true);
+            let _ = gate.value.done_tx.send(true);
         }
     }
 
     pub async fn wait_for_worktree_bootstrap(&self, worktree_id: WorktreeId) {
         let mut done_rx = {
-            let map = self.worktree_bootstrap_gates.lock().await;
-            let Some(gate) = map.get(&worktree_id) else {
+            let mut map = self.worktree_bootstrap_gates.lock().await;
+            let Some(gate) = map.get_mut(&worktree_id) else {
                 return;
             };
-            if !gate.wait_for_completion {
+            gate.touch();
+            if !gate.value.wait_for_completion {
                 return;
             }
-            gate.done_tx.subscribe()
+            gate.value.done_tx.subscribe()
         };
         if *done_rx.borrow() {
             return;
         }
         let _ = done_rx.changed().await;
+    }
+
+    pub async fn cleanup_session(&self, session_id: SessionId) {
+        self.workspace_active_snapshot
+            .remove_session(session_id)
+            .await;
+        {
+            let mut cache = self.session_head_cache.lock().await;
+            cache.remove(&session_id);
+        }
+        {
+            let mut map = self.schedulers.lock().await;
+            map.remove(&session_id);
+        }
+        {
+            let mut map = self.broadcasters.lock().await;
+            map.remove(&session_id);
+        }
+        {
+            let mut map = self.session_event_heads.lock().await;
+            map.remove(&session_id);
+        }
+        {
+            let mut map = self.active_head_projections.lock().await;
+            map.remove(&session_id);
+        }
+        {
+            let mut set = self.running_sessions.lock().await;
+            set.remove(&session_id);
+        }
+        {
+            let mut cache = self.session_meta_cache.lock().await;
+            cache.remove(&session_id);
+        }
+    }
+
+    pub async fn cleanup_workspace(&self, workspace_id: WorkspaceId) {
+        let session_ids = {
+            let cache = self.session_meta_cache.lock().await;
+            cache
+                .iter()
+                .filter_map(|(session_id, entry)| {
+                    if entry.value.workspace_id == workspace_id {
+                        Some(*session_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        for session_id in session_ids {
+            self.cleanup_session(session_id).await;
+        }
+        {
+            let mut cache = self.workspace_active_snapshot_cache.lock().await;
+            cache.remove(&workspace_id);
+        }
+        {
+            let mut cache = self.workspace_active_heads_cache.lock().await;
+            cache.remove(&workspace_id);
+        }
+        {
+            let mut cache = self.workspace_file_completions_cache.lock().await;
+            cache.remove(&workspace_id);
+        }
+        self.workspace_active_snapshot
+            .remove_workspace(workspace_id)
+            .await;
+    }
+
+    pub(crate) async fn emit_cache_miss(&self, cache: &str) {
+        self.emit_cache_counter("daemon.cache_miss", cache, 1, None)
+            .await;
+    }
+
+    pub(crate) async fn emit_cache_rehydrate(&self, cache: &str, ok: bool) {
+        let result = if ok { "ok" } else { "fail" };
+        self.emit_cache_counter("daemon.cache_rehydrate", cache, 1, Some(("result", result)))
+            .await;
+    }
+
+    async fn emit_cache_evicted(&self, cache: &str, value: usize) {
+        if value == 0 {
+            return;
+        }
+        self.emit_cache_counter("daemon.cache_evicted", cache, value as u64, None)
+            .await;
+    }
+
+    async fn emit_cache_counter(
+        &self,
+        name: &str,
+        cache: &str,
+        value: u64,
+        extra_label: Option<(&str, &str)>,
+    ) {
+        if value == 0 {
+            return;
+        }
+        let mut labels = HashMap::new();
+        labels.insert("cache".to_string(), cache.to_string());
+        labels.insert("source".to_string(), "daemon".to_string());
+        if let Some((key, val)) = extra_label {
+            labels.insert(key.to_string(), val.to_string());
+        }
+        let metric = PerfMetric {
+            name: name.to_string(),
+            kind: PerfMetricKind::Counter,
+            unit: "count".to_string(),
+            value: value as f64,
+            labels,
+        };
+        self.perf_telemetry
+            .record_metric(metric, None, None, None)
+            .await;
+    }
+
+    async fn sweep_idle_caches(&self, now: Instant, config: CacheSweepConfig) -> CacheSweepStats {
+        let mut stats = CacheSweepStats::default();
+        let running_sessions = {
+            let set = self.running_sessions.lock().await;
+            set.iter().copied().collect::<HashSet<_>>()
+        };
+        {
+            let mut cache = self.session_head_cache.lock().await;
+            let expired: Vec<SessionId> = cache
+                .iter()
+                .filter_map(|(session_id, entry)| {
+                    if running_sessions.contains(session_id) {
+                        return None;
+                    }
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*session_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for session_id in &expired {
+                cache.remove(session_id);
+            }
+            stats.session_head_evicted += expired.len();
+        }
+        {
+            let mut cache = self.session_meta_cache.lock().await;
+            let expired: Vec<SessionId> = cache
+                .iter()
+                .filter_map(|(session_id, entry)| {
+                    if running_sessions.contains(session_id) {
+                        return None;
+                    }
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*session_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for session_id in &expired {
+                cache.remove(session_id);
+            }
+            stats.session_meta_evicted += expired.len();
+        }
+        {
+            let mut map = self.schedulers.lock().await;
+            let expired: Vec<SessionId> = map
+                .iter()
+                .filter_map(|(session_id, entry)| {
+                    if running_sessions.contains(session_id) {
+                        return None;
+                    }
+                    if entry.value.is_closed()
+                        || now.duration_since(entry.last_access) >= config.session_ttl
+                    {
+                        Some(*session_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for session_id in &expired {
+                map.remove(session_id);
+            }
+            stats.schedulers_evicted += expired.len();
+        }
+        {
+            let mut map = self.broadcasters.lock().await;
+            let expired: Vec<SessionId> = map
+                .iter()
+                .filter_map(|(session_id, entry)| {
+                    if running_sessions.contains(session_id) {
+                        return None;
+                    }
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*session_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for session_id in &expired {
+                map.remove(session_id);
+            }
+            stats.broadcasters_evicted += expired.len();
+        }
+        {
+            let mut map = self.session_event_heads.lock().await;
+            let expired: Vec<SessionId> = map
+                .iter()
+                .filter_map(|(session_id, entry)| {
+                    if running_sessions.contains(session_id) {
+                        return None;
+                    }
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*session_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for session_id in &expired {
+                map.remove(session_id);
+            }
+            stats.session_event_heads_evicted += expired.len();
+        }
+        {
+            let mut cache = self.file_completions_cache.lock().await;
+            let expired: Vec<WorktreeId> = cache
+                .iter()
+                .filter_map(|(worktree_id, entry)| {
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*worktree_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for worktree_id in &expired {
+                cache.remove(worktree_id);
+            }
+            stats.file_completions_evicted += expired.len();
+        }
+        {
+            let mut cache = self.workspace_file_completions_cache.lock().await;
+            let expired: Vec<WorkspaceId> = cache
+                .iter()
+                .filter_map(|(workspace_id, entry)| {
+                    if now.duration_since(entry.last_access) >= config.workspace_ttl {
+                        Some(*workspace_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for workspace_id in &expired {
+                cache.remove(workspace_id);
+            }
+            stats.workspace_file_completions_evicted += expired.len();
+        }
+        {
+            let mut cache = self.git_status_snapshots.lock().await;
+            let expired: Vec<WorktreeId> = cache
+                .iter()
+                .filter_map(|(worktree_id, entry)| {
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*worktree_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for worktree_id in &expired {
+                cache.remove(worktree_id);
+            }
+            stats.git_status_evicted += expired.len();
+        }
+        {
+            let mut cache = self.workspace_active_snapshot_cache.lock().await;
+            let expired: Vec<WorkspaceId> = cache
+                .iter()
+                .filter_map(|(workspace_id, entry)| {
+                    if now.duration_since(entry.last_access) >= config.workspace_ttl {
+                        Some(*workspace_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for workspace_id in &expired {
+                cache.remove(workspace_id);
+            }
+            stats.workspace_snapshot_evicted += expired.len();
+        }
+        {
+            let mut cache = self.workspace_active_heads_cache.lock().await;
+            let expired: Vec<WorkspaceId> = cache
+                .iter()
+                .filter_map(|(workspace_id, entry)| {
+                    if now.duration_since(entry.last_access) >= config.workspace_ttl {
+                        Some(*workspace_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for workspace_id in &expired {
+                cache.remove(workspace_id);
+            }
+            stats.workspace_heads_evicted += expired.len();
+        }
+        {
+            let mut cache = self.worktree_bootstrap_gates.lock().await;
+            let expired: Vec<WorktreeId> = cache
+                .iter()
+                .filter_map(|(worktree_id, entry)| {
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*worktree_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for worktree_id in &expired {
+                cache.remove(worktree_id);
+            }
+            stats.worktree_bootstrap_evicted += expired.len();
+        }
+        let mut active_sessions: HashSet<SessionId> = HashSet::new();
+        {
+            let set = self.running_sessions.lock().await;
+            active_sessions.extend(set.iter().copied());
+        }
+        {
+            let map = self.schedulers.lock().await;
+            active_sessions.extend(map.keys().copied());
+        }
+        {
+            let map = self.broadcasters.lock().await;
+            active_sessions.extend(map.keys().copied());
+        }
+        {
+            let map = self.session_event_heads.lock().await;
+            active_sessions.extend(map.keys().copied());
+        }
+
+        let mut active_workspaces: HashSet<WorkspaceId> = HashSet::new();
+        let mut missing = Vec::new();
+        {
+            let cache = self.session_meta_cache.lock().await;
+            for session_id in &active_sessions {
+                if let Some(entry) = cache.get(session_id) {
+                    active_workspaces.insert(entry.value.workspace_id);
+                } else {
+                    missing.push(*session_id);
+                }
+            }
+        }
+        for session_id in missing {
+            if let Ok(Some(workspace_id)) = self
+                .global_store()
+                .get_workspace_id_for_session(session_id)
+                .await
+            {
+                active_workspaces.insert(workspace_id);
+            }
+        }
+
+        stats.workspace_stores_evicted = self
+            .stores
+            .evict_idle_workspaces(config.workspace_ttl, &active_workspaces)
+            .await;
+
+        self.emit_cache_evicted("session_head", stats.session_head_evicted)
+            .await;
+        self.emit_cache_evicted("session_meta", stats.session_meta_evicted)
+            .await;
+        self.emit_cache_evicted("scheduler", stats.schedulers_evicted)
+            .await;
+        self.emit_cache_evicted("broadcaster", stats.broadcasters_evicted)
+            .await;
+        self.emit_cache_evicted("session_event_head", stats.session_event_heads_evicted)
+            .await;
+        self.emit_cache_evicted("file_completions", stats.file_completions_evicted)
+            .await;
+        self.emit_cache_evicted(
+            "workspace_file_completions",
+            stats.workspace_file_completions_evicted,
+        )
+        .await;
+        self.emit_cache_evicted("git_status", stats.git_status_evicted)
+            .await;
+        self.emit_cache_evicted(
+            "workspace_active_snapshot",
+            stats.workspace_snapshot_evicted,
+        )
+        .await;
+        self.emit_cache_evicted("workspace_active_heads", stats.workspace_heads_evicted)
+            .await;
+        self.emit_cache_evicted("worktree_bootstrap", stats.worktree_bootstrap_evicted)
+            .await;
+        self.emit_cache_evicted("workspace_store", stats.workspace_stores_evicted)
+            .await;
+
+        stats
     }
 
     pub async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> Result<()> {
@@ -1236,11 +1758,19 @@ impl AppState {
     ) -> mpsc::Sender<SchedulerCommand> {
         self.remember_session_meta(&session).await;
         let mut map = self.schedulers.lock().await;
-        if let Some(tx) = map.get(&session.id) {
-            return tx.clone();
+        if let Some(entry) = map.get_mut(&session.id) {
+            if !entry.value.is_closed() {
+                entry.touch();
+                return entry.value.clone();
+            }
+            map.remove(&session.id);
+            tracing::info!(
+                session_id = %session.id.0,
+                "scheduler sender closed; recreating"
+            );
         }
         let (tx, rx) = mpsc::channel(64);
-        map.insert(session.id, tx.clone());
+        map.insert(session.id, TimedEntry::new(tx.clone()));
         tokio::spawn(session_worker(self.clone(), session, rx));
         tx
     }
@@ -1249,7 +1779,11 @@ impl AppState {
         &self,
         session_id: SessionId,
     ) -> Option<mpsc::Sender<SchedulerCommand>> {
-        self.schedulers.lock().await.get(&session_id).cloned()
+        let mut map = self.schedulers.lock().await;
+        map.get_mut(&session_id).map(|entry| {
+            entry.touch();
+            entry.value.clone()
+        })
     }
 
     pub async fn is_running(&self, session_id: SessionId) -> bool {
@@ -1381,6 +1915,41 @@ async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn spawn_cache_sweeper(state: Arc<AppState>) {
+    let config = CacheSweepConfig::from_env();
+    tokio::spawn(async move {
+        let mut shutdown_rx = state.shutdown_tx.subscribe();
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(config.interval) => {
+                    let stats = state.sweep_idle_caches(Instant::now(), config).await;
+                    if stats.total_evicted() > 0 {
+                        tracing::info!(
+                            session_head_evicted = stats.session_head_evicted,
+                            session_meta_evicted = stats.session_meta_evicted,
+                            schedulers_evicted = stats.schedulers_evicted,
+                            broadcasters_evicted = stats.broadcasters_evicted,
+                            session_event_heads_evicted = stats.session_event_heads_evicted,
+                            file_completions_evicted = stats.file_completions_evicted,
+                            workspace_file_completions_evicted =
+                                stats.workspace_file_completions_evicted,
+                            git_status_evicted = stats.git_status_evicted,
+                            workspace_snapshot_evicted = stats.workspace_snapshot_evicted,
+                            workspace_heads_evicted = stats.workspace_heads_evicted,
+                            worktree_bootstrap_evicted = stats.worktree_bootstrap_evicted,
+                            workspace_stores_evicted = stats.workspace_stores_evicted,
+                            "cache sweep completed"
+                        );
+                    }
+                }
+                _ = shutdown_rx.recv() => {
+                    break;
+                }
+            }
+        }
+    });
 }
 
 pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
@@ -1681,6 +2250,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     ));
     state.web_sessions.clone().start_reaper().await;
     state.terminals.clone().start_reaper().await;
+    spawn_cache_sweeper(state.clone());
     if let Err(err) = reconcile_running_turns(&state).await {
         tracing::warn!(err = %err, "failed to reconcile running turns on startup");
     }
@@ -1876,6 +2446,110 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         })
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ctx_core::models::VcsKind;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn sweeper_eviction_keeps_active_entries() {
+        let temp = tempdir().unwrap();
+        let stores = StoreManager::open(temp.path()).await.unwrap();
+        let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+        providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+        let state = Arc::new(AppState::new(
+            temp.path().to_path_buf(),
+            stores.clone(),
+            providers,
+            "http://localhost".to_string(),
+            None,
+        ));
+
+        let workspace = state
+            .global_store()
+            .create_workspace(
+                "ws".to_string(),
+                temp.path().to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+        let store = state.store_for_workspace(workspace.id).await.unwrap();
+        let worktree = store
+            .create_worktree(
+                workspace.id,
+                temp.path().to_string_lossy().to_string(),
+                "deadbeef".to_string(),
+                None,
+            )
+            .await
+            .unwrap();
+        let task = store
+            .create_task(workspace.id, "task".to_string(), None)
+            .await
+            .unwrap();
+        let session = store
+            .create_session(
+                task.id,
+                workspace.id,
+                worktree.id,
+                "fake".to_string(),
+                "model".to_string(),
+                "implementer".to_string(),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        {
+            let mut cache = state.session_head_cache.lock().await;
+            cache.insert(session.id, TimedEntry::new(HashMap::new()));
+        }
+        let _ = state.get_broadcaster(session.id).await;
+        let _ = state.subscribe_session_event_head(session.id).await;
+        let _ = state.ensure_scheduler(session.clone()).await;
+
+        let now = Instant::now();
+        {
+            let mut cache = state.session_head_cache.lock().await;
+            if let Some(entry) = cache.get_mut(&session.id) {
+                entry.last_access = now - Duration::from_secs(3600);
+            }
+        }
+        {
+            let mut map = state.broadcasters.lock().await;
+            if let Some(entry) = map.get_mut(&session.id) {
+                entry.last_access = now;
+            }
+        }
+        {
+            let mut map = state.schedulers.lock().await;
+            if let Some(entry) = map.get_mut(&session.id) {
+                entry.last_access = now;
+            }
+        }
+
+        let config = CacheSweepConfig {
+            session_ttl: Duration::from_secs(60),
+            workspace_ttl: Duration::from_secs(365 * 24 * 60 * 60),
+            interval: Duration::from_secs(1),
+        };
+        let stats = state.sweep_idle_caches(now, config).await;
+        assert_eq!(stats.session_head_evicted, 1);
+        assert!(state
+            .session_head_cache
+            .lock()
+            .await
+            .get(&session.id)
+            .is_none());
+        assert!(state.broadcasters.lock().await.get(&session.id).is_some());
+        assert!(state.schedulers.lock().await.get(&session.id).is_some());
+    }
 }
 
 pub async fn init_workspace(root: Option<String>) -> Result<()> {

@@ -427,6 +427,55 @@ impl WorkspaceActiveSnapshotHub {
         heads.remove(&session_id);
     }
 
+    pub async fn remove_session(&self, session_id: SessionId) {
+        let workspace_id = {
+            let mut index = self.active_head_index.lock().await;
+            index.remove(&session_id)
+        };
+        {
+            let mut heads = self.session_heads.lock().await;
+            heads.remove(&session_id);
+        }
+        let mut guard = self.inner.lock().await;
+        if let Some(workspace_id) = workspace_id {
+            if let Some(entry) = guard.get_mut(&workspace_id) {
+                entry.active_heads.remove(&session_id);
+                entry.session_replay.remove(&session_id);
+            }
+        } else {
+            for entry in guard.values_mut() {
+                entry.active_heads.remove(&session_id);
+                entry.session_replay.remove(&session_id);
+            }
+        }
+    }
+
+    pub async fn remove_workspace(&self, workspace_id: WorkspaceId) {
+        let entry = {
+            let mut guard = self.inner.lock().await;
+            guard.remove(&workspace_id)
+        };
+        let Some(entry) = entry else {
+            return;
+        };
+        let session_ids: HashSet<SessionId> = entry
+            .active_heads
+            .keys()
+            .copied()
+            .chain(entry.session_replay.keys().copied())
+            .collect();
+        {
+            let mut heads = self.session_heads.lock().await;
+            for session_id in &session_ids {
+                heads.remove(session_id);
+            }
+        }
+        let mut index = self.active_head_index.lock().await;
+        for session_id in &session_ids {
+            index.remove(session_id);
+        }
+    }
+
     pub async fn get_session_head(&self, session_id: SessionId) -> Option<SessionHeadSnapshot> {
         let heads = self.session_heads.lock().await;
         heads.get(&session_id).cloned()

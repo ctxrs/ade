@@ -151,29 +151,30 @@ pub async fn emit_git_status_snapshot_for_sessions(
     {
         let mut cache = state.git_status_snapshots.lock().await;
         let entry = cache.entry(worktree_id).or_insert_with(|| {
-            crate::daemon::GitStatusSnapshotCacheEntry {
+            crate::daemon::TimedEntry::new(crate::daemon::GitStatusSnapshotCacheEntry {
                 payload: String::new(),
                 emitted_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
                 last_change_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
-            }
+            })
         });
-        let is_first = entry.payload.is_empty();
-        if entry.payload == payload_raw {
+        entry.touch_at(now);
+        let is_first = entry.value.payload.is_empty();
+        if entry.value.payload == payload_raw {
             if !force_emit {
                 return;
             }
         } else {
-            let since_change = now.duration_since(entry.last_change_at);
-            entry.payload = payload_raw;
-            entry.last_change_at = now;
-            let since_emit = now.duration_since(entry.emitted_at);
+            let since_change = now.duration_since(entry.value.last_change_at);
+            entry.value.payload = payload_raw;
+            entry.value.last_change_at = now;
+            let since_emit = now.duration_since(entry.value.emitted_at);
             if !is_first
                 && since_emit < Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS)
                 && since_change < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS)
             {
                 return;
             }
-            entry.emitted_at = now;
+            entry.value.emitted_at = now;
         }
     }
 
