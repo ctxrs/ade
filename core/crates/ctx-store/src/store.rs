@@ -8045,6 +8045,20 @@ fn is_transient_session_event(
     event_type: &SessionEventType,
     payload_json: &serde_json::Value,
 ) -> bool {
+    if payload_json
+        .get("crp_channel")
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| v == "data")
+    {
+        return true;
+    }
+    if payload_json
+        .get("crpChannel")
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| v == "data")
+    {
+        return true;
+    }
     if matches!(event_type, SessionEventType::ToolCallUpdate) {
         return true;
     }
@@ -8058,7 +8072,8 @@ fn is_transient_session_event(
     if let Some(kind) = payload_json.get("kind").and_then(|v| v.as_str()) {
         if matches!(
             kind,
-            "provider_guard_warning"
+            "reasoning_summary"
+                | "provider_guard_warning"
                 | "provider_guard_kill"
                 | "title_generated"
                 | "git_status_snapshot"

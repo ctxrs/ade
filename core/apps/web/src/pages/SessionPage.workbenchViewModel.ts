@@ -21,6 +21,165 @@ type PendingMessageEntry = {
   message: Message;
 };
 
+function readEventOrderSeq(ev: SessionEvent): number | null {
+  const parse = (value: unknown): number | null => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number.parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+
+  const payload = ev.payload_json ?? {};
+  const crpSeq = parse((payload as any)?.crp_seq ?? (payload as any)?.crpSeq);
+  if (crpSeq != null) return crpSeq;
+  return parse((ev as any).seq);
+}
+
+function appendStreamingFragment(prev: string, fragment: string): string {
+  const p = prev ?? "";
+  const f = fragment ?? "";
+  if (!p) return f;
+  if (!f) return p;
+  if (f.startsWith(p)) return f;
+  if (p.endsWith(f)) return p;
+  return `${p}${f}`;
+}
+
+function isCrpThoughtEvent(ev: SessionEvent): boolean {
+  if (ev.event_type !== "thought_chunk") return false;
+  const payload = ev.payload_json ?? {};
+  return (
+    payload?.crp_seq != null ||
+    payload?.crpSeq != null ||
+    payload?.crp_channel != null ||
+    payload?.crpChannel != null
+  );
+}
+
+function isCrpDataEvent(ev: SessionEvent): boolean {
+  const payload = ev.payload_json ?? {};
+  const channel = payload?.crp_channel ?? payload?.crpChannel;
+  return String(channel ?? "").toLowerCase() === "data";
+}
+
+
+function collectThoughtStream(events: SessionEvent[]): {
+  text: string;
+  orderSeq?: number;
+  createdAt?: string;
+  isCrp: boolean;
+} | null {
+  const thoughtEvents = events.filter((ev) => ev.event_type === "thought_chunk" && shouldRenderThoughtChunk(ev));
+  if (thoughtEvents.length === 0) return null;
+
+  const sorted = thoughtEvents.slice().sort((a, b) => {
+    const sa = readEventOrderSeq(a);
+    const sb = readEventOrderSeq(b);
+    if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return (sa ?? 0) - (sb ?? 0);
+    if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
+    if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
+    return String(a.created_at).localeCompare(String(b.created_at));
+  });
+
+  let text = "";
+  let createdAt: string | undefined;
+  let orderSeq: number | undefined;
+  let isCrp = false;
+
+  for (const ev of sorted) {
+    const fragment = String(ev.payload_json?.content_fragment ?? "");
+    if (!fragment) continue;
+    text = appendStreamingFragment(text, fragment);
+    createdAt = createdAt ?? ev.created_at;
+    if (orderSeq === undefined) {
+      const seq = readEventOrderSeq(ev);
+      if (Number.isFinite(seq)) orderSeq = seq as number;
+    }
+    if (isCrpThoughtEvent(ev)) isCrp = true;
+  }
+
+  if (!text) return null;
+
+
+  return { text, orderSeq, createdAt, isCrp };
+}
+
+type ThoughtBlock = {
+  text: string;
+  orderSeq?: number;
+  createdAt?: string;
+  isCrp: boolean;
+};
+
+function collectThoughtBlocks(events: SessionEvent[]): ThoughtBlock[] {
+  const hasCrpThought = events.some(
+    (ev) => ev.event_type === "thought_chunk" && shouldRenderThoughtChunk(ev) && isCrpThoughtEvent(ev),
+  );
+  if (!hasCrpThought) {
+    const stream = collectThoughtStream(events);
+    return stream
+      ? [
+        {
+          text: stream.text,
+          orderSeq: stream.orderSeq,
+          createdAt: stream.createdAt,
+          isCrp: stream.isCrp,
+        },
+      ]
+      : [];
+  }
+
+  const sorted = events.slice().sort((a, b) => {
+    const sa = readEventOrderSeq(a);
+    const sb = readEventOrderSeq(b);
+    if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return (sa ?? 0) - (sb ?? 0);
+    if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
+    if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
+    return String(a.created_at).localeCompare(String(b.created_at));
+  });
+
+  const blocks: ThoughtBlock[] = [];
+  let current: ThoughtBlock | null = null;
+
+  const flush = () => {
+    if (current && current.text.trim()) {
+      blocks.push(current);
+    }
+    current = null;
+  };
+
+  for (const ev of sorted) {
+    const isBoundary = !isCrpDataEvent(ev);
+    if (ev.event_type === "thought_chunk" && shouldRenderThoughtChunk(ev) && isCrpThoughtEvent(ev)) {
+      const fragment = String(ev.payload_json?.content_fragment ?? "");
+      if (fragment) {
+        if (!current) {
+          current = {
+            text: "",
+            createdAt: ev.created_at,
+            orderSeq: readEventOrderSeq(ev) ?? undefined,
+            isCrp: true,
+          };
+        }
+        current.text = appendStreamingFragment(current.text, fragment);
+        current.createdAt = current.createdAt ?? ev.created_at;
+        if (current.orderSeq === undefined) {
+          const seq = readEventOrderSeq(ev);
+          if (Number.isFinite(seq)) current.orderSeq = seq as number;
+        }
+      }
+    }
+    if (isBoundary) {
+      flush();
+    }
+  }
+  flush();
+
+  return blocks;
+}
+
 function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> {
   const normalize = (value: unknown): string | null => {
     const t = String(value ?? "").trim();
@@ -44,11 +203,22 @@ function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> 
     );
   };
 
+  const extractReasoningSummaryText = (ev: SessionEvent): string | null => {
+    if (ev.event_type !== "notice") return null;
+    const payload = ev.payload_json ?? {};
+    if (payload?.kind !== "reasoning_summary") return null;
+    return (
+      normalize(payload?.text) ??
+      normalize(payload?.summary) ??
+      normalize(payload?.content)
+    );
+  };
+
   const toolStatusVerb = (kind: string): string | null => {
     const k = String(kind ?? "").trim().toLowerCase();
     if (k === "search") return "Searching";
     if (k === "read" || k === "read_file") return "Reading";
-    if (k === "execute") return "Running";
+    if (k === "execute" || k === "exec") return "Running";
     if (k === "write" || k === "edit") return "Writing";
     return null;
   };
@@ -74,14 +244,17 @@ function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> 
   const sorted = events
     .slice()
     .sort((a, b) => {
-      const sa = typeof (a as any).seq === "number" ? ((a as any).seq as number) : Number.NaN;
-      const sb = typeof (b as any).seq === "number" ? ((b as any).seq as number) : Number.NaN;
+      const sa = readEventOrderSeq(a);
+      const sb = readEventOrderSeq(b);
       if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
       if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
       if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
       return String(a.created_at).localeCompare(String(b.created_at));
     });
 
+  // CRP: "reasoning_summary" is expected to be title-only (pre-split by the runtime).
+  // Do not apply UI-side heuristics to parse or truncate it.
+  const summaryByTurn = new Map<string, { order: number; text: string }>();
   const noticeByTurn = new Map<string, { order: number; text: string }>();
   const toolsByTurn = new Map<string, Map<string, { order: number; status: string; text: string | null }>>();
 
@@ -91,11 +264,18 @@ function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> 
     const turnId = idToString((ev as any).turn_id);
     if (!turnId) continue;
 
+    const summaryText = extractReasoningSummaryText(ev);
+    if (summaryText) {
+      summaryByTurn.set(turnId, { order, text: summaryText });
+      continue;
+    }
+
     const noticeText = extractNoticeStatusText(ev);
     if (noticeText) {
       noticeByTurn.set(turnId, { order, text: noticeText });
       continue;
     }
+
 
     if (ev.event_type !== "tool_call" && ev.event_type !== "tool_call_update" && ev.event_type !== "tool_result") {
       continue;
@@ -121,9 +301,20 @@ function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> 
     toolsByTurn.set(turnId, perTurn);
   }
 
+
   const out = new Map<string, string>();
-  const allTurnIds = new Set<string>([...noticeByTurn.keys(), ...toolsByTurn.keys()]);
+  const allTurnIds = new Set<string>([
+    ...summaryByTurn.keys(),
+    ...noticeByTurn.keys(),
+    ...toolsByTurn.keys(),
+  ]);
   for (const turnId of allTurnIds) {
+    const summary = summaryByTurn.get(turnId);
+    if (summary?.text) {
+      out.set(turnId, summary.text);
+      continue;
+    }
+
     const perTurnTools = toolsByTurn.get(turnId);
     let bestTool: { order: number; text: string } | null = null;
     if (perTurnTools) {
@@ -596,7 +787,16 @@ function applyToolUpdateFromEvent(
   const nextKind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
   if (nextKind) tool.tool_kind = nextKind;
 
-  const nextTitle = String(update?.title ?? update?.toolCall?.title ?? update?.toolCall?.name ?? "").trim();
+  const nextTitle = String(
+    update?.title ??
+      update?.tool_label ??
+      update?.toolLabel ??
+      update?.toolCall?.title ??
+      update?.toolCall?.tool_label ??
+      update?.toolCall?.toolLabel ??
+      update?.toolCall?.name ??
+      "",
+  ).trim();
   if (nextTitle) tool.title = nextTitle;
   else if (tool.tool_kind && tool.title === "Tool") tool.title = humanToolKind(tool.tool_kind);
 
@@ -654,11 +854,14 @@ function buildTurnActivityTimeline(opts: {
     toolById.set(tool.tool_call_id, tool);
   }
 
+  const thoughtBlocks = collectThoughtBlocks(opts.events);
+
   const activity: ActivityEntry[] = [];
   const toolInserted = new Set<string>();
   const askInserted = new Set<string>();
 
   for (const ev of opts.events) {
+    const orderSeq = readEventOrderSeq(ev) ?? undefined;
     if (ev.event_type === "notice") {
       const askItem = buildAskUserQuestionItem(ev, opts.turnId, opts.askUserQuestionAnswers);
       if (askItem && !askInserted.has(askItem.tool_call_id)) {
@@ -666,42 +869,10 @@ function buildTurnActivityTimeline(opts: {
           item: askItem,
           created_at: ev.created_at,
           kind: "ask_user_question",
-          order_seq: typeof ev.seq === "number" ? ev.seq : undefined,
+          order_seq: orderSeq,
         });
         askInserted.add(askItem.tool_call_id);
       }
-    }
-
-    if (ev.event_type === "thought_chunk") {
-      if (!shouldRenderThoughtChunk(ev)) {
-        continue;
-      }
-      const fragment = String(ev.payload_json?.content_fragment ?? "");
-      if (!fragment) {
-        continue;
-      }
-      const last = activity[activity.length - 1];
-      if (last && last.item.kind === "thought") {
-        (last.item as Extract<ThreadItem, { kind: "thought" }>).content = mergeStreamingText(
-          (last.item as Extract<ThreadItem, { kind: "thought" }>).content,
-          fragment,
-        );
-        continue;
-      }
-      const thoughtItem: Extract<ThreadItem, { kind: "thought" }> = {
-        kind: "thought",
-        id: `thought-${opts.turnId}-${ev.seq ?? ev.created_at}`,
-        turn_id: opts.turnId,
-        created_at: ev.created_at,
-        content: fragment,
-      };
-      activity.push({
-        item: thoughtItem,
-        created_at: ev.created_at,
-        kind: "thought",
-        order_seq: typeof ev.seq === "number" ? ev.seq : undefined,
-      });
-      continue;
     }
 
     if (ev.event_type === "tool_call" || ev.event_type === "tool_call_update" || ev.event_type === "tool_result") {
@@ -726,7 +897,7 @@ function buildTurnActivityTimeline(opts: {
           item: tool,
           created_at: tool.created_at,
           kind: "tool",
-          order_seq: typeof ev.seq === "number" ? ev.seq : undefined,
+          order_seq: orderSeq,
         });
         toolInserted.add(toolCallId);
       }
@@ -734,20 +905,41 @@ function buildTurnActivityTimeline(opts: {
     }
   }
 
-  const fallbackThought = String(opts.turn.thought_partial ?? "").trim();
-  if (fallbackThought && !activity.some((entry) => entry.item.kind === "thought")) {
-    const fallbackItem: Extract<ThreadItem, { kind: "thought" }> = {
-      kind: "thought",
-      id: `thought-${opts.turnId}-fallback`,
-      turn_id: opts.turnId,
-      created_at: opts.turn.updated_at ?? opts.turn.started_at,
-      content: fallbackThought,
-    };
-    activity.push({
-      item: fallbackItem,
-      created_at: fallbackItem.created_at,
-      kind: "thought",
+  if (thoughtBlocks.length > 0) {
+    thoughtBlocks.forEach((block, index) => {
+      const thoughtText = block.text ?? "";
+      if (!thoughtText.trim()) return;
+      const thoughtItem: Extract<ThreadItem, { kind: "thought" }> = {
+        kind: "thought",
+        id: `thought-${opts.turnId}-${index}`,
+        turn_id: opts.turnId,
+        created_at: block.createdAt ?? opts.turn.updated_at ?? opts.turn.started_at,
+        content: thoughtText,
+      };
+      activity.push({
+        item: thoughtItem,
+        created_at: thoughtItem.created_at,
+        kind: "thought",
+        order_seq: block.orderSeq,
+      });
     });
+  } else {
+    const fallbackThoughtRaw = String(opts.turn.thought_partial ?? "");
+    const fallbackThought = fallbackThoughtRaw.trim();
+    if (fallbackThought && !activity.some((entry) => entry.item.kind === "thought")) {
+      const fallbackItem: Extract<ThreadItem, { kind: "thought" }> = {
+        kind: "thought",
+        id: `thought-${opts.turnId}-fallback`,
+        turn_id: opts.turnId,
+        created_at: opts.turn.updated_at ?? opts.turn.started_at,
+        content: fallbackThoughtRaw,
+      };
+      activity.push({
+        item: fallbackItem,
+        created_at: fallbackItem.created_at,
+        kind: "thought",
+      });
+    }
   }
 
   const remainingTools = Array.from(toolById.values()).filter((tool) => !toolInserted.has(tool.tool_call_id));
@@ -996,6 +1188,7 @@ function buildWorkbenchThreadViewModelFromEvents(
     assistant: Extract<ThreadItem, { kind: "assistant" }> | null;
     thought_first_at: string | null;
     thought_last_at: string | null;
+    thought_is_crp: boolean;
     assistant_first_at: string | null;
     assistant_complete_at: string | null;
   };
@@ -1067,11 +1260,13 @@ function buildWorkbenchThreadViewModelFromEvents(
         assistant: null,
         thought_first_at: null,
         thought_last_at: null,
+        thought_is_crp: false,
         assistant_first_at: null,
         assistant_complete_at: null,
       };
       let thought = "";
       let thoughtAt: string | null = null;
+      let thoughtIsCrp = false;
       const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
       const askInserted = new Set<string>();
       for (const ev of events) {
@@ -1083,10 +1278,12 @@ function buildWorkbenchThreadViewModelFromEvents(
           }
         }
         if (ev.event_type === "thought_chunk") {
+          if (!shouldRenderThoughtChunk(ev)) continue;
           const fragment = String(ev.payload_json?.content_fragment ?? "");
           if (fragment) {
-            thought += fragment;
+            thought = appendStreamingFragment(thought, fragment);
             thoughtAt = thoughtAt ?? ev.created_at;
+            if (isCrpThoughtEvent(ev)) thoughtIsCrp = true;
           }
         }
         const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
@@ -1096,13 +1293,14 @@ function buildWorkbenchThreadViewModelFromEvents(
         ensureTool(g, toolCallId, ev.created_at);
       }
       const items: ThreadItem[] = [];
-      if (thought.trim()) {
+      const thoughtContent = thought;
+      if (thoughtContent.trim()) {
         items.push({
           kind: "thought",
           id: `thought-${g.key}`,
           turn_id: g.key,
           created_at: thoughtAt ?? g.first_at,
-          content: thought,
+          content: thoughtContent,
         });
       }
       const activityItems = [...g.toolItems, ...askItems];
@@ -1138,6 +1336,7 @@ function buildWorkbenchThreadViewModelFromEvents(
         assistant: null,
         thought_first_at: null,
         thought_last_at: null,
+        thought_is_crp: false,
         assistant_first_at: null,
         assistant_complete_at: null,
       };
@@ -1286,13 +1485,16 @@ function buildWorkbenchThreadViewModelFromEvents(
       activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
       items.push(...activityItems);
       if (g.assistant?.thought.trim()) {
-        items.push({
-          kind: "thought",
-          id: `thought-${g.key}`,
-          turn_id: g.key,
-          created_at: g.thought_first_at ?? g.assistant_first_at ?? g.first_at,
-          content: g.assistant.thought,
-        });
+        const thoughtContent = g.assistant.thought;
+        if (thoughtContent.trim()) {
+          items.push({
+            kind: "thought",
+            id: `thought-${g.key}`,
+            turn_id: g.key,
+            created_at: g.thought_first_at ?? g.assistant_first_at ?? g.first_at,
+            content: thoughtContent,
+          });
+        }
       }
       if (g.assistant) {
         items.push({
@@ -1348,6 +1550,7 @@ function buildWorkbenchThreadViewModelFromEvents(
       assistant: null,
       thought_first_at: null,
       thought_last_at: null,
+      thought_is_crp: false,
       assistant_first_at: null,
       assistant_complete_at: null,
     };
@@ -1448,7 +1651,8 @@ function buildWorkbenchThreadViewModelFromEvents(
           }
           g.thought_first_at = g.thought_first_at ?? ev.created_at;
           g.thought_last_at = ev.created_at;
-          g.assistant.thought += fragment;
+          g.assistant.thought = appendStreamingFragment(g.assistant.thought, fragment);
+          if (isCrpThoughtEvent(ev)) g.thought_is_crp = true;
           break;
         }
         case "tool_call":
@@ -1523,13 +1727,16 @@ function buildWorkbenchThreadViewModelFromEvents(
     activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
     items.push(...activityItems);
     if (g.assistant?.thought.trim()) {
-      items.push({
-        kind: "thought",
-        id: `thought-${g.key}`,
-        turn_id: g.key,
-        created_at: g.thought_first_at ?? g.assistant_first_at ?? g.first_at,
-        content: g.assistant.thought,
-      });
+      const thoughtContent = g.assistant.thought;
+      if (thoughtContent.trim()) {
+        items.push({
+          kind: "thought",
+          id: `thought-${g.key}`,
+          turn_id: g.key,
+          created_at: g.thought_first_at ?? g.assistant_first_at ?? g.first_at,
+          content: thoughtContent,
+        });
+      }
     }
     if (g.assistant) {
       items.push({
@@ -1563,6 +1770,7 @@ function buildWorkbenchThreadViewModelFromEvents(
       assistant: null,
       thought_first_at: null,
       thought_last_at: null,
+      thought_is_crp: false,
       assistant_first_at: null,
       assistant_complete_at: null,
     };

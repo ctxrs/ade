@@ -133,7 +133,7 @@ export function formatSubagentChildMeta(child: SubagentInvocationChild): string 
 
 export function toolKindIcon(kind: string): string {
   const k = String(kind ?? "").trim().toLowerCase();
-  if (k === "execute") return "$";
+  if (k === "execute" || k === "exec") return "$";
   if (k === "read" || k === "read_file") return "R";
   if (k === "search" || k === "list" || k === "list_files") return "S";
   if (k === "write" || k === "edit" || k === "apply_patch") return "W";
@@ -142,7 +142,7 @@ export function toolKindIcon(kind: string): string {
 
 export function humanToolKind(kind: string): string {
   const k = (kind || "").toLowerCase();
-  if (k === "execute") return "Run Command";
+  if (k === "execute" || k === "exec") return "Run Command";
   if (k === "search") return "Search";
   if (k === "read" || k === "read_file") return "Read File";
   if (k === "edit" || k === "write" || k === "apply_patch") return "Edit File";
@@ -155,7 +155,7 @@ export function humanToolKind(kind: string): string {
 
 export function formatToolInput(toolKind: string, input: any): string {
   const k = (toolKind || "").toLowerCase();
-  if (k === "execute") {
+  if (k === "execute" || k === "exec") {
     const cmd = Array.isArray(input?.command) ? input.command.join(" ") : input?.command;
     const cwd = input?.cwd;
     const out: string[] = [];
@@ -243,7 +243,7 @@ function formatToolPathSummary(input: any): string {
 
 export function toolSummaryLine(toolKind: string, input: any): string {
   const k = (toolKind || "").toLowerCase();
-  if (k === "execute") {
+  if (k === "execute" || k === "exec") {
     const cmd = Array.isArray(input?.command) ? input.command.join(" ") : input?.command;
     return cmd ? truncateMiddle(String(cmd), 120) : "";
   }

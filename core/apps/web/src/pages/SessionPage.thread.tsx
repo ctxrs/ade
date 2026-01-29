@@ -480,9 +480,17 @@ export function WorkbenchToolRow({
       "Edit",
     ]);
     const titleRest = titlePrefixed?.rest ?? "";
+    const trimmedSummary = String(summary ?? "").trim();
+    const hasSummary = trimmedSummary.length > 0;
 
     if (normalizedTitle && normalizedTitle !== "Tool") {
-      if (titlePrefixed) return titlePrefixed;
+      if (titlePrefixed) {
+        if (!titlePrefixed.rest && hasSummary) return makeParts(titlePrefixed.verb, trimmedSummary);
+        return titlePrefixed;
+      }
+      if (hasSummary && !/\s/.test(normalizedTitle)) {
+        return makeParts(normalizedTitle, trimmedSummary);
+      }
       return makeParts(normalizedTitle);
     }
 

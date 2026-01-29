@@ -18,12 +18,18 @@ pub type SharedTurnDiffTracker = Arc<Mutex<TurnDiffTracker>>;
 
 #[derive(Clone)]
 pub struct ToolInvocation {
-    pub session: Arc<Session>,
-    pub turn: Arc<TurnContext>,
-    pub tracker: SharedTurnDiffTracker,
+    pub(crate) session: Arc<Session>,
+    pub(crate) turn: Arc<TurnContext>,
+    pub(crate) tracker: SharedTurnDiffTracker,
     pub call_id: String,
     pub tool_name: String,
     pub payload: ToolPayload,
+}
+
+impl ToolInvocation {
+    pub fn turn_id(&self) -> &str {
+        &self.turn.sub_id
+    }
 }
 
 #[derive(Clone, Debug)]

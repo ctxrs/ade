@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -289,7 +290,8 @@ impl CrpSessionPool {
                                 continue;
                             }
                             last_seq = env.seq;
-                            let mapped = map_crp_event(env.event, env.seq, &mut tool_output_cache);
+                            let mapped =
+                                map_crp_event(env.event, env.channel, env.seq, &mut tool_output_cache);
                             for event in mapped.events {
                                 let _ = req.event_sink.send(event).await;
                             }
@@ -473,11 +475,29 @@ impl CrpProcess {
 }
 
 async fn stdout_pump(process: Arc<CrpProcess>, stdout: impl tokio::io::AsyncRead + Unpin) {
+    // Debugging aid: when set, dump raw CRP stdout lines from the runtime to this file.
+    // This lets us confirm what the runtime emitted without involving storage/UI layers.
+    let dump_path = std::env::var("CTX_CRP_DUMP_EVENTS_PATH")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let mut dump_file = dump_path.as_deref().and_then(|path| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()
+    });
+
     let mut lines = BufReader::new(stdout).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
+        }
+        if let Some(f) = dump_file.as_mut() {
+            // Best-effort only; never fail the pump because debug dumping failed.
+            let _ = writeln!(f, "{trimmed}");
         }
         match serde_json::from_str::<CrpEventEnvelope>(trimmed) {
             Ok(env) => {
@@ -643,6 +663,8 @@ enum CrpEvent {
         session_id: String,
         run_id: String,
         turn_id: String,
+        #[serde(default)]
+        summary_index: i64,
         text: String,
         #[serde(default)]
         item_id: Option<String>,
@@ -664,7 +686,11 @@ enum CrpEvent {
         tool_call_id: String,
         tool_name: String,
         #[serde(default)]
+        tool_label: Option<String>,
+        #[serde(default)]
         input: Option<Value>,
+        #[serde(default)]
+        input_preview: Option<Value>,
     },
     #[serde(rename = "tool.output.delta")]
     ToolOutputDelta {
@@ -682,11 +708,15 @@ enum CrpEvent {
         turn_id: String,
         tool_call_id: String,
         tool_name: String,
+        #[serde(default)]
+        tool_label: Option<String>,
         status: CrpToolStatus,
         #[serde(default)]
         output: Option<Value>,
         #[serde(default)]
         error: Option<String>,
+        #[serde(default)]
+        input_preview: Option<Value>,
     },
     #[serde(rename = "models.list")]
     ModelsList {
@@ -734,11 +764,27 @@ struct MappedCrpEvent {
     done: bool,
 }
 
+struct ToolCompletedPayloadParams {
+    tool_call_id: String,
+    tool_name: String,
+    tool_label: Option<String>,
+    status: CrpToolStatus,
+    output: Option<Value>,
+    error: Option<String>,
+    input_preview: Option<Value>,
+    seq: u64,
+}
+
 fn map_crp_event(
     event: CrpEvent,
+    channel: CrpChannel,
     seq: u64,
     tool_output_cache: &mut HashMap<String, String>,
 ) -> MappedCrpEvent {
+    let crp_channel = match channel {
+        CrpChannel::Data => Some("data"),
+        CrpChannel::Control => None,
+    };
     match event {
         CrpEvent::SessionOpened {
             session_id,
@@ -754,7 +800,12 @@ fn map_crp_event(
             done: false,
         },
         CrpEvent::TurnStarted { .. } => MappedCrpEvent {
-            events: Vec::new(),
+            events: vec![NormalizedEvent {
+                event_type: SessionEventType::TurnStarted,
+                payload_json: json!({
+                    "crp_seq": seq,
+                }),
+            }],
             done: false,
         },
         CrpEvent::MessageDelta {
@@ -766,6 +817,7 @@ fn map_crp_event(
                     "content_fragment": delta,
                     "message_id": message_id,
                     "crp_seq": seq,
+                    "crp_channel": crp_channel,
                 }),
             }],
             done: false,
@@ -785,11 +837,17 @@ fn map_crp_event(
             }],
             done: false,
         },
-        CrpEvent::ReasoningSummary { text, item_id, .. } => MappedCrpEvent {
+        CrpEvent::ReasoningSummary {
+            text,
+            item_id,
+            summary_index,
+            ..
+        } => MappedCrpEvent {
             events: vec![NormalizedEvent {
                 event_type: SessionEventType::Notice,
                 payload_json: json!({
                     "kind": "reasoning_summary",
+                    "summary_index": summary_index,
                     "text": text,
                     "item_id": item_id,
                     "crp_seq": seq,
@@ -799,24 +857,41 @@ fn map_crp_event(
         },
         CrpEvent::ReasoningTrace {
             chunk, encoding, ..
-        } => MappedCrpEvent {
-            events: vec![NormalizedEvent {
-                event_type: SessionEventType::ThoughtChunk,
-                payload_json: json!({
-                    "content_fragment": chunk,
-                    "encoding": encoding,
-                    "crp_seq": seq,
-                }),
-            }],
-            done: false,
-        },
+        } => {
+            let mut payload = json!({
+                "content_fragment": chunk,
+                "encoding": encoding,
+                "crp_seq": seq,
+            });
+            if let Some(channel) = crp_channel {
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("crp_channel".to_string(), json!(channel));
+                }
+            }
+            MappedCrpEvent {
+                events: vec![NormalizedEvent {
+                    event_type: SessionEventType::ThoughtChunk,
+                    payload_json: payload,
+                }],
+                done: false,
+            }
+        }
         CrpEvent::ToolStarted {
             tool_call_id,
             tool_name,
+            tool_label,
             input,
+            input_preview,
             ..
         } => {
-            let payload = build_tool_started_payload(tool_call_id, tool_name, input, seq);
+            let payload = build_tool_started_payload(
+                tool_call_id,
+                tool_name,
+                tool_label,
+                input,
+                input_preview,
+                seq,
+            );
             MappedCrpEvent {
                 events: vec![NormalizedEvent {
                     event_type: SessionEventType::ToolCall,
@@ -835,15 +910,21 @@ fn map_crp_event(
                 entry.push_str(&chunk);
                 entry.clone()
             };
+            let mut payload = json!({
+                "tool_call_id": tool_call_id,
+                "outputText": output_text,
+                "status": "running",
+                "crp_seq": seq,
+            });
+            if let Some(channel) = crp_channel {
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("crp_channel".to_string(), json!(channel));
+                }
+            }
             MappedCrpEvent {
                 events: vec![NormalizedEvent {
                     event_type: SessionEventType::ToolCallUpdate,
-                    payload_json: json!({
-                        "tool_call_id": tool_call_id,
-                        "outputText": output_text,
-                        "status": "running",
-                        "crp_seq": seq,
-                    }),
+                    payload_json: payload,
                 }],
                 done: false,
             }
@@ -851,14 +932,24 @@ fn map_crp_event(
         CrpEvent::ToolCompleted {
             tool_call_id,
             tool_name,
+            tool_label,
             status,
             output,
             error,
+            input_preview,
             ..
         } => {
             let tool_call_id_for_cache = tool_call_id.clone();
-            let payload =
-                build_tool_completed_payload(tool_call_id, tool_name, status, output, error, seq);
+            let payload = build_tool_completed_payload(ToolCompletedPayloadParams {
+                tool_call_id,
+                tool_name,
+                tool_label,
+                status,
+                output,
+                error,
+                input_preview,
+                seq,
+            });
             tool_output_cache.remove(&tool_call_id_for_cache);
             MappedCrpEvent {
                 events: vec![NormalizedEvent {
@@ -912,7 +1003,9 @@ fn map_crp_event(
 fn build_tool_started_payload(
     tool_call_id: String,
     tool_name: String,
+    tool_label: Option<String>,
     input: Option<Value>,
+    input_preview: Option<Value>,
     seq: u64,
 ) -> Value {
     let mut payload = serde_json::Map::new();
@@ -920,8 +1013,16 @@ fn build_tool_started_payload(
     payload.insert("tool_call_id".to_string(), json!(tool_call_id.clone()));
     payload.insert("kind".to_string(), json!(tool_name.clone()));
     payload.insert("status".to_string(), json!("running"));
-    if let Some(input) = input.clone() {
-        payload.insert("rawInput".to_string(), input);
+    let preview = input_preview.clone().or_else(|| input.clone());
+    if let Some(input_value) = preview.clone() {
+        payload.insert("rawInput".to_string(), input_value);
+    }
+    if let Some(input_preview) = input_preview.clone() {
+        payload.insert("input_preview".to_string(), input_preview);
+    }
+    if let Some(label) = tool_label.clone() {
+        payload.insert("title".to_string(), json!(label.clone()));
+        payload.insert("tool_label".to_string(), json!(label));
     }
     payload.insert(
         "toolCall".to_string(),
@@ -929,22 +1030,26 @@ fn build_tool_started_payload(
             "id": tool_call_id,
             "name": tool_name_for_call.clone(),
             "kind": tool_name_for_call,
-            "rawInput": input,
+            "rawInput": preview,
             "status": "running",
+            "title": tool_label,
         }),
     );
     payload.insert("crp_seq".to_string(), json!(seq));
     Value::Object(payload)
 }
 
-fn build_tool_completed_payload(
-    tool_call_id: String,
-    tool_name: String,
-    status: CrpToolStatus,
-    output: Option<Value>,
-    error: Option<String>,
-    seq: u64,
-) -> Value {
+fn build_tool_completed_payload(params: ToolCompletedPayloadParams) -> Value {
+    let ToolCompletedPayloadParams {
+        tool_call_id,
+        tool_name,
+        tool_label,
+        status,
+        output,
+        error,
+        input_preview,
+        seq,
+    } = params;
     let mut payload = serde_json::Map::new();
     let tool_name_for_call = tool_name.clone();
     payload.insert("tool_call_id".to_string(), json!(tool_call_id.clone()));
@@ -956,6 +1061,13 @@ fn build_tool_completed_payload(
             CrpToolStatus::Error => "failed",
         }),
     );
+    if let Some(input_preview) = input_preview.clone() {
+        payload.insert("input_preview".to_string(), input_preview);
+    }
+    if let Some(label) = tool_label.clone() {
+        payload.insert("title".to_string(), json!(label.clone()));
+        payload.insert("tool_label".to_string(), json!(label));
+    }
     if let Some(output) = output.clone() {
         if let Some(text) = extract_output_text(&output) {
             payload.insert("output_text".to_string(), json!(text));
@@ -971,6 +1083,7 @@ fn build_tool_completed_payload(
             "id": tool_call_id,
             "name": tool_name_for_call.clone(),
             "kind": tool_name_for_call,
+            "title": tool_label,
             "rawOutput": payload.get("rawOutput").cloned(),
             "status": payload.get("status").cloned(),
         }),

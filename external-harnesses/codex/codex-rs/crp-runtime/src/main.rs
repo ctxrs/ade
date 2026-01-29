@@ -35,7 +35,9 @@ use codex_core::default_client::set_default_originator;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
+use codex_core::protocol::ExecCommandSource;
 use codex_core::protocol::ExecOutputStream;
+use codex_core::protocol::FileChange;
 use codex_core::protocol::Op;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::Submission;
@@ -45,6 +47,7 @@ use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::openai_models::{ModelPreset, ReasoningEffort};
+use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
 use mcp_types::CallToolResult;
@@ -174,6 +177,8 @@ struct TurnState {
     turn_id: String,
     message_id: Option<String>,
     reasoning_item_id: Option<String>,
+    current_summary_index: i64,
+    reasoning_summaries: HashMap<i64, ReasoningSummaryState>,
     emitted_final: bool,
     completed: bool,
 }
@@ -185,10 +190,132 @@ impl TurnState {
             turn_id,
             message_id: None,
             reasoning_item_id: None,
+            current_summary_index: 0,
+            reasoning_summaries: HashMap::new(),
             emitted_final: false,
             completed: false,
         }
     }
+}
+
+#[derive(Default, Debug)]
+struct ReasoningSummaryState {
+    buffer: String,
+    title_emitted: bool,
+    body_offset: usize,
+    body_sent: usize,
+}
+
+impl ReasoningSummaryState {
+    fn push_delta(&mut self, delta: &str) -> (Option<String>, Option<String>) {
+        if delta.is_empty() {
+            return (None, None);
+        }
+        self.buffer.push_str(delta);
+
+        if !self.title_emitted {
+            if let Some((title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
+                self.title_emitted = true;
+                self.body_offset = body_offset;
+                self.body_sent = body_offset;
+                let body = if self.buffer.len() > body_offset {
+                    Some(self.buffer[body_offset..].to_string())
+                } else {
+                    None
+                };
+                self.body_sent = self.buffer.len();
+                let title = if title.trim().is_empty() {
+                    None
+                } else {
+                    Some(title)
+                };
+                return (title, body);
+            }
+            return (None, None);
+        }
+
+        if self.buffer.len() > self.body_sent {
+            let chunk = self.buffer[self.body_sent..].to_string();
+            self.body_sent = self.buffer.len();
+            return (None, Some(chunk));
+        }
+
+        (None, None)
+    }
+
+    /// Best-effort "final" update when Codex emits a complete summary text (legacy event) after
+    /// streaming deltas. This is used to capture any body content that might not have been
+    /// delivered via `ReasoningContentDelta`.
+    fn finalize_with_full_text(&mut self, full: &str) -> (Option<String>, Option<String>) {
+        if full.is_empty() {
+            return (None, None);
+        }
+
+        if self.buffer.is_empty() {
+            return self.push_delta(full);
+        }
+
+        if full.starts_with(&self.buffer) {
+            let suffix = &full[self.buffer.len()..];
+            return self.push_delta(suffix);
+        }
+
+        // If the full text doesn't start with our buffered deltas, prefer not to re-emit the
+        // title. We still want to emit any body we haven't sent yet.
+        self.buffer = full.to_string();
+
+        if !self.title_emitted {
+            if let Some((title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
+                self.title_emitted = true;
+                self.body_offset = body_offset;
+                self.body_sent = body_offset;
+                let body = if self.buffer.len() > body_offset {
+                    Some(self.buffer[body_offset..].to_string())
+                } else {
+                    None
+                };
+                self.body_sent = self.buffer.len();
+                let title = if title.trim().is_empty() { None } else { Some(title) };
+                return (title, body);
+            }
+            return (None, None);
+        }
+
+        if let Some((_title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
+            if self.body_sent < body_offset {
+                self.body_sent = body_offset;
+            }
+        }
+
+        if self.buffer.len() > self.body_sent {
+            let chunk = self.buffer[self.body_sent..].to_string();
+            self.body_sent = self.buffer.len();
+            return (None, Some(chunk));
+        }
+
+        (None, None)
+    }
+}
+
+fn extract_summary_title_and_body_offset(text: &str) -> Option<(String, usize)> {
+    let start = text.find("**")?;
+    let after_start = start + 2;
+    let end_rel = text[after_start..].find("**")?;
+    let end = after_start + end_rel;
+    let title = text[after_start..end].trim().to_string();
+    let mut body_offset = end + 2;
+
+    // Codex formats summaries like: "**Title**\n\nBody...".
+    // We want title-only status and body-only trace; drop leading whitespace in the body so the
+    // first emitted trace chunk doesn't start with blank lines.
+    if body_offset < text.len() {
+        let sub = &text[body_offset..];
+        let trimmed = sub.trim_start();
+        let skipped = sub.len().saturating_sub(trimmed.len());
+        body_offset += skipped;
+    }
+
+    Some((title, body_offset))
 }
 
 struct ToolBridgeRequest {
@@ -519,7 +646,10 @@ async fn handle_command(
 
             let items = match (items, prompt) {
                 (Some(items), _) => items,
-                (None, Some(prompt)) => vec![UserInput::Text { text: prompt }],
+                (None, Some(prompt)) => vec![UserInput::Text {
+                    text: prompt,
+                    text_elements: Vec::new(),
+                }],
                 (None, None) => {
                     warn!("session.prompt ignored: missing prompt or items");
                     return Ok(());
@@ -540,6 +670,8 @@ async fn handle_command(
                 effort,
                 summary: session_state.default_summary,
                 final_output_json_schema: None,
+                collaboration_mode: None,
+                personality: None,
             };
 
             let sub_id = if let Some(turn_id) = turn_id {
@@ -581,7 +713,12 @@ async fn handle_command(
             );
             let thread_manager =
                 ThreadManager::new(config.codex_home.clone(), auth_manager, SessionSource::Exec);
-            let presets = thread_manager.list_models(&config).await;
+            let presets = thread_manager
+                .list_models(
+                    &config,
+                    codex_core::models_manager::manager::RefreshStrategy::OnlineIfUncached,
+                )
+                .await;
             let models = build_crp_model_infos(&presets);
             let current_model_id = build_current_model_id(&config, &presets);
 
@@ -645,10 +782,12 @@ async fn load_config_from_crp(
         codex_linux_sandbox_exe,
         base_instructions: None,
         developer_instructions: None,
+        model_personality: None,
         compact_prompt: None,
         include_apply_patch_tool: None,
         show_raw_agent_reasoning: session_config.reasoning_trace_enabled,
         tools_web_search_request: None,
+        ephemeral: None,
         additional_writable_roots: Vec::new(),
     };
 
@@ -710,7 +849,11 @@ async fn open_session(
         ThreadManager::new(config.codex_home.clone(), auth_manager, SessionSource::Exec);
     let default_model = thread_manager
         .get_models_manager()
-        .get_model(&config.model, &config)
+        .get_default_model(
+            &config.model,
+            &config,
+            codex_core::models_manager::manager::RefreshStrategy::OnlineIfUncached,
+        )
         .await;
 
     let NewThread {
@@ -977,7 +1120,9 @@ fn handle_tool_request(
         turn_id: turn_id.clone(),
         tool_call_id: tool_call_id.clone(),
         tool_name: tool_name.clone(),
+        tool_label: None,
         input,
+        input_preview: None,
     });
 
     if pending
@@ -1063,9 +1208,11 @@ fn handle_tool_result(
             turn_id: pending_request.turn_id.clone(),
             tool_call_id: command.tool_call_id.clone(),
             tool_name: pending_request.tool_name,
+            tool_label: None,
             status: result.status.clone(),
             output: result.output.clone(),
             error: result.error.clone(),
+            input_preview: None,
         },
     );
 
@@ -1216,6 +1363,133 @@ fn chunk_output(output: &str, max_bytes: usize) -> Vec<String> {
     chunks
 }
 
+fn is_exploring_parsed_cmd(parsed_cmd: &[ParsedCommand]) -> bool {
+    !parsed_cmd.is_empty()
+        && parsed_cmd.iter().all(|parsed| {
+            matches!(
+                parsed,
+                ParsedCommand::Read { .. }
+                    | ParsedCommand::ListFiles { .. }
+                    | ParsedCommand::Search { .. }
+            )
+        })
+}
+
+fn tool_label_for_exec(parsed_cmd: &[ParsedCommand], completed: bool) -> String {
+    if is_exploring_parsed_cmd(parsed_cmd) {
+        if completed {
+            "Explored".to_string()
+        } else {
+            "Exploring".to_string()
+        }
+    } else if completed {
+        "Ran".to_string()
+    } else {
+        "Running".to_string()
+    }
+}
+
+fn exec_input_preview(
+    command: &[String],
+    parsed_cmd: &[ParsedCommand],
+    cwd: &PathBuf,
+    source: ExecCommandSource,
+    interaction_input: Option<&String>,
+) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("command".to_string(), json!(command));
+    obj.insert("cwd".to_string(), json!(cwd));
+    obj.insert("source".to_string(), json!(source));
+    if !parsed_cmd.is_empty() {
+        obj.insert("parsed_cmd".to_string(), json!(parsed_cmd));
+    }
+    if let Some(input) = interaction_input {
+        obj.insert("interaction_input".to_string(), json!(input));
+    }
+    serde_json::Value::Object(obj)
+}
+
+fn count_lines(text: &str) -> usize {
+    if text.is_empty() {
+        0
+    } else {
+        text.lines().count()
+    }
+}
+
+fn diff_stats_for_changes(changes: &HashMap<PathBuf, FileChange>) -> (usize, usize, usize) {
+    let mut added = 0usize;
+    let mut removed = 0usize;
+    for change in changes.values() {
+        match change {
+            FileChange::Add { content } => {
+                added += count_lines(content);
+            }
+            FileChange::Delete { content } => {
+                removed += count_lines(content);
+            }
+            FileChange::Update { unified_diff, .. } => {
+                for line in unified_diff.lines() {
+                    if line.starts_with("+++") || line.starts_with("---") {
+                        continue;
+                    }
+                    if line.starts_with('+') {
+                        added += 1;
+                    } else if line.starts_with('-') {
+                        removed += 1;
+                    }
+                }
+            }
+        }
+    }
+    (added, removed, changes.len())
+}
+
+fn change_paths(changes: &HashMap<PathBuf, FileChange>) -> Vec<String> {
+    let mut paths: Vec<String> = changes
+        .keys()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+    paths.sort();
+    paths
+}
+
+fn patch_input_preview(changes: &HashMap<PathBuf, FileChange>) -> serde_json::Value {
+    let paths = change_paths(changes);
+    let (added, removed, files) = diff_stats_for_changes(changes);
+    let mut obj = serde_json::Map::new();
+    if let Some(first) = paths.first() {
+        if paths.len() == 1 {
+            obj.insert("path".to_string(), json!(first));
+        } else {
+            obj.insert("paths".to_string(), json!(paths));
+            obj.insert("paths_total".to_string(), json!(paths.len()));
+        }
+    }
+    obj.insert(
+        "diff_stats".to_string(),
+        json!({
+            "added": added,
+            "removed": removed,
+            "files": files,
+        }),
+    );
+    serde_json::Value::Object(obj)
+}
+
+fn tool_label_for_patch(changes: &HashMap<PathBuf, FileChange>) -> String {
+    if changes.len() == 1 {
+        if let Some(change) = changes.values().next() {
+            return match change {
+                FileChange::Add { .. } => "Added".to_string(),
+                FileChange::Delete { .. } => "Deleted".to_string(),
+                FileChange::Update { .. } => "Edited".to_string(),
+            };
+        }
+    }
+    "Edited".to_string()
+}
+
 fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, CrpEvent)> {
     let session_id = tracker.session_id.clone();
     match event.msg {
@@ -1253,16 +1527,39 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                 Some(ev.item_id.clone())
             };
             turn.reasoning_item_id = item_id.clone();
-            vec![(
-                CrpChannel::Control,
-                CrpEvent::ReasoningSummary {
-                    session_id,
-                    run_id: turn.run_id.clone(),
-                    turn_id: turn.turn_id.clone(),
-                    text: ev.delta,
-                    item_id,
-                },
-            )]
+            turn.current_summary_index = ev.summary_index;
+            let state = turn
+                .reasoning_summaries
+                .entry(ev.summary_index)
+                .or_default();
+            let (title, body_chunk) = state.push_delta(&ev.delta);
+            let mut out = Vec::new();
+            if let Some(title) = title {
+                out.push((
+                    CrpChannel::Control,
+                    CrpEvent::ReasoningSummary {
+                        session_id: session_id.clone(),
+                        run_id: turn.run_id.clone(),
+                        turn_id: turn.turn_id.clone(),
+                        summary_index: ev.summary_index,
+                        text: title,
+                        item_id,
+                    },
+                ));
+            }
+            if let Some(chunk) = body_chunk {
+                out.push((
+                    CrpChannel::Data,
+                    CrpEvent::ReasoningTrace {
+                        session_id,
+                        run_id: turn.run_id.clone(),
+                        turn_id: turn.turn_id.clone(),
+                        chunk,
+                        encoding: None,
+                    },
+                ));
+            }
+            out
         }
         EventMsg::ReasoningRawContentDelta(ev) => {
             let turn = ensure_turn(tracker, &event.id);
@@ -1308,21 +1605,43 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             } else {
                 Some(ev.item_id)
             };
+            turn.current_summary_index = ev.summary_index;
             Vec::new()
         }
         EventMsg::AgentReasoningDelta(_) => Vec::new(),
         EventMsg::AgentReasoning(ev) => {
             let turn = ensure_turn(tracker, &event.id);
-            vec![(
-                CrpChannel::Control,
-                CrpEvent::ReasoningSummary {
-                    session_id,
-                    run_id: turn.run_id.clone(),
-                    turn_id: turn.turn_id.clone(),
-                    text: ev.text,
-                    item_id: turn.reasoning_item_id.clone(),
-                },
-            )]
+            let summary_index = turn.current_summary_index;
+            let item_id = turn.reasoning_item_id.clone();
+            let state = turn.reasoning_summaries.entry(summary_index).or_default();
+            let (title, body_chunk) = state.finalize_with_full_text(&ev.text);
+            let mut out = Vec::new();
+            if let Some(title) = title {
+                out.push((
+                    CrpChannel::Control,
+                    CrpEvent::ReasoningSummary {
+                        session_id: session_id.clone(),
+                        run_id: turn.run_id.clone(),
+                        turn_id: turn.turn_id.clone(),
+                        summary_index,
+                        text: title,
+                        item_id: item_id.clone(),
+                    },
+                ));
+            }
+            if let Some(chunk) = body_chunk {
+                out.push((
+                    CrpChannel::Data,
+                    CrpEvent::ReasoningTrace {
+                        session_id,
+                        run_id: turn.run_id.clone(),
+                        turn_id: turn.turn_id.clone(),
+                        chunk,
+                        encoding: None,
+                    },
+                ));
+            }
+            out
         }
         EventMsg::AgentReasoningRawContentDelta(ev) => {
             let turn = ensure_turn(tracker, &event.id);
@@ -1352,12 +1671,14 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
         }
         EventMsg::ExecCommandBegin(ev) => {
             let turn = ensure_turn(tracker, &event.id);
-            let input = json!({
-                "command": ev.command,
-                "cwd": ev.cwd,
-                "source": ev.source,
-                "interaction_input": ev.interaction_input,
-            });
+            let input_preview = exec_input_preview(
+                &ev.command,
+                &ev.parsed_cmd,
+                &ev.cwd,
+                ev.source,
+                ev.interaction_input.as_ref(),
+            );
+            let tool_label = tool_label_for_exec(&ev.parsed_cmd, false);
             vec![(
                 CrpChannel::Control,
                 CrpEvent::ToolStarted {
@@ -1366,7 +1687,9 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name: "exec".to_string(),
-                    input: Some(input),
+                    tool_label: Some(tool_label),
+                    input: Some(input_preview.clone()),
+                    input_preview: Some(input_preview),
                 },
             )]
         }
@@ -1406,6 +1729,14 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
         }
         EventMsg::ExecCommandEnd(ev) => {
             let turn = ensure_turn(tracker, &event.id);
+            let input_preview = exec_input_preview(
+                &ev.command,
+                &ev.parsed_cmd,
+                &ev.cwd,
+                ev.source,
+                ev.interaction_input.as_ref(),
+            );
+            let tool_label = tool_label_for_exec(&ev.parsed_cmd, true);
             let exit_code = ev.exit_code;
             let status = if exit_code == 0 {
                 CrpToolStatus::Success
@@ -1438,16 +1769,21 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name: "exec".to_string(),
+                    tool_label: Some(tool_label),
                     status,
                     output: Some(output),
                     error,
+                    input_preview: Some(input_preview),
                 },
             )]
         }
         EventMsg::PatchApplyBegin(ev) => {
             let turn = ensure_turn(tracker, &event.id);
+            let preview = patch_input_preview(&ev.changes);
+            let tool_label = tool_label_for_patch(&ev.changes);
             let input = json!({
                 "auto_approved": ev.auto_approved,
+                "preview": preview,
             });
             vec![(
                 CrpChannel::Control,
@@ -1457,12 +1793,16 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name: "apply_patch".to_string(),
+                    tool_label: Some(tool_label),
                     input: Some(input),
+                    input_preview: Some(patch_input_preview(&ev.changes)),
                 },
             )]
         }
         EventMsg::PatchApplyEnd(ev) => {
             let turn = ensure_turn(tracker, &event.id);
+            let preview = patch_input_preview(&ev.changes);
+            let tool_label = tool_label_for_patch(&ev.changes);
             let status = if ev.success {
                 CrpToolStatus::Success
             } else {
@@ -1487,9 +1827,11 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name: "apply_patch".to_string(),
+                    tool_label: Some(tool_label),
                     status,
                     output: Some(output),
                     error,
+                    input_preview: Some(preview),
                 },
             )]
         }
@@ -1503,12 +1845,15 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name: "web_search".to_string(),
+                    tool_label: Some("Search".to_string()),
                     input: None,
+                    input_preview: None,
                 },
             )]
         }
         EventMsg::WebSearchEnd(ev) => {
             let turn = ensure_turn(tracker, &event.id);
+            let input_preview = json!({ "query": ev.query });
             let output = json!({
                 "query": ev.query,
             });
@@ -1520,9 +1865,11 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name: "web_search".to_string(),
+                    tool_label: Some("Searched".to_string()),
                     status: CrpToolStatus::Success,
                     output: Some(output),
                     error: None,
+                    input_preview: Some(input_preview),
                 },
             )]
         }
@@ -1537,6 +1884,10 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                 "tool": tool,
                 "arguments": invocation.arguments,
             });
+            let input_preview = json!({
+                "server": server,
+                "tool": tool,
+            });
             vec![(
                 CrpChannel::Control,
                 CrpEvent::ToolStarted {
@@ -1545,7 +1896,9 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name,
+                    tool_label: Some("Call".to_string()),
                     input: Some(input),
+                    input_preview: Some(input_preview),
                 },
             )]
         }
@@ -1573,6 +1926,10 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     })),
                 ),
             };
+            let input_preview = json!({
+                "server": server,
+                "tool": tool,
+            });
             vec![(
                 CrpChannel::Control,
                 CrpEvent::ToolCompleted {
@@ -1581,9 +1938,11 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name,
+                    tool_label: Some("Called".to_string()),
                     status,
                     output,
                     error,
+                    input_preview: Some(input_preview),
                 },
             )]
         }
@@ -1601,7 +1960,9 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         turn_id: turn.turn_id.clone(),
                         tool_call_id: ev.call_id.clone(),
                         tool_name: "view_image".to_string(),
+                        tool_label: Some("View".to_string()),
                         input: Some(payload.clone()),
+                        input_preview: Some(payload.clone()),
                     },
                 ),
                 (
@@ -1612,9 +1973,11 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         turn_id: turn.turn_id.clone(),
                         tool_call_id: ev.call_id,
                         tool_name: "view_image".to_string(),
+                        tool_label: Some("Viewed".to_string()),
                         status: CrpToolStatus::Success,
                         output: Some(payload),
                         error: None,
+                        input_preview: None,
                     },
                 ),
             ]
@@ -1902,7 +2265,17 @@ mod tests {
                     thread_id: "thread".to_string(),
                     turn_id: turn_id.clone(),
                     item_id: "reasoning-1".to_string(),
-                    delta: "summary".to_string(),
+                    delta: "**Reading".to_string(),
+                    summary_index: 0,
+                }),
+            },
+            Event {
+                id: turn_id.clone(),
+                msg: EventMsg::ReasoningContentDelta(ReasoningContentDeltaEvent {
+                    thread_id: "thread".to_string(),
+                    turn_id: turn_id.clone(),
+                    item_id: "reasoning-1".to_string(),
+                    delta: " foo**\n\nThinking about bar".to_string(),
                     summary_index: 0,
                 }),
             },
@@ -1933,17 +2306,22 @@ mod tests {
             mapped.extend(map_codex_event(&mut tracker, event));
         }
 
-        let summary = mapped.iter().find_map(|(channel, event)| match event {
-            CrpEvent::ReasoningSummary { text, item_id, .. } => {
-                Some((channel, text.clone(), item_id.clone()))
-            }
-            _ => None,
-        });
+        let summaries: Vec<_> = mapped
+            .iter()
+            .filter_map(|(channel, event)| match event {
+                CrpEvent::ReasoningSummary { text, item_id, .. } => {
+                    Some((channel, text.clone(), item_id.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(summaries.len(), 1);
+        let summary = summaries.into_iter().next();
         let Some((channel, text, item_id)) = summary else {
             panic!("missing reasoning summary");
         };
         assert_eq!(channel, &CrpChannel::Control);
-        assert_eq!(text, "summary".to_string());
+        assert_eq!(text, "Reading foo".to_string());
         assert_eq!(item_id.as_deref(), Some("reasoning-1"));
 
         let trace_chunks: Vec<_> = mapped
@@ -1953,11 +2331,13 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(trace_chunks.len(), 2);
+        assert_eq!(trace_chunks.len(), 3);
         assert_eq!(trace_chunks[0].0, &CrpChannel::Data);
-        assert_eq!(trace_chunks[0].1, "raw".to_string());
+        assert_eq!(trace_chunks[0].1, "Thinking about bar".to_string());
         assert_eq!(trace_chunks[1].0, &CrpChannel::Data);
-        assert_eq!(trace_chunks[1].1, "raw-final".to_string());
+        assert_eq!(trace_chunks[1].1, "raw".to_string());
+        assert_eq!(trace_chunks[2].0, &CrpChannel::Data);
+        assert_eq!(trace_chunks[2].1, "raw-final".to_string());
     }
 
     #[test]

@@ -157,6 +157,10 @@ pub enum CrpEvent {
         session_id: String,
         run_id: String,
         turn_id: String,
+        /// Codex can stream multiple reasoning summary blocks; this identifies which block.
+        /// Consumers can use it to pick the latest block title for status displays.
+        #[serde(default)]
+        summary_index: i64,
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         item_id: Option<String>,
@@ -185,7 +189,11 @@ pub enum CrpEvent {
         turn_id: String,
         tool_call_id: String,
         tool_name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_label: Option<String>,
         input: Option<Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        input_preview: Option<Value>,
     },
     #[serde(rename = "tool.request")]
     ToolRequest {
@@ -212,9 +220,13 @@ pub enum CrpEvent {
         turn_id: String,
         tool_call_id: String,
         tool_name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_label: Option<String>,
         status: CrpToolStatus,
         output: Option<Value>,
         error: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        input_preview: Option<Value>,
     },
     #[serde(rename = "models.list")]
     ModelsList {
@@ -302,9 +314,11 @@ mod tests {
             turn_id: "turn".to_string(),
             tool_call_id: "tool".to_string(),
             tool_name: "exec".to_string(),
+            tool_label: None,
             status: CrpToolStatus::Success,
             output: None,
             error: None,
+            input_preview: None,
         };
         let value = serde_json::to_value(event).unwrap();
         let kind = value.get("type").and_then(|value| value.as_str());
@@ -332,6 +346,7 @@ mod tests {
             session_id: "session".to_string(),
             run_id: "run".to_string(),
             turn_id: "turn".to_string(),
+            summary_index: 0,
             text: "summary".to_string(),
             item_id: None,
         };
