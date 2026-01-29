@@ -1323,13 +1323,14 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const archiveCleanupSnackbar = archiveCleanupNotice ? (
     <div className="wb-snackbar" role="status" aria-live="polite">
       <div className="wb-snackbar-body">
-        <div className="wb-snackbar-title">Archived, but cleanup failed.</div>
+        <div className="wb-snackbar-title">Archived task, but some cleanup failed.</div>
         <div className="wb-snackbar-subtitle">
-          Some worktree files could not be removed. Fix permissions and delete them manually if needed.
+          Some worktree files were likely root-owned and could not be removed. Fix permissions and delete them manually if
+          needed.
         </div>
       </div>
       <button type="button" className="wb-snackbar-close" onClick={dismissArchiveCleanupNotice} aria-label="Dismiss">
-        X
+        <X size={14} aria-hidden="true" />
       </button>
     </div>
   ) : null;
