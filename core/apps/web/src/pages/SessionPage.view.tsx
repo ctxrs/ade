@@ -205,6 +205,7 @@ export function SessionView({
   const [dropActive, setDropActive] = useState(false);
   const [workbenchModeInternal, setWorkbenchModeInternal] = useState<WorkbenchModeId>("default");
   const [sendBusy, setSendBusy] = useState(false);
+  const sendBusyRef = useRef(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [queueActionBusyId, setQueueActionBusyId] = useState<string | null>(null);
   const [pendingMessages, setPendingMessages] = useState<PendingMessageEntry[]>([]);
@@ -1419,15 +1420,31 @@ export function SessionView({
     };
   };
 
+  const setSendBusySafe = (next: boolean) => {
+    sendBusyRef.current = next;
+    setSendBusy(next);
+  };
+
   const sendNow = async () => {
     if (!id) return;
-    if (sendBusy) return;
+    if (sendBusyRef.current) return;
     if (hasActiveTurn && !queuedMessagesEnabled) {
       // Temporarily disabled: queued messages are gated off while a turn is running.
       return;
     }
-    const text = (dictationRecording ? await stopDictation({ awaitFinal: true }) : input).trim();
-    if (!text) return;
+    setSendBusySafe(true);
+    let text = "";
+    try {
+      text = (dictationRecording ? await stopDictation({ awaitFinal: true }) : input).trim();
+    } catch (e: any) {
+      setSendError(e?.message ? String(e.message) : String(e));
+      setSendBusySafe(false);
+      return;
+    }
+    if (!text) {
+      setSendBusySafe(false);
+      return;
+    }
     const attachmentsToSend = draftAttachments;
     const shouldQueue = hasActiveTurn && queuedMessagesEnabled;
     const optimisticId = createClientMessageId();
@@ -1443,7 +1460,6 @@ export function SessionView({
       delivery: shouldQueue ? "queued" : "immediate",
       created_at: new Date().toISOString(),
     };
-    setSendBusy(true);
     setSendError(null);
     if (shouldQueue) {
       setPendingQueueMessages((prev) => [...prev, { clientId: optimisticId, message: optimisticMessage }]);
@@ -1482,7 +1498,7 @@ export function SessionView({
       setDraftAttachments(attachmentsToSend);
       setSendError(e?.message ? String(e.message) : String(e));
     } finally {
-      setSendBusy(false);
+      setSendBusySafe(false);
     }
   };
 
@@ -1536,7 +1552,7 @@ export function SessionView({
 
   const onSendQueuedNow = async (message: Message) => {
     if (!id) return;
-    if (queueActionBusy || sendBusy) return;
+    if (queueActionBusy || sendBusyRef.current) return;
     const mid = idToString(message.id);
     if (!mid) return;
     const attachments = getQueuedAttachments(message);
@@ -1565,7 +1581,7 @@ export function SessionView({
       setQueueActionBusyId(null);
       return;
     }
-    setSendBusy(true);
+    setSendBusySafe(true);
 
     const optimisticId = createClientMessageId();
     const optimisticMessage: Message = {
@@ -1595,7 +1611,7 @@ export function SessionView({
       setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== optimisticId));
       setSendError(e?.message ? String(e.message) : String(e));
     } finally {
-      setSendBusy(false);
+      setSendBusySafe(false);
       setQueueActionBusyId(null);
     }
   };
