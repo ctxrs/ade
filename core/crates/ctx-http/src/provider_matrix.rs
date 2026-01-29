@@ -498,12 +498,10 @@ async fn detect_provider_version(
     }
 
     let probe = entry.version_probe.as_ref()?;
-    let command = cfg
-        .providers
-        .get(&status.provider_id)
+    let command = crate::installer::resolve_provider_command(cfg, &status.provider_id)
         .map(|c| ProviderCommand {
-            command: c.command.clone(),
-            args: c.args.clone(),
+            command: c.command,
+            args: c.args,
         })
         .or_else(|| entry.command.clone());
     let command = command?;

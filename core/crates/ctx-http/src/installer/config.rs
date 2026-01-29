@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use ctx_lsp::LspManagerConfig;
 
+use crate::bundled_assets;
 use crate::installs::truncate_for_storage;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +112,22 @@ pub fn apply_managed_install_details(
             .details
             .insert("managed_last_error_stage".to_string(), err.stage.clone());
     }
+}
+
+pub fn resolve_provider_command(
+    cfg: &AgentServerConfigFile,
+    provider_id: &str,
+) -> Option<AgentServerCommand> {
+    if let Some(cmd) = cfg.providers.get(provider_id) {
+        return Some(cmd.clone());
+    }
+    let bundled = bundled_assets::bundled_provider_command(provider_id)?;
+    Some(AgentServerCommand {
+        command: bundled.command,
+        args: bundled.args,
+        dependencies: Vec::new(),
+        managed: None,
+    })
 }
 
 pub fn agent_server_config_path(data_root: &Path) -> PathBuf {

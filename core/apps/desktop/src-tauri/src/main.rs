@@ -2815,6 +2815,15 @@ fn dev_web_dist() -> Option<PathBuf> {
     }
 }
 
+fn dev_bundle_dir() -> Option<PathBuf> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bundles");
+    if dir.exists() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn systemd_run_available() -> bool {
     match Command::new("systemd-run").arg("--version").status() {
@@ -2900,6 +2909,13 @@ fn spawn_daemon_with_mode(
             candidates.into_iter().find(|c| c.exists())
         })
         .or_else(dev_web_dist);
+    let bundle_dir = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|p| p.join("bundles"))
+        .filter(|p| p.exists())
+        .or_else(dev_bundle_dir);
 
     let local_port = pick_unused_local_port()?;
     let base_url = format!("http://127.0.0.1:{local_port}");
@@ -2922,6 +2938,10 @@ fn spawn_daemon_with_mode(
             cmd.arg("--setenv")
                 .arg(format!("CTX_MCP_COMMAND={}", mcp.to_string_lossy()));
         }
+        if let Some(bundle) = bundle_dir.as_ref() {
+            cmd.arg("--setenv")
+                .arg(format!("CTX_BUNDLE_DIR={}", bundle.to_string_lossy()));
+        }
         if let Ok(appimage) = std::env::var("APPIMAGE") {
             cmd.arg("--setenv")
                 .arg(format!("CTX_APPIMAGE_PATH={appimage}"));
@@ -2935,6 +2955,9 @@ fn spawn_daemon_with_mode(
         }
         if let Some(mcp) = mcp_bin.as_ref() {
             cmd.env("CTX_MCP_COMMAND", mcp.to_string_lossy().to_string());
+        }
+        if let Some(bundle) = bundle_dir.as_ref() {
+            cmd.env("CTX_BUNDLE_DIR", bundle.to_string_lossy().to_string());
         }
         if let Ok(appimage) = std::env::var("APPIMAGE") {
             cmd.env("CTX_APPIMAGE_PATH", appimage.clone());

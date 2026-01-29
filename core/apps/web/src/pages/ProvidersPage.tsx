@@ -20,6 +20,7 @@ import {
 } from "../api/client";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { isDesktopApp } from "../utils/desktop";
+import { PROVIDER_INSTALLS_ENABLED } from "../utils/providerInstallGate";
 
 type InstallSession = {
   installId: string;
@@ -60,6 +61,7 @@ export default function ProvidersPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [installs, setInstalls] = useState<Record<string, InstallSession>>({});
+  const installControlsEnabled = PROVIDER_INSTALLS_ENABLED;
 
   const eventSourcesRef = useRef<Record<string, EventSource>>({});
   const pollTimeoutsRef = useRef<Record<string, number>>({});
@@ -314,9 +316,11 @@ export default function ProvidersPage() {
       <div className="card">
         <div className="row">
           <strong>Managed installs</strong>
-          <button type="button" onClick={onInstallAll} disabled={busy !== null}>
-            {busy === "all" ? "Installing…" : "Install all"}
-          </button>
+          {installControlsEnabled ? (
+            <button type="button" onClick={onInstallAll} disabled={busy !== null}>
+              {busy === "all" ? "Installing…" : "Install all"}
+            </button>
+          ) : null}
         </div>
         <div className="muted">
           Installs ACP agent servers under <code>~/.ctx/providers/agent-servers</code>.
@@ -516,22 +520,24 @@ export default function ProvidersPage() {
               </div>
             )}
 
-            <div className="row">
-              <button
-                type="button"
-                onClick={() => onInstall(p.provider_id)}
-                disabled={installDisabled}
-                title={installSupported ? "Install this provider" : "Install not supported yet"}
-              >
-                {busy === p.provider_id || installRunning
-                  ? "Installing…"
-                  : p.installed && p.health === "unsupported_version"
-                    ? "Update"
-                    : p.installed
-                      ? "Reinstall"
-                    : "Install"}
-              </button>
-            </div>
+            {installControlsEnabled ? (
+              <div className="row">
+                <button
+                  type="button"
+                  onClick={() => onInstall(p.provider_id)}
+                  disabled={installDisabled}
+                  title={installSupported ? "Install this provider" : "Install not supported yet"}
+                >
+                  {busy === p.provider_id || installRunning
+                    ? "Installing…"
+                    : p.installed && p.health === "unsupported_version"
+                      ? "Update"
+                      : p.installed
+                        ? "Reinstall"
+                        : "Install"}
+                </button>
+              </div>
+            ) : null}
           </li>
           );
         })}

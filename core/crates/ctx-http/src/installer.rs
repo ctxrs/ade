@@ -10,6 +10,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
+use crate::bundled_assets;
 use crate::daemon::AppState;
 use crate::installs::{truncate_for_storage, InstallEventLevel, InstallId, InstallProgressEvent};
 use crate::lsp_catalog::{LspCatalogArchive, LspCatalogInstall};
@@ -23,9 +24,10 @@ mod config;
 pub use config::{
     agent_server_config_path, apply_managed_install_details, apply_managed_lsp_server_config,
     apply_user_lsp_server_config, cagent_config_path, load_agent_server_config,
-    load_lsp_server_config, load_user_lsp_config, save_agent_server_config, save_lsp_server_config,
-    AgentServerCommand, AgentServerConfigFile, LspServerConfigFile, ManagedInstallError,
-    ManagedInstallMetadata, UserLspConfigFile, UserLspServerSpec,
+    load_lsp_server_config, load_user_lsp_config, resolve_provider_command,
+    save_agent_server_config, save_lsp_server_config, AgentServerCommand, AgentServerConfigFile,
+    LspServerConfigFile, ManagedInstallError, ManagedInstallMetadata, UserLspConfigFile,
+    UserLspServerSpec,
 };
 
 const NODE_VERSION: &str = "24.12.0";
@@ -800,7 +802,7 @@ async fn install_managed_npm_provider(
 pub async fn ensure_claude_code_acp_ask_user_question_patched(
     agent_cfg: &AgentServerConfigFile,
 ) -> Result<bool> {
-    let Some(cmd) = agent_cfg.providers.get("claude") else {
+    let Some(cmd) = resolve_provider_command(agent_cfg, "claude") else {
         return Ok(false);
     };
     let Some(script_path) = cmd.args.first() else {
@@ -1897,6 +1899,35 @@ pub(crate) async fn ensure_node_runtime(
     data_root: &Path,
 ) -> Result<NodeRuntime> {
     let target = node_target_triple()?;
+    if let Some(bundled) = bundled_assets::bundled_node_runtime() {
+        if bundled.version == NODE_VERSION {
+            if let Some(npm_cli_js) = bundled.npm_cli.clone() {
+                emit_install(
+                    state,
+                    install_id,
+                    provider_id,
+                    InstallEventLevel::Info,
+                    "node",
+                    format!("Using bundled Node runtime v{NODE_VERSION} ({target})"),
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+                return Ok(NodeRuntime {
+                    node_root: bundled.root,
+                    node_bin: bundled.bin,
+                    npm_cli_js,
+                });
+            }
+        } else {
+            tracing::warn!(
+                "bundled Node runtime version {} does not match expected {}",
+                bundled.version,
+                NODE_VERSION
+            );
+        }
+    }
     let folder = format!("node-v{NODE_VERSION}-{target}");
     let node_root = data_root.join("runtimes").join("node").join(&folder);
     let (node_bin, npm_cli_js) = node_runtime_paths(&node_root);
@@ -2101,6 +2132,32 @@ async fn ensure_python_runtime(
     data_root: &Path,
 ) -> Result<PythonRuntime> {
     let target = python_target_triple()?;
+    if let Some(bundled) = bundled_assets::bundled_python_runtime() {
+        if bundled.version == PYTHON_VERSION {
+            emit_install(
+                state,
+                install_id,
+                provider_id,
+                InstallEventLevel::Info,
+                "python",
+                format!("Using bundled Python runtime {PYTHON_VERSION} ({target})"),
+                None,
+                None,
+                None,
+            )
+            .await;
+            return Ok(PythonRuntime {
+                python_root: bundled.root,
+                python_bin: bundled.bin,
+            });
+        } else {
+            tracing::warn!(
+                "bundled Python runtime version {} does not match expected {}",
+                bundled.version,
+                PYTHON_VERSION
+            );
+        }
+    }
     let folder = format!("cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target}");
     let python_root = data_root.join("runtimes").join("python").join(&folder);
     let python_bin = resolve_python_bin(&python_root);

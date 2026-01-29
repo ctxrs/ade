@@ -8,6 +8,7 @@ import {
 } from "../../api/client";
 import { shouldSendOnEnter } from "../../utils/keyboard";
 import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
+import { PROVIDER_INSTALLS_ENABLED } from "../../utils/providerInstallGate";
 import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToInlineAttachments } from "../../utils/messageAttachments";
@@ -71,6 +72,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const contextWindow =
     variant === "activeSession" ? (props as ActiveSessionProps).contextWindow ?? null : null;
   const hasDraft = value.trim().length > 0 || attachments.length > 0;
+  const installControlsEnabled = PROVIDER_INSTALLS_ENABLED;
   const showStop = !!onInterrupt && !!isWorking && !hasDraft;
   const sendActionDisabled = !showStop && (!!sendDisabled || !!sendDisabledReason);
   const sendActionTitle = showStop ? "Stop" : sendDisabledReason ?? "Send";
@@ -712,26 +714,28 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             <span className="wb-toggle" aria-hidden="true" />
           </label>
 
-          {(() => {
-            const ns = props as NewSessionProps;
-            const hasSupportedMissing = Object.values(ns.providersById).some(
-              (st) =>
-                st.details?.install_supported === "true" &&
-                (!(st.installed ?? false) || st.health !== "ok"),
-            );
-            const busy = ns.installAllBusy ?? false;
-            return (
-              <button
-                type="button"
-                className="wb-harness-install-all"
-                onClick={() => ns.onInstallAllProviders()}
-                disabled={!hasSupportedMissing || busy}
-                title={hasSupportedMissing ? "Install all supported harnesses" : "No supported harnesses to install"}
-              >
-                {busy ? "Installing…" : "Install all"}
-              </button>
-            );
-          })()}
+          {installControlsEnabled
+            ? (() => {
+                const ns = props as NewSessionProps;
+                const hasSupportedMissing = Object.values(ns.providersById).some(
+                  (st) =>
+                    st.details?.install_supported === "true" &&
+                    (!(st.installed ?? false) || st.health !== "ok"),
+                );
+                const busy = ns.installAllBusy ?? false;
+                return (
+                  <button
+                    type="button"
+                    className="wb-harness-install-all"
+                    onClick={() => ns.onInstallAllProviders()}
+                    disabled={!hasSupportedMissing || busy}
+                    title={hasSupportedMissing ? "Install all supported harnesses" : "No supported harnesses to install"}
+                  >
+                    {busy ? "Installing…" : "Install all"}
+                  </button>
+                );
+              })()
+            : null}
         </div>
 
         <div className="wb-harness-list">
@@ -833,33 +837,35 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
                   <div className="wb-harness-actions">
                     {!installed ? (
-                      <button
-                        type="button"
-                        className="wb-harness-install"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          ns.onInstallProvider(id);
-                        }}
-                        disabled={!installSupported || installBusy}
-                        title={!installSupported ? "Install not supported yet" : "Install this harness"}
-                        style={
-                          installBusy && installPct !== null
-                            ? ({ ["--wb-install-pct" as any]: `${Math.max(0, Math.min(100, installPct))}%` } as any)
-                            : undefined
-                        }
-                      >
-                        {installBusy
-                          ? installFinishing
-                            ? "Finalizing…"
-                            : installPct === null
-                              ? "Installing…"
-                              : `${Math.max(0, Math.min(100, installPct))}%`
-                          : installUi?.state === "failed"
-                            ? "Retry"
-                            : providerStatus?.installed
-                              ? "Update"
-                              : "Install"}
-                      </button>
+                      installControlsEnabled ? (
+                        <button
+                          type="button"
+                          className="wb-harness-install"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            ns.onInstallProvider(id);
+                          }}
+                          disabled={!installSupported || installBusy}
+                          title={!installSupported ? "Install not supported yet" : "Install this harness"}
+                          style={
+                            installBusy && installPct !== null
+                              ? ({ ["--wb-install-pct" as any]: `${Math.max(0, Math.min(100, installPct))}%` } as any)
+                              : undefined
+                          }
+                        >
+                          {installBusy
+                            ? installFinishing
+                              ? "Finalizing…"
+                              : installPct === null
+                                ? "Installing…"
+                                : `${Math.max(0, Math.min(100, installPct))}%`
+                            : installUi?.state === "failed"
+                              ? "Retry"
+                              : providerStatus?.installed
+                                ? "Update"
+                                : "Install"}
+                        </button>
+                      ) : null
                     ) : (
                       <>
                         {opts?.auth_required && (

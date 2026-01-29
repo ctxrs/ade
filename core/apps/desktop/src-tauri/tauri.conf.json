@@ -26,7 +26,7 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.icns", "icons/icon.png"],
-    "resources": ["bin/*", "web/dist/**/*"],
+    "resources": ["bin/*", "web/dist/**/*", "bundles/**/*"],
     "externalBin": ["bin/ctx", "bin/ctx-mcp"],
     "macOS": {
       "infoPlist": "Info.plist"

@@ -80,6 +80,15 @@ fn active_head_projection_should_flush(
     now.duration_since(last_event_at) >= debounce || now.duration_since(last_flush_at) >= max_flush
 }
 
+fn fallback_provider_command(command: &str, args: Vec<String>) -> installer::AgentServerCommand {
+    installer::AgentServerCommand {
+        command: command.to_string(),
+        args,
+        dependencies: Vec::new(),
+        managed: None,
+    }
+}
+
 fn message_from_event(event: &SessionEvent, session: &Session) -> Option<Message> {
     let message_id = event
         .payload_json
@@ -2056,106 +2065,92 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     }
 
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    let codex_adapter: Arc<Tier1AcpAdapter> = Arc::new(
-        agent_cfg
-            .providers
-            .get("codex")
-            .map(|c| Tier1AcpAdapter::from_raw("codex", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(Tier1AcpAdapter::codex),
-    );
-    let claude_cmd = agent_cfg
-        .providers
-        .get("claude")
-        .map(|c| (c.command.clone(), c.args.clone()));
-    let gemini_adapter: Arc<Tier1AcpAdapter> = Arc::new(
-        agent_cfg
-            .providers
-            .get("gemini")
-            .map(|c| Tier1AcpAdapter::from_raw("gemini", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(Tier1AcpAdapter::gemini),
-    );
-    let qwen_adapter: Arc<Tier1AcpAdapter> = Arc::new(
-        agent_cfg
-            .providers
-            .get("qwen")
-            .map(|c| Tier1AcpAdapter::from_raw("qwen", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(|| {
-                Tier1AcpAdapter::from_raw(
-                    "qwen",
-                    "qwen".to_string(),
-                    vec!["--experimental-acp".to_string()],
-                )
-            }),
-    );
-    let opencode_adapter: Arc<Tier1AcpAdapter> = Arc::new(
-        agent_cfg
-            .providers
-            .get("opencode")
-            .map(|c| Tier1AcpAdapter::from_raw("opencode", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(|| {
-                Tier1AcpAdapter::from_raw(
-                    "opencode",
-                    "opencode".to_string(),
-                    vec!["acp".to_string()],
-                )
-            }),
-    );
-    let mistral_adapter: Arc<Tier1AcpAdapter> = Arc::new(
-        agent_cfg
-            .providers
-            .get("mistral")
-            .map(|c| Tier1AcpAdapter::from_raw("mistral", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(|| {
-                Tier1AcpAdapter::from_raw("mistral", "vibe-acp".to_string(), vec![])
-            }),
-    );
-    let goose_adapter: Arc<Tier1AcpAdapter> = Arc::new(
-        agent_cfg
-            .providers
-            .get("goose")
-            .map(|c| Tier1AcpAdapter::from_raw("goose", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(|| {
-                Tier1AcpAdapter::from_raw("goose", "goose".to_string(), vec!["acp".to_string()])
-            }),
-    );
-    let kimi_adapter: Arc<Tier1AcpAdapter> = Arc::new(
-        agent_cfg
-            .providers
-            .get("kimi")
-            .map(|c| Tier1AcpAdapter::from_raw("kimi", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(|| {
-                Tier1AcpAdapter::from_raw("kimi", "kimi".to_string(), vec!["--acp".to_string()])
-            }),
-    );
-    let auggie_adapter: Arc<Tier1AcpAdapter> = Arc::new(
-        agent_cfg
-            .providers
-            .get("auggie")
-            .map(|c| Tier1AcpAdapter::from_raw("auggie", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(|| {
-                Tier1AcpAdapter::from_raw("auggie", "auggie".to_string(), vec!["--acp".to_string()])
-            }),
-    );
-    let cagent_adapter: Arc<Tier1AcpAdapter> = Arc::new(
-        agent_cfg
-            .providers
-            .get("cagent")
-            .map(|c| Tier1AcpAdapter::from_raw("cagent", c.command.clone(), c.args.clone()))
-            .unwrap_or_else(|| {
-                let cfg = data_root
-                    .join("providers")
-                    .join("agent-servers")
-                    .join("cagent")
-                    .join("config.yaml")
-                    .to_string_lossy()
-                    .to_string();
-                Tier1AcpAdapter::from_raw(
-                    "cagent",
-                    "cagent".to_string(),
-                    vec!["acp".to_string(), cfg],
-                )
-            }),
-    );
+    let codex_cmd = installer::resolve_provider_command(&agent_cfg, "codex")
+        .unwrap_or_else(|| fallback_provider_command("codex-acp", vec![]));
+    let codex_adapter: Arc<Tier1AcpAdapter> = Arc::new(Tier1AcpAdapter::from_raw(
+        "codex",
+        codex_cmd.command,
+        codex_cmd.args,
+    ));
+
+    let claude_cmd =
+        installer::resolve_provider_command(&agent_cfg, "claude").map(|c| (c.command, c.args));
+
+    let gemini_cmd =
+        installer::resolve_provider_command(&agent_cfg, "gemini").unwrap_or_else(|| {
+            fallback_provider_command("gemini", vec!["--experimental-acp".to_string()])
+        });
+    let gemini_adapter: Arc<Tier1AcpAdapter> = Arc::new(Tier1AcpAdapter::from_raw(
+        "gemini",
+        gemini_cmd.command,
+        gemini_cmd.args,
+    ));
+
+    let qwen_cmd = installer::resolve_provider_command(&agent_cfg, "qwen").unwrap_or_else(|| {
+        fallback_provider_command("qwen", vec!["--experimental-acp".to_string()])
+    });
+    let qwen_adapter: Arc<Tier1AcpAdapter> = Arc::new(Tier1AcpAdapter::from_raw(
+        "qwen",
+        qwen_cmd.command,
+        qwen_cmd.args,
+    ));
+
+    let opencode_cmd = installer::resolve_provider_command(&agent_cfg, "opencode")
+        .unwrap_or_else(|| fallback_provider_command("opencode", vec!["acp".to_string()]));
+    let opencode_adapter: Arc<Tier1AcpAdapter> = Arc::new(Tier1AcpAdapter::from_raw(
+        "opencode",
+        opencode_cmd.command,
+        opencode_cmd.args,
+    ));
+
+    let mistral_cmd = installer::resolve_provider_command(&agent_cfg, "mistral")
+        .unwrap_or_else(|| fallback_provider_command("vibe-acp", vec![]));
+    let mistral_adapter: Arc<Tier1AcpAdapter> = Arc::new(Tier1AcpAdapter::from_raw(
+        "mistral",
+        mistral_cmd.command,
+        mistral_cmd.args,
+    ));
+
+    let goose_cmd = installer::resolve_provider_command(&agent_cfg, "goose")
+        .unwrap_or_else(|| fallback_provider_command("goose", vec!["acp".to_string()]));
+    let goose_adapter: Arc<Tier1AcpAdapter> = Arc::new(Tier1AcpAdapter::from_raw(
+        "goose",
+        goose_cmd.command,
+        goose_cmd.args,
+    ));
+
+    let kimi_cmd = installer::resolve_provider_command(&agent_cfg, "kimi")
+        .unwrap_or_else(|| fallback_provider_command("kimi", vec!["--acp".to_string()]));
+    let kimi_adapter: Arc<Tier1AcpAdapter> = Arc::new(Tier1AcpAdapter::from_raw(
+        "kimi",
+        kimi_cmd.command,
+        kimi_cmd.args,
+    ));
+
+    let auggie_cmd = installer::resolve_provider_command(&agent_cfg, "auggie")
+        .unwrap_or_else(|| fallback_provider_command("auggie", vec!["--acp".to_string()]));
+    let auggie_adapter: Arc<Tier1AcpAdapter> = Arc::new(Tier1AcpAdapter::from_raw(
+        "auggie",
+        auggie_cmd.command,
+        auggie_cmd.args,
+    ));
+
+    let cagent_cmd =
+        installer::resolve_provider_command(&agent_cfg, "cagent").unwrap_or_else(|| {
+            let cfg = data_root
+                .join("providers")
+                .join("agent-servers")
+                .join("cagent")
+                .join("config.yaml")
+                .to_string_lossy()
+                .to_string();
+            fallback_provider_command("cagent", vec!["acp".to_string(), cfg])
+        });
+    let cagent_adapter: Arc<Tier1AcpAdapter> = Arc::new(Tier1AcpAdapter::from_raw(
+        "cagent",
+        cagent_cmd.command,
+        cagent_cmd.args,
+    ));
 
     providers.insert("codex".into(), codex_adapter.clone());
     providers.insert("gemini".into(), gemini_adapter.clone());
@@ -2172,13 +2167,11 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     if enable_codex_crp {
-        let codex_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(
-            agent_cfg
-                .providers
-                .get("codex-crp")
-                .map(|c| Tier1CrpAdapter::from_raw("codex-crp", c.command.clone(), c.args.clone()))
-                .unwrap_or_else(Tier1CrpAdapter::codex),
-        );
+        let codex_crp_cmd = installer::resolve_provider_command(&agent_cfg, "codex-crp");
+        let codex_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(match codex_crp_cmd {
+            Some(cmd) => Tier1CrpAdapter::from_raw("codex-crp", cmd.command, cmd.args),
+            None => Tier1CrpAdapter::codex(),
+        });
         providers.insert("codex-crp".into(), codex_crp_adapter);
     }
 
@@ -2204,19 +2197,11 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         ("cline", "cline-acp", vec![]),
         ("swe-agent", "sweagent", vec!["acp"]),
     ] {
-        let adapter: Arc<Tier1AcpAdapter> = Arc::new(
-            agent_cfg
-                .providers
-                .get(id)
-                .map(|c| Tier1AcpAdapter::from_raw(id, c.command.clone(), c.args.clone()))
-                .unwrap_or_else(|| {
-                    Tier1AcpAdapter::from_raw(
-                        id,
-                        command.to_string(),
-                        args.into_iter().map(|s| s.to_string()).collect(),
-                    )
-                }),
-        );
+        let cmd = installer::resolve_provider_command(&agent_cfg, id).unwrap_or_else(|| {
+            fallback_provider_command(command, args.into_iter().map(|s| s.to_string()).collect())
+        });
+        let adapter: Arc<Tier1AcpAdapter> =
+            Arc::new(Tier1AcpAdapter::from_raw(id, cmd.command, cmd.args));
         providers.insert(id.to_string(), adapter);
     }
 
@@ -2328,14 +2313,12 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     }
 
     let codex_adapter: Arc<Tier1AcpAdapter> = Arc::new(
-        agent_cfg
-            .providers
-            .get("codex")
+        installer::resolve_provider_command(&agent_cfg, "codex")
             .map(|c| {
                 Tier1AcpAdapter::from_raw_with_ask_user_question(
                     "codex",
-                    c.command.clone(),
-                    c.args.clone(),
+                    c.command,
+                    c.args,
                     Arc::clone(&state.ask_user_question),
                 )
             })
