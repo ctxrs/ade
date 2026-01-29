@@ -7096,10 +7096,10 @@ async fn load_and_cache_worktree_files(
     let mut cache = state.file_completions_cache.lock().await;
     cache.insert(
         worktree.id,
-        crate::daemon::CachedFileCompletions {
+        crate::daemon::TimedEntry::new(crate::daemon::CachedFileCompletions {
             cached_at: now,
             files: files.clone(),
-        },
+        }),
     );
     let mut labels = HashMap::new();
     labels.insert("event".to_string(), "list_files_worktree".to_string());
@@ -7145,10 +7145,10 @@ async fn load_and_cache_workspace_files(
     let mut cache = state.workspace_file_completions_cache.lock().await;
     cache.insert(
         ws_id,
-        crate::daemon::CachedFileCompletions {
+        crate::daemon::TimedEntry::new(crate::daemon::CachedFileCompletions {
             cached_at: now,
             files: files.clone(),
-        },
+        }),
     );
     let mut labels = HashMap::new();
     labels.insert("event".to_string(), "list_files_workspace".to_string());
@@ -10523,6 +10523,7 @@ async fn delete_workspace(
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    state.cleanup_workspace(id).await;
     state
         .global_store()
         .delete_workspace_indexes(id)
@@ -11263,6 +11264,9 @@ async fn delete_task(
         .list_sessions_for_task(task_id)
         .await
         .unwrap_or_default();
+    for session in &sessions {
+        state.cleanup_session(session.id).await;
+    }
     let deleted = store
         .delete_task(task_id)
         .await
@@ -11479,6 +11483,9 @@ async fn archive_task(
         .list_sessions_for_task(task_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    for session in &sessions {
+        state.cleanup_session(session.id).await;
+    }
     let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
     if let Some(primary_worktree_id) = task.primary_worktree_id {
         worktree_ids.insert(primary_worktree_id);
@@ -12564,6 +12571,7 @@ async fn get_session_head(
         }
         return Ok(Json(head));
     }
+    state.emit_cache_miss("session_head").await;
     let store = state
         .store_for_session(session_id)
         .await
@@ -12573,6 +12581,7 @@ async fn get_session_head(
         .await
     {
         Ok(Some(head)) => {
+            state.emit_cache_rehydrate("session_head", true).await;
             if include_events {
                 state
                     .workspace_active_snapshot
@@ -12581,8 +12590,14 @@ async fn get_session_head(
             }
             Ok(Json(head))
         }
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Ok(None) => {
+            state.emit_cache_rehydrate("session_head", false).await;
+            Err(StatusCode::NOT_FOUND)
+        }
+        Err(_) => {
+            state.emit_cache_rehydrate("session_head", false).await;
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }
 
@@ -12999,28 +13014,29 @@ async fn maybe_emit_git_status_snapshot(
     let now = Instant::now();
     {
         let mut cache = state.git_status_snapshots.lock().await;
-        let entry = cache
-            .entry(worktree_id)
-            .or_insert_with(|| GitStatusSnapshotCacheEntry {
+        let entry = cache.entry(worktree_id).or_insert_with(|| {
+            crate::daemon::TimedEntry::new(GitStatusSnapshotCacheEntry {
                 payload: String::new(),
                 emitted_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
                 last_change_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
-            });
-        let is_first = entry.payload.is_empty();
-        if entry.payload == payload_raw {
+            })
+        });
+        entry.touch_at(now);
+        let is_first = entry.value.payload.is_empty();
+        if entry.value.payload == payload_raw {
             return;
         }
-        let since_change = now.duration_since(entry.last_change_at);
-        entry.payload = payload_raw;
-        entry.last_change_at = now;
-        let since_emit = now.duration_since(entry.emitted_at);
+        let since_change = now.duration_since(entry.value.last_change_at);
+        entry.value.payload = payload_raw;
+        entry.value.last_change_at = now;
+        let since_emit = now.duration_since(entry.value.emitted_at);
         if !is_first
             && since_emit < Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS)
             && since_change < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS)
         {
             return;
         }
-        entry.emitted_at = now;
+        entry.value.emitted_at = now;
     }
     let notice = match state.store_for_session(session_id).await {
         Ok(store) => {
@@ -13313,10 +13329,11 @@ async fn session_file_completions(
 
     let files = {
         let now = Instant::now();
-        let cache = state.file_completions_cache.lock().await;
-        if let Some(entry) = cache.get(&worktree.id) {
-            if now.duration_since(entry.cached_at) <= CACHE_TTL {
-                entry.files.clone()
+        let mut cache = state.file_completions_cache.lock().await;
+        if let Some(entry) = cache.get_mut(&worktree.id) {
+            entry.touch();
+            if now.duration_since(entry.value.cached_at) <= CACHE_TTL {
+                entry.value.files.clone()
             } else {
                 drop(cache);
                 load_and_cache_worktree_files(&state, &worktree, now).await?
@@ -13359,10 +13376,11 @@ async fn workspace_file_completions(
 
     let files = {
         let now = Instant::now();
-        let cache = state.workspace_file_completions_cache.lock().await;
-        if let Some(entry) = cache.get(&ws_id) {
-            if now.duration_since(entry.cached_at) <= CACHE_TTL {
-                entry.files.clone()
+        let mut cache = state.workspace_file_completions_cache.lock().await;
+        if let Some(entry) = cache.get_mut(&ws_id) {
+            entry.touch();
+            if now.duration_since(entry.value.cached_at) <= CACHE_TTL {
+                entry.value.files.clone()
             } else {
                 drop(cache);
                 load_and_cache_workspace_files(&state, ws_id, &root, now).await?
