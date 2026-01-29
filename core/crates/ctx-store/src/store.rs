@@ -2886,8 +2886,14 @@ impl Store {
             anyhow::bail!("relationship requires parent_session_id");
         }
         let now = Utc::now();
+        let id = SessionId::new();
+        let title = if relationship.as_deref() == Some("sub_agent") {
+            format!("subagent-{}", id.0)
+        } else {
+            "New Task".to_string()
+        };
         let session = Session {
-            id: SessionId::new(),
+            id,
             task_id,
             workspace_id,
             worktree_id,
@@ -2895,7 +2901,7 @@ impl Store {
             relationship,
             provider_id,
             model_id,
-            title: "New Task".to_string(),
+            title,
             agent_role,
             status: SessionStatus::Active,
             provider_session_ref,
@@ -9237,5 +9243,72 @@ mod tests {
         .await
         .unwrap();
         assert!(row.is_none());
+    }
+
+    #[tokio::test]
+    async fn subagent_label_is_unique_per_task() {
+        let (_dir, store) = setup_store().await;
+        let ws = store
+            .create_workspace("test".into(), "/tmp/test".into(), VcsKind::Git)
+            .await
+            .unwrap();
+        let task = store.create_task(ws.id, "task".into(), None).await.unwrap();
+        let worktree = store
+            .create_worktree(ws.id, "/tmp/ws".into(), "abc123".into(), None)
+            .await
+            .unwrap();
+        let parent = store
+            .create_session(
+                task.id,
+                ws.id,
+                worktree.id,
+                "fake".into(),
+                "fake".into(),
+                "assistant".into(),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let child_one = store
+            .create_session(
+                task.id,
+                ws.id,
+                worktree.id,
+                "fake".into(),
+                "fake".into(),
+                "subagent".into(),
+                Some(parent.id),
+                Some("sub_agent".into()),
+                None,
+            )
+            .await
+            .unwrap();
+        let child_two = store
+            .create_session(
+                task.id,
+                ws.id,
+                worktree.id,
+                "fake".into(),
+                "fake".into(),
+                "subagent".into(),
+                Some(parent.id),
+                Some("sub_agent".into()),
+                None,
+            )
+            .await
+            .unwrap();
+
+        store
+            .update_session_title(child_one.id, "Dup".into())
+            .await
+            .unwrap();
+
+        let err = store
+            .update_session_title(child_two.id, "Dup".into())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("unique"));
     }
 }

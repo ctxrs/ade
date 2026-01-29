@@ -10579,20 +10579,26 @@ async fn mcp_subagent_wait(
         );
     }
 
-    let status = if results.iter().any(|r| r.status == "failed") {
-        "failed"
-    } else if results.iter().any(|r| r.status == "interrupted") {
-        "interrupted"
-    } else if results.iter().any(|r| r.status == "running") {
-        "running"
-    } else {
-        "completed"
-    };
+    let status = aggregate_subagent_status(&results);
 
     Ok(Json(SubagentWaitResp {
         status: status.to_string(),
         results,
     }))
+}
+
+fn aggregate_subagent_status(results: &[AgentInitResult]) -> &'static str {
+    if results.iter().any(|r| r.status == "failed") {
+        "failed"
+    } else if results.iter().any(|r| r.status == "interrupted") {
+        "interrupted"
+    } else if results.iter().any(|r| r.status == "running") {
+        "running"
+    } else if results.iter().any(|r| r.status == "unknown") {
+        "unknown"
+    } else {
+        "completed"
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -14186,6 +14192,16 @@ mod tests {
         (data_dir, state, session)
     }
 
+    fn result_with_status(status: &str) -> AgentInitResult {
+        AgentInitResult {
+            label: "agent".to_string(),
+            status: status.to_string(),
+            content: None,
+            context_window: None,
+            worktree_path: None,
+        }
+    }
+
     #[tokio::test]
     async fn schedule_title_generation_falls_back_without_config() {
         let (_data_dir, state, session) = setup_state().await;
@@ -14234,6 +14250,21 @@ mod tests {
             outcome.title,
             title_generation::fallback_title_from_prompt(prompt)
         );
+    }
+
+    #[test]
+    fn aggregate_subagent_status_reports_unknown() {
+        let results = vec![
+            result_with_status("completed"),
+            result_with_status("unknown"),
+        ];
+        assert_eq!(aggregate_subagent_status(&results), "unknown");
+    }
+
+    #[test]
+    fn aggregate_subagent_status_prefers_running_over_unknown() {
+        let results = vec![result_with_status("running"), result_with_status("unknown")];
+        assert_eq!(aggregate_subagent_status(&results), "running");
     }
 }
 
