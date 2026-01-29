@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -209,6 +210,35 @@ async fn subagent_init_rejects_response_mode() {
         .as_str()
         .unwrap_or("")
         .contains("response_mode"));
+}
+
+#[tokio::test]
+async fn subagent_init_rejects_worktree_new_when_dirty() {
+    let repo = common::init_git_repo(&[("README.md", "ok")]).await;
+    fs::write(repo.path().join("dirty.txt"), "dirty").unwrap();
+
+    let (_data_dir, _state, server, _store, parent_id) = setup_state(repo.path()).await;
+    let client = &server.client;
+    let base = &server.base_url;
+
+    let resp = client
+        .post(format!("{base}/api/mcp/sessions/{parent_id}/subagent_init"))
+        .json(&json!({
+            "worktree": "new",
+            "agents": [
+                { "prompt": "a", "label": "Dirty", "harness": "fake", "model": "fake-model" }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["error"].as_str().unwrap_or(""),
+        "Your worktree has uncommitted changes. Before starting new subagents in new worktree mode, you must commit or stash your changes to be explicit about whether subagents should inherit these diffs."
+    );
 }
 
 #[tokio::test]
