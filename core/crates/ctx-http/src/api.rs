@@ -9515,9 +9515,27 @@ async fn mcp_agent_init(
         }
     }
 
+    let parent_worktree = store
+        .get_worktree(parent.worktree_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "parent worktree not found".to_string(),
+            }),
+        ))?;
+
     let worktree_plan = if worktree_selection == SubagentWorktreeSelection::New {
-        let workspace_root = StdPath::new(&workspace.root_path);
-        let vcs = vcs::driver_for_path(workspace_root).await.map_err(|e| {
+        let parent_root = StdPath::new(&parent_worktree.root_path);
+        let vcs = vcs::driver_for_path(parent_root).await.map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiErrorResp {
@@ -9525,7 +9543,7 @@ async fn mcp_agent_init(
                 }),
             )
         })?;
-        let base_commit_sha = vcs.rev_parse_head(workspace_root).await.map_err(|e| {
+        let base_commit_sha = vcs.rev_parse_head(parent_root).await.map_err(|e| {
             let msg = e.to_string().to_lowercase();
             if msg.contains("ambiguous argument 'head'")
                 || msg.contains("unknown revision or path not in the working tree")
