@@ -8632,6 +8632,23 @@ fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Valu
         obj.insert("output_spool_path".to_string(), Value::String(path));
     }
 
+    if let Some(value) = raw_payload
+        .get("crp_seq")
+        .or_else(|| raw_payload.get("crpSeq"))
+        .or_else(|| update.get("crp_seq"))
+        .or_else(|| update.get("crpSeq"))
+    {
+        obj.insert("crp_seq".to_string(), value.clone());
+    }
+    if let Some(value) = raw_payload
+        .get("crp_channel")
+        .or_else(|| raw_payload.get("crpChannel"))
+        .or_else(|| update.get("crp_channel"))
+        .or_else(|| update.get("crpChannel"))
+    {
+        obj.insert("crp_channel".to_string(), value.clone());
+    }
+
     Value::Object(obj)
 }
 

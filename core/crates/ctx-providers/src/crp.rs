@@ -265,6 +265,7 @@ impl CrpSessionPool {
             .await?;
         let mut last_seq = 0u64;
         let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+        let mut tool_input_cache: HashMap<String, Value> = HashMap::new();
         let mut cancel_rx = req.cancel_rx;
         loop {
             tokio::select! {
@@ -290,8 +291,13 @@ impl CrpSessionPool {
                                 continue;
                             }
                             last_seq = env.seq;
-                            let mapped =
-                                map_crp_event(env.event, env.channel, env.seq, &mut tool_output_cache);
+                            let mapped = map_crp_event(
+                                env.event,
+                                env.channel,
+                                env.seq,
+                                &mut tool_output_cache,
+                                &mut tool_input_cache,
+                            );
                             for event in mapped.events {
                                 let _ = req.event_sink.send(event).await;
                             }
@@ -771,6 +777,7 @@ struct ToolCompletedPayloadParams {
     status: CrpToolStatus,
     output: Option<Value>,
     error: Option<String>,
+    input: Option<Value>,
     input_preview: Option<Value>,
     seq: u64,
 }
@@ -780,6 +787,7 @@ fn map_crp_event(
     channel: CrpChannel,
     seq: u64,
     tool_output_cache: &mut HashMap<String, String>,
+    tool_input_cache: &mut HashMap<String, Value>,
 ) -> MappedCrpEvent {
     let crp_channel = match channel {
         CrpChannel::Data => Some("data"),
@@ -884,6 +892,9 @@ fn map_crp_event(
             input_preview,
             ..
         } => {
+            if let Some(input_value) = input.as_ref() {
+                tool_input_cache.insert(tool_call_id.clone(), input_value.clone());
+            }
             let payload = build_tool_started_payload(
                 tool_call_id,
                 tool_name,
@@ -940,6 +951,7 @@ fn map_crp_event(
             ..
         } => {
             let tool_call_id_for_cache = tool_call_id.clone();
+            let input = tool_input_cache.remove(&tool_call_id_for_cache);
             let payload = build_tool_completed_payload(ToolCompletedPayloadParams {
                 tool_call_id,
                 tool_name,
@@ -947,6 +959,7 @@ fn map_crp_event(
                 status,
                 output,
                 error,
+                input,
                 input_preview,
                 seq,
             });
@@ -1013,8 +1026,8 @@ fn build_tool_started_payload(
     payload.insert("tool_call_id".to_string(), json!(tool_call_id.clone()));
     payload.insert("kind".to_string(), json!(tool_name.clone()));
     payload.insert("status".to_string(), json!("running"));
-    let preview = input_preview.clone().or_else(|| input.clone());
-    if let Some(input_value) = preview.clone() {
+    let raw_input = input.clone().or_else(|| input_preview.clone());
+    if let Some(input_value) = raw_input.clone() {
         payload.insert("rawInput".to_string(), input_value);
     }
     if let Some(input_preview) = input_preview.clone() {
@@ -1030,7 +1043,7 @@ fn build_tool_started_payload(
             "id": tool_call_id,
             "name": tool_name_for_call.clone(),
             "kind": tool_name_for_call,
-            "rawInput": preview,
+            "rawInput": raw_input,
             "status": "running",
             "title": tool_label,
         }),
@@ -1047,6 +1060,7 @@ fn build_tool_completed_payload(params: ToolCompletedPayloadParams) -> Value {
         status,
         output,
         error,
+        input,
         input_preview,
         seq,
     } = params;
@@ -1061,6 +1075,10 @@ fn build_tool_completed_payload(params: ToolCompletedPayloadParams) -> Value {
             CrpToolStatus::Error => "failed",
         }),
     );
+    let raw_input = input.clone().or_else(|| input_preview.clone());
+    if let Some(input_value) = raw_input.clone() {
+        payload.insert("rawInput".to_string(), input_value);
+    }
     if let Some(input_preview) = input_preview.clone() {
         payload.insert("input_preview".to_string(), input_preview);
     }
@@ -1084,6 +1102,7 @@ fn build_tool_completed_payload(params: ToolCompletedPayloadParams) -> Value {
             "name": tool_name_for_call.clone(),
             "kind": tool_name_for_call,
             "title": tool_label,
+            "rawInput": raw_input,
             "rawOutput": payload.get("rawOutput").cloned(),
             "status": payload.get("status").cloned(),
         }),

@@ -525,60 +525,6 @@ fn tool_input_preview(
     }
 }
 
-fn tool_input_ops_preview(input: Option<&Value>) -> Option<Value> {
-    let mut out = serde_json::Map::new();
-    let obj = input.and_then(|value| value.as_object());
-    if let Some(obj) = obj {
-        for key in [
-            "cwd",
-            "root",
-            "path",
-            "file",
-            "filename",
-            "file_path",
-            "filePath",
-            "filepath",
-            "target",
-            "glob",
-            "paths",
-            "files",
-            "file_paths",
-            "filePaths",
-        ] {
-            if let Some(value) = obj.get(key) {
-                if value.is_string() || value.is_array() || value.is_object() {
-                    out.insert(key.to_string(), value.clone());
-                }
-            }
-        }
-    }
-
-    let mut paths = Vec::new();
-    if !out.is_empty() {
-        collect_paths_from_value(&Value::Object(out.clone()), &mut paths);
-    }
-    if let Some(input) = input {
-        if let Some(changes) = input.get("changes") {
-            collect_paths_from_changes(changes, &mut paths);
-        }
-    }
-    dedupe_paths(&mut paths);
-    if !paths.is_empty() {
-        out.insert(
-            "paths".to_string(),
-            Value::Array(paths.into_iter().map(Value::String).collect()),
-        );
-    }
-
-    if out.is_empty() {
-        None
-    } else {
-        let value = Value::Object(out);
-        let mut truncated = false;
-        Some(truncate_preview_value(&value, &mut truncated))
-    }
-}
-
 fn truncate_preview_value(value: &Value, truncated: &mut bool) -> Value {
     match value {
         Value::String(value) => {
@@ -725,7 +671,10 @@ pub(super) fn sanitize_tool_event_payload(
     };
 
     let input = extract_tool_input(update);
-    let input_preview = tool_input_ops_preview(input);
+    let input_preview = update
+        .get("input_preview")
+        .cloned()
+        .or_else(|| tool_input_preview(input, update, tool_kind.as_deref(), title.as_deref()));
     let input_meta = build_json_preview(input, input_preview);
 
     let patch_preview = if is_edit_tool(tool_kind.as_deref(), title.as_deref()) {
@@ -772,6 +721,15 @@ pub(super) fn sanitize_tool_event_payload(
             "output_original_bytes".to_string(),
             Value::Number(serde_json::Number::from(preview.original_bytes as i64)),
         );
+    }
+    if let Some(value) = raw_payload.get("crp_seq").or_else(|| update.get("crp_seq")) {
+        obj.insert("crp_seq".to_string(), value.clone());
+    }
+    if let Some(value) = raw_payload
+        .get("crp_channel")
+        .or_else(|| update.get("crp_channel"))
+    {
+        obj.insert("crp_channel".to_string(), value.clone());
     }
     if let Some(path) = output_spool_path {
         obj.insert(
