@@ -2,6 +2,9 @@
 .DS_Store
 Thumbs.db
 
+# Repo temp outputs
+tmp/
+
 # Editors
 .idea/
 *.swp
