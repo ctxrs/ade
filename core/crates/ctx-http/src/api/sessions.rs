@@ -19,6 +19,7 @@ use super::redact_json_value;
 use super::shared::{
     env_target_for_worktree, load_and_cache_worktree_files, FileCompletionsQuery, SessionWithEnv,
 };
+use crate::attachments;
 use crate::completions;
 use crate::daemon::{AppState, GitStatusSnapshotCacheEntry};
 use crate::git_status::{load_git_status_snapshot, GitStatusEntry};
@@ -30,10 +31,12 @@ use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
 use crate::title_generation;
 use crate::workspace_config;
+use crate::worktree_bootstrap;
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_fs::git::git_merge_base;
 use ctx_fs::vcs;
+use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_providers::events::NormalizedEvent;
 use ctx_providers::{
     acp::{probe_provider_options, AcpAgentConfig, AcpClientConfig},
@@ -4320,7 +4323,6 @@ fn aggregate_subagent_status(results: &[AgentInitResult]) -> &'static str {
     }
 }
 
-#[derive(Debug, Deserialize)]
 #[derive(Debug, Deserialize)]
 pub(super) struct GenerateSessionTitleReq {
     #[serde(default)]

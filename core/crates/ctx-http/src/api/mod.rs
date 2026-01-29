@@ -71,7 +71,6 @@ use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::resource_utilization;
 use crate::title_generation_local;
 use crate::updates;
-use crate::vcs_hooks;
 use crate::web_sessions::{
     render_web_session_view, WebSessionCreateRequest, WebSessionInfo, WebSessionRunRequest,
     WebSessionRunResponse, WebSessionViewport,
