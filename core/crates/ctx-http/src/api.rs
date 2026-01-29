@@ -84,6 +84,7 @@ use crate::title_generation;
 use crate::title_generation_local;
 use crate::tool_cgroup;
 use crate::updates;
+use crate::vcs_hooks;
 use crate::web_sessions::{
     render_web_session_view, WebSessionCreateRequest, WebSessionInfo, WebSessionRunRequest,
     WebSessionRunResponse, WebSessionViewport,
@@ -10523,6 +10524,10 @@ async fn delete_workspace(
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let worktrees = match state.store_for_workspace(id).await {
+        Ok(store) => store.list_worktrees(id).await.unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
     state.cleanup_workspace(id).await;
     state
         .global_store()
@@ -10535,6 +10540,29 @@ async fn delete_workspace(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     state.stores.evict_workspace(id).await;
+    for worktree in &worktrees {
+        if let Err(err) = vcs_hooks::cleanup_worktree_hooks(
+            &state.data_root,
+            id,
+            worktree.id,
+            Some(StdPath::new(&worktree.root_path)),
+            worktree.vcs_kind.clone(),
+        )
+        .await
+        {
+            tracing::warn!(
+                workspace_id = %id.0,
+                worktree_id = %worktree.id.0,
+                "failed to remove vcs hooks: {err:#}"
+            );
+        }
+    }
+    if let Err(err) = vcs_hooks::cleanup_workspace_hooks(&state.data_root, id).await {
+        tracing::warn!(
+            workspace_id = %id.0,
+            "failed to remove vcs hooks: {err:#}"
+        );
+    }
     let workspace_db_dir = state
         .data_root
         .join("db")
@@ -11264,6 +11292,10 @@ async fn delete_task(
         .list_sessions_for_task(task_id)
         .await
         .unwrap_or_default();
+    let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
+    if let Some(primary_worktree_id) = task.primary_worktree_id {
+        worktree_ids.insert(primary_worktree_id);
+    }
     for session in &sessions {
         state.cleanup_session(session.id).await;
     }
@@ -11273,6 +11305,56 @@ async fn delete_task(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !deleted {
         return Err(StatusCode::NOT_FOUND);
+    }
+    for worktree_id in worktree_ids {
+        let other_active = match store
+            .count_active_tasks_for_worktree(worktree_id, Some(task_id))
+            .await
+        {
+            Ok(count) => count > 0,
+            Err(err) => {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree_id.0,
+                    "failed to check worktree usage: {err:#}"
+                );
+                true
+            }
+        };
+        if other_active {
+            continue;
+        }
+        let worktree = match store.get_worktree(worktree_id).await {
+            Ok(Some(worktree)) => Some(worktree),
+            Ok(None) => None,
+            Err(err) => {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree_id.0,
+                    "failed to load worktree for hooks cleanup: {err:#}"
+                );
+                None
+            }
+        };
+        let worktree_root = worktree
+            .as_ref()
+            .map(|entry| StdPath::new(&entry.root_path));
+        let vcs_kind = worktree.as_ref().and_then(|entry| entry.vcs_kind.clone());
+        if let Err(err) = vcs_hooks::cleanup_worktree_hooks(
+            &state.data_root,
+            task.workspace_id,
+            worktree_id,
+            worktree_root,
+            vcs_kind,
+        )
+        .await
+        {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree_id.0,
+                "failed to remove vcs hooks: {err:#}"
+            );
+        }
     }
     let _ = state
         .global_store()
@@ -11507,6 +11589,38 @@ async fn archive_task(
     let mut errors: Vec<anyhow::Error> = Vec::new();
     let mut needs_prune = false;
     for worktree in &worktrees {
+        let other_active = match store
+            .count_active_tasks_for_worktree(worktree.id, Some(task_id))
+            .await
+        {
+            Ok(count) => count > 0,
+            Err(err) => {
+                tracing::warn!(
+                    task_id = %task_id.0,
+                    worktree_id = %worktree.id.0,
+                    "failed to check worktree usage: {err:#}"
+                );
+                true
+            }
+        };
+        if other_active {
+            continue;
+        }
+        if let Err(err) = vcs_hooks::cleanup_worktree_hooks(
+            &state.data_root,
+            workspace.id,
+            worktree.id,
+            Some(StdPath::new(&worktree.root_path)),
+            worktree.vcs_kind.clone(),
+        )
+        .await
+        {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree.id.0,
+                "failed to remove vcs hooks: {err:#}"
+            );
+        }
         let Some(root) = managed_worktree_root(&state, &workspace, worktree) else {
             continue;
         };
@@ -11697,6 +11811,22 @@ async fn unarchive_task(
         .await
         {
             tracing::warn!(task_id = %task_id.0, "worktree bootstrap failed: {e:?}");
+        }
+        if let Err(e) = vcs_hooks::ensure_task_commit_hook(
+            &state.data_root,
+            workspace.id,
+            worktree.id,
+            StdPath::new(&worktree.root_path),
+            worktree.vcs_kind.clone(),
+            task_id,
+        )
+        .await
+        {
+            tracing::warn!(
+                task_id = %task_id.0,
+                worktree_id = %worktree.id.0,
+                "failed to configure vcs hooks: {e:#}"
+            );
         }
     }
 
@@ -12046,6 +12176,23 @@ async fn create_task(
         tracing::warn!(worktree_id = %worktree_id.0, "failed to update worktree index: {e:?}");
     }
 
+    if let Err(e) = vcs_hooks::ensure_task_commit_hook(
+        &state.data_root,
+        ws_id,
+        worktree_id,
+        StdPath::new(&worktree.root_path),
+        worktree.vcs_kind.clone(),
+        task.id,
+    )
+    .await
+    {
+        tracing::warn!(
+            task_id = %task.id.0,
+            worktree_id = %worktree_id.0,
+            "failed to configure vcs hooks: {e:#}"
+        );
+    }
+
     if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
         Arc::clone(&state),
         ws.clone(),
@@ -12338,6 +12485,25 @@ async fn create_session_for_task(
             _ => return Err(StatusCode::BAD_REQUEST),
         }
     };
+
+    if let Ok(Some(worktree)) = store.get_worktree(worktree_id).await {
+        if let Err(e) = vcs_hooks::ensure_task_commit_hook(
+            &state.data_root,
+            task.workspace_id,
+            worktree.id,
+            StdPath::new(&worktree.root_path),
+            worktree.vcs_kind.clone(),
+            task.id,
+        )
+        .await
+        {
+            tracing::warn!(
+                task_id = %task.id.0,
+                worktree_id = %worktree.id.0,
+                "failed to configure vcs hooks: {e:#}"
+            );
+        }
+    }
 
     let session = store
         .create_session(
