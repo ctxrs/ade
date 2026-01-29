@@ -1572,7 +1572,7 @@ fn find_codex_session_log(session_ref: &str) -> Option<PathBuf> {
     None
 }
 
-fn model_context_window(provider_id: &str, model_id: &str) -> Option<usize> {
+pub(crate) fn model_context_window(provider_id: &str, model_id: &str) -> Option<usize> {
     match (provider_id, model_id) {
         ("fake", "fake-model") => Some(8192),
         _ => None,

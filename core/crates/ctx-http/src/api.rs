@@ -530,13 +530,18 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/cancel", post(cancel_session))
         .route("/api/sessions/:id/interrupt", post(interrupt_session))
         .route("/api/sessions/:id/authenticate", post(authenticate_session))
-        .route(
-            "/api/mcp/sessions/:id/subagent_init",
-            post(mcp_agent_init),
-        )
+        .route("/api/mcp/sessions/:id/subagent_init", post(mcp_agent_init))
         .route(
             "/api/mcp/sessions/:id/subagent_reply",
             post(mcp_agent_reply),
+        )
+        .route(
+            "/api/mcp/sessions/:id/subagent_interrupt",
+            post(mcp_subagent_interrupt),
+        )
+        .route(
+            "/api/mcp/sessions/:id/subagent_list",
+            get(mcp_subagent_list),
         )
         .route("/api/mcp/sessions/:id/oracle", post(mcp_oracle))
         .route(
@@ -8070,6 +8075,8 @@ struct AgentInitReq {
     tool_call_id: Option<String>,
     #[serde(default)]
     response_mode: Option<String>,
+    #[serde(default)]
+    worktree: Option<String>,
     agents: Vec<AgentInitItem>,
 }
 
@@ -8086,19 +8093,19 @@ struct AgentInitItem {
     reasoning_effort: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug)]
-enum AgentInitResponseMode {
-    Enqueue,
-    Await,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SubagentWorktreeSelection {
+    Inherit,
+    New,
 }
 
-fn parse_agent_init_response_mode(value: Option<&str>) -> Result<AgentInitResponseMode, String> {
+fn parse_subagent_worktree(value: Option<&str>) -> Result<SubagentWorktreeSelection, String> {
     let trimmed = value.map(|raw| raw.trim()).filter(|raw| !raw.is_empty());
     match trimmed {
-        None => Ok(AgentInitResponseMode::Enqueue),
-        Some("enqueue") => Ok(AgentInitResponseMode::Enqueue),
-        Some("await") => Ok(AgentInitResponseMode::Await),
-        Some(_) => Err("response_mode must be 'enqueue' or 'await'".to_string()),
+        Some("inherit") => Ok(SubagentWorktreeSelection::Inherit),
+        Some("new") => Ok(SubagentWorktreeSelection::New),
+        Some(_) => Err("worktree must be 'inherit' or 'new'".to_string()),
+        None => Err("worktree is required".to_string()),
     }
 }
 
@@ -8174,46 +8181,82 @@ fn build_subagent_request_json(agents: &[AgentInitItem]) -> serde_json::Value {
 
 #[derive(Debug, Serialize)]
 struct AgentInitResp {
-    invocation_id: String,
     status: String,
     results: Vec<AgentInitResult>,
 }
 
 #[derive(Debug, Serialize)]
 struct AgentInitResult {
-    session_id: SessionId,
     label: String,
-    provider_id: String,
-    model_id: String,
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_window: Option<ContextWindowSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worktree_path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ContextWindowSummary {
+    total: u64,
+    used: u64,
+    remaining: u64,
+    utilization: f64,
 }
 
 #[derive(Debug, Deserialize)]
 struct SubagentWaitReq {
-    invocation_id: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
 struct SubagentWaitResp {
-    invocation_id: String,
     status: String,
     results: Vec<AgentInitResult>,
 }
 
 #[derive(Debug, Deserialize)]
+struct SubagentInterruptReq {
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    all: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+struct SubagentInterruptResp {
+    status: String,
+    results: Vec<AgentInitResult>,
+}
+
+#[derive(Debug, Serialize)]
+struct SubagentListItem {
+    label: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_window: Option<ContextWindowSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worktree_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct AgentReplyReq {
-    session_id: String,
+    label: String,
     prompt: String,
 }
 
 #[derive(Debug, Serialize)]
 struct AgentReplyResp {
-    session_id: SessionId,
+    label: String,
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
+    context_window: Option<ContextWindowSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worktree_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -8738,30 +8781,205 @@ async fn emit_subagent_invocation_notice(
     Ok(())
 }
 
-fn build_agent_init_result(
+fn parse_u64(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(num) => num.as_u64(),
+        serde_json::Value::String(raw) => raw.trim().parse::<u64>().ok(),
+        _ => None,
+    }
+}
+
+fn parse_f64(value: &serde_json::Value) -> Option<f64> {
+    match value {
+        serde_json::Value::Number(num) => num.as_f64(),
+        serde_json::Value::String(raw) => raw.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+fn summarize_context_window(metrics: &serde_json::Value) -> Option<ContextWindowSummary> {
+    let obj = metrics.as_object()?;
+    let total = obj
+        .get("context_window_tokens")
+        .and_then(parse_u64)
+        .or_else(|| obj.get("context_window").and_then(parse_u64))
+        .or_else(|| obj.get("window_tokens").and_then(parse_u64))?;
+    let mut used = obj
+        .get("context_tokens_estimate")
+        .and_then(parse_u64)
+        .or_else(|| obj.get("total_tokens").and_then(parse_u64))
+        .or_else(|| obj.get("used_tokens").and_then(parse_u64));
+    let mut remaining = obj
+        .get("remaining_tokens_estimate")
+        .and_then(parse_u64)
+        .or_else(|| obj.get("remaining_tokens").and_then(parse_u64));
+
+    if used.is_none() {
+        if let Some(rem) = remaining {
+            used = Some(total.saturating_sub(rem));
+        }
+    }
+    if remaining.is_none() {
+        if let Some(used) = used {
+            remaining = Some(total.saturating_sub(used));
+        }
+    }
+    let used = used.unwrap_or(0);
+    let remaining = remaining.unwrap_or_else(|| total.saturating_sub(used));
+    let utilization = obj
+        .get("remaining_fraction")
+        .and_then(parse_f64)
+        .map(|fraction| (1.0 - fraction).clamp(0.0, 1.0))
+        .unwrap_or_else(|| {
+            if total == 0 {
+                0.0
+            } else {
+                (used as f64 / total as f64).clamp(0.0, 1.0)
+            }
+        });
+
+    Some(ContextWindowSummary {
+        total,
+        used,
+        remaining,
+        utilization,
+    })
+}
+
+async fn context_window_for_run(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    run_id: RunId,
+) -> Option<ContextWindowSummary> {
+    let store = state.store_for_session(session_id).await.ok()?;
+    let turn = store
+        .get_latest_turn_for_run(session_id, run_id)
+        .await
+        .ok()
+        .flatten()?;
+    summarize_context_window(turn.metrics_json.as_ref()?)
+}
+
+async fn context_window_for_session(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+) -> Option<ContextWindowSummary> {
+    let store = state.store_for_session(session_id).await.ok()?;
+    let turn = store
+        .get_latest_turn_for_session(session_id)
+        .await
+        .ok()
+        .flatten()?;
+    summarize_context_window(turn.metrics_json.as_ref()?)
+}
+
+fn estimate_context_window_for_prompt_len(
+    provider_id: &str,
+    model_id: &str,
+    prompt_len: i64,
+) -> Option<ContextWindowSummary> {
+    let total = crate::scheduler::model_context_window(provider_id, model_id)? as u64;
+    let chars = prompt_len.max(0) as u64;
+    let used = chars.div_ceil(4);
+    let remaining = total.saturating_sub(used);
+    let utilization = if total == 0 {
+        0.0
+    } else {
+        (used as f64 / total as f64).clamp(0.0, 1.0)
+    };
+    Some(ContextWindowSummary {
+        total,
+        used,
+        remaining,
+        utilization,
+    })
+}
+
+fn estimate_context_window_for_prompt(
+    provider_id: &str,
+    model_id: &str,
+    prompt: &str,
+) -> Option<ContextWindowSummary> {
+    let prompt_len = prompt.chars().count() as i64;
+    estimate_context_window_for_prompt_len(provider_id, model_id, prompt_len)
+}
+
+async fn worktree_path_for_child(
+    state: &Arc<AppState>,
+    parent_worktree_id: WorktreeId,
+    child_session_id: SessionId,
+) -> Option<String> {
+    let store = state.store_for_session(child_session_id).await.ok()?;
+    let session = store.get_session(child_session_id).await.ok().flatten()?;
+    if session.worktree_id == parent_worktree_id {
+        return None;
+    }
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .ok()
+        .flatten()?;
+    Some(worktree.root_path)
+}
+
+async fn build_subagent_result(
+    state: &Arc<AppState>,
+    parent_worktree_id: WorktreeId,
     child: &SubagentInvocationChild,
     status: String,
     content: Option<String>,
-) -> AgentInitResult {
+    context_window: Option<ContextWindowSummary>,
+) -> Result<AgentInitResult, String> {
     let label = child
         .label
         .clone()
         .unwrap_or_else(|| format!("Subagent {}", child.position + 1));
-    let provider_id = child.harness.clone().unwrap_or_default();
-    let model_id = child.model.clone().unwrap_or_default();
-    AgentInitResult {
-        session_id: child.child_session_id,
+    let worktree_path =
+        worktree_path_for_child(state, parent_worktree_id, child.child_session_id).await;
+    Ok(AgentInitResult {
         label,
-        provider_id,
-        model_id,
         status,
         content,
-    }
+        context_window,
+        worktree_path,
+    })
+}
+
+async fn build_subagent_result_for_session(
+    state: &Arc<AppState>,
+    parent_worktree_id: WorktreeId,
+    session: &Session,
+    label: String,
+    status: String,
+    content: Option<String>,
+    context_window: Option<ContextWindowSummary>,
+) -> Result<AgentInitResult, String> {
+    let worktree_path = if session.worktree_id == parent_worktree_id {
+        None
+    } else {
+        let store = state
+            .store_for_session(session.id)
+            .await
+            .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
+        store
+            .get_worktree(session.worktree_id)
+            .await
+            .map_err(|e| logs::redact_sensitive(&e.to_string()))?
+            .map(|worktree| worktree.root_path)
+    };
+    Ok(AgentInitResult {
+        label,
+        status,
+        content,
+        context_window,
+        worktree_path,
+    })
 }
 
 async fn run_subagent_child(
     state: &Arc<AppState>,
     child: SubagentInvocationChild,
+    parent_worktree_id: WorktreeId,
 ) -> Result<AgentInitResult, String> {
     let run_id = child
         .run_id
@@ -8796,7 +9014,16 @@ async fn run_subagent_child(
         .flatten()
         .map(|m| m.content);
 
-    Ok(build_agent_init_result(&child, status, content))
+    let context_window = context_window_for_run(state, child.child_session_id, run_id).await;
+    build_subagent_result(
+        state,
+        parent_worktree_id,
+        &child,
+        status,
+        content,
+        context_window,
+    )
+    .await
 }
 
 async fn finalize_subagent_invocation(
@@ -8881,31 +9108,107 @@ async fn finalize_subagent_invocation(
     Ok(())
 }
 
-async fn build_subagent_results_from_invocation(
+async fn create_subagent_worktree(
     state: &Arc<AppState>,
-    invocation: &SubagentInvocation,
-) -> Result<Vec<AgentInitResult>, String> {
-    let mut results = Vec::with_capacity(invocation.children.len());
-    for child in &invocation.children {
-        let content = match child.run_id {
-            Some(run_id) => match state.store_for_session(child.child_session_id).await {
-                Ok(store) => store
-                    .get_last_assistant_message_for_run(child.child_session_id, run_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|m| m.content),
-                Err(_) => None,
-            },
-            None => None,
-        };
-        results.push(build_agent_init_result(
-            child,
-            child.status.clone(),
-            content,
-        ));
+    store: &ctx_store::Store,
+    workspace: &Workspace,
+    task_id: TaskId,
+    base_commit_sha: &str,
+    vcs_kind: VcsKind,
+) -> Result<Worktree, (StatusCode, Json<ApiErrorResp>)> {
+    let worktree_id = WorktreeId::new();
+    let wt_path = managed_worktree_path(&state.data_root, workspace.id, worktree_id);
+    if let Some(parent) = wt_path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
     }
-    Ok(results)
+    let branch_name = format!("ctx/{}/{}", task_id.0, worktree_id.0);
+    create_worktree(
+        &workspace.root_path,
+        &wt_path,
+        base_commit_sha,
+        &branch_name,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let worktree = Worktree {
+        id: worktree_id,
+        workspace_id: workspace.id,
+        root_path: wt_path.to_string_lossy().to_string(),
+        base_commit_sha: base_commit_sha.to_string(),
+        git_branch: (vcs_kind == VcsKind::Git).then(|| branch_name.clone()),
+        vcs_kind: Some(vcs_kind),
+        base_revision: Some(base_commit_sha.to_string()),
+        vcs_ref: Some(branch_name),
+        created_at: chrono::Utc::now(),
+        bootstrap_status: None,
+        bootstrap_started_at: None,
+        bootstrap_finished_at: None,
+        bootstrap_exit_code: None,
+        bootstrap_timeout_sec: None,
+        bootstrap_error: None,
+        bootstrap_log_path: None,
+        bootstrap_log_truncated: None,
+        bootstrap_config_path: None,
+        bootstrap_config_key: None,
+        bootstrap_command: None,
+        bootstrap_script_path: None,
+    };
+
+    store.insert_worktree(worktree.clone()).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    if let Err(e) = state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree_id, workspace.id)
+        .await
+    {
+        tracing::warn!(
+            worktree_id = %worktree_id.0,
+            "failed to update worktree index: {e:?}"
+        );
+    }
+    if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
+        Arc::clone(state),
+        workspace.clone(),
+        worktree.clone(),
+    )
+    .await
+    {
+        tracing::warn!(worktree_id = %worktree_id.0, "worktree bootstrap failed: {e:?}");
+    }
+    if let Err(e) =
+        attachments::sync_workspace_attachments(Arc::clone(state), workspace, false).await
+    {
+        tracing::warn!(worktree_id = %worktree_id.0, "attachment sync failed: {e:?}");
+    }
+    if let Err(e) =
+        attachments::ensure_worktree_attachment_mounts_if_materialized(state, workspace, &worktree)
+            .await
+    {
+        tracing::warn!(worktree_id = %worktree_id.0, "attachment mounts failed: {e:?}");
+    }
+
+    Ok(worktree)
 }
 
 async fn enqueue_subagent_prompt(
@@ -9035,7 +9338,21 @@ async fn mcp_agent_init(
             }),
         ));
     }
-    let response_mode = parse_agent_init_response_mode(req.response_mode.as_deref())
+    if req
+        .response_mode
+        .as_deref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .is_some()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "response_mode is not supported; use subagent_wait to await".to_string(),
+            }),
+        ));
+    }
+    let worktree_selection = parse_subagent_worktree(req.worktree.as_deref())
         .map_err(|error| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error })))?;
 
     let store = state.store_for_session(parent_id).await.map_err(|e| {
@@ -9081,6 +9398,52 @@ async fn mcp_agent_init(
                 error: "workspace not found".to_string(),
             }),
         ))?;
+
+    let mut labels = Vec::with_capacity(req.agents.len());
+    let mut seen_labels = HashSet::new();
+    for (idx, agent) in req.agents.iter().enumerate() {
+        let label = agent
+            .label
+            .as_deref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .ok_or((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: format!("agent {} label is required", idx + 1),
+                }),
+            ))?;
+        if !seen_labels.insert(label.to_string()) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: format!("duplicate subagent label '{label}'"),
+                }),
+            ));
+        }
+        labels.push(label.to_string());
+    }
+    for label in &labels {
+        if store
+            .subagent_label_exists(parent.task_id, label)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?
+        {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: format!("subagent label '{label}' already exists for this task"),
+                }),
+            ));
+        }
+    }
 
     let mut provider_ids = HashSet::new();
     for agent in &req.agents {
@@ -9151,6 +9514,40 @@ async fn mcp_agent_init(
             }
         }
     }
+
+    let worktree_plan = if worktree_selection == SubagentWorktreeSelection::New {
+        let workspace_root = StdPath::new(&workspace.root_path);
+        let vcs = vcs::driver_for_path(workspace_root).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+        let base_commit_sha = vcs.rev_parse_head(workspace_root).await.map_err(|e| {
+            let msg = e.to_string().to_lowercase();
+            if msg.contains("ambiguous argument 'head'")
+                || msg.contains("unknown revision or path not in the working tree")
+            {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: "git repo has no commits; create an initial commit before creating a worktree".to_string(),
+                    }),
+                );
+            }
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+        Some((vcs.kind(), base_commit_sha))
+    } else {
+        None
+    };
 
     let request_json = Some(build_subagent_request_json(&req.agents));
 
@@ -9261,11 +9658,17 @@ async fn mcp_agent_init(
     for (idx, agent) in req.agents.into_iter().enumerate() {
         let state = state.clone();
         let parent = parent.clone();
+        let workspace = workspace.clone();
         let model_catalogs = model_catalogs.clone();
         let invocation_id = invocation_id.clone();
         let tool_call_id = tool_call_id.clone();
         let child_ids = child_ids.clone();
         let parent_turn_id = parent_turn_id;
+        let label = labels
+            .get(idx)
+            .cloned()
+            .unwrap_or_else(|| format!("Subagent {}", idx + 1));
+        let worktree_plan = worktree_plan.clone();
         futures.push(async move {
             let store = state.store_for_session(parent.id).await.map_err(|e| {
                 (
@@ -9284,13 +9687,6 @@ async fn mcp_agent_init(
                     }),
                 ));
             }
-            let label = agent
-                .label
-                .as_deref()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("Subagent {}", idx + 1));
             let provider_id = agent
                 .harness
                 .as_deref()
@@ -9332,11 +9728,33 @@ async fn mcp_agent_init(
             let (_, model_effort) = split_model_id(&resolved.model_id);
             let reasoning_effort = requested_effort.or(model_effort);
 
+            let worktree_id = match worktree_selection {
+                SubagentWorktreeSelection::Inherit => parent.worktree_id,
+                SubagentWorktreeSelection::New => {
+                    let (vcs_kind, base_commit_sha) = worktree_plan.clone().ok_or((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: "worktree plan missing".to_string(),
+                        }),
+                    ))?;
+                    let worktree = create_subagent_worktree(
+                        &state,
+                        &store,
+                        &workspace,
+                        parent.task_id,
+                        &base_commit_sha,
+                        vcs_kind,
+                    )
+                    .await?;
+                    worktree.id
+                }
+            };
+
             let session = store
                 .create_session(
                     parent.task_id,
                     parent.workspace_id,
-                    parent.worktree_id,
+                    worktree_id,
                     provider_id.clone(),
                     resolved.model_id.clone(),
                     "subagent".into(),
@@ -9458,116 +9876,58 @@ async fn mcp_agent_init(
         }
     };
 
-    match response_mode {
-        AgentInitResponseMode::Await => {
-            let mut run_futures = Vec::with_capacity(children.len());
-            for child in children.into_iter() {
-                let state = state.clone();
-                run_futures.push(async move {
-                    run_subagent_child(&state, child).await.map_err(|error| {
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(ApiErrorResp { error }),
-                        )
-                    })
-                });
+    for child in children.iter().cloned() {
+        let state = state.clone();
+        let invocation_id = invocation_id.clone();
+        let tool_call_id = tool_call_id.clone();
+        let parent_id = parent.id;
+        let parent_worktree_id = parent.worktree_id;
+        tokio::spawn(async move {
+            if let Err(error) = run_subagent_child(&state, child, parent_worktree_id).await {
+                tracing::warn!(error = %error, "subagent execution failed");
             }
-
-            let results = match futures::future::try_join_all(run_futures).await {
-                Ok(results) => results,
-                Err(err) => {
-                    let updated_at = chrono::Utc::now();
-                    if let Ok(store) = state.store_for_session(parent.id).await {
-                        if let Err(e) = store
-                            .update_subagent_invocation_status(&invocation_id, "failed", updated_at)
-                            .await
-                        {
-                            tracing::warn!(
-                                error = ?e,
-                                "failed to update subagent invocation status"
-                            );
-                        }
-                    }
-                    let child_session_ids = {
-                        let ids = child_ids.lock().await;
-                        ids.clone()
-                    };
-                    let _ = emit_subagent_invocation_notice(
-                        &state,
-                        parent.id,
-                        parent_turn_id,
-                        serde_json::json!({
-                            "kind": "subagent_invocation_updated",
-                            "invocation_id": invocation_id.clone(),
-                            "tool_call_id": tool_call_id.clone(),
-                            "status": "failed",
-                            "child_session_ids": child_session_ids,
-                        }),
-                    )
-                    .await;
-                    return Err(err);
-                }
-            };
-
-            let final_status = if results.iter().all(|r| r.status == "completed") {
-                "completed"
-            } else {
-                "failed"
-            };
             if let Err(error) = finalize_subagent_invocation(
                 &state,
                 &invocation_id,
                 &tool_call_id,
-                parent.id,
+                parent_id,
                 parent_turn_id,
             )
             .await
             {
                 tracing::warn!(error = %error, "failed to finalize subagent invocation");
             }
-
-            Ok(Json(AgentInitResp {
-                invocation_id,
-                status: final_status.to_string(),
-                results,
-            }))
-        }
-        AgentInitResponseMode::Enqueue => {
-            for child in children.iter().cloned() {
-                let state = state.clone();
-                let invocation_id = invocation_id.clone();
-                let tool_call_id = tool_call_id.clone();
-                let parent_id = parent.id;
-                tokio::spawn(async move {
-                    if let Err(error) = run_subagent_child(&state, child).await {
-                        tracing::warn!(error = %error, "subagent execution failed");
-                    }
-                    if let Err(error) = finalize_subagent_invocation(
-                        &state,
-                        &invocation_id,
-                        &tool_call_id,
-                        parent_id,
-                        parent_turn_id,
-                    )
-                    .await
-                    {
-                        tracing::warn!(error = %error, "failed to finalize subagent invocation");
-                    }
-                });
-            }
-
-            let results = children
-                .iter()
-                .map(|child| build_agent_init_result(child, "running".to_string(), None))
-                .collect();
-
-            Ok(Json(AgentInitResp {
-                invocation_id,
-                status: "running".to_string(),
-                results,
-            }))
-        }
+        });
     }
+
+    let results = futures::future::try_join_all(children.iter().map(|child| {
+        let context_window = match (child.harness.as_deref(), child.model.as_deref()) {
+            (Some(provider_id), Some(model_id)) => {
+                estimate_context_window_for_prompt_len(provider_id, model_id, child.prompt_length)
+            }
+            _ => None,
+        };
+        build_subagent_result(
+            &state,
+            parent.worktree_id,
+            child,
+            "running".to_string(),
+            None,
+            context_window,
+        )
+    }))
+    .await
+    .map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp { error }),
+        )
+    })?;
+
+    Ok(Json(AgentInitResp {
+        status: "running".to_string(),
+        results,
+    }))
 }
 
 async fn mcp_agent_reply(
@@ -9610,16 +9970,17 @@ async fn mcp_agent_reply(
             }),
         ))?;
 
-    let child_id = SessionId(uuid::Uuid::parse_str(&req.session_id).map_err(|_| {
-        (
+    let label = req.label.trim();
+    if label.is_empty() {
+        return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
-                error: "invalid child session id".to_string(),
+                error: "label is required".to_string(),
             }),
-        )
-    })?);
+        ));
+    }
     let child = store
-        .get_session(child_id)
+        .get_subagent_session_by_label(parent.id, label)
         .await
         .map_err(|e| {
             (
@@ -9632,20 +9993,9 @@ async fn mcp_agent_reply(
         .ok_or((
             StatusCode::NOT_FOUND,
             Json(ApiErrorResp {
-                error: "subagent session not found".to_string(),
+                error: "subagent label not found".to_string(),
             }),
         ))?;
-
-    if child.parent_session_id != Some(parent.id)
-        || child.relationship.as_deref() != Some("sub_agent")
-    {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ApiErrorResp {
-                error: "session is not a subagent of the parent".to_string(),
-            }),
-        ));
-    }
 
     let prompt = req.prompt.trim().to_string();
     if prompt.is_empty() {
@@ -9657,28 +10007,245 @@ async fn mcp_agent_reply(
         ));
     }
 
-    let (run_id, _message) = enqueue_subagent_prompt(&state, &child, prompt).await?;
-    let terminal = wait_for_run_terminal_event(&state, child.id, run_id).await;
-    let status = match terminal {
-        Ok(SessionEventType::Done) | Ok(SessionEventType::TurnFinished) => "completed",
-        Ok(SessionEventType::TurnInterrupted) => "interrupted",
-        Ok(SessionEventType::Error) => "failed",
-        Ok(_) => "completed",
-        Err(_) => "unknown",
-    }
-    .to_string();
-
-    let content = store
-        .get_last_assistant_message_for_run(child.id, run_id)
+    if store
+        .get_running_turn_for_session(child.id)
         .await
-        .ok()
-        .flatten()
-        .map(|m| m.content);
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .is_some()
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "subagent_busy: The subagent is still running. Please await it with subagent_wait or interrupt it with subagent_interrupt.".to_string(),
+            }),
+        ));
+    }
+
+    let mut context_window =
+        estimate_context_window_for_prompt(&child.provider_id, &child.model_id, &prompt);
+    if context_window.is_none() {
+        context_window = context_window_for_session(&state, child.id).await;
+    }
+
+    let (_run_id, _message) = enqueue_subagent_prompt(&state, &child, prompt).await?;
+    let worktree_path = worktree_path_for_child(&state, parent.worktree_id, child.id).await;
 
     Ok(Json(AgentReplyResp {
-        session_id: child.id,
-        status,
-        content,
+        label: label.to_string(),
+        status: "running".to_string(),
+        context_window,
+        worktree_path,
+    }))
+}
+
+async fn mcp_subagent_list(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<SubagentListItem>>, (StatusCode, Json<ApiErrorResp>)> {
+    let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+
+    let store = state.store_for_session(parent_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let parent = store
+        .get_session(parent_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "parent session not found".to_string(),
+            }),
+        ))?;
+
+    let subs = store.list_subagent_sessions(parent.id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    let mut results = Vec::with_capacity(subs.len());
+    for sub in subs {
+        let label = sub.title.trim().to_string();
+        let status = match sub.status {
+            SessionStatus::Active => "active",
+            SessionStatus::Completed => "completed",
+            SessionStatus::Failed => "failed",
+            SessionStatus::Cancelled => "cancelled",
+        }
+        .to_string();
+        let context_window = context_window_for_session(&state, sub.id).await;
+        let worktree_path = worktree_path_for_child(&state, parent.worktree_id, sub.id).await;
+        results.push(SubagentListItem {
+            label,
+            status,
+            context_window,
+            worktree_path,
+        });
+    }
+
+    Ok(Json(results))
+}
+
+async fn mcp_subagent_interrupt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<SubagentInterruptReq>,
+) -> Result<Json<SubagentInterruptResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid session id".to_string(),
+            }),
+        )
+    })?);
+
+    let store = state.store_for_session(parent_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let parent = store
+        .get_session(parent_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "parent session not found".to_string(),
+            }),
+        ))?;
+
+    let use_all = req.all.unwrap_or(false);
+    let labels = match (use_all, req.label) {
+        (true, Some(_)) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "provide either label or all".to_string(),
+                }),
+            ));
+        }
+        (true, None) => {
+            let subs = store.list_subagent_sessions(parent.id).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+            subs.into_iter()
+                .map(|sub| sub.title.trim().to_string())
+                .collect::<Vec<_>>()
+        }
+        (false, Some(label)) => vec![label],
+        (false, None) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "label or all is required".to_string(),
+                }),
+            ));
+        }
+    };
+
+    let mut results = Vec::with_capacity(labels.len());
+    for label in labels {
+        let trimmed = label.trim();
+        if trimmed.is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "label cannot be empty".to_string(),
+                }),
+            ));
+        }
+        let child = store
+            .get_subagent_session_by_label(parent.id, trimmed)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?
+            .ok_or((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: format!("subagent label '{trimmed}' not found"),
+                }),
+            ))?;
+
+        let tx = state.ensure_scheduler(child.clone()).await;
+        let _ = tx.send(SchedulerCommand::Interrupt).await;
+
+        let context_window = context_window_for_session(&state, child.id).await;
+        results.push(
+            build_subagent_result_for_session(
+                &state,
+                parent.worktree_id,
+                &child,
+                trimmed.to_string(),
+                "interrupt_requested".to_string(),
+                None,
+                context_window,
+            )
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp { error }),
+                )
+            })?,
+        );
+    }
+
+    Ok(Json(SubagentInterruptResp {
+        status: "interrupt_requested".to_string(),
+        results,
     }))
 }
 
@@ -9811,115 +10378,181 @@ async fn mcp_subagent_wait(
             }),
         ))?;
 
-    let invocation_id = req.invocation_id.trim();
-    if invocation_id.is_empty() {
+    let mut labels = match (req.label, req.labels) {
+        (Some(label), None) => vec![label],
+        (None, Some(labels)) => labels,
+        (Some(_), Some(_)) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "provide either label or labels".to_string(),
+                }),
+            ));
+        }
+        (None, None) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "label or labels is required".to_string(),
+                }),
+            ));
+        }
+    };
+    if labels.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
-                error: "invocation_id is required".to_string(),
+                error: "labels is required".to_string(),
             }),
         ));
     }
-
-    let invocation = store
-        .get_subagent_invocation(invocation_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "subagent invocation not found".to_string(),
-            }),
-        ))?;
-
-    if invocation.parent_session_id != parent.id {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ApiErrorResp {
-                error: "invocation does not belong to session".to_string(),
-            }),
-        ));
-    }
-
-    if invocation.children.is_empty() {
-        return Ok(Json(SubagentWaitResp {
-            invocation_id: invocation.id,
-            status: invocation.status,
-            results: Vec::new(),
-        }));
-    }
-
-    if matches!(invocation.status.as_str(), "requested" | "running") {
-        if invocation
-            .children
-            .iter()
-            .any(|child| child.run_id.is_none())
-        {
+    let mut seen = HashSet::new();
+    for label in labels.iter_mut() {
+        let trimmed = label.trim().to_string();
+        if trimmed.is_empty() {
             return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "label cannot be empty".to_string(),
+                }),
+            ));
+        }
+        if !seen.insert(trimmed.clone()) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: format!("duplicate label '{trimmed}'"),
+                }),
+            ));
+        }
+        *label = trimmed;
+    }
+
+    let mut results = Vec::with_capacity(labels.len());
+    for label in labels {
+        let child = store
+            .get_subagent_session_by_label(parent.id, &label)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?
+            .ok_or((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: format!("subagent label '{label}' not found"),
+                }),
+            ))?;
+
+        let running_turn = store
+            .get_running_turn_for_session(child.id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+
+        let (status, run_id) = if let Some(turn) = running_turn {
+            let run_id = turn.run_id.ok_or((
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
                     error: "subagent run_id missing; cannot wait".to_string(),
                 }),
-            ));
-        }
-
-        let mut futures = Vec::with_capacity(invocation.children.len());
-        for child in invocation.children.clone() {
-            let state = state.clone();
-            futures.push(async move {
-                run_subagent_child(&state, child).await.map_err(|error| {
+            ))?;
+            let terminal = wait_for_run_terminal_event(&state, child.id, run_id).await;
+            let status = match terminal {
+                Ok(SessionEventType::Done) | Ok(SessionEventType::TurnFinished) => "completed",
+                Ok(SessionEventType::TurnInterrupted) => "interrupted",
+                Ok(SessionEventType::Error) => "failed",
+                Ok(_) => "completed",
+                Err(_) => "unknown",
+            }
+            .to_string();
+            (status, Some(run_id))
+        } else if let Some(turn) =
+            store
+                .get_latest_turn_for_session(child.id)
+                .await
+                .map_err(|e| {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ApiErrorResp { error }),
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                        }),
                     )
-                })
-            });
-        }
-        let results = futures::future::try_join_all(futures).await?;
-        let final_status = if results.iter().all(|r| r.status == "completed") {
-            "completed"
+                })?
+        {
+            let status = match turn.status {
+                SessionTurnStatus::Completed => "completed",
+                SessionTurnStatus::Interrupted => "interrupted",
+                SessionTurnStatus::Failed => "failed",
+                SessionTurnStatus::Running | SessionTurnStatus::Queued => "running",
+            }
+            .to_string();
+            (status, turn.run_id)
         } else {
-            "failed"
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: format!("subagent '{label}' has no runs to wait for"),
+                }),
+            ));
         };
 
-        if let Err(error) = finalize_subagent_invocation(
-            &state,
-            invocation_id,
-            &invocation.tool_call_id,
-            parent.id,
-            invocation.parent_turn_id,
-        )
-        .await
-        {
-            tracing::warn!(error = %error, "failed to finalize subagent invocation");
-        }
+        let content = match run_id {
+            Some(run_id) => store
+                .get_last_assistant_message_for_run(child.id, run_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|m| m.content),
+            None => None,
+        };
+        let context_window = match run_id {
+            Some(run_id) => context_window_for_run(&state, child.id, run_id).await,
+            None => context_window_for_session(&state, child.id).await,
+        };
 
-        return Ok(Json(SubagentWaitResp {
-            invocation_id: invocation_id.to_string(),
-            status: final_status.to_string(),
-            results,
-        }));
+        results.push(
+            build_subagent_result_for_session(
+                &state,
+                parent.worktree_id,
+                &child,
+                label,
+                status,
+                content,
+                context_window,
+            )
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp { error }),
+                )
+            })?,
+        );
     }
 
-    let results = build_subagent_results_from_invocation(&state, &invocation)
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp { error }),
-            )
-        })?;
+    let status = if results.iter().any(|r| r.status == "failed") {
+        "failed"
+    } else if results.iter().any(|r| r.status == "interrupted") {
+        "interrupted"
+    } else if results.iter().any(|r| r.status == "running") {
+        "running"
+    } else {
+        "completed"
+    };
 
     Ok(Json(SubagentWaitResp {
-        invocation_id: invocation.id,
-        status: invocation.status,
+        status: status.to_string(),
         results,
     }))
 }

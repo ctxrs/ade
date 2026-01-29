@@ -3136,6 +3136,65 @@ impl Store {
         Ok(out)
     }
 
+    pub async fn get_subagent_session_by_label(
+        &self,
+        parent_session_id: SessionId,
+        label: &str,
+    ) -> Result<Option<Session>> {
+        let row = self
+            .query(
+                r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
+               provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
+               FROM sessions
+               WHERE parent_session_id = ? AND relationship = 'sub_agent' AND title = ?
+               LIMIT 1"#,
+            )
+            .bind(parent_session_id.0.to_string())
+            .bind(label)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|r| {
+            let id: String = r.try_get("id").ok()?;
+            let task_id: String = r.try_get("task_id").ok()?;
+            let ws_id: String = r.try_get("workspace_id").ok()?;
+            let wt_id: String = r.try_get("worktree_id").ok()?;
+            let created_at: String = r.try_get("created_at").ok()?;
+            let updated_at: String = r.try_get("updated_at").ok()?;
+            Some(Session {
+                id: SessionId(uuid::Uuid::parse_str(&id).ok()?),
+                task_id: TaskId(uuid::Uuid::parse_str(&task_id).ok()?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
+                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id).ok()?),
+                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id").ok()?),
+                relationship: r.try_get("relationship").ok()?,
+                provider_id: r.try_get("provider_id").ok()?,
+                model_id: r.try_get("model_id").ok()?,
+                title: r.try_get("title").ok()?,
+                agent_role: r.try_get("agent_role").ok()?,
+                status: parse_session_status(r.try_get::<String, _>("status").ok()?.as_str()),
+                provider_session_ref: r.try_get("provider_session_ref").ok()?,
+                created_at: parse_dt(&created_at).ok()?,
+                updated_at: parse_dt(&updated_at).ok()?,
+            })
+        }))
+    }
+
+    pub async fn subagent_label_exists(&self, task_id: TaskId, label: &str) -> Result<bool> {
+        let row = self
+            .query(
+                r#"SELECT 1
+               FROM sessions
+               WHERE task_id = ? AND relationship = 'sub_agent' AND title = ?
+               LIMIT 1"#,
+            )
+            .bind(task_id.0.to_string())
+            .bind(label)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.is_some())
+    }
+
     pub async fn get_session_summary_checkpoint(
         &self,
         session_id: SessionId,
@@ -5518,6 +5577,71 @@ impl Store {
         .bind(turn_id.0.to_string())
         .fetch_optional(&self.pool)
         .await?;
+
+        Ok(row.and_then(|r| build_session_turn_from_row(r).ok()))
+    }
+
+    pub async fn get_running_turn_for_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<SessionTurn>> {
+        let row = self
+            .query(
+                r#"SELECT turn_id, session_id, run_id, user_message_id, status,
+                          start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                   FROM session_turns
+                   WHERE session_id = ? AND status IN ('queued', 'running')
+                   ORDER BY start_seq DESC
+                   LIMIT 1"#,
+            )
+            .bind(session_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|r| build_session_turn_from_row(r).ok()))
+    }
+
+    pub async fn get_latest_turn_for_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<SessionTurn>> {
+        let row = self
+            .query(
+                r#"SELECT turn_id, session_id, run_id, user_message_id, status,
+                          start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                   FROM session_turns
+                   WHERE session_id = ?
+                   ORDER BY start_seq DESC
+                   LIMIT 1"#,
+            )
+            .bind(session_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|r| build_session_turn_from_row(r).ok()))
+    }
+
+    pub async fn get_latest_turn_for_run(
+        &self,
+        session_id: SessionId,
+        run_id: RunId,
+    ) -> Result<Option<SessionTurn>> {
+        let row = self
+            .query(
+                r#"SELECT turn_id, session_id, run_id, user_message_id, status,
+                          start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                   FROM session_turns
+                   WHERE session_id = ? AND run_id = ?
+                   ORDER BY start_seq DESC
+                   LIMIT 1"#,
+            )
+            .bind(session_id.0.to_string())
+            .bind(run_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.and_then(|r| build_session_turn_from_row(r).ok()))
     }

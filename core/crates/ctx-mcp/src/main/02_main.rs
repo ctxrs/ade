@@ -90,11 +90,11 @@ async fn main() -> Result<()> {
                         {
                             "name": "subagent_init",
                             "title": "Init Subagents",
-                            "description": "Spawns one or more subagents (max configurable, default 10) for the current session. response_mode defaults to enqueue.",
+                            "description": "Spawns one or more subagents (max configurable, default 10) for the current session. Enqueue-only; use subagent_wait to await.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "response_mode": { "type": "string", "enum": ["enqueue", "await"], "description": "Optional response mode (default enqueue)." },
+                                    "worktree": { "type": "string", "enum": ["inherit", "new"], "description": "Worktree selection for spawned subagents." },
                                     "agents": {
                                         "type": "array",
                                         "items": {
@@ -106,39 +106,60 @@ async fn main() -> Result<()> {
                                                 "model": { "type": "string" },
                                                 "reasoning_effort": { "type": "string" }
                                             },
-                                            "required": ["prompt"],
+                                            "required": ["prompt", "label"],
                                             "additionalProperties": false
                                         }
                                     }
                                 },
-                                "required": ["agents"],
+                                "required": ["worktree", "agents"],
                                 "additionalProperties": false
                             }
                         },
                         {
                             "name": "subagent_reply",
                             "title": "Reply to Subagent",
-                            "description": "Sends a prompt to an existing subagent and waits for its response.",
+                            "description": "Sends a prompt to an existing subagent (enqueue-only). Use subagent_wait to await the response.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "subagent_id": { "type": "string", "description": "Subagent id returned by subagent_init." },
+                                    "label": { "type": "string", "description": "Subagent label." },
                                     "prompt": { "type": "string" }
                                 },
-                                "required": ["subagent_id", "prompt"],
+                                "required": ["label", "prompt"],
                                 "additionalProperties": false
                             }
                         },
                         {
                             "name": "subagent_wait",
                             "title": "Wait for Subagent Invocation",
-                            "description": "Waits for a subagent invocation to complete and returns results.",
+                            "description": "Waits for subagent runs to complete and returns results.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "subagent_group_id": { "type": "string", "description": "Subagent group id returned by subagent_init." }
+                                    "label": { "type": "string", "description": "Subagent label." },
+                                    "labels": { "type": "array", "items": { "type": "string" }, "description": "Subagent labels." }
                                 },
-                                "required": ["subagent_group_id"],
+                                "anyOf": [
+                                    { "required": ["label"] },
+                                    { "required": ["labels"] }
+                                ],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "subagent_interrupt",
+                            "title": "Interrupt Subagent",
+                            "description": "Requests interruption for a subagent (or all subagents) in the current session.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "label": { "type": "string", "description": "Subagent label." },
+                                    "all": { "type": "boolean", "description": "Interrupt all subagents." }
+                                },
+                                "anyOf": [
+                                    { "required": ["label"] },
+                                    { "required": ["all"] }
+                                ],
                                 "additionalProperties": false
                             }
                         },
@@ -1094,6 +1115,12 @@ async fn main() -> Result<()> {
                         }
                         "subagent_wait" => {
                             match subagent_wait_call(&client, &daemon_url, &arguments).await {
+                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                            }
+                        }
+                        "subagent_interrupt" => {
+                            match subagent_interrupt_call(&client, &daemon_url, &arguments).await {
                                 Ok(val) => ok(id.unwrap(), tool_ok(val)),
                                 Err(e) => ok(id.unwrap(), tool_err(e)),
                             }
