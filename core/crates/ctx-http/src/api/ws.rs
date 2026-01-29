@@ -82,7 +82,7 @@ async fn handle_mobile_secure_ws(
     let mut reset_queued = false;
 
     let (snapshot_rev, archived_rev) =
-        super::load_workspace_active_snapshot_state(&state, workspace_id).await;
+        super::tasks::load_workspace_active_snapshot_state(&state, workspace_id).await;
     let ready = WorkspaceActiveSnapshotEvent::Ready {
         workspace_id,
         snapshot_rev,
@@ -1414,7 +1414,8 @@ async fn queue_reset_required(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
 ) -> Result<(), ()> {
-    let (snapshot_rev, _) = super::load_workspace_active_snapshot_state(state, workspace_id).await;
+    let (snapshot_rev, _) =
+        super::tasks::load_workspace_active_snapshot_state(state, workspace_id).await;
     if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_reset").is_err() {
         return Err(());
     }
@@ -1516,7 +1517,8 @@ where
     F: FnMut(WorkspaceActiveSnapshotStreamMessage) -> Fut,
     Fut: std::future::Future<Output = Result<(), ()>>,
 {
-    let (snapshot_rev, _) = super::load_workspace_active_snapshot_state(state, workspace_id).await;
+    let (snapshot_rev, _) =
+        super::tasks::load_workspace_active_snapshot_state(state, workspace_id).await;
     if crate::fault_injection::maybe_fail("ctx_http.replay_session_events_active.list").is_err() {
         return Ok(ReplayOutcome::ResetRequired);
     }
@@ -1778,7 +1780,7 @@ async fn handle_workspace_active_snapshot_ws(
     let mut reset_queued = false;
 
     let (snapshot_rev, archived_rev) =
-        super::load_workspace_active_snapshot_state(&state, workspace_id).await;
+        super::tasks::load_workspace_active_snapshot_state(&state, workspace_id).await;
     let ready = WorkspaceActiveSnapshotEvent::Ready {
         workspace_id,
         snapshot_rev,
@@ -2524,7 +2526,8 @@ where
     F: FnMut(WorkspaceActiveSnapshotStreamMessage) -> Fut,
     Fut: std::future::Future<Output = Result<(), ()>>,
 {
-    let (snapshot_rev, _) = super::load_workspace_active_snapshot_state(state, workspace_id).await;
+    let (snapshot_rev, _) =
+        super::tasks::load_workspace_active_snapshot_state(state, workspace_id).await;
     if crate::fault_injection::maybe_fail("ctx_http.replay_session_events_secure.list").is_err() {
         return Ok(ReplayOutcome::ResetRequired);
     }
