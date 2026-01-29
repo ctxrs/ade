@@ -13,6 +13,14 @@ export type WorkspaceActiveSnapshotCommand =
       authToken?: string | null;
       baseUrl?: string | null;
       wsBaseUrl?: string | null;
+      runId?: string | null;
+    }
+  | {
+      type: "update_auth";
+      authToken?: string | null;
+      baseUrl?: string | null;
+      wsBaseUrl?: string | null;
+      runId?: string | null;
     }
   | {
       type: "seed_cache";

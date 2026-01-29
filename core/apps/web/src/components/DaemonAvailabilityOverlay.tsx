@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { daemonFetchRaw, getDaemonBaseUrl, setDaemonBaseUrl } from "../api/client";
+import { daemonFetchRaw, getDaemonBaseUrl, setDaemonAuthToken, setDaemonBaseUrl } from "../api/client";
 import {
   desktopConnectLocal,
   desktopGetConnection,
@@ -214,12 +214,7 @@ export default function DaemonAvailabilityOverlay() {
     const token = String(info.token ?? "").trim();
     if (base) setDaemonBaseUrl(base, true);
     else setDaemonBaseUrl(null, false);
-    try {
-      if (token) sessionStorage.setItem("ctxAuthToken", token);
-      else sessionStorage.removeItem("ctxAuthToken");
-    } catch {
-      // ignore
-    }
+    setDaemonAuthToken(token || null);
   };
 
   const restartDaemon = useCallback(async () => {

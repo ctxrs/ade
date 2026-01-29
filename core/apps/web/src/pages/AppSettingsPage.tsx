@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getDaemonBaseUrl, setDaemonBaseUrl } from "../api/client";
+import { getDaemonBaseUrl, setDaemonAuthToken, setDaemonBaseUrl } from "../api/client";
 import { desktopDisconnect, isDesktopApp } from "../utils/desktop";
 
 const RECENTS_KEY = "contextDesktopRecentsV1";
@@ -26,11 +26,7 @@ export default function AppSettingsPage() {
       if (isDesktopApp()) {
         await desktopDisconnect();
       }
-      try {
-        sessionStorage.removeItem("ctxAuthToken");
-      } catch {
-        // ignore
-      }
+      setDaemonAuthToken(null);
       setDaemonBaseUrl(null, true);
       setBaseUrl(null);
     } finally {
@@ -93,4 +89,3 @@ export default function AppSettingsPage() {
     </div>
   );
 }
-
