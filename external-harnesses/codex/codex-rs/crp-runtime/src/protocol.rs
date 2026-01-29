@@ -132,13 +132,11 @@ pub enum CrpEvent {
     #[serde(rename = "turn.started")]
     TurnStarted {
         session_id: String,
-        run_id: String,
         turn_id: String,
     },
     #[serde(rename = "message.delta")]
     MessageDelta {
         session_id: String,
-        run_id: String,
         turn_id: String,
         message_id: String,
         delta: String,
@@ -146,7 +144,6 @@ pub enum CrpEvent {
     #[serde(rename = "message.final")]
     MessageFinal {
         session_id: String,
-        run_id: String,
         turn_id: String,
         message_id: String,
         content: String,
@@ -155,7 +152,6 @@ pub enum CrpEvent {
     #[serde(rename = "reasoning.summary")]
     ReasoningSummary {
         session_id: String,
-        run_id: String,
         turn_id: String,
         /// Codex can stream multiple reasoning summary blocks; this identifies which block.
         /// Consumers can use it to pick the latest block title for status displays.
@@ -169,7 +165,6 @@ pub enum CrpEvent {
     #[serde(rename = "reasoning.trace")]
     ReasoningTrace {
         session_id: String,
-        run_id: String,
         turn_id: String,
         chunk: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -178,14 +173,12 @@ pub enum CrpEvent {
     #[serde(rename = "turn.completed")]
     TurnCompleted {
         session_id: String,
-        run_id: String,
         turn_id: String,
         status: CrpTurnStatus,
     },
     #[serde(rename = "tool.started")]
     ToolStarted {
         session_id: String,
-        run_id: String,
         turn_id: String,
         tool_call_id: String,
         tool_name: String,
@@ -198,7 +191,6 @@ pub enum CrpEvent {
     #[serde(rename = "tool.request")]
     ToolRequest {
         session_id: String,
-        run_id: String,
         turn_id: String,
         tool_call_id: String,
         tool_name: String,
@@ -207,7 +199,6 @@ pub enum CrpEvent {
     #[serde(rename = "tool.output.delta")]
     ToolOutputDelta {
         session_id: String,
-        run_id: String,
         turn_id: String,
         tool_call_id: String,
         stream: Option<CrpToolOutputStream>,
@@ -216,7 +207,6 @@ pub enum CrpEvent {
     #[serde(rename = "tool.completed")]
     ToolCompleted {
         session_id: String,
-        run_id: String,
         turn_id: String,
         tool_call_id: String,
         tool_name: String,
@@ -296,7 +286,6 @@ mod tests {
     fn event_types_use_dotted_names() {
         let event = CrpEvent::MessageFinal {
             session_id: "session".to_string(),
-            run_id: "run".to_string(),
             turn_id: "turn".to_string(),
             message_id: "message".to_string(),
             content: "hello".to_string(),
@@ -310,7 +299,6 @@ mod tests {
     fn tool_event_types_use_dotted_names() {
         let event = CrpEvent::ToolCompleted {
             session_id: "session".to_string(),
-            run_id: "run".to_string(),
             turn_id: "turn".to_string(),
             tool_call_id: "tool".to_string(),
             tool_name: "exec".to_string(),
@@ -329,7 +317,6 @@ mod tests {
     fn tool_request_event_uses_dotted_name() {
         let event = CrpEvent::ToolRequest {
             session_id: "session".to_string(),
-            run_id: "run".to_string(),
             turn_id: "turn".to_string(),
             tool_call_id: "tool".to_string(),
             tool_name: "exec".to_string(),
@@ -344,7 +331,6 @@ mod tests {
     fn reasoning_event_types_use_dotted_names() {
         let summary = CrpEvent::ReasoningSummary {
             session_id: "session".to_string(),
-            run_id: "run".to_string(),
             turn_id: "turn".to_string(),
             summary_index: 0,
             text: "summary".to_string(),
@@ -356,7 +342,6 @@ mod tests {
 
         let trace = CrpEvent::ReasoningTrace {
             session_id: "session".to_string(),
-            run_id: "run".to_string(),
             turn_id: "turn".to_string(),
             chunk: "trace".to_string(),
             encoding: None,

@@ -645,13 +645,11 @@ enum CrpEvent {
     #[serde(rename = "turn.started")]
     TurnStarted {
         session_id: String,
-        run_id: String,
         turn_id: String,
     },
     #[serde(rename = "message.delta")]
     MessageDelta {
         session_id: String,
-        run_id: String,
         turn_id: String,
         message_id: String,
         delta: String,
@@ -659,7 +657,6 @@ enum CrpEvent {
     #[serde(rename = "message.final")]
     MessageFinal {
         session_id: String,
-        run_id: String,
         turn_id: String,
         message_id: String,
         content: String,
@@ -667,7 +664,6 @@ enum CrpEvent {
     #[serde(rename = "reasoning.summary")]
     ReasoningSummary {
         session_id: String,
-        run_id: String,
         turn_id: String,
         #[serde(default)]
         summary_index: i64,
@@ -678,7 +674,6 @@ enum CrpEvent {
     #[serde(rename = "reasoning.trace")]
     ReasoningTrace {
         session_id: String,
-        run_id: String,
         turn_id: String,
         chunk: String,
         #[serde(default)]
@@ -687,7 +682,6 @@ enum CrpEvent {
     #[serde(rename = "tool.started")]
     ToolStarted {
         session_id: String,
-        run_id: String,
         turn_id: String,
         tool_call_id: String,
         tool_name: String,
@@ -701,7 +695,6 @@ enum CrpEvent {
     #[serde(rename = "tool.output.delta")]
     ToolOutputDelta {
         session_id: String,
-        run_id: String,
         turn_id: String,
         tool_call_id: String,
         #[serde(default)]
@@ -710,7 +703,6 @@ enum CrpEvent {
     #[serde(rename = "tool.completed")]
     ToolCompleted {
         session_id: String,
-        run_id: String,
         turn_id: String,
         tool_call_id: String,
         tool_name: String,
@@ -733,15 +725,12 @@ enum CrpEvent {
     #[serde(rename = "turn.completed")]
     TurnCompleted {
         session_id: String,
-        run_id: String,
         turn_id: String,
         status: CrpTurnStatus,
     },
     #[serde(rename = "session.gap")]
     SessionGap {
         session_id: String,
-        #[serde(default)]
-        run_id: Option<String>,
         #[serde(default)]
         turn_id: Option<String>,
         #[serde(default)]
