@@ -779,25 +779,13 @@ async fn get_merge_queue_entry_logs(
     Ok(resp)
 }
 
-const MOBILE_API_MIN_VERSION: i64 = 1;
-const MOBILE_API_MAX_VERSION: i64 = 1;
-
-#[derive(Debug, Serialize)]
-struct HealthCompatibility {
-    desktop_exact_version: String,
-    mobile_api_min: i64,
-    mobile_api_max: i64,
-}
-
 #[derive(Debug, Serialize)]
 struct HealthResp {
     version: String,
-    daemon_version: String,
     pid: u32,
     data_root: String,
     daemon_url: String,
     auth_required: bool,
-    compatibility: HealthCompatibility,
 }
 
 #[derive(Debug, Deserialize)]
@@ -883,19 +871,12 @@ struct BlobUploadResp {
 }
 
 async fn health(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp>, StatusCode> {
-    let version = env!("CARGO_PKG_VERSION").to_string();
     Ok(Json(HealthResp {
-        version: version.clone(),
-        daemon_version: version.clone(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
         pid: std::process::id(),
         data_root: state.data_root.to_string_lossy().to_string(),
         daemon_url: state.daemon_url.clone(),
         auth_required: state.auth_token.is_some(),
-        compatibility: HealthCompatibility {
-            desktop_exact_version: version,
-            mobile_api_min: MOBILE_API_MIN_VERSION,
-            mobile_api_max: MOBILE_API_MAX_VERSION,
-        },
     }))
 }
 
@@ -1323,20 +1304,13 @@ async fn diagnostics(
         .unwrap_or_else(|e| serde_json::json!({"error": logs::redact_sensitive(&e.to_string())}));
     let managed_installs = redact_json_value(managed_installs);
 
-    let version = env!("CARGO_PKG_VERSION").to_string();
     Ok(Json(DiagnosticsResp {
         daemon: HealthResp {
-            version: version.clone(),
-            daemon_version: version.clone(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
             pid: std::process::id(),
             data_root: state.data_root.to_string_lossy().to_string(),
             daemon_url: state.daemon_url.clone(),
             auth_required: state.auth_token.is_some(),
-            compatibility: HealthCompatibility {
-                desktop_exact_version: version,
-                mobile_api_min: MOBILE_API_MIN_VERSION,
-                mobile_api_max: MOBILE_API_MAX_VERSION,
-            },
         },
         platform: serde_json::json!({
             "os": std::env::consts::OS,
@@ -5910,51 +5884,7 @@ async fn get_provider_options(
         .and_then(|st| st.capabilities.as_ref())
         .map(|caps| caps.supports_acp)
         .unwrap_or(true);
-    if !supports_acp {
-        if provider_id != "codex-crp" {
-            let mut raw_resp = serde_json::json!({
-                "provider_id": provider_id,
-                "workspace_id": ws_id.0,
-                "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
-                "probe_ok": true,
-                "supports_load": false,
-                "auth_required": false,
-                "probed_at": chrono::Utc::now().to_rfc3339(),
-            });
-            if raw_resp.get("models").is_none()
-                || raw_resp.get("models").is_some_and(|v| v.is_null())
-            {
-                if let Some(models) = cached_models {
-                    raw_resp["models"] = models;
-                }
-            }
-            if raw_resp.get("modes").is_none() || raw_resp.get("modes").is_some_and(|v| v.is_null())
-            {
-                if let Some(modes) = cached_modes {
-                    raw_resp["modes"] = modes;
-                }
-            }
-
-            let resp = redact_json_value(raw_resp);
-            state.provider_options_cache.lock().await.insert(
-                cache_key,
-                crate::daemon::CachedProviderOptions {
-                    cached_at: std::time::Instant::now(),
-                    value: resp.clone(),
-                },
-            );
-
-            let mut out = resp;
-            if let Some((verify_at, verify)) = verify_entry.as_ref() {
-                if verify_at.elapsed() < VERIFY_TTL {
-                    if let Some(obj) = out.as_object_mut() {
-                        obj.insert("verify".to_string(), verify.clone());
-                    }
-                }
-            }
-            return Ok(Json(out));
-        }
-
+    if provider_id == "codex-crp" {
         let ws = state
             .global_store()
             .get_workspace(ws_id)
@@ -6033,6 +5963,46 @@ async fn get_provider_options(
             }),
         };
 
+        if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
+            if let Some(models) = cached_models {
+                raw_resp["models"] = models;
+            }
+        }
+        if raw_resp.get("modes").is_none() || raw_resp.get("modes").is_some_and(|v| v.is_null()) {
+            if let Some(modes) = cached_modes {
+                raw_resp["modes"] = modes;
+            }
+        }
+
+        let resp = redact_json_value(raw_resp);
+        state.provider_options_cache.lock().await.insert(
+            cache_key,
+            crate::daemon::CachedProviderOptions {
+                cached_at: std::time::Instant::now(),
+                value: resp.clone(),
+            },
+        );
+
+        let mut out = resp;
+        if let Some((verify_at, verify)) = verify_entry.as_ref() {
+            if verify_at.elapsed() < VERIFY_TTL {
+                if let Some(obj) = out.as_object_mut() {
+                    obj.insert("verify".to_string(), verify.clone());
+                }
+            }
+        }
+        return Ok(Json(out));
+    }
+    if !supports_acp {
+        let mut raw_resp = serde_json::json!({
+            "provider_id": provider_id,
+            "workspace_id": ws_id.0,
+            "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
+            "probe_ok": true,
+            "supports_load": false,
+            "auth_required": false,
+            "probed_at": chrono::Utc::now().to_rfc3339(),
+        });
         if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
             if let Some(models) = cached_models {
                 raw_resp["models"] = models;
@@ -8507,7 +8477,8 @@ async fn load_provider_model_catalog(
             .map(|caps| caps.supports_acp)
             .unwrap_or(true)
     };
-    if !supports_acp && provider_id != "codex-crp" {
+    let use_crp_probe = provider_id == "codex-crp";
+    if !supports_acp && !use_crp_probe {
         return Ok(None);
     }
 
@@ -8524,7 +8495,7 @@ async fn load_provider_model_catalog(
         .or_else(|| default_agent_server_command(&matrix, &state.data_root, provider_id))
         .ok_or_else(|| "unknown provider id".to_string())?;
 
-    if !supports_acp {
+    if use_crp_probe {
         let mut env = std::collections::HashMap::new();
         env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
         if let Some(token) = state.auth_token.as_ref() {

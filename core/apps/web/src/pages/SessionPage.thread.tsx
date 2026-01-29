@@ -618,7 +618,8 @@ export function WorkbenchTurnStatusRow({
 }) {
   const isRunning = item.status === "running" || item.status === "queued";
   const isCompleted = item.status === "completed";
-  const statusLabel = humanTurnStatus(item.status);
+  const customStatus = item.custom_status?.trim();
+  const statusLabel = isRunning && customStatus ? customStatus : humanTurnStatus(item.status);
   const startMs = parseIsoMs(item.started_at);
   const endMs = isRunning ? nowMs : parseIsoMs(item.updated_at) ?? nowMs;
   const elapsedMs = startMs != null && endMs != null ? Math.max(0, endMs - startMs) : 0;

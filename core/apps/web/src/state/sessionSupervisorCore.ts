@@ -1438,6 +1438,7 @@ export class SessionSupervisor {
     let changed = false;
     switch (String(event.event_type)) {
       case "assistant_chunk": {
+        if (!shouldRenderAssistantChunk(event)) break;
         const fragment = String(event.payload_json?.content_fragment ?? "");
         if (fragment) {
           turn.assistant_partial = appendFragment(turn.assistant_partial, fragment);
@@ -1854,6 +1855,19 @@ function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
   if (isStatusUpdateMeta(meta)) return false;
   const reasoningKind = meta?.codex?.reasoning_kind ?? meta?.codex?.reasoningKind;
   if (reasoningKind === "summary") return false;
+  return true;
+}
+
+function shouldRenderAssistantChunk(ev: SessionEvent): boolean {
+  const payload = ev.payload_json ?? {};
+  const meta =
+    payload?.acp_update?._meta ??
+    payload?.acp_update?.meta ??
+    payload?._meta ??
+    payload?.meta ??
+    {};
+  if (meta?.heartbeat === true) return false;
+  if (isStatusUpdateMeta(meta)) return false;
   return true;
 }
 

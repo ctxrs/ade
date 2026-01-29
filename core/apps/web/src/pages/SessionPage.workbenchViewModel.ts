@@ -536,6 +536,19 @@ function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
   return true;
 }
 
+function shouldRenderAssistantChunk(ev: SessionEvent): boolean {
+  const payload = ev.payload_json ?? {};
+  const meta =
+    payload?.acp_update?._meta ??
+    payload?.acp_update?.meta ??
+    payload?._meta ??
+    payload?.meta ??
+    {};
+  if (meta?.heartbeat === true) return false;
+  if (isStatusUpdateMeta(meta)) return false;
+  return true;
+}
+
 type ActivityEntry = {
   item: ThreadItem;
   created_at: string;
@@ -884,8 +897,14 @@ export function buildWorkbenchThreadViewModelFromTurns(
       });
     }
 
+    const statusText =
+      turn.status === "running" || turn.status === "queued"
+        ? customStatusByTurnId.get(turnId) ?? null
+        : null;
     const pendingContent = String(turn.assistant_partial ?? "");
-    if (pendingContent.trim().length > 0) {
+    const pendingTrimmed = pendingContent.trim();
+    const statusTrimmed = statusText?.trim() ?? "";
+    if (pendingTrimmed.length > 0 && pendingTrimmed !== statusTrimmed) {
       timeline.push({
         item: {
           kind: "assistant",
@@ -937,7 +956,6 @@ export function buildWorkbenchThreadViewModelFromTurns(
       items.push({ kind: "spacer", id: `spacer-${turnId}`, created_at: turn.started_at });
     }
 
-    const statusText = customStatusByTurnId.get(turnId) ?? null;
     const assistantMessagesContent = assistantMessages
       .map((m) => m.content ?? "")
       .filter((c) => c.trim().length > 0)
@@ -1157,6 +1175,7 @@ function buildWorkbenchThreadViewModelFromEvents(
             break;
           }
           case "assistant_chunk": {
+            if (!shouldRenderAssistantChunk(ev)) break;
             const fragment = String(ev.payload_json?.content_fragment ?? "");
             if (!fragment) break;
             if (!g.assistant) {
@@ -1376,6 +1395,7 @@ function buildWorkbenchThreadViewModelFromEvents(
           break;
         }
         case "assistant_chunk": {
+          if (!shouldRenderAssistantChunk(ev)) break;
           const fragment = String(ev.payload_json?.content_fragment ?? "");
           if (!fragment) break;
           if (!g.assistant) {
