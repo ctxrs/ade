@@ -93,11 +93,87 @@ type PendingMessageEntry = {
   message: Message;
 };
 
+// Edge case: the workspace stream can deliver the real message before the
+// POST response updates the optimistic entry. We drop client-id pending
+// messages when a matching real message arrives within this time window,
+// allowing small client/server clock skew.
+const PENDING_MATCH_WINDOW_MS = 15_000;
+const PENDING_MATCH_EARLY_SKEW_MS = 2_000;
+
+const isClientMessageId = (value: unknown): boolean => {
+  const id = idToString(value as { 0?: string } | string);
+  return Boolean(id && id.startsWith("client-"));
+};
+
 const createClientMessageId = (): string => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return `client-${crypto.randomUUID()}`;
   }
   return `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
+const normalizeAttachmentKey = (value: MessageAttachment): string => {
+  const key = String((value as any)?.blob_id ?? (value as any)?.name ?? (value as any)?.kind ?? "").trim();
+  return key;
+};
+
+const buildAttachmentSignature = (attachments?: MessageAttachment[]): string => {
+  if (!Array.isArray(attachments) || attachments.length === 0) return "";
+  const keys = attachments.map(normalizeAttachmentKey).filter(Boolean).sort();
+  return keys.join("|");
+};
+
+const buildMessageSignature = (message: Message): string => {
+  if (!message || message.role !== "user") return "";
+  const content = String(message.content ?? "");
+  const attachments = buildAttachmentSignature(message.attachments);
+  return `${content}::${attachments}`;
+};
+
+const parseMessageTimestamp = (value?: string | null): number | null => {
+  const ts = Date.parse(value ?? "");
+  return Number.isFinite(ts) ? ts : null;
+};
+
+const buildSignatureTimestampIndex = (messages: Message[]): Map<string, number[]> => {
+  const index = new Map<string, number[]>();
+  for (const message of messages) {
+    if (!message || message.role !== "user") continue;
+    const signature = buildMessageSignature(message);
+    if (!signature) continue;
+    const ts = parseMessageTimestamp(message.created_at);
+    if (ts == null) continue;
+    const list = index.get(signature);
+    if (list) {
+      list.push(ts);
+    } else {
+      index.set(signature, [ts]);
+    }
+  }
+  return index;
+};
+
+const shouldDropPendingMessage = (
+  pending: Message,
+  realIds: Set<string>,
+  realBySignature: Map<string, number[]>,
+): boolean => {
+  const pid = idToString(pending.id);
+  if (pid && realIds.has(pid)) return true;
+  if (!isClientMessageId(pid)) return false;
+  if (pending.role !== "user") return false;
+  const signature = buildMessageSignature(pending);
+  if (!signature) return false;
+  const pendingTs = parseMessageTimestamp(pending.created_at);
+  if (pendingTs == null) return false;
+  const candidates = realBySignature.get(signature);
+  if (!candidates || candidates.length === 0) return false;
+  for (const realTs of candidates) {
+    if (realTs + PENDING_MATCH_EARLY_SKEW_MS < pendingTs) continue;
+    if (realTs - pendingTs > PENDING_MATCH_WINDOW_MS) continue;
+    return true;
+  }
+  return false;
 };
 
 function useRafCoalesced<T>(value: T): T {
@@ -745,11 +821,11 @@ export function SessionView({
   useEffect(() => {
     if (pendingMessages.length === 0) return;
     const realIds = new Set(messages.map((m) => idToString(m.id)));
+    const realBySignature = buildSignatureTimestampIndex(messages);
     setPendingMessages((prev) => {
       if (prev.length === 0) return prev;
       const next = prev.filter((entry) => {
-        const pid = idToString(entry.message.id);
-        return pid ? !realIds.has(pid) : true;
+        return !shouldDropPendingMessage(entry.message, realIds, realBySignature);
       });
       return next.length === prev.length ? prev : next;
     });
@@ -757,11 +833,11 @@ export function SessionView({
   useEffect(() => {
     if (pendingQueueMessages.length === 0) return;
     const realIds = new Set(queue.map((m) => idToString(m.id)));
+    const realBySignature = buildSignatureTimestampIndex(queue);
     setPendingQueueMessages((prev) => {
       if (prev.length === 0) return prev;
       const next = prev.filter((entry) => {
-        const pid = idToString(entry.message.id);
-        return pid ? !realIds.has(pid) : true;
+        return !shouldDropPendingMessage(entry.message, realIds, realBySignature);
       });
       return next.length === prev.length ? prev : next;
     });
