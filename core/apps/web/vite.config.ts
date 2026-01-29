@@ -177,6 +177,11 @@ export default defineConfig(({ command }) => {
       environment: "jsdom",
       setupFiles: "./vitest.setup.ts",
       exclude: ["e2e/**", "node_modules/**"],
+      coverage: {
+        provider: "v8",
+        reporter: ["text", "lcov", "json-summary"],
+        reportsDirectory: path.resolve(__dirname, "../../coverage/web"),
+      },
     },
     server: {
       host: "0.0.0.0",
