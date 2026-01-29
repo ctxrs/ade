@@ -9562,6 +9562,26 @@ async fn mcp_agent_init(
                 }),
             )
         })?;
+
+        let (dirty_files, dirty_additions, dirty_deletions) =
+            ctx_fs::worktrees::diff_worktree_summary(parent_root, &base_commit_sha)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                        }),
+                    )
+                })?;
+        if dirty_files > 0 || dirty_additions > 0 || dirty_deletions > 0 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "Your worktree has uncommitted changes. Before starting new subagents in new worktree mode, you must commit or stash your changes to be explicit about whether subagents should inherit these diffs.".to_string(),
+                }),
+            ));
+        }
         Some((vcs.kind(), base_commit_sha))
     } else {
         None
