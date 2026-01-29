@@ -344,7 +344,7 @@ async fn agent_init_call(
         .map(|v| v.trim())
         .filter(|v| !v.is_empty())
         .map(|v| v.to_string());
-    let path = format!("/api/mcp/sessions/{}/agent_init", session_id);
+    let path = format!("/api/mcp/sessions/{}/subagent_init", session_id);
     let mut body = json!({ "agents": agents });
     if let Some(response_mode) = response_mode {
         if let Some(obj) = body.as_object_mut() {
@@ -387,7 +387,7 @@ async fn agent_reply_call(
         .get("prompt")
         .and_then(|v| v.as_str())
         .context("missing prompt")?;
-    let path = format!("/api/mcp/sessions/{}/agent_reply", parent_session_id);
+    let path = format!("/api/mcp/sessions/{}/subagent_reply", parent_session_id);
     let mut response = daemon_post_json(
         client,
         daemon_url,
@@ -407,41 +407,26 @@ async fn agent_reply_call(
     Ok(response)
 }
 
-async fn subagent_invocations_list_call(
-    client: &reqwest::Client,
-    daemon_url: &str,
-    args: &Value,
-) -> Result<Value> {
-    let _ = args;
+async fn subagent_list_call(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
     let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let path = format!("/api/sessions/{}/subagent_invocations", session_id);
+    let path = format!("/api/sessions/{}/subagents", session_id);
     let response = daemon_get_json(client, daemon_url, &path).await?;
-    let mut mapped = Vec::new();
-    if let Some(items) = response.as_array() {
-        for item in items {
-            if let Some(value) = map_subagent_invocation_summary(item) {
-                mapped.push(value);
-            }
-        }
-    }
+    let Some(items) = response.as_array() else {
+        return Ok(response);
+    };
+    let mapped: Vec<Value> = items
+        .iter()
+        .filter_map(|item| {
+            let obj = item.as_object()?;
+            let label = obj.get("title").cloned().unwrap_or(Value::Null);
+            let status = obj.get("status").cloned().unwrap_or(Value::Null);
+            Some(json!({
+                "label": label,
+                "status": status,
+            }))
+        })
+        .collect();
     Ok(Value::Array(mapped))
-}
-
-async fn subagent_invocation_get_call(
-    client: &reqwest::Client,
-    daemon_url: &str,
-    args: &Value,
-) -> Result<Value> {
-    let group_id = args
-        .get("subagent_group_id")
-        .and_then(|v| v.as_str())
-        .context("missing subagent_group_id")?;
-    let invocation_id =
-        invocation_id_for_subagent_group(group_id).context("unknown subagent_group_id")?;
-    let invocation_id = urlencoding::encode(&invocation_id);
-    let path = format!("/api/subagent_invocations/{invocation_id}");
-    let response = daemon_get_json(client, daemon_url, &path).await?;
-    map_subagent_invocation_detail(&response).context("invalid subagent invocation response")
 }
 
 async fn subagent_wait_call(

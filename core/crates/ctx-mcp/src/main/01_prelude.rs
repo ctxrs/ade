@@ -35,6 +35,15 @@ fn lsp_tools_enabled() -> bool {
         .unwrap_or(false)
 }
 
+fn dev_tools_enabled() -> bool {
+    ctx_env_opt("MCP_DEV_MODE")
+        .map(|raw| {
+            let v = raw.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
 fn is_lsp_related_tool(name: &str) -> bool {
     name.starts_with("lsp_")
         || matches!(
@@ -277,72 +286,6 @@ fn map_subagent_results(value: &mut Value) {
     }
 }
 
-fn map_subagent_invocation_summary(invocation: &Value) -> Option<Value> {
-    let obj = invocation.as_object()?;
-    let id = obj.get("id")?.as_str()?;
-    let group_id = subagent_group_id_for_invocation(id);
-    let status = obj.get("status").cloned().unwrap_or(Value::Null);
-    let created_at = obj.get("created_at").cloned().unwrap_or(Value::Null);
-    let updated_at = obj.get("updated_at").cloned().unwrap_or(Value::Null);
-    let count = obj
-        .get("children")
-        .and_then(|v| v.as_array())
-        .map(|items| items.len())
-        .unwrap_or(0);
-    Some(json!({
-        "subagent_group_id": group_id,
-        "status": status,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "subagent_count": count,
-    }))
-}
-
-fn map_subagent_invocation_detail(invocation: &Value) -> Option<Value> {
-    let obj = invocation.as_object()?;
-    let id = obj.get("id")?.as_str()?;
-    let group_id = subagent_group_id_for_invocation(id);
-    let status = obj.get("status").cloned().unwrap_or(Value::Null);
-    let created_at = obj.get("created_at").cloned().unwrap_or(Value::Null);
-    let updated_at = obj.get("updated_at").cloned().unwrap_or(Value::Null);
-    let mut subagents = Vec::new();
-    if let Some(children) = obj.get("children").and_then(|v| v.as_array()) {
-        for child in children {
-            let Some(child_obj) = child.as_object() else {
-                continue;
-            };
-            let session_id = child_obj.get("child_session_id").and_then(|v| v.as_str());
-            let mut mapped = serde_json::Map::new();
-            if let Some(session_id) = session_id {
-                let subagent_id = subagent_id_for_session(session_id);
-                mapped.insert("subagent_id".to_string(), Value::String(subagent_id));
-            }
-            if let Some(status) = child_obj.get("status") {
-                mapped.insert("status".to_string(), status.clone());
-            }
-            if let Some(label) = child_obj.get("label") {
-                mapped.insert("label".to_string(), label.clone());
-            }
-            if let Some(harness) = child_obj.get("harness") {
-                mapped.insert("provider".to_string(), harness.clone());
-            }
-            if let Some(model) = child_obj.get("model") {
-                mapped.insert("model".to_string(), model.clone());
-            }
-            if !mapped.is_empty() {
-                subagents.push(Value::Object(mapped));
-            }
-        }
-    }
-    Some(json!({
-        "subagent_group_id": group_id,
-        "status": status,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "subagents": subagents,
-    }))
-}
-
 fn map_edit_plan_summary(value: &mut Value) {
     let Some(obj) = value.as_object_mut() else {
         return;
@@ -395,4 +338,3 @@ fn map_interactive_sessions(value: &mut Value) {
     }
     map_interactive_session(value);
 }
-

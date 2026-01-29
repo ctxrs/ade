@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "agent_init",
+                            "name": "subagent_init",
                             "title": "Init Subagents",
                             "description": "Spawns one or more subagents (max configurable, default 10) for the current session. response_mode defaults to enqueue.",
                             "inputSchema": {
@@ -116,38 +116,16 @@ async fn main() -> Result<()> {
                             }
                         },
                         {
-                            "name": "agent_reply",
+                            "name": "subagent_reply",
                             "title": "Reply to Subagent",
                             "description": "Sends a prompt to an existing subagent and waits for its response.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "subagent_id": { "type": "string", "description": "Subagent id returned by agent_init." },
+                                    "subagent_id": { "type": "string", "description": "Subagent id returned by subagent_init." },
                                     "prompt": { "type": "string" }
                                 },
                                 "required": ["subagent_id", "prompt"],
-                                "additionalProperties": false
-                            }
-                        },
-                        {
-                            "name": "subagent_invocations_list",
-                            "title": "List Subagent Invocations",
-                            "description": "Lists subagent invocations for the current session.",
-                            "inputSchema": {
-                                "type": "object",
-                                "additionalProperties": false
-                            }
-                        },
-                        {
-                            "name": "subagent_invocation_get",
-                            "title": "Get Subagent Invocation",
-                            "description": "Fetches a subagent invocation by id.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "subagent_group_id": { "type": "string", "description": "Subagent group id returned by agent_init." }
-                                },
-                                "required": ["subagent_group_id"],
                                 "additionalProperties": false
                             }
                         },
@@ -158,9 +136,18 @@ async fn main() -> Result<()> {
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "subagent_group_id": { "type": "string", "description": "Subagent group id returned by agent_init." }
+                                    "subagent_group_id": { "type": "string", "description": "Subagent group id returned by subagent_init." }
                                 },
                                 "required": ["subagent_group_id"],
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "name": "subagent_list",
+                            "title": "List Subagents",
+                            "description": "Lists subagents for the current session.",
+                            "inputSchema": {
+                                "type": "object",
                                 "additionalProperties": false
                             }
                         },
@@ -1003,6 +990,15 @@ async fn main() -> Result<()> {
                     ]
                 });
 
+                if !dev_tools_enabled() {
+                    if let Some(tools) = resp.get_mut("tools").and_then(|v| v.as_array_mut()) {
+                        tools.retain(|tool| {
+                            let name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            name != "ping"
+                        });
+                    }
+                }
+
                 if !lsp_tools_enabled() {
                     if let Some(tools) = resp.get_mut("tools").and_then(|v| v.as_array_mut()) {
                         tools.retain(|tool| {
@@ -1028,7 +1024,14 @@ async fn main() -> Result<()> {
                     raw_name
                 };
 
-                if !lsp_tools_enabled() && is_lsp_related_tool(name.as_str()) {
+                if !dev_tools_enabled() && name.as_str() == "ping" {
+                    ok(
+                        id.unwrap(),
+                        tool_err(anyhow::anyhow!(
+                            "tool disabled: {name} (ping is dev-only; set CTX_MCP_DEV_MODE=1 to enable)"
+                        )),
+                    )
+                } else if !lsp_tools_enabled() && is_lsp_related_tool(name.as_str()) {
                     ok(
                         id.unwrap(),
                         tool_err(anyhow::anyhow!(
@@ -1077,36 +1080,26 @@ async fn main() -> Result<()> {
                                 Err(e) => ok(id.unwrap(), tool_err(e)),
                             }
                         }
-                        "agent_init" => {
+                        "subagent_init" => {
                             match agent_init_call(&client, &daemon_url, &arguments).await {
                                 Ok(val) => ok(id.unwrap(), tool_ok(val)),
                                 Err(e) => ok(id.unwrap(), tool_err(e)),
                             }
                         }
-                        "agent_reply" => {
+                        "subagent_reply" => {
                             match agent_reply_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
-                            }
-                        }
-                        "subagent_invocations_list" => {
-                            match subagent_invocations_list_call(&client, &daemon_url, &arguments)
-                                .await
-                            {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
-                            }
-                        }
-                        "subagent_invocation_get" => {
-                            match subagent_invocation_get_call(&client, &daemon_url, &arguments)
-                                .await
-                            {
                                 Ok(val) => ok(id.unwrap(), tool_ok(val)),
                                 Err(e) => ok(id.unwrap(), tool_err(e)),
                             }
                         }
                         "subagent_wait" => {
                             match subagent_wait_call(&client, &daemon_url, &arguments).await {
+                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
+                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                            }
+                        }
+                        "subagent_list" => {
+                            match subagent_list_call(&client, &daemon_url).await {
                                 Ok(val) => ok(id.unwrap(), tool_ok(val)),
                                 Err(e) => ok(id.unwrap(), tool_err(e)),
                             }
