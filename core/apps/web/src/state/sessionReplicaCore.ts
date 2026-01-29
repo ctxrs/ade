@@ -23,7 +23,7 @@ export type SessionReplicaApi = {
   getSessionState?: (sessionId: string) => Promise<SessionState | null>;
   getSessionSnapshot?: (sessionId: string, limit?: number, includeEvents?: boolean) => Promise<SessionSnapshot | null>;
   listSessionArtifacts?: (sessionId: string) => Promise<Artifact[]>;
-  setAuth?: (baseUrl?: string | null, authToken?: string | null) => void;
+  setAuth?: (baseUrl?: string | null, authToken?: string | null, runId?: string | null) => void;
 };
 
 type SessionReplicaEntry = {
@@ -198,7 +198,10 @@ export class SessionReplicaCore {
     switch (cmd.type) {
       case "init":
         if (cmd.config) this.config = cmd.config;
-        this.deps.api.setAuth?.(cmd.baseUrl ?? null, cmd.authToken ?? null);
+        this.deps.api.setAuth?.(cmd.baseUrl ?? null, cmd.authToken ?? null, cmd.runId ?? null);
+        return;
+      case "update_auth":
+        this.deps.api.setAuth?.(cmd.baseUrl ?? null, cmd.authToken ?? null, cmd.runId ?? null);
         return;
       case "open_session":
         this.openSession(cmd.sessionId, { force: cmd.force, silent: cmd.silent }).catch(() => {});

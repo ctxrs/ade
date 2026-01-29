@@ -16,8 +16,10 @@ import type {
   WorkspaceTaskSummary,
 } from "@ctx/types";
 import {
+  authToken,
+  getDaemonClientConfig,
   resolveDaemonBaseUrl,
-  resolveDaemonWsBaseUrl,
+  subscribeDaemonConfig,
   getDaemonBaseUrl,
   getHealth,
   idToString,
@@ -102,14 +104,6 @@ const shouldRequestSnapshot = (reason: string): boolean => {
       return true;
     default:
       return false;
-  }
-};
-
-const authToken = (): string | null => {
-  try {
-    return sessionStorage.getItem("ctxAuthToken");
-  } catch {
-    return null;
   }
 };
 
@@ -350,6 +344,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private workerPatchFlushMs = WORKSPACE_PATCH_FLUSH_MS;
   private authTokenOverride: string | null = null;
   private wsBaseUrlOverride: string | null = null;
+  private configUnsubscribe: (() => void) | null = null;
   private listWorkspaceArchivedTaskSummariesFn: typeof listWorkspaceArchivedTaskSummaries;
   private subscribedSessionIds: string[] = [];
   private activeSessionIds: string[] = [];
@@ -489,6 +484,16 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.connectStream().catch(() => {});
       return;
     }
+    if (!this.configUnsubscribe && typeof window !== "undefined") {
+      this.configUnsubscribe = subscribeDaemonConfig((config) => {
+        this.updateAuthConfig({
+          authToken: config.authToken ?? null,
+          wsBaseUrl: config.wsBaseUrl ?? null,
+          baseUrl: config.baseUrl ?? null,
+          runId: config.runId ?? null,
+        });
+      });
+    }
     this.ensureWorkerAvailable();
     cachePromise.finally(() => {
       if (!this.destroyed) {
@@ -508,15 +513,17 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       if (msg?.type !== "patch") return;
       this.applyWorkerPatch(msg.patch);
     };
-    const auth = this.authTokenOverride ?? authToken();
-    const wsBaseUrl = this.wsBaseUrlOverride ?? resolveDaemonWsBaseUrl();
-    const baseUrl = resolveDaemonBaseUrl() ?? (wsBaseUrl ? toHttpBaseUrl(wsBaseUrl) : null);
+    const daemonConfig = getDaemonClientConfig();
+    const auth = this.authTokenOverride ?? daemonConfig.authToken;
+    const wsBaseUrl = this.wsBaseUrlOverride ?? daemonConfig.wsBaseUrl ?? null;
+    const baseUrl = daemonConfig.baseUrl ?? (wsBaseUrl ? toHttpBaseUrl(wsBaseUrl) : null);
     this.postWorkerCommand({
       type: "init",
       workspaceId: this.workspaceId,
       authToken: auth,
       baseUrl,
       wsBaseUrl: wsBaseUrl || null,
+      runId: daemonConfig.runId ?? null,
     });
     if (this.subscribedSessionIds.length > 0) {
       this.postWorkerCommand({ type: "set_subscribed_session_ids", sessionIds: this.subscribedSessionIds.slice() });
@@ -529,6 +536,50 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.pendingWorkerCache = null;
     }
   }
+
+  updateAuthConfig = (opts: {
+    authToken?: string | null;
+    wsBaseUrl?: string | null;
+    baseUrl?: string | null;
+    runId?: string | null;
+  }) => {
+    const nextAuth = opts.authToken ?? null;
+    const nextWs = opts.wsBaseUrl ?? null;
+    const authChanged = this.authTokenOverride !== nextAuth;
+    const wsChanged = this.wsBaseUrlOverride !== nextWs;
+    this.authTokenOverride = nextAuth;
+    this.wsBaseUrlOverride = nextWs;
+
+    if (this.worker) {
+      const baseUrl = opts.baseUrl ?? resolveDaemonBaseUrl() ?? (nextWs ? toHttpBaseUrl(nextWs) : null);
+      this.postWorkerCommand({
+        type: "update_auth",
+        authToken: nextAuth,
+        baseUrl,
+        wsBaseUrl: nextWs,
+        runId: opts.runId ?? null,
+      });
+      return;
+    }
+
+    if (!this.disableWorker) {
+      return;
+    }
+    if (!authChanged && !wsChanged) return;
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {
+        // ignore
+      }
+      this.ws = null;
+      this.snapshot.connection = "disconnected";
+      this.publish();
+    }
+    if (!this.destroyed) {
+      this.connectStream().catch(() => {});
+    }
+  };
 
   private postWorkerCommand(cmd: WorkspaceActiveSnapshotCommand) {
     if (!this.worker) return;
@@ -566,6 +617,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (this.worker) {
       this.worker.terminate();
       this.worker = null;
+    }
+    if (this.configUnsubscribe) {
+      this.configUnsubscribe();
+      this.configUnsubscribe = null;
     }
     if (this.ws) {
       try {

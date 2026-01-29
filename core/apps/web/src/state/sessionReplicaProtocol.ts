@@ -29,6 +29,13 @@ export type SessionReplicaCommand =
       config: SessionReplicaConfig;
       baseUrl?: string | null;
       authToken?: string | null;
+      runId?: string | null;
+    }
+  | {
+      type: "update_auth";
+      baseUrl?: string | null;
+      authToken?: string | null;
+      runId?: string | null;
     }
   | { type: "open_session"; sessionId: string; force?: boolean; silent?: boolean }
   | { type: "close_session"; sessionId: string }

@@ -1,4 +1,5 @@
 import type { WorkspaceArchivedPage, WorkspaceIndexCursor } from "@ctx/types";
+import { workerFetchJson, setWorkerClientConfig } from "../api/workerClient";
 import { WorkspaceActiveSnapshotStoreImpl } from "../state/workspaceActiveSnapshotStoreCore";
 import type {
   WorkspaceActiveSnapshotCommand,
@@ -6,34 +7,8 @@ import type {
 } from "../state/workspaceActiveSnapshotProtocol";
 import type { PersistedWorkspaceActiveSnapshotV1 } from "../state/uiStateStore";
 
-let apiBaseUrl: string | null = null;
-let apiAuthToken: string | null = null;
-
-const setAuth = (baseUrl?: string | null, authToken?: string | null) => {
-  apiBaseUrl = baseUrl ?? null;
-  apiAuthToken = authToken ?? null;
-};
-
-const buildUrl = (path: string): string => {
-  if (!apiBaseUrl) return path;
-  const base = apiBaseUrl.replace(/\/+$/, "");
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  if (path.startsWith("/")) return `${base}${path}`;
-  return `${base}/${path}`;
-};
-
-const fetchJson = async <T>(path: string): Promise<T> => {
-  const res = await fetch(buildUrl(path), {
-    headers: {
-      "content-type": "application/json",
-      ...(apiAuthToken ? { authorization: `Bearer ${apiAuthToken}` } : {}),
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `Request failed (${res.status})`);
-  }
-  return res.json() as Promise<T>;
+const setAuth = (baseUrl?: string | null, authToken?: string | null, runId?: string | null) => {
+  setWorkerClientConfig({ baseUrl, authToken, runId });
 };
 
 const idToString = (id: any): string => (typeof id === "string" ? id : id?.["0"]);
@@ -52,7 +27,7 @@ const listWorkspaceArchivedTaskSummaries = (
   }
   const qs = search.toString();
   const suffix = qs ? `?${qs}` : "";
-  return fetchJson<WorkspaceArchivedPage>(`/api/workspaces/${workspaceId}/archived_task_summaries${suffix}`);
+  return workerFetchJson<WorkspaceArchivedPage>(`/api/workspaces/${workspaceId}/archived_task_summaries${suffix}`);
 };
 
 let store: WorkspaceActiveSnapshotStoreImpl | null = null;
@@ -61,7 +36,7 @@ let pendingSubscribedSessionIds: string[] | null = null;
 let pendingForegroundTaskId: string | null = null;
 
 const ensureStore = (cmd: Extract<WorkspaceActiveSnapshotCommand, { type: "init" }>) => {
-  setAuth(cmd.baseUrl, cmd.authToken);
+  setAuth(cmd.baseUrl, cmd.authToken, cmd.runId);
   if (store) return;
   store = new WorkspaceActiveSnapshotStoreImpl(cmd.workspaceId, {
     disableCache: true,
@@ -95,6 +70,13 @@ self.onmessage = (event: MessageEvent<WorkspaceActiveSnapshotCommand>) => {
   switch (cmd.type) {
     case "init":
       ensureStore(cmd);
+      return;
+    case "update_auth":
+      setAuth(cmd.baseUrl, cmd.authToken, cmd.runId);
+      store?.updateAuthConfig({
+        authToken: cmd.authToken ?? null,
+        wsBaseUrl: cmd.wsBaseUrl ?? null,
+      });
       return;
     case "seed_cache":
       if (!store) {

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { appendDesktopLog, getDaemonBaseUrl, setDaemonBaseUrl } from "./api/client";
+import { appendDesktopLog, authToken, getDaemonBaseUrl, setDaemonAuthToken, setDaemonBaseUrl } from "./api/client";
 import DaemonAvailabilityOverlay from "./components/DaemonAvailabilityOverlay";
 import LauncherPage from "./pages/LauncherPage";
 import AppSettingsPage from "./pages/AppSettingsPage";
@@ -21,7 +21,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
     if (token) {
-      sessionStorage.setItem("ctxAuthToken", token);
+      setDaemonAuthToken(token);
       params.delete("token");
       const next =
         window.location.pathname +
@@ -36,8 +36,8 @@ export default function App() {
     const loopback = host === "localhost" || host === "::1" || host.startsWith("127.");
     if (!loopback) return;
 
-    if (envToken && !sessionStorage.getItem("ctxAuthToken")) {
-      sessionStorage.setItem("ctxAuthToken", envToken);
+    if (envToken && !authToken()) {
+      setDaemonAuthToken(envToken);
     }
     if (envDaemonUrl && !getDaemonBaseUrl()) {
       setDaemonBaseUrl(envDaemonUrl, true);

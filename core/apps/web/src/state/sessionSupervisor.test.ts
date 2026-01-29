@@ -16,6 +16,13 @@ vi.mock("../api/client", () => {
   return {
     authToken: vi.fn(() => null),
     idToString,
+    getDaemonClientConfig: vi.fn(() => ({
+      baseUrl: "",
+      wsBaseUrl: "",
+      authToken: null,
+      runId: null,
+    })),
+    subscribeDaemonConfig: vi.fn(() => () => {}),
     getProviderOptions: vi.fn(async () => undefined),
     getSessionHead: vi.fn(),
     getSessionSnapshot: vi.fn(),

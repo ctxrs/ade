@@ -5,7 +5,7 @@ import App from "./App";
 import { initLoadTestTelemetry } from "./utils/loadTestTelemetry";
 import { initWalRecorder } from "./utils/walRecorder";
 import { initTheme } from "./utils/theme";
-import { getDaemonBaseUrl, setDaemonBaseUrl } from "./api/client";
+import { authToken, getDaemonBaseUrl, setDaemonAuthToken, setDaemonBaseUrl } from "./api/client";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 
@@ -14,7 +14,7 @@ const primeAuthSession = () => {
   const params = new URLSearchParams(window.location.search);
   const token = params.get("token");
   if (token) {
-    sessionStorage.setItem("ctxAuthToken", token);
+    setDaemonAuthToken(token);
     params.delete("token");
     const next =
       window.location.pathname +
@@ -25,8 +25,8 @@ const primeAuthSession = () => {
   if (import.meta.env.DEV) {
     const envToken = import.meta.env.VITE_CTX_AUTH_TOKEN;
     const envDaemonUrl = import.meta.env.VITE_CTX_DAEMON_URL;
-    if (envToken && !sessionStorage.getItem("ctxAuthToken")) {
-      sessionStorage.setItem("ctxAuthToken", envToken);
+    if (envToken && !authToken()) {
+      setDaemonAuthToken(envToken);
     }
     if (envDaemonUrl && !getDaemonBaseUrl()) {
       setDaemonBaseUrl(envDaemonUrl, true);

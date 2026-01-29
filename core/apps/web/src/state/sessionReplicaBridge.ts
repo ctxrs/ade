@@ -1,10 +1,10 @@
 import {
-  authToken,
   getSessionHead,
   getSessionSnapshot,
   getSessionState,
   listSessionArtifacts,
-  resolveDaemonBaseUrl,
+  getDaemonClientConfig,
+  subscribeDaemonConfig,
 } from "../api/client";
 import { SessionReplicaCore } from "./sessionReplicaCore";
 import type {
@@ -25,6 +25,7 @@ const shouldUseWorker = (): boolean => {
 export class SessionReplicaBridge {
   private worker: Worker | null = null;
   private core: SessionReplicaCore | null = null;
+  private configUnsubscribe: (() => void) | null = null;
 
   constructor(
     private onPatches: (patches: SessionReplicaPatch[]) => void,
@@ -49,11 +50,21 @@ export class SessionReplicaBridge {
       });
     }
 
+    const daemonConfig = getDaemonClientConfig();
     this.dispatch({
       type: "init",
       config: this.config,
-      baseUrl: resolveDaemonBaseUrl(),
-      authToken: authToken(),
+      baseUrl: daemonConfig.baseUrl,
+      authToken: daemonConfig.authToken,
+      runId: daemonConfig.runId,
+    });
+    this.configUnsubscribe = subscribeDaemonConfig((next) => {
+      this.dispatch({
+        type: "update_auth",
+        baseUrl: next.baseUrl,
+        authToken: next.authToken,
+        runId: next.runId,
+      });
     });
   }
 
@@ -69,6 +80,10 @@ export class SessionReplicaBridge {
     if (this.worker) {
       this.worker.terminate();
       this.worker = null;
+    }
+    if (this.configUnsubscribe) {
+      this.configUnsubscribe();
+      this.configUnsubscribe = null;
     }
     this.core = null;
   }
