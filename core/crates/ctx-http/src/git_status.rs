@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -17,6 +17,8 @@ use crate::daemon::AppState;
 const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
 const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
 const GIT_STATUS_WATCH_DEBOUNCE_MS: u64 = 500;
+const GIT_STATUS_POLL_INTERVAL_MS: u64 = 1000;
+const GIT_STATUS_SAFETY_POLL_INTERVAL_MS: u64 = 2000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GitStatusSnapshot {
@@ -212,14 +214,30 @@ pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) ->
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let mut watcher = watcher(tx)?;
-    watcher
-        .watch(root, RecursiveMode::Recursive)
-        .context("watching worktree for git status")?;
+    if let Err(err) = watcher.watch(root, RecursiveMode::Recursive) {
+        // On hosts with low watch limits (or many concurrent watchers), file watching can fail with
+        // ENOSPC/too-many-watches. Falling back to polling keeps git status updates flowing and
+        // avoids flaking tests that rely on live status changes.
+        tracing::warn!(
+            worktree_id = %worktree.id.0,
+            "git status watcher unavailable; falling back to polling: {err:#}"
+        );
+        return run_git_status_poller(state, worktree).await;
+    }
 
     let debounce = Duration::from_millis(GIT_STATUS_WATCH_DEBOUNCE_MS);
     let mut pending = false;
     let timer = tokio::time::sleep(debounce);
     tokio::pin!(timer);
+
+    // Safety net: notify can succeed but still fail to deliver events under watch pressure
+    // (e.g. partial watch installation, dropped events). Polling keeps git status updates flowing
+    // and avoids flaky tests that rely on live status changes.
+    let mut poll = tokio::time::interval_at(
+        tokio::time::Instant::now() + Duration::from_millis(GIT_STATUS_SAFETY_POLL_INTERVAL_MS),
+        Duration::from_millis(GIT_STATUS_SAFETY_POLL_INTERVAL_MS),
+    );
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
         tokio::select! {
@@ -233,6 +251,11 @@ pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) ->
                 pending = true;
                 timer.as_mut().reset(tokio::time::Instant::now() + debounce);
             }
+            _ = poll.tick() => {
+                if let Err(err) = emit_git_status_snapshot_for_worktree(&state, &worktree).await {
+                    tracing::warn!(worktree_id = %worktree.id.0, "git status snapshot failed: {err:#}");
+                }
+            }
             _ = &mut timer, if pending => {
                 pending = false;
                 if let Err(err) = emit_git_status_snapshot_for_worktree(&state, &worktree).await {
@@ -242,6 +265,17 @@ pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) ->
         }
     }
     Ok(())
+}
+
+async fn run_git_status_poller(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
+    let mut interval = tokio::time::interval(Duration::from_millis(GIT_STATUS_POLL_INTERVAL_MS));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+        if let Err(err) = emit_git_status_snapshot_for_worktree(&state, &worktree).await {
+            tracing::warn!(worktree_id = %worktree.id.0, "git status snapshot failed: {err:#}");
+        }
+    }
 }
 
 fn parse_git_status_short(output: &str) -> GitStatusBranchInfo {

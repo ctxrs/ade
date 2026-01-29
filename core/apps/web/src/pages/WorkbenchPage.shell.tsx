@@ -125,6 +125,35 @@ import type {
   TaskListContext,
   TaskListItem,
 } from "./WorkbenchPage.types";
+
+const DIFF_LINE_GUARD_LIMIT = 10000;
+const DIFF_FILE_GUARD_LIMIT = 200;
+
+const readDiffSummaryNumber = (summary: Record<string, unknown> | null, keys: string[]): number | null => {
+  if (!summary) return null;
+  for (const key of keys) {
+    const raw = (summary as any)[key];
+    const value = Number(raw);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+};
+
+const getDiffSummaryStats = (summary: Record<string, unknown> | null) => {
+  const fileCount = readDiffSummaryNumber(summary, ["file_count", "files", "fileCount"]);
+  const additions = readDiffSummaryNumber(summary, ["line_additions", "additions", "lineAdditions"]);
+  const deletions = readDiffSummaryNumber(summary, ["line_deletions", "deletions", "lineDeletions"]);
+  const lineCount =
+    additions !== null && deletions !== null ? additions + deletions : additions ?? deletions ?? null;
+  return { fileCount, additions, deletions, lineCount };
+};
+
+const isDiffSummaryTooLarge = (summary: Record<string, unknown> | null) => {
+  const { fileCount, lineCount } = getDiffSummaryStats(summary);
+  if (lineCount !== null && lineCount > DIFF_LINE_GUARD_LIMIT) return true;
+  if (fileCount !== null && fileCount > DIFF_FILE_GUARD_LIMIT) return true;
+  return false;
+};
 import {
   ARCHIVE_CONFIRM_STORAGE_KEY,
   SESSION_VIEW_POOL_LIMIT,
@@ -439,6 +468,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [diffOpenHydrated, setDiffOpenHydrated] = useState(false);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffSummary, setDiffSummary] = useState<null | Record<string, unknown>>(null);
+  const [diffSummaryError, setDiffSummaryError] = useState<string | null>(null);
   const [gitStatusLoading, setGitStatusLoading] = useState(false);
   const [gitStatusError, setGitStatusError] = useState<string | null>(null);
   const [artifactsOpenHydrated, setArtifactsOpenHydrated] = useState(false);
@@ -2066,19 +2096,31 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
   }, [activeSessionKind, sessionSections]);
 
-  const diffSummaryCount = useMemo(() => {
-    if (!diffSummary) return null;
-    const raw =
-      (diffSummary as any).file_count ??
-      (diffSummary as any).files ??
-      (diffSummary as any).fileCount ??
-      null;
-    const count = Number(raw);
-    if (!Number.isFinite(count)) return null;
-    return count;
-  }, [diffSummary]);
+  const diffSummaryStats = useMemo(() => getDiffSummaryStats(diffSummary), [diffSummary]);
+  const diffSummaryCount = diffSummaryStats.fileCount;
+  const diffTooLarge = useMemo(() => {
+    const { fileCount, lineCount } = diffSummaryStats;
+    if (lineCount !== null && lineCount > DIFF_LINE_GUARD_LIMIT) return true;
+    if (fileCount !== null && fileCount > DIFF_FILE_GUARD_LIMIT) return true;
+    return false;
+  }, [diffSummaryStats]);
+  const diffTooLargeLabel = useMemo(() => {
+    if (!diffTooLarge) return null;
+    const details: string[] = [];
+    if (diffSummaryStats.fileCount !== null) details.push(`${diffSummaryStats.fileCount} files`);
+    if (diffSummaryStats.lineCount !== null) details.push(`${diffSummaryStats.lineCount} lines`);
+    const suffix = details.length > 0 ? ` (${details.join(", ")})` : "";
+    return `Diff too large to display${suffix}.`;
+  }, [diffSummaryStats, diffTooLarge]);
 
-  const hasDiff = diffSummaryCount !== null ? diffSummaryCount > 0 : activeSessionDiff.trim().length > 0;
+  const hasDiff =
+    diffSummaryError !== null
+      ? true
+      : diffSummaryCount !== null
+        ? diffSummaryCount > 0
+        : diffSummaryStats.lineCount !== null
+          ? diffSummaryStats.lineCount > 0
+          : activeSessionDiff.trim().length > 0;
   const gitStatusSummaryLine = useMemo(() => readGitStatusSummaryLine(gitStatusSummary), [gitStatusSummary]);
   const gitStatusEntries = useMemo(() => {
     if (!gitStatusSummary) return [];
@@ -2219,29 +2261,39 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       };
       if (opts?.resetSummary && activeSessionIdRef.current === sessionId) {
         setDiffSummary(null);
+        setDiffSummaryError(null);
       }
       setLoading(true);
-      const request = Promise.all([
-        getSessionDiffSummary(sessionId)
-          .then((summary) => {
-            if (activeSessionIdRef.current !== sessionId) return;
-            setDiffSummary((summary as any) ?? null);
-          })
-          .catch(() => {
-            if (activeSessionIdRef.current === sessionId) setDiffSummary(null);
-          }),
-        getSessionDiff(sessionId)
-          .then((resp) => {
-            supervisor.setDiff(sessionId, resp.diff ?? "");
-          })
-          .catch(() => {
-            supervisor.setDiff(sessionId, "");
-          }),
-      ])
-        .finally(() => {
-          diffRefreshInFlightRef.current = null;
-          setLoading(false);
-        });
+      const request = (async () => {
+        let summary: Record<string, unknown> | null = null;
+        try {
+          summary = (await getSessionDiffSummary(sessionId)) as any;
+        } catch {
+          summary = null;
+        }
+        if (activeSessionIdRef.current === sessionId) {
+          setDiffSummary(summary ?? null);
+          setDiffSummaryError(summary ? null : "Failed to load diff summary.");
+        }
+        // If we can't get a summary, do not fetch the full diff (it can be huge and crash the renderer).
+        if (!summary) {
+          supervisor.setDiff(sessionId, "");
+          return;
+        }
+        if (isDiffSummaryTooLarge(summary)) {
+          supervisor.setDiff(sessionId, "");
+          return;
+        }
+        try {
+          const resp = await getSessionDiff(sessionId);
+          supervisor.setDiff(sessionId, resp.diff ?? "");
+        } catch {
+          supervisor.setDiff(sessionId, "");
+        }
+      })().finally(() => {
+        diffRefreshInFlightRef.current = null;
+        setLoading(false);
+      });
       diffRefreshInFlightRef.current = request;
       return request;
     },
@@ -3722,7 +3774,17 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                       )}
 
                       {reviewTab === "git" && hasDiff ? (
-                        <DiffReviewPane diff={activeSessionDiff} />
+                        diffSummaryError ? (
+                          <div className="wb-diff-empty">
+                            <div className="wb-muted">{diffSummaryError}</div>
+                          </div>
+                        ) : diffTooLarge ? (
+                          <div className="wb-diff-empty">
+                            <div className="wb-muted">{diffTooLargeLabel ?? "Diff too large to display."}</div>
+                          </div>
+                        ) : (
+                          <DiffReviewPane diff={activeSessionDiff} />
+                        )
                       ) : (
                         <div className="wb-diff-empty">
                           <div className="wb-muted">
