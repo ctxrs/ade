@@ -52,7 +52,7 @@ pub(super) async fn persist_blob_bytes(
 
     let blob_id = uuid::Uuid::new_v4().to_string();
 
-    let dir = blobs_dir(&state.data_root);
+    let dir = blobs_dir(&state.core.data_root);
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -129,7 +129,7 @@ pub(super) async fn get_blob(
         return Err(StatusCode::NOT_FOUND);
     };
 
-    let path = blobs_dir(&state.data_root).join(&id);
+    let path = blobs_dir(&state.core.data_root).join(&id);
     let file = tokio::fs::File::open(&path)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;

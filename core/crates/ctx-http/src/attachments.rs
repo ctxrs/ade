@@ -885,11 +885,11 @@ fn attachment_store_root(data_root: &Path) -> PathBuf {
 
 fn materialized_root_for_attachment(state: &AppState, attachment: &WorkspaceAttachment) -> PathBuf {
     match attachment.kind {
-        WorkspaceAttachmentKind::ReferenceRepo => attachment_store_root(&state.data_root)
+        WorkspaceAttachmentKind::ReferenceRepo => attachment_store_root(&state.core.data_root)
             .join("reference-repos")
             .join("checkouts")
             .join(attachment.id.0.to_string()),
-        WorkspaceAttachmentKind::DocMirror => attachment_store_root(&state.data_root)
+        WorkspaceAttachmentKind::DocMirror => attachment_store_root(&state.core.data_root)
             .join("doc-mirrors")
             .join(attachment.id.0.to_string()),
     }
@@ -898,12 +898,12 @@ fn materialized_root_for_attachment(state: &AppState, attachment: &WorkspaceAtta
 fn materialized_path_for_attachment(state: &AppState, attachment: &WorkspaceAttachment) -> PathBuf {
     let revision = revision_key(attachment);
     match attachment.kind {
-        WorkspaceAttachmentKind::ReferenceRepo => attachment_store_root(&state.data_root)
+        WorkspaceAttachmentKind::ReferenceRepo => attachment_store_root(&state.core.data_root)
             .join("reference-repos")
             .join("checkouts")
             .join(attachment.id.0.to_string())
             .join(revision),
-        WorkspaceAttachmentKind::DocMirror => attachment_store_root(&state.data_root)
+        WorkspaceAttachmentKind::DocMirror => attachment_store_root(&state.core.data_root)
             .join("doc-mirrors")
             .join(attachment.id.0.to_string())
             .join(revision),

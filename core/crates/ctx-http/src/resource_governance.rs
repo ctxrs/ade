@@ -324,7 +324,7 @@ pub async fn apply_limits(
 pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()> {
     let cfg = settings.resource_governance.clone().unwrap_or_default();
     let (system, _disks, _cache_age_ms) = {
-        let mut sampler = state.resource_sampler.lock().await;
+        let mut sampler = state.telemetry.resource_sampler.lock().await;
         sampler.system_snapshot()
     };
     let cpu_count = std::thread::available_parallelism()
@@ -346,7 +346,7 @@ pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()>
         runtime.requires_restart = false;
     }
 
-    let mut guard = state.resource_governance.lock().await;
+    let mut guard = state.telemetry.resource_governance.lock().await;
     *guard = runtime;
     Ok(())
 }
@@ -357,21 +357,21 @@ pub async fn build_public_settings(
 ) -> Option<PublicResourceGovernanceSettings> {
     let cfg = settings.resource_governance.as_ref()?;
     let (system, _disks, _cache_age_ms) = {
-        let mut sampler = state.resource_sampler.lock().await;
+        let mut sampler = state.telemetry.resource_sampler.lock().await;
         sampler.system_snapshot()
     };
     let cpu_count = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
     let effective = compute_effective_limits(cfg, &system, cpu_count);
-    let runtime = state.resource_governance.lock().await.clone();
+    let runtime = state.telemetry.resource_governance.lock().await.clone();
     let status = status_for(cfg.enabled, effective.as_ref(), &runtime);
     Some(public_settings(cfg, effective.as_ref(), status))
 }
 
 async fn has_running_children(state: &AppState) -> bool {
     let providers = {
-        let map = state.providers.lock().await;
+        let map = state.providers.adapters.lock().await;
         map.values().cloned().collect::<Vec<_>>()
     };
     for adapter in providers {
@@ -379,5 +379,5 @@ async fn has_running_children(state: &AppState) -> bool {
             return true;
         }
     }
-    state.terminals.has_running().await
+    state.transport.terminals.has_running().await
 }

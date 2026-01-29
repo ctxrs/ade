@@ -151,7 +151,7 @@ pub async fn emit_git_status_snapshot_for_sessions(
     };
     let now = Instant::now();
     {
-        let mut cache = state.git_status_snapshots.lock().await;
+        let mut cache = state.workspaces.git_status_snapshots.lock().await;
         let entry = cache.entry(worktree_id).or_insert_with(|| {
             crate::daemon::TimedEntry::new(crate::daemon::GitStatusSnapshotCacheEntry {
                 payload: String::new(),

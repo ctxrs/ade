@@ -68,6 +68,7 @@ async fn handle_mobile_secure_ws(
         crate::mobile_e2ee::derive_key(&device_id, device_public_key, &cfg.daemon_private_key)?;
 
     let mut rx = state
+        .workspaces
         .workspace_active_snapshot
         .subscribe(workspace_id)
         .await;
@@ -314,8 +315,7 @@ async fn handle_mobile_secure_ws(
                                 if include_active_heads
                                     && skip_replay_sessions.contains(&session_id)
                                 {
-                                    let last_sent = state
-                                        .workspace_active_snapshot
+                                    let last_sent = state.workspaces.workspace_active_snapshot
                                         .session_last_event_seq(workspace_id, session_id)
                                         .await
                                         .max(after_seq);
@@ -470,8 +470,7 @@ async fn handle_mobile_secure_ws(
                                 if let std::collections::hash_map::Entry::Vacant(entry) =
                                     subscriptions.entry(session_id)
                                 {
-                                    let last_sent = state
-                                        .workspace_active_snapshot
+                                    let last_sent = state.workspaces.workspace_active_snapshot
                                         .session_last_event_seq(workspace_id, session_id)
                                         .await;
                                     entry.insert(SessionCursor { last_sent });
@@ -743,6 +742,7 @@ pub(super) async fn terminal_stream_ws(
     let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
     let session = state
+        .transport
         .terminals
         .get(terminal_id)
         .await
@@ -879,11 +879,12 @@ pub(super) async fn web_session_signal(
     ws: WebSocketUpgrade,
 ) -> Result<Response, StatusCode> {
     state
+        .transport
         .web_sessions
         .get(&id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
-    let manager = state.web_sessions.clone();
+    let manager = state.transport.web_sessions.clone();
     let session_id = id.clone();
     Ok(ws.on_upgrade(move |socket| async move {
         handle_web_session_socket(socket, manager, session_id).await;
@@ -1436,6 +1437,7 @@ async fn load_session_head_reset(
     session_id: SessionId,
 ) -> Result<Option<SessionHeadSnapshot>, ()> {
     if let Some(head) = state
+        .workspaces
         .workspace_active_snapshot
         .get_session_head(session_id)
         .await
@@ -1451,6 +1453,7 @@ async fn load_session_head_reset(
             head.events.clear();
             head.head_window.event_count = 0;
             state
+                .workspaces
                 .workspace_active_snapshot
                 .update_session_head(head.clone())
                 .await;
@@ -1471,10 +1474,12 @@ async fn queue_snapshot_payload(
         .ensure_workspace_active_snapshot_hydrated(workspace_id)
         .await;
     let active_snapshot = state
+        .workspaces
         .workspace_active_snapshot
         .active_snapshot(workspace_id, i64::MAX)
         .await;
     let active_heads = state
+        .workspaces
         .workspace_active_snapshot
         .active_heads(workspace_id)
         .await;
@@ -1523,6 +1528,7 @@ where
         return Ok(ReplayOutcome::ResetRequired);
     }
     let replay = state
+        .workspaces
         .workspace_active_snapshot
         .replay_session_head_deltas(
             workspace_id,
@@ -1605,6 +1611,7 @@ async fn resolve_foreground_task_sessions(
     task_id: TaskId,
 ) -> HashSet<SessionId> {
     if let Some(summary) = state
+        .workspaces
         .workspace_active_snapshot
         .active_task_summary(workspace_id, task_id)
         .await
@@ -1654,6 +1661,7 @@ async fn resolve_workspace_active_snapshot_subscriptions(
             if matches!(scope, Some(WorkspaceActiveSnapshotSubscribeScope::Active)) {
                 active_scope = true;
                 let snapshot = state
+                    .workspaces
                     .workspace_active_snapshot
                     .active_snapshot(workspace_id, i64::MAX)
                     .await;
@@ -1701,6 +1709,7 @@ async fn resolve_workspace_active_snapshot_subscriptions(
             for sub in next.iter_mut() {
                 if sub.after_seq.is_none() {
                     let last_seq = state
+                        .workspaces
                         .workspace_active_snapshot
                         .session_last_event_seq(workspace_id, sub.session_id)
                         .await;
@@ -1772,6 +1781,7 @@ async fn handle_workspace_active_snapshot_ws(
     let head_buffer = Arc::new(HeadBatchBuffer::new());
     let send_control = Arc::new(StreamSendControl::new());
     let mut rx = state
+        .workspaces
         .workspace_active_snapshot
         .subscribe(workspace_id)
         .await;
@@ -1988,8 +1998,7 @@ async fn handle_workspace_active_snapshot_ws(
                                     if include_active_heads
                                         && skip_replay_sessions.contains(&session_id)
                                     {
-                                        let last_sent = state
-                                            .workspace_active_snapshot
+                                        let last_sent = state.workspaces.workspace_active_snapshot
                                             .session_last_event_seq(workspace_id, session_id)
                                             .await
                                             .max(after_seq);
@@ -2174,8 +2183,7 @@ async fn handle_workspace_active_snapshot_ws(
                                         if include_active_heads
                                             && skip_replay_sessions.contains(&session_id)
                                         {
-                                            let last_sent = state
-                                                .workspace_active_snapshot
+                                            let last_sent = state.workspaces.workspace_active_snapshot
                                                 .session_last_event_seq(workspace_id, session_id)
                                                 .await
                                                 .max(after_seq);
@@ -2335,8 +2343,7 @@ async fn handle_workspace_active_snapshot_ws(
                                 if let std::collections::hash_map::Entry::Vacant(entry) =
                                     subscriptions.entry(session_id)
                                 {
-                                    let last_sent = state
-                                        .workspace_active_snapshot
+                                    let last_sent = state.workspaces.workspace_active_snapshot
                                         .session_last_event_seq(workspace_id, session_id)
                                         .await;
                                     entry.insert(SessionCursor { last_sent });
@@ -2532,6 +2539,7 @@ where
         return Ok(ReplayOutcome::ResetRequired);
     }
     let replay = state
+        .workspaces
         .workspace_active_snapshot
         .replay_session_head_deltas(
             workspace_id,

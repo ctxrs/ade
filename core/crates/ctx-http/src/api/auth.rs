@@ -38,7 +38,7 @@ pub(super) async fn auth_middleware(
     if path.starts_with("/api/mobile/secure") || path == "/api/mobile/pair" {
         return Ok(next.run(req).await);
     }
-    if state.auth_token.is_none() {
+    if state.core.auth_token.is_none() {
         return Ok(next.run(req).await);
     }
     if req.extensions().get::<MobileAuthContext>().is_some() {
@@ -74,7 +74,7 @@ pub(super) async fn auth_middleware(
         header_token.or(query_token)
     };
 
-    if token.as_deref() == state.auth_token.as_deref() {
+    if token.as_deref() == state.core.auth_token.as_deref() {
         return Ok(next.run(req).await);
     }
     if let Some(token_value) = token {

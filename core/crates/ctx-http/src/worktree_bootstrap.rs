@@ -617,7 +617,7 @@ async fn write_bootstrap_log(
     worktree_id: WorktreeId,
     contents: &str,
 ) -> Result<PathBuf> {
-    let dir = logs::logs_dir(&state.data_root).join("worktree-bootstrap");
+    let dir = logs::logs_dir(&state.core.data_root).join("worktree-bootstrap");
     tokio::fs::create_dir_all(&dir)
         .await
         .context("creating bootstrap log dir")?;
@@ -642,6 +642,7 @@ async fn emit_failure_notice(
     notice: WorktreeBootstrapNotice,
 ) {
     state
+        .workspaces
         .workspace_active_snapshot
         .publish_worktree_bootstrap(workspace_id, notice)
         .await;

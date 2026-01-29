@@ -74,7 +74,7 @@ pub fn spawn_resource_telemetry(state: Arc<AppState>) {
         return;
     }
 
-    let mut shutdown_rx = state.shutdown_tx.subscribe();
+    let mut shutdown_rx = state.core.shutdown_tx.subscribe();
     tokio::spawn(async move {
         let mut last_cleanup = None::<String>;
         if let Err(err) = sample_once(&state, &cfg, &mut last_cleanup).await {
@@ -104,7 +104,7 @@ async fn sample_once(
 ) -> Result<()> {
     let provider_processes = list_provider_processes(state).await;
     let (system, cache_age_ms, processes, provider_memory_rollups) = {
-        let mut sampler = state.resource_sampler.lock().await;
+        let mut sampler = state.telemetry.resource_sampler.lock().await;
         let (system, _disks, cache_age_ms) = sampler.system_snapshot();
         let processes = sampler.processes_snapshot_light(std::process::id(), &provider_processes);
         let provider_memory_rollups = sampler.provider_memory_rollups(&provider_processes);
@@ -122,17 +122,17 @@ async fn sample_once(
         provider_memory_rollups,
     };
 
-    append_local_log(&state.data_root, &event, cfg).await?;
+    append_local_log(&state.core.data_root, &event, cfg).await?;
     if cfg.local_retention_days > 0 {
         let today = event.occurred_at.format("%Y-%m-%d").to_string();
         if last_cleanup.as_deref() != Some(&today) {
-            let _ = cleanup_old_logs(&state.data_root, cfg.local_retention_days).await;
+            let _ = cleanup_old_logs(&state.core.data_root, cfg.local_retention_days).await;
             *last_cleanup = Some(today);
         }
     }
 
     export_remote_metrics(
-        &state.perf_telemetry,
+        &state.telemetry.perf_telemetry,
         &system,
         &processes,
         &provider_sessions,
@@ -142,7 +142,7 @@ async fn sample_once(
 
 async fn list_provider_processes(state: &Arc<AppState>) -> Vec<ProviderProcessInfo> {
     let providers = {
-        let providers = state.providers.lock().await;
+        let providers = state.providers.adapters.lock().await;
         providers.values().cloned().collect::<Vec<_>>()
     };
     let mut processes = Vec::new();

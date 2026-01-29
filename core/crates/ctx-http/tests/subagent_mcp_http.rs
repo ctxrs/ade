@@ -37,7 +37,8 @@ async fn setup_state(
     {
         let status = FakeProviderAdapter::new().inspect().await.unwrap();
         state
-            .provider_statuses
+            .providers
+            .statuses
             .lock()
             .await
             .insert("fake".into(), status);

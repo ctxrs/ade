@@ -166,6 +166,7 @@ pub(super) async fn update_task_title(
         .map(|session| session.id.0.to_string())
         .collect();
     if let Err(e) = state
+        .transport
         .web_sessions
         .close_for_task(&session_ids, &worktree_id_strings)
         .await
@@ -242,7 +243,7 @@ pub(super) async fn delete_task(
             .map(|entry| StdPath::new(&entry.root_path));
         let vcs_kind = worktree.as_ref().and_then(|entry| entry.vcs_kind.clone());
         if let Err(err) = vcs_hooks::cleanup_worktree_hooks(
-            &state.data_root,
+            &state.core.data_root,
             task.workspace_id,
             worktree_id,
             worktree_root,
@@ -284,7 +285,7 @@ fn managed_worktree_root(
     worktree: &Worktree,
 ) -> Option<PathBuf> {
     let root = PathBuf::from(&worktree.root_path);
-    let expected = managed_worktree_path(&state.data_root, workspace.id, worktree.id);
+    let expected = managed_worktree_path(&state.core.data_root, workspace.id, worktree.id);
     if root == expected {
         Some(root)
     } else {
@@ -508,7 +509,7 @@ pub(super) async fn archive_task(
             continue;
         }
         if let Err(err) = vcs_hooks::cleanup_worktree_hooks(
-            &state.data_root,
+            &state.core.data_root,
             workspace.id,
             worktree.id,
             Some(StdPath::new(&worktree.root_path)),
@@ -714,7 +715,7 @@ pub(super) async fn unarchive_task(
             tracing::warn!(task_id = %task_id.0, "worktree bootstrap failed: {e:?}");
         }
         if let Err(e) = vcs_hooks::ensure_task_commit_hook(
-            &state.data_root,
+            &state.core.data_root,
             workspace.id,
             worktree.id,
             StdPath::new(&worktree.root_path),
@@ -1015,7 +1016,7 @@ pub(super) async fn create_task(
     })?;
 
     let worktree_id = WorktreeId::new();
-    let wt_path = managed_worktree_path(&state.data_root, ws_id, worktree_id);
+    let wt_path = managed_worktree_path(&state.core.data_root, ws_id, worktree_id);
     if let Some(parent) = wt_path.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(|e| {
             (
@@ -1078,7 +1079,7 @@ pub(super) async fn create_task(
     }
 
     if let Err(e) = vcs_hooks::ensure_task_commit_hook(
-        &state.data_root,
+        &state.core.data_root,
         ws_id,
         worktree_id,
         StdPath::new(&worktree.root_path),
@@ -1228,7 +1229,7 @@ pub(super) async fn create_session_for_task(
             "worktree" | "cloud" => {
                 let worktree_id = WorktreeId::new();
                 let wt_path =
-                    managed_worktree_path(&state.data_root, task.workspace_id, worktree_id);
+                    managed_worktree_path(&state.core.data_root, task.workspace_id, worktree_id);
                 if let Some(parent) = wt_path.parent() {
                     tokio::fs::create_dir_all(parent)
                         .await
@@ -1311,7 +1312,7 @@ pub(super) async fn create_session_for_task(
 
     if let Ok(Some(worktree)) = store.get_worktree(worktree_id).await {
         if let Err(e) = vcs_hooks::ensure_task_commit_hook(
-            &state.data_root,
+            &state.core.data_root,
             task.workspace_id,
             worktree.id,
             StdPath::new(&worktree.root_path),
@@ -1437,6 +1438,7 @@ pub(super) async fn create_session_for_task(
     let env_target = env_target_for_worktree(worktree.as_ref());
     state
         .telemetry
+        .telemetry
         .emit(TelemetryEvent::session_started(
             session.provider_id.clone(),
             session.model_id.clone(),
@@ -1453,7 +1455,7 @@ pub(super) async fn create_session_for_task(
         "parent_session_id": session.parent_session_id.map(|id| id.0.to_string()),
         "relationship": session.relationship.clone(),
     }));
-    state.ops_events.emit(ops_event);
+    state.telemetry.ops_events.emit(ops_event);
     if let Err(e) = state.emit_workspace_task_upsert(session.task_id).await {
         tracing::warn!(task_id = %session.task_id.0, "workspace active snapshot refresh failed: {e:?}");
     }
@@ -1469,6 +1471,7 @@ pub(super) async fn load_workspace_active_snapshot_state(
     workspace_id: WorkspaceId,
 ) -> (i64, i64) {
     state
+        .workspaces
         .workspace_active_snapshot
         .snapshot_state(workspace_id)
         .await

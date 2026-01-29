@@ -56,7 +56,7 @@ pub(super) async fn load_and_cache_worktree_files(
     files.sort();
     let files = Arc::new(files);
 
-    let mut cache = state.file_completions_cache.lock().await;
+    let mut cache = state.workspaces.file_completions_cache.lock().await;
     cache.insert(
         worktree.id,
         crate::daemon::TimedEntry::new(crate::daemon::CachedFileCompletions {
@@ -75,6 +75,7 @@ pub(super) async fn load_and_cache_worktree_files(
         labels,
     };
     state
+        .telemetry
         .perf_telemetry
         .record_metric(metric, None, None, None)
         .await;
@@ -105,7 +106,11 @@ pub(super) async fn load_and_cache_workspace_files(
     files.sort();
     let files = Arc::new(files);
 
-    let mut cache = state.workspace_file_completions_cache.lock().await;
+    let mut cache = state
+        .workspaces
+        .workspace_file_completions_cache
+        .lock()
+        .await;
     cache.insert(
         ws_id,
         crate::daemon::TimedEntry::new(crate::daemon::CachedFileCompletions {
@@ -124,6 +129,7 @@ pub(super) async fn load_and_cache_workspace_files(
         labels,
     };
     state
+        .telemetry
         .perf_telemetry
         .record_metric(metric, None, None, None)
         .await;

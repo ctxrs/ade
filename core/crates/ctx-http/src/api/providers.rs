@@ -34,16 +34,18 @@ use super::redact_json_value;
 pub(super) async fn list_providers(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ProviderStatus>>, StatusCode> {
-    let map = state.provider_statuses.lock().await;
+    let map = state.providers.statuses.lock().await;
     let mut out: Vec<ProviderStatus> = map.values().cloned().collect();
     drop(map);
 
-    let managed = installer::load_agent_server_config(&state.data_root)
+    let managed = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
-    let matrix =
-        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
-            .await;
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
 
     let show_fake = std::env::var("CTX_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1");
     for status in out.iter_mut() {
@@ -78,16 +80,18 @@ pub(super) async fn get_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ProviderStatus>, StatusCode> {
-    let map = state.provider_statuses.lock().await;
+    let map = state.providers.statuses.lock().await;
     let mut status = map.get(&id).cloned().ok_or(StatusCode::NOT_FOUND)?;
     drop(map);
 
-    let managed = installer::load_agent_server_config(&state.data_root)
+    let managed = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
-    let matrix =
-        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
-            .await;
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
     installer::apply_managed_install_details(&mut status, &managed);
     status.details.insert(
         "install_supported".into(),
@@ -120,7 +124,7 @@ pub(super) async fn get_provider_usage(
 ) -> Result<Json<provider_usage::ProviderUsageSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
     let refresh = query.refresh.unwrap_or(false);
     let snapshot = if !refresh {
-        let cache = state.provider_usage_cache.lock().await;
+        let cache = state.providers.usage_cache.lock().await;
         cache.get(&id).cloned()
     } else {
         None
@@ -129,7 +133,7 @@ pub(super) async fn get_provider_usage(
         Some(snapshot) => snapshot,
         None => {
             let env = if id == "codex" {
-                provider_accounts::codex_env_for_active_account(&state.data_root)
+                provider_accounts::codex_env_for_active_account(&state.core.data_root)
                     .await
                     .map_err(|e| {
                         (
@@ -214,9 +218,9 @@ const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 pub(super) async fn list_codex_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let registry = provider_accounts::load_codex_registry(&state.data_root).await;
+    let registry = provider_accounts::load_codex_registry(&state.core.data_root).await;
     let logins = {
-        let map = state.codex_login_sessions.lock().await;
+        let map = state.providers.codex_login_sessions.lock().await;
         map.values().cloned().collect::<Vec<_>>()
     };
     Ok(Json(CodexAccountsResponse {
@@ -231,10 +235,10 @@ pub(super) async fn get_codex_accounts_usage(
     Query(query): Query<ProviderUsageQuery>,
 ) -> Result<Json<CodexAccountsUsageResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let refresh = query.refresh.unwrap_or(false);
-    let registry = provider_accounts::load_codex_registry(&state.data_root).await;
+    let registry = provider_accounts::load_codex_registry(&state.core.data_root).await;
     let active_id = registry.active_account_id.clone();
     let cached_active = if !refresh {
-        let cache = state.provider_usage_cache.lock().await;
+        let cache = state.providers.usage_cache.lock().await;
         cache.get("codex").cloned()
     } else {
         None
@@ -252,7 +256,7 @@ pub(super) async fn get_codex_accounts_usage(
     let mut entries = Vec::new();
 
     for account in registry.accounts {
-        let env = provider_accounts::codex_env_for_account(&state.data_root, &account.id);
+        let env = provider_accounts::codex_env_for_account(&state.core.data_root, &account.id);
         let usage = if active_id.as_deref() == Some(&account.id) {
             if let Some(snapshot) = cached_active.clone() {
                 snapshot
@@ -285,16 +289,17 @@ pub(super) async fn start_codex_login(
 ) -> Result<Json<CodexLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     let account_id = uuid::Uuid::new_v4().to_string();
     let label = provider_accounts::normalize_label(req.label, &account_id);
-    let account_dir = provider_accounts::ensure_codex_account_dir(&state.data_root, &account_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: e.to_string(),
-                }),
-            )
-        })?;
+    let account_dir =
+        provider_accounts::ensure_codex_account_dir(&state.core.data_root, &account_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            })?;
     let login = match start_codex_login_process(&account_dir).await {
         Ok(login) => login,
         Err(e) => {
@@ -314,7 +319,7 @@ pub(super) async fn start_codex_login(
         error: None,
     };
     {
-        let mut map = state.codex_login_sessions.lock().await;
+        let mut map = state.providers.codex_login_sessions.lock().await;
         map.insert(account_id.clone(), status);
     }
     let state_clone = Arc::clone(&state);
@@ -334,7 +339,7 @@ pub(super) async fn get_codex_login(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::CodexLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
-    let map = state.codex_login_sessions.lock().await;
+    let map = state.providers.codex_login_sessions.lock().await;
     let status = map.get(&id).cloned().ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
@@ -351,7 +356,7 @@ pub(super) async fn set_codex_active_account(
     Json(req): Json<CodexActiveAccountReq>,
 ) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     if let Some(ref account_id) = req.account_id {
-        let registry = provider_accounts::load_codex_registry(&state.data_root).await;
+        let registry = provider_accounts::load_codex_registry(&state.core.data_root).await;
         if !registry.accounts.iter().any(|a| a.id == *account_id) {
             return Err((
                 StatusCode::NOT_FOUND,
@@ -361,18 +366,19 @@ pub(super) async fn set_codex_active_account(
             ));
         }
     }
-    let registry = provider_accounts::set_active_codex_account(&state.data_root, req.account_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: e.to_string(),
-                }),
-            )
-        })?;
+    let registry =
+        provider_accounts::set_active_codex_account(&state.core.data_root, req.account_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            })?;
     let logins = {
-        let map = state.codex_login_sessions.lock().await;
+        let map = state.providers.codex_login_sessions.lock().await;
         map.values().cloned().collect::<Vec<_>>()
     };
     Ok(Json(CodexAccountsResponse {
@@ -386,7 +392,7 @@ pub(super) async fn delete_codex_account(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let registry = provider_accounts::remove_codex_account(&state.data_root, &id)
+    let registry = provider_accounts::remove_codex_account(&state.core.data_root, &id)
         .await
         .map_err(|e| {
             (
@@ -397,7 +403,7 @@ pub(super) async fn delete_codex_account(
             )
         })?;
     let logins = {
-        let mut map = state.codex_login_sessions.lock().await;
+        let mut map = state.providers.codex_login_sessions.lock().await;
         map.remove(&id);
         map.values().cloned().collect::<Vec<_>>()
     };
@@ -504,12 +510,12 @@ pub(super) async fn monitor_codex_login(
             created_at: Utc::now(),
             last_used_at: Some(Utc::now()),
         };
-        if provider_accounts::upsert_codex_account(&state.data_root, entry)
+        if provider_accounts::upsert_codex_account(&state.core.data_root, entry)
             .await
             .is_ok()
         {
             let _ = provider_accounts::set_active_codex_account(
-                &state.data_root,
+                &state.core.data_root,
                 Some(account_id.clone()),
             )
             .await;
@@ -519,7 +525,7 @@ pub(super) async fn monitor_codex_login(
     }
 
     {
-        let mut map = state.codex_login_sessions.lock().await;
+        let mut map = state.providers.codex_login_sessions.lock().await;
         if let Some(entry) = map.get_mut(&account_id) {
             entry.status = if status.success {
                 "success".to_string()
@@ -693,13 +699,15 @@ pub(super) async fn get_provider_options(
 
     let cache_key = format!("{}/{}", ws_id.0, provider_id);
     let verify_entry: Option<(std::time::Instant, serde_json::Value)> = state
-        .provider_verify_cache
+        .providers
+        .verify_cache
         .lock()
         .await
         .get(&cache_key)
         .map(|c| (c.cached_at, c.value.clone()));
     let cached_entry: Option<(std::time::Instant, serde_json::Value)> = state
-        .provider_options_cache
+        .providers
+        .options_cache
         .lock()
         .await
         .get(&cache_key)
@@ -729,7 +737,8 @@ pub(super) async fn get_provider_options(
         .filter(|v| !v.is_null());
 
     let provider_status = state
-        .provider_statuses
+        .providers
+        .statuses
         .lock()
         .await
         .get(&provider_id)
@@ -747,7 +756,7 @@ pub(super) async fn get_provider_options(
                 "probe_error": "provider not installed or unhealthy",
                 "probed_at": chrono::Utc::now().to_rfc3339(),
             }));
-            state.provider_options_cache.lock().await.insert(
+            state.providers.options_cache.lock().await.insert(
                 cache_key,
                 crate::daemon::CachedProviderOptions {
                     cached_at: std::time::Instant::now(),
@@ -797,7 +806,7 @@ pub(super) async fn get_provider_options(
             }
 
             let resp = redact_json_value(raw_resp);
-            state.provider_options_cache.lock().await.insert(
+            state.providers.options_cache.lock().await.insert(
                 cache_key,
                 crate::daemon::CachedProviderOptions {
                     cached_at: std::time::Instant::now(),
@@ -835,19 +844,19 @@ pub(super) async fn get_provider_options(
                 }),
             ))?;
 
-        let cfg = installer::load_agent_server_config(&state.data_root)
+        let cfg = installer::load_agent_server_config(&state.core.data_root)
             .await
             .unwrap_or_default();
         let matrix = crate::provider_matrix::load_matrix_cached(
-            &state.data_root,
-            &state.provider_matrix_cache,
+            &state.core.data_root,
+            &state.providers.matrix_cache,
         )
         .await;
         let (command, args) = cfg
             .providers
             .get(&provider_id)
             .map(|c| (c.command.clone(), c.args.clone()))
-            .or_else(|| default_agent_server_command(&matrix, &state.data_root, &provider_id))
+            .or_else(|| default_agent_server_command(&matrix, &state.core.data_root, &provider_id))
             .ok_or((
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
@@ -856,8 +865,8 @@ pub(super) async fn get_provider_options(
             ))?;
 
         let mut env = std::collections::HashMap::new();
-        env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
-        if let Some(token) = state.auth_token.as_ref() {
+        env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+        if let Some(token) = state.core.auth_token.as_ref() {
             env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
         }
 
@@ -906,7 +915,7 @@ pub(super) async fn get_provider_options(
         }
 
         let resp = redact_json_value(raw_resp);
-        state.provider_options_cache.lock().await.insert(
+        state.providers.options_cache.lock().await.insert(
             cache_key,
             crate::daemon::CachedProviderOptions {
                 cached_at: std::time::Instant::now(),
@@ -944,18 +953,20 @@ pub(super) async fn get_provider_options(
             }),
         ))?;
 
-    let cfg = installer::load_agent_server_config(&state.data_root)
+    let cfg = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
-    let matrix =
-        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
-            .await;
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
 
     let (command, args) = cfg
         .providers
         .get(&provider_id)
         .map(|c| (c.command.clone(), c.args.clone()))
-        .or_else(|| default_agent_server_command(&matrix, &state.data_root, &provider_id))
+        .or_else(|| default_agent_server_command(&matrix, &state.core.data_root, &provider_id))
         .ok_or((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -978,8 +989,8 @@ pub(super) async fn get_provider_options(
     };
 
     let mut env = std::collections::HashMap::new();
-    env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
-    if let Some(token) = state.auth_token.as_ref() {
+    env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+    if let Some(token) = state.core.auth_token.as_ref() {
         env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
     }
 
@@ -1024,7 +1035,7 @@ pub(super) async fn get_provider_options(
 
     let resp = redact_json_value(raw_resp);
 
-    state.provider_options_cache.lock().await.insert(
+    state.providers.options_cache.lock().await.insert(
         cache_key,
         crate::daemon::CachedProviderOptions {
             cached_at: std::time::Instant::now(),
@@ -1082,17 +1093,19 @@ pub(super) async fn authenticate_provider_for_workspace(
             }),
         ))?;
 
-    let cfg = installer::load_agent_server_config(&state.data_root)
+    let cfg = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
-    let matrix =
-        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
-            .await;
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
     let (command, args) = cfg
         .providers
         .get(&provider_id)
         .map(|c| (c.command.clone(), c.args.clone()))
-        .or_else(|| default_agent_server_command(&matrix, &state.data_root, &provider_id))
+        .or_else(|| default_agent_server_command(&matrix, &state.core.data_root, &provider_id))
         .ok_or((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -1115,13 +1128,15 @@ pub(super) async fn authenticate_provider_for_workspace(
     };
 
     let mut env = std::collections::HashMap::new();
-    env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
-    if let Some(token) = state.auth_token.as_ref() {
+    env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+    if let Some(token) = state.core.auth_token.as_ref() {
         env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
     }
     env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
     if provider_id == "codex" {
-        if let Ok(extra) = provider_accounts::codex_env_for_active_account(&state.data_root).await {
+        if let Ok(extra) =
+            provider_accounts::codex_env_for_active_account(&state.core.data_root).await
+        {
             for (key, value) in extra {
                 env.insert(key, value);
             }
@@ -1190,17 +1205,19 @@ pub(super) async fn verify_provider_for_workspace(
             }),
         ))?;
 
-    let cfg = installer::load_agent_server_config(&state.data_root)
+    let cfg = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
-    let matrix =
-        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
-            .await;
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
     let (command, args) = cfg
         .providers
         .get(&provider_id)
         .map(|c| (c.command.clone(), c.args.clone()))
-        .or_else(|| default_agent_server_command(&matrix, &state.data_root, &provider_id))
+        .or_else(|| default_agent_server_command(&matrix, &state.core.data_root, &provider_id))
         .ok_or((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
@@ -1223,8 +1240,8 @@ pub(super) async fn verify_provider_for_workspace(
     };
 
     let mut env = std::collections::HashMap::new();
-    env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
-    if let Some(token) = state.auth_token.as_ref() {
+    env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+    if let Some(token) = state.core.auth_token.as_ref() {
         env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
     }
     env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
@@ -1251,7 +1268,7 @@ pub(super) async fn verify_provider_for_workspace(
     }));
 
     let cache_key = format!("{}/{}", ws_id.0, provider_id);
-    state.provider_verify_cache.lock().await.insert(
+    state.providers.verify_cache.lock().await.insert(
         cache_key,
         crate::daemon::CachedProviderVerify {
             cached_at: std::time::Instant::now(),
@@ -1266,9 +1283,11 @@ pub(super) async fn install_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<InstallStartResponse>, StatusCode> {
-    let matrix =
-        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
-            .await;
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
     if !installer::is_supported_managed_provider(&matrix, &id) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -1338,9 +1357,11 @@ pub(super) async fn install_all_providers(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<InstallStartResponse>>, StatusCode> {
     let mut out = Vec::new();
-    let matrix =
-        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
-            .await;
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
     for entry in matrix.providers.iter() {
         if !installer::is_supported_managed_provider(&matrix, &entry.id) {
             continue;
@@ -1354,7 +1375,7 @@ pub(super) async fn install_all_providers(
             continue;
         }
 
-        let status = state.provider_statuses.lock().await.get(id).cloned();
+        let status = state.providers.statuses.lock().await.get(id).cloned();
         if let Some(st) = status {
             if st.installed && matches!(st.health, ctx_providers::adapters::ProviderHealth::Ok) {
                 continue;

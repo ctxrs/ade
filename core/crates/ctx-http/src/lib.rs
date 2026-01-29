@@ -239,7 +239,7 @@ mod tests {
                     details: HashMap::new(),
                 },
             );
-            *state.provider_statuses.lock().await = statuses;
+            *state.providers.statuses.lock().await = statuses;
         }
 
         let app = api::router(state.clone());

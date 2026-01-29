@@ -111,6 +111,7 @@ pub(super) async fn get_workspace(
         Some(ws) => {
             state
                 .telemetry
+                .telemetry
                 .emit(TelemetryEvent::workspace_opened())
                 .await;
             Ok(Json(ws))
@@ -129,6 +130,7 @@ pub(super) async fn get_workspace_active_snapshot(
         .ensure_workspace_active_snapshot_hydrated(workspace_id)
         .await;
     let snapshot = state
+        .workspaces
         .workspace_active_snapshot
         .active_snapshot(workspace_id, i64::MAX)
         .await;
@@ -148,6 +150,7 @@ pub(super) async fn get_workspace_active_heads(
         .ensure_workspace_active_snapshot_hydrated(workspace_id)
         .await;
     let heads = state
+        .workspaces
         .workspace_active_snapshot
         .active_heads(workspace_id)
         .await;
@@ -245,6 +248,7 @@ pub(super) async fn create_workspace(
     }
     state
         .telemetry
+        .telemetry
         .emit(TelemetryEvent::workspace_registered())
         .await;
     Ok(Json(workspace))
@@ -270,10 +274,10 @@ pub(super) async fn delete_workspace(
         .delete_workspace(id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    state.stores.evict_workspace(id).await;
+    state.core.stores.evict_workspace(id).await;
     for worktree in &worktrees {
         if let Err(err) = vcs_hooks::cleanup_worktree_hooks(
-            &state.data_root,
+            &state.core.data_root,
             id,
             worktree.id,
             Some(StdPath::new(&worktree.root_path)),
@@ -288,13 +292,14 @@ pub(super) async fn delete_workspace(
             );
         }
     }
-    if let Err(err) = vcs_hooks::cleanup_workspace_hooks(&state.data_root, id).await {
+    if let Err(err) = vcs_hooks::cleanup_workspace_hooks(&state.core.data_root, id).await {
         tracing::warn!(
             workspace_id = %id.0,
             "failed to remove vcs hooks: {err:#}"
         );
     }
     let workspace_db_dir = state
+        .core
         .data_root
         .join("db")
         .join("workspaces")
@@ -895,7 +900,11 @@ pub(super) async fn workspace_file_completions(
 
     let files = {
         let now = Instant::now();
-        let mut cache = state.workspace_file_completions_cache.lock().await;
+        let mut cache = state
+            .workspaces
+            .workspace_file_completions_cache
+            .lock()
+            .await;
         if let Some(entry) = cache.get_mut(&ws_id) {
             entry.touch();
             if now.duration_since(entry.value.cached_at) <= CACHE_TTL {

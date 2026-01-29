@@ -52,7 +52,7 @@ struct CodexConfigFile {
 }
 
 pub fn spawn_provider_usage_poller(state: Arc<AppState>) {
-    let mut shutdown_rx = state.shutdown_tx.subscribe();
+    let mut shutdown_rx = state.core.shutdown_tx.subscribe();
     let poll_interval = usage_poll_interval_from_env().unwrap_or(DEFAULT_POLL_INTERVAL);
     if poll_interval.is_zero() {
         return;
@@ -73,7 +73,7 @@ pub fn spawn_provider_usage_poller(state: Arc<AppState>) {
 }
 
 pub async fn refresh_provider_usage(state: &Arc<AppState>) -> Result<()> {
-    let env = provider_accounts::codex_env_for_active_account(&state.data_root).await?;
+    let env = provider_accounts::codex_env_for_active_account(&state.core.data_root).await?;
     refresh_provider_usage_for(state, "codex", env).await?;
     Ok(())
 }
@@ -95,7 +95,7 @@ pub async fn refresh_provider_usage_for(
             });
         }
     };
-    let mut cache = state.provider_usage_cache.lock().await;
+    let mut cache = state.providers.usage_cache.lock().await;
     cache.insert(provider_id.to_string(), snapshot.clone());
     Ok(snapshot)
 }

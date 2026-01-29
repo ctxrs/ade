@@ -68,10 +68,12 @@ async fn session_head_rehydrates_after_cache_eviction() {
         .unwrap()
         .expect("session head snapshot");
     state
+        .workspaces
         .workspace_active_snapshot
         .update_session_head(baseline.clone())
         .await;
     assert!(state
+        .workspaces
         .workspace_active_snapshot
         .get_session_head(session.id)
         .await
@@ -79,6 +81,7 @@ async fn session_head_rehydrates_after_cache_eviction() {
 
     state.cleanup_session(session.id).await;
     assert!(state
+        .workspaces
         .workspace_active_snapshot
         .get_session_head(session.id)
         .await

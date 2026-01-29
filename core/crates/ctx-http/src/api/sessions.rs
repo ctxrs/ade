@@ -77,6 +77,7 @@ pub(super) async fn get_session_head(
     let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     if let Some(mut head) = state
+        .workspaces
         .workspace_active_snapshot
         .get_session_head(session_id)
         .await
@@ -100,6 +101,7 @@ pub(super) async fn get_session_head(
             state.emit_cache_rehydrate("session_head", true).await;
             if include_events {
                 state
+                    .workspaces
                     .workspace_active_snapshot
                     .update_session_head(head.clone())
                     .await;
@@ -529,7 +531,7 @@ pub(super) async fn maybe_emit_git_status_snapshot(
     };
     let now = Instant::now();
     {
-        let mut cache = state.git_status_snapshots.lock().await;
+        let mut cache = state.workspaces.git_status_snapshots.lock().await;
         let entry = cache.entry(worktree_id).or_insert_with(|| {
             crate::daemon::TimedEntry::new(GitStatusSnapshotCacheEntry {
                 payload: String::new(),
@@ -725,7 +727,7 @@ pub(super) struct TitleGenerationOutcome {
 pub(super) async fn configured_title_generation_settings(
     state: &AppState,
 ) -> Option<user_settings::TitleGenerationSettings> {
-    let settings = user_settings::load_settings(&state.data_root).await;
+    let settings = user_settings::load_settings(&state.core.data_root).await;
     settings
         .title_generation
         .as_ref()
@@ -845,7 +847,7 @@ pub(super) async fn maybe_generate_session_title(
         return Ok(None);
     }
 
-    let outcome = generate_title_for_prompt(cfg.as_ref(), &prompt, &state.data_root).await?;
+    let outcome = generate_title_for_prompt(cfg.as_ref(), &prompt, &state.core.data_root).await?;
     apply_session_title_update(&state, &session, outcome.clone()).await?;
     Ok(Some(outcome))
 }
@@ -1054,7 +1056,7 @@ pub(super) async fn session_file_completions(
 
     let files = {
         let now = Instant::now();
-        let mut cache = state.file_completions_cache.lock().await;
+        let mut cache = state.workspaces.file_completions_cache.lock().await;
         if let Some(entry) = cache.get_mut(&worktree.id) {
             entry.touch();
             if now.duration_since(entry.value.cached_at) <= CACHE_TTL {
@@ -1700,7 +1702,7 @@ pub(super) async fn set_session_model(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let adapter = {
-        let map = state.providers.lock().await;
+        let map = state.providers.adapters.lock().await;
         map.get(&session.provider_id).cloned()
     }
     .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -1751,7 +1753,7 @@ pub(super) async fn set_session_mode(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let adapter = {
-        let map = state.providers.lock().await;
+        let map = state.providers.adapters.lock().await;
         map.get(&session.provider_id).cloned()
     }
     .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -2266,7 +2268,7 @@ async fn load_provider_model_catalog(
     provider_id: &str,
 ) -> Result<Option<ModelCatalog>, String> {
     let cache_key = format!("{}/{}", workspace.id.0, provider_id);
-    if let Some(entry) = state.provider_options_cache.lock().await.get(&cache_key) {
+    if let Some(entry) = state.providers.options_cache.lock().await.get(&cache_key) {
         if let Some(models) = entry.value.get("models") {
             if let Some(catalog) = build_model_catalog(models) {
                 return Ok(Some(catalog));
@@ -2275,7 +2277,7 @@ async fn load_provider_model_catalog(
     }
 
     let supports_acp = {
-        let statuses = state.provider_statuses.lock().await;
+        let statuses = state.providers.statuses.lock().await;
         statuses
             .get(provider_id)
             .and_then(|status| status.capabilities.as_ref())
@@ -2286,23 +2288,25 @@ async fn load_provider_model_catalog(
         return Ok(None);
     }
 
-    let cfg = installer::load_agent_server_config(&state.data_root)
+    let cfg = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
-    let matrix =
-        crate::provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
-            .await;
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
     let (command, args) = cfg
         .providers
         .get(provider_id)
         .map(|c| (c.command.clone(), c.args.clone()))
-        .or_else(|| default_agent_server_command(&matrix, &state.data_root, provider_id))
+        .or_else(|| default_agent_server_command(&matrix, &state.core.data_root, provider_id))
         .ok_or_else(|| "unknown provider id".to_string())?;
 
     if !supports_acp {
         let mut env = std::collections::HashMap::new();
-        env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
-        if let Some(token) = state.auth_token.as_ref() {
+        env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+        if let Some(token) = state.core.auth_token.as_ref() {
             env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
         }
 
@@ -2342,7 +2346,7 @@ async fn load_provider_model_catalog(
                 "probed_at": chrono::Utc::now().to_rfc3339(),
             });
             value = redact_json_value(value);
-            state.provider_options_cache.lock().await.insert(
+            state.providers.options_cache.lock().await.insert(
                 cache_key,
                 crate::daemon::CachedProviderOptions {
                     cached_at: std::time::Instant::now(),
@@ -2369,8 +2373,8 @@ async fn load_provider_model_catalog(
         mcp_servers: vec![],
     };
     let mut env = std::collections::HashMap::new();
-    env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
-    if let Some(token) = state.auth_token.as_ref() {
+    env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+    if let Some(token) = state.core.auth_token.as_ref() {
         env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
     }
 
@@ -2403,7 +2407,7 @@ async fn load_provider_model_catalog(
             "probed_at": chrono::Utc::now().to_rfc3339(),
         });
         value = redact_json_value(value);
-        state.provider_options_cache.lock().await.insert(
+        state.providers.options_cache.lock().await.insert(
             cache_key,
             crate::daemon::CachedProviderOptions {
                 cached_at: std::time::Instant::now(),
@@ -2839,7 +2843,7 @@ async fn create_subagent_worktree(
     vcs_kind: VcsKind,
 ) -> Result<Worktree, (StatusCode, Json<ApiErrorResp>)> {
     let worktree_id = WorktreeId::new();
-    let wt_path = managed_worktree_path(&state.data_root, workspace.id, worktree_id);
+    let wt_path = managed_worktree_path(&state.core.data_root, workspace.id, worktree_id);
     if let Some(parent) = wt_path.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(|e| {
             (
@@ -3050,7 +3054,7 @@ pub(super) async fn mcp_agent_init(
             }),
         ));
     }
-    let settings = user_settings::load_settings(&state.data_root).await;
+    let settings = user_settings::load_settings(&state.core.data_root).await;
     let max_subagents = resolve_max_subagents_per_call(&settings);
     if req.agents.len() > max_subagents {
         return Err((
@@ -3186,14 +3190,14 @@ pub(super) async fn mcp_agent_init(
     }
 
     let available_providers: Vec<String> = {
-        let statuses = state.provider_statuses.lock().await;
+        let statuses = state.providers.statuses.lock().await;
         let mut ids = statuses.keys().cloned().collect::<Vec<_>>();
         ids.sort();
         ids
     };
     let mut provider_statuses = HashMap::new();
     {
-        let statuses = state.provider_statuses.lock().await;
+        let statuses = state.providers.statuses.lock().await;
         for provider_id in provider_ids.iter() {
             if let Some(status) = statuses.get(provider_id) {
                 provider_statuses.insert(provider_id.clone(), status.clone());
@@ -4078,7 +4082,7 @@ pub(super) async fn mcp_oracle(
         ));
     }
 
-    let settings = user_settings::load_settings(&state.data_root).await;
+    let settings = user_settings::load_settings(&state.core.data_root).await;
     let cfg = settings.oracle.as_ref().ok_or((
         StatusCode::BAD_REQUEST,
         Json(ApiErrorResp {
@@ -4496,7 +4500,7 @@ pub(super) async fn authenticate_session(
         })?;
 
     let adapter = {
-        let map = state.providers.lock().await;
+        let map = state.providers.adapters.lock().await;
         map.get(&session.provider_id).cloned()
     }
     .ok_or_else(|| {
@@ -4531,8 +4535,8 @@ pub(super) async fn authenticate_session(
     let workdir = PathBuf::from(worktree.root_path.clone());
 
     let mut provider_env = std::collections::HashMap::new();
-    provider_env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
-    if let Some(token) = state.auth_token.clone() {
+    provider_env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+    if let Some(token) = state.core.auth_token.clone() {
         provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
     }
     if let Some(provider_ref) = session.provider_session_ref.clone() {
@@ -4546,7 +4550,9 @@ pub(super) async fn authenticate_session(
         provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
     }
     if session.provider_id == "codex" {
-        if let Ok(extra) = provider_accounts::codex_env_for_active_account(&state.data_root).await {
+        if let Ok(extra) =
+            provider_accounts::codex_env_for_active_account(&state.core.data_root).await
+        {
             for (key, value) in extra {
                 provider_env.insert(key, value);
             }
@@ -4756,6 +4762,7 @@ pub(super) async fn submit_ask_user_question(
     let answers_for_event = answers.clone();
 
     let ok = state
+        .core
         .ask_user_question
         .submit(
             &session_uuid.to_string(),

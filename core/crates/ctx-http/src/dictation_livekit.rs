@@ -159,7 +159,7 @@ async fn connect_livekit_inference_stt(
 
 pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::Arc<AppState>) {
     tracing::info!("dictation: client connected");
-    let settings = settings::load_settings(&state.data_root).await;
+    let settings = settings::load_settings(&state.core.data_root).await;
     let Some(dictation) = settings.dictation else {
         let _ = socket
             .send(WsMessage::Text(
