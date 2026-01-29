@@ -36,6 +36,7 @@ pub mod title_generation;
 pub mod title_generation_local;
 pub mod tool_cgroup;
 pub mod updates;
+pub mod vcs_hooks;
 pub mod web_sessions;
 pub mod workspace_active_snapshot;
 pub mod workspace_config;
