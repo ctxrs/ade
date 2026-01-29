@@ -10,6 +10,9 @@ path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.5.3", features = [] }
+sha2 = "0.10"
+ureq = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dependencies]
 anyhow = "1"
@@ -26,7 +29,7 @@ tauri-plugin-dialog = "2.4.2"
 tauri-plugin-notification = "2.3.3"
 tauri-plugin-shell = "2.3.4"
 tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }
-tauri-plugin-stt = "0.1"
+tauri-plugin-stt = { version = "0.1", optional = true }
 tokio = { version = "1", features = ["sync"] }
 url = "2"
 urlencoding = "2"
@@ -36,5 +39,6 @@ uuid = { version = "1", features = ["v4"] }
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 automation = ["tauri-plugin-automation"]
+stt = ["tauri-plugin-stt"]
 
 [workspace]

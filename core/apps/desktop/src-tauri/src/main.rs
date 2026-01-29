@@ -20,6 +20,11 @@ use tokio::sync::OnceCell;
 use url::Url;
 
 fn main() {
+    #[cfg(all(target_os = "windows", feature = "stt"))]
+    {
+        configure_windows_vosk_dll_search_path();
+    }
+
     let mut builder = tauri::Builder::default()
         .manage(ConnectionManager::default())
         .manage(DeepLinkTokenStore::default())
@@ -32,7 +37,6 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_stt::init())
         .invoke_handler(tauri::generate_handler![
             desktop_get_connection,
             desktop_disconnect,
@@ -78,9 +82,58 @@ fn main() {
         builder = builder.plugin(automation_init());
     }
 
+    #[cfg(feature = "stt")]
+    {
+        builder = builder.plugin(tauri_plugin_stt::init());
+    }
+
     builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(all(target_os = "windows", feature = "stt"))]
+fn configure_windows_vosk_dll_search_path() {
+    use std::env;
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::PathBuf;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetDllDirectoryW(lpPathName: *const u16) -> i32;
+    }
+
+    let Ok(exe) = env::current_exe() else {
+        return;
+    };
+    let Some(exe_dir) = exe.parent().map(PathBuf::from) else {
+        return;
+    };
+
+    let candidates = [
+        exe_dir.clone(),
+        exe_dir.join("bin"),
+        exe_dir.join("resources").join("bin"),
+        exe_dir.join("resources"),
+    ];
+
+    let Some(found_dir) = candidates
+        .into_iter()
+        .find(|dir| dir.join("libvosk.dll").exists())
+    else {
+        return;
+    };
+
+    let wide: Vec<u16> = OsStr::new(found_dir.as_os_str())
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        // Ignore failures here; if this doesn't work, STT will fail when used.
+        let _ = SetDllDirectoryW(wide.as_ptr());
+    }
 }
 
 fn schedule_startup_workspaces(app: tauri::AppHandle) {
