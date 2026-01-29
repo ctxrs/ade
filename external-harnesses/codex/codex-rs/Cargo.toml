@@ -16,6 +16,7 @@ members = [
     "cli",
     "common",
     "core",
+    "crp-runtime",
     "exec",
     "exec-server",
     "execpolicy",

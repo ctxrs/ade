@@ -1546,9 +1546,8 @@ impl Config {
             codex_linux_sandbox_exe,
 
             hide_agent_reasoning: cfg.hide_agent_reasoning.unwrap_or(false),
-            show_raw_agent_reasoning: cfg
-                .show_raw_agent_reasoning
-                .or(show_raw_agent_reasoning)
+            show_raw_agent_reasoning: show_raw_agent_reasoning
+                .or(cfg.show_raw_agent_reasoning)
                 .unwrap_or(false),
             model_reasoning_effort: config_profile
                 .model_reasoning_effort

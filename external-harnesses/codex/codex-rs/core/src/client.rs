@@ -298,7 +298,7 @@ impl ModelClientSession {
             None
         };
 
-        let include = if reasoning.is_some() {
+        let include = if reasoning.is_some() || self.state.config.show_raw_agent_reasoning {
             vec!["reasoning.encrypted_content".to_string()]
         } else {
             Vec::new()
