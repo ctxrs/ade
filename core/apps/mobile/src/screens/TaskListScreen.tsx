@@ -55,7 +55,7 @@ export function TaskListScreen() {
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <View style={styles.listSection}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>ACTIVE</Text>
+              <Text style={styles.sectionTitle}>Active Tasks</Text>
             </View>
 
             <View style={styles.list}>
@@ -87,7 +87,7 @@ export function TaskListScreen() {
             </View>
 
             <View style={styles.archivedRow}>
-              <Text style={styles.sectionTitle}>ARCHIVED</Text>
+              <Text style={styles.sectionTitle}>Archived Tasks</Text>
               <View style={styles.archivedMeta}>
                 <Text style={styles.archivedCount}>{archivedCount}</Text>
                 <ChevronDown size={12} color={colors.textSecondary} style={styles.archivedChevron} />
