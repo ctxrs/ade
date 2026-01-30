@@ -1,0 +1,34 @@
+#!/usr/bin/env node
+import * as fs from "node:fs";
+
+function getPackageVersion() {
+  try {
+    const pkgPath = new URL("../package.json", import.meta.url);
+    const raw = fs.readFileSync(pkgPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.version === "string") {
+      return parsed.version;
+    }
+  } catch {
+    // Ignore and fall through.
+  }
+  return "0.0.0";
+}
+
+if (process.argv.includes("--version") || process.argv.includes("-v")) {
+  process.stdout.write(`${getPackageVersion()}\n`);
+  process.exit(0);
+}
+
+try {
+  const mod = await import("../dist/runtime.js");
+  if (typeof mod.runRuntime === "function") {
+    await mod.runRuntime();
+  } else {
+    process.stderr.write("[claude-crp] runtime entrypoint missing\n");
+    process.exitCode = 1;
+  }
+} catch (err) {
+  process.stderr.write(`[claude-crp] failed to load runtime: ${err}\n`);
+  process.exitCode = 1;
+}
