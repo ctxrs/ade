@@ -1768,7 +1768,7 @@ fn install_macos_settings_button(
         let ns_window: &NSWindow = &*webview.ns_window().cast();
         let image = icon_path
             .as_deref()
-            .and_then(|path| load_lucide_settings_icon(path, mtm))
+            .and_then(|path| load_lucide_settings_icon(path))
             .or_else(|| NSImage::imageNamed(NSImageNamePreferencesGeneral));
         let Some(image) = image else {
             return;
@@ -1794,10 +1794,7 @@ fn install_macos_settings_button(
 }
 
 #[cfg(target_os = "macos")]
-fn load_lucide_settings_icon(
-    icon_path: &str,
-    mtm: MainThreadMarker,
-) -> Option<Retained<NSImage>> {
+fn load_lucide_settings_icon(icon_path: &str) -> Option<Retained<NSImage>> {
     let ns_path = NSString::from_str(icon_path);
     let image = NSImage::initWithContentsOfFile(NSImage::alloc(), &ns_path)?;
     image.setTemplate(true);
