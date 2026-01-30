@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { useEffect, useRef } from "react";
+import { BrowserRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { appendDesktopLog, authToken, getDaemonBaseUrl, setDaemonAuthToken, setDaemonBaseUrl } from "./api/client";
 import DaemonAvailabilityOverlay from "./components/DaemonAvailabilityOverlay";
 import LauncherPage from "./pages/LauncherPage";
@@ -15,6 +15,48 @@ import { SettingsStoreProvider } from "./state/settingsStore";
 import { preloadHarnessLogos } from "./utils/harnessCatalog";
 import { initStatsig } from "./utils/statsig";
 import { refreshUpdateCheck } from "./utils/updateNotice";
+import { desktopListen, isDesktopApp } from "./utils/desktop";
+
+function DesktopSettingsListener() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const locationRef = useRef(location);
+
+  useEffect(() => {
+    locationRef.current = location;
+  }, [location]);
+
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    desktopListen("desktop_open_settings", () => {
+      const path = locationRef.current.pathname;
+      let target = "/settings";
+      if (path.startsWith("/workspaces/")) {
+        const wsId = path.split("/")[2];
+        if (wsId) {
+          target = `/settings?ws=${encodeURIComponent(wsId)}`;
+        }
+      }
+      navigate(target);
+    })
+      .then((fn) => {
+        if (!active) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      if (unlisten) unlisten();
+    };
+  }, [navigate]);
+
+  return null;
+}
 
 export default function App() {
   useEffect(() => {
@@ -64,6 +106,7 @@ export default function App() {
     <SessionSupervisorProvider>
       <SettingsStoreProvider>
         <BrowserRouter>
+          <DesktopSettingsListener />
           <Routes>
             <Route path="/" element={<LauncherPage />} />
             <Route path="/app-settings" element={<AppSettingsPage />} />

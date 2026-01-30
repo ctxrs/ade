@@ -27,6 +27,8 @@ use objc2_app_kit::{
     NSBezelStyle, NSButton, NSImage, NSImageNamePreferencesGeneral, NSLayoutAttribute,
     NSTitlebarAccessoryViewController, NSWindow,
 };
+#[cfg(target_os = "macos")]
+use objc2_foundation::NSString;
 #[cfg(feature = "automation")]
 use tauri_plugin_automation::init as automation_init;
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -1708,7 +1710,22 @@ extern "C" fn settings_button_clicked(
     _sender: *mut AnyObject,
 ) {
     if let Some(app) = SETTINGS_BUTTON_APP.get() {
-        let _ = open_settings_window(app);
+        emit_settings_in_focused_window(app);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn emit_settings_in_focused_window(app: &tauri::AppHandle) {
+    let mut focused: Option<tauri::WebviewWindow> = None;
+    for window in app.webview_windows().values() {
+        if window.is_focused().unwrap_or(false) {
+            focused = Some(window.clone());
+            break;
+        }
+    }
+    let window = focused.or_else(|| app.get_webview_window("main"));
+    if let Some(window) = window {
+        let _ = window.emit("desktop_open_settings", ());
     }
 }
 
@@ -1744,7 +1761,9 @@ fn install_macos_settings_button(
     window.with_webview(|webview| unsafe {
         let mtm = MainThreadMarker::new().expect("titlebar button should be on main thread");
         let ns_window: &NSWindow = &*webview.ns_window().cast();
-        let Some(image) = NSImage::imageNamed(NSImageNamePreferencesGeneral) else {
+        let image = load_lucide_settings_icon(app, mtm)
+            .or_else(|| NSImage::imageNamed(NSImageNamePreferencesGeneral));
+        let Some(image) = image else {
             return;
         };
         let cls = settings_button_target_class();
@@ -1765,6 +1784,20 @@ fn install_macos_settings_button(
         ns_window.addTitlebarAccessoryViewController(&accessory);
     })?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn load_lucide_settings_icon(
+    app: &tauri::AppHandle,
+    mtm: MainThreadMarker,
+) -> Option<Retained<NSImage>> {
+    let resource_dir = app.path().resource_dir().ok()?;
+    let icon_path = resource_dir.join("bundles/lucide-settings.svg");
+    let icon_path = icon_path.to_str()?;
+    let ns_path = NSString::from_str(icon_path);
+    let image = NSImage::initWithContentsOfFile(NSImage::alloc(mtm), &ns_path)?;
+    image.setTemplate(true);
+    Some(image)
 }
 
 fn apply_workbench_titlebar<'a, R: tauri::Runtime, M: tauri::Manager<R>>(
