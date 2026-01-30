@@ -2309,6 +2309,16 @@ async fn load_provider_model_catalog(
         if let Some(token) = state.core.auth_token.as_ref() {
             env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
         }
+        if provider_id == "codex-crp" {
+            // Keep probing consistent with real codex-crp sessions (they need CODEX_HOME).
+            if let Ok(extra) =
+                crate::provider_accounts::codex_env_for_active_account(&state.core.data_root).await
+            {
+                for (key, value) in extra {
+                    env.insert(key, value);
+                }
+            }
+        }
 
         let probe = match probe_crp_models(
             provider_id,

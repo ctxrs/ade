@@ -869,6 +869,17 @@ pub(super) async fn get_provider_options(
         if let Some(token) = state.core.auth_token.as_ref() {
             env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
         }
+        if provider_id == "codex-crp" {
+            // codex-crp relies on Codex auth material (via CODEX_HOME). Without it, probing can
+            // return empty models even when Codex is otherwise configured.
+            if let Ok(extra) =
+                crate::provider_accounts::codex_env_for_active_account(&state.core.data_root).await
+            {
+                for (key, value) in extra {
+                    env.insert(key, value);
+                }
+            }
+        }
 
         let probe = probe_crp_models(
             &provider_id,

@@ -264,6 +264,7 @@ impl CrpSessionPool {
             .await?;
         let mut last_seq = 0u64;
         let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+        let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
         let mut cancel_rx = req.cancel_rx;
         loop {
             tokio::select! {
@@ -289,7 +290,12 @@ impl CrpSessionPool {
                                 continue;
                             }
                             last_seq = env.seq;
-                            let mapped = map_crp_event(env.event, env.seq, &mut tool_output_cache);
+                            let mapped = map_crp_event(
+                                env.event,
+                                env.seq,
+                                &mut tool_output_cache,
+                                &mut tool_input_cache,
+                            );
                             for event in mapped.events {
                                 let _ = req.event_sink.send(event).await;
                             }
@@ -665,6 +671,8 @@ enum CrpEvent {
         tool_name: String,
         #[serde(default)]
         input: Option<Value>,
+        #[serde(default)]
+        input_preview: Option<Value>,
     },
     #[serde(rename = "tool.output.delta")]
     ToolOutputDelta {
@@ -687,6 +695,8 @@ enum CrpEvent {
         output: Option<Value>,
         #[serde(default)]
         error: Option<String>,
+        #[serde(default)]
+        input_preview: Option<Value>,
     },
     #[serde(rename = "models.list")]
     ModelsList {
@@ -734,10 +744,17 @@ struct MappedCrpEvent {
     done: bool,
 }
 
+#[derive(Debug, Clone)]
+struct CachedToolInput {
+    input: Option<Value>,
+    input_preview: Option<Value>,
+}
+
 fn map_crp_event(
     event: CrpEvent,
     seq: u64,
     tool_output_cache: &mut HashMap<String, String>,
+    tool_input_cache: &mut HashMap<String, CachedToolInput>,
 ) -> MappedCrpEvent {
     match event {
         CrpEvent::SessionOpened {
@@ -814,9 +831,25 @@ fn map_crp_event(
             tool_call_id,
             tool_name,
             input,
+            input_preview,
             ..
         } => {
-            let payload = build_tool_started_payload(tool_call_id, tool_name, input, seq);
+            if input.is_some() || input_preview.is_some() {
+                tool_input_cache.insert(
+                    tool_call_id.clone(),
+                    CachedToolInput {
+                        input: input.clone(),
+                        input_preview: input_preview.clone(),
+                    },
+                );
+            }
+            let payload = build_tool_started_payload(
+                tool_call_id,
+                tool_name,
+                input,
+                input_preview,
+                seq,
+            );
             MappedCrpEvent {
                 events: vec![NormalizedEvent {
                     event_type: SessionEventType::ToolCall,
@@ -854,11 +887,25 @@ fn map_crp_event(
             status,
             output,
             error,
+            input_preview,
             ..
         } => {
             let tool_call_id_for_cache = tool_call_id.clone();
-            let payload =
-                build_tool_completed_payload(tool_call_id, tool_name, status, output, error, seq);
+            let cached = tool_input_cache.remove(&tool_call_id_for_cache);
+            let (input, cached_preview) = cached
+                .map(|c| (c.input, c.input_preview))
+                .unwrap_or((None, None));
+            let input_preview = input_preview.or(cached_preview);
+            let payload = build_tool_completed_payload(
+                tool_call_id,
+                tool_name,
+                status,
+                output,
+                error,
+                input,
+                input_preview,
+                seq,
+            );
             tool_output_cache.remove(&tool_call_id_for_cache);
             MappedCrpEvent {
                 events: vec![NormalizedEvent {
@@ -913,6 +960,7 @@ fn build_tool_started_payload(
     tool_call_id: String,
     tool_name: String,
     input: Option<Value>,
+    input_preview: Option<Value>,
     seq: u64,
 ) -> Value {
     let mut payload = serde_json::Map::new();
@@ -920,8 +968,12 @@ fn build_tool_started_payload(
     payload.insert("tool_call_id".to_string(), json!(tool_call_id.clone()));
     payload.insert("kind".to_string(), json!(tool_name.clone()));
     payload.insert("status".to_string(), json!("running"));
-    if let Some(input) = input.clone() {
+    let raw_input = input.clone().or_else(|| input_preview.clone());
+    if let Some(input) = raw_input.clone() {
         payload.insert("rawInput".to_string(), input);
+    }
+    if let Some(input_preview) = input_preview.clone() {
+        payload.insert("input_preview".to_string(), input_preview);
     }
     payload.insert(
         "toolCall".to_string(),
@@ -929,7 +981,7 @@ fn build_tool_started_payload(
             "id": tool_call_id,
             "name": tool_name_for_call.clone(),
             "kind": tool_name_for_call,
-            "rawInput": input,
+            "rawInput": raw_input,
             "status": "running",
         }),
     );
@@ -943,6 +995,8 @@ fn build_tool_completed_payload(
     status: CrpToolStatus,
     output: Option<Value>,
     error: Option<String>,
+    input: Option<Value>,
+    input_preview: Option<Value>,
     seq: u64,
 ) -> Value {
     let mut payload = serde_json::Map::new();
@@ -956,6 +1010,13 @@ fn build_tool_completed_payload(
             CrpToolStatus::Error => "failed",
         }),
     );
+    let raw_input = input.clone().or_else(|| input_preview.clone());
+    if let Some(input) = raw_input.clone() {
+        payload.insert("rawInput".to_string(), input);
+    }
+    if let Some(input_preview) = input_preview.clone() {
+        payload.insert("input_preview".to_string(), input_preview);
+    }
     if let Some(output) = output.clone() {
         if let Some(text) = extract_output_text(&output) {
             payload.insert("output_text".to_string(), json!(text));
@@ -971,6 +1032,7 @@ fn build_tool_completed_payload(
             "id": tool_call_id,
             "name": tool_name_for_call.clone(),
             "kind": tool_name_for_call,
+            "rawInput": raw_input,
             "rawOutput": payload.get("rawOutput").cloned(),
             "status": payload.get("status").cloned(),
         }),
@@ -1231,4 +1293,62 @@ async fn build_prompt_items(
 
     items.push(json!({"type":"text","text": input.content}));
     Ok(items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_completed_retains_started_preview_when_completed_omits_it() {
+        let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+        let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
+
+        let started_preview = json!({"summary":"Read: foo.txt"});
+        let started = map_crp_event(
+            CrpEvent::ToolStarted {
+                session_id: "s".to_string(),
+                run_id: "r".to_string(),
+                turn_id: "t".to_string(),
+                tool_call_id: "call1".to_string(),
+                tool_name: "read_file".to_string(),
+                input: None,
+                input_preview: Some(started_preview.clone()),
+            },
+            1,
+            &mut tool_output_cache,
+            &mut tool_input_cache,
+        );
+        assert_eq!(started.events.len(), 1);
+        assert!(matches!(
+            &started.events[0].event_type,
+            SessionEventType::ToolCall
+        ));
+
+        let completed = map_crp_event(
+            CrpEvent::ToolCompleted {
+                session_id: "s".to_string(),
+                run_id: "r".to_string(),
+                turn_id: "t".to_string(),
+                tool_call_id: "call1".to_string(),
+                tool_name: "read_file".to_string(),
+                status: CrpToolStatus::Success,
+                output: None,
+                error: None,
+                input_preview: None,
+            },
+            2,
+            &mut tool_output_cache,
+            &mut tool_input_cache,
+        );
+        assert_eq!(completed.events.len(), 1);
+        assert!(matches!(
+            &completed.events[0].event_type,
+            SessionEventType::ToolResult
+        ));
+
+        let payload = &completed.events[0].payload_json;
+        assert_eq!(payload.get("input_preview"), Some(&started_preview));
+        assert_eq!(payload.get("rawInput"), Some(&started_preview));
+    }
 }
