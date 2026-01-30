@@ -779,13 +779,25 @@ async fn get_merge_queue_entry_logs(
     Ok(resp)
 }
 
+const MOBILE_API_MIN: i64 = 1;
+const MOBILE_API_MAX: i64 = 1;
+
+#[derive(Debug, Serialize)]
+struct HealthCompatibility {
+    desktop_exact_version: String,
+    mobile_api_min: i64,
+    mobile_api_max: i64,
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResp {
     version: String,
+    daemon_version: String,
     pid: u32,
     data_root: String,
     daemon_url: String,
     auth_required: bool,
+    compatibility: HealthCompatibility,
 }
 
 #[derive(Debug, Deserialize)]
@@ -870,14 +882,25 @@ struct BlobUploadResp {
     name: Option<String>,
 }
 
-async fn health(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp>, StatusCode> {
-    Ok(Json(HealthResp {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+fn build_health_resp(state: &AppState) -> HealthResp {
+    let version = env!("CARGO_PKG_VERSION").to_string();
+    HealthResp {
+        version: version.clone(),
+        daemon_version: version.clone(),
         pid: std::process::id(),
         data_root: state.data_root.to_string_lossy().to_string(),
         daemon_url: state.daemon_url.clone(),
         auth_required: state.auth_token.is_some(),
-    }))
+        compatibility: HealthCompatibility {
+            desktop_exact_version: version,
+            mobile_api_min: MOBILE_API_MIN,
+            mobile_api_max: MOBILE_API_MAX,
+        },
+    }
+}
+
+async fn health(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp>, StatusCode> {
+    Ok(Json(build_health_resp(&state)))
 }
 
 fn blobs_dir(data_root: &StdPath) -> PathBuf {
@@ -1305,13 +1328,7 @@ async fn diagnostics(
     let managed_installs = redact_json_value(managed_installs);
 
     Ok(Json(DiagnosticsResp {
-        daemon: HealthResp {
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            pid: std::process::id(),
-            data_root: state.data_root.to_string_lossy().to_string(),
-            daemon_url: state.daemon_url.clone(),
-            auth_required: state.auth_token.is_some(),
-        },
+        daemon: build_health_resp(&state),
         platform: serde_json::json!({
             "os": std::env::consts::OS,
             "arch": std::env::consts::ARCH,
