@@ -530,8 +530,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/cancel", post(cancel_session))
         .route("/api/sessions/:id/interrupt", post(interrupt_session))
         .route("/api/sessions/:id/authenticate", post(authenticate_session))
-        .route("/api/mcp/sessions/:id/agent_init", post(mcp_agent_init))
-        .route("/api/mcp/sessions/:id/agent_reply", post(mcp_agent_reply))
+        .route("/api/mcp/sessions/:id/subagent_init", post(mcp_agent_init))
+        .route("/api/mcp/sessions/:id/subagent_reply", post(mcp_agent_reply))
         .route("/api/mcp/sessions/:id/oracle", post(mcp_oracle))
         .route(
             "/api/mcp/sessions/:id/subagent_wait",
