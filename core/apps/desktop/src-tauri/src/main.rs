@@ -21,7 +21,7 @@ use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, Sel, NSObject};
 #[cfg(target_os = "macos")]
-use objc2::{msg_send, sel, MainThreadMarker};
+use objc2::{msg_send, sel, ClassType, MainThreadMarker};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
     NSBezelStyle, NSButton, NSImage, NSImageNamePreferencesGeneral, NSLayoutAttribute,
@@ -1699,12 +1699,10 @@ fn reveal_in_file_manager(path: &Path) -> Result<()> {
 #[cfg(target_os = "macos")]
 static SETTINGS_BUTTON_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 #[cfg(target_os = "macos")]
-static SETTINGS_BUTTON_TARGET: OnceLock<*mut AnyObject> = OnceLock::new();
-#[cfg(target_os = "macos")]
 static SETTINGS_BUTTON_CLASS: Once = Once::new();
 
 #[cfg(target_os = "macos")]
-unsafe extern "C-unwind" fn settings_button_clicked(
+unsafe extern "C" fn settings_button_clicked(
     _this: &AnyObject,
     _cmd: Sel,
     _sender: *mut AnyObject,
@@ -1723,26 +1721,13 @@ fn settings_button_target_class() -> &'static AnyClass {
         let mut builder = ClassBuilder::new(class_name, NSObject::class())
             .expect("settings button class should be registerable");
         unsafe {
-            builder.add_method(
-                sel!(openSettings:),
-                settings_button_clicked as extern "C-unwind" fn(&AnyObject, Sel, *mut AnyObject),
-            );
+            builder.add_method(sel!(openSettings:), settings_button_clicked);
         }
         builder.register();
     });
     let class_name = CStr::from_bytes_with_nul(CLASS_NAME)
         .expect("settings button class name should be valid");
     AnyClass::get(class_name).expect("settings button class should be registered")
-}
-
-#[cfg(target_os = "macos")]
-fn settings_button_target() -> &'static AnyObject {
-    let target_ptr = SETTINGS_BUTTON_TARGET.get_or_init(|| {
-        let cls = settings_button_target_class();
-        let target: Retained<AnyObject> = unsafe { msg_send![cls, new] };
-        Retained::into_raw(target)
-    });
-    unsafe { &**target_ptr }
 }
 
 #[cfg(target_os = "macos")]
@@ -1757,7 +1742,9 @@ fn install_macos_settings_button(
         let Some(image) = NSImage::imageNamed(NSImageNamePreferencesGeneral) else {
             return;
         };
-        let target = settings_button_target();
+        let cls = settings_button_target_class();
+        let target: Retained<AnyObject> = msg_send![cls, new];
+        let target = &*Retained::into_raw(target);
         let button = NSButton::buttonWithImage_target_action(
             &image,
             Some(target),
