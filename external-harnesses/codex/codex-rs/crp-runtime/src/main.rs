@@ -42,6 +42,9 @@ use codex_core::protocol::Op;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::Submission;
 use codex_core::protocol::TurnAbortReason;
+use codex_core::find_thread_path_by_id_str;
+use codex_core::SESSIONS_SUBDIR;
+use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_protocol::ThreadId;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
@@ -741,7 +744,11 @@ async fn handle_command(
     _tool_request_tx: &mpsc::UnboundedSender<ToolBridgeRequest>,
 ) -> anyhow::Result<()> {
     match command {
-        CrpCommand::SessionOpen { session_id, config } => {
+        CrpCommand::SessionOpen {
+            session_id,
+            provider_session_id,
+            config,
+        } => {
             if session.is_some() {
                 warn!("session.open ignored: session already active");
                 return Ok(());
@@ -757,7 +764,20 @@ async fn handle_command(
                 mcp_servers: None,
             });
 
-            let state = open_session(config, cli_kv_overrides, codex_linux_sandbox_exe).await?;
+            let provider_session_id = provider_session_id.or_else(|| {
+                std::env::var("CTX_PROVIDER_SESSION_REF")
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            });
+
+            let state = open_session(
+                config,
+                cli_kv_overrides,
+                codex_linux_sandbox_exe,
+                provider_session_id.clone(),
+            )
+            .await?;
             let provider_session_id = state.thread_id.to_string();
             let session_id = session_id.unwrap_or_else(|| provider_session_id.clone());
 
@@ -1004,6 +1024,7 @@ async fn open_session(
     session_config: CrpSessionConfig,
     cli_kv_overrides: &[(String, toml::Value)],
     codex_linux_sandbox_exe: Option<PathBuf>,
+    provider_session_id: Option<String>,
 ) -> anyhow::Result<SessionState> {
     let config =
         load_config_from_crp(session_config, cli_kv_overrides, codex_linux_sandbox_exe).await?;
@@ -1013,8 +1034,11 @@ async fn open_session(
         true,
         config.cli_auth_credentials_store_mode,
     );
-    let thread_manager =
-        ThreadManager::new(config.codex_home.clone(), auth_manager, SessionSource::Exec);
+    let thread_manager = ThreadManager::new(
+        config.codex_home.clone(),
+        Arc::clone(&auth_manager),
+        SessionSource::Exec,
+    );
     let default_model = thread_manager
         .get_models_manager()
         .get_default_model(
@@ -1024,11 +1048,50 @@ async fn open_session(
         )
         .await;
 
+    let resume_path = if let Some(id) = provider_session_id.as_deref() {
+        match find_thread_path_by_id_str(&config.codex_home, id).await {
+            Ok(Some(path)) => {
+                if rollout_filename_matches_id(&path, id) {
+                    Some(path)
+                } else {
+                    let fallback = find_rollout_path_fallback(&config.codex_home, id).await;
+                    if fallback.is_none() {
+                        warn!(%id, "provider_session_id not found; starting new session");
+                    }
+                    fallback
+                }
+            }
+            Ok(None) => {
+                let fallback = find_rollout_path_fallback(&config.codex_home, id).await;
+                if fallback.is_none() {
+                    warn!(%id, "provider_session_id not found; starting new session");
+                }
+                fallback
+            }
+            Err(err) => {
+                warn!(%id, ?err, "failed to look up provider_session_id; trying fallback");
+                let fallback = find_rollout_path_fallback(&config.codex_home, id).await;
+                if fallback.is_none() {
+                    warn!(%id, "provider_session_id not found; starting new session");
+                }
+                fallback
+            }
+        }
+    } else {
+        None
+    };
+
     let NewThread {
         thread_id,
         thread,
         session_configured: _,
-    } = thread_manager.start_thread(config.clone()).await?;
+    } = if let Some(path) = resume_path {
+        thread_manager
+            .resume_thread_from_rollout(config.clone(), path, auth_manager)
+            .await?
+    } else {
+        thread_manager.start_thread(config.clone()).await?
+    };
 
     Ok(SessionState {
         tracker: TurnTracker::new(String::new()),
@@ -1041,6 +1104,53 @@ async fn open_session(
         default_approval_policy: config.approval_policy.value(),
         default_sandbox_policy: config.sandbox_policy.get().clone(),
     })
+}
+
+async fn find_rollout_path_fallback(codex_home: &PathBuf, id: &str) -> Option<PathBuf> {
+    let roots = [SESSIONS_SUBDIR, ARCHIVED_SESSIONS_SUBDIR];
+    for subdir in roots {
+        let root = codex_home.join(subdir);
+        if let Some(found) = find_rollout_path_in_dir(&root, id).await {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn rollout_filename_matches_id(path: &PathBuf, id: &str) -> bool {
+    let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    name.contains("rollout-") && name.contains(id)
+}
+
+async fn find_rollout_path_in_dir(root: &PathBuf, id: &str) -> Option<PathBuf> {
+    if !root.exists() {
+        return None;
+    }
+    let mut stack = vec![root.clone()];
+    while let Some(dir) = stack.pop() {
+        let mut entries = match tokio::fs::read_dir(&dir).await {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            let Ok(metadata) = entry.metadata().await else {
+                continue;
+            };
+            if metadata.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                if name.contains("rollout-") && name.contains(id) {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn build_crp_model_infos(presets: &[ModelPreset]) -> Vec<CrpModelInfo> {

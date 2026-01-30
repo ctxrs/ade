@@ -22,6 +22,8 @@ pub enum CrpCommand {
     #[serde(rename = "session.open")]
     SessionOpen {
         session_id: Option<String>,
+        #[serde(default)]
+        provider_session_id: Option<String>,
         config: Option<CrpSessionConfig>,
     },
     #[serde(rename = "session.prompt")]

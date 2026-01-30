@@ -243,11 +243,19 @@ function formatToolPathSummary(input: any): string {
 
 export function toolSummaryLine(toolKind: string, input: any): string {
   const k = (toolKind || "").toLowerCase();
+  if (k.startsWith("mcp.")) {
+    const server = String(input?.server ?? "").trim();
+    const tool = String(input?.tool ?? "").trim();
+    if (server && tool) return `${server}/${tool}`;
+    if (server) return server;
+    const parts = k.split(".").filter(Boolean);
+    if (parts.length >= 3) return `${parts[1]}/${parts.slice(2).join(".")}`;
+  }
   if (k === "execute" || k === "exec") {
     const cmd = Array.isArray(input?.command) ? input.command.join(" ") : input?.command;
     return cmd ? truncateMiddle(String(cmd), 120) : "";
   }
-  if (k === "search") {
+  if (k === "search" || k === "web_search") {
     const q = input?.query ?? input?.pattern ?? input?.regex ?? input?.text;
     const path = formatToolPathSummary(input);
     const query = q ? truncateMiddle(String(q), 120) : "";

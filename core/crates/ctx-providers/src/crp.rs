@@ -242,10 +242,16 @@ impl CrpSessionPool {
 
         if !session.opened.load(Ordering::SeqCst) {
             let config = build_crp_session_config(&req.env, &req.workdir);
+            let provider_session_id = req
+                .env
+                .get("CTX_PROVIDER_SESSION_REF")
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
             session
                 .process
                 .send(CrpCommand::SessionOpen {
                     session_id: Some(req.session_key.clone()),
+                    provider_session_id,
                     config: Some(config),
                 })
                 .await?;
@@ -549,6 +555,8 @@ enum CrpCommand {
     #[serde(rename = "session.open")]
     SessionOpen {
         session_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider_session_id: Option<String>,
         config: Option<CrpSessionConfig>,
     },
     #[serde(rename = "session.prompt")]
@@ -643,10 +651,7 @@ enum CrpEvent {
         provider_session_id: Option<String>,
     },
     #[serde(rename = "turn.started")]
-    TurnStarted {
-        session_id: String,
-        turn_id: String,
-    },
+    TurnStarted { session_id: String, turn_id: String },
     #[serde(rename = "message.delta")]
     MessageDelta {
         session_id: String,
