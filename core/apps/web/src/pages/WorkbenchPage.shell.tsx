@@ -1535,7 +1535,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 }}
                 aria-expanded={!archivedCollapsed}
               >
-                <span className="wb-section-title">Archived</span>
+                <span className="wb-section-title">Archived Tasks</span>
                 <span className={`wb-section-chev ${archivedCollapsed ? "wb-section-chev-collapsed" : ""}`}>
                   <ChevronDown size={14} />
                 </span>
