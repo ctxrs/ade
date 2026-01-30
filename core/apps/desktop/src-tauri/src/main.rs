@@ -1733,8 +1733,8 @@ fn emit_settings_inplace(app: &tauri::AppHandle, target: &AnyObject) {
             }
         }
     }
-    if let Some(window) = app.get_webview_window(\"main\") {
-        let _ = window.eval(\"window.location.assign('/settings');\");
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.eval("window.location.assign('/settings');");
         return;
     }
     let _ = app.emit("desktop_open_settings", ());
