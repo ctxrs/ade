@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "macos")]
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::net::TcpListener;
@@ -1710,23 +1710,38 @@ extern "C" fn settings_button_clicked(
     _sender: *mut AnyObject,
 ) {
     if let Some(app) = SETTINGS_BUTTON_APP.get() {
-        emit_settings_inplace(app);
+        emit_settings_inplace(app, _this);
     }
 }
 
 #[cfg(target_os = "macos")]
-fn emit_settings_inplace(app: &tauri::AppHandle) {
+fn emit_settings_inplace(app: &tauri::AppHandle, target: &AnyObject) {
+    const WINDOW_LABEL_IVAR: &[u8] = b"ctxWindowLabel\0";
+    let ivar = settings_button_target_class()
+        .instance_variable(CStr::from_bytes_with_nul(WINDOW_LABEL_IVAR).unwrap());
+    if let Some(ivar) = ivar {
+        let label_ptr = unsafe { *ivar.load::<*const std::ffi::c_char>(target) };
+        if !label_ptr.is_null() {
+            let label = unsafe { CStr::from_ptr(label_ptr) }.to_string_lossy().into_owned();
+            let _ = app.emit_to(tauri::EventTarget::webview_window(label), "desktop_open_settings", ());
+            return;
+        }
+    }
     let _ = app.emit("desktop_open_settings", ());
 }
 
 #[cfg(target_os = "macos")]
 fn settings_button_target_class() -> &'static AnyClass {
     const CLASS_NAME: &[u8] = b"CtxSettingsButtonTarget\0";
+    const WINDOW_LABEL_IVAR: &[u8] = b"ctxWindowLabel\0";
     SETTINGS_BUTTON_CLASS.call_once(|| {
         let class_name = CStr::from_bytes_with_nul(CLASS_NAME)
             .expect("settings button class name should be valid");
         let mut builder = ClassBuilder::new(class_name, NSObject::class())
             .expect("settings button class should be registerable");
+        let ivar_name = CStr::from_bytes_with_nul(WINDOW_LABEL_IVAR)
+            .expect("settings button ivar name should be valid");
+        builder.add_ivar::<*const std::ffi::c_char>(ivar_name);
         unsafe {
             let open_settings: extern "C" fn(&'static AnyObject, Sel, *mut AnyObject) =
                 settings_button_clicked;
@@ -1766,6 +1781,14 @@ fn install_macos_settings_button(
         let cls = settings_button_target_class();
         let target: Retained<AnyObject> = msg_send![cls, new];
         let target = &*Retained::into_raw(target);
+        let label_ptr = CString::new(window.label())
+            .expect("window label should be valid")
+            .into_raw();
+        let ivar = settings_button_target_class()
+            .instance_variable(CStr::from_bytes_with_nul(b"ctxWindowLabel\0").unwrap())
+            .expect("settings button ivar should exist");
+        ivar.load_ptr::<*const std::ffi::c_char>(target)
+            .write(label_ptr as *const std::ffi::c_char);
         let button = NSButton::buttonWithImage_target_action(
             &image,
             Some(target),
