@@ -271,7 +271,7 @@ impl CrpSessionPool {
             .await?;
         let mut last_seq = 0u64;
         let mut tool_output_cache: HashMap<String, String> = HashMap::new();
-        let mut tool_input_cache: HashMap<String, Value> = HashMap::new();
+        let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
         // Debugging aid: when set, dump normalized session events (post-CRP mapping) to this file.
         // This lets us diff: raw Codex dump -> CRP stdout -> ctx-normalized events -> web UI.
         let dump_norm_path = std::env::var("CTX_CRP_DUMP_NORMALIZED_EVENTS_PATH")
@@ -803,12 +803,18 @@ struct ToolCompletedPayloadParams {
     seq: u64,
 }
 
+#[derive(Debug, Clone)]
+struct CachedToolInput {
+    input: Option<Value>,
+    input_preview: Option<Value>,
+}
+
 fn map_crp_event(
     event: CrpEvent,
     channel: CrpChannel,
     seq: u64,
     tool_output_cache: &mut HashMap<String, String>,
-    tool_input_cache: &mut HashMap<String, Value>,
+    tool_input_cache: &mut HashMap<String, CachedToolInput>,
 ) -> MappedCrpEvent {
     let crp_channel = match channel {
         CrpChannel::Data => Some("data"),
@@ -911,8 +917,14 @@ fn map_crp_event(
             input_preview,
             ..
         } => {
-            if let Some(input_value) = input.as_ref() {
-                tool_input_cache.insert(tool_call_id.clone(), input_value.clone());
+            if input.is_some() || input_preview.is_some() {
+                tool_input_cache.insert(
+                    tool_call_id.clone(),
+                    CachedToolInput {
+                        input: input.clone(),
+                        input_preview: input_preview.clone(),
+                    },
+                );
             }
             let payload = build_tool_started_payload(
                 tool_call_id,
@@ -970,7 +982,11 @@ fn map_crp_event(
             ..
         } => {
             let tool_call_id_for_cache = tool_call_id.clone();
-            let input = tool_input_cache.remove(&tool_call_id_for_cache);
+            let cached = tool_input_cache.remove(&tool_call_id_for_cache);
+            let (input, cached_preview) = cached
+                .map(|c| (c.input, c.input_preview))
+                .unwrap_or((None, None));
+            let input_preview = input_preview.or(cached_preview);
             let payload = build_tool_completed_payload(ToolCompletedPayloadParams {
                 tool_call_id,
                 tool_name,
@@ -1382,4 +1398,64 @@ async fn build_prompt_items(
 
     items.push(json!({"type":"text","text": input.content}));
     Ok(items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_completed_retains_started_preview_when_completed_omits_it() {
+        let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+        let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
+
+        let started_preview = json!({"summary":"Read: foo.txt"});
+        let started = map_crp_event(
+            CrpEvent::ToolStarted {
+                session_id: "s".to_string(),
+                turn_id: "t".to_string(),
+                tool_call_id: "call1".to_string(),
+                tool_name: "read_file".to_string(),
+                tool_label: None,
+                input: None,
+                input_preview: Some(started_preview.clone()),
+            },
+            CrpChannel::Control,
+            1,
+            &mut tool_output_cache,
+            &mut tool_input_cache,
+        );
+        assert_eq!(started.events.len(), 1);
+        assert!(matches!(
+            &started.events[0].event_type,
+            SessionEventType::ToolCall
+        ));
+
+        let completed = map_crp_event(
+            CrpEvent::ToolCompleted {
+                session_id: "s".to_string(),
+                turn_id: "t".to_string(),
+                tool_call_id: "call1".to_string(),
+                tool_name: "read_file".to_string(),
+                tool_label: None,
+                status: CrpToolStatus::Success,
+                output: None,
+                error: None,
+                input_preview: None,
+            },
+            CrpChannel::Control,
+            2,
+            &mut tool_output_cache,
+            &mut tool_input_cache,
+        );
+        assert_eq!(completed.events.len(), 1);
+        assert!(matches!(
+            &completed.events[0].event_type,
+            SessionEventType::ToolResult
+        ));
+
+        let payload = &completed.events[0].payload_json;
+        assert_eq!(payload.get("input_preview"), Some(&started_preview));
+        assert_eq!(payload.get("rawInput"), Some(&started_preview));
+    }
 }

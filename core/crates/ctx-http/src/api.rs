@@ -5946,6 +5946,13 @@ async fn get_provider_options(
         if let Some(token) = state.auth_token.as_ref() {
             env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
         }
+        // codex-crp uses the same auth material as codex (via CODEX_HOME). If we don't pass it
+        // through, model probing can fail/return empty even when Codex is configured.
+        if let Ok(extra) = provider_accounts::codex_env_for_active_account(&state.data_root).await {
+            for (key, value) in extra {
+                env.insert(key, value);
+            }
+        }
 
         let probe = probe_crp_models(
             &provider_id,
@@ -8517,6 +8524,12 @@ async fn load_provider_model_catalog(
         env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
         if let Some(token) = state.auth_token.as_ref() {
             env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
+        }
+        // Keep probing consistent with real codex-crp sessions (they need CODEX_HOME).
+        if let Ok(extra) = provider_accounts::codex_env_for_active_account(&state.data_root).await {
+            for (key, value) in extra {
+                env.insert(key, value);
+            }
         }
 
         let probe = match probe_crp_models(
