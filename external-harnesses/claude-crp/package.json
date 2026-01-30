@@ -1,0 +1,14 @@
+{
+  "name": "claude-crp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "capture": "node ./scripts/capture.mjs",
+    "update:fixtures": "node ./scripts/translate_fixtures.mjs --update",
+    "test:fixtures": "node ./scripts/verify_fixtures.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.7"
+  }
+}
