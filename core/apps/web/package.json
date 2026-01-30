@@ -26,8 +26,8 @@
     "@supabase/supabase-js": "^2.49.1",
     "@tauri-apps/api": "^2.9.1",
     "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-os": "2.3.2",
     "@tauri-apps/plugin-shell": "2.3.4",
-    "tauri-plugin-stt-api": "^0.1.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-web-links": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
@@ -41,7 +41,8 @@
     "react-router-dom": "^6.28.0",
     "react-syntax-highlighter": "^15.6.1",
     "react-virtuoso": "^4.10.7",
-    "remark-gfm": "^4.0.0"
+    "remark-gfm": "^4.0.0",
+    "tauri-plugin-stt-api": "^0.1.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",

@@ -80,7 +80,7 @@ export const isDesktopApp = (): boolean => {
 export const getDesktopPlatform = async (): Promise<DesktopPlatform> => {
   if (!isDesktopApp()) return "unknown";
   try {
-    const mod = await import("@tauri-apps/api/os");
+    const mod = await import("@tauri-apps/plugin-os");
     const value = await mod.platform();
     switch (value) {
       case "macos":
