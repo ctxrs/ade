@@ -128,8 +128,7 @@ fn maybe_dump_codex_event(event: &Event) {
     let writer = CODEX_EVENT_DUMP.get_or_init(|| {
         let file = OpenOptions::new()
             .create(true)
-            .write(true)
-            .truncate(true)
+            .append(true)
             .open(path)
             .expect("failed to open CODEX_CRP_DUMP_CODEX_EVENTS_PATH");
         Mutex::new(std::io::BufWriter::new(file))
@@ -159,8 +158,7 @@ fn maybe_dump_crp_event(envelope: &CrpEventEnvelope) {
     let writer = CRP_EVENT_DUMP.get_or_init(|| {
         let file = OpenOptions::new()
             .create(true)
-            .write(true)
-            .truncate(true)
+            .append(true)
             .open(path)
             .expect("failed to open CODEX_CRP_DUMP_CRP_EVENTS_PATH");
         Mutex::new(std::io::BufWriter::new(file))
