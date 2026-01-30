@@ -480,6 +480,123 @@ I'm checking the .ctx directory for agent-basics.");
     }
 }
 
+#[cfg(test)]
+mod replay_golden_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn testdata_path(file: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata").join(file)
+    }
+
+    fn replay_fixture(input_name: &str) -> Vec<serde_json::Value> {
+        let input_path = testdata_path(input_name);
+        let input = fs::read_to_string(&input_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", input_path.display()));
+
+        let mut tracker = TurnTracker::new("replay_session".to_string());
+
+        let mut seq: u64 = 0;
+        let mut out = Vec::new();
+
+        // Seed a SessionOpened event so snapshots are self-contained (mirrors offline replay mode).
+        seq += 1;
+        let opened = CrpEventEnvelope {
+            v: 1,
+            seq,
+            channel: CrpChannel::Control,
+            event: CrpEvent::SessionOpened {
+                session_id: "replay_session".to_string(),
+                provider_session_id: None,
+            },
+        };
+        out.push(serde_json::to_value(&opened).unwrap());
+
+        for line in input.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let v: serde_json::Value = match serde_json::from_str(trimmed) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let msg_type = v
+                .get("event")
+                .and_then(|e| e.get("msg"))
+                .and_then(|m| m.get("type"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
+
+            match msg_type {
+                // Large / legacy / redundant events shouldn't influence the CRP output.
+                "raw_response_item" => continue,
+                "agent_message_delta" | "agent_message" => continue,
+                "agent_reasoning_delta" | "agent_reasoning" => continue,
+                _ => {}
+            }
+
+            let Some(ev_val) = v.get("event") else { continue };
+            let event: Event = match serde_json::from_value(ev_val.clone()) {
+                Ok(ev) => ev,
+                Err(_) => continue,
+            };
+
+            for (channel, event) in map_codex_event(&mut tracker, event) {
+                seq += 1;
+                let env = CrpEventEnvelope {
+                    v: 1,
+                    seq,
+                    channel,
+                    event,
+                };
+                out.push(serde_json::to_value(&env).unwrap());
+            }
+        }
+
+        out
+    }
+
+    fn assert_fixture(input: &str, expected: &str) {
+        let got = replay_fixture(input);
+        let expected_path = testdata_path(expected);
+        let expected_contents = fs::read_to_string(&expected_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", expected_path.display()));
+        let expected_values: Vec<serde_json::Value> = expected_contents
+            .lines()
+            .filter_map(|l| {
+                let t = l.trim();
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::from_str(t).unwrap())
+                }
+            })
+            .collect();
+
+        assert_eq!(got, expected_values);
+    }
+
+    #[test]
+    fn wal_title_only_does_not_emit_trace() {
+        assert_fixture(
+            "wal_title_only_no_trace.input.jsonl",
+            "wal_title_only_no_trace.expected.jsonl",
+        );
+    }
+
+    #[test]
+    fn wal_title_then_body_emits_body_only() {
+        assert_fixture(
+            "wal_title_then_body_trace_no_title.input.jsonl",
+            "wal_title_then_body_trace_no_title.expected.jsonl",
+        );
+    }
+}
+
 fn extract_summary_title_and_body_offset(text: &str) -> Option<(String, usize)> {
     let start = text.find("**")?;
     let after_start = start + 2;
