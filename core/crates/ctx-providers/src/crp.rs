@@ -828,13 +828,11 @@ fn map_crp_event(
             }],
             done: false,
         },
+        // The scheduler already emits the canonical turn lifecycle events. Treat harness-emitted
+        // `turn.started` as internal signal only to avoid duplicating `turn_started` rows with a
+        // mismatched payload shape.
         CrpEvent::TurnStarted { .. } => MappedCrpEvent {
-            events: vec![NormalizedEvent {
-                event_type: SessionEventType::TurnStarted,
-                payload_json: json!({
-                    "crp_seq": seq,
-                }),
-            }],
+            events: Vec::new(),
             done: false,
         },
         CrpEvent::MessageDelta {

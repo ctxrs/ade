@@ -671,9 +671,10 @@ pub(super) fn sanitize_tool_event_payload(
     };
 
     let input = extract_tool_input(update);
+    // Treat explicit JSON null as "missing" so we still derive a useful preview from rawInput.
     let input_preview = update
         .get("input_preview")
-        .cloned()
+        .and_then(|v| if v.is_null() { None } else { Some(v.clone()) })
         .or_else(|| tool_input_preview(input, update, tool_kind.as_deref(), title.as_deref()));
     let input_meta = build_json_preview(input, input_preview);
 
