@@ -1,5 +1,14 @@
 export type DesktopConnectionKind = "none" | "local" | "ssh";
 
+export type DesktopPlatform = "macos" | "windows" | "linux" | "unknown";
+
+export type DesktopTitlebarColor = {
+  r: number;
+  g: number;
+  b: number;
+  a?: number;
+};
+
 export type DesktopConnectionInfo = {
   kind: DesktopConnectionKind;
   base_url?: string | null;
@@ -65,6 +74,27 @@ export const isDesktopApp = (): boolean => {
     return Boolean(g?.__TAURI_INTERNALS__ || g?.__TAURI__);
   } catch {
     return false;
+  }
+};
+
+export const getDesktopPlatform = async (): Promise<DesktopPlatform> => {
+  if (!isDesktopApp()) return "unknown";
+  try {
+    const mod = await import("@tauri-apps/api/os");
+    const value = await mod.platform();
+    switch (value) {
+      case "macos":
+      case "darwin":
+        return "macos";
+      case "windows":
+        return "windows";
+      case "linux":
+        return "linux";
+      default:
+        return "unknown";
+    }
+  } catch {
+    return "unknown";
   }
 };
 
@@ -183,3 +213,6 @@ export const desktopSetOpenWorkspaces = async (workspace_ids: string[]): Promise
 
 export const desktopOpenWorkspaceInNewWindow = async (workspace_id: string): Promise<void> =>
   invoke<void>("desktop_open_workspace_in_new_window", { workspace_id });
+
+export const desktopSetTitlebarColor = async (color: DesktopTitlebarColor): Promise<void> =>
+  invoke<void>("desktop_set_titlebar_color", { color });

@@ -24,11 +24,11 @@ use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, Sel, NSObject};
 use objc2::{msg_send, sel, AnyThread, ClassType, MainThreadMarker};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
-    NSBezelStyle, NSButton, NSImage, NSImageNamePreferencesGeneral, NSLayoutAttribute,
+    NSBezelStyle, NSButton, NSColor, NSImage, NSImageNamePreferencesGeneral, NSLayoutAttribute,
     NSTitlebarAccessoryViewController, NSWindow,
 };
 #[cfg(target_os = "macos")]
-use objc2_foundation::NSString;
+use objc2_foundation::{CGFloat, NSString};
 #[cfg(feature = "automation")]
 use tauri_plugin_automation::init as automation_init;
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -70,6 +70,7 @@ fn main() {
             desktop_get_deep_link_token,
             desktop_set_open_workspaces,
             desktop_open_workspace_in_new_window,
+            desktop_set_titlebar_color,
             desktop_register_workspace_window,
             desktop_unregister_workspace_window,
             desktop_upload_blob,
@@ -742,6 +743,39 @@ fn desktop_open_workspace_in_new_window(
     let _ = window.show();
     let _ = window.set_focus();
     registry.register(&label, workspace_id);
+    Ok(())
+}
+
+#[derive(Deserialize)]
+struct DesktopTitlebarColor {
+    r: f64,
+    g: f64,
+    b: f64,
+    a: Option<f64>,
+}
+
+#[tauri::command]
+fn desktop_set_titlebar_color(
+    window: tauri::WebviewWindow,
+    color: DesktopTitlebarColor,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let clamp_unit = |value: f64| (value.max(0.0).min(255.0) / 255.0) as CGFloat;
+        let alpha = color.a.unwrap_or(1.0).max(0.0).min(1.0) as CGFloat;
+        let r = clamp_unit(color.r);
+        let g = clamp_unit(color.g);
+        let b = clamp_unit(color.b);
+        window
+            .with_webview(move |webview| unsafe {
+                let _mtm = MainThreadMarker::new().expect("titlebar color must be on main thread");
+                let ns_window: &NSWindow = &*webview.ns_window().cast();
+                ns_window.setTitlebarAppearsTransparent(false);
+                let bg = NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, alpha);
+                ns_window.setBackgroundColor(Some(&bg));
+            })
+            .map_err(|e| format!("failed to set titlebar color: {e}"))?;
+    }
     Ok(())
 }
 

@@ -14,7 +14,6 @@ import {
   Image,
   Laptop,
   Mic,
-  Plus,
   SquarePen,
   Settings,
   Terminal,
@@ -52,7 +51,6 @@ import {
   installProvider,
   listWebSessions,
   listProviders,
-  listWorkspaces,
   markTaskRead as markTaskReadApi,
   markTaskUnread as markTaskUnreadApi,
   postMessage,
@@ -79,10 +77,11 @@ import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import {
-  desktopListen,
-  desktopOpenWorkspaceInNewWindow,
-  desktopSetOpenWorkspaces,
+  desktopSetTitlebarColor,
+  getDesktopPlatform,
   isDesktopApp,
+  type DesktopPlatform,
+  type DesktopTitlebarColor,
 } from "../utils/desktop";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { copyTextToClipboard } from "../utils/clipboard";
@@ -92,6 +91,7 @@ import { parseModelId } from "../utils/modelEffort";
 import { getLoadTestTelemetry } from "../utils/loadTestTelemetry";
 import { useDictationController } from "../utils/useDictationController";
 import { randomUuid } from "../utils/randomUuid";
+import { readCssVar, useThemeVariant } from "../utils/theme";
 import {
   NEW_TASK_DRAFT_KEY,
   scrollKey,
@@ -106,7 +106,6 @@ import {
   saveWorkbenchDiffPaneOpenV1,
   saveWorkbenchSessionsPaneOpenV1,
   saveWorkbenchTerminalPanelOpenV1,
-  workbenchDaemonKey,
 } from "../workbench/persistence";
 import {
   useWorkspaceActiveSnapshotSnapshot,
@@ -125,6 +124,31 @@ import type {
   TaskListContext,
   TaskListItem,
 } from "./WorkbenchPage.types";
+import {
+  ARCHIVE_CONFIRM_STORAGE_KEY,
+  SESSION_VIEW_POOL_LIMIT,
+  appendSegment,
+  clampNum,
+  deriveManagedWorktreeRoot,
+  deriveTaskTitle,
+  formatGitStatusEntry,
+  formatGitStatusPath,
+  formatWorktreeLabel,
+  formatWorktreePath,
+  gitStatusCodeClass,
+  gitStatusCodeLabel,
+  isOptimisticTask,
+  lastAssistantMessageMs,
+  lastRoleMessageMs,
+  modelIdsFromOptions,
+  normalizeAnchorRect,
+  normalizeGitStatusCode,
+  normalizeGitStatusSummary,
+  parseMs,
+  readGitStatusSummaryLine,
+  sanitizeFileName,
+  saveMarkdownExport,
+} from "./WorkbenchPage.utils";
 
 const DIFF_LINE_GUARD_LIMIT = 10000;
 const DIFF_FILE_GUARD_LIMIT = 200;
@@ -154,37 +178,37 @@ const isDiffSummaryTooLarge = (summary: Record<string, unknown> | null) => {
   if (fileCount !== null && fileCount > DIFF_FILE_GUARD_LIMIT) return true;
   return false;
 };
-import {
-  ARCHIVE_CONFIRM_STORAGE_KEY,
-  SESSION_VIEW_POOL_LIMIT,
-  WORKSPACE_TABS_STORAGE_KEY,
-  appendSegment,
-  clampNum,
-  deriveManagedWorktreeRoot,
-  deriveTaskTitle,
-  ensureWorkspaceIdInTabs,
-  formatGitStatusEntry,
-  formatGitStatusPath,
-  formatWorktreeLabel,
-  formatWorktreePath,
-  getOrCreateUiWindowId,
-  gitStatusCodeClass,
-  gitStatusCodeLabel,
-  isOptimisticTask,
-  lastAssistantMessageMs,
-  lastRoleMessageMs,
-  loadWorkspaceTabsState,
-  modelIdsFromOptions,
-  normalizeAnchorRect,
-  normalizeGitStatusCode,
-  normalizeGitStatusSummary,
-  parseMs,
-  readGitStatusSummaryLine,
-  sanitizeFileName,
-  saveMarkdownExport,
-  saveWorkspaceTabsState,
-  type WorkspaceTabsState,
-} from "./WorkbenchPage.utils";
+
+const parseCssColor = (value: string): DesktopTitlebarColor | null => {
+  const raw = value.trim();
+  if (!raw) return null;
+  if (raw.startsWith("#")) {
+    const hex = raw.slice(1);
+    if (hex.length === 3) {
+      const r = parseInt(hex[0] + hex[0], 16);
+      const g = parseInt(hex[1] + hex[1], 16);
+      const b = parseInt(hex[2] + hex[2], 16);
+      if ([r, g, b].some((v) => Number.isNaN(v))) return null;
+      return { r, g, b, a: 1 };
+    }
+    if (hex.length === 6) {
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      if ([r, g, b].some((v) => Number.isNaN(v))) return null;
+      return { r, g, b, a: 1 };
+    }
+    return null;
+  }
+  const nums = raw.match(/[\d.]+/g);
+  if (!nums || nums.length < 3) return null;
+  const r = Number(nums[0]);
+  const g = Number(nums[1]);
+  const b = Number(nums[2]);
+  if ([r, g, b].some((v) => Number.isNaN(v))) return null;
+  const a = nums.length >= 4 ? Number(nums[3]) : 1;
+  return { r, g, b, a: Number.isNaN(a) ? 1 : a };
+};
 
 export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate();
@@ -206,109 +230,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const draftPrompt = newTaskDraft.text;
   const draftMode = newTaskDraft.modeId;
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-
-  const uiWindowId = useMemo(() => getOrCreateUiWindowId(), []);
-  const workspaceTabsStorageKey = useMemo(
-    () => `${WORKSPACE_TABS_STORAGE_KEY}.${encodeURIComponent(workbenchDaemonKey())}.${encodeURIComponent(uiWindowId)}`,
-    [uiWindowId],
-  );
-  const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTabsState>(() => {
-    const loaded = loadWorkspaceTabsState(workspaceTabsStorageKey);
-    return ensureWorkspaceIdInTabs(loaded ?? { openWorkspaceIds: [] }, workspaceId);
-  });
-  useEffect(() => {
-    setWorkspaceTabs((prev) => ensureWorkspaceIdInTabs(prev, workspaceId));
-  }, [workspaceId]);
-  useEffect(() => {
-    saveWorkspaceTabsState(workspaceTabsStorageKey, workspaceTabs);
-  }, [workspaceTabs, workspaceTabsStorageKey]);
-  useEffect(() => {
-    if (!isDesktopApp()) return;
-    desktopSetOpenWorkspaces(workspaceTabs.openWorkspaceIds).catch(() => {});
-  }, [workspaceTabs.openWorkspaceIds]);
-
-  const [allWorkspaces, setAllWorkspaces] = useState<Workspace[]>([]);
-  useEffect(() => {
-    listWorkspaces().then(setAllWorkspaces).catch(() => {});
-  }, []);
-  const allWorkspacesById = useMemo(() => {
-    const map = new Map<string, Workspace>();
-    for (const ws of allWorkspaces) {
-      const id = idToString((ws as any).id);
-      if (!id) continue;
-      map.set(id, ws);
-    }
-    return map;
-  }, [allWorkspaces]);
-
-  const workspaceTabsResolved = useMemo(() => {
-    const out = [];
-    for (const id of workspaceTabs.openWorkspaceIds) {
-      const known = id === workspaceId ? workspace : allWorkspacesById.get(id);
-      out.push({ id, name: known?.name ?? "Workspace" });
-    }
-    return out;
-  }, [allWorkspacesById, workspace, workspaceId, workspaceTabs.openWorkspaceIds]);
-
-  const openWorkspaceTab = useCallback(
-    (id: string) => {
-      const trimmed = String(id || "").trim();
-      if (!trimmed) return;
-      setWorkspaceTabs((prev) => ensureWorkspaceIdInTabs(prev, trimmed));
-      navigate(`/workspaces/${encodeURIComponent(trimmed)}`);
-    },
-    [navigate],
-  );
-
-  useEffect(() => {
-    if (!isDesktopApp()) return;
-    let unlisten: (() => void) | null = null;
-    desktopListen<string>("workspace:open", (id) => openWorkspaceTab(id))
-      .then((u) => {
-        unlisten = u;
-      })
-      .catch(() => {});
-    return () => {
-      unlisten?.();
-    };
-  }, [openWorkspaceTab]);
-
-  const closeWorkspaceTab = useCallback(
-    (id: string) => {
-      const trimmed = String(id || "").trim();
-      if (!trimmed) return;
-      const open = workspaceTabs.openWorkspaceIds.filter((wsId) => wsId !== trimmed);
-      setWorkspaceTabs({ openWorkspaceIds: open });
-      if (trimmed !== workspaceId) return;
-      const next = open[open.length - 1] ?? open[0] ?? null;
-      navigate(next ? `/workspaces/${encodeURIComponent(next)}` : "/workspaces");
-    },
-    [navigate, workspaceId, workspaceTabs.openWorkspaceIds],
-  );
-
-  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
-  const workspacePickerBtnRef = useRef<HTMLButtonElement | null>(null);
-  const workspacePickerMenuRef = useRef<HTMLDivElement | null>(null);
-  const [workspacePickerAnchor, setWorkspacePickerAnchor] = useState<AnchorRect | null>(null);
-  useEffect(() => {
-    if (!workspacePickerOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setWorkspacePickerOpen(false);
-    };
-    const onClick = (e: MouseEvent) => {
-      const target = e.target as Node | null;
-      if (!target) return;
-      if (workspacePickerBtnRef.current?.contains(target)) return;
-      if (workspacePickerMenuRef.current?.contains(target)) return;
-      setWorkspacePickerOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("mousedown", onClick);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("mousedown", onClick);
-    };
-  }, [workspacePickerOpen]);
 
   useEffect(() => {
     supervisor.bindWorkspaceActiveSnapshotStore(workspaceSnapshotStore);
@@ -3241,6 +3162,43 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     urlToImageFile,
   ]);
 
+  const desktopUi = isDesktopApp();
+  const [desktopPlatform, setDesktopPlatform] = useState<DesktopPlatform>(() => {
+    if (!desktopUi) return "unknown";
+    const platform = typeof navigator === "undefined" ? "" : navigator.platform;
+    if (/mac/i.test(platform)) return "macos";
+    if (/win/i.test(platform)) return "windows";
+    if (/linux/i.test(platform)) return "linux";
+    return "unknown";
+  });
+  const themeVariant = useThemeVariant();
+
+  useEffect(() => {
+    if (!desktopUi) return;
+    let cancelled = false;
+    getDesktopPlatform()
+      .then((platform) => {
+        if (!cancelled) setDesktopPlatform(platform);
+      })
+      .catch(() => {
+        if (!cancelled) setDesktopPlatform("unknown");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopUi]);
+
+  const useHtmlTopbar = !desktopUi || desktopPlatform !== "macos";
+  const workspaceTitle = workspace?.name ?? "";
+
+  useEffect(() => {
+    if (!desktopUi || desktopPlatform !== "macos") return;
+    const raw = readCssVar("--surface-sidebar");
+    const color = parseCssColor(raw);
+    if (!color) return;
+    desktopSetTitlebarColor(color).catch(() => {});
+  }, [desktopUi, desktopPlatform, themeVariant]);
+
   const rootStyle = useMemo(() => {
     const max = Math.max(170, window.innerWidth - 240);
     const clamped = Math.min(max, Math.max(170, Math.round(sidebarWidth)));
@@ -3248,10 +3206,9 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return {
       ["--wb-sidebar-width" as any]: `${clamped}px`,
       ["--wb-terminal-offset" as any]: `${terminalOffset}px`,
+      ["--wb-topbar-height" as any]: useHtmlTopbar ? "46px" : "0px",
     } as React.CSSProperties;
-  }, [sidebarWidth, terminalHeight, terminalOpen]);
-
-  const desktopUi = isDesktopApp();
+  }, [sidebarWidth, terminalHeight, terminalOpen, useHtmlTopbar]);
 
   useEffect(() => {
     if (!desktopUi) return;
@@ -3259,81 +3216,12 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     document.title = title;
   }, [activeTask?.title, desktopUi, workspace?.name]);
 
-  const workspacePickerChoices = useMemo(() => {
-    const openSet = new Set(workspaceTabs.openWorkspaceIds);
-    return allWorkspaces
-      .map((ws) => {
-        const id = idToString((ws as any).id);
-        return id ? { id, ws } : null;
-      })
-      .filter((v): v is { id: string; ws: Workspace } => Boolean(v))
-      .filter((v) => !openSet.has(v.id));
-  }, [allWorkspaces, workspaceTabs.openWorkspaceIds]);
-
-  const topbar = (
+  const topbar = useHtmlTopbar ? (
     <div className="wb-topbar" data-tauri-drag-region={desktopUi ? true : undefined}>
-      <div
-        className="wb-topbar-tabs"
-        role="tablist"
-        aria-label="Workspaces"
-        data-tauri-drag-region={false}
-      >
-        {workspaceTabsResolved.map((t) => (
-          <div
-            key={t.id}
-            role="tab"
-            aria-selected={t.id === workspaceId}
-            className={`wb-topbar-tab ${t.id === workspaceId ? "wb-topbar-tab-active" : ""}`}
-            title={t.name}
-            onClick={() => openWorkspaceTab(t.id)}
-            data-tauri-drag-region={false}
-          >
-            <span className="wb-topbar-tab-label">{t.name}</span>
-            <button
-              type="button"
-              className="wb-topbar-tab-close"
-              aria-label={`Close ${t.name}`}
-              title="Close"
-              onClick={(e) => {
-                e.stopPropagation();
-                closeWorkspaceTab(t.id);
-              }}
-              data-tauri-drag-region={false}
-            >
-              <X size={12} />
-            </button>
-          </div>
-        ))}
-        <button
-          ref={workspacePickerBtnRef}
-          type="button"
-          className="wb-topbar-tab-add"
-          aria-label="Open workspace"
-          title="Open workspace"
-          onClick={() => {
-            const rect = workspacePickerBtnRef.current?.getBoundingClientRect();
-            if (rect) {
-              setWorkspacePickerAnchor({
-                left: rect.left,
-                right: rect.right,
-                top: rect.top,
-                bottom: rect.bottom,
-                width: rect.width,
-                height: rect.height,
-              });
-            } else {
-              setWorkspacePickerAnchor(null);
-            }
-            setWorkspacePickerOpen((v) => !v);
-          }}
-          data-tauri-drag-region={false}
-        >
-          <Plus size={14} />
-        </button>
+      <div className="wb-topbar-left" />
+      <div className="wb-topbar-center">
+        {workspaceTitle ? <div className="wb-topbar-title">{workspaceTitle}</div> : null}
       </div>
-
-      {activeTask && <div className="wb-topbar-sub">{activeTask.title}</div>}
-
       <div className="wb-topbar-right" data-tauri-drag-region={false}>
         {showDebugIds && (
           <button
@@ -3353,6 +3241,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 ),
               )
             }
+            data-tauri-drag-region={false}
           >
             {debugIdLabel}
           </button>
@@ -3362,69 +3251,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           to={`/settings?ws=${encodeURIComponent(String(workspaceId))}`}
           title="Settings"
           aria-label="Settings"
+          data-tauri-drag-region={false}
         >
           <Settings size={14} />
         </Link>
       </div>
-      {workspacePickerOpen && workspacePickerAnchor && (
-        <div
-          ref={workspacePickerMenuRef}
-          className="wb-menu"
-          style={{
-            left: Math.round(workspacePickerAnchor.left),
-            top: Math.round(workspacePickerAnchor.bottom + 6),
-          }}
-        >
-          <div className="wb-menu-top">
-            <div className="wb-menu-title-row">
-              <div className="wb-menu-title">Open workspace</div>
-              <button
-                type="button"
-                className="wb-topbar-icon"
-                aria-label="Close"
-                title="Close"
-                onClick={() => setWorkspacePickerOpen(false)}
-              >
-                <X size={14} />
-              </button>
-            </div>
-          </div>
-          {workspacePickerChoices.length === 0 ? (
-            <div className="wb-menu-empty">No other workspaces.</div>
-          ) : (
-            workspacePickerChoices.map(({ id, ws }) => (
-              <div key={id} className="wb-workspace-picker-row">
-                <button
-                  type="button"
-                  className="wb-menu-item wb-workspace-picker-open"
-                  onClick={() => {
-                    setWorkspacePickerOpen(false);
-                    openWorkspaceTab(id);
-                  }}
-                >
-                  {ws.name}
-                </button>
-                {isDesktopApp() && (
-                  <button
-                    type="button"
-                    className="wb-menu-item wb-workspace-picker-newwin"
-                    title="Open in new window"
-                    aria-label={`Open ${ws.name} in new window`}
-                    onClick={() => {
-                      setWorkspacePickerOpen(false);
-                      desktopOpenWorkspaceInNewWindow(id).catch(() => {});
-                    }}
-                  >
-                    New window
-                  </button>
-                )}
-              </div>
-            ))
-          )}
-        </div>
-      )}
     </div>
-  );
+  ) : null;
   if (!workbenchSnap.hydrated) {
     return (
       <div
