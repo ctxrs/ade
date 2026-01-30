@@ -1723,9 +1723,19 @@ fn emit_settings_inplace(app: &tauri::AppHandle, target: &AnyObject) {
         let label_ptr = unsafe { *ivar.load::<*const std::ffi::c_char>(target) };
         if !label_ptr.is_null() {
             let label = unsafe { CStr::from_ptr(label_ptr) }.to_string_lossy().into_owned();
-            let _ = app.emit_to(tauri::EventTarget::webview_window(label), "desktop_open_settings", ());
-            return;
+            if let Some(window) = app.get_webview_window(&label) {
+                let _ = window.eval(
+                    "(() => { let t = '/settings'; const p = window.location.pathname || ''; \
+                     if (p.startsWith('/workspaces/')) { const ws = p.split('/')[2]; if (ws) { t = `/settings?ws=${encodeURIComponent(ws)}`; } } \
+                     window.location.assign(t); })();",
+                );
+                return;
+            }
         }
+    }
+    if let Some(window) = app.get_webview_window(\"main\") {
+        let _ = window.eval(\"window.location.assign('/settings');\");
+        return;
     }
     let _ = app.emit("desktop_open_settings", ());
 }
