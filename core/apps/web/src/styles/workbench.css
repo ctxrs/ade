@@ -197,7 +197,7 @@
   font-size: 12px;
   color: var(--muted);
   margin-bottom: 8px;
-  letter-spacing: 0.02em;
+  letter-spacing: normal;
 }
 
 .wb-task-list {
