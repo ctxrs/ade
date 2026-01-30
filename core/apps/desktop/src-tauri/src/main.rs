@@ -1702,7 +1702,7 @@ static SETTINGS_BUTTON_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 static SETTINGS_BUTTON_CLASS: Once = Once::new();
 
 #[cfg(target_os = "macos")]
-unsafe extern "C" fn settings_button_clicked(
+extern "C" fn settings_button_clicked(
     _this: &AnyObject,
     _cmd: Sel,
     _sender: *mut AnyObject,
