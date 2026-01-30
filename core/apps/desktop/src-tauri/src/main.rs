@@ -1710,23 +1710,13 @@ extern "C" fn settings_button_clicked(
     _sender: *mut AnyObject,
 ) {
     if let Some(app) = SETTINGS_BUTTON_APP.get() {
-        emit_settings_in_focused_window(app);
+        emit_settings_inplace(app);
     }
 }
 
 #[cfg(target_os = "macos")]
-fn emit_settings_in_focused_window(app: &tauri::AppHandle) {
-    let mut focused: Option<tauri::WebviewWindow> = None;
-    for window in app.webview_windows().values() {
-        if window.is_focused().unwrap_or(false) {
-            focused = Some(window.clone());
-            break;
-        }
-    }
-    let window = focused.or_else(|| app.get_webview_window("main"));
-    if let Some(window) = window {
-        let _ = window.emit("desktop_open_settings", ());
-    }
+fn emit_settings_inplace(app: &tauri::AppHandle) {
+    let _ = app.emit_all("desktop_open_settings", ());
 }
 
 #[cfg(target_os = "macos")]

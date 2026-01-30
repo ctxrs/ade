@@ -31,6 +31,7 @@ function DesktopSettingsListener() {
     let active = true;
     let unlisten: (() => void) | null = null;
     desktopListen("desktop_open_settings", () => {
+      if (!document.hasFocus()) return;
       const path = locationRef.current.pathname;
       let target = "/settings";
       if (path.startsWith("/workspaces/")) {
