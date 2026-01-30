@@ -112,6 +112,13 @@ static CODEX_EVENT_DUMP: OnceLock<Mutex<std::io::BufWriter<std::fs::File>>> = On
 static CODEX_EVENT_DUMP_SEQ: AtomicU64 = AtomicU64::new(1);
 const CODEX_EVENT_DUMP_ENV: &str = "CODEX_CRP_DUMP_CODEX_EVENTS_PATH";
 
+// Optional debug dump of CRP events emitted by this runtime (after mapping, before stdout).
+//
+// Enable by setting `CODEX_CRP_DUMP_CRP_EVENTS_PATH=/path/to/file.jsonl`.
+// Each line is JSON: <CrpEventEnvelope>.
+static CRP_EVENT_DUMP: OnceLock<Mutex<std::io::BufWriter<std::fs::File>>> = OnceLock::new();
+const CRP_EVENT_DUMP_ENV: &str = "CODEX_CRP_DUMP_CRP_EVENTS_PATH";
+
 fn maybe_dump_codex_event(event: &Event) {
     // Fast-path when not enabled.
     let Ok(path) = std::env::var(CODEX_EVENT_DUMP_ENV) else {
@@ -143,6 +150,32 @@ fn maybe_dump_codex_event(event: &Event) {
     }
 }
 
+fn maybe_dump_crp_event(envelope: &CrpEventEnvelope) {
+    // Fast-path when not enabled.
+    let Ok(path) = std::env::var(CRP_EVENT_DUMP_ENV) else {
+        return;
+    };
+
+    let writer = CRP_EVENT_DUMP.get_or_init(|| {
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)
+            .expect("failed to open CODEX_CRP_DUMP_CRP_EVENTS_PATH");
+        Mutex::new(std::io::BufWriter::new(file))
+    });
+
+    let Ok(mut w) = writer.lock() else {
+        return;
+    };
+
+    if serde_json::to_writer(&mut *w, envelope).is_ok() {
+        let _ = w.write_all(b"\n");
+        let _ = w.flush();
+    }
+}
+
 struct CrpWriter {
     seq: u64,
     out: BufWriter<tokio::io::Stdout>,
@@ -163,6 +196,7 @@ impl CrpWriter {
             channel,
             event,
         };
+        maybe_dump_crp_event(&envelope);
         let bytes = serde_json::to_vec(&envelope)?;
         self.out.write_all(&bytes).await?;
         self.out.write_all(b"\n").await?;
@@ -277,13 +311,15 @@ impl ReasoningSummaryState {
         if delta.is_empty() {
             return (None, None);
         }
-        if Self::looks_like_snapshot(delta) {
+        let replaced_with_snapshot = if Self::looks_like_snapshot(delta) {
             // Replace (best-known full text), rather than append.
             self.buffer.clear();
             self.buffer.push_str(delta);
+            true
         } else {
             self.buffer.push_str(delta);
-        }
+            false
+        };
 
         if !self.title_emitted {
             if let Some((title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
@@ -307,60 +343,20 @@ impl ReasoningSummaryState {
             return (None, None);
         }
 
+        // If Codex sent a snapshot after the title was already emitted, recompute the body offset
+        // to keep the "post-title" boundary aligned with the latest full text. Otherwise the
+        // title block (and its newlines) can leak into the thought stream.
+        if replaced_with_snapshot {
+            if let Some((_title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
+                self.body_offset = body_offset;
+            }
+        }
+
         // Stream only the new suffix of the body region (post-title).
         if self.buffer.len() > self.body_offset {
             let body = &self.buffer[self.body_offset..];
             if self.body_sent > body.len() {
                 // If a snapshot replaced the buffer with a shorter version, clamp.
-                self.body_sent = body.len();
-            }
-            if body.len() > self.body_sent {
-                let chunk = body[self.body_sent..].to_string();
-                self.body_sent = body.len();
-                return (None, Some(chunk));
-            }
-        }
-
-        (None, None)
-    }
-
-    /// Best-effort "final" update when Codex emits a complete summary text (legacy event) after
-    /// streaming deltas. This is used to capture any body content that might not have been
-    /// delivered via `ReasoningContentDelta`.
-    fn finalize_with_full_text(&mut self, full: &str) -> (Option<String>, Option<String>) {
-        if full.is_empty() {
-            return (None, None);
-        }
-
-        // Treat the "full text" as a snapshot update.
-        self.buffer.clear();
-        self.buffer.push_str(full);
-
-        if !self.title_emitted {
-            if let Some((title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
-                self.title_emitted = true;
-                self.body_offset = body_offset;
-                self.body_sent = 0;
-                let body = if self.buffer.len() > body_offset {
-                    let body = self.buffer[body_offset..].to_string();
-                    self.body_sent = body.len();
-                    Some(body)
-                } else {
-                    None
-                };
-                let title = if title.trim().is_empty() { None } else { Some(title) };
-                return (title, body);
-            }
-            return (None, None);
-        }
-
-        if let Some((_title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
-            self.body_offset = body_offset;
-        }
-
-        if self.buffer.len() > self.body_offset {
-            let body = &self.buffer[self.body_offset..];
-            if self.body_sent > body.len() {
                 self.body_sent = body.len();
             }
             if body.len() > self.body_sent {
@@ -1879,68 +1875,13 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             Vec::new()
         }
         EventMsg::AgentReasoningDelta(_) => Vec::new(),
-        EventMsg::AgentReasoning(ev) => {
-            let turn = ensure_turn(tracker, &event.id);
-            let summary_index = turn.current_summary_index;
-            let item_id = turn.reasoning_item_id.clone();
-            let key_item_id = item_id
-                .clone()
-                .unwrap_or_else(|| "unknown_reasoning_item".to_string());
-            let state = turn
-                .reasoning_summaries
-                .entry((key_item_id, summary_index))
-                .or_default();
-            let (title, body_chunk) = state.finalize_with_full_text(&ev.text);
-            let mut out = Vec::new();
-            if let Some(title) = title {
-                out.push((
-                    CrpChannel::Control,
-                    CrpEvent::ReasoningSummary {
-                        session_id: session_id.clone(),
-                        turn_id: turn.turn_id.clone(),
-                        summary_index,
-                        text: title,
-                        item_id: item_id.clone(),
-                    },
-                ));
-            }
-            if let Some(chunk) = body_chunk {
-                out.push((
-                    CrpChannel::Data,
-                    CrpEvent::ReasoningTrace {
-                        session_id,
-                        turn_id: turn.turn_id.clone(),
-                        chunk,
-                        encoding: None,
-                    },
-                ));
-            }
-            out
-        }
-        EventMsg::AgentReasoningRawContentDelta(ev) => {
-            let turn = ensure_turn(tracker, &event.id);
-            vec![(
-                CrpChannel::Data,
-                CrpEvent::ReasoningTrace {
-                    session_id,
-                    turn_id: turn.turn_id.clone(),
-                    chunk: ev.delta,
-                    encoding: None,
-                },
-            )]
-        }
-        EventMsg::AgentReasoningRawContent(ev) => {
-            let turn = ensure_turn(tracker, &event.id);
-            vec![(
-                CrpChannel::Data,
-                CrpEvent::ReasoningTrace {
-                    session_id,
-                    turn_id: turn.turn_id.clone(),
-                    chunk: ev.text,
-                    encoding: None,
-                },
-            )]
-        }
+        // Latest Codex emits structured reasoning via `ReasoningContentDelta` (and section breaks).
+        // The legacy `AgentReasoning*` family can arrive concurrently and is not stable across
+        // Codex versions; it can duplicate content and introduce formatting artifacts (wrapped
+        // newlines, title blocks leaking into the thought stream). Ignore it entirely.
+        EventMsg::AgentReasoning(_) => Vec::new(),
+        EventMsg::AgentReasoningRawContentDelta(_) => Vec::new(),
+        EventMsg::AgentReasoningRawContent(_) => Vec::new(),
         EventMsg::ExecCommandBegin(ev) => {
             let turn = ensure_turn(tracker, &event.id);
             let input_preview = exec_input_preview(

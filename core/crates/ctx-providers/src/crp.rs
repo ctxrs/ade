@@ -272,6 +272,19 @@ impl CrpSessionPool {
         let mut last_seq = 0u64;
         let mut tool_output_cache: HashMap<String, String> = HashMap::new();
         let mut tool_input_cache: HashMap<String, Value> = HashMap::new();
+        // Debugging aid: when set, dump normalized session events (post-CRP mapping) to this file.
+        // This lets us diff: raw Codex dump -> CRP stdout -> ctx-normalized events -> web UI.
+        let dump_norm_path = std::env::var("CTX_CRP_DUMP_NORMALIZED_EVENTS_PATH")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let mut dump_norm_file = dump_norm_path.as_deref().and_then(|path| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .ok()
+        });
         let mut cancel_rx = req.cancel_rx;
         loop {
             tokio::select! {
@@ -305,6 +318,20 @@ impl CrpSessionPool {
                                 &mut tool_input_cache,
                             );
                             for event in mapped.events {
+                                if let Some(f) = dump_norm_file.as_mut() {
+                                    // Best-effort only; never fail the turn because debug dumping failed.
+                                    let _ = writeln!(
+                                        f,
+                                        "{}",
+                                        json!({
+                                            "session_key": req.session_key,
+                                            "turn_id": turn_id,
+                                            "crp_seq": env.seq,
+                                            "event_type": format!("{:?}", event.event_type),
+                                            "payload_json": event.payload_json,
+                                        })
+                                    );
+                                }
                                 let _ = req.event_sink.send(event).await;
                             }
                             if mapped.done {
