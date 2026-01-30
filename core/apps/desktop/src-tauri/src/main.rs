@@ -1763,7 +1763,7 @@ fn install_macos_settings_button(
         .resource_dir()
         .ok()
         .and_then(|dir| dir.join("bundles/lucide-settings.svg").to_str().map(str::to_string));
-    window.with_webview(|webview| unsafe {
+    window.with_webview(move |webview| unsafe {
         let mtm = MainThreadMarker::new().expect("titlebar button should be on main thread");
         let ns_window: &NSWindow = &*webview.ns_window().cast();
         let image = icon_path
@@ -1799,7 +1799,7 @@ fn load_lucide_settings_icon(
     mtm: MainThreadMarker,
 ) -> Option<Retained<NSImage>> {
     let ns_path = NSString::from_str(icon_path);
-    let image = NSImage::initWithContentsOfFile(NSImage::alloc(mtm), &ns_path)?;
+    let image = NSImage::initWithContentsOfFile(NSImage::alloc(), &ns_path)?;
     image.setTemplate(true);
     Some(image)
 }
