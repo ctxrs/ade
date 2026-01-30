@@ -291,6 +291,7 @@ impl TurnState {
 #[derive(Default, Debug)]
 struct ReasoningSummaryState {
     buffer: String,
+    title: Option<String>,
     title_emitted: bool,
     body_offset: usize,
     // Number of bytes emitted from the body region (buffer[body_offset..]).
@@ -305,10 +306,43 @@ impl ReasoningSummaryState {
         delta.starts_with("**") && delta.contains("\n\n") && delta.matches("**").count() >= 2 && delta.len() >= 16
     }
 
+    fn looks_like_title_only(delta: &str) -> bool {
+        // Codex also sometimes emits repeated "title only" deltas like:
+        //   **Reading files**
+        // If we've already emitted that title, these must not enter the trace stream.
+        let t = delta.trim();
+        t.starts_with("**") && t.ends_with("**") && !t.contains("\n\n") && t.matches("**").count() >= 2
+    }
+
     fn push_delta(&mut self, delta: &str) -> (Option<String>, Option<String>) {
         if delta.is_empty() {
             return (None, None);
         }
+
+        // If we've already emitted a title and Codex repeats a title-only delta, treat it as a
+        // no-op update (or a title update), never as trace content.
+        if self.title_emitted && Self::looks_like_title_only(delta) {
+            // Extract inner title text (best-effort).
+            let t = delta.trim();
+            if let Some((title, _)) = extract_summary_title_and_body_offset(t) {
+                if self.title.as_deref() == Some(title.as_str()) {
+                    // Repeated title; ignore.
+                    return (None, None);
+                }
+                // Title changed without body; update status title and reset body tracking.
+                self.buffer.clear();
+                self.buffer.push_str(t);
+                self.title = Some(title.clone());
+                self.title_emitted = true;
+                // The body is empty for title-only blocks.
+                if let Some((_title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
+                    self.body_offset = body_offset;
+                }
+                self.body_sent = 0;
+                return (Some(title), None);
+            }
+        }
+
         let replaced_with_snapshot = if Self::looks_like_snapshot(delta) {
             // Replace (best-known full text), rather than append.
             self.buffer.clear();
@@ -322,6 +356,7 @@ impl ReasoningSummaryState {
         if !self.title_emitted {
             if let Some((title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
                 self.title_emitted = true;
+                self.title = Some(title.clone());
                 self.body_offset = body_offset;
                 self.body_sent = 0;
                 let body = if self.buffer.len() > body_offset {
@@ -345,8 +380,28 @@ impl ReasoningSummaryState {
         // to keep the "post-title" boundary aligned with the latest full text. Otherwise the
         // title block (and its newlines) can leak into the thought stream.
         if replaced_with_snapshot {
-            if let Some((_title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
+            if let Some((title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
+                // If a snapshot changed the title, publish the new status title and reset body tracking.
+                if self.title.as_deref() != Some(title.as_str()) {
+                    self.title = Some(title.clone());
+                    self.body_sent = 0;
+                    self.body_offset = body_offset;
+                    return (Some(title), None);
+                }
                 self.body_offset = body_offset;
+            }
+        }
+
+        // Codex typically formats summary blocks like: "**Title**\n\nBody...". When the body
+        // arrives in a later delta, the leading whitespace/newlines might appear only then.
+        // Trim that leading whitespace exactly once (before the first emitted body chunk) so
+        // blank lines don't leak into the thought stream.
+        if self.body_sent == 0 && self.buffer.len() > self.body_offset {
+            let sub = &self.buffer[self.body_offset..];
+            let trimmed = sub.trim_start();
+            let skipped = sub.len().saturating_sub(trimmed.len());
+            if skipped > 0 {
+                self.body_offset += skipped;
             }
         }
 
@@ -365,6 +420,63 @@ impl ReasoningSummaryState {
         }
 
         (None, None)
+    }
+}
+
+#[cfg(test)]
+mod reasoning_summary_state_tests {
+    use super::*;
+
+    #[test]
+    fn title_only_duplicates_do_not_emit_trace() {
+        let mut s = ReasoningSummaryState::default();
+
+        // First title-only delta emits a summary title, no trace.
+        let (title, trace) = s.push_delta("**Applying patch to add hello_world.txt**");
+        assert_eq!(title.as_deref(), Some("Applying patch to add hello_world.txt"));
+        assert!(trace.is_none());
+
+        // Repeated title-only deltas must not leak into trace.
+        let (title2, trace2) = s.push_delta("**Applying patch to add hello_world.txt**");
+        assert!(title2.is_none());
+        assert!(trace2.is_none());
+    }
+
+    #[test]
+    fn snapshot_with_body_emits_body_once_and_dedupes() {
+        let mut s = ReasoningSummaryState::default();
+
+        let (title, trace) =
+            s.push_delta("**Reading instruction files**
+
+I'm checking the .ctx directory.");
+        assert_eq!(title.as_deref(), Some("Reading instruction files"));
+        assert_eq!(trace.as_deref(), Some("I'm checking the .ctx directory."));
+
+        // Duplicate full snapshot should not re-emit the body.
+        let (title2, trace2) =
+            s.push_delta("**Reading instruction files**
+
+I'm checking the .ctx directory.");
+        assert!(title2.is_none());
+        assert!(trace2.is_none());
+    }
+
+    #[test]
+    fn title_then_body_delta_emits_body_without_title() {
+        let mut s = ReasoningSummaryState::default();
+
+        let (title, trace) = s.push_delta("**Exploring context files**");
+        assert_eq!(title.as_deref(), Some("Exploring context files"));
+        assert!(trace.is_none());
+
+        let (_title2, trace2) = s.push_delta("
+
+I'm checking the .ctx directory for agent-basics.");
+        assert_eq!(
+            trace2.as_deref(),
+            Some("I'm checking the .ctx directory for agent-basics.")
+        );
     }
 }
 
