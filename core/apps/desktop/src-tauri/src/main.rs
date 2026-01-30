@@ -1763,6 +1763,7 @@ fn install_macos_settings_button(
     window: &tauri::WebviewWindow,
 ) -> Result<()> {
     SETTINGS_BUTTON_APP.get_or_init(|| app.clone());
+    let window_label = window.label().to_string();
     let icon_path = app
         .path()
         .resource_dir()
@@ -1781,7 +1782,7 @@ fn install_macos_settings_button(
         let cls = settings_button_target_class();
         let target: Retained<AnyObject> = msg_send![cls, new];
         let target = &*Retained::into_raw(target);
-        let label_ptr = CString::new(window.label())
+        let label_ptr = CString::new(window_label.as_str())
             .expect("window label should be valid")
             .into_raw();
         let ivar = settings_button_target_class()
