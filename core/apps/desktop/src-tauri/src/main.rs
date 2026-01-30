@@ -1,9 +1,13 @@
 use std::collections::{HashMap, HashSet};
+#[cfg(target_os = "macos")]
+use std::ffi::CStr;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+#[cfg(target_os = "macos")]
+use std::sync::{Once, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
@@ -12,6 +16,17 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{Row, SqlitePool};
 use tauri::Emitter;
 use tauri::Manager;
+#[cfg(target_os = "macos")]
+use objc2::rc::Retained;
+#[cfg(target_os = "macos")]
+use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, Sel, NSObject};
+#[cfg(target_os = "macos")]
+use objc2::{msg_send, sel, MainThreadMarker};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{
+    NSBezelStyle, NSButton, NSImage, NSImageNamePreferencesGeneral, NSLayoutAttribute,
+    NSTitlebarAccessoryViewController, NSWindow,
+};
 #[cfg(feature = "automation")]
 use tauri_plugin_automation::init as automation_init;
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -718,6 +733,10 @@ fn desktop_open_workspace_in_new_window(
     let window = apply_workbench_titlebar(builder)
         .build()
         .map_err(|e| format!("creating window failed: {e}"))?;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = install_macos_settings_button(&app, &window);
+    }
     let _ = window.show();
     let _ = window.set_focus();
     registry.register(&label, workspace_id);
@@ -1677,14 +1696,93 @@ fn reveal_in_file_manager(path: &Path) -> Result<()> {
     }
 }
 
+#[cfg(target_os = "macos")]
+static SETTINGS_BUTTON_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+#[cfg(target_os = "macos")]
+static SETTINGS_BUTTON_TARGET: OnceLock<*mut AnyObject> = OnceLock::new();
+#[cfg(target_os = "macos")]
+static SETTINGS_BUTTON_CLASS: Once = Once::new();
+
+#[cfg(target_os = "macos")]
+unsafe extern "C-unwind" fn settings_button_clicked(
+    _this: &AnyObject,
+    _cmd: Sel,
+    _sender: *mut AnyObject,
+) {
+    if let Some(app) = SETTINGS_BUTTON_APP.get() {
+        let _ = open_settings_window(app);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn settings_button_target_class() -> &'static AnyClass {
+    const CLASS_NAME: &[u8] = b"CtxSettingsButtonTarget\0";
+    SETTINGS_BUTTON_CLASS.call_once(|| {
+        let class_name = CStr::from_bytes_with_nul(CLASS_NAME)
+            .expect("settings button class name should be valid");
+        let mut builder = ClassBuilder::new(class_name, NSObject::class())
+            .expect("settings button class should be registerable");
+        unsafe {
+            builder.add_method(
+                sel!(openSettings:),
+                settings_button_clicked as extern "C-unwind" fn(&AnyObject, Sel, *mut AnyObject),
+            );
+        }
+        builder.register();
+    });
+    let class_name = CStr::from_bytes_with_nul(CLASS_NAME)
+        .expect("settings button class name should be valid");
+    AnyClass::get(class_name).expect("settings button class should be registered")
+}
+
+#[cfg(target_os = "macos")]
+fn settings_button_target() -> &'static AnyObject {
+    let target_ptr = SETTINGS_BUTTON_TARGET.get_or_init(|| {
+        let cls = settings_button_target_class();
+        let target: Retained<AnyObject> = unsafe { msg_send![cls, new] };
+        Retained::into_raw(target)
+    });
+    unsafe { &**target_ptr }
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos_settings_button(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+) -> Result<()> {
+    SETTINGS_BUTTON_APP.get_or_init(|| app.clone());
+    window.with_webview(|webview| unsafe {
+        let mtm = MainThreadMarker::new().expect("titlebar button should be on main thread");
+        let ns_window: &NSWindow = &*webview.ns_window().cast();
+        let Some(image) = NSImage::imageNamed(NSImageNamePreferencesGeneral) else {
+            return;
+        };
+        let target = settings_button_target();
+        let button = NSButton::buttonWithImage_target_action(
+            &image,
+            Some(target),
+            Some(sel!(openSettings:)),
+            mtm,
+        );
+        button.setBezelStyle(NSBezelStyle::Toolbar);
+
+        let accessory = NSTitlebarAccessoryViewController::new(mtm);
+        accessory.setView(button.as_ref());
+        accessory.setLayoutAttribute(NSLayoutAttribute::Trailing);
+        accessory.setAutomaticallyAdjustsSize(true);
+        ns_window.addTitlebarAccessoryViewController(&accessory);
+    })?;
+    Ok(())
+}
+
 fn apply_workbench_titlebar<'a, R: tauri::Runtime, M: tauri::Manager<R>>(
     builder: tauri::WebviewWindowBuilder<'a, R, M>,
 ) -> tauri::WebviewWindowBuilder<'a, R, M> {
     #[cfg(target_os = "macos")]
     {
         return builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true);
+            .title_bar_style(tauri::TitleBarStyle::Visible)
+            .hidden_title(false);
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1711,9 +1809,13 @@ fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
         builder = builder.inner_size(1200.0, 900.0);
     }
     let builder = apply_workbench_titlebar(builder);
-    builder
+    let window = builder
         .build()
         .context("creating window")?;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = install_macos_settings_button(app, &window);
+    }
     Ok(())
 }
 
