@@ -710,6 +710,8 @@ enum CrpEvent {
         run_id: String,
         turn_id: String,
         status: CrpTurnStatus,
+        #[serde(default)]
+        error: Option<CrpTurnError>,
     },
     #[serde(rename = "session.gap")]
     SessionGap {
@@ -730,6 +732,13 @@ enum CrpTurnStatus {
     Error,
     Canceled,
     Interrupted,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct CrpTurnError {
+    message: String,
+    #[serde(default)]
+    kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -843,13 +852,8 @@ fn map_crp_event(
                     },
                 );
             }
-            let payload = build_tool_started_payload(
-                tool_call_id,
-                tool_name,
-                input,
-                input_preview,
-                seq,
-            );
+            let payload =
+                build_tool_started_payload(tool_call_id, tool_name, input, input_preview, seq);
             MappedCrpEvent {
                 events: vec![NormalizedEvent {
                     event_type: SessionEventType::ToolCall,
@@ -915,16 +919,25 @@ fn map_crp_event(
                 done: false,
             }
         }
-        CrpEvent::TurnCompleted { status, .. } => {
+        CrpEvent::TurnCompleted { status, error, .. } => {
             let (event_type, payload) = match status {
                 CrpTurnStatus::Success => (
                     SessionEventType::Done,
                     json!({"status": "completed", "crp_seq": seq}),
                 ),
-                CrpTurnStatus::Error => (
-                    SessionEventType::Error,
-                    json!({"message": "crp_turn_error", "crp_seq": seq}),
-                ),
+                CrpTurnStatus::Error => {
+                    let message = error
+                        .as_ref()
+                        .map(|err| err.message.clone())
+                        .unwrap_or_else(|| "crp_turn_error".to_string());
+                    let mut payload = serde_json::Map::new();
+                    payload.insert("message".to_string(), json!(message));
+                    if let Some(kind) = error.and_then(|err| err.kind) {
+                        payload.insert("kind".to_string(), json!(kind));
+                    }
+                    payload.insert("crp_seq".to_string(), json!(seq));
+                    (SessionEventType::Error, Value::Object(payload))
+                }
                 CrpTurnStatus::Canceled | CrpTurnStatus::Interrupted => (
                     SessionEventType::TurnInterrupted,
                     json!({"reason": "crp_turn_interrupted", "crp_seq": seq}),
@@ -989,6 +1002,7 @@ fn build_tool_started_payload(
     Value::Object(payload)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_tool_completed_payload(
     tool_call_id: String,
     tool_name: String,

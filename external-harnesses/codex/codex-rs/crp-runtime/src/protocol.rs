@@ -177,6 +177,8 @@ pub enum CrpEvent {
         run_id: String,
         turn_id: String,
         status: CrpTurnStatus,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<CrpTurnError>,
     },
     #[serde(rename = "tool.started")]
     ToolStarted {
@@ -231,6 +233,13 @@ pub enum CrpTurnStatus {
     Error,
     Canceled,
     Interrupted,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CrpTurnError {
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

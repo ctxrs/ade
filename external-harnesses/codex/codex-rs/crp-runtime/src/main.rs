@@ -12,6 +12,7 @@ use crate::protocol::CrpMcpServerConfig;
 use crate::protocol::CrpSessionConfig;
 use crate::protocol::CrpToolOutputStream;
 use crate::protocol::CrpToolStatus;
+use crate::protocol::CrpTurnError;
 use crate::protocol::CrpTurnStatus;
 use async_trait::async_trait;
 use base64::Engine;
@@ -1646,6 +1647,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         run_id: turn.run_id.clone(),
                         turn_id: turn.turn_id.clone(),
                         status: CrpTurnStatus::Success,
+                        error: None,
                     },
                 ));
             }
@@ -1667,13 +1669,14 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         run_id: turn.run_id.clone(),
                         turn_id: turn.turn_id.clone(),
                         status,
+                        error: None,
                     },
                 )]
             } else {
                 Vec::new()
             }
         }
-        EventMsg::Error(_) | EventMsg::StreamError(_) => {
+        EventMsg::Error(err) => {
             let turn = ensure_turn(tracker, &event.id);
             if mark_completed(turn) {
                 vec![(
@@ -1683,6 +1686,30 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         run_id: turn.run_id.clone(),
                         turn_id: turn.turn_id.clone(),
                         status: CrpTurnStatus::Error,
+                        error: Some(CrpTurnError {
+                            message: err.to_string(),
+                            kind: Some("error".to_string()),
+                        }),
+                    },
+                )]
+            } else {
+                Vec::new()
+            }
+        }
+        EventMsg::StreamError(err) => {
+            let turn = ensure_turn(tracker, &event.id);
+            if mark_completed(turn) {
+                vec![(
+                    CrpChannel::Control,
+                    CrpEvent::TurnCompleted {
+                        session_id,
+                        run_id: turn.run_id.clone(),
+                        turn_id: turn.turn_id.clone(),
+                        status: CrpTurnStatus::Error,
+                        error: Some(CrpTurnError {
+                            message: err.to_string(),
+                            kind: Some("stream_error".to_string()),
+                        }),
                     },
                 )]
             } else {
