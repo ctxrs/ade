@@ -484,8 +484,14 @@ impl ToolHandler for ExternalToolHandler {
 }
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    // Important: `codex-core` expects binaries embedding it (including this runtime) to support
+    // a virtual `apply_patch` CLI via the arg0 dispatch mechanism:
+    //   <bin> --codex-run-as-apply-patch
+    //
+    // If we parse CLI args before calling `arg0_dispatch_or_else`, clap will reject the
+    // `--codex-run-as-apply-patch` flag and `apply_patch` will be broken.
     arg0_dispatch_or_else(|codex_linux_sandbox_exe| async move {
+        let cli = Cli::parse();
         run_main(cli, codex_linux_sandbox_exe).await
     })
 }
