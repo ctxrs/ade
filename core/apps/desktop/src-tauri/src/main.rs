@@ -1716,7 +1716,7 @@ extern "C" fn settings_button_clicked(
 
 #[cfg(target_os = "macos")]
 fn emit_settings_inplace(app: &tauri::AppHandle) {
-    let _ = app.emit_all("desktop_open_settings", ());
+    let _ = app.emit("desktop_open_settings", ());
 }
 
 #[cfg(target_os = "macos")]
