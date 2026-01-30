@@ -55,6 +55,10 @@ impl Tier1CrpAdapter {
     pub fn codex() -> Self {
         Self::new("codex-crp", "codex-crp", vec![])
     }
+
+    pub fn claude() -> Self {
+        Self::new("claude-crp", "claude-crp", vec![])
+    }
 }
 
 #[async_trait]
