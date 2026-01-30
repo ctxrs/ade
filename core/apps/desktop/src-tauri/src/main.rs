@@ -1721,7 +1721,10 @@ fn settings_button_target_class() -> &'static AnyClass {
         let mut builder = ClassBuilder::new(class_name, NSObject::class())
             .expect("settings button class should be registerable");
         unsafe {
-            builder.add_method(sel!(openSettings:), settings_button_clicked);
+            builder.add_method(
+                sel!(openSettings:),
+                settings_button_clicked as extern "C" fn(&AnyObject, Sel, *mut AnyObject),
+            );
         }
         builder.register();
     });
