@@ -2706,6 +2706,13 @@
   margin-right: auto;
 }
 
+.wb-session-view .thread-stack {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .wb-session-view .queue-panel {
   width: 100%;
   max-width: var(--wb-thread-max-width);
