@@ -251,6 +251,12 @@ impl CrpSessionPool {
             session.opened.store(true, Ordering::SeqCst);
         }
         let items = build_prompt_items(&req.input, &req.workdir, &req.env).await?;
+        let (model, reasoning_effort) = req
+            .input
+            .model_id
+            .as_deref()
+            .map(split_model_id_and_effort)
+            .unwrap_or((None, None));
         session
             .process
             .send(CrpCommand::SessionPrompt {
@@ -258,7 +264,8 @@ impl CrpSessionPool {
                 turn_id: Some(turn_id.clone()),
                 items: Some(items),
                 prompt: Some(req.input.content.clone()),
-                model: req.input.model_id.clone(),
+                model,
+                reasoning_effort,
                 cwd: Some(req.workdir.clone()),
             })
             .await?;
@@ -541,6 +548,8 @@ enum CrpCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        reasoning_effort: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         cwd: Option<PathBuf>,
     },
     #[serde(rename = "session.cancel")]
@@ -561,6 +570,8 @@ struct CrpSessionConfig {
     cwd: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model_provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1110,6 +1121,11 @@ fn build_crp_session_config(env: &HashMap<String, String>, workdir: &Path) -> Cr
         .map(|v| v != "1" && v.to_lowercase() != "true")
         .unwrap_or(true);
 
+    let (model, reasoning_effort) = env
+        .get("CTX_MODEL_ID")
+        .map(|value| split_model_id_and_effort(value))
+        .unwrap_or((None, None));
+
     let mcp_servers = if mcp_enabled {
         let mut mcp_env = HashMap::new();
         if let Some(url) = env.get("CTX_DAEMON_URL") {
@@ -1152,7 +1168,8 @@ fn build_crp_session_config(env: &HashMap<String, String>, workdir: &Path) -> Cr
 
     CrpSessionConfig {
         cwd: Some(workdir.to_path_buf()),
-        model: env.get("CTX_MODEL_ID").cloned(),
+        model,
+        reasoning_effort,
         model_provider: None,
         reasoning_trace_enabled: Some(true),
         mcp_servers,
@@ -1160,12 +1177,43 @@ fn build_crp_session_config(env: &HashMap<String, String>, workdir: &Path) -> Cr
 }
 
 fn build_crp_model_probe_config(env: &HashMap<String, String>, workdir: &Path) -> CrpSessionConfig {
+    let (model, reasoning_effort) = env
+        .get("CTX_MODEL_ID")
+        .map(|value| split_model_id_and_effort(value))
+        .unwrap_or((None, None));
     CrpSessionConfig {
         cwd: Some(workdir.to_path_buf()),
-        model: env.get("CTX_MODEL_ID").cloned(),
+        model,
+        reasoning_effort,
         model_provider: None,
         reasoning_trace_enabled: None,
         mcp_servers: None,
+    }
+}
+
+fn split_model_id_and_effort(model_id: &str) -> (Option<String>, Option<String>) {
+    let trimmed = model_id.trim();
+    if trimmed.is_empty() {
+        return (None, None);
+    }
+    let Some((base, suffix)) = trimmed.rsplit_once('/') else {
+        return (Some(trimmed.to_string()), None);
+    };
+    if base.trim().is_empty() {
+        return (Some(trimmed.to_string()), None);
+    }
+    let Some(effort) = normalize_effort_id(suffix) else {
+        return (Some(trimmed.to_string()), None);
+    };
+    (Some(base.trim().to_string()), Some(effort))
+}
+
+fn normalize_effort_id(raw: &str) -> Option<String> {
+    let normalized = raw.trim().to_lowercase();
+    match normalized.as_str() {
+        "none" | "minimal" | "low" | "medium" | "high" | "xhigh" => Some(normalized),
+        "extra_high" | "extra-high" | "extra high" => Some("xhigh".to_string()),
+        _ => None,
     }
 }
 

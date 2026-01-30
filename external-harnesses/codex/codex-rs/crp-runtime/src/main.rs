@@ -456,6 +456,7 @@ async fn handle_command(
             let config = config.unwrap_or(CrpSessionConfig {
                 cwd: None,
                 model: None,
+                reasoning_effort: None,
                 model_provider: None,
                 approval_policy: None,
                 sandbox_mode: None,
@@ -505,6 +506,7 @@ async fn handle_command(
             prompt,
             items,
             model,
+            reasoning_effort,
             cwd,
         } => {
             let Some(session_state) = session.as_mut() else {
@@ -530,7 +532,9 @@ async fn handle_command(
             let cwd = cwd.unwrap_or_else(|| session_state.default_cwd.clone());
             let model = model.unwrap_or_else(|| session_state.default_model.clone());
             let (model, effort_override) = split_model_and_effort(&model);
-            let effort = effort_override.or(session_state.default_effort);
+            let effort = reasoning_effort
+                .or(effort_override)
+                .or(session_state.default_effort);
 
             let op = Op::UserTurn {
                 items,
@@ -566,6 +570,7 @@ async fn handle_command(
             let config = config.unwrap_or(CrpSessionConfig {
                 cwd: None,
                 model: None,
+                reasoning_effort: None,
                 model_provider: None,
                 approval_policy: None,
                 sandbox_mode: None,
@@ -635,6 +640,7 @@ async fn load_config_from_crp(
         .map(split_model_and_effort)
         .map(|(model, effort)| (Some(model), effort))
         .unwrap_or((None, None));
+    let effort_override = session_config.reasoning_effort.or(effort_override);
     let overrides = ConfigOverrides {
         model: model_override,
         review_model: None,
@@ -672,25 +678,27 @@ async fn load_config_from_crp(
 }
 
 fn split_model_and_effort(model: &str) -> (String, Option<ReasoningEffort>) {
-    let Some((base, effort_str)) = model.rsplit_once('/') else {
-        return (model.to_string(), None);
+    let trimmed = model.trim();
+    let Some((base, effort_str)) = trimmed.rsplit_once('/') else {
+        return (trimmed.to_string(), None);
     };
-    if base.is_empty() {
-        return (model.to_string(), None);
+    if base.trim().is_empty() {
+        return (trimmed.to_string(), None);
     }
-    let effort = match effort_str {
+    let normalized = effort_str.trim().to_lowercase();
+    let effort = match normalized.as_str() {
         "none" => Some(ReasoningEffort::None),
         "minimal" => Some(ReasoningEffort::Minimal),
         "low" => Some(ReasoningEffort::Low),
         "medium" => Some(ReasoningEffort::Medium),
         "high" => Some(ReasoningEffort::High),
-        "xhigh" => Some(ReasoningEffort::XHigh),
+        "xhigh" | "extra_high" | "extra-high" | "extra high" => Some(ReasoningEffort::XHigh),
         _ => None,
     };
     if effort.is_some() {
-        (base.to_string(), effort)
+        (base.trim().to_string(), effort)
     } else {
-        (model.to_string(), None)
+        (trimmed.to_string(), None)
     }
 }
 

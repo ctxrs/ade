@@ -1,4 +1,5 @@
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::user_input::UserInput;
 use serde::Deserialize;
@@ -31,6 +32,7 @@ pub enum CrpCommand {
         prompt: Option<String>,
         items: Option<Vec<UserInput>>,
         model: Option<String>,
+        reasoning_effort: Option<ReasoningEffort>,
         cwd: Option<PathBuf>,
     },
     #[serde(rename = "session.cancel")]
@@ -58,6 +60,7 @@ pub enum CrpCommand {
 pub struct CrpSessionConfig {
     pub cwd: Option<PathBuf>,
     pub model: Option<String>,
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub model_provider: Option<String>,
     pub approval_policy: Option<AskForApproval>,
     pub sandbox_mode: Option<SandboxMode>,
