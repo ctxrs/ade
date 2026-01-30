@@ -21,7 +21,7 @@ use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, Sel, NSObject};
 #[cfg(target_os = "macos")]
-use objc2::{msg_send, sel, ClassType, MainThreadMarker};
+use objc2::{msg_send, sel, AnyThread, ClassType, MainThreadMarker};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
     NSBezelStyle, NSButton, NSImage, NSImageNamePreferencesGeneral, NSLayoutAttribute,
@@ -1758,10 +1758,17 @@ fn install_macos_settings_button(
     window: &tauri::WebviewWindow,
 ) -> Result<()> {
     SETTINGS_BUTTON_APP.get_or_init(|| app.clone());
+    let icon_path = app
+        .path()
+        .resource_dir()
+        .ok()
+        .and_then(|dir| dir.join("bundles/lucide-settings.svg").to_str().map(str::to_string));
     window.with_webview(|webview| unsafe {
         let mtm = MainThreadMarker::new().expect("titlebar button should be on main thread");
         let ns_window: &NSWindow = &*webview.ns_window().cast();
-        let image = load_lucide_settings_icon(app, mtm)
+        let image = icon_path
+            .as_deref()
+            .and_then(|path| load_lucide_settings_icon(path, mtm))
             .or_else(|| NSImage::imageNamed(NSImageNamePreferencesGeneral));
         let Some(image) = image else {
             return;
@@ -1788,12 +1795,9 @@ fn install_macos_settings_button(
 
 #[cfg(target_os = "macos")]
 fn load_lucide_settings_icon(
-    app: &tauri::AppHandle,
+    icon_path: &str,
     mtm: MainThreadMarker,
 ) -> Option<Retained<NSImage>> {
-    let resource_dir = app.path().resource_dir().ok()?;
-    let icon_path = resource_dir.join("bundles/lucide-settings.svg");
-    let icon_path = icon_path.to_str()?;
     let ns_path = NSString::from_str(icon_path);
     let image = NSImage::initWithContentsOfFile(NSImage::alloc(mtm), &ns_path)?;
     image.setTemplate(true);
