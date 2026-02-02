@@ -8690,16 +8690,10 @@ fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Valu
         .get("title")
         .and_then(|v| v.as_str())
         .or_else(|| update.get("tool_label").and_then(|v| v.as_str()))
-        .or_else(|| update.get("toolLabel").and_then(|v| v.as_str()))
         .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
         .or_else(|| {
             update
                 .pointer("/toolCall/tool_label")
-                .and_then(|v| v.as_str())
-        })
-        .or_else(|| {
-            update
-                .pointer("/toolCall/toolLabel")
                 .and_then(|v| v.as_str())
         })
         .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
@@ -8841,16 +8835,10 @@ fn build_turn_tool_from_event(event: &SessionEvent, turn_id: TurnId) -> Option<S
         .get("title")
         .and_then(|v| v.as_str())
         .or_else(|| update.get("tool_label").and_then(|v| v.as_str()))
-        .or_else(|| update.get("toolLabel").and_then(|v| v.as_str()))
         .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
         .or_else(|| {
             update
                 .pointer("/toolCall/tool_label")
-                .and_then(|v| v.as_str())
-        })
-        .or_else(|| {
-            update
-                .pointer("/toolCall/toolLabel")
                 .and_then(|v| v.as_str())
         })
         .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
@@ -9078,16 +9066,10 @@ fn build_turn_tools_from_events(
             .get("title")
             .and_then(|v| v.as_str())
             .or_else(|| update.get("tool_label").and_then(|v| v.as_str()))
-            .or_else(|| update.get("toolLabel").and_then(|v| v.as_str()))
             .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
             .or_else(|| {
                 update
                     .pointer("/toolCall/tool_label")
-                    .and_then(|v| v.as_str())
-            })
-            .or_else(|| {
-                update
-                    .pointer("/toolCall/toolLabel")
                     .and_then(|v| v.as_str())
             })
             .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
