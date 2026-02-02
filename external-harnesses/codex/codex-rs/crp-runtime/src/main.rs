@@ -42,6 +42,8 @@ use codex_core::protocol::ExecCommandSource;
 use codex_core::protocol::ExecOutputStream;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::Op;
+use codex_core::protocol::ReviewRequest;
+use codex_core::protocol::ReviewTarget;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::Submission;
 use codex_core::protocol::TurnAbortReason;
@@ -1118,6 +1120,123 @@ async fn handle_command(
                 personality: None,
             };
 
+            let sub_id = if let Some(turn_id) = turn_id {
+                session_state
+                    .thread
+                    .submit_with_id(Submission {
+                        id: turn_id.clone(),
+                        op,
+                    })
+                    .await?;
+                turn_id
+            } else {
+                session_state.thread.submit(op).await?
+            };
+
+            session_state
+                .tracker
+                .turns
+                .entry(sub_id.clone())
+                .or_insert_with(|| TurnState::new(sub_id));
+        }
+        CrpCommand::SessionCompact { session_id, turn_id } => {
+            let Some(session_state) = session.as_mut() else {
+                warn!("session.compact ignored: no active session");
+                return Ok(());
+            };
+            if let Some(expected) = session_id.as_deref()
+                && expected != session_state.tracker.session_id
+            {
+                warn!(%expected, "session.compact ignored: session_id mismatch");
+                return Ok(());
+            }
+
+            let op = Op::Compact;
+            let sub_id = if let Some(turn_id) = turn_id {
+                session_state
+                    .thread
+                    .submit_with_id(Submission {
+                        id: turn_id.clone(),
+                        op,
+                    })
+                    .await?;
+                turn_id
+            } else {
+                session_state.thread.submit(op).await?
+            };
+
+            session_state
+                .tracker
+                .turns
+                .entry(sub_id.clone())
+                .or_insert_with(|| TurnState::new(sub_id));
+        }
+        CrpCommand::SessionUndo { session_id, turn_id } => {
+            let Some(session_state) = session.as_mut() else {
+                warn!("session.undo ignored: no active session");
+                return Ok(());
+            };
+            if let Some(expected) = session_id.as_deref()
+                && expected != session_state.tracker.session_id
+            {
+                warn!(%expected, "session.undo ignored: session_id mismatch");
+                return Ok(());
+            }
+
+            let op = Op::Undo;
+            let sub_id = if let Some(turn_id) = turn_id {
+                session_state
+                    .thread
+                    .submit_with_id(Submission {
+                        id: turn_id.clone(),
+                        op,
+                    })
+                    .await?;
+                turn_id
+            } else {
+                session_state.thread.submit(op).await?
+            };
+
+            session_state
+                .tracker
+                .turns
+                .entry(sub_id.clone())
+                .or_insert_with(|| TurnState::new(sub_id));
+        }
+        CrpCommand::SessionReview {
+            session_id,
+            turn_id,
+            instructions,
+        } => {
+            let Some(session_state) = session.as_mut() else {
+                warn!("session.review ignored: no active session");
+                return Ok(());
+            };
+            if let Some(expected) = session_id.as_deref()
+                && expected != session_state.tracker.session_id
+            {
+                warn!(%expected, "session.review ignored: session_id mismatch");
+                return Ok(());
+            }
+
+            let instructions = instructions.and_then(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            });
+            let target = match instructions {
+                Some(instructions) => ReviewTarget::Custom { instructions },
+                None => ReviewTarget::UncommittedChanges,
+            };
+            let op = Op::Review {
+                review_request: ReviewRequest {
+                    target,
+                    user_facing_hint: None,
+                },
+            };
             let sub_id = if let Some(turn_id) = turn_id {
                 session_state
                     .thread

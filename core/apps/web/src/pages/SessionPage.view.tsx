@@ -1728,6 +1728,13 @@ export function SessionView({
         { name: "help", description: "Show help" },
       ];
     }
+    if (provider === "codex-crp") {
+      return [
+        { name: "review", description: "Review my current changes and find issues" },
+        { name: "undo", description: "Undo the last turn" },
+        { name: "compact", description: "Summarize conversation to save context" },
+      ];
+    }
     return [{ name: "compact", description: "Summarize conversation to save context" }];
   }, [session?.provider_id]);
 

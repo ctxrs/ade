@@ -366,25 +366,57 @@ impl CrpSessionPool {
                 .await?;
             session.opened.store(true, Ordering::SeqCst);
         }
-        let items = build_prompt_items(&req.input, &req.workdir, &req.env).await?;
-        let (model, reasoning_effort) = req
-            .input
-            .model_id
-            .as_deref()
-            .map(split_model_id_and_effort)
-            .unwrap_or((None, None));
-        session
-            .process
-            .send(CrpCommand::SessionPrompt {
-                session_id: Some(req.session_key.clone()),
-                turn_id: Some(turn_id.clone()),
-                items: Some(items),
-                prompt: Some(req.input.content.clone()),
-                model,
-                reasoning_effort,
-                cwd: Some(req.workdir.clone()),
-            })
-            .await?;
+        match parse_crp_slash_command(&req.input.content) {
+            Some(CrpSlashCommand::Compact) => {
+                session
+                    .process
+                    .send(CrpCommand::SessionCompact {
+                        session_id: Some(req.session_key.clone()),
+                        turn_id: Some(turn_id.clone()),
+                    })
+                    .await?;
+            }
+            Some(CrpSlashCommand::Undo) => {
+                session
+                    .process
+                    .send(CrpCommand::SessionUndo {
+                        session_id: Some(req.session_key.clone()),
+                        turn_id: Some(turn_id.clone()),
+                    })
+                    .await?;
+            }
+            Some(CrpSlashCommand::Review { instructions }) => {
+                session
+                    .process
+                    .send(CrpCommand::SessionReview {
+                        session_id: Some(req.session_key.clone()),
+                        turn_id: Some(turn_id.clone()),
+                        instructions,
+                    })
+                    .await?;
+            }
+            None => {
+                let items = build_prompt_items(&req.input, &req.workdir, &req.env).await?;
+                let (model, reasoning_effort) = req
+                    .input
+                    .model_id
+                    .as_deref()
+                    .map(split_model_id_and_effort)
+                    .unwrap_or((None, None));
+                session
+                    .process
+                    .send(CrpCommand::SessionPrompt {
+                        session_id: Some(req.session_key.clone()),
+                        turn_id: Some(turn_id.clone()),
+                        items: Some(items),
+                        prompt: Some(req.input.content.clone()),
+                        model,
+                        reasoning_effort,
+                        cwd: Some(req.workdir.clone()),
+                    })
+                    .await?;
+            }
+        }
         let mut last_seq = 0u64;
         let mut tool_output_cache: HashMap<String, String> = HashMap::new();
         let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
@@ -577,6 +609,45 @@ struct CrpPromptRequest {
     env: HashMap<String, String>,
     event_sink: mpsc::Sender<NormalizedEvent>,
     cancel_rx: oneshot::Receiver<()>,
+}
+
+enum CrpSlashCommand {
+    Compact,
+    Undo,
+    Review { instructions: Option<String> },
+}
+
+fn parse_crp_slash_command(content: &str) -> Option<CrpSlashCommand> {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with('/') {
+        return None;
+    }
+    let matches_command = |name: &str| {
+        if !trimmed.starts_with(name) {
+            return false;
+        }
+        trimmed
+            .chars()
+            .nth(name.len())
+            .map(|ch| ch.is_whitespace())
+            .unwrap_or(true)
+    };
+    if matches_command("/compact") {
+        return Some(CrpSlashCommand::Compact);
+    }
+    if matches_command("/undo") {
+        return Some(CrpSlashCommand::Undo);
+    }
+    if matches_command("/review") {
+        let rest = trimmed["/review".len()..].trim();
+        let instructions = if rest.is_empty() {
+            None
+        } else {
+            Some(rest.to_string())
+        };
+        return Some(CrpSlashCommand::Review { instructions });
+    }
+    None
 }
 
 struct CrpProcess {
@@ -773,6 +844,23 @@ enum CrpCommand {
         reasoning_effort: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         cwd: Option<PathBuf>,
+    },
+    #[serde(rename = "session.compact")]
+    SessionCompact {
+        session_id: Option<String>,
+        turn_id: Option<String>,
+    },
+    #[serde(rename = "session.undo")]
+    SessionUndo {
+        session_id: Option<String>,
+        turn_id: Option<String>,
+    },
+    #[serde(rename = "session.review")]
+    SessionReview {
+        session_id: Option<String>,
+        turn_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        instructions: Option<String>,
     },
     #[serde(rename = "session.cancel")]
     SessionCancel {

@@ -38,6 +38,22 @@ pub enum CrpCommand {
         reasoning_effort: Option<ReasoningEffort>,
         cwd: Option<PathBuf>,
     },
+    #[serde(rename = "session.compact")]
+    SessionCompact {
+        session_id: Option<String>,
+        turn_id: Option<String>,
+    },
+    #[serde(rename = "session.undo")]
+    SessionUndo {
+        session_id: Option<String>,
+        turn_id: Option<String>,
+    },
+    #[serde(rename = "session.review")]
+    SessionReview {
+        session_id: Option<String>,
+        turn_id: Option<String>,
+        instructions: Option<String>,
+    },
     #[serde(rename = "session.cancel")]
     SessionCancel {
         session_id: Option<String>,
