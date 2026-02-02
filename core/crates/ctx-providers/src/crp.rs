@@ -934,7 +934,8 @@ fn map_crp_event(
                     },
                 );
             }
-            let payload = build_tool_started_payload(tool_call_id, tool_name, input, input_preview, seq);
+            let payload =
+                build_tool_started_payload(tool_call_id, tool_name, input, input_preview, seq);
             MappedCrpEvent {
                 events: vec![NormalizedEvent {
                     event_type: SessionEventType::ToolCall,
