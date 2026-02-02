@@ -1087,7 +1087,7 @@ fn map_crp_event(
         CrpEvent::ToolStarted {
             tool_call_id,
             tool_name,
-            tool_label: _tool_label,
+            tool_label,
             input,
             input_preview,
             ..
@@ -1101,8 +1101,14 @@ fn map_crp_event(
                     },
                 );
             }
-            let payload =
-                build_tool_started_payload(tool_call_id, tool_name, input, input_preview, seq);
+            let payload = build_tool_started_payload(
+                tool_call_id,
+                tool_name,
+                tool_label,
+                input,
+                input_preview,
+                seq,
+            );
             MappedCrpEvent {
                 events: vec![NormalizedEvent {
                     event_type: SessionEventType::ToolCall,
@@ -1143,7 +1149,7 @@ fn map_crp_event(
         CrpEvent::ToolCompleted {
             tool_call_id,
             tool_name,
-            tool_label: _tool_label,
+            tool_label,
             status,
             output,
             error,
@@ -1159,6 +1165,7 @@ fn map_crp_event(
             let payload = build_tool_completed_payload(
                 tool_call_id,
                 tool_name,
+                tool_label,
                 status,
                 output,
                 error,
@@ -1228,6 +1235,7 @@ fn map_crp_event(
 fn build_tool_started_payload(
     tool_call_id: String,
     tool_name: String,
+    tool_label: Option<String>,
     input: Option<Value>,
     input_preview: Option<Value>,
     seq: u64,
@@ -1236,6 +1244,9 @@ fn build_tool_started_payload(
     let tool_name_for_call = tool_name.clone();
     payload.insert("tool_call_id".to_string(), json!(tool_call_id.clone()));
     payload.insert("kind".to_string(), json!(tool_name.clone()));
+    if let Some(label) = tool_label.as_ref() {
+        payload.insert("tool_label".to_string(), json!(label));
+    }
     payload.insert("status".to_string(), json!("running"));
     let raw_input = input.clone().or_else(|| input_preview.clone());
     if let Some(input) = raw_input.clone() {
@@ -1250,6 +1261,7 @@ fn build_tool_started_payload(
             "id": tool_call_id,
             "name": tool_name_for_call.clone(),
             "kind": tool_name_for_call,
+            "tool_label": tool_label,
             "rawInput": raw_input,
             "status": "running",
         }),
@@ -1262,6 +1274,7 @@ fn build_tool_started_payload(
 fn build_tool_completed_payload(
     tool_call_id: String,
     tool_name: String,
+    tool_label: Option<String>,
     status: CrpToolStatus,
     output: Option<Value>,
     error: Option<String>,
@@ -1273,6 +1286,9 @@ fn build_tool_completed_payload(
     let tool_name_for_call = tool_name.clone();
     payload.insert("tool_call_id".to_string(), json!(tool_call_id.clone()));
     payload.insert("kind".to_string(), json!(tool_name.clone()));
+    if let Some(label) = tool_label.as_ref() {
+        payload.insert("tool_label".to_string(), json!(label));
+    }
     payload.insert(
         "status".to_string(),
         json!(match status {
@@ -1302,6 +1318,7 @@ fn build_tool_completed_payload(
             "id": tool_call_id,
             "name": tool_name_for_call.clone(),
             "kind": tool_name_for_call,
+            "tool_label": tool_label,
             "rawInput": raw_input,
             "rawOutput": payload.get("rawOutput").cloned(),
             "status": payload.get("status").cloned(),

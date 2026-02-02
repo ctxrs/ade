@@ -455,7 +455,10 @@ mod done_event_tests {
             serde_json::json!({"text":"raw full","content_index": 0}),
         );
         match ev {
-            Some(ResponseEvent::ReasoningContentDelta { delta, content_index }) => {
+            Some(ResponseEvent::ReasoningContentDelta {
+                delta,
+                content_index,
+            }) => {
                 assert_eq!(delta, "raw full");
                 assert_eq!(content_index, 0);
             }
@@ -470,7 +473,10 @@ mod done_event_tests {
             serde_json::json!({"text":"**Title**\n\nBody","summary_index": 2}),
         );
         match ev {
-            Some(ResponseEvent::ReasoningSummaryDelta { delta, summary_index }) => {
+            Some(ResponseEvent::ReasoningSummaryDelta {
+                delta,
+                summary_index,
+            }) => {
                 assert_eq!(delta, "**Title**\n\nBody");
                 assert_eq!(summary_index, 2);
             }
@@ -488,7 +494,10 @@ mod done_event_tests {
             }),
         );
         match ev {
-            Some(ResponseEvent::ReasoningSummaryDelta { delta, summary_index }) => {
+            Some(ResponseEvent::ReasoningSummaryDelta {
+                delta,
+                summary_index,
+            }) => {
                 assert_eq!(delta, "**Title**\n\nBody");
                 assert_eq!(summary_index, 1);
             }
