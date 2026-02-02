@@ -1389,15 +1389,25 @@ export function SessionView({
 
   const acpModels = entry?.acpModels ?? acpSessionInfo?.payload_json?.models;
   const acpCurrentModelId =
-    entry?.acpCurrentModelId ?? acpModels?.currentModelId ?? acpModels?.current_model_id;
+    entry?.acpCurrentModelId ??
+    acpModels?.currentModelId ??
+    acpModels?.current_model_id ??
+    acpModels?.models?.currentModelId ??
+    acpModels?.models?.current_model_id;
   const modelOptions = useMemo(() => {
+    const raw = acpModels as any;
+    if (!raw) return [];
     const list =
-      acpModels?.availableModels ??
-      acpModels?.available_models ??
-      acpModels?.available_models ??
-      [];
-    if (!Array.isArray(list)) return [];
-    return list
+      raw.availableModels ??
+      raw.available_models ??
+      raw.models ??
+      raw;
+    const normalized =
+      Array.isArray(list) || list == null || typeof list !== "object"
+        ? list
+        : list.availableModels ?? list.available_models ?? list.models ?? list;
+    if (!Array.isArray(normalized)) return [];
+    return normalized
       .map((m: any) => ({
         id: m.modelId ?? m.model_id ?? m.id,
         name: m.name ?? (m.modelId ?? m.model_id ?? m.id),
