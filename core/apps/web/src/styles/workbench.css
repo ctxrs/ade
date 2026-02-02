@@ -3061,7 +3061,8 @@
 }
 
 .wb-thought-row {
-  padding: 2px 4px 6px 4px;
+  padding: 8px 4px;
+  font-size: 11px;
   color: var(--muted);
   font-style: italic;
   white-space: pre-wrap;
