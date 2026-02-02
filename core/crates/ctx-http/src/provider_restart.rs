@@ -9,6 +9,7 @@ use sysinfo::{Pid, Signal, System};
 
 use ctx_core::ids::MessageId;
 use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionEventType};
+use ctx_providers::adapters::ProviderRestartMode;
 
 use crate::daemon::AppState;
 use crate::resource_utilization::{ProviderMemorySample, SystemSnapshot};
@@ -257,7 +258,10 @@ async fn restart_provider(state: &Arc<AppState>, provider_id: &str, pid: u32) {
     let mut needs_kill = true;
     if let Some(adapter) = adapter {
         match adapter
-            .restart("provider restart: sustained memory usage")
+            .restart(
+                "provider restart: sustained memory usage",
+                ProviderRestartMode::Immediate,
+            )
             .await
         {
             Ok(()) => {

@@ -170,3 +170,22 @@ export const installStreamUrl = (installId: string): string => {
     ? `/api/providers/install/${installId}/stream?token=${encodeURIComponent(token)}`
     : `/api/providers/install/${installId}/stream`;
 };
+
+export type DevRestartProvidersMode = "immediate" | "drain";
+
+export type DevRestartProvidersResult = {
+  provider_id: string;
+  status: string;
+  message?: string;
+};
+
+export type DevRestartProvidersResponse = {
+  mode: DevRestartProvidersMode;
+  results: DevRestartProvidersResult[];
+};
+
+export const devRestartProviders = (mode: DevRestartProvidersMode) =>
+  apiAny<DevRestartProvidersResponse>(`/api/dev/providers/restart`, {
+    method: "POST",
+    body: JSON.stringify({ mode }),
+  });

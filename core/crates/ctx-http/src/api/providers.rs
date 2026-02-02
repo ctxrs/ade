@@ -27,7 +27,7 @@ use ctx_providers::acp::{
     authenticate_provider, probe_provider_options, verify_provider_connection, AcpAgentConfig,
     AcpClientConfig,
 };
-use ctx_providers::adapters::ProviderStatus;
+use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
 use ctx_providers::crp::probe_crp_models;
 
 use super::redact_json_value;
@@ -1478,4 +1478,106 @@ pub(super) async fn install_stream_sse(
     let stream = initial.chain(live);
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15))))
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct DevRestartProvidersReq {
+    mode: String,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DevRestartProvidersResp {
+    mode: String,
+    results: Vec<DevRestartProvidersResult>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DevRestartProvidersResult {
+    provider_id: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+fn dev_tools_enabled() -> bool {
+    std::env::var("CTX_DEV_MODE")
+        .ok()
+        .map(|raw| {
+            let v = raw.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+fn parse_restart_mode(value: &str) -> Option<ProviderRestartMode> {
+    match value.trim().to_lowercase().as_str() {
+        "immediate" => Some(ProviderRestartMode::Immediate),
+        "drain" => Some(ProviderRestartMode::Drain),
+        _ => None,
+    }
+}
+
+pub(super) async fn dev_restart_providers(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<DevRestartProvidersReq>,
+) -> Result<Json<DevRestartProvidersResp>, (StatusCode, Json<ApiErrorResp>)> {
+    if !dev_tools_enabled() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "dev tools are disabled".to_string(),
+            }),
+        ));
+    }
+
+    let Some(mode) = parse_restart_mode(&req.mode) else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "mode must be 'immediate' or 'drain'".to_string(),
+            }),
+        ));
+    };
+    let reason = req
+        .reason
+        .unwrap_or_else(|| format!("dev restart ({})", mode.as_str()));
+
+    let adapters = {
+        let providers = state.providers.adapters.lock().await;
+        providers
+            .iter()
+            .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
+            .collect::<Vec<_>>()
+    };
+
+    let mut results = Vec::with_capacity(adapters.len());
+    for (provider_id, adapter) in adapters {
+        match adapter.restart(&reason, mode).await {
+            Ok(()) => results.push(DevRestartProvidersResult {
+                provider_id,
+                status: "ok".to_string(),
+                message: None,
+            }),
+            Err(err) => {
+                let message = err.to_string();
+                let status = if message.to_lowercase().contains("does not support") {
+                    "unsupported"
+                } else {
+                    "error"
+                };
+                results.push(DevRestartProvidersResult {
+                    provider_id,
+                    status: status.to_string(),
+                    message: Some(message),
+                });
+            }
+        }
+    }
+
+    Ok(Json(DevRestartProvidersResp {
+        mode: mode.as_str().to_string(),
+        results,
+    }))
 }

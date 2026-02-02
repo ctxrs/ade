@@ -19,7 +19,8 @@ export type SectionId =
   | "title_generation"
   | "billing"
   | "team_enterprise"
-  | "usage_analytics";
+  | "usage_analytics"
+  | "dev_tools";
 
 export type InstallSession = {
   installId: string;

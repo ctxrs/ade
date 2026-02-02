@@ -69,6 +69,21 @@ pub struct ProviderProcessInfo {
     pub label: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderRestartMode {
+    Immediate,
+    Drain,
+}
+
+impl ProviderRestartMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Immediate => "immediate",
+            Self::Drain => "drain",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TurnInput {
     pub content: String,
@@ -104,8 +119,8 @@ pub trait ProviderAdapter: Send + Sync {
     }
 
     /// Best-effort provider restart (used for memory recovery).
-    async fn restart(&self, _reason: &str) -> Result<()> {
-        anyhow::bail!("provider does not support restart");
+    async fn restart(&self, _reason: &str, mode: ProviderRestartMode) -> Result<()> {
+        anyhow::bail!("provider does not support {} restart", mode.as_str());
     }
 
     /// Whether this adapter has an in-memory live provider session for the given key.

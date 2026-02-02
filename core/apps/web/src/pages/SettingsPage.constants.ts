@@ -58,4 +58,5 @@ export const SECTIONS: Array<{
   { id: "billing", label: "Billing", group: "advanced", navHidden: true },
   { id: "team_enterprise", label: "Team & Enterprise", group: "advanced", navHidden: true },
   { id: "usage_analytics", label: "Usage Analytics", group: "advanced", navHidden: true },
+  { id: "dev_tools", label: "Dev Tools", group: "advanced" },
 ];

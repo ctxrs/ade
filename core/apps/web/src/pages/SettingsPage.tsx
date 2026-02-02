@@ -4,6 +4,7 @@ import type { User } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import {
   DictationSettings,
+  DevRestartProvidersResult,
   InstallInfo,
   MobileAccessStatus,
   EnableMobileAccessResponse,
@@ -29,6 +30,7 @@ import {
   createWorkspaceAttachment,
   deleteCodexAccount,
   deleteWorkspaceAttachment,
+  devRestartProviders,
   disableMobileAccess,
   enableMobileAccess,
   getAgentSystemPrompt,
@@ -144,6 +146,7 @@ export default function SettingsPage() {
   const [active, setActive] = useState<SectionId>(() => sectionFromHash(window.location.hash) ?? "general");
   const [query, setQuery] = useState("");
   const supabase = useMemo(() => getSupabaseClient(), []);
+  const devToolsEnabled = import.meta.env.DEV;
   const [theme, setTheme] = useState<ThemeMode>(() => resolveThemeMode());
   const themeVariant = useThemeVariant();
   const qrFgColor = readCssVar("--text", themeVariant === "dark" ? "#d4d4d4" : "#3b3b3b");
@@ -193,6 +196,9 @@ export default function SettingsPage() {
     }
   });
   const [entitlementsBusy, setEntitlementsBusy] = useState(false);
+  const [devRestartBusy, setDevRestartBusy] = useState(false);
+  const [devRestartError, setDevRestartError] = useState<string | null>(null);
+  const [devRestartResults, setDevRestartResults] = useState<DevRestartProvidersResult[] | null>(null);
 
   const [mobileStatus, setMobileStatus] = useState<MobileAccessStatus | null>(null);
   const [mobileStatusBusy, setMobileStatusBusy] = useState(false);
@@ -1634,10 +1640,12 @@ export default function SettingsPage() {
 
   const sidebarSections = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const all = SECTIONS.filter((section) => !section.navHidden);
+    const all = SECTIONS.filter(
+      (section) => !section.navHidden && (devToolsEnabled || section.id !== "dev_tools"),
+    );
     if (!q) return all;
     return all.filter((s) => s.label.toLowerCase().includes(q));
-  }, [query]);
+  }, [query, devToolsEnabled]);
 
   const workspaceFromQuery = useMemo(() => {
     const ws = new URLSearchParams(location.search).get("ws");
@@ -1673,6 +1681,28 @@ export default function SettingsPage() {
       await handleSaveSubagentPrompt();
     }
   }, [workspaceId, agentPromptDirty, subagentPromptDirty, handleSaveAgentPrompt, handleSaveSubagentPrompt]);
+
+  const handleDevRestart = useCallback(
+    async (mode: "drain" | "immediate") => {
+      if (!devToolsEnabled || devRestartBusy) return;
+      if (mode === "immediate") {
+        const confirmed = window.confirm("Immediate restart will interrupt running provider work. Continue?");
+        if (!confirmed) return;
+      }
+      setDevRestartBusy(true);
+      setDevRestartError(null);
+      setDevRestartResults(null);
+      try {
+        const response = await devRestartProviders(mode);
+        setDevRestartResults(response.results);
+      } catch (err: any) {
+        setDevRestartError(err?.message ?? String(err));
+      } finally {
+        setDevRestartBusy(false);
+      }
+    },
+    [devToolsEnabled, devRestartBusy, devRestartProviders],
+  );
 
   const backLink = useMemo(() => {
     const ws = new URLSearchParams(location.search).get("ws");
@@ -3743,6 +3773,59 @@ export default function SettingsPage() {
           ) : (
             <div className="settings-empty">Codex is not installed on this host.</div>
           )}
+        </>
+      );
+    }
+
+    if (active === "dev_tools") {
+      if (!devToolsEnabled) {
+        return <div className="settings-empty">Dev tools are only available in development builds.</div>;
+      }
+      return (
+        <>
+          <Card title="Provider Restart">
+            <Row
+              title="Drain all providers"
+              description="Let active turns finish, then restart provider processes."
+              control={
+                <button
+                  type="button"
+                  className="settings-btn settings-btn-secondary"
+                  onClick={() => handleDevRestart("drain")}
+                  disabled={devRestartBusy}
+                >
+                  {devRestartBusy ? "Draining..." : "Drain"}
+                </button>
+              }
+            />
+            <Row
+              title="Immediate restart"
+              description="Interrupt running turns and restart provider processes immediately."
+              control={
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => handleDevRestart("immediate")}
+                  disabled={devRestartBusy}
+                >
+                  {devRestartBusy ? "Restarting..." : "Restart now"}
+                </button>
+              }
+            />
+          </Card>
+          {devRestartError ? (
+            <div className="settings-banner settings-banner-error">{devRestartError}</div>
+          ) : null}
+          {devRestartResults ? (
+            <div className="settings-banner">
+              {devRestartResults.map((result) => (
+                <div key={result.provider_id} className="settings-meta-line">
+                  {result.provider_id}: {result.status}
+                  {result.message ? ` — ${result.message}` : ""}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </>
       );
     }

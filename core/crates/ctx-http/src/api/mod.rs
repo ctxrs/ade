@@ -233,6 +233,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/providers/install/:install_id/stream",
             get(install_stream_sse),
         )
+        .route("/api/dev/providers/restart", post(dev_restart_providers))
         .route("/api/lsp/status", get(lsp_status))
         .route("/api/lsp/catalog", get(lsp_catalog_list))
         .route(

@@ -2,6 +2,8 @@
 
 CARGO_TARGET_DIR ?= $(HOME)/.cache/cargo/ctx-monorepo
 CTX_MCP_COMMAND ?= $(CARGO_TARGET_DIR)/debug/ctx-mcp
+CTX_CRP_PROFILE ?= debug
+CTX_DEV_MODE ?= 1
 CTX_DAEMON_PORT ?= 4399
 CTX_DAEMON_BIND ?= 127.0.0.1:$(CTX_DAEMON_PORT)
 CTX_DATA_DIR ?=
@@ -26,6 +28,7 @@ DEV_ACP_HEAP_PROFILE_LG_SAMPLE ?= 19
 DEV_RESOURCE_TELEMETRY_INTERVAL_MS ?= 5000
 DEV_RESOURCE_TELEMETRY_LOCAL_MAX_BYTES ?= 209715200
 DEV_ENABLE_CODEX_CRP ?= 1
+DEV_MODE ?= 1
 
 DEV_LOG_ENV := $(if $(filter 1,$(DEV_LOG)),\
 	RUST_LOG=$(if $(RUST_LOG),$(RUST_LOG),$(DEV_RUST_LOG)) \
@@ -59,6 +62,8 @@ DEV_DEBUG_SETENV := $(if $(filter 1,$(DEV_DEBUG)),\
 )
 DEV_CRP_ENV := CTX_ENABLE_CODEX_CRP=$(if $(CTX_ENABLE_CODEX_CRP),$(CTX_ENABLE_CODEX_CRP),$(DEV_ENABLE_CODEX_CRP))
 DEV_CRP_SETENV := --setenv CTX_ENABLE_CODEX_CRP=$(if $(CTX_ENABLE_CODEX_CRP),$(CTX_ENABLE_CODEX_CRP),$(DEV_ENABLE_CODEX_CRP))
+DEV_MISC_ENV := CTX_DEV_MODE=$(if $(CTX_DEV_MODE),$(CTX_DEV_MODE),$(DEV_MODE))
+DEV_MISC_SETENV := --setenv CTX_DEV_MODE=$(if $(CTX_DEV_MODE),$(CTX_DEV_MODE),$(DEV_MODE))
 export CARGO_TARGET_DIR
 
 ifeq ($(SUPABASE_PROD),1)
@@ -81,6 +86,7 @@ ifeq ($(SUPABASE_FUNCTIONS),1)
 endif
 
 dev: dev-preflight supabase-local supabase-functions
+	@CTX_DATA_DIR="$(CTX_DATA_DIR)" CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" ../scripts/dev_install_codex_crp.sh
 	cargo build -p ctx-mcp
 ifeq ($(shell uname -s),Linux)
 	@if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then \
@@ -93,16 +99,17 @@ ifeq ($(shell uname -s),Linux)
 			$(DEV_LOG_SETENV) \
 			$(DEV_DEBUG_SETENV) \
 			$(DEV_CRP_SETENV) \
+			$(DEV_MISC_SETENV) \
 			--setenv CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) \
 			--setenv CTX_BUNDLE_DIR="$$bundle_dir" \
 			cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
 	else \
 		bundle_dir="$$(../scripts/ensure_bundled_harnesses.sh)"; \
-		$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
+		$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) $(DEV_MISC_ENV) CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
 	fi
 else
 	bundle_dir="$$(../scripts/ensure_bundled_harnesses.sh)"; \
-	$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
+	$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) $(DEV_MISC_ENV) CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
 endif
 
 dev-preflight:

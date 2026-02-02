@@ -24,7 +24,10 @@ export const saveTextFile = async (name: string, contents: string) => {
 export function sectionFromHash(hash: string): SectionId | null {
   const raw = String(hash || "").replace(/^#/, "").trim();
   if (!raw) return null;
-  return (SECTIONS.find((s) => s.id === raw)?.id ?? null) as any;
+  const match = SECTIONS.find((s) => s.id === raw);
+  if (!match) return null;
+  if (match.id === "dev_tools" && !import.meta.env.DEV) return null;
+  return (match.id ?? null) as any;
 }
 
 export function clampPct(n: number): number {
