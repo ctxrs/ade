@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use base64::Engine;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
@@ -26,6 +27,8 @@ use crate::events::NormalizedEvent;
 const CRP_VERSION: u32 = 1;
 const DEFAULT_CTX_MCP_TOOL_TIMEOUT_SECS: u64 = 2 * 60 * 60;
 const CRP_MODEL_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const CODEX_CRP_DUMP_CODEX_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CODEX_EVENTS_PATH";
+const CODEX_CRP_DUMP_CRP_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CRP_EVENTS_PATH";
 
 #[derive(Clone)]
 pub struct Tier1CrpAdapter {
@@ -659,6 +662,12 @@ struct CrpProcess {
     shutdown: watch::Sender<Option<String>>,
 }
 
+struct CrpLogPaths {
+    codex_events: PathBuf,
+    crp_events: PathBuf,
+    stderr: PathBuf,
+}
+
 impl CrpProcess {
     async fn spawn(
         agent: &CrpAgentConfig,
@@ -671,6 +680,20 @@ impl CrpProcess {
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+        let mut stderr_log_path: Option<PathBuf> = None;
+        if let Some(paths) = crp_log_paths(env, &agent.provider_id) {
+            if let Some(parent) = paths.stderr.parent() {
+                if std::fs::create_dir_all(parent).is_ok() {
+                    if !env.contains_key(CODEX_CRP_DUMP_CODEX_EVENTS_ENV) {
+                        cmd.env(CODEX_CRP_DUMP_CODEX_EVENTS_ENV, &paths.codex_events);
+                    }
+                    if !env.contains_key(CODEX_CRP_DUMP_CRP_EVENTS_ENV) {
+                        cmd.env(CODEX_CRP_DUMP_CRP_EVENTS_ENV, &paths.crp_events);
+                    }
+                    stderr_log_path = Some(paths.stderr);
+                }
+            }
+        }
         for (k, v) in env {
             cmd.env(k, v);
         }
@@ -713,7 +736,7 @@ impl CrpProcess {
         });
         let stderr_process = Arc::clone(&process);
         tokio::spawn(async move {
-            stderr_pump(stderr_process, stderr).await;
+            stderr_pump(stderr_process, stderr, stderr_log_path).await;
         });
 
         Ok(process)
@@ -758,6 +781,19 @@ impl CrpProcess {
     }
 }
 
+fn crp_log_paths(env: &HashMap<String, String>, provider_id: &str) -> Option<CrpLogPaths> {
+    let data_root = env.get("CTX_DATA_ROOT")?;
+    let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%SZ");
+    let suffix = Uuid::new_v4().simple().to_string();
+    let base = format!("crp-{}-{}-{}", provider_id, timestamp, suffix);
+    let dir = Path::new(data_root).join("logs").join("providers");
+    Some(CrpLogPaths {
+        codex_events: dir.join(format!("{base}.codex-events.jsonl")),
+        crp_events: dir.join(format!("{base}.crp-events.jsonl")),
+        stderr: dir.join(format!("{base}.stderr.log")),
+    })
+}
+
 async fn stdout_pump(process: Arc<CrpProcess>, stdout: impl tokio::io::AsyncRead + Unpin) {
     // Debugging aid: when set, dump raw CRP stdout lines from the runtime to this file.
     // This lets us confirm what the runtime emitted without involving storage/UI layers.
@@ -798,12 +834,34 @@ async fn stdout_pump(process: Arc<CrpProcess>, stdout: impl tokio::io::AsyncRead
     }
 }
 
-async fn stderr_pump(process: Arc<CrpProcess>, stderr: impl tokio::io::AsyncRead + Unpin) {
+async fn stderr_pump(
+    process: Arc<CrpProcess>,
+    stderr: impl tokio::io::AsyncRead + Unpin,
+    log_path: Option<PathBuf>,
+) {
+    let mut log_file = match log_path {
+        Some(path) => tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .await
+            .ok(),
+        None => None,
+    };
     let mut lines = BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
+        }
+        if let Some(file) = log_file.as_mut() {
+            let redacted = redact_sensitive(trimmed);
+            if file.write_all(redacted.as_bytes()).await.is_err() {
+                log_file = None;
+            } else {
+                let _ = file.write_all(b"\n").await;
+                let _ = file.flush().await;
+            }
         }
         tracing::debug!(
             provider_id = %process.agent.provider_id,
@@ -811,6 +869,48 @@ async fn stderr_pump(process: Arc<CrpProcess>, stderr: impl tokio::io::AsyncRead
             trimmed
         );
     }
+}
+
+fn redact_sensitive(input: &str) -> String {
+    fn redact_after_marker(mut s: String, marker: &str) -> String {
+        let redacted = "[REDACTED]";
+        let mut search_from = 0usize;
+        while let Some(rel) = s[search_from..].find(marker) {
+            let marker_start = search_from + rel;
+            let start = marker_start + marker.len();
+            if start >= s.len() {
+                break;
+            }
+            if s[start..].starts_with(redacted) {
+                search_from = start + redacted.len();
+                continue;
+            }
+
+            let mut end = s.len();
+            for (i, ch) in s[start..].char_indices() {
+                if ch.is_whitespace() || ch == '"' || ch == '\'' || ch == '&' {
+                    end = start + i;
+                    break;
+                }
+            }
+
+            s.replace_range(start..end, redacted);
+            search_from = start + redacted.len();
+        }
+        s
+    }
+
+    let mut out = input.to_string();
+    out = redact_after_marker(out, "Bearer ");
+    out = redact_after_marker(out, "bearer ");
+    out = redact_after_marker(out, "Authorization: Bearer ");
+    out = redact_after_marker(out, "authorization: Bearer ");
+    out = redact_after_marker(out, "token=");
+    out = redact_after_marker(out, "TOKEN=");
+    out = redact_after_marker(out, "CTX_AUTH_TOKEN=");
+    out = redact_after_marker(out, "ctxAuthToken\":\"");
+    out = redact_after_marker(out, "ctx_auth_token\":\"");
+    out
 }
 
 #[derive(Debug, Serialize)]
@@ -1052,6 +1152,8 @@ struct CrpTurnError {
     message: String,
     #[serde(default)]
     kind: Option<String>,
+    #[serde(default)]
+    details: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1281,10 +1383,15 @@ fn map_crp_event(
                         .as_ref()
                         .map(|err| err.message.clone())
                         .unwrap_or_else(|| "crp_turn_error".to_string());
+                    let kind = error.as_ref().and_then(|err| err.kind.clone());
+                    let details = error.as_ref().and_then(|err| err.details.clone());
                     let mut payload = serde_json::Map::new();
                     payload.insert("message".to_string(), json!(message));
-                    if let Some(kind) = error.and_then(|err| err.kind) {
+                    if let Some(kind) = kind {
                         payload.insert("kind".to_string(), json!(kind));
+                    }
+                    if let Some(details) = details {
+                        payload.insert("details".to_string(), json!(details));
                     }
                     payload.insert("crp_seq".to_string(), json!(seq));
                     (SessionEventType::Error, Value::Object(payload))

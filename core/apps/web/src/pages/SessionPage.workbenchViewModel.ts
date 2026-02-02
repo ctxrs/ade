@@ -2036,34 +2036,78 @@ function readNonEmptyString(value: unknown): string | null {
   return text ? text : null;
 }
 
+function extractErrorDetails(payload: any): string | null {
+  if (!payload) return null;
+  const direct =
+    readNonEmptyString(payload.details) ??
+    readNonEmptyString(payload.detail) ??
+    readNonEmptyString(payload.additional_details) ??
+    readNonEmptyString(payload.additionalDetails);
+  if (direct) return direct;
+
+  const codexInfo = payload.codex_error_info ?? payload.codexErrorInfo;
+  const codexText = extractErrorMessageFromObject(codexInfo);
+  if (codexText) return codexText;
+
+  const kind = readNonEmptyString(payload.kind);
+  return kind;
+}
+
 function extractErrorMessage(payload: any): string | null {
   if (!payload) return null;
+  const details = extractErrorDetails(payload);
   const direct =
     readNonEmptyString(payload.message) ??
     readNonEmptyString(payload.error) ??
     readNonEmptyString(payload.error_message) ??
     readNonEmptyString(payload.errorMessage);
-  if (direct) return direct;
+  if (direct) {
+    if (details && !direct.includes(details)) {
+      return `${direct}\nDetails: ${details}`;
+    }
+    return direct;
+  }
 
   const acpError = payload.acp_error ?? payload.acpError;
   if (acpError && typeof acpError === "object") {
     const acpDataText = extractErrorMessageFromObject((acpError as any).data);
-    if (acpDataText) return acpDataText;
+    if (acpDataText) {
+      if (details && !acpDataText.includes(details)) {
+        return `${acpDataText}\nDetails: ${details}`;
+      }
+      return acpDataText;
+    }
   }
   const acpErrorText = extractErrorMessageFromObject(acpError);
-  if (acpErrorText) return acpErrorText;
+  if (acpErrorText) {
+    if (details && !acpErrorText.includes(details)) {
+      return `${acpErrorText}\nDetails: ${details}`;
+    }
+    return acpErrorText;
+  }
 
   const update = payload.acp_update ?? payload.acpUpdate ?? payload.update;
   const updateText = extractErrorMessageFromObject(update);
-  if (updateText) return updateText;
+  if (updateText) {
+    if (details && !updateText.includes(details)) {
+      return `${updateText}\nDetails: ${details}`;
+    }
+    return updateText;
+  }
 
   const meta = update?._meta ?? update?.meta ?? payload._meta ?? payload.meta ?? null;
-  return (
+  const metaText =
     readNonEmptyString(meta?.statusText) ??
     readNonEmptyString(meta?.status_text) ??
     readNonEmptyString(meta?.message) ??
-    readNonEmptyString(meta?.error)
-  );
+    readNonEmptyString(meta?.error);
+  if (metaText) {
+    if (details && !metaText.includes(details)) {
+      return `${metaText}\nDetails: ${details}`;
+    }
+    return metaText;
+  }
+  return details;
 }
 
 function extractErrorMessageFromObject(value: any): string | null {

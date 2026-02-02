@@ -12,6 +12,7 @@ use crate::protocol::CrpModelInfo;
 use crate::protocol::CrpSessionConfig;
 use crate::protocol::CrpToolOutputStream;
 use crate::protocol::CrpToolStatus;
+use crate::protocol::CrpTurnError;
 use crate::protocol::CrpTurnStatus;
 use async_trait::async_trait;
 use base64::Engine;
@@ -54,6 +55,7 @@ use codex_protocol::items::TurnItem;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::parse_command::ParsedCommand;
+use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
 use mcp_types::CallToolResult;
@@ -2678,6 +2680,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         session_id,
                         turn_id: turn.turn_id.clone(),
                         status: CrpTurnStatus::Success,
+                        error: None,
                     },
                 ));
             }
@@ -2698,21 +2701,51 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         session_id,
                         turn_id: turn.turn_id.clone(),
                         status,
+                        error: None,
                     },
                 )]
             } else {
                 Vec::new()
             }
         }
-        EventMsg::Error(_) | EventMsg::StreamError(_) => {
+        EventMsg::Error(ev) => {
             let turn = ensure_turn(tracker, &event.id);
             if mark_completed(turn) {
+                let error = build_crp_turn_error(
+                    "error",
+                    ev.message,
+                    ev.codex_error_info.as_ref(),
+                    None,
+                );
                 vec![(
                     CrpChannel::Control,
                     CrpEvent::TurnCompleted {
                         session_id,
                         turn_id: turn.turn_id.clone(),
                         status: CrpTurnStatus::Error,
+                        error: Some(error),
+                    },
+                )]
+            } else {
+                Vec::new()
+            }
+        }
+        EventMsg::StreamError(ev) => {
+            let turn = ensure_turn(tracker, &event.id);
+            if mark_completed(turn) {
+                let error = build_crp_turn_error(
+                    "stream_error",
+                    ev.message,
+                    ev.codex_error_info.as_ref(),
+                    ev.additional_details.as_deref(),
+                );
+                vec![(
+                    CrpChannel::Control,
+                    CrpEvent::TurnCompleted {
+                        session_id,
+                        turn_id: turn.turn_id.clone(),
+                        status: CrpTurnStatus::Error,
+                        error: Some(error),
                     },
                 )]
             } else {
@@ -2721,6 +2754,37 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
         }
         _ => Vec::new(),
     }
+}
+
+fn build_crp_turn_error(
+    kind: &str,
+    message: String,
+    codex_error_info: Option<&CodexErrorInfo>,
+    additional_details: Option<&str>,
+) -> CrpTurnError {
+    let mut details = Vec::new();
+    if let Some(info) = codex_error_info {
+        details.push(format_codex_error_info(info));
+    }
+    if let Some(extra) = additional_details {
+        let trimmed = extra.trim();
+        if !trimmed.is_empty() {
+            details.push(trimmed.to_string());
+        }
+    }
+    CrpTurnError {
+        message,
+        kind: Some(kind.to_string()),
+        details: if details.is_empty() {
+            None
+        } else {
+            Some(details.join("\n"))
+        },
+    }
+}
+
+fn format_codex_error_info(info: &CodexErrorInfo) -> String {
+    serde_json::to_string(info).unwrap_or_else(|_| format!("{info:?}"))
 }
 
 fn ensure_turn<'a>(tracker: &'a mut TurnTracker, turn_id: &str) -> &'a mut TurnState {
