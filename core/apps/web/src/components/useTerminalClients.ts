@@ -9,6 +9,22 @@ import { readCssVar, useThemeVariant, withAlpha, type ThemeVariant } from "../ut
 
 export type TerminalConnectionStatus = "connected" | "reconnecting" | "disconnected";
 
+function getE2ETerminalRegistry(): Map<string, Terminal> | null {
+  // E2E-only hook: allow Playwright tests to introspect xterm state (buffer ydisp/baseY)
+  // without relying on renderer-specific DOM text.
+  if (typeof window === "undefined") return null;
+  try {
+    if (window.sessionStorage.getItem("ctxE2E") !== "1") return null;
+  } catch {
+    return null;
+  }
+  const w = window as any;
+  if (!w.__ctxE2ETerminals) {
+    w.__ctxE2ETerminals = new Map<string, Terminal>();
+  }
+  return w.__ctxE2ETerminals as Map<string, Terminal>;
+}
+
 export type TerminalClient = {
   id: string;
   terminal: Terminal;
@@ -206,6 +222,11 @@ const DISCONNECTED_AFTER_ATTEMPTS = 3;
 const KEEPALIVE_INTERVAL_MS = 25_000;
 const KEEPALIVE_TIMEOUT_MS = 75_000;
 
+// When the terminal is hidden/collapsed (height 0), xterm can get into a bad scroll state
+// if we keep feeding it output. Buffer a bounded amount while unfittable and flush on the
+// next successful fit.
+const PENDING_OUTPUT_MAX_BYTES = 512 * 1024;
+
 function createClient(
   terminal: TerminalSession,
   themeVariant: ThemeVariant,
@@ -224,6 +245,7 @@ function createClient(
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
   const cleanupLinks = installWebLinksAddon(term);
+  getE2ETerminalRegistry()?.set(id, term);
 
   let client: TerminalClient;
   let socket: WebSocket | null = null;
@@ -236,6 +258,61 @@ function createClient(
   let status: TerminalSession["status"] = terminal.status;
   let exitCode: number | null = terminal.exit_code ?? null;
   let lastServerMessageAt = Date.now();
+  let scrollToBottomOnNextFit = true;
+  let pendingOutput: Array<string | Uint8Array | null> = [];
+  let pendingOutputHead = 0;
+  let pendingOutputBytes = 0;
+
+  const pendingSizeOf = (chunk: string | Uint8Array) =>
+    typeof chunk === "string" ? chunk.length : chunk.byteLength;
+  const hasPendingOutput = () => pendingOutputHead < pendingOutput.length;
+
+  const maybeCompactPendingOutput = () => {
+    // Avoid O(n) shifting on drops while still keeping memory bounded.
+    if (pendingOutputHead < 128) return;
+    if (pendingOutputHead * 2 < pendingOutput.length) return;
+    pendingOutput = pendingOutput.slice(pendingOutputHead);
+    pendingOutputHead = 0;
+  };
+
+  const enqueuePendingOutput = (chunk: string | Uint8Array) => {
+    pendingOutput.push(chunk);
+    pendingOutputBytes += pendingSizeOf(chunk);
+    while (pendingOutputBytes > PENDING_OUTPUT_MAX_BYTES && hasPendingOutput()) {
+      const dropped = pendingOutput[pendingOutputHead];
+      // Release dropped chunks immediately to keep actual memory usage bounded even if
+      // compaction hasn't run yet (e.g. a few large WS messages while the panel is hidden).
+      pendingOutput[pendingOutputHead] = null;
+      pendingOutputHead += 1;
+      if (dropped !== null) {
+        pendingOutputBytes -= pendingSizeOf(dropped);
+      }
+    }
+    maybeCompactPendingOutput();
+  };
+
+  const flushPendingOutput = (): boolean => {
+    if (!hasPendingOutput()) return false;
+    const chunks = pendingOutput;
+    const start = pendingOutputHead;
+    const end = chunks.length;
+    pendingOutputHead = 0;
+    pendingOutput = [];
+    pendingOutputBytes = 0;
+    for (let i = start; i < end; i += 1) {
+      const chunk = chunks[i];
+      if (chunk === null) continue;
+      term.write(chunk);
+    }
+    return true;
+  };
+
+  const scrollToBottomIfRequested = () => {
+    if (!scrollToBottomOnNextFit) return;
+    scrollToBottomOnNextFit = false;
+    term.scrollToBottom();
+  };
+
   const canFit = () => {
     if (!element || !element.isConnected) return false;
     if (element.closest(".wb-terminal-group-hidden")) return false;
@@ -253,6 +330,33 @@ function createClient(
     if (!canFit()) return;
     fitAddon.fit();
     sendResize();
+    // xterm can get a stale viewport after being hidden/collapsed; force a repaint.
+    term.refresh(0, Math.max(0, term.rows - 1));
+    // If we buffered output while hidden, flush after we've established correct cols/rows.
+    if (flushPendingOutput()) {
+      term.refresh(0, Math.max(0, term.rows - 1));
+    }
+    scrollToBottomIfRequested();
+  };
+
+  const writeOrBufferOutput = (chunk: string | Uint8Array) => {
+    if (!canFit()) {
+      enqueuePendingOutput(chunk);
+      return;
+    }
+
+    // Preserve stream ordering across hidden->visible transitions. Otherwise, new
+    // chunks can be written while older buffered chunks flush later in `fitNow()`.
+    if (hasPendingOutput()) {
+      fitNow();
+      // If we couldn't flush (visibility flipped again), keep buffering to avoid reordering.
+      if (hasPendingOutput()) {
+        enqueuePendingOutput(chunk);
+        return;
+      }
+    }
+
+    term.write(chunk);
   };
 
   const updateInputState = () => {
@@ -356,15 +460,17 @@ function createClient(
         } catch {
           // ignore
         }
-        term.write(ev.data);
+        writeOrBufferOutput(ev.data);
         return;
       }
       if (ev.data instanceof ArrayBuffer) {
-        term.write(new Uint8Array(ev.data));
+        writeOrBufferOutput(new Uint8Array(ev.data));
         return;
       }
       if (ev.data instanceof Blob) {
-        void ev.data.arrayBuffer().then((buf) => term.write(new Uint8Array(buf)));
+        void ev.data.arrayBuffer().then((buf) => {
+          writeOrBufferOutput(new Uint8Array(buf));
+        });
       }
     });
   };
@@ -406,6 +512,7 @@ function createClient(
       cleanupLinks();
       socket?.close();
       socket = null;
+      getE2ETerminalRegistry()?.delete(id);
       term.dispose();
     },
     reconnect: () => {

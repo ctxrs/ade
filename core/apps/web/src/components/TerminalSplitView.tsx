@@ -104,18 +104,17 @@ function TerminalLeaf({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalId = leaf.terminalId;
+  const client = clients.current.get(terminalId);
   useLayoutEffect(() => {
     const el = hostRef.current;
     if (!el) return;
-    const client = clients.current.get(terminalId);
     if (!client) return;
     client.attach(el);
     const ro = new ResizeObserver(() => client.fit());
     ro.observe(el);
     return () => ro.disconnect();
-  }, [clients, terminalId]);
+  }, [client, terminalId]);
 
-  const client = clients.current.get(terminalId);
   const connectionStatus = client?.connectionStatus ?? "disconnected";
   const exited = client?.status === "exited";
   const statusText = exited

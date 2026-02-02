@@ -6,6 +6,8 @@ const test = base.extend({
   context: async ({ context }, use) => {
     await context.addInitScript((token: string) => {
       window.sessionStorage.setItem("ctxAuthToken", token);
+      // Used by a few tests to enable app-side E2E hooks (disabled in normal usage).
+      window.sessionStorage.setItem("ctxE2E", "1");
     }, AUTH_TOKEN);
     await use(context);
   },

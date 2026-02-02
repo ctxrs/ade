@@ -227,7 +227,6 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, TerminalPanelProps>
     }
   }, [open]);
 
-
   useEffect(() => {
     if (!layoutHydrated) return;
     setPanelState((prev) => {
