@@ -14,7 +14,17 @@ vi.mock("../api/client", () => {
   const idToString = (id: any): string => (typeof id === "string" ? id : id?.["0"]);
   return {
     idToString,
+    authToken: vi.fn(() => null),
+    getDaemonClientConfig: vi.fn(() => ({
+      baseUrl: "",
+      wsBaseUrl: "",
+      authToken: null,
+      runId: null,
+    })),
     getDaemonBaseUrl: vi.fn(() => ""),
+    resolveDaemonBaseUrl: vi.fn(() => ""),
+    resolveDaemonWsBaseUrl: vi.fn(() => "ws://localhost"),
+    subscribeDaemonConfig: vi.fn(() => () => {}),
     getHealth: vi.fn(async () => ({
       version: "0.0.0",
       daemon_version: "0.0.0",

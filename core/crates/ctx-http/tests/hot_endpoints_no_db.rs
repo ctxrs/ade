@@ -90,12 +90,14 @@ async fn hot_endpoints_use_cache_when_db_unavailable() {
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     let mut cached_snapshot = state
+        .workspaces
         .workspace_active_snapshot
         .active_snapshot(ws.id, 50)
         .await;
     while cached_snapshot.active.tasks.is_empty() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
         cached_snapshot = state
+            .workspaces
             .workspace_active_snapshot
             .active_snapshot(ws.id, 50)
             .await;
@@ -108,10 +110,18 @@ async fn hot_endpoints_use_cache_when_db_unavailable() {
         .cache_workspace_active_snapshot(cached_snapshot.clone())
         .await;
 
-    let mut cached_heads = state.workspace_active_snapshot.active_heads(ws.id).await;
+    let mut cached_heads = state
+        .workspaces
+        .workspace_active_snapshot
+        .active_heads(ws.id)
+        .await;
     while cached_heads.heads.is_empty() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
-        cached_heads = state.workspace_active_snapshot.active_heads(ws.id).await;
+        cached_heads = state
+            .workspaces
+            .workspace_active_snapshot
+            .active_heads(ws.id)
+            .await;
     }
     assert!(
         !cached_heads.heads.is_empty(),

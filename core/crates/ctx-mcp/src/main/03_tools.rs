@@ -332,25 +332,20 @@ async fn agent_init_call(
         .get("agents")
         .and_then(|v| v.as_array())
         .context("missing agents")?;
-    let response_mode = args
-        .get("response_mode")
+    let worktree = args
+        .get("worktree")
         .and_then(|v| v.as_str())
         .map(|v| v.trim())
         .filter(|v| !v.is_empty())
-        .map(|v| v.to_string());
+        .context("missing worktree")?;
     let tool_call_id = args
         .get("tool_call_id")
         .and_then(|v| v.as_str())
         .map(|v| v.trim())
         .filter(|v| !v.is_empty())
         .map(|v| v.to_string());
-    let path = format!("/api/mcp/sessions/{}/agent_init", session_id);
-    let mut body = json!({ "agents": agents });
-    if let Some(response_mode) = response_mode {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("response_mode".to_string(), Value::String(response_mode));
-        }
-    }
+    let path = format!("/api/mcp/sessions/{}/subagent_init", session_id);
+    let mut body = json!({ "agents": agents, "worktree": worktree });
     if let Some(tool_call_id) = tool_call_id {
         if let Some(obj) = body.as_object_mut() {
             obj.insert("tool_call_id".to_string(), Value::String(tool_call_id));
@@ -358,13 +353,6 @@ async fn agent_init_call(
     }
     let mut response = daemon_post_json(client, daemon_url, &path, &body).await?;
     if let Some(obj) = response.as_object_mut() {
-        if let Some(invocation_id) = obj
-            .remove("invocation_id")
-            .and_then(|v| v.as_str().map(|s| s.to_string()))
-        {
-            let group_id = subagent_group_id_for_invocation(&invocation_id);
-            obj.insert("subagent_group_id".to_string(), Value::String(group_id));
-        }
         if let Some(results) = obj.get_mut("results") {
             map_subagent_results(results);
         }
@@ -378,70 +366,29 @@ async fn agent_reply_call(
     args: &Value,
 ) -> Result<Value> {
     let parent_session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let subagent_id = args
-        .get("subagent_id")
+    let label = args
+        .get("label")
         .and_then(|v| v.as_str())
-        .context("missing subagent_id")?;
-    let session_id = session_id_for_subagent(subagent_id).context("unknown subagent_id")?;
+        .context("missing label")?;
     let prompt = args
         .get("prompt")
         .and_then(|v| v.as_str())
         .context("missing prompt")?;
-    let path = format!("/api/mcp/sessions/{}/agent_reply", parent_session_id);
-    let mut response = daemon_post_json(
+    let path = format!("/api/mcp/sessions/{}/subagent_reply", parent_session_id);
+    let response = daemon_post_json(
         client,
         daemon_url,
         &path,
-        &json!({ "session_id": session_id, "prompt": prompt }),
+        &json!({ "label": label, "prompt": prompt }),
     )
     .await?;
-    if let Some(obj) = response.as_object_mut() {
-        if let Some(session_id) = obj
-            .remove("session_id")
-            .and_then(|v| v.as_str().map(|s| s.to_string()))
-        {
-            let mapped = subagent_id_for_session(&session_id);
-            obj.insert("subagent_id".to_string(), Value::String(mapped));
-        }
-    }
     Ok(response)
 }
 
-async fn subagent_invocations_list_call(
-    client: &reqwest::Client,
-    daemon_url: &str,
-    args: &Value,
-) -> Result<Value> {
-    let _ = args;
+async fn subagent_list_call(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
     let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let path = format!("/api/sessions/{}/subagent_invocations", session_id);
-    let response = daemon_get_json(client, daemon_url, &path).await?;
-    let mut mapped = Vec::new();
-    if let Some(items) = response.as_array() {
-        for item in items {
-            if let Some(value) = map_subagent_invocation_summary(item) {
-                mapped.push(value);
-            }
-        }
-    }
-    Ok(Value::Array(mapped))
-}
-
-async fn subagent_invocation_get_call(
-    client: &reqwest::Client,
-    daemon_url: &str,
-    args: &Value,
-) -> Result<Value> {
-    let group_id = args
-        .get("subagent_group_id")
-        .and_then(|v| v.as_str())
-        .context("missing subagent_group_id")?;
-    let invocation_id =
-        invocation_id_for_subagent_group(group_id).context("unknown subagent_group_id")?;
-    let invocation_id = urlencoding::encode(&invocation_id);
-    let path = format!("/api/subagent_invocations/{invocation_id}");
-    let response = daemon_get_json(client, daemon_url, &path).await?;
-    map_subagent_invocation_detail(&response).context("invalid subagent invocation response")
+    let path = format!("/api/mcp/sessions/{}/subagent_list", session_id);
+    daemon_get_json(client, daemon_url, &path).await
 }
 
 async fn subagent_wait_call(
@@ -450,33 +397,30 @@ async fn subagent_wait_call(
     args: &Value,
 ) -> Result<Value> {
     let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let group_id = args
-        .get("subagent_group_id")
-        .and_then(|v| v.as_str())
-        .context("missing subagent_group_id")?;
-    let invocation_id =
-        invocation_id_for_subagent_group(group_id).context("unknown subagent_group_id")?;
     let path = format!("/api/mcp/sessions/{}/subagent_wait", session_id);
     let mut response = daemon_post_json(
         client,
         daemon_url,
         &path,
-        &json!({ "invocation_id": invocation_id }),
+        args,
     )
     .await?;
     if let Some(obj) = response.as_object_mut() {
-        if let Some(invocation_id) = obj
-            .remove("invocation_id")
-            .and_then(|v| v.as_str().map(|s| s.to_string()))
-        {
-            let mapped = subagent_group_id_for_invocation(&invocation_id);
-            obj.insert("subagent_group_id".to_string(), Value::String(mapped));
-        }
         if let Some(results) = obj.get_mut("results") {
             map_subagent_results(results);
         }
     }
     Ok(response)
+}
+
+async fn subagent_interrupt_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    args: &Value,
+) -> Result<Value> {
+    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
+    let path = format!("/api/mcp/sessions/{}/subagent_interrupt", session_id);
+    daemon_post_json(client, daemon_url, &path, args).await
 }
 
 async fn set_artifacts(

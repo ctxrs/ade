@@ -986,6 +986,7 @@ async fn handle_command(
             let config = config.unwrap_or(CrpSessionConfig {
                 cwd: None,
                 model: None,
+                reasoning_effort: None,
                 model_provider: None,
                 approval_policy: None,
                 sandbox_mode: None,
@@ -1048,6 +1049,7 @@ async fn handle_command(
             prompt,
             items,
             model,
+            reasoning_effort,
             cwd,
         } => {
             let Some(session_state) = session.as_mut() else {
@@ -1076,7 +1078,7 @@ async fn handle_command(
             let cwd = cwd.unwrap_or_else(|| session_state.default_cwd.clone());
             let model = model.unwrap_or_else(|| session_state.default_model.clone());
             let (model, effort_override) = split_model_and_effort(&model);
-            let effort = effort_override.or(session_state.default_effort);
+            let effort = effort_override.or(reasoning_effort).or(session_state.default_effort);
 
             let op = Op::UserTurn {
                 items,
@@ -1114,6 +1116,7 @@ async fn handle_command(
             let config = config.unwrap_or(CrpSessionConfig {
                 cwd: None,
                 model: None,
+                reasoning_effort: None,
                 model_provider: None,
                 approval_policy: None,
                 sandbox_mode: None,
@@ -1182,6 +1185,7 @@ async fn load_config_from_crp(
     cli_kv_overrides: &[(String, toml::Value)],
     codex_linux_sandbox_exe: Option<PathBuf>,
 ) -> anyhow::Result<Config> {
+    let session_effort = session_config.reasoning_effort.clone();
     let (model_override, effort_override) = session_config
         .model
         .as_deref()
@@ -1215,7 +1219,7 @@ async fn load_config_from_crp(
 
     let mut config =
         Config::load_with_cli_overrides_and_harness_overrides(cli_overrides, overrides).await?;
-    if let Some(effort) = effort_override {
+    if let Some(effort) = effort_override.or(session_effort) {
         config.model_reasoning_effort = Some(effort);
     }
 

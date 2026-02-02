@@ -84,6 +84,7 @@ dev: dev-preflight supabase-local supabase-functions
 	cargo build -p ctx-mcp
 ifeq ($(shell uname -s),Linux)
 	@if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then \
+		bundle_dir="$$(../scripts/ensure_bundled_harnesses.sh)"; \
 		if [ "$(CTX_DAEMON_STOP)" = "1" ]; then \
 			systemctl --user stop $(CTX_DAEMON_UNIT).scope >/dev/null 2>&1 || true; \
 			systemctl --user reset-failed $(CTX_DAEMON_UNIT).scope >/dev/null 2>&1 || true; \
@@ -93,12 +94,15 @@ ifeq ($(shell uname -s),Linux)
 			$(DEV_DEBUG_SETENV) \
 			$(DEV_CRP_SETENV) \
 			--setenv CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) \
+			--setenv CTX_BUNDLE_DIR="$$bundle_dir" \
 			cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
 	else \
-		$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
+		bundle_dir="$$(../scripts/ensure_bundled_harnesses.sh)"; \
+		$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
 	fi
 else
-	$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
+	bundle_dir="$$(../scripts/ensure_bundled_harnesses.sh)"; \
+	$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
 endif
 
 dev-preflight:

@@ -1,6 +1,24 @@
 import type { ClientTelemetryBatch } from "@ctx/types";
 import { desktopDaemonRequest, isDesktopApp } from "../utils/desktop";
 
+export type DaemonClientConfig = {
+  baseUrl: string | null;
+  wsBaseUrl: string | null;
+  authToken: string | null;
+  runId: string | null;
+};
+
+type DaemonConfigListener = (config: DaemonClientConfig) => void;
+const daemonConfigListeners = new Set<DaemonConfigListener>();
+
+const notifyDaemonConfig = () => {
+  if (!daemonConfigListeners.size) return;
+  const config = getDaemonClientConfig();
+  for (const listener of daemonConfigListeners) {
+    listener(config);
+  }
+};
+
 export const authToken = (): string | null => {
   try {
     return sessionStorage.getItem("ctxAuthToken");
@@ -53,6 +71,20 @@ export const resolveDaemonWsBaseUrl = (): string => {
   return `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
 };
 
+export const getDaemonClientConfig = (): DaemonClientConfig => ({
+  baseUrl: resolveDaemonBaseUrl(),
+  wsBaseUrl: resolveDaemonWsBaseUrl() || null,
+  authToken: authToken(),
+  runId: getTelemetryRunId(),
+});
+
+export const subscribeDaemonConfig = (listener: DaemonConfigListener): (() => void) => {
+  daemonConfigListeners.add(listener);
+  return () => {
+    daemonConfigListeners.delete(listener);
+  };
+};
+
 export const setDaemonBaseUrl = (baseUrl: string | null, persist?: boolean) => {
   try {
     if (!baseUrl) {
@@ -64,6 +96,22 @@ export const setDaemonBaseUrl = (baseUrl: string | null, persist?: boolean) => {
     if (persist) localStorage.setItem("contextDaemonBaseUrl", baseUrl);
   } catch {
     // ignore
+  } finally {
+    notifyDaemonConfig();
+  }
+};
+
+export const setDaemonAuthToken = (token: string | null) => {
+  try {
+    if (token) {
+      sessionStorage.setItem("ctxAuthToken", token);
+    } else {
+      sessionStorage.removeItem("ctxAuthToken");
+    }
+  } catch {
+    // ignore
+  } finally {
+    notifyDaemonConfig();
   }
 };
 

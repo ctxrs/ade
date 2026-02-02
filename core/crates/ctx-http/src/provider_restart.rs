@@ -88,7 +88,7 @@ pub fn compute_effective_limits(
 pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()> {
     let cfg = settings.provider_restart.clone().unwrap_or_default();
     let (system, _disks, _cache_age_ms) = {
-        let mut sampler = state.resource_sampler.lock().await;
+        let mut sampler = state.telemetry.resource_sampler.lock().await;
         sampler.system_snapshot()
     };
     let effective = compute_effective_limits(&cfg, &system);
@@ -99,19 +99,19 @@ pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()>
         last_message: None,
     };
 
-    let mut guard = state.provider_restart.lock().await;
+    let mut guard = state.providers.restart.lock().await;
     *guard = runtime;
     Ok(())
 }
 
 pub fn spawn_provider_restart(state: Arc<AppState>) {
-    let mut shutdown_rx = state.shutdown_tx.subscribe();
+    let mut shutdown_rx = state.core.shutdown_tx.subscribe();
     tokio::spawn(async move {
         let mut over_high: HashMap<String, OverLimitState> = HashMap::new();
 
         loop {
             let (enabled, limits) = {
-                let runtime = state.provider_restart.lock().await;
+                let runtime = state.providers.restart.lock().await;
                 (runtime.enabled, runtime.last_applied.clone())
             };
 
@@ -149,7 +149,7 @@ async fn restart_once(
 ) -> Result<()> {
     let provider_processes = list_provider_processes(state).await;
     let (system, samples) = {
-        let mut sampler = state.resource_sampler.lock().await;
+        let mut sampler = state.telemetry.resource_sampler.lock().await;
         let (system, _disks, _cache_age_ms) = sampler.system_snapshot();
         let samples = sampler.provider_memory_snapshot(&provider_processes);
         (system, samples)
@@ -251,7 +251,7 @@ async fn handle_limits(
 
 async fn restart_provider(state: &Arc<AppState>, provider_id: &str, pid: u32) {
     let adapter = {
-        let providers = state.providers.lock().await;
+        let providers = state.providers.adapters.lock().await;
         providers.get(provider_id).cloned()
     };
     let mut needs_kill = true;
@@ -402,7 +402,7 @@ async fn list_provider_processes(
     state: &Arc<AppState>,
 ) -> Vec<ctx_providers::adapters::ProviderProcessInfo> {
     let providers = {
-        let providers = state.providers.lock().await;
+        let providers = state.providers.adapters.lock().await;
         providers.values().cloned().collect::<Vec<_>>()
     };
     let mut processes = Vec::new();

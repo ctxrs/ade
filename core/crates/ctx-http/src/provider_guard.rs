@@ -85,7 +85,7 @@ pub fn compute_effective_limits(
 pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()> {
     let cfg = settings.provider_guard.clone().unwrap_or_default();
     let (system, _disks, _cache_age_ms) = {
-        let mut sampler = state.resource_sampler.lock().await;
+        let mut sampler = state.telemetry.resource_sampler.lock().await;
         sampler.system_snapshot()
     };
     let effective = compute_effective_limits(&cfg, &system);
@@ -96,20 +96,20 @@ pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()>
         last_message: None,
     };
 
-    let mut guard = state.provider_guard.lock().await;
+    let mut guard = state.providers.guard.lock().await;
     *guard = runtime;
     Ok(())
 }
 
 pub fn spawn_provider_guard(state: Arc<AppState>) {
-    let mut shutdown_rx = state.shutdown_tx.subscribe();
+    let mut shutdown_rx = state.core.shutdown_tx.subscribe();
     tokio::spawn(async move {
         let mut warned_high: HashSet<u32> = HashSet::new();
         let mut over_max: HashMap<u32, OverLimitState> = HashMap::new();
 
         loop {
             let (enabled, limits) = {
-                let runtime = state.provider_guard.lock().await;
+                let runtime = state.providers.guard.lock().await;
                 (runtime.enabled, runtime.last_applied.clone())
             };
 
@@ -150,7 +150,7 @@ async fn guard_once(
 ) -> Result<()> {
     let provider_processes = list_provider_processes(state).await;
     let (system, processes) = {
-        let mut sampler = state.resource_sampler.lock().await;
+        let mut sampler = state.telemetry.resource_sampler.lock().await;
         let (system, _disks, _cache_age_ms) = sampler.system_snapshot();
         let processes = sampler.processes_snapshot(std::process::id(), &provider_processes);
         (system, processes)
@@ -257,6 +257,7 @@ async fn log_guard_event(
     labels.insert("provider_id".to_string(), proc.label.clone());
     labels.insert("event".to_string(), event.to_string());
     state
+        .telemetry
         .perf_telemetry
         .record_metric(
             PerfMetric {
@@ -316,7 +317,7 @@ async fn capture_guard_snapshot(
     #[cfg(target_os = "linux")]
     {
         let timestamp_ms = unix_ms_now();
-        let dir = state.data_root.join("logs").join("providers");
+        let dir = state.core.data_root.join("logs").join("providers");
         let path = dir.join(format!(
             "provider-guard-{}-{}-{}-{}.log",
             proc.label, proc.pid, event, timestamp_ms
@@ -459,7 +460,7 @@ async fn list_provider_processes(
     state: &Arc<AppState>,
 ) -> Vec<ctx_providers::adapters::ProviderProcessInfo> {
     let providers = {
-        let providers = state.providers.lock().await;
+        let providers = state.providers.adapters.lock().await;
         providers.values().cloned().collect::<Vec<_>>()
     };
     let mut processes = Vec::new();

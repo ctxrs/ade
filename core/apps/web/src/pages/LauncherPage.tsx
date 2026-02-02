@@ -8,6 +8,7 @@ import {
   idToString,
   listMobileConnectionProfiles,
   listWorkspaces,
+  setDaemonAuthToken,
   setDaemonBaseUrl,
   type CreateMobileProfileResponse,
   type MobileConnectionProfile,
@@ -80,19 +81,7 @@ function applyConnection(info: DesktopConnectionInfo) {
   const token = String(info.token ?? "").trim();
   if (baseUrl) setDaemonBaseUrl(baseUrl, true);
   else setDaemonBaseUrl(null, false);
-  if (token) {
-    try {
-      sessionStorage.setItem("ctxAuthToken", token);
-    } catch {
-      // ignore
-    }
-  } else {
-    try {
-      sessionStorage.removeItem("ctxAuthToken");
-    } catch {
-      // ignore
-    }
-  }
+  setDaemonAuthToken(token || null);
 }
 
 async function createOrOpenWorkspaceByPath(rootPath: string): Promise<string> {

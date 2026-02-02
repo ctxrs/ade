@@ -35,96 +35,21 @@ fn lsp_tools_enabled() -> bool {
         .unwrap_or(false)
 }
 
+fn dev_tools_enabled() -> bool {
+    ctx_env_opt("MCP_DEV_MODE")
+        .map(|raw| {
+            let v = raw.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
 fn is_lsp_related_tool(name: &str) -> bool {
     name.starts_with("lsp_")
         || matches!(
             name,
             "list_edit_plans" | "get_edit_plan" | "apply_edit_plan" | "discard_edit_plan"
         )
-}
-
-#[derive(Default)]
-struct SubagentRefMap {
-    by_subagent: HashMap<String, String>,
-    by_session: HashMap<String, String>,
-}
-
-impl SubagentRefMap {
-    fn subagent_id_for_session(&mut self, session_id: &str) -> String {
-        if let Some(existing) = self.by_session.get(session_id) {
-            return existing.clone();
-        }
-        let subagent_id = format!("subagent-{}", Uuid::new_v4());
-        self.by_session
-            .insert(session_id.to_string(), subagent_id.clone());
-        self.by_subagent
-            .insert(subagent_id.clone(), session_id.to_string());
-        subagent_id
-    }
-
-    fn session_id_for_subagent(&self, subagent_id: &str) -> Option<String> {
-        self.by_subagent.get(subagent_id).cloned()
-    }
-}
-
-static SUBAGENT_REFS: OnceLock<Mutex<SubagentRefMap>> = OnceLock::new();
-
-fn subagent_refs() -> &'static Mutex<SubagentRefMap> {
-    SUBAGENT_REFS.get_or_init(|| Mutex::new(SubagentRefMap::default()))
-}
-
-fn subagent_id_for_session(session_id: &str) -> String {
-    let mut map = subagent_refs().lock().expect("subagent ref map poisoned");
-    map.subagent_id_for_session(session_id)
-}
-
-fn session_id_for_subagent(subagent_id: &str) -> Option<String> {
-    let map = subagent_refs().lock().expect("subagent ref map poisoned");
-    map.session_id_for_subagent(subagent_id)
-}
-
-#[derive(Default)]
-struct SubagentGroupRefMap {
-    by_group: HashMap<String, String>,
-    by_invocation: HashMap<String, String>,
-}
-
-impl SubagentGroupRefMap {
-    fn subagent_group_id_for_invocation(&mut self, invocation_id: &str) -> String {
-        if let Some(existing) = self.by_invocation.get(invocation_id) {
-            return existing.clone();
-        }
-        let group_id = format!("subagent-group-{}", Uuid::new_v4());
-        self.by_invocation
-            .insert(invocation_id.to_string(), group_id.clone());
-        self.by_group
-            .insert(group_id.clone(), invocation_id.to_string());
-        group_id
-    }
-
-    fn invocation_id_for_subagent_group(&self, subagent_group_id: &str) -> Option<String> {
-        self.by_group.get(subagent_group_id).cloned()
-    }
-}
-
-static SUBAGENT_GROUP_REFS: OnceLock<Mutex<SubagentGroupRefMap>> = OnceLock::new();
-
-fn subagent_group_refs() -> &'static Mutex<SubagentGroupRefMap> {
-    SUBAGENT_GROUP_REFS.get_or_init(|| Mutex::new(SubagentGroupRefMap::default()))
-}
-
-fn subagent_group_id_for_invocation(invocation_id: &str) -> String {
-    let mut map = subagent_group_refs()
-        .lock()
-        .expect("subagent group ref map poisoned");
-    map.subagent_group_id_for_invocation(invocation_id)
-}
-
-fn invocation_id_for_subagent_group(subagent_group_id: &str) -> Option<String> {
-    let map = subagent_group_refs()
-        .lock()
-        .expect("subagent group ref map poisoned");
-    map.invocation_id_for_subagent_group(subagent_group_id)
 }
 
 #[derive(Default)]
@@ -253,13 +178,7 @@ fn map_subagent_result(value: &mut Value) {
     let Some(obj) = value.as_object_mut() else {
         return;
     };
-    let session_id = obj
-        .remove("session_id")
-        .and_then(|v| v.as_str().map(|s| s.to_string()));
-    if let Some(session_id) = session_id {
-        let subagent_id = subagent_id_for_session(&session_id);
-        obj.insert("subagent_id".to_string(), Value::String(subagent_id));
-    }
+    obj.remove("session_id");
     if let Some(provider_id) = obj.remove("provider_id") {
         obj.insert("provider".to_string(), provider_id);
     }
@@ -275,72 +194,6 @@ fn map_subagent_results(value: &mut Value) {
     for item in items {
         map_subagent_result(item);
     }
-}
-
-fn map_subagent_invocation_summary(invocation: &Value) -> Option<Value> {
-    let obj = invocation.as_object()?;
-    let id = obj.get("id")?.as_str()?;
-    let group_id = subagent_group_id_for_invocation(id);
-    let status = obj.get("status").cloned().unwrap_or(Value::Null);
-    let created_at = obj.get("created_at").cloned().unwrap_or(Value::Null);
-    let updated_at = obj.get("updated_at").cloned().unwrap_or(Value::Null);
-    let count = obj
-        .get("children")
-        .and_then(|v| v.as_array())
-        .map(|items| items.len())
-        .unwrap_or(0);
-    Some(json!({
-        "subagent_group_id": group_id,
-        "status": status,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "subagent_count": count,
-    }))
-}
-
-fn map_subagent_invocation_detail(invocation: &Value) -> Option<Value> {
-    let obj = invocation.as_object()?;
-    let id = obj.get("id")?.as_str()?;
-    let group_id = subagent_group_id_for_invocation(id);
-    let status = obj.get("status").cloned().unwrap_or(Value::Null);
-    let created_at = obj.get("created_at").cloned().unwrap_or(Value::Null);
-    let updated_at = obj.get("updated_at").cloned().unwrap_or(Value::Null);
-    let mut subagents = Vec::new();
-    if let Some(children) = obj.get("children").and_then(|v| v.as_array()) {
-        for child in children {
-            let Some(child_obj) = child.as_object() else {
-                continue;
-            };
-            let session_id = child_obj.get("child_session_id").and_then(|v| v.as_str());
-            let mut mapped = serde_json::Map::new();
-            if let Some(session_id) = session_id {
-                let subagent_id = subagent_id_for_session(session_id);
-                mapped.insert("subagent_id".to_string(), Value::String(subagent_id));
-            }
-            if let Some(status) = child_obj.get("status") {
-                mapped.insert("status".to_string(), status.clone());
-            }
-            if let Some(label) = child_obj.get("label") {
-                mapped.insert("label".to_string(), label.clone());
-            }
-            if let Some(harness) = child_obj.get("harness") {
-                mapped.insert("provider".to_string(), harness.clone());
-            }
-            if let Some(model) = child_obj.get("model") {
-                mapped.insert("model".to_string(), model.clone());
-            }
-            if !mapped.is_empty() {
-                subagents.push(Value::Object(mapped));
-            }
-        }
-    }
-    Some(json!({
-        "subagent_group_id": group_id,
-        "status": status,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "subagents": subagents,
-    }))
 }
 
 fn map_edit_plan_summary(value: &mut Value) {
@@ -395,4 +248,3 @@ fn map_interactive_sessions(value: &mut Value) {
     }
     map_interactive_session(value);
 }
-

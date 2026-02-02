@@ -11,6 +11,9 @@ vi.mock("@xterm/xterm", () => {
     options = { disableStdin: false };
 
     loadAddon() {}
+    setOption(key: string, value: unknown) {
+      (this.options as Record<string, unknown>)[key] = value;
+    }
     open(el: HTMLElement) {
       this.element = el;
     }

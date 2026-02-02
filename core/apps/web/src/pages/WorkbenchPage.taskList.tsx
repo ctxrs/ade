@@ -45,7 +45,7 @@ const TaskListContainer = React.forwardRef<HTMLDivElement, React.HTMLAttributes<
 
 const TaskListHeader = () => (
   <div className="wb-section-header">
-    <div className="wb-section-title">Active</div>
+    <div className="wb-section-title">Active Tasks</div>
   </div>
 );
 

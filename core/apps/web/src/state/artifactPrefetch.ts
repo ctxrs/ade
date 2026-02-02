@@ -101,7 +101,7 @@ class ArtifactPrefetcher {
     try {
       const resp = await fetch(url, {
         cache: "force-cache",
-        credentials: "include",
+        credentials: "same-origin",
         signal: controller.signal,
       });
       if (!resp.ok) return;

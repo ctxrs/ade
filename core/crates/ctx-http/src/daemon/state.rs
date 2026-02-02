@@ -1,0 +1,880 @@
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use anyhow::Result;
+use tokio::sync::{broadcast, mpsc, watch, Mutex, Notify};
+
+use crate::buffers::BufferStore;
+use crate::edit_plans::{EditPlan, EditPlanId};
+use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
+use crate::mobile_tunnel::MobileTunnelManager;
+use crate::ops_events::OpsEvents;
+use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
+use crate::provider_accounts;
+use crate::provider_guard;
+use crate::provider_restart;
+use crate::provider_usage;
+use crate::resource_governance::ResourceGovernanceRuntime;
+use crate::resource_utilization::ResourceSampler;
+use crate::scheduler::SchedulerCommand;
+use crate::telemetry::Telemetry;
+use crate::terminals::TerminalManager;
+use crate::web_sessions::WebSessionManager;
+use crate::workspace_active_snapshot::WorkspaceActiveSnapshotHub;
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+use ctx_core::models::{
+    Session, SessionEvent, SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
+};
+use ctx_lsp::{LspManager, LspManagerConfig};
+use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
+use ctx_providers::ask_user_question::AskUserQuestionBroker;
+use ctx_store::{Store, StoreManager};
+
+use super::edit_plans;
+pub struct CoreState {
+    pub data_root: PathBuf,
+    pub tool_output_spool_enabled: bool,
+    pub tool_output_spool_dir: PathBuf,
+    pub stores: StoreManager,
+    pub daemon_url: String,
+    pub auth_token: Option<String>,
+    pub lsp_cfg: LspManagerConfig,
+    pub lsp: Arc<LspManager>,
+    pub lsp_edit_plans_enabled: bool,
+    pub buffers: BufferStore,
+    pub ask_user_question: Arc<AskUserQuestionBroker>,
+    pub shutdown_tx: broadcast::Sender<()>,
+}
+
+pub struct SessionRuntime {
+    pub session_head_cache:
+        Mutex<HashMap<SessionId, TimedEntry<HashMap<SessionHeadCacheKey, SessionHeadSnapshot>>>>,
+    pub schedulers: Mutex<HashMap<SessionId, TimedEntry<mpsc::Sender<SchedulerCommand>>>>,
+    pub broadcasters: Mutex<HashMap<SessionId, TimedEntry<broadcast::Sender<SessionEvent>>>>,
+    pub session_event_heads: Mutex<HashMap<SessionId, TimedEntry<watch::Sender<i64>>>>,
+    pub(crate) active_head_projections: Mutex<HashMap<SessionId, ActiveHeadProjectionEntry>>,
+    pub(crate) active_task_refreshes: Mutex<HashMap<TaskId, ActiveTaskRefreshEntry>>,
+    pub running_sessions: Mutex<HashSet<SessionId>>,
+    pub session_meta_cache: Mutex<HashMap<SessionId, TimedEntry<Session>>>,
+}
+
+pub struct WorkspaceRuntime {
+    pub file_completions_cache: Mutex<HashMap<WorktreeId, TimedEntry<CachedFileCompletions>>>,
+    pub workspace_file_completions_cache:
+        Mutex<HashMap<WorkspaceId, TimedEntry<CachedFileCompletions>>>,
+    pub git_status_snapshots: Mutex<HashMap<WorktreeId, TimedEntry<GitStatusSnapshotCacheEntry>>>,
+    pub git_status_watchers: Mutex<HashSet<WorktreeId>>,
+    pub workspace_active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    pub workspace_active_snapshot_cache:
+        Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveSnapshotCacheEntry>>>,
+    pub workspace_active_heads_cache:
+        Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveHeadCacheEntry>>>,
+    pub(crate) worktree_bootstrap_gates:
+        Mutex<HashMap<WorktreeId, TimedEntry<WorktreeBootstrapGate>>>,
+    pub edit_plans: Mutex<HashMap<EditPlanId, EditPlan>>,
+}
+
+pub struct ProviderRuntime {
+    pub adapters: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
+    pub statuses: Mutex<HashMap<String, ProviderStatus>>,
+    pub matrix_cache: Mutex<crate::provider_matrix::ProviderMatrixCache>,
+    pub options_cache: Mutex<HashMap<String, CachedProviderOptions>>,
+    pub verify_cache: Mutex<HashMap<String, CachedProviderVerify>>,
+    pub guard: Mutex<provider_guard::ProviderGuardRuntime>,
+    pub restart: Mutex<provider_restart::ProviderRestartRuntime>,
+    pub usage_cache: Mutex<HashMap<String, provider_usage::ProviderUsageSnapshot>>,
+    pub codex_login_sessions: Mutex<HashMap<String, provider_accounts::CodexLoginStatus>>,
+    pub installs: Mutex<HashMap<InstallId, InstallState>>,
+}
+
+pub struct TelemetryRuntime {
+    pub telemetry: Telemetry,
+    pub ops_events: OpsEvents,
+    pub perf_telemetry: PerfTelemetry,
+    pub resource_governance: Mutex<ResourceGovernanceRuntime>,
+    pub resource_sampler: Mutex<ResourceSampler>,
+}
+
+pub struct TransportRuntime {
+    pub terminals: Arc<TerminalManager>,
+    pub mobile_tunnel: MobileTunnelManager,
+    pub web_sessions: Arc<WebSessionManager>,
+    pub merge_queue_notify: Arc<Notify>,
+    pub lsp_diag_broadcaster: broadcast::Sender<serde_json::Value>,
+    pub lsp_diag_forwarders: Mutex<HashSet<String>>,
+}
+
+pub struct AppState {
+    pub core: CoreState,
+    pub sessions: SessionRuntime,
+    pub workspaces: WorkspaceRuntime,
+    pub providers: ProviderRuntime,
+    pub telemetry: TelemetryRuntime,
+    pub transport: TransportRuntime,
+}
+
+pub(crate) struct WorktreeBootstrapGate {
+    pub(crate) wait_for_completion: bool,
+    pub(crate) done_tx: watch::Sender<bool>,
+}
+
+pub struct CachedProviderOptions {
+    pub cached_at: Instant,
+    pub value: serde_json::Value,
+}
+
+pub struct CachedProviderVerify {
+    pub cached_at: Instant,
+    pub value: serde_json::Value,
+}
+
+pub struct CachedFileCompletions {
+    pub cached_at: Instant,
+    pub files: Arc<Vec<String>>,
+}
+
+pub struct GitStatusSnapshotCacheEntry {
+    pub payload: String,
+    pub emitted_at: Instant,
+    pub last_change_at: Instant,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkspaceActiveSnapshotCacheEntry {
+    pub snapshot: WorkspaceActiveSnapshot,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SessionHeadCacheKey {
+    pub limit: u32,
+    pub include_events: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkspaceActiveHeadCacheEntry {
+    pub batch: WorkspaceActiveHeadBatch,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ActiveHeadProjectionEntry {
+    pub(crate) last_event_seq: i64,
+    pub(crate) last_event_at: Instant,
+    pub(crate) last_flushed_seq: i64,
+    pub(crate) last_flush_at: Instant,
+}
+
+pub(crate) struct ActiveTaskRefreshEntry {
+    pub(crate) generation: u64,
+}
+
+const DEFAULT_SESSION_CACHE_TTL_HOURS: u64 = 24;
+const DEFAULT_WORKSPACE_CACHE_TTL_DAYS: u64 = 7;
+const DEFAULT_CACHE_SWEEP_INTERVAL_SECS: u64 = 60 * 60;
+
+#[derive(Clone, Copy, Debug)]
+pub struct CacheSweepConfig {
+    pub session_ttl: Duration,
+    pub workspace_ttl: Duration,
+    pub interval: Duration,
+}
+
+impl CacheSweepConfig {
+    pub fn from_env() -> Self {
+        let session_ttl_hours = std::env::var("CTX_SESSION_CACHE_TTL_HOURS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_SESSION_CACHE_TTL_HOURS);
+        let workspace_ttl_days = std::env::var("CTX_WORKSPACE_CACHE_TTL_DAYS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_WORKSPACE_CACHE_TTL_DAYS);
+        let interval_secs = std::env::var("CTX_CACHE_SWEEP_INTERVAL_SECS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_CACHE_SWEEP_INTERVAL_SECS);
+        Self {
+            session_ttl: Duration::from_secs(session_ttl_hours * 60 * 60),
+            workspace_ttl: Duration::from_secs(workspace_ttl_days * 24 * 60 * 60),
+            interval: Duration::from_secs(interval_secs.max(30)),
+        }
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct CacheSweepStats {
+    pub session_head_evicted: usize,
+    pub session_meta_evicted: usize,
+    pub schedulers_evicted: usize,
+    pub broadcasters_evicted: usize,
+    pub session_event_heads_evicted: usize,
+    pub file_completions_evicted: usize,
+    pub workspace_file_completions_evicted: usize,
+    pub git_status_evicted: usize,
+    pub workspace_snapshot_evicted: usize,
+    pub workspace_heads_evicted: usize,
+    pub worktree_bootstrap_evicted: usize,
+    pub workspace_stores_evicted: usize,
+}
+
+impl CacheSweepStats {
+    pub fn total_evicted(&self) -> usize {
+        self.session_head_evicted
+            + self.session_meta_evicted
+            + self.schedulers_evicted
+            + self.broadcasters_evicted
+            + self.session_event_heads_evicted
+            + self.file_completions_evicted
+            + self.workspace_file_completions_evicted
+            + self.git_status_evicted
+            + self.workspace_snapshot_evicted
+            + self.workspace_heads_evicted
+            + self.worktree_bootstrap_evicted
+            + self.workspace_stores_evicted
+    }
+}
+
+#[derive(Debug)]
+pub struct TimedEntry<T> {
+    pub(crate) value: T,
+    pub(crate) last_access: Instant,
+}
+
+impl<T> TimedEntry<T> {
+    pub(crate) fn new(value: T) -> Self {
+        Self {
+            value,
+            last_access: Instant::now(),
+        }
+    }
+
+    pub(crate) fn touch(&mut self) {
+        self.last_access = Instant::now();
+    }
+
+    pub(crate) fn touch_at(&mut self, now: Instant) {
+        self.last_access = now;
+    }
+}
+
+impl AppState {
+    pub fn new(
+        data_root: PathBuf,
+        stores: StoreManager,
+        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        daemon_url: String,
+        auth_token: Option<String>,
+    ) -> Self {
+        Self::new_with_lsp_config(
+            data_root,
+            stores,
+            providers,
+            daemon_url,
+            auth_token,
+            LspManagerConfig::default(),
+        )
+    }
+
+    pub fn new_with_lsp_config(
+        data_root: PathBuf,
+        stores: StoreManager,
+        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        daemon_url: String,
+        auth_token: Option<String>,
+        lsp_cfg: LspManagerConfig,
+    ) -> Self {
+        let lsp_edit_plans_enabled = std::env::var("CTX_LSP_EDITPLANS_ENABLED")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        Self::new_with_lsp_config_and_flags(
+            data_root,
+            stores,
+            providers,
+            daemon_url,
+            auth_token,
+            lsp_cfg,
+            lsp_edit_plans_enabled,
+        )
+    }
+
+    pub fn new_with_lsp_config_and_flags(
+        data_root: PathBuf,
+        stores: StoreManager,
+        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        daemon_url: String,
+        auth_token: Option<String>,
+        lsp_cfg: LspManagerConfig,
+        lsp_edit_plans_enabled: bool,
+    ) -> Self {
+        let tool_output_spool_enabled = std::env::var("CTX_TOOL_OUTPUT_DISK_SPOOL")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes"))
+            .unwrap_or(false);
+        let tool_output_spool_dir = data_root.join("tool-output-spool");
+        if tool_output_spool_enabled {
+            if let Err(e) = std::fs::create_dir_all(&tool_output_spool_dir) {
+                tracing::warn!(
+                    "failed to create tool output spool dir {}: {e}",
+                    tool_output_spool_dir.to_string_lossy()
+                );
+            }
+        }
+        let edit_plans_dir = edit_plans::edit_plans_dir(&data_root);
+        if let Err(e) = std::fs::create_dir_all(&edit_plans_dir) {
+            tracing::warn!(
+                "failed to create edit plans dir {}: {e}",
+                edit_plans_dir.to_string_lossy()
+            );
+        }
+        let edit_plans = edit_plans::load_edit_plans_from_disk(&data_root);
+
+        let (shutdown_tx, _) = broadcast::channel(8);
+        let (lsp_diag_broadcaster, _) = broadcast::channel(2048);
+        let ask_user_question = Arc::new(AskUserQuestionBroker::new());
+        let lsp = Arc::new(LspManager::new(lsp_cfg.clone()));
+        let telemetry = Telemetry::new(data_root.clone());
+        let ops_events = OpsEvents::new(data_root.clone());
+        let perf_telemetry = PerfTelemetry::new(data_root.clone());
+        let workspace_active_snapshot = Arc::new(WorkspaceActiveSnapshotHub::new());
+        let web_sessions = Arc::new(WebSessionManager::new());
+        let merge_queue_notify = Arc::new(Notify::new());
+
+        Self {
+            core: CoreState {
+                data_root,
+                tool_output_spool_enabled,
+                tool_output_spool_dir,
+                stores,
+                daemon_url,
+                auth_token,
+                lsp_cfg,
+                lsp,
+                lsp_edit_plans_enabled,
+                buffers: BufferStore::default(),
+                ask_user_question,
+                shutdown_tx,
+            },
+            sessions: SessionRuntime {
+                session_head_cache: Mutex::new(HashMap::new()),
+                schedulers: Mutex::new(HashMap::new()),
+                broadcasters: Mutex::new(HashMap::new()),
+                session_event_heads: Mutex::new(HashMap::new()),
+                active_head_projections: Mutex::new(HashMap::new()),
+                active_task_refreshes: Mutex::new(HashMap::new()),
+                running_sessions: Mutex::new(HashSet::new()),
+                session_meta_cache: Mutex::new(HashMap::new()),
+            },
+            workspaces: WorkspaceRuntime {
+                file_completions_cache: Mutex::new(HashMap::new()),
+                workspace_file_completions_cache: Mutex::new(HashMap::new()),
+                git_status_snapshots: Mutex::new(HashMap::new()),
+                git_status_watchers: Mutex::new(HashSet::new()),
+                workspace_active_snapshot,
+                workspace_active_snapshot_cache: Mutex::new(HashMap::new()),
+                workspace_active_heads_cache: Mutex::new(HashMap::new()),
+                worktree_bootstrap_gates: Mutex::new(HashMap::new()),
+                edit_plans: Mutex::new(edit_plans),
+            },
+            providers: ProviderRuntime {
+                adapters: Mutex::new(providers),
+                statuses: Mutex::new(HashMap::new()),
+                matrix_cache: Mutex::new(crate::provider_matrix::ProviderMatrixCache::default()),
+                options_cache: Mutex::new(HashMap::new()),
+                verify_cache: Mutex::new(HashMap::new()),
+                guard: Mutex::new(provider_guard::ProviderGuardRuntime::default()),
+                restart: Mutex::new(provider_restart::ProviderRestartRuntime::default()),
+                usage_cache: Mutex::new(HashMap::new()),
+                codex_login_sessions: Mutex::new(HashMap::new()),
+                installs: Mutex::new(HashMap::new()),
+            },
+            telemetry: TelemetryRuntime {
+                telemetry,
+                ops_events,
+                perf_telemetry,
+                resource_governance: Mutex::new(ResourceGovernanceRuntime::default()),
+                resource_sampler: Mutex::new(ResourceSampler::new()),
+            },
+            transport: TransportRuntime {
+                terminals: Arc::new(TerminalManager::default()),
+                mobile_tunnel: MobileTunnelManager::default(),
+                web_sessions,
+                merge_queue_notify,
+                lsp_diag_broadcaster,
+                lsp_diag_forwarders: Mutex::new(HashSet::new()),
+            },
+        }
+    }
+
+    pub fn edit_plans_dir(&self) -> PathBuf {
+        edit_plans::edit_plans_dir(&self.core.data_root)
+    }
+
+    pub fn persist_edit_plan(&self, plan: &EditPlan) {
+        if let Err(e) = edit_plans::persist_edit_plan_to_disk(&self.core.data_root, plan) {
+            tracing::warn!("failed to persist edit plan {}: {e}", plan.id.0);
+        }
+    }
+
+    pub fn delete_edit_plan_file(&self, plan_id: EditPlanId) {
+        if let Err(e) = edit_plans::delete_edit_plan_file(&self.core.data_root, plan_id) {
+            tracing::warn!("failed to delete edit plan {} file: {e}", plan_id.0);
+        }
+    }
+
+    pub fn global_store(&self) -> &Store {
+        self.core.stores.global()
+    }
+
+    pub async fn store_for_workspace(&self, workspace_id: WorkspaceId) -> Result<Store> {
+        self.core.stores.workspace(workspace_id).await
+    }
+
+    pub async fn store_for_task(&self, task_id: TaskId) -> Result<Store> {
+        self.core.stores.store_for_task(task_id).await
+    }
+
+    pub async fn store_for_session(&self, session_id: SessionId) -> Result<Store> {
+        self.core.stores.store_for_session(session_id).await
+    }
+
+    pub async fn store_for_worktree(&self, worktree_id: WorktreeId) -> Result<Store> {
+        self.core.stores.store_for_worktree(worktree_id).await
+    }
+
+    pub fn lsp_diag_broadcaster(&self) -> broadcast::Sender<serde_json::Value> {
+        self.transport.lsp_diag_broadcaster.clone()
+    }
+
+    pub(crate) async fn emit_cache_miss(&self, cache: &str) {
+        self.emit_cache_counter("daemon.cache_miss", cache, 1, None)
+            .await;
+    }
+
+    pub(crate) async fn emit_cache_rehydrate(&self, cache: &str, ok: bool) {
+        let result = if ok { "ok" } else { "fail" };
+        self.emit_cache_counter("daemon.cache_rehydrate", cache, 1, Some(("result", result)))
+            .await;
+    }
+
+    async fn emit_cache_evicted(&self, cache: &str, value: usize) {
+        if value == 0 {
+            return;
+        }
+        self.emit_cache_counter("daemon.cache_evicted", cache, value as u64, None)
+            .await;
+    }
+
+    async fn emit_cache_counter(
+        &self,
+        name: &str,
+        cache: &str,
+        value: u64,
+        extra_label: Option<(&str, &str)>,
+    ) {
+        if value == 0 {
+            return;
+        }
+        let mut labels = HashMap::new();
+        labels.insert("cache".to_string(), cache.to_string());
+        labels.insert("source".to_string(), "daemon".to_string());
+        if let Some((key, val)) = extra_label {
+            labels.insert(key.to_string(), val.to_string());
+        }
+        let metric = PerfMetric {
+            name: name.to_string(),
+            kind: PerfMetricKind::Counter,
+            unit: "count".to_string(),
+            value: value as f64,
+            labels,
+        };
+        self.telemetry
+            .perf_telemetry
+            .record_metric(metric, None, None, None)
+            .await;
+    }
+
+    pub async fn sweep_idle_caches(
+        &self,
+        now: Instant,
+        config: CacheSweepConfig,
+    ) -> CacheSweepStats {
+        let mut stats = CacheSweepStats::default();
+        let running_sessions = {
+            let set = self.sessions.running_sessions.lock().await;
+            set.iter().copied().collect::<HashSet<_>>()
+        };
+        {
+            let mut cache = self.sessions.session_head_cache.lock().await;
+            let expired: Vec<SessionId> = cache
+                .iter()
+                .filter_map(|(session_id, entry)| {
+                    if running_sessions.contains(session_id) {
+                        return None;
+                    }
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*session_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for session_id in &expired {
+                cache.remove(session_id);
+            }
+            stats.session_head_evicted += expired.len();
+        }
+        {
+            let mut cache = self.sessions.session_meta_cache.lock().await;
+            let expired: Vec<SessionId> = cache
+                .iter()
+                .filter_map(|(session_id, entry)| {
+                    if running_sessions.contains(session_id) {
+                        return None;
+                    }
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*session_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for session_id in &expired {
+                cache.remove(session_id);
+            }
+            stats.session_meta_evicted += expired.len();
+        }
+        {
+            let mut map = self.sessions.schedulers.lock().await;
+            let expired: Vec<SessionId> = map
+                .iter()
+                .filter_map(|(session_id, entry)| {
+                    if running_sessions.contains(session_id) {
+                        return None;
+                    }
+                    if entry.value.is_closed()
+                        || now.duration_since(entry.last_access) >= config.session_ttl
+                    {
+                        Some(*session_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for session_id in &expired {
+                map.remove(session_id);
+            }
+            stats.schedulers_evicted += expired.len();
+        }
+        {
+            let mut map = self.sessions.broadcasters.lock().await;
+            let expired: Vec<SessionId> = map
+                .iter()
+                .filter_map(|(session_id, entry)| {
+                    if running_sessions.contains(session_id) {
+                        return None;
+                    }
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*session_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for session_id in &expired {
+                map.remove(session_id);
+            }
+            stats.broadcasters_evicted += expired.len();
+        }
+        {
+            let mut map = self.sessions.session_event_heads.lock().await;
+            let expired: Vec<SessionId> = map
+                .iter()
+                .filter_map(|(session_id, entry)| {
+                    if running_sessions.contains(session_id) {
+                        return None;
+                    }
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*session_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for session_id in &expired {
+                map.remove(session_id);
+            }
+            stats.session_event_heads_evicted += expired.len();
+        }
+        {
+            let mut cache = self.workspaces.file_completions_cache.lock().await;
+            let expired: Vec<WorktreeId> = cache
+                .iter()
+                .filter_map(|(worktree_id, entry)| {
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*worktree_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for worktree_id in &expired {
+                cache.remove(worktree_id);
+            }
+            stats.file_completions_evicted += expired.len();
+        }
+        {
+            let mut cache = self
+                .workspaces
+                .workspace_file_completions_cache
+                .lock()
+                .await;
+            let expired: Vec<WorkspaceId> = cache
+                .iter()
+                .filter_map(|(workspace_id, entry)| {
+                    if now.duration_since(entry.last_access) >= config.workspace_ttl {
+                        Some(*workspace_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for workspace_id in &expired {
+                cache.remove(workspace_id);
+            }
+            stats.workspace_file_completions_evicted += expired.len();
+        }
+        {
+            let mut cache = self.workspaces.git_status_snapshots.lock().await;
+            let expired: Vec<WorktreeId> = cache
+                .iter()
+                .filter_map(|(worktree_id, entry)| {
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*worktree_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for worktree_id in &expired {
+                cache.remove(worktree_id);
+            }
+            stats.git_status_evicted += expired.len();
+        }
+        {
+            let mut cache = self.workspaces.workspace_active_snapshot_cache.lock().await;
+            let expired: Vec<WorkspaceId> = cache
+                .iter()
+                .filter_map(|(workspace_id, entry)| {
+                    if now.duration_since(entry.last_access) >= config.workspace_ttl {
+                        Some(*workspace_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for workspace_id in &expired {
+                cache.remove(workspace_id);
+            }
+            stats.workspace_snapshot_evicted += expired.len();
+        }
+        {
+            let mut cache = self.workspaces.workspace_active_heads_cache.lock().await;
+            let expired: Vec<WorkspaceId> = cache
+                .iter()
+                .filter_map(|(workspace_id, entry)| {
+                    if now.duration_since(entry.last_access) >= config.workspace_ttl {
+                        Some(*workspace_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for workspace_id in &expired {
+                cache.remove(workspace_id);
+            }
+            stats.workspace_heads_evicted += expired.len();
+        }
+        {
+            let mut cache = self.workspaces.worktree_bootstrap_gates.lock().await;
+            let expired: Vec<WorktreeId> = cache
+                .iter()
+                .filter_map(|(worktree_id, entry)| {
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*worktree_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for worktree_id in &expired {
+                cache.remove(worktree_id);
+            }
+            stats.worktree_bootstrap_evicted += expired.len();
+        }
+        let mut active_sessions: HashSet<SessionId> = HashSet::new();
+        {
+            let set = self.sessions.running_sessions.lock().await;
+            active_sessions.extend(set.iter().copied());
+        }
+        {
+            let map = self.sessions.schedulers.lock().await;
+            active_sessions.extend(map.keys().copied());
+        }
+        {
+            let map = self.sessions.broadcasters.lock().await;
+            active_sessions.extend(map.keys().copied());
+        }
+        {
+            let map = self.sessions.session_event_heads.lock().await;
+            active_sessions.extend(map.keys().copied());
+        }
+
+        let mut active_workspaces: HashSet<WorkspaceId> = HashSet::new();
+        let mut missing = Vec::new();
+        {
+            let cache = self.sessions.session_meta_cache.lock().await;
+            for session_id in &active_sessions {
+                if let Some(entry) = cache.get(session_id) {
+                    active_workspaces.insert(entry.value.workspace_id);
+                } else {
+                    missing.push(*session_id);
+                }
+            }
+        }
+        for session_id in missing {
+            if let Ok(Some(workspace_id)) = self
+                .global_store()
+                .get_workspace_id_for_session(session_id)
+                .await
+            {
+                active_workspaces.insert(workspace_id);
+            }
+        }
+
+        stats.workspace_stores_evicted = self
+            .core
+            .stores
+            .evict_idle_workspaces(config.workspace_ttl, &active_workspaces)
+            .await;
+
+        self.emit_cache_evicted("session_head", stats.session_head_evicted)
+            .await;
+        self.emit_cache_evicted("session_meta", stats.session_meta_evicted)
+            .await;
+        self.emit_cache_evicted("scheduler", stats.schedulers_evicted)
+            .await;
+        self.emit_cache_evicted("broadcaster", stats.broadcasters_evicted)
+            .await;
+        self.emit_cache_evicted("session_event_head", stats.session_event_heads_evicted)
+            .await;
+        self.emit_cache_evicted("file_completions", stats.file_completions_evicted)
+            .await;
+        self.emit_cache_evicted(
+            "workspace_file_completions",
+            stats.workspace_file_completions_evicted,
+        )
+        .await;
+        self.emit_cache_evicted("git_status", stats.git_status_evicted)
+            .await;
+        self.emit_cache_evicted(
+            "workspace_active_snapshot",
+            stats.workspace_snapshot_evicted,
+        )
+        .await;
+        self.emit_cache_evicted("workspace_active_heads", stats.workspace_heads_evicted)
+            .await;
+        self.emit_cache_evicted("worktree_bootstrap", stats.worktree_bootstrap_evicted)
+            .await;
+        self.emit_cache_evicted("workspace_store", stats.workspace_stores_evicted)
+            .await;
+
+        stats
+    }
+
+    pub async fn find_running_install(&self, provider_id: &str) -> Option<InstallId> {
+        let map = self.providers.installs.lock().await;
+        map.iter().find_map(|(id, st)| {
+            if st.provider_id == provider_id && matches!(st.state, InstallStateKind::Running) {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+    }
+
+    pub async fn start_install(&self, provider_id: String) -> (InstallId, bool) {
+        if let Some(existing) = self.find_running_install(&provider_id).await {
+            return (existing, false);
+        }
+        let install_id = InstallId::new_v4();
+        let state = InstallState::new(provider_id);
+        self.providers
+            .installs
+            .lock()
+            .await
+            .insert(install_id, state);
+        (install_id, true)
+    }
+
+    pub async fn get_install_sender(
+        &self,
+        install_id: InstallId,
+    ) -> Option<broadcast::Sender<InstallProgressEvent>> {
+        self.providers
+            .installs
+            .lock()
+            .await
+            .get(&install_id)
+            .map(|s| s.tx.clone())
+    }
+
+    pub async fn get_install_info(
+        &self,
+        install_id: InstallId,
+    ) -> Option<crate::installs::InstallInfo> {
+        self.providers
+            .installs
+            .lock()
+            .await
+            .get(&install_id)
+            .map(|s| s.info(install_id))
+    }
+
+    pub async fn get_install_events(
+        &self,
+        install_id: InstallId,
+    ) -> Option<Vec<InstallProgressEvent>> {
+        self.providers
+            .installs
+            .lock()
+            .await
+            .get(&install_id)
+            .map(|s| s.events.iter().cloned().collect())
+    }
+
+    pub async fn emit_install_event(&self, install_id: InstallId, event: InstallProgressEvent) {
+        let mut map = self.providers.installs.lock().await;
+        let Some(st) = map.get_mut(&install_id) else {
+            return;
+        };
+        if st.events.len() >= 256 {
+            st.events.pop_front();
+        }
+        st.events.push_back(event.clone());
+        let _ = st.tx.send(event);
+    }
+
+    pub async fn finish_install(&self, install_id: InstallId, ok: bool, error: Option<String>) {
+        let mut map = self.providers.installs.lock().await;
+        let Some(st) = map.get_mut(&install_id) else {
+            return;
+        };
+        st.state = if ok {
+            InstallStateKind::Succeeded
+        } else {
+            InstallStateKind::Failed
+        };
+        st.error = error;
+        st.finished_at = Some(chrono::Utc::now());
+    }
+}

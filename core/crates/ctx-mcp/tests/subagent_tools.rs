@@ -13,104 +13,53 @@ fn mcp_bin() -> &'static str {
 #[tokio::test]
 async fn mcp_subagent_tools_call_daemon_http() {
     let parent_id = "00000000-0000-0000-0000-000000000001";
-    let child_id = "00000000-0000-0000-0000-000000000002";
-    let invocation_id = "subagent-1";
 
     let app = Router::new()
         .route(
-            &format!("/api/mcp/sessions/{}/agent_init", parent_id),
+            &format!("/api/mcp/sessions/{}/subagent_init", parent_id),
             post(move |Json(body): Json<serde_json::Value>| async move {
                 assert_eq!(body["agents"][0]["prompt"], "check foo");
-                assert_eq!(body["response_mode"], "await");
+                assert_eq!(body["worktree"], "inherit");
                 assert_eq!(body["tool_call_id"], "tool-1");
                 Json(json!({
-                    "invocation_id": invocation_id,
-                    "status": "completed",
+                    "status": "running",
                     "results": [{
-                        "session_id": child_id,
                         "label": "Audit FooAPI",
-                        "provider_id": "codex",
-                        "model_id": "gpt-5.2",
-                        "status": "completed",
-                        "content": "found 3 usages"
+                        "status": "running"
                     }]
                 }))
             }),
         )
         .route(
-            &format!("/api/mcp/sessions/{}/agent_reply", parent_id),
+            &format!("/api/mcp/sessions/{}/subagent_reply", parent_id),
             post(move |Json(body): Json<serde_json::Value>| async move {
-                assert_eq!(body["session_id"], child_id);
+                assert_eq!(body["label"], "Audit FooAPI");
                 assert_eq!(body["prompt"], "summarize output");
                 Json(json!({
-                    "session_id": child_id,
-                    "status": "completed",
-                    "content": "summary"
+                    "label": "Audit FooAPI",
+                    "status": "running"
                 }))
             }),
         )
         .route(
-            &format!("/api/sessions/{}/subagent_invocations", parent_id),
+            &format!("/api/mcp/sessions/{}/subagent_list", parent_id),
             get(move || async move {
                 Json(json!([
                     {
-                        "id": invocation_id,
-                        "tool_call_id": "tool-1",
-                        "parent_session_id": parent_id,
-                        "requested_count": 1,
-                        "status": "completed",
-                        "created_at": "2024-01-01T00:00:00Z",
-                        "updated_at": "2024-01-01T00:00:00Z",
-                        "children": [{
-                            "invocation_id": invocation_id,
-                            "child_session_id": child_id,
-                            "run_id": "11111111-1111-1111-1111-111111111111",
-                            "position": 0,
-                            "status": "completed",
-                            "prompt_length": 3,
-                            "created_at": "2024-01-01T00:00:00Z",
-                            "updated_at": "2024-01-01T00:00:00Z"
-                        }]
+                        "label": "Audit FooAPI",
+                        "status": "active"
                     }
                 ]))
             }),
         )
         .route(
-            &format!("/api/subagent_invocations/{}", invocation_id),
-            get(move || async move {
-                Json(json!({
-                    "id": invocation_id,
-                    "tool_call_id": "tool-1",
-                    "parent_session_id": parent_id,
-                    "requested_count": 1,
-                    "status": "completed",
-                    "created_at": "2024-01-01T00:00:00Z",
-                    "updated_at": "2024-01-01T00:00:00Z",
-                    "children": [{
-                        "invocation_id": invocation_id,
-                        "child_session_id": child_id,
-                        "run_id": "11111111-1111-1111-1111-111111111111",
-                        "position": 0,
-                        "status": "completed",
-                        "prompt_length": 3,
-                        "created_at": "2024-01-01T00:00:00Z",
-                        "updated_at": "2024-01-01T00:00:00Z"
-                    }]
-                }))
-            }),
-        )
-        .route(
             &format!("/api/mcp/sessions/{}/subagent_wait", parent_id),
             post(move |Json(body): Json<serde_json::Value>| async move {
-                assert_eq!(body["invocation_id"], invocation_id);
+                assert_eq!(body["label"], "Audit FooAPI");
                 Json(json!({
-                    "invocation_id": invocation_id,
                     "status": "completed",
                     "results": [{
-                        "session_id": child_id,
                         "label": "Audit FooAPI",
-                        "provider_id": "codex",
-                        "model_id": "gpt-5.2",
                         "status": "completed",
                         "content": "final"
                     }]
@@ -147,10 +96,10 @@ async fn mcp_subagent_tools_call_daemon_http() {
             "id":3,
             "method":"tools/call",
             "params":{
-                "name":"ctx.agent_init",
+                "name":"ctx.subagent_init",
                 "_meta":{"toolCallId":"tool-1"},
                 "arguments":{
-                    "response_mode":"await",
+                    "worktree":"inherit",
                     "agents":[
                         {
                             "prompt":"check foo",
@@ -168,8 +117,6 @@ async fn mcp_subagent_tools_call_daemon_http() {
     }
     stdin.flush().await.unwrap();
 
-    let mut subagent_group_id: Option<String> = None;
-    let mut subagent_id: Option<String> = None;
     let init_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < init_deadline {
         let Some(line) = reader.next_line().await.unwrap() else {
@@ -179,24 +126,10 @@ async fn mcp_subagent_tools_call_daemon_http() {
         if v.get("id").and_then(|id| id.as_i64()) == Some(3) {
             let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
             let payload: serde_json::Value = serde_json::from_str(text).unwrap();
-            subagent_group_id = payload
-                .get("subagent_group_id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            subagent_id = payload
-                .get("results")
-                .and_then(|v| v.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|item| item.get("subagent_id"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            assert!(text.contains("found 3 usages"));
+            assert_eq!(payload["results"][0]["label"], "Audit FooAPI");
             break;
         }
     }
-
-    let subagent_group_id = subagent_group_id.expect("missing subagent_group_id");
-    let subagent_id = subagent_id.expect("missing subagent_id");
 
     for msg in [
         json!({
@@ -204,9 +137,9 @@ async fn mcp_subagent_tools_call_daemon_http() {
             "id":4,
             "method":"tools/call",
             "params":{
-                "name":"ctx.agent_reply",
+                "name":"ctx.subagent_reply",
                 "arguments":{
-                    "subagent_id": subagent_id,
+                    "label": "Audit FooAPI",
                     "prompt":"summarize output"
                 }
             }
@@ -216,19 +149,8 @@ async fn mcp_subagent_tools_call_daemon_http() {
             "id":5,
             "method":"tools/call",
             "params":{
-                "name":"ctx.subagent_invocations_list",
+                "name":"ctx.subagent_list",
                 "arguments":{}
-            }
-        }),
-        json!({
-            "jsonrpc":"2.0",
-            "id":6,
-            "method":"tools/call",
-            "params":{
-                "name":"ctx.subagent_invocation_get",
-                "arguments":{
-                    "subagent_group_id": subagent_group_id
-                }
             }
         }),
         json!({
@@ -238,7 +160,7 @@ async fn mcp_subagent_tools_call_daemon_http() {
             "params":{
                 "name":"ctx.subagent_wait",
                 "arguments":{
-                    "subagent_group_id": subagent_group_id
+                    "label": "Audit FooAPI"
                 }
             }
         }),
@@ -250,7 +172,6 @@ async fn mcp_subagent_tools_call_daemon_http() {
 
     let mut got_reply = false;
     let mut got_list = false;
-    let mut got_get = false;
     let mut got_wait = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
@@ -261,18 +182,13 @@ async fn mcp_subagent_tools_call_daemon_http() {
         match v.get("id").and_then(|id| id.as_i64()) {
             Some(4) => {
                 let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
-                assert!(text.contains("summary"));
+                assert!(text.contains("\"status\": \"running\""));
                 got_reply = true;
             }
             Some(5) => {
                 let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
-                assert!(text.contains(&subagent_group_id));
+                assert!(text.contains("Audit FooAPI"));
                 got_list = true;
-            }
-            Some(6) => {
-                let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
-                assert!(text.contains("completed"));
-                got_get = true;
             }
             Some(7) => {
                 let text = v["result"]["content"][0]["text"].as_str().unwrap_or("");
@@ -281,17 +197,13 @@ async fn mcp_subagent_tools_call_daemon_http() {
             }
             _ => {}
         }
-        if got_reply && got_list && got_get && got_wait {
+        if got_reply && got_list && got_wait {
             break;
         }
     }
 
-    assert!(got_reply, "did not receive agent_reply response");
-    assert!(
-        got_list,
-        "did not receive subagent_invocations_list response"
-    );
-    assert!(got_get, "did not receive subagent_invocation_get response");
+    assert!(got_reply, "did not receive subagent_reply response");
+    assert!(got_list, "did not receive subagent_list response");
     assert!(got_wait, "did not receive subagent_wait response");
     let _ = child.kill().await;
 }

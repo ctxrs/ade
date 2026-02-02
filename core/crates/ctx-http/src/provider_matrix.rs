@@ -394,7 +394,6 @@ pub async fn apply_matrix_to_status(
             .insert("matrix_latest_version".to_string(), latest.version.clone());
     }
 
-    let mut supported = true;
     let mut diagnostics = Vec::new();
 
     if status.installed {
@@ -402,13 +401,11 @@ pub async fn apply_matrix_to_status(
             match release_for_version(entry, version) {
                 Some(release) => {
                     if release.status != ProviderReleaseStatus::Supported {
-                        supported = false;
                         diagnostics.push(format!(
                             "Provider version {} is blocked by the support matrix",
                             release.version
                         ));
                     } else if !release_matches_context(release, context_version) {
-                        supported = false;
                         let mut msg = "Provider version requires a newer ctx build".to_string();
                         if let Some(min) = release.context_min.as_ref() {
                             msg = format!("Provider version requires ctx >= {min}");
@@ -417,7 +414,6 @@ pub async fn apply_matrix_to_status(
                     }
                 }
                 None => {
-                    supported = false;
                     diagnostics.push(format!(
                         "Provider version {} is not in the support matrix",
                         version
@@ -425,16 +421,8 @@ pub async fn apply_matrix_to_status(
                 }
             }
         } else {
-            supported = false;
             diagnostics.push("Unable to determine provider version".to_string());
         }
-    }
-
-    if status.installed
-        && matches!(status.health, ctx_providers::adapters::ProviderHealth::Ok)
-        && !supported
-    {
-        status.health = ctx_providers::adapters::ProviderHealth::UnsupportedVersion;
     }
 
     if !diagnostics.is_empty() {
@@ -498,12 +486,10 @@ async fn detect_provider_version(
     }
 
     let probe = entry.version_probe.as_ref()?;
-    let command = cfg
-        .providers
-        .get(&status.provider_id)
+    let command = crate::installer::resolve_provider_command(cfg, &status.provider_id)
         .map(|c| ProviderCommand {
-            command: c.command.clone(),
-            args: c.args.clone(),
+            command: c.command,
+            args: c.args,
         })
         .or_else(|| entry.command.clone());
     let command = command?;

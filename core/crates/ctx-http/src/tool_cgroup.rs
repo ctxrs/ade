@@ -89,7 +89,7 @@ pub async fn build_public_settings(
 ) -> Option<PublicToolLimitsSettings> {
     let cfg = settings.tool_limits.as_ref()?;
     let (system, _disks, _cache_age_ms) = {
-        let mut sampler = state.resource_sampler.lock().await;
+        let mut sampler = state.telemetry.resource_sampler.lock().await;
         sampler.system_snapshot()
     };
     let effective = compute_effective_limits(cfg, &system);
@@ -115,7 +115,7 @@ pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()>
             return Ok(());
         }
         let (system, _disks, _cache_age_ms) = {
-            let mut sampler = state.resource_sampler.lock().await;
+            let mut sampler = state.telemetry.resource_sampler.lock().await;
             sampler.system_snapshot()
         };
         let Some(limits) = compute_effective_limits(&cfg, &system) else {

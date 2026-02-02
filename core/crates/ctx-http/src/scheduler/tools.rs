@@ -1201,7 +1201,7 @@ pub(super) async fn maybe_spool_tool_output(
     session_id: ctx_core::ids::SessionId,
     turn_id: ctx_core::ids::TurnId,
 ) -> Option<String> {
-    if !state.tool_output_spool_enabled {
+    if !state.core.tool_output_spool_enabled {
         return None;
     }
     let tool_call_id = tool_call_id_from_payload(raw_payload)?;
@@ -1210,7 +1210,10 @@ pub(super) async fn maybe_spool_tool_output(
     if output.trim().is_empty() {
         return None;
     }
-    let mut dir = state.tool_output_spool_dir.join(session_id.0.to_string());
+    let mut dir = state
+        .core
+        .tool_output_spool_dir
+        .join(session_id.0.to_string());
     dir = dir.join(turn_id.0.to_string());
     if let Err(err) = fs::create_dir_all(&dir).await {
         tracing::warn!(

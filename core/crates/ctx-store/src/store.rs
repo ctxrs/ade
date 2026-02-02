@@ -2886,8 +2886,14 @@ impl Store {
             anyhow::bail!("relationship requires parent_session_id");
         }
         let now = Utc::now();
+        let id = SessionId::new();
+        let title = if relationship.as_deref() == Some("sub_agent") {
+            format!("subagent-{}", id.0)
+        } else {
+            "New Task".to_string()
+        };
         let session = Session {
-            id: SessionId::new(),
+            id,
             task_id,
             workspace_id,
             worktree_id,
@@ -2895,7 +2901,7 @@ impl Store {
             relationship,
             provider_id,
             model_id,
-            title: "New Task".to_string(),
+            title,
             agent_role,
             status: SessionStatus::Active,
             provider_session_ref,
@@ -3134,6 +3140,65 @@ impl Store {
             });
         }
         Ok(out)
+    }
+
+    pub async fn get_subagent_session_by_label(
+        &self,
+        parent_session_id: SessionId,
+        label: &str,
+    ) -> Result<Option<Session>> {
+        let row = self
+            .query(
+                r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
+               provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
+               FROM sessions
+               WHERE parent_session_id = ? AND relationship = 'sub_agent' AND title = ?
+               LIMIT 1"#,
+            )
+            .bind(parent_session_id.0.to_string())
+            .bind(label)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|r| {
+            let id: String = r.try_get("id").ok()?;
+            let task_id: String = r.try_get("task_id").ok()?;
+            let ws_id: String = r.try_get("workspace_id").ok()?;
+            let wt_id: String = r.try_get("worktree_id").ok()?;
+            let created_at: String = r.try_get("created_at").ok()?;
+            let updated_at: String = r.try_get("updated_at").ok()?;
+            Some(Session {
+                id: SessionId(uuid::Uuid::parse_str(&id).ok()?),
+                task_id: TaskId(uuid::Uuid::parse_str(&task_id).ok()?),
+                workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
+                worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id).ok()?),
+                parent_session_id: parse_optional_session_id(r.try_get("parent_session_id").ok()?),
+                relationship: r.try_get("relationship").ok()?,
+                provider_id: r.try_get("provider_id").ok()?,
+                model_id: r.try_get("model_id").ok()?,
+                title: r.try_get("title").ok()?,
+                agent_role: r.try_get("agent_role").ok()?,
+                status: parse_session_status(r.try_get::<String, _>("status").ok()?.as_str()),
+                provider_session_ref: r.try_get("provider_session_ref").ok()?,
+                created_at: parse_dt(&created_at).ok()?,
+                updated_at: parse_dt(&updated_at).ok()?,
+            })
+        }))
+    }
+
+    pub async fn subagent_label_exists(&self, task_id: TaskId, label: &str) -> Result<bool> {
+        let row = self
+            .query(
+                r#"SELECT 1
+               FROM sessions
+               WHERE task_id = ? AND relationship = 'sub_agent' AND title = ?
+               LIMIT 1"#,
+            )
+            .bind(task_id.0.to_string())
+            .bind(label)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.is_some())
     }
 
     pub async fn get_session_summary_checkpoint(
@@ -3663,6 +3728,31 @@ impl Store {
             .await?;
 
         Ok((active, archived))
+    }
+    pub async fn count_active_tasks_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+        exclude_task_id: Option<TaskId>,
+    ) -> Result<i64> {
+        let count: i64 = if let Some(task_id) = exclude_task_id {
+            self.query_scalar(
+                r#"SELECT COUNT(*) FROM tasks
+                   WHERE primary_worktree_id = ? AND archived_at IS NULL AND id != ?"#,
+            )
+            .bind(worktree_id.0.to_string())
+            .bind(task_id.0.to_string())
+            .fetch_one(&self.pool)
+            .await?
+        } else {
+            self.query_scalar(
+                r#"SELECT COUNT(*) FROM tasks
+                   WHERE primary_worktree_id = ? AND archived_at IS NULL"#,
+            )
+            .bind(worktree_id.0.to_string())
+            .fetch_one(&self.pool)
+            .await?
+        };
+        Ok(count)
     }
 
     pub async fn list_workspace_index_page(
@@ -5518,6 +5608,71 @@ impl Store {
         .bind(turn_id.0.to_string())
         .fetch_optional(&self.pool)
         .await?;
+
+        Ok(row.and_then(|r| build_session_turn_from_row(r).ok()))
+    }
+
+    pub async fn get_running_turn_for_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<SessionTurn>> {
+        let row = self
+            .query(
+                r#"SELECT turn_id, session_id, run_id, user_message_id, status,
+                          start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                   FROM session_turns
+                   WHERE session_id = ? AND status IN ('queued', 'running')
+                   ORDER BY start_seq DESC
+                   LIMIT 1"#,
+            )
+            .bind(session_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|r| build_session_turn_from_row(r).ok()))
+    }
+
+    pub async fn get_latest_turn_for_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<SessionTurn>> {
+        let row = self
+            .query(
+                r#"SELECT turn_id, session_id, run_id, user_message_id, status,
+                          start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                   FROM session_turns
+                   WHERE session_id = ?
+                   ORDER BY start_seq DESC
+                   LIMIT 1"#,
+            )
+            .bind(session_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|r| build_session_turn_from_row(r).ok()))
+    }
+
+    pub async fn get_latest_turn_for_run(
+        &self,
+        session_id: SessionId,
+        run_id: RunId,
+    ) -> Result<Option<SessionTurn>> {
+        let row = self
+            .query(
+                r#"SELECT turn_id, session_id, run_id, user_message_id, status,
+                          start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                   FROM session_turns
+                   WHERE session_id = ? AND run_id = ?
+                   ORDER BY start_seq DESC
+                   LIMIT 1"#,
+            )
+            .bind(session_id.0.to_string())
+            .bind(run_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.and_then(|r| build_session_turn_from_row(r).ok()))
     }
@@ -9145,5 +9300,72 @@ mod tests {
         .await
         .unwrap();
         assert!(row.is_none());
+    }
+
+    #[tokio::test]
+    async fn subagent_label_is_unique_per_task() {
+        let (_dir, store) = setup_store().await;
+        let ws = store
+            .create_workspace("test".into(), "/tmp/test".into(), VcsKind::Git)
+            .await
+            .unwrap();
+        let task = store.create_task(ws.id, "task".into(), None).await.unwrap();
+        let worktree = store
+            .create_worktree(ws.id, "/tmp/ws".into(), "abc123".into(), None)
+            .await
+            .unwrap();
+        let parent = store
+            .create_session(
+                task.id,
+                ws.id,
+                worktree.id,
+                "fake".into(),
+                "fake".into(),
+                "assistant".into(),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let child_one = store
+            .create_session(
+                task.id,
+                ws.id,
+                worktree.id,
+                "fake".into(),
+                "fake".into(),
+                "subagent".into(),
+                Some(parent.id),
+                Some("sub_agent".into()),
+                None,
+            )
+            .await
+            .unwrap();
+        let child_two = store
+            .create_session(
+                task.id,
+                ws.id,
+                worktree.id,
+                "fake".into(),
+                "fake".into(),
+                "subagent".into(),
+                Some(parent.id),
+                Some("sub_agent".into()),
+                None,
+            )
+            .await
+            .unwrap();
+
+        store
+            .update_session_title(child_one.id, "Dup".into())
+            .await
+            .unwrap();
+
+        let err = store
+            .update_session_title(child_two.id, "Dup".into())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("unique"));
     }
 }

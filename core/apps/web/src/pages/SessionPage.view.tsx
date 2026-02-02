@@ -93,11 +93,87 @@ type PendingMessageEntry = {
   message: Message;
 };
 
+// Edge case: the workspace stream can deliver the real message before the
+// POST response updates the optimistic entry. We drop client-id pending
+// messages when a matching real message arrives within this time window,
+// allowing small client/server clock skew.
+const PENDING_MATCH_WINDOW_MS = 15_000;
+const PENDING_MATCH_EARLY_SKEW_MS = 2_000;
+
+const isClientMessageId = (value: unknown): boolean => {
+  const id = idToString(value as { 0?: string } | string);
+  return Boolean(id && id.startsWith("client-"));
+};
+
 const createClientMessageId = (): string => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return `client-${crypto.randomUUID()}`;
   }
   return `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
+const normalizeAttachmentKey = (value: MessageAttachment): string => {
+  const key = String((value as any)?.blob_id ?? (value as any)?.name ?? (value as any)?.kind ?? "").trim();
+  return key;
+};
+
+const buildAttachmentSignature = (attachments?: MessageAttachment[]): string => {
+  if (!Array.isArray(attachments) || attachments.length === 0) return "";
+  const keys = attachments.map(normalizeAttachmentKey).filter(Boolean).sort();
+  return keys.join("|");
+};
+
+const buildMessageSignature = (message: Message): string => {
+  if (!message || message.role !== "user") return "";
+  const content = String(message.content ?? "");
+  const attachments = buildAttachmentSignature(message.attachments);
+  return `${content}::${attachments}`;
+};
+
+const parseMessageTimestamp = (value?: string | null): number | null => {
+  const ts = Date.parse(value ?? "");
+  return Number.isFinite(ts) ? ts : null;
+};
+
+const buildSignatureTimestampIndex = (messages: Message[]): Map<string, number[]> => {
+  const index = new Map<string, number[]>();
+  for (const message of messages) {
+    if (!message || message.role !== "user") continue;
+    const signature = buildMessageSignature(message);
+    if (!signature) continue;
+    const ts = parseMessageTimestamp(message.created_at);
+    if (ts == null) continue;
+    const list = index.get(signature);
+    if (list) {
+      list.push(ts);
+    } else {
+      index.set(signature, [ts]);
+    }
+  }
+  return index;
+};
+
+const shouldDropPendingMessage = (
+  pending: Message,
+  realIds: Set<string>,
+  realBySignature: Map<string, number[]>,
+): boolean => {
+  const pid = idToString(pending.id);
+  if (pid && realIds.has(pid)) return true;
+  if (!isClientMessageId(pid)) return false;
+  if (pending.role !== "user") return false;
+  const signature = buildMessageSignature(pending);
+  if (!signature) return false;
+  const pendingTs = parseMessageTimestamp(pending.created_at);
+  if (pendingTs == null) return false;
+  const candidates = realBySignature.get(signature);
+  if (!candidates || candidates.length === 0) return false;
+  for (const realTs of candidates) {
+    if (realTs + PENDING_MATCH_EARLY_SKEW_MS < pendingTs) continue;
+    if (realTs - pendingTs > PENDING_MATCH_WINDOW_MS) continue;
+    return true;
+  }
+  return false;
 };
 
 function useRafCoalesced<T>(value: T): T {
@@ -205,6 +281,7 @@ export function SessionView({
   const [dropActive, setDropActive] = useState(false);
   const [workbenchModeInternal, setWorkbenchModeInternal] = useState<WorkbenchModeId>("default");
   const [sendBusy, setSendBusy] = useState(false);
+  const sendBusyRef = useRef(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [queueActionBusyId, setQueueActionBusyId] = useState<string | null>(null);
   const [pendingMessages, setPendingMessages] = useState<PendingMessageEntry[]>([]);
@@ -744,11 +821,11 @@ export function SessionView({
   useEffect(() => {
     if (pendingMessages.length === 0) return;
     const realIds = new Set(messages.map((m) => idToString(m.id)));
+    const realBySignature = buildSignatureTimestampIndex(messages);
     setPendingMessages((prev) => {
       if (prev.length === 0) return prev;
       const next = prev.filter((entry) => {
-        const pid = idToString(entry.message.id);
-        return pid ? !realIds.has(pid) : true;
+        return !shouldDropPendingMessage(entry.message, realIds, realBySignature);
       });
       return next.length === prev.length ? prev : next;
     });
@@ -756,11 +833,11 @@ export function SessionView({
   useEffect(() => {
     if (pendingQueueMessages.length === 0) return;
     const realIds = new Set(queue.map((m) => idToString(m.id)));
+    const realBySignature = buildSignatureTimestampIndex(queue);
     setPendingQueueMessages((prev) => {
       if (prev.length === 0) return prev;
       const next = prev.filter((entry) => {
-        const pid = idToString(entry.message.id);
-        return pid ? !realIds.has(pid) : true;
+        return !shouldDropPendingMessage(entry.message, realIds, realBySignature);
       });
       return next.length === prev.length ? prev : next;
     });
@@ -1419,15 +1496,31 @@ export function SessionView({
     };
   };
 
+  const setSendBusySafe = (next: boolean) => {
+    sendBusyRef.current = next;
+    setSendBusy(next);
+  };
+
   const sendNow = async () => {
     if (!id) return;
-    if (sendBusy) return;
+    if (sendBusyRef.current) return;
     if (hasActiveTurn && !queuedMessagesEnabled) {
       // Temporarily disabled: queued messages are gated off while a turn is running.
       return;
     }
-    const text = (dictationRecording ? await stopDictation({ awaitFinal: true }) : input).trim();
-    if (!text) return;
+    setSendBusySafe(true);
+    let text = "";
+    try {
+      text = (dictationRecording ? await stopDictation({ awaitFinal: true }) : input).trim();
+    } catch (e: any) {
+      setSendError(e?.message ? String(e.message) : String(e));
+      setSendBusySafe(false);
+      return;
+    }
+    if (!text) {
+      setSendBusySafe(false);
+      return;
+    }
     const attachmentsToSend = draftAttachments;
     const shouldQueue = hasActiveTurn && queuedMessagesEnabled;
     const optimisticId = createClientMessageId();
@@ -1443,7 +1536,6 @@ export function SessionView({
       delivery: shouldQueue ? "queued" : "immediate",
       created_at: new Date().toISOString(),
     };
-    setSendBusy(true);
     setSendError(null);
     if (shouldQueue) {
       setPendingQueueMessages((prev) => [...prev, { clientId: optimisticId, message: optimisticMessage }]);
@@ -1482,7 +1574,7 @@ export function SessionView({
       setDraftAttachments(attachmentsToSend);
       setSendError(e?.message ? String(e.message) : String(e));
     } finally {
-      setSendBusy(false);
+      setSendBusySafe(false);
     }
   };
 
@@ -1536,7 +1628,7 @@ export function SessionView({
 
   const onSendQueuedNow = async (message: Message) => {
     if (!id) return;
-    if (queueActionBusy || sendBusy) return;
+    if (queueActionBusy || sendBusyRef.current) return;
     const mid = idToString(message.id);
     if (!mid) return;
     const attachments = getQueuedAttachments(message);
@@ -1565,7 +1657,7 @@ export function SessionView({
       setQueueActionBusyId(null);
       return;
     }
-    setSendBusy(true);
+    setSendBusySafe(true);
 
     const optimisticId = createClientMessageId();
     const optimisticMessage: Message = {
@@ -1595,7 +1687,7 @@ export function SessionView({
       setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== optimisticId));
       setSendError(e?.message ? String(e.message) : String(e));
     } finally {
-      setSendBusy(false);
+      setSendBusySafe(false);
       setQueueActionBusyId(null);
     }
   };

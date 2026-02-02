@@ -10,6 +10,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
+use crate::bundled_assets;
 use crate::daemon::AppState;
 use crate::installs::{truncate_for_storage, InstallEventLevel, InstallId, InstallProgressEvent};
 use crate::lsp_catalog::{LspCatalogArchive, LspCatalogInstall};
@@ -23,9 +24,10 @@ mod config;
 pub use config::{
     agent_server_config_path, apply_managed_install_details, apply_managed_lsp_server_config,
     apply_user_lsp_server_config, cagent_config_path, load_agent_server_config,
-    load_lsp_server_config, load_user_lsp_config, save_agent_server_config, save_lsp_server_config,
-    AgentServerCommand, AgentServerConfigFile, LspServerConfigFile, ManagedInstallError,
-    ManagedInstallMetadata, UserLspConfigFile, UserLspServerSpec,
+    load_lsp_server_config, load_user_lsp_config, resolve_provider_command,
+    save_agent_server_config, save_lsp_server_config, AgentServerCommand, AgentServerConfigFile,
+    LspServerConfigFile, ManagedInstallError, ManagedInstallMetadata, UserLspConfigFile,
+    UserLspServerSpec,
 };
 
 const NODE_VERSION: &str = "24.12.0";
@@ -254,7 +256,7 @@ async fn install_agent_server_url_binary(
     bin_path: &str,
     stage: &mut &'static str,
 ) -> Result<PathBuf> {
-    let data_root = &state.data_root;
+    let data_root = &state.core.data_root;
     let install_dir = data_root
         .join("providers")
         .join("agent-servers")
@@ -344,7 +346,7 @@ async fn install_url_binary(
     archive: LspCatalogArchive,
     bin_path: &str,
 ) -> Result<PathBuf> {
-    let data_root = &state.data_root;
+    let data_root = &state.core.data_root;
     let install_dir = data_root
         .join("lsp")
         .join("binaries")
@@ -484,7 +486,7 @@ async fn install_lsp_catalog_server_impl(
     catalog_id: &str,
     install_id: Option<InstallId>,
 ) -> Result<()> {
-    let data_root = state.data_root.clone();
+    let data_root = state.core.data_root.clone();
     let provider_id = format!("lsp:{catalog_id}");
     let entry = crate::lsp_catalog::get_entry(&data_root, catalog_id).await?;
     let extra_id = entry.id.clone();
@@ -726,7 +728,7 @@ async fn install_managed_npm_provider(
     extra_args: Vec<String>,
     stage: &mut &'static str,
 ) -> Result<ManagedProviderInstall> {
-    let data_root = state.data_root.clone();
+    let data_root = state.core.data_root.clone();
     let install_dir = data_root
         .join("providers")
         .join("agent-servers")
@@ -800,7 +802,7 @@ async fn install_managed_npm_provider(
 pub async fn ensure_claude_code_acp_ask_user_question_patched(
     agent_cfg: &AgentServerConfigFile,
 ) -> Result<bool> {
-    let Some(cmd) = agent_cfg.providers.get("claude") else {
+    let Some(cmd) = resolve_provider_command(agent_cfg, "claude") else {
         return Ok(false);
     };
     let Some(script_path) = cmd.args.first() else {
@@ -962,6 +964,7 @@ async fn install_managed_archive_provider(
     .context("installing agent server binary")?;
 
     let install_dir = state
+        .core
         .data_root
         .join("providers")
         .join("agent-servers")
@@ -970,7 +973,7 @@ async fn install_managed_archive_provider(
     let meta = ManagedInstallMetadata {
         package: Some(url.to_string()),
         version: Some(version.to_string()),
-        install_dir_rel: Some(install_dir_rel(&state.data_root, &install_dir)),
+        install_dir_rel: Some(install_dir_rel(&state.core.data_root, &install_dir)),
         bin_dir_rel: None,
         last_success_at: Some(Utc::now().to_rfc3339()),
         last_error: None,
@@ -995,11 +998,11 @@ async fn install_managed_python_provider(
     stage: &mut &'static str,
 ) -> Result<ManagedProviderInstall> {
     *stage = "python";
-    let python = ensure_python_runtime(state, install_id, provider_id, &state.data_root)
+    let python = ensure_python_runtime(state, install_id, provider_id, &state.core.data_root)
         .await
         .context("ensuring managed Python runtime")?
         .python_bin;
-    let data_root = state.data_root.clone();
+    let data_root = state.core.data_root.clone();
     let install_dir = data_root
         .join("providers")
         .join("agent-servers")
@@ -1139,7 +1142,7 @@ async fn install_managed_npm_dependency(
     version: &str,
     stage: &mut &'static str,
 ) -> Result<ManagedDependencyInstall> {
-    let data_root = state.data_root.clone();
+    let data_root = state.core.data_root.clone();
     let install_dir = data_root
         .join("providers")
         .join("agent-servers")
@@ -1234,7 +1237,7 @@ async fn install_managed_archive_dependency(
     bin_path: &str,
     stage: &mut &'static str,
 ) -> Result<ManagedDependencyInstall> {
-    let data_root = state.data_root.clone();
+    let data_root = state.core.data_root.clone();
     let install_dir = data_root
         .join("providers")
         .join("agent-servers")
@@ -1311,7 +1314,7 @@ async fn ensure_cagent_config(
     provider_id: &str,
     stage: &mut &'static str,
 ) -> Result<PathBuf> {
-    let cfg_path = cagent_config_path(&state.data_root);
+    let cfg_path = cagent_config_path(&state.core.data_root);
     if cfg_path.exists() {
         return Ok(cfg_path);
     }
@@ -1367,9 +1370,11 @@ async fn install_provider_impl(
         )
         .await;
 
-        let matrix =
-            provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache)
-                .await;
+        let matrix = provider_matrix::load_matrix_cached(
+            &state.core.data_root,
+            &state.providers.matrix_cache,
+        )
+        .await;
         let entry = provider_matrix::get_entry(&matrix, &provider_id)
             .ok_or_else(|| anyhow::anyhow!("unsupported provider for install: {provider_id}"))?;
         let Some(install) = entry.managed_install.as_ref() else {
@@ -1442,12 +1447,12 @@ async fn install_provider_impl(
                     }
                 };
 
-                let mut cfg = load_agent_server_config(&state.data_root)
+                let mut cfg = load_agent_server_config(&state.core.data_root)
                     .await
                     .unwrap_or_default();
                 cfg.managed_installs
                     .insert(dep.id.clone(), managed.meta.clone());
-                save_agent_server_config(&state.data_root, &cfg)
+                save_agent_server_config(&state.core.data_root, &cfg)
                     .await
                     .context("saving managed install registry")?;
             }
@@ -1473,7 +1478,7 @@ async fn install_provider_impl(
                     package,
                     &version,
                     entrypoint,
-                    resolve_install_args(args, &state.data_root),
+                    resolve_install_args(args, &state.core.data_root),
                     &mut stage,
                 )
                 .await?
@@ -1506,7 +1511,7 @@ async fn install_provider_impl(
                     package,
                     version,
                     entrypoint,
-                    resolve_install_args(args, &state.data_root),
+                    resolve_install_args(args, &state.core.data_root),
                     &mut stage,
                 )
                 .await?
@@ -1543,7 +1548,7 @@ async fn install_provider_impl(
                     &target_entry.url,
                     map_archive_kind(target_entry.archive),
                     &target_entry.bin_path,
-                    resolve_install_args(args, &state.data_root),
+                    resolve_install_args(args, &state.core.data_root),
                     &mut stage,
                 )
                 .await?
@@ -1569,7 +1574,7 @@ async fn install_provider_impl(
                 Tier1AcpAdapter::claude_from_raw_with_ask_user_question(
                     managed.command.clone(),
                     managed.args.clone(),
-                    std::sync::Arc::clone(&state.ask_user_question),
+                    std::sync::Arc::clone(&state.core.ask_user_question),
                 )
             } else {
                 Tier1AcpAdapter::from_raw(
@@ -1581,12 +1586,12 @@ async fn install_provider_impl(
 
         // Refresh the in-memory adapter so new Sessions use the managed install.
         {
-            let mut map = state.providers.lock().await;
+            let mut map = state.providers.adapters.lock().await;
             map.insert(provider_id.clone(), adapter.clone());
         }
 
         stage = "refresh";
-        let mut status_cfg = load_agent_server_config(&state.data_root)
+        let mut status_cfg = load_agent_server_config(&state.core.data_root)
             .await
             .unwrap_or_default();
         status_cfg
@@ -1595,7 +1600,8 @@ async fn install_provider_impl(
         refresh_provider_statuses_with_cfg(state, status_cfg).await?;
 
         let status = state
-            .provider_statuses
+            .providers
+            .statuses
             .lock()
             .await
             .get(&provider_id)
@@ -1625,7 +1631,7 @@ async fn install_provider_impl(
         )
         .await;
 
-        let mut cfg = load_agent_server_config(&state.data_root)
+        let mut cfg = load_agent_server_config(&state.core.data_root)
             .await
             .context("loading managed install registry")?;
         cfg.managed_installs
@@ -1639,7 +1645,7 @@ async fn install_provider_impl(
                 managed: Some(managed.meta.clone()),
             },
         );
-        save_agent_server_config(&state.data_root, &cfg)
+        save_agent_server_config(&state.core.data_root, &cfg)
             .await
             .context("saving managed install registry")?;
 
@@ -1686,7 +1692,7 @@ async fn install_provider_impl(
         )
         .await;
         update_registry_last_error(
-            &state.data_root,
+            &state.core.data_root,
             &provider_id,
             stage,
             e,
@@ -1818,7 +1824,7 @@ async fn repair_install_dir(
 }
 
 pub async fn refresh_provider_statuses(state: &AppState) -> Result<()> {
-    let cfg = load_agent_server_config(&state.data_root)
+    let cfg = load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
     refresh_provider_statuses_with_cfg(state, cfg).await
@@ -1829,9 +1835,10 @@ async fn refresh_provider_statuses_with_cfg(
     cfg: AgentServerConfigFile,
 ) -> Result<()> {
     let matrix =
-        provider_matrix::load_matrix_cached(&state.data_root, &state.provider_matrix_cache).await;
+        provider_matrix::load_matrix_cached(&state.core.data_root, &state.providers.matrix_cache)
+            .await;
 
-    let map = state.providers.lock().await;
+    let map = state.providers.adapters.lock().await;
     let mut statuses = HashMap::new();
     for (id, adapter) in map.iter() {
         match adapter.inspect().await {
@@ -1839,7 +1846,7 @@ async fn refresh_provider_statuses_with_cfg(
                 apply_managed_install_details(&mut status, &cfg);
                 if let Some(entry) = provider_matrix::get_entry(&matrix, id) {
                     provider_matrix::apply_matrix_to_status(
-                        &state.data_root,
+                        &state.core.data_root,
                         &cfg,
                         entry,
                         &mut status,
@@ -1866,7 +1873,7 @@ async fn refresh_provider_statuses_with_cfg(
         }
     }
     drop(map);
-    *state.provider_statuses.lock().await = statuses;
+    *state.providers.statuses.lock().await = statuses;
     Ok(())
 }
 
@@ -1897,6 +1904,35 @@ pub(crate) async fn ensure_node_runtime(
     data_root: &Path,
 ) -> Result<NodeRuntime> {
     let target = node_target_triple()?;
+    if let Some(bundled) = bundled_assets::bundled_node_runtime() {
+        if bundled.version == NODE_VERSION {
+            if let Some(npm_cli_js) = bundled.npm_cli.clone() {
+                emit_install(
+                    state,
+                    install_id,
+                    provider_id,
+                    InstallEventLevel::Info,
+                    "node",
+                    format!("Using bundled Node runtime v{NODE_VERSION} ({target})"),
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+                return Ok(NodeRuntime {
+                    node_root: bundled.root,
+                    node_bin: bundled.bin,
+                    npm_cli_js,
+                });
+            }
+        } else {
+            tracing::warn!(
+                "bundled Node runtime version {} does not match expected {}",
+                bundled.version,
+                NODE_VERSION
+            );
+        }
+    }
     let folder = format!("node-v{NODE_VERSION}-{target}");
     let node_root = data_root.join("runtimes").join("node").join(&folder);
     let (node_bin, npm_cli_js) = node_runtime_paths(&node_root);
@@ -2101,6 +2137,32 @@ async fn ensure_python_runtime(
     data_root: &Path,
 ) -> Result<PythonRuntime> {
     let target = python_target_triple()?;
+    if let Some(bundled) = bundled_assets::bundled_python_runtime() {
+        if bundled.version == PYTHON_VERSION {
+            emit_install(
+                state,
+                install_id,
+                provider_id,
+                InstallEventLevel::Info,
+                "python",
+                format!("Using bundled Python runtime {PYTHON_VERSION} ({target})"),
+                None,
+                None,
+                None,
+            )
+            .await;
+            return Ok(PythonRuntime {
+                python_root: bundled.root,
+                python_bin: bundled.bin,
+            });
+        } else {
+            tracing::warn!(
+                "bundled Python runtime version {} does not match expected {}",
+                bundled.version,
+                PYTHON_VERSION
+            );
+        }
+    }
     let folder = format!("cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target}");
     let python_root = data_root.join("runtimes").join("python").join(&folder);
     let python_bin = resolve_python_bin(&python_root);
@@ -2647,7 +2709,7 @@ async fn install_lsp_server_impl(
     server_id: &str,
     install_id: Option<InstallId>,
 ) -> Result<()> {
-    let data_root = state.data_root.clone();
+    let data_root = state.core.data_root.clone();
     let provider_id = format!("lsp:{server_id}");
 
     if !is_supported_managed_lsp_server(server_id) {
@@ -3118,10 +3180,10 @@ async fn install_title_generation_local_impl(
         anyhow::bail!("llama.cpp runtime not available for this platform");
     };
 
-    let runtime_dir = title_generation_local::runtime_dir(&state.data_root);
+    let runtime_dir = title_generation_local::runtime_dir(&state.core.data_root);
     tokio::fs::create_dir_all(&runtime_dir).await.ok();
 
-    let runtime_bin = title_generation_local::find_runtime_binary(&state.data_root);
+    let runtime_bin = title_generation_local::find_runtime_binary(&state.core.data_root);
     if runtime_bin.is_none() {
         emit_install(
             state,
@@ -3200,15 +3262,15 @@ async fn install_title_generation_local_impl(
             }
         }
 
-        let runtime_bin = title_generation_local::find_runtime_binary(&state.data_root)
+        let runtime_bin = title_generation_local::find_runtime_binary(&state.core.data_root)
             .ok_or_else(|| anyhow::anyhow!("llama-server binary not found after extraction"))?;
         ensure_executable(&runtime_bin)?;
         tokio::fs::remove_file(&tmp).await.ok();
     }
 
-    let model_dir = title_generation_local::model_dir(&state.data_root);
+    let model_dir = title_generation_local::model_dir(&state.core.data_root);
     tokio::fs::create_dir_all(&model_dir).await.ok();
-    let model_path = title_generation_local::model_path(&state.data_root);
+    let model_path = title_generation_local::model_path(&state.core.data_root);
 
     let expected_sha = fetch_hf_etag_sha256(title_generation_local::LOCAL_MODEL_URL)
         .await
@@ -3216,7 +3278,7 @@ async fn install_title_generation_local_impl(
     let mut model_exists = model_path.exists();
     if model_exists {
         let digest = sha256_file(&model_path).await?;
-        let needs_metadata = title_generation_local::load_model_metadata(&state.data_root)
+        let needs_metadata = title_generation_local::load_model_metadata(&state.core.data_root)
             .await
             .is_none();
         if let Some(expected) = expected_sha.as_ref() {
@@ -3244,7 +3306,7 @@ async fn install_title_generation_local_impl(
                     size,
                     installed_at: Utc::now(),
                 };
-                title_generation_local::write_model_metadata(&state.data_root, &meta).await?;
+                title_generation_local::write_model_metadata(&state.core.data_root, &meta).await?;
             }
         } else if needs_metadata {
             let size = tokio::fs::metadata(&model_path).await?.len();
@@ -3255,7 +3317,7 @@ async fn install_title_generation_local_impl(
                 size,
                 installed_at: Utc::now(),
             };
-            title_generation_local::write_model_metadata(&state.data_root, &meta).await?;
+            title_generation_local::write_model_metadata(&state.core.data_root, &meta).await?;
         }
     }
 
@@ -3322,7 +3384,7 @@ async fn install_title_generation_local_impl(
             size,
             installed_at: Utc::now(),
         };
-        title_generation_local::write_model_metadata(&state.data_root, &meta).await?;
+        title_generation_local::write_model_metadata(&state.core.data_root, &meta).await?;
     }
 
     Ok(())

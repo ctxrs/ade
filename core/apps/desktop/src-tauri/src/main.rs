@@ -1,9 +1,13 @@
 use std::collections::{HashMap, HashSet};
+#[cfg(target_os = "macos")]
+use std::ffi::{CStr, CString};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+#[cfg(target_os = "macos")]
+use std::sync::{Once, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
@@ -12,6 +16,19 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{Row, SqlitePool};
 use tauri::Emitter;
 use tauri::Manager;
+#[cfg(target_os = "macos")]
+use objc2::rc::Retained;
+#[cfg(target_os = "macos")]
+use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, Sel, NSObject};
+#[cfg(target_os = "macos")]
+use objc2::{msg_send, sel, AnyThread, ClassType, MainThreadMarker};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{
+    NSBezelStyle, NSButton, NSColor, NSImage, NSImageNamePreferencesGeneral, NSLayoutAttribute,
+    NSTitlebarAccessoryViewController, NSWindow,
+};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{CGFloat, NSString};
 #[cfg(feature = "automation")]
 use tauri_plugin_automation::init as automation_init;
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -20,6 +37,11 @@ use tokio::sync::OnceCell;
 use url::Url;
 
 fn main() {
+    #[cfg(all(target_os = "windows", feature = "stt"))]
+    {
+        configure_windows_vosk_dll_search_path();
+    }
+
     let mut builder = tauri::Builder::default()
         .manage(ConnectionManager::default())
         .manage(DeepLinkTokenStore::default())
@@ -31,8 +53,8 @@ fn main() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_stt::init())
         .invoke_handler(tauri::generate_handler![
             desktop_get_connection,
             desktop_disconnect,
@@ -49,6 +71,7 @@ fn main() {
             desktop_get_deep_link_token,
             desktop_set_open_workspaces,
             desktop_open_workspace_in_new_window,
+            desktop_set_titlebar_color,
             desktop_register_workspace_window,
             desktop_unregister_workspace_window,
             desktop_upload_blob,
@@ -78,9 +101,58 @@ fn main() {
         builder = builder.plugin(automation_init());
     }
 
+    #[cfg(feature = "stt")]
+    {
+        builder = builder.plugin(tauri_plugin_stt::init());
+    }
+
     builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(all(target_os = "windows", feature = "stt"))]
+fn configure_windows_vosk_dll_search_path() {
+    use std::env;
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::PathBuf;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetDllDirectoryW(lpPathName: *const u16) -> i32;
+    }
+
+    let Ok(exe) = env::current_exe() else {
+        return;
+    };
+    let Some(exe_dir) = exe.parent().map(PathBuf::from) else {
+        return;
+    };
+
+    let candidates = [
+        exe_dir.clone(),
+        exe_dir.join("bin"),
+        exe_dir.join("resources").join("bin"),
+        exe_dir.join("resources"),
+    ];
+
+    let Some(found_dir) = candidates
+        .into_iter()
+        .find(|dir| dir.join("libvosk.dll").exists())
+    else {
+        return;
+    };
+
+    let wide: Vec<u16> = OsStr::new(found_dir.as_os_str())
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        // Ignore failures here; if this doesn't work, STT will fail when used.
+        let _ = SetDllDirectoryW(wide.as_ptr());
+    }
 }
 
 fn schedule_startup_workspaces(app: tauri::AppHandle) {
@@ -665,9 +737,46 @@ fn desktop_open_workspace_in_new_window(
     let window = apply_workbench_titlebar(builder)
         .build()
         .map_err(|e| format!("creating window failed: {e}"))?;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = install_macos_settings_button(&app, &window);
+    }
     let _ = window.show();
     let _ = window.set_focus();
     registry.register(&label, workspace_id);
+    Ok(())
+}
+
+#[derive(Deserialize)]
+struct DesktopTitlebarColor {
+    r: f64,
+    g: f64,
+    b: f64,
+    a: Option<f64>,
+}
+
+#[tauri::command]
+fn desktop_set_titlebar_color(
+    window: tauri::WebviewWindow,
+    color: DesktopTitlebarColor,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let clamp_unit = |value: f64| (value.max(0.0).min(255.0) / 255.0) as CGFloat;
+        let alpha = color.a.unwrap_or(1.0).max(0.0).min(1.0) as CGFloat;
+        let r = clamp_unit(color.r);
+        let g = clamp_unit(color.g);
+        let b = clamp_unit(color.b);
+        window
+            .with_webview(move |webview| unsafe {
+                let _mtm = MainThreadMarker::new().expect("titlebar color must be on main thread");
+                let ns_window: &NSWindow = &*webview.ns_window().cast();
+                ns_window.setTitlebarAppearsTransparent(false);
+                let bg = NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, alpha);
+                ns_window.setBackgroundColor(Some(&bg));
+            })
+            .map_err(|e| format!("failed to set titlebar color: {e}"))?;
+    }
     Ok(())
 }
 
@@ -1624,14 +1733,141 @@ fn reveal_in_file_manager(path: &Path) -> Result<()> {
     }
 }
 
+#[cfg(target_os = "macos")]
+static SETTINGS_BUTTON_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+#[cfg(target_os = "macos")]
+static SETTINGS_BUTTON_CLASS: Once = Once::new();
+
+#[cfg(target_os = "macos")]
+extern "C" fn settings_button_clicked(
+    _this: &AnyObject,
+    _cmd: Sel,
+    _sender: *mut AnyObject,
+) {
+    if let Some(app) = SETTINGS_BUTTON_APP.get() {
+        emit_settings_inplace(app, _this);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn emit_settings_inplace(app: &tauri::AppHandle, target: &AnyObject) {
+    const WINDOW_LABEL_IVAR: &[u8] = b"ctxWindowLabel\0";
+    let ivar = settings_button_target_class()
+        .instance_variable(CStr::from_bytes_with_nul(WINDOW_LABEL_IVAR).unwrap());
+    if let Some(ivar) = ivar {
+        let label_ptr = unsafe { *ivar.load::<*const std::ffi::c_char>(target) };
+        if !label_ptr.is_null() {
+            let label = unsafe { CStr::from_ptr(label_ptr) }.to_string_lossy().into_owned();
+            if let Some(window) = app.get_webview_window(&label) {
+                let _ = window.eval(
+                    "(() => { let t = '/settings'; const p = window.location.pathname || ''; \
+                     if (p.startsWith('/workspaces/')) { const ws = p.split('/')[2]; if (ws) { t = `/settings?ws=${encodeURIComponent(ws)}`; } } \
+                     window.location.assign(t); })();",
+                );
+                return;
+            }
+        }
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.eval("window.location.assign('/settings');");
+        return;
+    }
+    let _ = app.emit("desktop_open_settings", ());
+}
+
+#[cfg(target_os = "macos")]
+fn settings_button_target_class() -> &'static AnyClass {
+    const CLASS_NAME: &[u8] = b"CtxSettingsButtonTarget\0";
+    const WINDOW_LABEL_IVAR: &[u8] = b"ctxWindowLabel\0";
+    SETTINGS_BUTTON_CLASS.call_once(|| {
+        let class_name = CStr::from_bytes_with_nul(CLASS_NAME)
+            .expect("settings button class name should be valid");
+        let mut builder = ClassBuilder::new(class_name, NSObject::class())
+            .expect("settings button class should be registerable");
+        let ivar_name = CStr::from_bytes_with_nul(WINDOW_LABEL_IVAR)
+            .expect("settings button ivar name should be valid");
+        builder.add_ivar::<*const std::ffi::c_char>(ivar_name);
+        unsafe {
+            let open_settings: extern "C" fn(&'static AnyObject, Sel, *mut AnyObject) =
+                settings_button_clicked;
+            builder.add_method(
+                sel!(openSettings:),
+                open_settings,
+            );
+        }
+        builder.register();
+    });
+    let class_name = CStr::from_bytes_with_nul(CLASS_NAME)
+        .expect("settings button class name should be valid");
+    AnyClass::get(class_name).expect("settings button class should be registered")
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos_settings_button(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+) -> Result<()> {
+    SETTINGS_BUTTON_APP.get_or_init(|| app.clone());
+    let window_label = window.label().to_string();
+    let icon_path = app
+        .path()
+        .resource_dir()
+        .ok()
+        .and_then(|dir| dir.join("bundles/lucide-settings.svg").to_str().map(str::to_string));
+    window.with_webview(move |webview| unsafe {
+        let mtm = MainThreadMarker::new().expect("titlebar button should be on main thread");
+        let ns_window: &NSWindow = &*webview.ns_window().cast();
+        let image = icon_path
+            .as_deref()
+            .and_then(|path| load_lucide_settings_icon(path))
+            .or_else(|| NSImage::imageNamed(NSImageNamePreferencesGeneral));
+        let Some(image) = image else {
+            return;
+        };
+        let cls = settings_button_target_class();
+        let target: Retained<AnyObject> = msg_send![cls, new];
+        let target = &*Retained::into_raw(target);
+        let label_ptr = CString::new(window_label.as_str())
+            .expect("window label should be valid")
+            .into_raw();
+        let ivar = settings_button_target_class()
+            .instance_variable(CStr::from_bytes_with_nul(b"ctxWindowLabel\0").unwrap())
+            .expect("settings button ivar should exist");
+        ivar.load_ptr::<*const std::ffi::c_char>(target)
+            .write(label_ptr as *const std::ffi::c_char);
+        let button = NSButton::buttonWithImage_target_action(
+            &image,
+            Some(target),
+            Some(sel!(openSettings:)),
+            mtm,
+        );
+        button.setBezelStyle(NSBezelStyle::Toolbar);
+
+        let accessory = NSTitlebarAccessoryViewController::new(mtm);
+        accessory.setView(button.as_ref());
+        accessory.setLayoutAttribute(NSLayoutAttribute::Trailing);
+        accessory.setAutomaticallyAdjustsSize(true);
+        ns_window.addTitlebarAccessoryViewController(&accessory);
+    })?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn load_lucide_settings_icon(icon_path: &str) -> Option<Retained<NSImage>> {
+    let ns_path = NSString::from_str(icon_path);
+    let image = NSImage::initWithContentsOfFile(NSImage::alloc(), &ns_path)?;
+    image.setTemplate(true);
+    Some(image)
+}
+
 fn apply_workbench_titlebar<'a, R: tauri::Runtime, M: tauri::Manager<R>>(
     builder: tauri::WebviewWindowBuilder<'a, R, M>,
 ) -> tauri::WebviewWindowBuilder<'a, R, M> {
     #[cfg(target_os = "macos")]
     {
         return builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true);
+            .title_bar_style(tauri::TitleBarStyle::Visible)
+            .hidden_title(false);
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1658,9 +1894,13 @@ fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
         builder = builder.inner_size(1200.0, 900.0);
     }
     let builder = apply_workbench_titlebar(builder);
-    builder
+    let window = builder
         .build()
         .context("creating window")?;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = install_macos_settings_button(app, &window);
+    }
     Ok(())
 }
 
@@ -2762,6 +3002,15 @@ fn dev_web_dist() -> Option<PathBuf> {
     }
 }
 
+fn dev_bundle_dir() -> Option<PathBuf> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bundles");
+    if dir.exists() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn systemd_run_available() -> bool {
     match Command::new("systemd-run").arg("--version").status() {
@@ -2847,6 +3096,13 @@ fn spawn_daemon_with_mode(
             candidates.into_iter().find(|c| c.exists())
         })
         .or_else(dev_web_dist);
+    let bundle_dir = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|p| p.join("bundles"))
+        .filter(|p| p.exists())
+        .or_else(dev_bundle_dir);
 
     let local_port = pick_unused_local_port()?;
     let base_url = format!("http://127.0.0.1:{local_port}");
@@ -2869,6 +3125,10 @@ fn spawn_daemon_with_mode(
             cmd.arg("--setenv")
                 .arg(format!("CTX_MCP_COMMAND={}", mcp.to_string_lossy()));
         }
+        if let Some(bundle) = bundle_dir.as_ref() {
+            cmd.arg("--setenv")
+                .arg(format!("CTX_BUNDLE_DIR={}", bundle.to_string_lossy()));
+        }
         if let Ok(appimage) = std::env::var("APPIMAGE") {
             cmd.arg("--setenv")
                 .arg(format!("CTX_APPIMAGE_PATH={appimage}"));
@@ -2882,6 +3142,9 @@ fn spawn_daemon_with_mode(
         }
         if let Some(mcp) = mcp_bin.as_ref() {
             cmd.env("CTX_MCP_COMMAND", mcp.to_string_lossy().to_string());
+        }
+        if let Some(bundle) = bundle_dir.as_ref() {
+            cmd.env("CTX_BUNDLE_DIR", bundle.to_string_lossy().to_string());
         }
         if let Ok(appimage) = std::env::var("APPIMAGE") {
             cmd.env("CTX_APPIMAGE_PATH", appimage.clone());

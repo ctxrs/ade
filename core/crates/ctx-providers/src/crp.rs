@@ -258,6 +258,12 @@ impl CrpSessionPool {
             session.opened.store(true, Ordering::SeqCst);
         }
         let items = build_prompt_items(&req.input, &req.workdir, &req.env).await?;
+        let (model, reasoning_effort) = req
+            .input
+            .model_id
+            .as_deref()
+            .map(split_model_id_and_effort)
+            .unwrap_or((None, None));
         session
             .process
             .send(CrpCommand::SessionPrompt {
@@ -265,7 +271,8 @@ impl CrpSessionPool {
                 turn_id: Some(turn_id.clone()),
                 items: Some(items),
                 prompt: Some(req.input.content.clone()),
-                model: req.input.model_id.clone(),
+                model,
+                reasoning_effort,
                 cwd: Some(req.workdir.clone()),
             })
             .await?;
@@ -596,6 +603,8 @@ enum CrpCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        reasoning_effort: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         cwd: Option<PathBuf>,
     },
     #[serde(rename = "session.cancel")]
@@ -616,6 +625,8 @@ struct CrpSessionConfig {
     cwd: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model_provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -759,6 +770,8 @@ enum CrpEvent {
         session_id: String,
         turn_id: String,
         status: CrpTurnStatus,
+        #[serde(default)]
+        error: Option<CrpTurnError>,
     },
     #[serde(rename = "session.gap")]
     SessionGap {
@@ -780,6 +793,13 @@ enum CrpTurnStatus {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+struct CrpTurnError {
+    message: String,
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
 enum CrpToolStatus {
     Success,
@@ -789,18 +809,6 @@ enum CrpToolStatus {
 struct MappedCrpEvent {
     events: Vec<NormalizedEvent>,
     done: bool,
-}
-
-struct ToolCompletedPayloadParams {
-    tool_call_id: String,
-    tool_name: String,
-    tool_label: Option<String>,
-    status: CrpToolStatus,
-    output: Option<Value>,
-    error: Option<String>,
-    input: Option<Value>,
-    input_preview: Option<Value>,
-    seq: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -912,7 +920,7 @@ fn map_crp_event(
         CrpEvent::ToolStarted {
             tool_call_id,
             tool_name,
-            tool_label,
+            tool_label: _tool_label,
             input,
             input_preview,
             ..
@@ -926,14 +934,7 @@ fn map_crp_event(
                     },
                 );
             }
-            let payload = build_tool_started_payload(
-                tool_call_id,
-                tool_name,
-                tool_label,
-                input,
-                input_preview,
-                seq,
-            );
+            let payload = build_tool_started_payload(tool_call_id, tool_name, input, input_preview, seq);
             MappedCrpEvent {
                 events: vec![NormalizedEvent {
                     event_type: SessionEventType::ToolCall,
@@ -974,7 +975,7 @@ fn map_crp_event(
         CrpEvent::ToolCompleted {
             tool_call_id,
             tool_name,
-            tool_label,
+            tool_label: _tool_label,
             status,
             output,
             error,
@@ -987,17 +988,16 @@ fn map_crp_event(
                 .map(|c| (c.input, c.input_preview))
                 .unwrap_or((None, None));
             let input_preview = input_preview.or(cached_preview);
-            let payload = build_tool_completed_payload(ToolCompletedPayloadParams {
+            let payload = build_tool_completed_payload(
                 tool_call_id,
                 tool_name,
-                tool_label,
                 status,
                 output,
                 error,
                 input,
                 input_preview,
                 seq,
-            });
+            );
             tool_output_cache.remove(&tool_call_id_for_cache);
             MappedCrpEvent {
                 events: vec![NormalizedEvent {
@@ -1007,16 +1007,25 @@ fn map_crp_event(
                 done: false,
             }
         }
-        CrpEvent::TurnCompleted { status, .. } => {
+        CrpEvent::TurnCompleted { status, error, .. } => {
             let (event_type, payload) = match status {
                 CrpTurnStatus::Success => (
                     SessionEventType::Done,
                     json!({"status": "completed", "crp_seq": seq}),
                 ),
-                CrpTurnStatus::Error => (
-                    SessionEventType::Error,
-                    json!({"message": "crp_turn_error", "crp_seq": seq}),
-                ),
+                CrpTurnStatus::Error => {
+                    let message = error
+                        .as_ref()
+                        .map(|err| err.message.clone())
+                        .unwrap_or_else(|| "crp_turn_error".to_string());
+                    let mut payload = serde_json::Map::new();
+                    payload.insert("message".to_string(), json!(message));
+                    if let Some(kind) = error.and_then(|err| err.kind) {
+                        payload.insert("kind".to_string(), json!(kind));
+                    }
+                    payload.insert("crp_seq".to_string(), json!(seq));
+                    (SessionEventType::Error, Value::Object(payload))
+                }
                 CrpTurnStatus::Canceled | CrpTurnStatus::Interrupted => (
                     SessionEventType::TurnInterrupted,
                     json!({"reason": "crp_turn_interrupted", "crp_seq": seq}),
@@ -1051,7 +1060,6 @@ fn map_crp_event(
 fn build_tool_started_payload(
     tool_call_id: String,
     tool_name: String,
-    tool_label: Option<String>,
     input: Option<Value>,
     input_preview: Option<Value>,
     seq: u64,
@@ -1062,15 +1070,11 @@ fn build_tool_started_payload(
     payload.insert("kind".to_string(), json!(tool_name.clone()));
     payload.insert("status".to_string(), json!("running"));
     let raw_input = input.clone().or_else(|| input_preview.clone());
-    if let Some(input_value) = raw_input.clone() {
-        payload.insert("rawInput".to_string(), input_value);
+    if let Some(input) = raw_input.clone() {
+        payload.insert("rawInput".to_string(), input);
     }
     if let Some(input_preview) = input_preview.clone() {
         payload.insert("input_preview".to_string(), input_preview);
-    }
-    if let Some(label) = tool_label.clone() {
-        payload.insert("title".to_string(), json!(label.clone()));
-        payload.insert("tool_label".to_string(), json!(label));
     }
     payload.insert(
         "toolCall".to_string(),
@@ -1080,25 +1084,23 @@ fn build_tool_started_payload(
             "kind": tool_name_for_call,
             "rawInput": raw_input,
             "status": "running",
-            "title": tool_label,
         }),
     );
     payload.insert("crp_seq".to_string(), json!(seq));
     Value::Object(payload)
 }
 
-fn build_tool_completed_payload(params: ToolCompletedPayloadParams) -> Value {
-    let ToolCompletedPayloadParams {
-        tool_call_id,
-        tool_name,
-        tool_label,
-        status,
-        output,
-        error,
-        input,
-        input_preview,
-        seq,
-    } = params;
+#[allow(clippy::too_many_arguments)]
+fn build_tool_completed_payload(
+    tool_call_id: String,
+    tool_name: String,
+    status: CrpToolStatus,
+    output: Option<Value>,
+    error: Option<String>,
+    input: Option<Value>,
+    input_preview: Option<Value>,
+    seq: u64,
+) -> Value {
     let mut payload = serde_json::Map::new();
     let tool_name_for_call = tool_name.clone();
     payload.insert("tool_call_id".to_string(), json!(tool_call_id.clone()));
@@ -1111,15 +1113,11 @@ fn build_tool_completed_payload(params: ToolCompletedPayloadParams) -> Value {
         }),
     );
     let raw_input = input.clone().or_else(|| input_preview.clone());
-    if let Some(input_value) = raw_input.clone() {
-        payload.insert("rawInput".to_string(), input_value);
+    if let Some(input) = raw_input.clone() {
+        payload.insert("rawInput".to_string(), input);
     }
     if let Some(input_preview) = input_preview.clone() {
         payload.insert("input_preview".to_string(), input_preview);
-    }
-    if let Some(label) = tool_label.clone() {
-        payload.insert("title".to_string(), json!(label.clone()));
-        payload.insert("tool_label".to_string(), json!(label));
     }
     if let Some(output) = output.clone() {
         if let Some(text) = extract_output_text(&output) {
@@ -1136,7 +1134,6 @@ fn build_tool_completed_payload(params: ToolCompletedPayloadParams) -> Value {
             "id": tool_call_id,
             "name": tool_name_for_call.clone(),
             "kind": tool_name_for_call,
-            "title": tool_label,
             "rawInput": raw_input,
             "rawOutput": payload.get("rawOutput").cloned(),
             "status": payload.get("status").cloned(),
@@ -1201,6 +1198,11 @@ fn build_crp_session_config(env: &HashMap<String, String>, workdir: &Path) -> Cr
         .map(|v| v != "1" && v.to_lowercase() != "true")
         .unwrap_or(true);
 
+    let (model, reasoning_effort) = env
+        .get("CTX_MODEL_ID")
+        .map(|value| split_model_id_and_effort(value))
+        .unwrap_or((None, None));
+
     let mcp_servers = if mcp_enabled {
         let mut mcp_env = HashMap::new();
         if let Some(url) = env.get("CTX_DAEMON_URL") {
@@ -1243,7 +1245,8 @@ fn build_crp_session_config(env: &HashMap<String, String>, workdir: &Path) -> Cr
 
     CrpSessionConfig {
         cwd: Some(workdir.to_path_buf()),
-        model: env.get("CTX_MODEL_ID").cloned(),
+        model,
+        reasoning_effort,
         model_provider: None,
         reasoning_trace_enabled: Some(true),
         mcp_servers,
@@ -1251,12 +1254,43 @@ fn build_crp_session_config(env: &HashMap<String, String>, workdir: &Path) -> Cr
 }
 
 fn build_crp_model_probe_config(env: &HashMap<String, String>, workdir: &Path) -> CrpSessionConfig {
+    let (model, reasoning_effort) = env
+        .get("CTX_MODEL_ID")
+        .map(|value| split_model_id_and_effort(value))
+        .unwrap_or((None, None));
     CrpSessionConfig {
         cwd: Some(workdir.to_path_buf()),
-        model: env.get("CTX_MODEL_ID").cloned(),
+        model,
+        reasoning_effort,
         model_provider: None,
         reasoning_trace_enabled: None,
         mcp_servers: None,
+    }
+}
+
+fn split_model_id_and_effort(model_id: &str) -> (Option<String>, Option<String>) {
+    let trimmed = model_id.trim();
+    if trimmed.is_empty() {
+        return (None, None);
+    }
+    let Some((base, suffix)) = trimmed.rsplit_once('/') else {
+        return (Some(trimmed.to_string()), None);
+    };
+    if base.trim().is_empty() {
+        return (Some(trimmed.to_string()), None);
+    }
+    let Some(effort) = normalize_effort_id(suffix) else {
+        return (Some(trimmed.to_string()), None);
+    };
+    (Some(base.trim().to_string()), Some(effort))
+}
+
+fn normalize_effort_id(raw: &str) -> Option<String> {
+    let normalized = raw.trim().to_lowercase();
+    match normalized.as_str() {
+        "none" | "minimal" | "low" | "medium" | "high" | "xhigh" => Some(normalized),
+        "extra_high" | "extra-high" | "extra high" => Some("xhigh".to_string()),
+        _ => None,
     }
 }
 

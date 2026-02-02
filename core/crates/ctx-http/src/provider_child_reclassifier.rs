@@ -73,7 +73,7 @@ pub fn spawn_provider_child_reclassifier(state: Arc<AppState>) {
 
     #[cfg(target_os = "linux")]
     {
-        let mut shutdown_rx = state.shutdown_tx.subscribe();
+        let mut shutdown_rx = state.core.shutdown_tx.subscribe();
         tokio::spawn(async move {
             let mut system = System::new_all();
             let mut classified: HashSet<u32> = HashSet::new();
@@ -165,7 +165,7 @@ async fn reclassify_once(
 
 async fn list_provider_pids(state: &Arc<AppState>) -> Vec<u32> {
     let providers = {
-        let providers = state.providers.lock().await;
+        let providers = state.providers.adapters.lock().await;
         providers.values().cloned().collect::<Vec<_>>()
     };
     let mut pids = Vec::new();

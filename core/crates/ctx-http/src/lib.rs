@@ -2,6 +2,7 @@ pub mod api;
 pub mod async_util;
 pub mod attachments;
 pub mod buffers;
+pub mod bundled_assets;
 pub mod completions;
 pub mod daemon;
 pub mod dictation_livekit;
@@ -36,6 +37,7 @@ pub mod title_generation;
 pub mod title_generation_local;
 pub mod tool_cgroup;
 pub mod updates;
+pub mod vcs_hooks;
 pub mod web_sessions;
 pub mod workspace_active_snapshot;
 pub mod workspace_config;
@@ -237,7 +239,7 @@ mod tests {
                     details: HashMap::new(),
                 },
             );
-            *state.provider_statuses.lock().await = statuses;
+            *state.providers.statuses.lock().await = statuses;
         }
 
         let app = api::router(state.clone());

@@ -117,7 +117,7 @@ pub async fn session_worker(
         "vcs_ref": worktree.vcs_ref,
         "git_branch": worktree.git_branch,
     }));
-    state.ops_events.emit(worktree_event);
+    state.telemetry.ops_events.emit(worktree_event);
 
     loop {
         if running.is_none() && !suspend_queue {
@@ -263,7 +263,7 @@ async fn start_turn(
     let workdir_str = workdir_root.to_string_lossy().to_string();
 
     let adapter = {
-        let map = state.providers.lock().await;
+        let map = state.providers.adapters.lock().await;
         map.get(&session.provider_id)
             .cloned()
             .ok_or_else(|| anyhow!("provider not available: {}", session.provider_id))?
@@ -286,6 +286,7 @@ async fn start_turn(
         labels: queue_labels,
     };
     state
+        .telemetry
         .perf_telemetry
         .record_metric(queue_metric, perf_run_id.clone(), None, None)
         .await;
@@ -304,7 +305,7 @@ async fn start_turn(
         "model_id": session.model_id.clone(),
         "env_target": env_target,
     }));
-    state.ops_events.emit(run_event);
+    state.telemetry.ops_events.emit(run_event);
 
     if message.delivered_at.is_none() {
         store.mark_message_delivered(message.id).await?;
@@ -342,16 +343,16 @@ async fn start_turn(
     let event_tx = ev_tx.clone();
 
     let mut provider_env = std::collections::HashMap::new();
-    provider_env.insert("CTX_DAEMON_URL".to_string(), state.daemon_url.clone());
+    provider_env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
     provider_env.insert(
         "CTX_DATA_ROOT".to_string(),
-        state.data_root.to_string_lossy().to_string(),
+        state.core.data_root.to_string_lossy().to_string(),
     );
     provider_env.insert(
         "CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL".to_string(),
         "1".to_string(),
     );
-    if let Some(token) = state.auth_token.clone() {
+    if let Some(token) = state.core.auth_token.clone() {
         provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
     }
     if let Some(provider_ref) = session.provider_session_ref.clone() {
@@ -361,7 +362,7 @@ async fn start_turn(
     provider_env.insert("CTX_MODEL_ID".to_string(), session.model_id.clone());
     let mcp_token = uuid::Uuid::new_v4().to_string();
     provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
-    let provider_control_mode = settings::load_settings(&state.data_root)
+    let provider_control_mode = settings::load_settings(&state.core.data_root)
         .await
         .sandboxing
         .as_ref()
@@ -377,20 +378,22 @@ async fn start_turn(
         provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
     }
     if session.provider_id == "codex" || session.provider_id == "codex-crp" {
-        if let Ok(env) = provider_accounts::codex_env_for_active_account(&state.data_root).await {
+        if let Ok(env) =
+            provider_accounts::codex_env_for_active_account(&state.core.data_root).await
+        {
             for (key, value) in env {
                 provider_env.insert(key, value);
             }
         }
     }
 
-    if let Ok(cfg) = installer::load_agent_server_config(&state.data_root).await {
+    if let Ok(cfg) = installer::load_agent_server_config(&state.core.data_root).await {
         if let Some(cmd) = cfg.providers.get(&session.provider_id) {
             let mut bin_dirs: Vec<std::path::PathBuf> = Vec::new();
             for dep in &cmd.dependencies {
                 if let Some(meta) = cfg.managed_installs.get(dep) {
                     if let Some(rel) = meta.bin_dir_rel.as_ref() {
-                        bin_dirs.push(state.data_root.join(rel));
+                        bin_dirs.push(state.core.data_root.join(rel));
                     }
                 }
             }
@@ -406,7 +409,11 @@ async fn start_turn(
         }
     }
     if !provider_env.contains_key("CTX_WORKER_GATEWAY_URL") {
-        apply_acp_heap_profile_env(&session.provider_id, &mut provider_env, &state.data_root);
+        apply_acp_heap_profile_env(
+            &session.provider_id,
+            &mut provider_env,
+            &state.core.data_root,
+        );
     }
 
     let prompt_config = workspace_config::load_agent_system_prompt_append(workdir)
@@ -469,6 +476,7 @@ async fn start_turn(
                 labels: spawn_labels,
             };
             state
+                .telemetry
                 .perf_telemetry
                 .record_metric(spawn_metric, perf_run_id.clone(), None, None)
                 .await;
@@ -477,6 +485,7 @@ async fn start_turn(
         Err(err) => {
             let duration_ms = run_started_at.elapsed().as_millis() as u64;
             state
+                .telemetry
                 .telemetry
                 .emit(TelemetryEvent::provider_call(
                     session.provider_id.clone(),
@@ -499,7 +508,7 @@ async fn start_turn(
                 "env_target": env_target,
                 "error": err.to_string(),
             }));
-            state.ops_events.emit(fail_event);
+            state.telemetry.ops_events.emit(fail_event);
             return Err(err);
         }
     };
@@ -548,6 +557,7 @@ async fn start_turn(
                     labels: first_labels,
                 };
                 state_for_events
+                    .telemetry
                     .perf_telemetry
                     .record_metric(first_metric, perf_run_id.clone(), None, None)
                     .await;
@@ -626,7 +636,7 @@ async fn start_turn(
                 } else {
                     Some(Value::Object(meta))
                 };
-                state_for_events.ops_events.emit(event);
+                state_for_events.telemetry.ops_events.emit(event);
 
                 if let Some(cwd) = tool_meta.cwd.as_deref() {
                     if cwd_outside_worktree(cwd, &workdir_root, workdir_canonical.as_ref()) {
@@ -643,7 +653,7 @@ async fn start_turn(
                             "reason": "cwd_outside_worktree",
                             "tool_call_id": tool_meta.tool_call_id,
                         }));
-                        state_for_events.ops_events.emit(warn_event);
+                        state_for_events.telemetry.ops_events.emit(warn_event);
                     }
                 }
             }
@@ -721,6 +731,7 @@ async fn start_turn(
                                 .and_then(Value::as_str)
                                 .map(|value| value.to_string());
                             state_for_events
+                                .workspaces
                                 .workspace_active_snapshot
                                 .publish_session_gap(workspace_id, session_id, event.seq, reason)
                                 .await;
@@ -916,10 +927,12 @@ async fn start_turn(
                                 labels: run_labels,
                             };
                             state_for_events
+                                .telemetry
                                 .perf_telemetry
                                 .record_metric(run_metric, perf_run_id.clone(), None, None)
                                 .await;
                             state_for_events
+                                .telemetry
                                 .telemetry
                                 .emit(TelemetryEvent::provider_call(
                                     provider_id.clone(),
@@ -930,6 +943,7 @@ async fn start_turn(
                                 ))
                                 .await;
                             state_for_events
+                                .telemetry
                                 .telemetry
                                 .emit(TelemetryEvent::session_completed(
                                     provider_id.clone(),
@@ -990,10 +1004,12 @@ async fn start_turn(
                                 labels: run_labels,
                             };
                             state_for_events
+                                .telemetry
                                 .perf_telemetry
                                 .record_metric(run_metric, perf_run_id.clone(), None, None)
                                 .await;
                             state_for_events
+                                .telemetry
                                 .telemetry
                                 .emit(TelemetryEvent::provider_call(
                                     provider_id.clone(),
@@ -1004,6 +1020,7 @@ async fn start_turn(
                                 ))
                                 .await;
                             state_for_events
+                                .telemetry
                                 .telemetry
                                 .emit(TelemetryEvent::session_completed(
                                     provider_id.clone(),
@@ -1070,10 +1087,12 @@ async fn start_turn(
                                 labels: run_labels,
                             };
                             state_for_events
+                                .telemetry
                                 .perf_telemetry
                                 .record_metric(run_metric, perf_run_id.clone(), None, None)
                                 .await;
                             state_for_events
+                                .telemetry
                                 .telemetry
                                 .emit(TelemetryEvent::provider_call(
                                     provider_id.clone(),
@@ -1084,6 +1103,7 @@ async fn start_turn(
                                 ))
                                 .await;
                             state_for_events
+                                .telemetry
                                 .telemetry
                                 .emit(TelemetryEvent::session_completed(
                                     provider_id.clone(),
@@ -1572,7 +1592,7 @@ fn find_codex_session_log(session_ref: &str) -> Option<PathBuf> {
     None
 }
 
-fn model_context_window(provider_id: &str, model_id: &str) -> Option<usize> {
+pub(crate) fn model_context_window(provider_id: &str, model_id: &str) -> Option<usize> {
     match (provider_id, model_id) {
         ("fake", "fake-model") => Some(8192),
         _ => None,

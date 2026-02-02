@@ -9,6 +9,7 @@ vi.mock("../api/client", () => ({
   daemonFetchRaw: vi.fn(),
   getDaemonBaseUrl: vi.fn(),
   setDaemonBaseUrl: vi.fn(),
+  setDaemonAuthToken: vi.fn(),
 }));
 
 vi.mock("../utils/desktop", () => ({

@@ -81,6 +81,7 @@ import {
 } from "../utils/theme";
 import { useTauriSttModelStatus } from "../utils/useTauriSttModelStatus";
 import { HARNESS_CATALOG, type HarnessCatalogEntry } from "../utils/harnessCatalog";
+import { PROVIDER_INSTALLS_ENABLED } from "../utils/providerInstallGate";
 import {
   ENTITLEMENTS_CACHE_KEY,
   ENTITLEMENTS_CACHE_TTL_MS,
@@ -3343,6 +3344,7 @@ export default function SettingsPage() {
       const anyWorkspace = workspaces.length > 0;
       const visibleProviders = providers.filter((p) => p.details?.ui_hidden !== "true").slice();
       const providersById = new Map<string, ProviderStatus>(visibleProviders.map((p) => [p.provider_id, p]));
+      const installControlsEnabled = PROVIDER_INSTALLS_ENABLED;
 
       const order = new Map<string, number>(HARNESS_CATALOG.map((h, idx) => [h.id, idx]));
       const curated = HARNESS_CATALOG.filter((h) => providersById.has(h.id));
@@ -3356,15 +3358,17 @@ export default function SettingsPage() {
       return (
         <>
           <Card>
-            <Row
-              title="Install all"
-              description="Installs supported harnesses to ~/.ctx/providers/agent-servers."
-              control={
-                <button type="button" className="settings-btn" onClick={onInstallAll} disabled={installBusy !== null}>
-                  {installBusy === "all" ? "Installing…" : "Install all"}
-                </button>
-              }
-            />
+            {installControlsEnabled ? (
+              <Row
+                title="Install all"
+                description="Installs supported harnesses to ~/.ctx/providers/agent-servers."
+                control={
+                  <button type="button" className="settings-btn" onClick={onInstallAll} disabled={installBusy !== null}>
+                    {installBusy === "all" ? "Installing…" : "Install all"}
+                  </button>
+                }
+              />
+            ) : null}
             <Row
               title="Workspace"
               description="Used for authenticate/verify checks."
@@ -3449,20 +3453,22 @@ export default function SettingsPage() {
                     </div>
                     <div className="settings-row-right settings-harness-actions">
                       {!installed ? (
-                        <button
-                          type="button"
-                          className="settings-btn settings-btn-secondary"
-                          onClick={() => onInstall(id)}
-                          disabled={!installSupported || installBusyLocal}
-                          style={
-                            installBusyLocal && installUi?.pct !== null
-                              ? ({ ["--settings-install-pct" as any]: `${clampPct(installUi.pct)}%` } as any)
-                              : undefined
-                          }
-                          title={!installSupported ? "Install not supported yet" : "Install this harness"}
-                        >
-                          {installLabel}
-                        </button>
+                        installControlsEnabled ? (
+                          <button
+                            type="button"
+                            className="settings-btn settings-btn-secondary"
+                            onClick={() => onInstall(id)}
+                            disabled={!installSupported || installBusyLocal}
+                            style={
+                              installBusyLocal && installUi?.pct !== null
+                                ? ({ ["--settings-install-pct" as any]: `${clampPct(installUi.pct)}%` } as any)
+                                : undefined
+                            }
+                            title={!installSupported ? "Install not supported yet" : "Install this harness"}
+                          >
+                            {installLabel}
+                          </button>
+                        ) : null
                       ) : (
                         <>
                           {needsAuth ? (

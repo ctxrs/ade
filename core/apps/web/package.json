@@ -12,6 +12,7 @@
     "loadtest:replay": "node ./scripts/replay-loadtest.mjs",
     "wal:attach": "node ./scripts/wal-attach.mjs",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:quiet": "vitest run --silent --reporter=dot",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
@@ -25,8 +26,8 @@
     "@supabase/supabase-js": "^2.49.1",
     "@tauri-apps/api": "^2.9.1",
     "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-os": "2.3.2",
     "@tauri-apps/plugin-shell": "2.3.4",
-    "tauri-plugin-stt-api": "^0.1.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-web-links": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
@@ -40,7 +41,8 @@
     "react-router-dom": "^6.28.0",
     "react-syntax-highlighter": "^15.6.1",
     "react-virtuoso": "^4.10.7",
-    "remark-gfm": "^4.0.0"
+    "remark-gfm": "^4.0.0",
+    "tauri-plugin-stt-api": "^0.1.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",
@@ -50,6 +52,7 @@
     "@types/react-dom": "~19.1.0",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^4.3.3",
+    "@vitest/coverage-v8": "^2.1.8",
     "jsdom": "^25.0.1",
     "pixelmatch": "^7.1.0",
     "playwright": "^1.57.0",

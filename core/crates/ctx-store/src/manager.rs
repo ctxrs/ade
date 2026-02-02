@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tokio::sync::Mutex;
@@ -20,8 +21,27 @@ pub struct StoreManager {
     global: Store,
     data_root: PathBuf,
     global_db_path: PathBuf,
-    workspace_stores: Arc<Mutex<HashMap<WorkspaceId, Store>>>,
+    workspace_stores: Arc<Mutex<HashMap<WorkspaceId, TimedStoreEntry>>>,
     config: StoreManagerConfig,
+}
+
+#[derive(Clone)]
+struct TimedStoreEntry {
+    store: Store,
+    last_access: Instant,
+}
+
+impl TimedStoreEntry {
+    fn new(store: Store) -> Self {
+        Self {
+            store,
+            last_access: Instant::now(),
+        }
+    }
+
+    fn touch(&mut self) {
+        self.last_access = Instant::now();
+    }
 }
 
 impl StoreManager {
@@ -70,14 +90,12 @@ impl StoreManager {
     }
 
     pub async fn workspace(&self, workspace_id: WorkspaceId) -> Result<Store> {
-        if let Some(store) = self
-            .workspace_stores
-            .lock()
-            .await
-            .get(&workspace_id)
-            .cloned()
         {
-            return Ok(store);
+            let mut stores = self.workspace_stores.lock().await;
+            if let Some(entry) = stores.get_mut(&workspace_id) {
+                entry.touch();
+                return Ok(entry.store.clone());
+            }
         }
         let workspace = self
             .global
@@ -86,13 +104,14 @@ impl StoreManager {
             .with_context(|| format!("workspace {} not found", workspace_id.0))?;
         let store = self.open_workspace_store(&workspace, false).await?;
         let mut stores = self.workspace_stores.lock().await;
-        if let Some(existing) = stores.get(&workspace_id) {
-            let existing = existing.clone();
+        if let Some(existing) = stores.get_mut(&workspace_id) {
+            existing.touch();
+            let existing = existing.store.clone();
             drop(stores);
             store.close().await;
             return Ok(existing);
         }
-        stores.insert(workspace_id, store.clone());
+        stores.insert(workspace_id, TimedStoreEntry::new(store.clone()));
         Ok(store)
     }
 
@@ -129,8 +148,37 @@ impl StoreManager {
             stores.remove(&workspace_id)
         };
         if let Some(store) = store {
-            store.close().await;
+            store.store.close().await;
         }
+    }
+
+    pub async fn evict_idle_workspaces(
+        &self,
+        max_idle: Duration,
+        active_workspaces: &HashSet<WorkspaceId>,
+    ) -> usize {
+        let now = Instant::now();
+        let evicted = {
+            let mut stores = self.workspace_stores.lock().await;
+            let expired: Vec<WorkspaceId> = stores
+                .iter()
+                .filter_map(|(workspace_id, entry)| {
+                    if active_workspaces.contains(workspace_id) {
+                        return None;
+                    }
+                    if now.duration_since(entry.last_access) >= max_idle {
+                        Some(*workspace_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for workspace_id in &expired {
+                stores.remove(workspace_id);
+            }
+            expired.len()
+        };
+        evicted
     }
 
     async fn bootstrap_workspace_dbs(&self) -> Result<()> {
@@ -173,5 +221,39 @@ impl StoreManager {
             .join("workspaces")
             .join(workspace_id.0.to_string())
             .join("db.sqlite")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ctx_core::models::VcsKind;
+
+    #[tokio::test]
+    async fn evict_idle_workspaces_skips_active() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = StoreManager::open(temp.path()).await.unwrap();
+        let workspace = manager
+            .global()
+            .create_workspace(
+                "ws".to_string(),
+                temp.path().to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+        let _store = manager.workspace(workspace.id).await.unwrap();
+
+        let mut active = HashSet::new();
+        active.insert(workspace.id);
+        let evicted = manager
+            .evict_idle_workspaces(Duration::from_secs(0), &active)
+            .await;
+        assert_eq!(evicted, 0);
+
+        let evicted = manager
+            .evict_idle_workspaces(Duration::from_secs(0), &HashSet::new())
+            .await;
+        assert_eq!(evicted, 1);
     }
 }

@@ -206,7 +206,7 @@ pub async fn submit_merge_queue_entry(
     };
     let store = state.store_for_workspace(workspace.id).await?;
     store.create_merge_queue_entry(&entry).await?;
-    state.merge_queue_notify.notify_one();
+    state.transport.merge_queue_notify.notify_one();
     let entry = wait_for_merge_queue_completion(state, entry.id).await?;
     ensure_merge_queue_success(&entry)?;
     Ok(entry)
@@ -223,7 +223,7 @@ pub async fn cancel_merge_queue_entry(
             entry.status = MergeQueueEntryStatus::Cancelled;
             entry.updated_at = Utc::now();
             store.update_merge_queue_entry(&entry).await?;
-            state.merge_queue_notify.notify_waiters();
+            state.transport.merge_queue_notify.notify_waiters();
             Ok(entry)
         }
         MergeQueueEntryStatus::Running => {
@@ -246,8 +246,8 @@ pub async fn retry_merge_queue_entry(
             entry.result_commit_sha = None;
             entry.updated_at = Utc::now();
             store.update_merge_queue_entry(&entry).await?;
-            state.merge_queue_notify.notify_one();
-            state.merge_queue_notify.notify_waiters();
+            state.transport.merge_queue_notify.notify_one();
+            state.transport.merge_queue_notify.notify_waiters();
             Ok(entry)
         }
         _ => Ok(entry),
@@ -255,7 +255,7 @@ pub async fn retry_merge_queue_entry(
 }
 
 pub fn spawn_merge_queue_runner(state: Arc<AppState>) {
-    let notify = state.merge_queue_notify.clone();
+    let notify = state.transport.merge_queue_notify.clone();
     tokio::spawn(async move {
         loop {
             match run_next_entry(&state).await {
@@ -342,7 +342,7 @@ async fn run_entry(
             run.finished_at = Some(now);
             store.update_merge_queue_entry(&entry).await?;
             store.update_merge_queue_run(&run).await?;
-            state.merge_queue_notify.notify_waiters();
+            state.transport.merge_queue_notify.notify_waiters();
             if let Err(err) =
                 maybe_sync_originating_worktree(state, workspace, &entry, &commit_sha).await
             {
@@ -358,7 +358,7 @@ async fn run_entry(
             run.finished_at = Some(now);
             store.update_merge_queue_entry(&entry).await?;
             store.update_merge_queue_run(&run).await?;
-            state.merge_queue_notify.notify_waiters();
+            state.transport.merge_queue_notify.notify_waiters();
         }
         Err(QueueError::Failed {
             message,
@@ -376,7 +376,7 @@ async fn run_entry(
             run.finished_at = Some(now);
             store.update_merge_queue_entry(&entry).await?;
             store.update_merge_queue_run(&run).await?;
-            state.merge_queue_notify.notify_waiters();
+            state.transport.merge_queue_notify.notify_waiters();
         }
     }
 
@@ -389,7 +389,7 @@ async fn wait_for_merge_queue_completion(
 ) -> Result<MergeQueueEntry> {
     let entry = get_merge_queue_entry(state, entry_id).await?;
     let store = state.store_for_workspace(entry.workspace_id).await?;
-    let notify = state.merge_queue_notify.clone();
+    let notify = state.transport.merge_queue_notify.clone();
     loop {
         let entry = store
             .get_merge_queue_entry(entry_id)
@@ -2206,7 +2206,7 @@ fn emit_merge_queue_tool_event(
         "tool_slice": used_tool_slice,
         "slice": TOOL_SLICE_UNIT,
     }));
-    state.ops_events.emit(event);
+    state.telemetry.ops_events.emit(event);
 }
 
 async fn merge_queue_command(
