@@ -1331,6 +1331,18 @@
   font-size: 12px;
 }
 
+.wb-menu-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+.wb-menu-item-spinner {
+  flex: 0 0 auto;
+}
+
 .wb-menu-item:hover {
   background: var(--surface-hover);
   border-color: var(--surface-active);

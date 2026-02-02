@@ -148,6 +148,7 @@ import {
   readGitStatusSummaryLine,
   sanitizeFileName,
   saveMarkdownExport,
+  spinnerDelayForNow,
 } from "./WorkbenchPage.utils";
 
 const DIFF_LINE_GUARD_LIMIT = 10000;
@@ -332,6 +333,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const renameDraftsRef = useRef<Map<string, string>>(new Map());
   const [convoMenu, setConvoMenu] = useState<{ style: React.CSSProperties } | null>(null);
   const convoMenuRef = useRef<HTMLDivElement | null>(null);
+  const [copyTranscriptBusy, setCopyTranscriptBusy] = useState(false);
+  const copyTranscriptBusyRef = useRef(false);
+  const transcriptSpinnerDelayRef = useRef<number>(spinnerDelayForNow());
+  const [transcriptNotice, setTranscriptNotice] = useState<string | null>(null);
 
   const getRenameDraft = useCallback((taskId: string, fallback: string) => {
     return renameDraftsRef.current.get(taskId) ?? fallback;
@@ -1259,6 +1264,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setArchiveCleanupNotice(false);
   }, []);
 
+  const dismissTranscriptNotice = useCallback(() => {
+    setTranscriptNotice(null);
+  }, []);
+
   const archiveConfirmStyle = useMemo(() => {
     if (!archiveConfirm) return null;
     const rect = archiveConfirm.anchor;
@@ -1281,6 +1290,17 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         </div>
       </div>
       <button type="button" className="wb-snackbar-close" onClick={dismissArchiveCleanupNotice} aria-label="Dismiss">
+        <X size={14} aria-hidden="true" />
+      </button>
+    </div>
+  ) : null;
+
+  const transcriptNoticeSnackbar = transcriptNotice ? (
+    <div className="wb-snackbar" role="status" aria-live="polite">
+      <div className="wb-snackbar-body">
+        <div className="wb-snackbar-title">{transcriptNotice}</div>
+      </div>
+      <button type="button" className="wb-snackbar-close" onClick={dismissTranscriptNotice} aria-label="Dismiss">
         <X size={14} aria-hidden="true" />
       </button>
     </div>
@@ -3055,40 +3075,77 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return { title, markdown: lines.join("\n") };
   }, [activeEntry, singleSessionHeader?.title, worktreeChip.worktreePath]);
 
+  const buildTranscriptExportFromEntry = useCallback(
+    (entry: SessionCacheEntry | null) => {
+      if (!entry?.session) return;
+      const thread = buildWorkbenchThreadViewModel(
+        entry.turns ?? [],
+        entry.messages ?? [],
+        entry.turnToolsByTurnId ?? {},
+        entry.events ?? [],
+      );
+
+      const title = singleSessionHeader?.title ?? "Conversation";
+      const lines: string[] = [];
+      lines.push(`# ${title}`);
+      lines.push("");
+
+      for (const g of thread.groups ?? []) {
+        if (g?.header) {
+          lines.push("User:");
+          lines.push("");
+          lines.push(String(g.header.content ?? ""));
+          lines.push("");
+        }
+
+        const items: any[] = Array.isArray(g?.items) ? g.items : [];
+        for (const item of items) {
+          if (!item || item.kind !== "assistant") continue;
+          lines.push("Assistant:");
+          lines.push("");
+          lines.push(String(item.content ?? ""));
+          lines.push("");
+        }
+      }
+
+      return { title, markdown: lines.join("\n") };
+    },
+    [singleSessionHeader?.title],
+  );
+
   const buildTranscriptExport = useCallback(() => {
-    if (!activeEntry?.session) return;
-    const thread = buildWorkbenchThreadViewModel(
-      activeEntry.turns ?? [],
-      activeEntry.messages ?? [],
-      activeEntry.turnToolsByTurnId ?? {},
-      activeEntry.events ?? [],
-    );
+    return buildTranscriptExportFromEntry(activeEntry ?? null);
+  }, [activeEntry, buildTranscriptExportFromEntry]);
 
-    const title = singleSessionHeader?.title ?? "Conversation";
-    const lines: string[] = [];
-    lines.push(`# ${title}`);
-    lines.push("");
-
-    for (const g of thread.groups ?? []) {
-      if (g?.header) {
-        lines.push("User:");
-        lines.push("");
-        lines.push(String(g.header.content ?? ""));
-        lines.push("");
+  const hydrateTranscriptHistory = useCallback(
+    async (sessionId: string): Promise<{ ok: boolean; partial: boolean }> => {
+      let lastCursor: number | null = null;
+      let stalledCount = 0;
+      while (true) {
+        const entry = supervisor.getSnapshot().sessions[String(sessionId)];
+        if (!entry) return { ok: false, partial: true };
+        if (!entry.hasMoreTurns) return { ok: true, partial: false };
+        if (entry.fetching?.history) {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          continue;
+        }
+        const beforeCursor = entry.oldestTurnSeq ?? null;
+        await supervisor.loadMoreTurns(sessionId);
+        const nextEntry = supervisor.getSnapshot().sessions[String(sessionId)];
+        if (!nextEntry) return { ok: false, partial: true };
+        if (!nextEntry.hasMoreTurns) return { ok: true, partial: false };
+        const afterCursor = nextEntry.oldestTurnSeq ?? null;
+        if (afterCursor === beforeCursor && afterCursor === lastCursor) {
+          stalledCount += 1;
+          if (stalledCount >= 2) return { ok: false, partial: true };
+        } else {
+          stalledCount = 0;
+        }
+        lastCursor = afterCursor;
       }
-
-      const items: any[] = Array.isArray(g?.items) ? g.items : [];
-      for (const item of items) {
-        if (!item || item.kind !== "assistant") continue;
-        lines.push("Assistant:");
-        lines.push("");
-        lines.push(String(item.content ?? ""));
-        lines.push("");
-      }
-    }
-
-    return { title, markdown: lines.join("\n") };
-  }, [activeEntry, singleSessionHeader?.title]);
+    },
+    [supervisor],
+  );
 
   const exportSessionLog = useCallback(async () => {
     const payload = buildSessionLogExport();
@@ -3122,13 +3179,35 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [buildTranscriptExport]);
 
   const copyTranscript = useCallback(async () => {
-    const payload = buildTranscriptExport();
-    if (!payload) return;
-    const ok = await copyTextToClipboard(payload.markdown);
-    if (!ok) {
-      window.alert("Clipboard access is blocked; use HTTPS/desktop app or copy manually.");
+    const sessionId = activeSessionId;
+    if (!sessionId || copyTranscriptBusyRef.current) return;
+    copyTranscriptBusyRef.current = true;
+    setCopyTranscriptBusy(true);
+    setTranscriptNotice(null);
+    try {
+      let hydrationResult = { ok: true, partial: false };
+      try {
+        hydrationResult = await hydrateTranscriptHistory(sessionId);
+      } catch {
+        hydrationResult = { ok: false, partial: true };
+      }
+      const entry = supervisor.getSnapshot().sessions[String(sessionId)] ?? null;
+      const payload = buildTranscriptExportFromEntry(entry);
+      if (!payload) return;
+      const ok = await copyTextToClipboard(payload.markdown);
+      if (!ok) {
+        setTranscriptNotice("Clipboard access is blocked; use HTTPS/desktop app or copy manually.");
+        return;
+      }
+      if (!hydrationResult.ok || hydrationResult.partial) {
+        setTranscriptNotice("Couldn't load full history. Copied what's already loaded.");
+      }
+    } finally {
+      copyTranscriptBusyRef.current = false;
+      setCopyTranscriptBusy(false);
+      setConvoMenu(null);
     }
-  }, [buildTranscriptExport]);
+  }, [activeSessionId, buildTranscriptExportFromEntry, hydrateTranscriptHistory, supervisor]);
 
   useEffect(() => {
     const el = newComposerRef.current;
@@ -3266,6 +3345,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       >
         <WorktreeBootstrapSnackbar />
         {archiveCleanupSnackbar}
+        {transcriptNoticeSnackbar}
         {topbar}
         <div className="wb-main">
           <div className="wb-center">
@@ -3285,6 +3365,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     >
       <WorktreeBootstrapSnackbar />
       {archiveCleanupSnackbar}
+      {transcriptNoticeSnackbar}
       {topbar}
 
       <UpdateNoticeBanner />
@@ -3818,14 +3899,22 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           <button
             type="button"
             className="wb-menu-item"
-            disabled={!activeSessionId}
+            disabled={!activeSessionId || copyTranscriptBusy}
             onClick={() => {
-              setConvoMenu(null);
               void copyTranscript();
             }}
             role="menuitem"
           >
-            Copy Transcript
+            <span className="wb-menu-item-row">
+              <span>Copy Transcript</span>
+              {copyTranscriptBusy ? (
+                <span
+                  className="wb-task-spinner wb-menu-item-spinner"
+                  style={{ animationDelay: `${transcriptSpinnerDelayRef.current}ms` }}
+                  aria-hidden="true"
+                />
+              ) : null}
+            </span>
           </button>
           <button
             type="button"
