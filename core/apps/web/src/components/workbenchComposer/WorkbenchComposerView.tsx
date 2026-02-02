@@ -24,7 +24,6 @@ import {
   formatTokenCount,
   formatUsedTokenCount,
   imageAttachmentSrc,
-  labelForMode,
   labelForVerbosity,
   modelIdFromProviderOptions,
   pickDefaultEffort,
@@ -34,10 +33,9 @@ import type {
   DraftTrack,
   NewSessionProps,
   WorkbenchComposerProps,
-  WorkbenchModeId,
 } from "./WorkbenchComposer.types";
 
-type OpenMenuId = "harness" | "model" | "effort" | "mode" | "verbosity";
+type OpenMenuId = "harness" | "model" | "effort" | "verbosity";
 
 const logoClasses = (base: string, invertInDark?: boolean, invertInLight?: boolean) =>
   [base, invertInDark ? "wb-invert" : "", invertInLight ? "wb-invert-light" : ""].filter(Boolean).join(" ");
@@ -56,8 +54,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     sendDisabledReason,
     onInterrupt,
     isWorking,
-    modeId,
-    setModeId,
     sessionIdForAutocomplete,
     workspaceIdForAutocomplete,
     slashCommands,
@@ -118,7 +114,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const harnessTriggerRef = useRef<HTMLButtonElement | null>(null);
   const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
   const effortTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const modeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const verbosityTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -198,7 +193,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       if (id === "harness") return harnessTriggerRef.current;
       if (id === "model") return modelTriggerRef.current;
       if (id === "effort") return effortTriggerRef.current;
-      if (id === "mode") return modeTriggerRef.current;
       if (id === "verbosity") return verbosityTriggerRef.current;
       return null;
     },
@@ -306,28 +300,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       window.removeEventListener("scroll", onAnyScroll, true);
     };
   }, [openMenu, recomputeMenuPosition]);
-
-  const modeMenu = (
-    <div className="wb-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
-      <div className="wb-menu-top">
-        <MenuTitleRow title="Mode" description={MENU_DESCRIPTIONS.mode} tooltipId="wb-menu-tooltip-mode" />
-      </div>
-      {(["default", "research", "plan", "review"] as WorkbenchModeId[]).map((m) => (
-        <button
-          key={m}
-          type="button"
-          className={`wb-menu-item ${modeId === m ? "wb-menu-item-active" : ""}`}
-          onClick={() => {
-            setModeId(m);
-            setOpenMenu(null);
-          }}
-          role="menuitem"
-        >
-          {labelForMode(m)}
-        </button>
-      ))}
-    </div>
-  );
 
   const verbosityMenu = canAdjustVerbosity ? (
     <div className="wb-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
@@ -1289,23 +1261,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               {openMenu === "effort" && effortMenu}
             </div>
           )}
-
-          {/* Mode */}
-          <div className="wb-switcher-wrap">
-            <button
-              type="button"
-              className="wb-switcher wb-menu-trigger"
-              ref={modeTriggerRef}
-              onClick={() => setOpenMenu((v) => (v === "mode" ? null : "mode"))}
-              aria-haspopup="menu"
-              aria-expanded={openMenu === "mode"}
-              title="Mode"
-            >
-              <span className="wb-switcher-label">{labelForMode(modeId)}</span>
-              <ChevronDown size={14} />
-            </button>
-            {openMenu === "mode" && modeMenu}
-          </div>
 
         </div>
 
