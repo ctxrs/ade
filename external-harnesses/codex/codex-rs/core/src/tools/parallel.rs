@@ -52,6 +52,7 @@ impl ToolCallRuntime {
         cancellation_token: CancellationToken,
     ) -> impl std::future::Future<Output = Result<ResponseInputItem, CodexErr>> {
         let supports_parallel = self.router.tool_supports_parallel(&call.tool_name);
+        let call_for_failure = call.clone();
 
         let router = Arc::clone(&self.router);
         let session = Arc::clone(&self.session);
@@ -95,7 +96,7 @@ impl ToolCallRuntime {
             match handle.await {
                 Ok(Ok(response)) => Ok(response),
                 Ok(Err(FunctionCallError::Fatal(message))) => Err(CodexErr::Fatal(message)),
-                Ok(Err(other)) => Err(CodexErr::Fatal(other.to_string())),
+                Ok(Err(other)) => Ok(Self::failure_response(&call_for_failure, other)),
                 Err(err) => Err(CodexErr::Fatal(format!(
                     "tool task failed to receive: {err:?}"
                 ))),
@@ -132,6 +133,28 @@ impl ToolCallRuntime {
                 format!("Wall time: {secs:.1} seconds\naborted by user")
             }
             _ => format!("aborted by user after {secs:.1}s"),
+        }
+    }
+
+    fn failure_response(call: &ToolCall, err: FunctionCallError) -> ResponseInputItem {
+        let message = err.to_string();
+        match &call.payload {
+            ToolPayload::Custom { .. } => ResponseInputItem::CustomToolCallOutput {
+                call_id: call.call_id.clone(),
+                output: message,
+            },
+            ToolPayload::Mcp { .. } => ResponseInputItem::McpToolCallOutput {
+                call_id: call.call_id.clone(),
+                result: Err(message),
+            },
+            _ => ResponseInputItem::FunctionCallOutput {
+                call_id: call.call_id.clone(),
+                output: FunctionCallOutputPayload {
+                    content: message,
+                    success: Some(false),
+                    ..Default::default()
+                },
+            },
         }
     }
 }
