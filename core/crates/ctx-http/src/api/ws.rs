@@ -324,8 +324,8 @@ async fn handle_mobile_secure_ws(
                                 }
                                 let control = control.clone();
                                 let head_buffer = head_buffer.clone();
-                                let foreground_session_ids =
-                                    next_state.foreground_session_ids.clone();
+                                let active_task_sessions =
+                                    next_state.active_task_sessions.clone();
                                 let replay = replay_session_events_secure(
                                     &state,
                                     workspace_id,
@@ -334,8 +334,8 @@ async fn handle_mobile_secure_ws(
                                     move |event| {
                                         let control = control.clone();
                                         let head_buffer = head_buffer.clone();
-                                        let foreground_session_ids =
-                                            foreground_session_ids.clone();
+                                        let active_task_sessions =
+                                            active_task_sessions.clone();
                                         async move {
                                             match event {
                                                 WorkspaceActiveSnapshotStreamMessage::Event {
@@ -348,9 +348,9 @@ async fn handle_mobile_secure_ws(
                                                     ..
                                                 } => {
                                                     let delta =
-                                                        filter_partial_delta_for_foreground(
+                                                        filter_partial_delta_for_active_tasks(
                                                             *delta,
-                                                            &foreground_session_ids,
+                                                            &active_task_sessions,
                                                         );
                                                     if let Err(err) =
                                                         head_buffer.push(snapshot_rev, delta).await
@@ -579,9 +579,9 @@ async fn handle_mobile_secure_ws(
                             delta,
                             ..
                         } => {
-                            let delta = filter_partial_delta_for_foreground(
+                            let delta = filter_partial_delta_for_active_tasks(
                                 *delta,
-                                &subscription_state.foreground_session_ids,
+                                &subscription_state.active_task_sessions,
                             );
                             if let Err(err) =
                                 head_buffer.push(snapshot_rev, delta).await
@@ -1033,23 +1033,22 @@ fn is_partial_event(event: &SessionEvent) -> bool {
     )
 }
 
-fn allows_partial_for_foreground(
-    foreground_session_ids: &Option<HashSet<SessionId>>,
+fn allows_partial_for_active_primary_session(
+    active_task_sessions: &HashMap<TaskId, SessionId>,
     session_id: SessionId,
 ) -> bool {
-    match foreground_session_ids {
-        None => true,
-        Some(ids) => ids.contains(&session_id),
-    }
+    active_task_sessions
+        .values()
+        .any(|active_session_id| *active_session_id == session_id)
 }
 
-fn filter_partial_delta_for_foreground(
+fn filter_partial_delta_for_active_tasks(
     mut delta: SessionHeadDelta,
-    foreground_session_ids: &Option<HashSet<SessionId>>,
+    active_task_sessions: &HashMap<TaskId, SessionId>,
 ) -> SessionHeadDelta {
     if let Some(event) = delta.event.as_ref() {
         if is_partial_event(event)
-            && !allows_partial_for_foreground(foreground_session_ids, delta.session_id)
+            && !allows_partial_for_active_primary_session(active_task_sessions, delta.session_id)
         {
             delta.event = None;
         }
@@ -2007,8 +2006,8 @@ async fn handle_workspace_active_snapshot_ws(
                                     }
                                     let control = control.clone();
                                     let head_buffer = head_buffer.clone();
-                                    let foreground_session_ids =
-                                        next_state.foreground_session_ids.clone();
+                                    let active_task_sessions =
+                                        next_state.active_task_sessions.clone();
                                     let replay = replay_session_events_active(
                                         &state,
                                         workspace_id,
@@ -2017,8 +2016,8 @@ async fn handle_workspace_active_snapshot_ws(
                                         move |event| {
                                             let control = control.clone();
                                             let head_buffer = head_buffer.clone();
-                                            let foreground_session_ids =
-                                                foreground_session_ids.clone();
+                                            let active_task_sessions =
+                                                active_task_sessions.clone();
                                             async move {
                                                 match event {
                                                         WorkspaceActiveSnapshotStreamMessage::Event {
@@ -2031,9 +2030,9 @@ async fn handle_workspace_active_snapshot_ws(
                                                             ..
                                                         } => {
                                                             let delta =
-                                                                filter_partial_delta_for_foreground(
+                                                                filter_partial_delta_for_active_tasks(
                                                                     *delta,
-                                                                    &foreground_session_ids,
+                                                                    &active_task_sessions,
                                                                 );
                                                             if let Err(err) =
                                                                 head_buffer.push(snapshot_rev, delta).await
@@ -2192,8 +2191,8 @@ async fn handle_workspace_active_snapshot_ws(
                                         }
                                         let control = control.clone();
                                         let head_buffer = head_buffer.clone();
-                                        let foreground_session_ids =
-                                            next_state.foreground_session_ids.clone();
+                                        let active_task_sessions =
+                                            next_state.active_task_sessions.clone();
                                         let replay = replay_session_events_active(
                                             &state,
                                             workspace_id,
@@ -2202,8 +2201,8 @@ async fn handle_workspace_active_snapshot_ws(
                                             move |event| {
                                                 let control = control.clone();
                                                 let head_buffer = head_buffer.clone();
-                                                let foreground_session_ids =
-                                                    foreground_session_ids.clone();
+                                                let active_task_sessions =
+                                                    active_task_sessions.clone();
                                                 async move {
                                                     match event {
                                                             WorkspaceActiveSnapshotStreamMessage::Event {
@@ -2216,9 +2215,9 @@ async fn handle_workspace_active_snapshot_ws(
                                                                 ..
                                                             } => {
                                                                 let delta =
-                                                                    filter_partial_delta_for_foreground(
+                                                                    filter_partial_delta_for_active_tasks(
                                                                         *delta,
-                                                                        &foreground_session_ids,
+                                                                        &active_task_sessions,
                                                                     );
                                                                 if let Err(err) =
                                                                     head_buffer.push(snapshot_rev, delta).await
@@ -2454,9 +2453,9 @@ async fn handle_workspace_active_snapshot_ws(
                             delta,
                             ..
                         } => {
-                            let delta = filter_partial_delta_for_foreground(
+                            let delta = filter_partial_delta_for_active_tasks(
                                 *delta,
-                                &subscription_state.foreground_session_ids,
+                                &subscription_state.active_task_sessions,
                             );
                             if let Err(err) =
                                 head_buffer.push(snapshot_rev, delta).await
