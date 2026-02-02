@@ -200,6 +200,41 @@
       ]
     },
     {
+      "id": "claude-crp",
+      "display_name": "Claude CRP",
+      "tier": "tier2",
+      "command": {
+        "command": "claude-crp",
+        "args": []
+      },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.0.0-ctx.1",
+        "args": [],
+        "targets": {
+          "linux-x86_64": {
+            "url": "https://github.com/ctxrs/claude-crp/releases/download/v0.0.0-ctx.1/claude-crp-0.0.0-ctx.1-x86_64-unknown-linux-gnu.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "claude-crp"
+          }
+        }
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "0.0.0-ctx.1",
+          "status": "blocked",
+          "context_min": "0.1.0",
+          "notes": "Release pending for managed installs"
+        }
+      ]
+    },
+    {
       "id": "claude",
       "display_name": "Claude Code",
       "tier": "tier1",

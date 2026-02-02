@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsup src/runtime.ts --format esm --target node18 --out-dir dist --clean --sourcemap --dts false --splitting false",
+    "build": "tsup src/runtime.ts --format esm --target node18 --out-dir dist --clean --sourcemap --splitting false",
     "capture": "node ./scripts/capture.mjs",
     "start": "pnpm run build && node ./bin/claude-crp",
     "update:fixtures": "node ./scripts/translate_fixtures.mjs --update",

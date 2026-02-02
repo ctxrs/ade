@@ -531,7 +531,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/sessions/:id/interrupt", post(interrupt_session))
         .route("/api/sessions/:id/authenticate", post(authenticate_session))
         .route("/api/mcp/sessions/:id/subagent_init", post(mcp_agent_init))
-        .route("/api/mcp/sessions/:id/subagent_reply", post(mcp_agent_reply))
+        .route(
+            "/api/mcp/sessions/:id/subagent_reply",
+            post(mcp_agent_reply),
+        )
         .route("/api/mcp/sessions/:id/oracle", post(mcp_oracle))
         .route(
             "/api/mcp/sessions/:id/subagent_wait",
@@ -5901,7 +5904,7 @@ async fn get_provider_options(
         .and_then(|st| st.capabilities.as_ref())
         .map(|caps| caps.supports_acp)
         .unwrap_or(true);
-    if provider_id == "codex-crp" {
+    if provider_id == "codex-crp" || provider_id == "claude-crp" {
         let ws = state
             .global_store()
             .get_workspace(ws_id)
@@ -8494,7 +8497,7 @@ async fn load_provider_model_catalog(
             .map(|caps| caps.supports_acp)
             .unwrap_or(true)
     };
-    let use_crp_probe = provider_id == "codex-crp";
+    let use_crp_probe = provider_id == "codex-crp" || provider_id == "claude-crp";
     if !supports_acp && !use_crp_probe {
         return Ok(None);
     }

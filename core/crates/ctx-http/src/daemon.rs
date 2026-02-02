@@ -335,6 +335,21 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         providers.insert("codex-crp".into(), codex_crp_adapter);
     }
 
+    let enable_claude_crp = std::env::var("CTX_ENABLE_CLAUDE_CRP")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if enable_claude_crp {
+        let claude_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(
+            agent_cfg
+                .providers
+                .get("claude-crp")
+                .map(|c| Tier1CrpAdapter::from_raw("claude-crp", c.command.clone(), c.args.clone()))
+                .unwrap_or_else(Tier1CrpAdapter::claude),
+        );
+        providers.insert("claude-crp".into(), claude_crp_adapter);
+    }
+
     if std::env::var("CTX_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1") {
         providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
     }

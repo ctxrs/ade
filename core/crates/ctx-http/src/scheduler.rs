@@ -66,7 +66,7 @@ fn provider_mode_id_for(
     match control_mode {
         ProviderControlMode::Full => match provider_id {
             "codex" => Some("full-access"),
-            "claude" => Some("bypassPermissions"),
+            "claude" | "claude-crp" => Some("bypassPermissions"),
             _ => None,
         },
         ProviderControlMode::HarnessNative | ProviderControlMode::CtxEnforced => None,
