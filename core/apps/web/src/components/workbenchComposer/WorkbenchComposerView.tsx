@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, ChevronDown, Ellipsis, Image, Mic, Square } from "lucide-react";
-import {
-  authenticateProviderForWorkspace,
-  type ProviderOptions,
-  type ProviderStatus,
-  verifyProviderForWorkspace,
-} from "../../api/client";
+import { authenticateProviderForWorkspace, verifyProviderForWorkspace } from "../../api/client";
 import { shouldSendOnEnter } from "../../utils/keyboard";
 import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
 import { PROVIDER_INSTALLS_ENABLED } from "../../utils/providerInstallGate";
