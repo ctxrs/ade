@@ -150,8 +150,7 @@ impl ProcMemoryRollup {
 
 impl ResourceSampler {
     pub fn new() -> Self {
-        let mut system = System::new_all();
-        system.refresh_all();
+        let system = System::new();
         let mut disks = Disks::new_with_refreshed_list();
         disks.refresh();
         Self {

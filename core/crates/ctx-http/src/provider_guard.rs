@@ -10,7 +10,7 @@ use ctx_core::models::SessionEventType;
 
 use crate::daemon::AppState;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
-use crate::resource_utilization::{ResourceProcess, ResourceProcesses, SystemSnapshot};
+use crate::resource_utilization::{ProviderMemorySample, SystemSnapshot};
 use crate::settings::{ProviderGuardSettings, ResourceGovernanceMode, Settings};
 
 const DEFAULT_INTERVAL_MS: u64 = 5_000;
@@ -149,14 +149,22 @@ async fn guard_once(
     over_max: &mut HashMap<u32, OverLimitState>,
 ) -> Result<()> {
     let provider_processes = list_provider_processes(state).await;
-    let (system, processes) = {
+    let (system, provider_memory) = {
         let mut sampler = state.telemetry.resource_sampler.lock().await;
         let (system, _disks, _cache_age_ms) = sampler.system_snapshot();
-        let processes = sampler.processes_snapshot(std::process::id(), &provider_processes);
-        (system, processes)
+        let provider_memory = sampler.provider_memory_snapshot(&provider_processes);
+        (system, provider_memory)
     };
 
-    handle_limits(state, limits, &system, &processes, warned_high, over_max).await?;
+    handle_limits(
+        state,
+        limits,
+        &system,
+        &provider_memory,
+        warned_high,
+        over_max,
+    )
+    .await?;
     Ok(())
 }
 
@@ -164,7 +172,7 @@ async fn handle_limits(
     state: &Arc<AppState>,
     limits: &ProviderGuardLimits,
     system: &SystemSnapshot,
-    processes: &ResourceProcesses,
+    provider_memory: &[ProviderMemorySample],
     warned_high: &mut HashSet<u32>,
     over_max: &mut HashMap<u32, OverLimitState>,
 ) -> Result<()> {
@@ -172,7 +180,7 @@ async fn handle_limits(
     let high_bytes = mb_to_bytes(limits.memory_high_mb);
     let max_bytes = mb_to_bytes(limits.memory_max_mb);
 
-    for proc in processes.providers.iter() {
+    for proc in provider_memory.iter() {
         let pid = proc.pid;
         seen.insert(pid);
 
@@ -237,7 +245,7 @@ async fn handle_limits(
 
 async fn log_guard_event(
     state: &Arc<AppState>,
-    proc: &ResourceProcess,
+    proc: &ProviderMemorySample,
     event: &str,
     limits: &ProviderGuardLimits,
     memory_bytes: u64,
@@ -276,7 +284,7 @@ async fn log_guard_event(
 
 async fn kill_provider_process(
     state: &Arc<AppState>,
-    proc: &ResourceProcess,
+    proc: &ProviderMemorySample,
     limits: &ProviderGuardLimits,
     system: &SystemSnapshot,
 ) {
@@ -293,11 +301,7 @@ async fn kill_provider_process(
     )
     .await;
 
-    let mut pids = Vec::new();
-    pids.push(proc.pid);
-    for child in proc.children.iter() {
-        pids.push(child.pid);
-    }
+    let pids = vec![proc.pid];
     let killed = signal_pids(&pids, Signal::Kill);
     if killed == 0 {
         tracing::warn!(
@@ -310,7 +314,7 @@ async fn kill_provider_process(
 
 async fn capture_guard_snapshot(
     state: &Arc<AppState>,
-    proc: &ResourceProcess,
+    proc: &ProviderMemorySample,
     event: &str,
     memory_bytes: u64,
 ) {
@@ -390,7 +394,7 @@ async fn capture_guard_snapshot(
 
 async fn notify_sessions(
     state: &Arc<AppState>,
-    proc: &ResourceProcess,
+    proc: &ProviderMemorySample,
     limits: &ProviderGuardLimits,
     system: &SystemSnapshot,
     kind: &str,
