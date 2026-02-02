@@ -7,8 +7,8 @@ use crate::protocol::CrpCommand;
 use crate::protocol::CrpCommandEnvelope;
 use crate::protocol::CrpEvent;
 use crate::protocol::CrpEventEnvelope;
-use crate::protocol::CrpModelInfo;
 use crate::protocol::CrpMcpServerConfig;
+use crate::protocol::CrpModelInfo;
 use crate::protocol::CrpSessionConfig;
 use crate::protocol::CrpToolOutputStream;
 use crate::protocol::CrpToolStatus;
@@ -18,10 +18,12 @@ use base64::Engine;
 use clap::Parser;
 use codex_arg0::arg0_dispatch_or_else;
 use codex_common::CliConfigOverrides;
+use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_core::AuthManager;
 use codex_core::CodexThread;
 use codex_core::FunctionCallError;
 use codex_core::NewThread;
+use codex_core::SESSIONS_SUBDIR;
 use codex_core::ThreadManager;
 use codex_core::ToolHandler;
 use codex_core::ToolInvocation;
@@ -32,6 +34,7 @@ use codex_core::auth::enforce_login_restrictions;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::default_client::set_default_originator;
+use codex_core::find_thread_path_by_id_str;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
@@ -42,14 +45,12 @@ use codex_core::protocol::Op;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::Submission;
 use codex_core::protocol::TurnAbortReason;
-use codex_core::find_thread_path_by_id_str;
-use codex_core::SESSIONS_SUBDIR;
-use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_protocol::ThreadId;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::TurnItem;
-use codex_protocol::openai_models::{ModelPreset, ReasoningEffort};
+use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
@@ -57,14 +58,16 @@ use mcp_types::CallToolResult;
 use mcp_types::ContentBlock;
 use mcp_types::TextContent;
 use serde_json::json;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::OpenOptions;
-use std::collections::{HashMap, HashSet};
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
@@ -303,7 +306,10 @@ impl ReasoningSummaryState {
         // Codex sometimes emits "snapshot" deltas that contain the entire block:
         //   **Title**\n\nBody...
         // These should replace the buffer (not append), otherwise we duplicate title/body.
-        delta.starts_with("**") && delta.contains("\n\n") && delta.matches("**").count() >= 2 && delta.len() >= 16
+        delta.starts_with("**")
+            && delta.contains("\n\n")
+            && delta.matches("**").count() >= 2
+            && delta.len() >= 16
     }
 
     fn looks_like_title_only(delta: &str) -> bool {
@@ -311,7 +317,10 @@ impl ReasoningSummaryState {
         //   **Reading files**
         // If we've already emitted that title, these must not enter the trace stream.
         let t = delta.trim();
-        t.starts_with("**") && t.ends_with("**") && !t.contains("\n\n") && t.matches("**").count() >= 2
+        t.starts_with("**")
+            && t.ends_with("**")
+            && !t.contains("\n\n")
+            && t.matches("**").count() >= 2
     }
 
     fn push_delta(&mut self, delta: &str) -> (Option<String>, Option<String>) {
@@ -335,7 +344,9 @@ impl ReasoningSummaryState {
                 self.title = Some(title.clone());
                 self.title_emitted = true;
                 // The body is empty for title-only blocks.
-                if let Some((_title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
+                if let Some((_title, body_offset)) =
+                    extract_summary_title_and_body_offset(&self.buffer)
+                {
                     self.body_offset = body_offset;
                 }
                 self.body_sent = 0;
@@ -354,7 +365,8 @@ impl ReasoningSummaryState {
         };
 
         if !self.title_emitted {
-            if let Some((title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
+            if let Some((title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer)
+            {
                 self.title_emitted = true;
                 self.title = Some(title.clone());
                 self.body_offset = body_offset;
@@ -380,7 +392,8 @@ impl ReasoningSummaryState {
         // to keep the "post-title" boundary aligned with the latest full text. Otherwise the
         // title block (and its newlines) can leak into the thought stream.
         if replaced_with_snapshot {
-            if let Some((title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer) {
+            if let Some((title, body_offset)) = extract_summary_title_and_body_offset(&self.buffer)
+            {
                 // If a snapshot changed the title, publish the new status title and reset body tracking.
                 if self.title.as_deref() != Some(title.as_str()) {
                     self.title = Some(title.clone());
@@ -433,7 +446,10 @@ mod reasoning_summary_state_tests {
 
         // First title-only delta emits a summary title, no trace.
         let (title, trace) = s.push_delta("**Applying patch to add hello_world.txt**");
-        assert_eq!(title.as_deref(), Some("Applying patch to add hello_world.txt"));
+        assert_eq!(
+            title.as_deref(),
+            Some("Applying patch to add hello_world.txt")
+        );
         assert!(trace.is_none());
 
         // Repeated title-only deltas must not leak into trace.
@@ -446,18 +462,20 @@ mod reasoning_summary_state_tests {
     fn snapshot_with_body_emits_body_once_and_dedupes() {
         let mut s = ReasoningSummaryState::default();
 
-        let (title, trace) =
-            s.push_delta("**Reading instruction files**
+        let (title, trace) = s.push_delta(
+            "**Reading instruction files**
 
-I'm checking the .ctx directory.");
+I'm checking the .ctx directory.",
+        );
         assert_eq!(title.as_deref(), Some("Reading instruction files"));
         assert_eq!(trace.as_deref(), Some("I'm checking the .ctx directory."));
 
         // Duplicate full snapshot should not re-emit the body.
-        let (title2, trace2) =
-            s.push_delta("**Reading instruction files**
+        let (title2, trace2) = s.push_delta(
+            "**Reading instruction files**
 
-I'm checking the .ctx directory.");
+I'm checking the .ctx directory.",
+        );
         assert!(title2.is_none());
         assert!(trace2.is_none());
     }
@@ -470,9 +488,11 @@ I'm checking the .ctx directory.");
         assert_eq!(title.as_deref(), Some("Exploring context files"));
         assert!(trace.is_none());
 
-        let (_title2, trace2) = s.push_delta("
+        let (_title2, trace2) = s.push_delta(
+            "
 
-I'm checking the .ctx directory for agent-basics.");
+I'm checking the .ctx directory for agent-basics.",
+        );
         assert_eq!(
             trace2.as_deref(),
             Some("I'm checking the .ctx directory for agent-basics.")
@@ -487,7 +507,9 @@ mod replay_golden_tests {
     use std::path::PathBuf;
 
     fn testdata_path(file: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata").join(file)
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata")
+            .join(file)
     }
 
     fn replay_fixture(input_name: &str) -> Vec<serde_json::Value> {
@@ -539,7 +561,9 @@ mod replay_golden_tests {
                 _ => {}
             }
 
-            let Some(ev_val) = v.get("event") else { continue };
+            let Some(ev_val) = v.get("event") else {
+                continue;
+            };
             let event: Event = match serde_json::from_value(ev_val.clone()) {
                 Ok(ev) => ev,
                 Err(_) => continue,
@@ -739,11 +763,7 @@ async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow:
     let _ = tracing_subscriber::registry().with(fmt_layer).try_init();
 
     if let Some(input_path) = cli.replay_codex_events.clone() {
-        return run_replay_codex_events(
-            input_path,
-            cli.replay_out.clone(),
-        )
-        .await;
+        return run_replay_codex_events(input_path, cli.replay_out.clone()).await;
     }
 
     let cli_kv_overrides = cli
@@ -910,7 +930,8 @@ async fn run_replay_codex_events(
             provider_session_id: None,
         },
     };
-    out.write_all(serde_json::to_vec(&opened)?.as_slice()).await?;
+    out.write_all(serde_json::to_vec(&opened)?.as_slice())
+        .await?;
     out.write_all(b"\n").await?;
 
     while let Some(line) = reader.next_line().await? {
@@ -939,7 +960,9 @@ async fn run_replay_codex_events(
             _ => {}
         }
 
-        let Some(ev_val) = v.get("event") else { continue };
+        let Some(ev_val) = v.get("event") else {
+            continue;
+        };
         let event: Event = match serde_json::from_value(ev_val.clone()) {
             Ok(ev) => ev,
             Err(_) => continue,
@@ -1078,7 +1101,9 @@ async fn handle_command(
             let cwd = cwd.unwrap_or_else(|| session_state.default_cwd.clone());
             let model = model.unwrap_or_else(|| session_state.default_model.clone());
             let (model, effort_override) = split_model_and_effort(&model);
-            let effort = effort_override.or(reasoning_effort).or(session_state.default_effort);
+            let effort = effort_override
+                .or(reasoning_effort)
+                .or(session_state.default_effort);
 
             let op = Op::UserTurn {
                 items,
@@ -1427,9 +1452,7 @@ fn build_current_model_id(config: &Config, presets: &[ModelPreset]) -> Option<St
     if model.contains('/') {
         return Some(model.to_string());
     }
-    let preset = presets
-        .iter()
-        .find(|p| p.id == model || p.model == model);
+    let preset = presets.iter().find(|p| p.id == model || p.model == model);
     if let Some(preset) = preset {
         if preset.supported_reasoning_efforts.len() >= 2 {
             let desired = config
@@ -1623,12 +1646,13 @@ fn handle_tool_request(
         tool_name: tool_name.clone(),
         input: input.clone(),
     });
+    let label = tool_label_pair_for_name(&tool_name).active.to_string();
     let _ = router.send_control(CrpEvent::ToolStarted {
         session_id: session_id.clone(),
         turn_id: turn_id.clone(),
         tool_call_id: tool_call_id.clone(),
         tool_name: tool_name.clone(),
-        tool_label: None,
+        tool_label: Some(label),
         input,
         input_preview: None,
     });
@@ -1705,6 +1729,9 @@ fn handle_tool_result(
         }
     }
 
+    let label = tool_label_pair_for_name(&pending_request.tool_name)
+        .completed
+        .to_string();
     dispatch_event(
         router,
         CrpChannel::Control,
@@ -1713,7 +1740,7 @@ fn handle_tool_result(
             turn_id: pending_request.turn_id.clone(),
             tool_call_id: command.tool_call_id.clone(),
             tool_name: pending_request.tool_name,
-            tool_label: None,
+            tool_label: Some(label),
             status: result.status.clone(),
             output: result.output.clone(),
             error: result.error.clone(),
@@ -1868,29 +1895,103 @@ fn chunk_output(output: &str, max_bytes: usize) -> Vec<String> {
     chunks
 }
 
-fn is_exploring_parsed_cmd(parsed_cmd: &[ParsedCommand]) -> bool {
-    !parsed_cmd.is_empty()
-        && parsed_cmd.iter().all(|parsed| {
-            matches!(
-                parsed,
-                ParsedCommand::Read { .. }
-                    | ParsedCommand::ListFiles { .. }
-                    | ParsedCommand::Search { .. }
-            )
-        })
+struct ToolLabelPair {
+    active: &'static str,
+    completed: &'static str,
 }
 
-fn tool_label_for_exec(parsed_cmd: &[ParsedCommand], completed: bool) -> String {
-    if is_exploring_parsed_cmd(parsed_cmd) {
-        if completed {
-            "Explored".to_string()
-        } else {
-            "Exploring".to_string()
+fn tool_label_pair_for_name(tool_name: &str) -> ToolLabelPair {
+    if tool_name.starts_with("mcp.") {
+        return ToolLabelPair {
+            active: "Call",
+            completed: "Called",
+        };
+    }
+
+    match tool_name {
+        "exec" | "exec_command" | "shell" | "shell_command" | "local_shell" | "container.exec" => {
+            ToolLabelPair {
+                active: "Running",
+                completed: "Ran",
+            }
         }
-    } else if completed {
-        "Ran".to_string()
+        "web_search" => ToolLabelPair {
+            active: "Search",
+            completed: "Searched",
+        },
+        "view_image" => ToolLabelPair {
+            active: "View",
+            completed: "Viewed",
+        },
+        "write_stdin" => ToolLabelPair {
+            active: "Sending input",
+            completed: "Input sent",
+        },
+        "list_mcp_resources" => ToolLabelPair {
+            active: "Listing MCP resources",
+            completed: "Listed MCP resources",
+        },
+        "list_mcp_resource_templates" => ToolLabelPair {
+            active: "Listing MCP templates",
+            completed: "Listed MCP templates",
+        },
+        "read_mcp_resource" => ToolLabelPair {
+            active: "Reading MCP resource",
+            completed: "Read MCP resource",
+        },
+        "update_plan" => ToolLabelPair {
+            active: "Updating plan",
+            completed: "Updated plan",
+        },
+        "request_user_input" => ToolLabelPair {
+            active: "Requesting input",
+            completed: "Input received",
+        },
+        "spawn_agent" => ToolLabelPair {
+            active: "Spawning agent",
+            completed: "Spawned agent",
+        },
+        "send_input" => ToolLabelPair {
+            active: "Sending input",
+            completed: "Sent input",
+        },
+        "wait" => ToolLabelPair {
+            active: "Waiting on agent",
+            completed: "Agent responded",
+        },
+        "close_agent" => ToolLabelPair {
+            active: "Closing agent",
+            completed: "Closed agent",
+        },
+        "grep_files" => ToolLabelPair {
+            active: "Searching files",
+            completed: "Searched files",
+        },
+        "read_file" => ToolLabelPair {
+            active: "Reading file",
+            completed: "Read file",
+        },
+        "list_dir" => ToolLabelPair {
+            active: "Listing directory",
+            completed: "Listed directory",
+        },
+        "test_sync_tool" => ToolLabelPair {
+            active: "Syncing tests",
+            completed: "Synced tests",
+        },
+        _ => ToolLabelPair {
+            active: "Running tool",
+            completed: "Ran tool",
+        },
+    }
+}
+
+fn tool_label_for_exec(_parsed_cmd: &[ParsedCommand], completed: bool) -> String {
+    let labels = tool_label_pair_for_name("exec");
+    if completed {
+        labels.completed.to_string()
     } else {
-        "Running".to_string()
+        labels.active.to_string()
     }
 }
 
@@ -1993,6 +2094,14 @@ fn tool_label_for_patch(changes: &HashMap<PathBuf, FileChange>) -> String {
         }
     }
     "Edited".to_string()
+}
+
+fn tool_label_for_patch_end(changes: &HashMap<PathBuf, FileChange>, success: bool) -> String {
+    if success {
+        tool_label_for_patch(changes)
+    } else {
+        "Failed to apply patch".to_string()
+    }
 }
 
 fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, CrpEvent)> {
@@ -2247,7 +2356,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
         EventMsg::PatchApplyEnd(ev) => {
             let turn = ensure_turn(tracker, &event.id);
             let preview = patch_input_preview(&ev.changes);
-            let tool_label = tool_label_for_patch(&ev.changes);
+            let tool_label = tool_label_for_patch_end(&ev.changes, ev.success);
             let status = if ev.success {
                 CrpToolStatus::Success
             } else {
@@ -2281,6 +2390,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
         }
         EventMsg::WebSearchBegin(ev) => {
             let turn = ensure_turn(tracker, &event.id);
+            let tool_label = tool_label_pair_for_name("web_search").active.to_string();
             vec![(
                 CrpChannel::Control,
                 CrpEvent::ToolStarted {
@@ -2288,7 +2398,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name: "web_search".to_string(),
-                    tool_label: Some("Search".to_string()),
+                    tool_label: Some(tool_label),
                     input: None,
                     input_preview: None,
                 },
@@ -2300,6 +2410,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             let output = json!({
                 "query": ev.query,
             });
+            let tool_label = tool_label_pair_for_name("web_search").completed.to_string();
             vec![(
                 CrpChannel::Control,
                 CrpEvent::ToolCompleted {
@@ -2307,7 +2418,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name: "web_search".to_string(),
-                    tool_label: Some("Searched".to_string()),
+                    tool_label: Some(tool_label),
                     status: CrpToolStatus::Success,
                     output: Some(output),
                     error: None,
@@ -2321,6 +2432,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             let server = invocation.server;
             let tool = invocation.tool;
             let tool_name = format!("mcp.{server}.{tool}");
+            let tool_label = tool_label_pair_for_name(&tool_name).active.to_string();
             let input = json!({
                 "server": server,
                 "tool": tool,
@@ -2337,7 +2449,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name,
-                    tool_label: Some("Call".to_string()),
+                    tool_label: Some(tool_label),
                     input: Some(input),
                     input_preview: Some(input_preview),
                 },
@@ -2349,6 +2461,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             let server = invocation.server;
             let tool = invocation.tool;
             let tool_name = format!("mcp.{server}.{tool}");
+            let tool_label = tool_label_pair_for_name(&tool_name).completed.to_string();
             let duration_ms = ev.duration.as_millis();
             let (status, error, output) = match ev.result {
                 Ok(result) => (
@@ -2378,7 +2491,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name,
-                    tool_label: Some("Called".to_string()),
+                    tool_label: Some(tool_label),
                     status,
                     output,
                     error,
@@ -2391,6 +2504,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             let payload = json!({
                 "path": ev.path,
             });
+            let tool_label = tool_label_pair_for_name("view_image");
             vec![
                 (
                     CrpChannel::Control,
@@ -2399,7 +2513,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         turn_id: turn.turn_id.clone(),
                         tool_call_id: ev.call_id.clone(),
                         tool_name: "view_image".to_string(),
-                        tool_label: Some("View".to_string()),
+                        tool_label: Some(tool_label.active.to_string()),
                         input: Some(payload.clone()),
                         input_preview: Some(payload.clone()),
                     },
@@ -2411,7 +2525,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         turn_id: turn.turn_id.clone(),
                         tool_call_id: ev.call_id,
                         tool_name: "view_image".to_string(),
-                        tool_label: Some("Viewed".to_string()),
+                        tool_label: Some(tool_label.completed.to_string()),
                         status: CrpToolStatus::Success,
                         output: Some(payload),
                         error: None,

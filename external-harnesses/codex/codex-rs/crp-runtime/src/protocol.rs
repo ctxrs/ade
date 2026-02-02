@@ -105,7 +105,6 @@ pub struct CrpModelInfo {
     pub name: Option<String>,
 }
 
-
 #[derive(Debug, Serialize)]
 pub struct CrpEventEnvelope {
     pub v: u32,
@@ -137,10 +136,7 @@ pub enum CrpEvent {
         reason: Option<String>,
     },
     #[serde(rename = "turn.started")]
-    TurnStarted {
-        session_id: String,
-        turn_id: String,
-    },
+    TurnStarted { session_id: String, turn_id: String },
     #[serde(rename = "message.delta")]
     MessageDelta {
         session_id: String,
@@ -275,7 +271,8 @@ mod tests {
 
     #[test]
     fn command_types_include_tool_result() {
-        let json = r#"{"type":"tool.result","tool_call_id":"tool-1","status":"success","output":"ok"}"#;
+        let json =
+            r#"{"type":"tool.result","tool_call_id":"tool-1","status":"success","output":"ok"}"#;
         let cmd: CrpCommand = serde_json::from_str(json).unwrap();
         match cmd {
             CrpCommand::ToolResult {
