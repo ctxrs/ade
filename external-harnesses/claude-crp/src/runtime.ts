@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { translateClaudeEventsToCrp } from "./translate.js";
 
 const MAX_TOOL_INPUT_BYTES = 64 * 1024;
@@ -155,6 +156,107 @@ function buildQueryOptions(turn: TurnState) {
   }
 
   return options;
+}
+
+function extractModelsListConfig(command: CrpCommand): { model?: string; cwd?: string } {
+  const config =
+    command.config && typeof command.config === "object"
+      ? (command.config as Record<string, unknown>)
+      : {};
+  const model =
+    typeof config.model === "string" && config.model ? config.model : undefined;
+  const cwd = typeof config.cwd === "string" && config.cwd ? config.cwd : undefined;
+  return { model, cwd };
+}
+
+function buildModelsListOptions(params: {
+  cwd: string;
+  model?: string;
+  sessionId: string;
+  abortController: AbortController;
+}): Record<string, unknown> {
+  const options: Record<string, unknown> = {
+    cwd: params.cwd,
+    includePartialMessages: false,
+    settingSources: ["user", "project", "local"],
+    tools: { type: "preset", preset: "claude_code" },
+    extraArgs: { "session-id": params.sessionId },
+    abortController: params.abortController,
+    canUseTool: async () => ({ behavior: "allow" }),
+    stderr: (data: string) => {
+      process.stderr.write(String(data));
+      if (!String(data).endsWith("\n")) process.stderr.write("\n");
+    }
+  };
+
+  if (params.model) {
+    options.model = params.model;
+  }
+
+  return options;
+}
+
+async function listModels(command: CrpCommand, state: { session: SessionState | null }) {
+  const { model, cwd } = extractModelsListConfig(command);
+  const session = state.session;
+  const resolvedModel = model ?? session?.defaultModel;
+  const resolvedCwd = cwd ?? session?.defaultCwd ?? process.cwd();
+  const sessionId = session?.sessionId ?? randomUUID();
+  const abortController = new AbortController();
+
+  const options = buildModelsListOptions({
+    cwd: resolvedCwd,
+    model: resolvedModel,
+    sessionId,
+    abortController
+  });
+
+  let releaseInput: (() => void) | null = null;
+  const inputStream = (async function* () {
+    await new Promise<void>((resolve) => {
+      releaseInput = resolve;
+    });
+  })();
+
+  let supportedModels: ModelInfo[] = [];
+  try {
+    const q = query({ prompt: inputStream, options });
+    supportedModels = await q.supportedModels();
+  } catch (err) {
+    warn(`models.list failed: ${err}`);
+    throw err;
+  } finally {
+    if (releaseInput) releaseInput();
+    try {
+      abortController.abort();
+    } catch {
+      // Ignore abort failures.
+    }
+  }
+
+  const models: Array<{ id: string; name?: string }> = [];
+  if (Array.isArray(supportedModels)) {
+    for (const modelInfo of supportedModels) {
+      if (!modelInfo || typeof modelInfo !== "object") continue;
+      const value = (modelInfo as { value?: unknown }).value;
+      if (typeof value !== "string" || !value) continue;
+      const name = (modelInfo as { displayName?: unknown }).displayName;
+      models.push({ id: value, name: typeof name === "string" ? name : undefined });
+    }
+  }
+
+  if (resolvedModel && !models.some((entry) => entry.id === resolvedModel)) {
+    models.push({ id: resolvedModel, name: resolvedModel });
+  }
+
+  const currentModelId = resolvedModel ?? models[0]?.id;
+
+  await writeEnvelope({
+    channel: "control",
+    type: "models.list",
+    models,
+    current_model_id: currentModelId
+  });
 }
 
 async function emitTranslated(turn: TurnState): Promise<void> {
@@ -325,6 +427,9 @@ async function handleLine(line: string, state: { session: SessionState | null })
       return;
     case "session.prompt":
       await startTurn(command, state);
+      return;
+    case "models.list":
+      await listModels(command, state);
       return;
     case "turn.cancel":
     case "session.cancel":
