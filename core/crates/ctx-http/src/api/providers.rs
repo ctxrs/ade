@@ -780,51 +780,49 @@ pub(super) async fn get_provider_options(
         .and_then(|st| st.capabilities.as_ref())
         .map(|caps| caps.supports_acp)
         .unwrap_or(true);
-    if !supports_acp {
-        if provider_id != "codex-crp" {
-            let mut raw_resp = serde_json::json!({
-                "provider_id": provider_id,
-                "workspace_id": ws_id.0,
-                "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
-                "probe_ok": true,
-                "supports_load": false,
-                "auth_required": false,
-                "probed_at": chrono::Utc::now().to_rfc3339(),
-            });
-            if raw_resp.get("models").is_none()
-                || raw_resp.get("models").is_some_and(|v| v.is_null())
-            {
-                if let Some(models) = cached_models {
-                    raw_resp["models"] = models;
-                }
+    let use_crp_probe = provider_id == "codex-crp" || provider_id == "claude-crp";
+    if !supports_acp && !use_crp_probe {
+        let mut raw_resp = serde_json::json!({
+            "provider_id": provider_id,
+            "workspace_id": ws_id.0,
+            "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
+            "probe_ok": true,
+            "supports_load": false,
+            "auth_required": false,
+            "probed_at": chrono::Utc::now().to_rfc3339(),
+        });
+        if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
+            if let Some(models) = cached_models {
+                raw_resp["models"] = models;
             }
-            if raw_resp.get("modes").is_none() || raw_resp.get("modes").is_some_and(|v| v.is_null())
-            {
-                if let Some(modes) = cached_modes {
-                    raw_resp["modes"] = modes;
-                }
+        }
+        if raw_resp.get("modes").is_none() || raw_resp.get("modes").is_some_and(|v| v.is_null()) {
+            if let Some(modes) = cached_modes {
+                raw_resp["modes"] = modes;
             }
-
-            let resp = redact_json_value(raw_resp);
-            state.providers.options_cache.lock().await.insert(
-                cache_key,
-                crate::daemon::CachedProviderOptions {
-                    cached_at: std::time::Instant::now(),
-                    value: resp.clone(),
-                },
-            );
-
-            let mut out = resp;
-            if let Some((verify_at, verify)) = verify_entry.as_ref() {
-                if verify_at.elapsed() < VERIFY_TTL {
-                    if let Some(obj) = out.as_object_mut() {
-                        obj.insert("verify".to_string(), verify.clone());
-                    }
-                }
-            }
-            return Ok(Json(out));
         }
 
+        let resp = redact_json_value(raw_resp);
+        state.providers.options_cache.lock().await.insert(
+            cache_key,
+            crate::daemon::CachedProviderOptions {
+                cached_at: std::time::Instant::now(),
+                value: resp.clone(),
+            },
+        );
+
+        let mut out = resp;
+        if let Some((verify_at, verify)) = verify_entry.as_ref() {
+            if verify_at.elapsed() < VERIFY_TTL {
+                if let Some(obj) = out.as_object_mut() {
+                    obj.insert("verify".to_string(), verify.clone());
+                }
+            }
+        }
+        return Ok(Json(out));
+    }
+
+    if use_crp_probe {
         let ws = state
             .global_store()
             .get_workspace(ws_id)
