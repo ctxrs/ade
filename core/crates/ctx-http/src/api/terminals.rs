@@ -8,6 +8,7 @@ use serde::Deserialize;
 
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
+use crate::settings::{self, NetworkContext};
 use crate::terminals::TerminalCreateRequest;
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
@@ -214,6 +215,19 @@ pub(super) async fn create_workspace_terminal(
     let shell = requested_shell
         .map(|value| value.to_string())
         .unwrap_or_else(default_shell);
+    let settings = settings::load_settings(&state.core.data_root).await;
+    let network_profiles = settings.network_profiles.unwrap_or_default();
+    let network_profile = network_profiles.profile(NetworkContext::UserShell);
+    let proxy_env = state
+        .execution
+        .egress_proxy
+        .proxy_env_for_context(
+            workspace_id,
+            NetworkContext::UserShell,
+            network_profile,
+            "127.0.0.1",
+        )
+        .await;
     let session = state
         .transport
         .terminals
@@ -226,6 +240,7 @@ pub(super) async fn create_workspace_terminal(
             shell,
             cols: None,
             rows: None,
+            env: proxy_env,
         })
         .await
         .map_err(|e| {

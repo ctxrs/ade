@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -22,6 +23,7 @@ use ctx_fs::worktrees::{create_worktree, remove_worktree};
 
 use crate::daemon::AppState;
 use crate::ops_events::OpsEvent;
+use crate::settings::{self, NetworkContext};
 #[cfg(target_os = "linux")]
 use crate::tool_cgroup::TOOL_SLICE_UNIT;
 #[cfg(not(target_os = "linux"))]
@@ -1674,12 +1676,15 @@ async fn run_verify_command(
         .await
         .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
     let envs = vec![
-        ("CTX_MERGE_QUEUE_ENTRY_ID", entry.id.0.to_string()),
         (
-            "CTX_WORKTREE_ROOT",
+            "CTX_MERGE_QUEUE_ENTRY_ID".to_string(),
+            entry.id.0.to_string(),
+        ),
+        (
+            "CTX_WORKTREE_ROOT".to_string(),
             worktree_path.to_string_lossy().to_string(),
         ),
-        ("CTX_TARGET_BRANCH", entry.target_branch.clone()),
+        ("CTX_TARGET_BRANCH".to_string(), entry.target_branch.clone()),
     ];
     let mut cmd = command_for_shell(state, entry, command, worktree_path, &envs).await;
     cmd.stdin(Stdio::null());
@@ -1982,7 +1987,7 @@ async fn command_for_shell(
     entry: &MergeQueueEntry,
     command: &str,
     workdir: &Path,
-    envs: &[(&str, String)],
+    envs: &[(String, String)],
 ) -> Command {
     if cfg!(windows) {
         let mut cmd = merge_queue_command(state, entry, command, "cmd", Some(workdir), envs).await;
@@ -2209,15 +2214,38 @@ fn emit_merge_queue_tool_event(
     state.telemetry.ops_events.emit(event);
 }
 
+async fn merge_queue_proxy_env(state: &AppState, entry: &MergeQueueEntry) -> Vec<(String, String)> {
+    let settings = settings::load_settings(&state.core.data_root).await;
+    let network_profiles = settings.network_profiles.unwrap_or_default();
+    let network_profile = network_profiles.profile(NetworkContext::MergeQueue);
+    let env = state
+        .execution
+        .egress_proxy
+        .proxy_env_for_context(
+            entry.workspace_id,
+            NetworkContext::MergeQueue,
+            network_profile,
+            "127.0.0.1",
+        )
+        .await;
+    env.into_iter().collect()
+}
+
 async fn merge_queue_command(
     state: &AppState,
     entry: &MergeQueueEntry,
     command_label: &str,
     program: &str,
     workdir: Option<&Path>,
-    envs: &[(&str, String)],
+    envs: &[(String, String)],
 ) -> Command {
-    let (cmd, used_tool_slice) = tool_slice_command(program, workdir, envs).await;
+    let proxy_env = merge_queue_proxy_env(state, entry).await;
+    let mut merged: HashMap<String, String> = envs.iter().cloned().collect();
+    for (key, value) in proxy_env {
+        merged.insert(key, value);
+    }
+    let merged: Vec<(String, String)> = merged.into_iter().collect();
+    let (cmd, used_tool_slice) = tool_slice_command(program, workdir, &merged).await;
     emit_merge_queue_tool_event(state, entry, command_label, workdir, used_tool_slice);
     cmd
 }
@@ -2226,7 +2254,7 @@ async fn merge_queue_command(
 async fn tool_slice_command(
     program: &str,
     workdir: Option<&Path>,
-    envs: &[(&str, String)],
+    envs: &[(String, String)],
 ) -> (Command, bool) {
     if systemd_run_available().await {
         let mut cmd = Command::new("systemd-run");
@@ -2260,7 +2288,7 @@ async fn tool_slice_command(
 async fn tool_slice_command(
     program: &str,
     workdir: Option<&Path>,
-    envs: &[(&str, String)],
+    envs: &[(String, String)],
 ) -> (Command, bool) {
     let mut cmd = Command::new(program);
     if let Some(dir) = workdir {

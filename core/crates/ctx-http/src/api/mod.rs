@@ -364,6 +364,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             delete(delete_workspace).get(get_workspace),
         )
         .route(
+            "/api/workspaces/:id/harness_container",
+            get(get_workspace_harness_container),
+        )
+        .route(
+            "/api/workspaces/:id/harness_container/stop",
+            post(stop_workspace_harness_container),
+        )
+        .route(
             "/api/workspaces/:id/active_snapshot",
             get(get_workspace_active_snapshot),
         )

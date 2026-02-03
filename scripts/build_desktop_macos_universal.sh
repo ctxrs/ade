@@ -57,7 +57,7 @@ CTX_BUNDLE_APPEND=1 \
 ./scripts/ensure_bundled_harnesses.sh
 
 echo "Syncing universal sidecars + web dist into desktop resources..."
-node core/scripts/desktop_sync_resources_universal_macos.cjs --profile release
+CTX_DESKTOP_SYNC_BUNDLES=1 node core/scripts/desktop_sync_resources_universal_macos.cjs --profile release
 
 echo "Building per-arch Tauri bundles..."
 # Use `pnpm exec` so `--target` is passed to the Tauri CLI (not as Cargo args after `--`).

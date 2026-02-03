@@ -14,6 +14,7 @@ use super::shared::{load_and_cache_workspace_files, FileCompletionsQuery};
 use crate::attachments;
 use crate::completions;
 use crate::daemon::AppState;
+use crate::harness_runtime::HarnessContainerStatus;
 use crate::logs;
 use crate::telemetry::TelemetryEvent;
 use crate::vcs_hooks;
@@ -117,6 +118,56 @@ pub(super) async fn get_workspace(
             Ok(Json(ws))
         }
         None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+pub(super) async fn get_workspace_harness_container(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Option<HarnessContainerStatus>>, StatusCode> {
+    let workspace_id =
+        WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let workspace = state
+        .global_store()
+        .get_workspace(workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if workspace.is_none() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let status = state
+        .execution
+        .harness
+        .container_status(workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(status))
+}
+
+pub(super) async fn stop_workspace_harness_container(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let workspace_id =
+        WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+    let workspace = state
+        .global_store()
+        .get_workspace(workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if workspace.is_none() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let stopped = state
+        .execution
+        .harness
+        .stop_container(workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if stopped {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
     }
 }
 

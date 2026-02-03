@@ -210,3 +210,7 @@ pub fn bundled_node_runtime() -> Option<BundledRuntimePaths> {
 pub fn bundled_python_runtime() -> Option<BundledRuntimePaths> {
     bundled_runtime("python")
 }
+
+pub fn bundled_podman_runtime() -> Option<BundledRuntimePaths> {
+    bundled_runtime("podman")
+}

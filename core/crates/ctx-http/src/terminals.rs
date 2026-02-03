@@ -72,6 +72,7 @@ pub struct TerminalCreateRequest {
     pub shell: String,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
+    pub env: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -294,6 +295,9 @@ impl TerminalManager {
         let mut cmd = CommandBuilder::new(req.shell.clone());
         cmd.cwd(req.cwd.clone());
         cmd.env("TERM", "xterm-256color");
+        for (key, value) in &req.env {
+            cmd.env(key, value);
+        }
 
         let child = pair.slave.spawn_command(cmd).context("spawn terminal")?;
         drop(pair.slave);
