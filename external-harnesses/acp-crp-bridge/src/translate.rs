@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use agent_client_protocol::{ContentBlock, SessionUpdate, ToolCall, ToolCallStatus, ToolCallUpdate, ToolKind};
+use agent_client_protocol::{
+    ContentBlock, EmbeddedResourceResource, SessionUpdate, ToolCall, ToolCallStatus,
+    ToolCallUpdate, ToolKind,
+};
 use serde_json::Value;
 
-use crate::crp::{
-    CrpChannel, CrpEnvelope, CrpEvent, CrpToolStatus,
-};
+use crate::crp::{CrpChannel, CrpEnvelope, CrpEvent, CrpToolStatus};
 
 #[derive(Clone, Copy, Debug)]
 pub enum ReasoningMode {
@@ -179,12 +180,15 @@ impl Translator {
         };
         let tool_id = update.tool_call_id.to_string();
 
-        let entry = self.tool_cache.entry(tool_id.clone()).or_insert_with(|| ToolCache {
-            tool_name: "other".to_string(),
-            tool_label: None,
-            input: None,
-            input_preview: None,
-        });
+        let entry = self
+            .tool_cache
+            .entry(tool_id.clone())
+            .or_insert_with(|| ToolCache {
+                tool_name: "other".to_string(),
+                tool_label: None,
+                input: None,
+                input_preview: None,
+            });
 
         if let Some(kind) = update.fields.kind {
             entry.tool_name = tool_kind_name(kind).to_string();
@@ -289,6 +293,10 @@ fn content_block_to_text(block: &ContentBlock) -> Option<String> {
     match block {
         ContentBlock::Text(text) => Some(text.text.clone()),
         ContentBlock::ResourceLink(link) => Some(link.uri.clone()),
+        ContentBlock::Resource(resource) => match &resource.resource {
+            EmbeddedResourceResource::TextResourceContents(text) => Some(text.text.clone()),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -321,7 +329,8 @@ mod tests {
         let raw = std::fs::read_to_string("fixtures/basic.json").expect("fixture read");
         let fixture: Fixture = serde_json::from_str(&raw).expect("fixture parse");
 
-        let mut translator = Translator::new(fixture.session_id.clone(), ReasoningMode::RawThoughts);
+        let mut translator =
+            Translator::new(fixture.session_id.clone(), ReasoningMode::RawThoughts);
         translator.start_turn(fixture.turn_id.clone(), fixture.message_id.clone());
 
         let mut out = Vec::new();

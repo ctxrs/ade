@@ -203,6 +203,8 @@ print(resolved)
 PY
 }
 
+BRIDGE_DIR="${CTX_BUNDLE_BRIDGE_DIR:-$ROOT/external-harnesses/acp-crp-bridge}"
+BRIDGE_BIN="acp-crp-bridge"
 LOCAL_ADAPTERS_DIR="${CTX_BUNDLE_ADAPTERS_DIR:-$ROOT/harness-adapters}"
 LOCAL_ADAPTER_MODE="${CTX_BUNDLE_LOCAL_ADAPTERS:-auto}"
 BUILD_LOCAL_ADAPTERS="${CTX_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
@@ -260,6 +262,37 @@ local_adapter_binary_path() {
   printf '%s' "$LOCAL_ADAPTERS_DIR/$dir/target/$rust_target/release/${bin}${BIN_EXT}"
 }
 
+local_bridge_binary_path() {
+  if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+    if [[ -n "${rust_target:-}" ]]; then
+      printf '%s' "$CARGO_TARGET_DIR/$rust_target/release/${BRIDGE_BIN}${BIN_EXT}"
+    else
+      printf '%s' "$CARGO_TARGET_DIR/release/${BRIDGE_BIN}${BIN_EXT}"
+    fi
+    return 0
+  fi
+  printf '%s' "$BRIDGE_DIR/target/$rust_target/release/${BRIDGE_BIN}${BIN_EXT}"
+}
+
+require_bridge_binary() {
+  if [[ ! -d "$BRIDGE_DIR" ]]; then
+    log "error: missing acp-crp-bridge source dir at $BRIDGE_DIR"
+    exit 5
+  fi
+  local bridge_out
+  bridge_out="$(local_bridge_binary_path)"
+  if [[ ! -f "$bridge_out" ]]; then
+    if is_truthy "$BUILD_LOCAL_ADAPTERS"; then
+      require_cmd cargo
+      (cd "$BRIDGE_DIR" && cargo build --release --target "$rust_target")
+    fi
+  fi
+  if [[ ! -f "$bridge_out" ]]; then
+    log "error: missing acp-crp-bridge binary at $bridge_out"
+    exit 5
+  fi
+}
+
 local_adapter_amp_entrypoint() {
   printf '%s' "$LOCAL_ADAPTERS_DIR/${LOCAL_ADAPTER_DIR[amp]}/dist/bin/amp-acp.js"
 }
@@ -295,6 +328,7 @@ build_local_adapters() {
     require_cmd cargo
     (cd "$LOCAL_ADAPTERS_DIR/$dir" && cargo build --release --target "$rust_target")
   done
+
 }
 
 ensure_node_runtime() {
@@ -458,6 +492,7 @@ npm_install_bundle() {
 
 ensure_node_runtime
 ensure_python_runtime
+require_bridge_binary
 
 if is_truthy "$BUILD_LOCAL_ADAPTERS"; then
   if is_falsy "$LOCAL_ADAPTER_MODE"; then
@@ -634,6 +669,9 @@ add_local_provider() {
   local_ids+=("$provider_id")
 }
 
+bridge_src="$(local_bridge_binary_path)"
+add_local_provider "acp-crp-bridge" "local-bin" "local" "$bridge_src" "$(basename "$bridge_src")" "[]"
+
 if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   local_adapter_required=0
   if is_truthy "$LOCAL_ADAPTER_MODE"; then
@@ -669,10 +707,11 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
       exit 5
     fi
   done
+fi
 
-  if [[ ${#local_ids[@]} -gt 0 ]]; then
-    ids_csv="$(IFS=,; echo "${local_ids[*]}")"
-    run_python - "$providers_src" "$ids_csv" <<'PY'
+if [[ ${#local_ids[@]} -gt 0 ]]; then
+  ids_csv="$(IFS=,; echo "${local_ids[*]}")"
+  run_python - "$providers_src" "$ids_csv" <<'PY'
 import sys
 
 path = sys.argv[1]
@@ -692,8 +731,7 @@ with open(path, "r", encoding="utf-8") as fh:
 with open(path, "w", encoding="utf-8") as fh:
     fh.writelines(lines)
 PY
-    cat "$local_providers_src" >> "$providers_src"
-  fi
+  cat "$local_providers_src" >> "$providers_src"
 fi
 
 providers_out="$(mktemp /tmp/ctx-bundle-providers-out.XXXXXX)"
