@@ -12,12 +12,6 @@ import type {
 } from "@ctx/types";
 import type { GitStatusSummary } from "../api/client";
 
-export type SessionReplicaAcpMeta = {
-  models?: unknown;
-  modes?: unknown;
-  currentModelId?: string;
-};
-
 export type SessionReplicaConfig = {
   eventBufferLimit: number;
   headLimit: number;
@@ -59,7 +53,6 @@ export type SessionReplicaData = {
   stateRev?: number;
   artifacts?: Artifact[];
   gitStatusSummary?: GitStatusSummary | null;
-  acpMeta?: SessionReplicaAcpMeta;
   loading?: boolean;
   error?: string | null;
   turnsHydrated?: boolean;

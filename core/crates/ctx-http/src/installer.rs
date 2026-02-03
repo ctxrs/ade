@@ -17,7 +17,7 @@ use crate::lsp_catalog::{LspCatalogArchive, LspCatalogInstall};
 use crate::provider_matrix;
 use crate::title_generation_local;
 use crate::updates;
-use ctx_providers::tier1::Tier1AcpAdapter;
+use ctx_providers::crp::Tier1CrpAdapter;
 
 mod config;
 
@@ -759,17 +759,6 @@ async fn install_managed_npm_provider(
     .await
     .context("running npm install")?;
 
-    if provider_id == "claude" {
-        *stage = "patch";
-        if let Err(e) =
-            patch_claude_code_acp_for_ask_user_question(&install_dir.join(script_rel)).await
-        {
-            // Don't hard-fail install if patching fails; Claude can still run without the UI.
-            // This is a best-effort enhancement until the upstream package includes AskUserQuestion routing.
-            tracing::warn!("failed to patch claude-code-acp for AskUserQuestion: {e:#}");
-        }
-    }
-
     *stage = "entrypoint";
     let script_path = install_dir.join(script_rel);
     if !script_path.exists() {
@@ -797,144 +786,6 @@ async fn install_managed_npm_provider(
         args,
         meta,
     })
-}
-
-pub async fn ensure_claude_code_acp_ask_user_question_patched(
-    agent_cfg: &AgentServerConfigFile,
-) -> Result<bool> {
-    let Some(cmd) = resolve_provider_command(agent_cfg, "claude") else {
-        return Ok(false);
-    };
-    let Some(script_path) = cmd.args.first() else {
-        return Ok(false);
-    };
-    let script_path = PathBuf::from(script_path);
-    patch_claude_code_acp_for_ask_user_question(&script_path).await
-}
-
-async fn patch_claude_code_acp_for_ask_user_question(script_path: &Path) -> Result<bool> {
-    // `script_path` is usually `.../node_modules/@zed-industries/claude-code-acp/dist/index.js`.
-    // We patch `dist/acp-agent.js` in the same directory to route `AskUserQuestion` tool calls via
-    // the ACP extension method `_claude_code_acp/ask_user_question`.
-    let Some(dist_dir) = script_path.parent() else {
-        return Ok(false);
-    };
-    if script_path.file_name().and_then(|s| s.to_str()) != Some("index.js") {
-        return Ok(false);
-    }
-    let acp_agent_js = dist_dir.join("acp-agent.js");
-    if !acp_agent_js.exists() {
-        return Ok(false);
-    }
-
-    let original = tokio::fs::read_to_string(&acp_agent_js)
-        .await
-        .with_context(|| format!("reading {}", acp_agent_js.display()))?;
-    let mut patched = original.clone();
-    let mut changed = false;
-
-    // `@agentclientprotocol/sdk` implements `extMethod(method, ...)` by sending the JSON-RPC
-    // request method `_${method}`. That means callers should pass `claude_code_acp/...` (no
-    // leading underscore) to produce `_claude_code_acp/...` on the wire.
-    //
-    // Older/broken patches (including our initial one) used `_claude_code_acp/...` as the method
-    // argument, which results in `__claude_code_acp/...` on the wire.
-    if patched.contains("extMethod(\"_claude_code_acp/ask_user_question\"") {
-        patched = patched.replace(
-            "extMethod(\"_claude_code_acp/ask_user_question\"",
-            "extMethod(\"claude_code_acp/ask_user_question\"",
-        );
-        changed = true;
-    }
-
-    let needle = "if (toolName === \"ExitPlanMode\") {";
-    let ask_block = r#"if (toolName === "AskUserQuestion") {
-                if (signal.aborted) {
-                    throw new Error("Tool use aborted");
-                }
-                try {
-                    const rawResponse = await this.client.extMethod("claude_code_acp/ask_user_question", {
-                        sessionId,
-                        toolCallId: toolUseID,
-                        input: toolInput,
-                    });
-                    if (signal.aborted) {
-                        throw new Error("Tool use aborted");
-                    }
-                    const outcome = rawResponse?.outcome === "submitted" || rawResponse?.outcome === "cancelled" ? rawResponse.outcome : undefined;
-                    let answers;
-                    if (rawResponse && typeof rawResponse.answers === "object" && rawResponse.answers !== null && !Array.isArray(rawResponse.answers)) {
-                        answers = {};
-                        for (const [key, value] of Object.entries(rawResponse.answers)) {
-                            if (typeof value === "string") {
-                                answers[key] = value;
-                            }
-                        }
-                    }
-                    if (outcome === "cancelled") {
-                        return {
-                            behavior: "deny",
-                            message: "User cancelled the question prompt. Proceed without using AskUserQuestion and ask for clarification in the chat instead.",
-                        };
-                    }
-                    return {
-                        behavior: "allow",
-                        updatedInput: {
-                            ...toolInput,
-                            answers: answers ?? {},
-                        },
-                    };
-                }
-                catch (error) {
-                    const errorMessage = error instanceof Error && error.message ? error.message : String(error);
-                    return {
-                        behavior: "deny",
-                        message: "This ACP client does not support the AskUserQuestion interactive UI. Ask the user your questions in plain text and continue after the next user message. Details: " +
-                            errorMessage,
-                    };
-                }
-            }
-            "#;
-
-    if !patched.contains("extMethod(\"claude_code_acp/ask_user_question\"") {
-        let Some(insert_at) = patched.find(needle) else {
-            return Ok(changed);
-        };
-        let mut next = String::with_capacity(patched.len() + ask_block.len() + 16);
-        next.push_str(&patched[..insert_at]);
-        next.push_str(ask_block);
-        next.push_str(&patched[insert_at..]);
-        patched = next;
-        changed = true;
-    }
-
-    if !patched.contains("CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL") {
-        let allow_needle =
-            "const disableBuiltInTools = params._meta?.disableBuiltInTools === true;";
-        let allow_block = r#"
-        if (!disableBuiltInTools && process.env.CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL === "1") {
-            allowedTools.push("AskUserQuestion");
-        }"#;
-        if let Some(insert_at) = patched.find(allow_needle) {
-            let insert_at = insert_at + allow_needle.len();
-            let mut next = String::with_capacity(patched.len() + allow_block.len() + 8);
-            next.push_str(&patched[..insert_at]);
-            next.push_str(allow_block);
-            next.push_str(&patched[insert_at..]);
-            patched = next;
-            changed = true;
-        }
-    }
-
-    if !changed {
-        return Ok(false);
-    }
-
-    tokio::fs::write(&acp_agent_js, patched)
-        .await
-        .with_context(|| format!("writing {}", acp_agent_js.display()))?;
-
-    Ok(true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1569,20 +1420,9 @@ async fn install_provider_impl(
         )
         .await;
 
-        let adapter: std::sync::Arc<Tier1AcpAdapter> =
-            std::sync::Arc::new(if provider_id == "claude" {
-                Tier1AcpAdapter::claude_from_raw_with_ask_user_question(
-                    managed.command.clone(),
-                    managed.args.clone(),
-                    std::sync::Arc::clone(&state.core.ask_user_question),
-                )
-            } else {
-                Tier1AcpAdapter::from_raw(
-                    &provider_id,
-                    managed.command.clone(),
-                    managed.args.clone(),
-                )
-            });
+        let adapter: std::sync::Arc<Tier1CrpAdapter> = std::sync::Arc::new(
+            Tier1CrpAdapter::from_raw(&provider_id, managed.command.clone(), managed.args.clone()),
+        );
 
         // Refresh the in-memory adapter so new Sessions use the managed install.
         {

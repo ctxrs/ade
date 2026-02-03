@@ -28,7 +28,6 @@ pub struct ProviderCapabilities {
 
     pub supports_headless: bool,
     pub supports_server_mode: bool,
-    pub supports_acp: bool,
     pub supports_interactive_tui: bool,
 
     pub supports_private_state_dir: bool,

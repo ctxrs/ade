@@ -1,5 +1,4 @@
 import {
-  getProviderOptions,
   getSessionHead,
   getSessionHistory,
   getSessionSnapshot,
@@ -12,7 +11,6 @@ import {
   type GitStatusSummary,
   type Message,
   type MessageAttachment,
-  type ProviderOptions,
   type Session,
   type SessionEvent,
   type SessionHead,
@@ -27,14 +25,7 @@ import {
   type WorkspaceActiveSnapshotEvent,
 } from "../api/client";
 import type { WorkspaceActiveSnapshotEventSource, WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
-import {
-  loadSessionAcpMetaV1,
-  loadSessionHeadV1,
-  loadSessionHistoryPageV1,
-  saveSessionAcpMetaV1,
-  saveSessionHeadV1,
-  saveSessionHistoryPageV1,
-} from "./uiStateStore";
+import { loadSessionHeadV1, loadSessionHistoryPageV1, saveSessionHeadV1, saveSessionHistoryPageV1 } from "./uiStateStore";
 import { getClientSettings } from "./clientSettings";
 import { SessionReplicaBridge } from "./sessionReplicaBridge";
 import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
@@ -63,9 +54,6 @@ export type SessionSupervisorSnapshot = {
 export type SessionCacheEntry = {
   sessionId: string;
   session?: Session;
-  acpModels?: any;
-  acpModes?: any;
-  acpCurrentModelId?: string;
   turns: SessionTurn[];
   turnToolsByTurnId: Record<string, SessionTurnTool[]>;
   turnToolsLoading: string[];
@@ -97,26 +85,6 @@ type OpenOptions = {
   watchDiff?: boolean;
   force?: boolean;
   silent?: boolean;
-};
-
-type AcpMeta = {
-  models?: any;
-  modes?: any;
-  currentModelId?: string;
-};
-
-const readAcpCurrentModelId = (models: any): string | undefined => {
-  if (!models || typeof models !== "object") return;
-  return models.currentModelId ?? models.current_model_id ?? undefined;
-};
-
-const hasModelList = (models: any): boolean => {
-  const list =
-    models?.availableModels ??
-    models?.available_models ??
-    models?.models ??
-    [];
-  return Array.isArray(list) && list.length > 0;
 };
 
 const readString = (value: unknown): string | undefined => {
@@ -197,23 +165,9 @@ const messagesMatchForOptimistic = (optimistic: Message, incoming: Message): boo
   return buildAttachmentSignature(optimistic.attachments) === buildAttachmentSignature(incoming.attachments);
 };
 
-const extractAcpMetaFromEvent = (event: SessionEvent): AcpMeta | null => {
-  if (event.event_type !== "init") return null;
-  const payload = (event as any)?.payload_json ?? {};
-  const models = payload?.models ?? undefined;
-  const modes = payload?.modes ?? undefined;
-  if (!models && !modes) return null;
-  return {
-    models,
-    modes,
-    currentModelId: readAcpCurrentModelId(models),
-  };
-};
-
 type InternalEntry = SessionCacheEntry & {
   refCount: number;
   warmUntilMs: number;
-  acpMetaUpdatedAtMs?: number;
   seqSet: Set<number>;
   startedTurnIds: Set<string>;
   turnsHydrated: boolean;
@@ -261,8 +215,6 @@ export class SessionSupervisor {
   private activeTaskSessionIds: string[] = [];
   private warmSessionIds: string[] = [];
   private subscribedSessionIds: string[] = [];
-  private providerOptionsCache = new Map<string, ProviderOptions>();
-  private providerOptionsInFlight = new Map<string, Promise<ProviderOptions | undefined>>();
 
   constructor() {
     this.replica = new SessionReplicaBridge(this.handleReplicaPatches, {
@@ -563,9 +515,6 @@ export class SessionSupervisor {
       sessions[id] = {
         sessionId: e.sessionId,
         session: e.session,
-        acpModels: e.acpModels,
-        acpModes: e.acpModes,
-        acpCurrentModelId: e.acpCurrentModelId,
         turns: e.turns,
         turnToolsByTurnId: e.turnToolsByTurnId,
         turnToolsLoading: [...e.turnToolsLoadingSet],
@@ -660,12 +609,6 @@ export class SessionSupervisor {
       if (data.toolSummaries && data.toolSummaries.length > 0) {
         this.applyToolSummaries(entry, data.toolSummaries);
       }
-      if (data.acpMeta) {
-        entry.acpModels = data.acpMeta.models ?? entry.acpModels;
-        entry.acpModes = data.acpMeta.modes ?? entry.acpModes;
-        entry.acpCurrentModelId = data.acpMeta.currentModelId ?? entry.acpCurrentModelId;
-        entry.acpMetaUpdatedAtMs = Date.now();
-      }
       if (data.gitStatusSummary !== undefined) {
         entry.gitStatusSummary = data.gitStatusSummary ?? null;
       }
@@ -714,9 +657,6 @@ export class SessionSupervisor {
       if (data.subagentNotice) {
         void this.ensureSubagentInvocations(entry, { force: true });
       }
-      if (!entry.acpModels || !hasModelList(entry.acpModels)) {
-        void this.ensureProviderOptions(entry);
-      }
       entry.queue = entry.messages.filter((m) => m.delivery === "queued");
       entry.updatedAtMs = Date.now();
       changed = true;
@@ -744,9 +684,6 @@ export class SessionSupervisor {
     const entry: InternalEntry = {
       sessionId,
       session: undefined,
-      acpModels: undefined,
-      acpModes: undefined,
-      acpCurrentModelId: undefined,
       turns: [],
       turnToolsByTurnId: {},
       turnToolsLoading: [],
@@ -776,7 +713,6 @@ export class SessionSupervisor {
       updatedAtMs: Date.now(),
       refCount: 0,
       warmUntilMs: Date.now() + WARM_TTL_MS,
-      acpMetaUpdatedAtMs: undefined,
       seqSet: new Set<number>(),
       startedTurnIds: new Set<string>(),
       turnsHydrated: false,
@@ -800,40 +736,6 @@ export class SessionSupervisor {
     return entry;
   }
 
-  private applyAcpMeta(entry: InternalEntry, meta: AcpMeta, opts?: { persist?: boolean }): boolean {
-    const nextModels = meta.models ?? entry.acpModels;
-    const nextModes = meta.modes ?? entry.acpModes;
-    const nextCurrent =
-      meta.currentModelId ?? readAcpCurrentModelId(nextModels) ?? entry.acpCurrentModelId;
-    const modelsChanged = JSON.stringify(nextModels ?? null) !== JSON.stringify(entry.acpModels ?? null);
-    const modesChanged = JSON.stringify(nextModes ?? null) !== JSON.stringify(entry.acpModes ?? null);
-    const currentChanged = nextCurrent !== entry.acpCurrentModelId;
-    if (!modelsChanged && !modesChanged && !currentChanged) return false;
-
-    entry.acpModels = nextModels;
-    entry.acpModes = nextModes;
-    entry.acpCurrentModelId = nextCurrent;
-    entry.acpMetaUpdatedAtMs = Date.now();
-    if (opts?.persist !== false && (nextModels || nextModes || nextCurrent)) {
-      saveSessionAcpMetaV1(entry.sessionId, {
-        models: nextModels,
-        modes: nextModes,
-        currentModelId: nextCurrent,
-      }).catch(() => {});
-    }
-    return true;
-  }
-
-  private applyAcpMetaFromEvents(entry: InternalEntry, events: SessionEvent[]): boolean {
-    for (let i = events.length - 1; i >= 0; i -= 1) {
-      const meta = extractAcpMetaFromEvent(events[i]);
-      if (meta) {
-        return this.applyAcpMeta(entry, meta);
-      }
-    }
-    return false;
-  }
-
   private applyGitStatusSnapshotFromEvents(entry: InternalEntry, events: SessionEvent[]): boolean {
     for (let i = events.length - 1; i >= 0; i -= 1) {
       const event = events[i];
@@ -846,62 +748,6 @@ export class SessionSupervisor {
       return true;
     }
     return false;
-  }
-
-  private providerOptionsKey(session: Session): string {
-    return `${idToString(session.workspace_id)}:${session.provider_id}`;
-  }
-
-  private seedAcpMetaFromProviderOptions(entry: InternalEntry, opts?: ProviderOptions): boolean {
-    if (!opts?.models && !opts?.modes) return false;
-    return this.applyAcpMeta(entry, {
-      models: opts.models,
-      modes: opts.modes,
-      currentModelId: readAcpCurrentModelId(opts.models),
-    });
-  }
-
-  private async ensureProviderOptions(entry: InternalEntry) {
-    if (entry.acpModels && hasModelList(entry.acpModels)) return;
-    const session = entry.session;
-    if (!session) return;
-    const key = this.providerOptionsKey(session);
-    const cached = this.providerOptionsCache.get(key);
-    if (cached) {
-      if (this.seedAcpMetaFromProviderOptions(entry, cached)) {
-        entry.updatedAtMs = Date.now();
-        this.publish();
-      }
-      return;
-    }
-    const existing = this.providerOptionsInFlight.get(key);
-    if (existing) {
-      const opts = await existing.catch(() => undefined);
-      if (opts && this.seedAcpMetaFromProviderOptions(entry, opts)) {
-        entry.updatedAtMs = Date.now();
-        this.publish();
-      }
-      return;
-    }
-    const workspaceId = idToString(session.workspace_id);
-    if (!workspaceId) return;
-    const request = getProviderOptions(workspaceId, session.provider_id)
-      .then((opts) => {
-        this.providerOptionsCache.set(key, opts);
-        return opts;
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (this.providerOptionsInFlight.get(key) === request) {
-          this.providerOptionsInFlight.delete(key);
-        }
-      });
-    this.providerOptionsInFlight.set(key, request);
-    const opts = await request;
-    if (opts && this.seedAcpMetaFromProviderOptions(entry, opts)) {
-      entry.updatedAtMs = Date.now();
-      this.publish();
-    }
   }
 
   private async ensureLoaded(sessionId: string, opts?: OpenOptions) {
@@ -1034,22 +880,6 @@ export class SessionSupervisor {
       if (currentSeq >= 0 && cachedSeq >= 0 && cachedSeq < currentSeq) return;
       if (entry.turnsHydrated && !entry.headFromCache) return;
       this.applyHead(entry, cached.head, { fromCache: true });
-      const cachedMeta = await loadSessionAcpMetaV1(entry.sessionId);
-      if (cachedMeta) {
-        const changed = this.applyAcpMeta(
-          entry,
-          {
-            models: cachedMeta.models,
-            modes: cachedMeta.modes,
-            currentModelId: cachedMeta.currentModelId,
-          },
-          { persist: false },
-        );
-        if (changed) {
-          entry.updatedAtMs = Date.now();
-          this.publish();
-        }
-      }
     } catch {
       // ignore cache errors
     }
@@ -1111,11 +941,7 @@ export class SessionSupervisor {
     this.mergeTurns(entry, head.turns ?? []);
     this.mergeEvents(entry, head.events ?? [], { notify: false });
     this.mergeMessages(entry, head.messages ?? []);
-    this.applyAcpMetaFromEvents(entry, head.events ?? []);
     this.applyGitStatusSnapshotFromEvents(entry, head.events ?? []);
-    if (!entry.acpModels || !hasModelList(entry.acpModels)) {
-      void this.ensureProviderOptions(entry);
-    }
     if (head.tool_summaries && head.tool_summaries.length > 0) {
       const hydrated = entry.turnToolsHydratedByTurnId;
       const nextByTurn: Record<string, SessionTurnTool[]> = {};
@@ -1845,12 +1671,7 @@ function isStatusUpdateMeta(meta: any): boolean {
 
 function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
   const payload = ev.payload_json ?? {};
-  const meta =
-    payload?.acp_update?._meta ??
-    payload?.acp_update?.meta ??
-    payload?._meta ??
-    payload?.meta ??
-    {};
+  const meta = payload?._meta ?? payload?.meta ?? {};
   if (meta?.heartbeat === true) return false;
   if (isStatusUpdateMeta(meta)) return false;
   const reasoningKind = meta?.codex?.reasoning_kind ?? meta?.codex?.reasoningKind;
@@ -1860,12 +1681,7 @@ function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
 
 function shouldRenderAssistantChunk(ev: SessionEvent): boolean {
   const payload = ev.payload_json ?? {};
-  const meta =
-    payload?.acp_update?._meta ??
-    payload?.acp_update?.meta ??
-    payload?._meta ??
-    payload?.meta ??
-    {};
+  const meta = payload?._meta ?? payload?.meta ?? {};
   if (meta?.heartbeat === true) return false;
   if (isStatusUpdateMeta(meta)) return false;
   return true;
@@ -1875,8 +1691,6 @@ const extractToolCallId = (event: SessionEvent): string | null => {
   const payload = event.payload_json ?? {};
   const direct = payload?.tool_call_id ?? payload?.tool_call?.id ?? payload?.tool?.id;
   if (typeof direct === "string" && direct.trim()) return String(direct);
-  const fromUpdate = payload?.acp_update?.tool_call_id ?? payload?.acp_update?.tool_call?.id;
-  if (typeof fromUpdate === "string" && fromUpdate.trim()) return String(fromUpdate);
   return null;
 };
 
@@ -1894,8 +1708,6 @@ const extractToolStatus = (event: SessionEvent): string | null => {
   const payload = event.payload_json ?? {};
   const direct = payload?.tool_status ?? payload?.tool?.status ?? payload?.status;
   if (typeof direct === "string" && direct.trim()) return normalizeToolStatus(direct, String(event.event_type ?? ""));
-  const fromUpdate = payload?.acp_update?.tool_status ?? payload?.acp_update?.tool?.status;
-  if (typeof fromUpdate === "string" && fromUpdate.trim()) return normalizeToolStatus(fromUpdate, String(event.event_type ?? ""));
   if (event.event_type === "tool_result") return "completed";
   if (event.event_type === "tool_call") return "pending";
   return null;

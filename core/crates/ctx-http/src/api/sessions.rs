@@ -39,7 +39,6 @@ use ctx_fs::vcs;
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_providers::events::NormalizedEvent;
 use ctx_providers::{
-    acp::{probe_provider_options, AcpAgentConfig, AcpClientConfig},
     ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome},
     crp::probe_crp_models,
 };
@@ -2276,15 +2275,7 @@ async fn load_provider_model_catalog(
         }
     }
 
-    let supports_acp = {
-        let statuses = state.providers.statuses.lock().await;
-        statuses
-            .get(provider_id)
-            .and_then(|status| status.capabilities.as_ref())
-            .map(|caps| caps.supports_acp)
-            .unwrap_or(true)
-    };
-    if !supports_acp && provider_id != "codex-crp" {
+    if provider_id != "codex-crp" && provider_id != "claude-crp" {
         return Ok(None);
     }
 
@@ -2303,117 +2294,55 @@ async fn load_provider_model_catalog(
         .or_else(|| default_agent_server_command(&matrix, &state.core.data_root, provider_id))
         .ok_or_else(|| "unknown provider id".to_string())?;
 
-    if !supports_acp {
-        let mut env = std::collections::HashMap::new();
-        env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
-        if let Some(token) = state.core.auth_token.as_ref() {
-            env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
-        }
-        if provider_id == "codex-crp" {
-            // Keep probing consistent with real codex-crp sessions (they need CODEX_HOME).
-            if let Ok(extra) =
-                crate::provider_accounts::codex_env_for_active_account(&state.core.data_root).await
-            {
-                for (key, value) in extra {
-                    env.insert(key, value);
-                }
-            }
-        }
-
-        let probe = match probe_crp_models(
-            provider_id,
-            command,
-            args,
-            PathBuf::from(&workspace.root_path),
-            env,
-        )
-        .await
-        {
-            Ok(probe) => probe,
-            Err(e) => {
-                tracing::warn!(
-                    provider_id = provider_id,
-                    "provider options probe failed: {}",
-                    logs::redact_sensitive(&e.to_string())
-                );
-                return Ok(None);
-            }
-        };
-
-        let models_value = serde_json::json!({
-            "models": probe.models,
-            "current_model_id": probe.current_model_id,
-        });
-        if let Some(models) = build_model_catalog(&models_value) {
-            let mut value = serde_json::json!({
-                "provider_id": provider_id,
-                "workspace_id": workspace.id.0,
-                "installed": true,
-                "probe_ok": true,
-                "supports_load": false,
-                "auth_required": false,
-                "models": models_value,
-                "probed_at": chrono::Utc::now().to_rfc3339(),
-            });
-            value = redact_json_value(value);
-            state.providers.options_cache.lock().await.insert(
-                cache_key,
-                crate::daemon::CachedProviderOptions {
-                    cached_at: std::time::Instant::now(),
-                    value,
-                },
-            );
-            return Ok(Some(models));
-        }
-
-        return Ok(None);
-    }
-
-    let agent = AcpAgentConfig {
-        provider_id: provider_id.to_string(),
-        command,
-        args,
-    };
-    let client = AcpClientConfig {
-        client_name: "ctx".to_string(),
-        client_title: "ctx".to_string(),
-        client_version: env!("CARGO_PKG_VERSION").to_string(),
-        client_capabilities: serde_json::json!({}),
-        system_prompt_append: None,
-        mcp_servers: vec![],
-    };
     let mut env = std::collections::HashMap::new();
     env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
     if let Some(token) = state.core.auth_token.as_ref() {
         env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
     }
-
-    let probe =
-        match probe_provider_options(agent, client, PathBuf::from(&workspace.root_path), env).await
+    if provider_id == "codex-crp" {
+        // Keep probing consistent with real codex-crp sessions (they need CODEX_HOME).
+        if let Ok(extra) =
+            crate::provider_accounts::codex_env_for_active_account(&state.core.data_root).await
         {
-            Ok(probe) => probe,
-            Err(e) => {
-                tracing::warn!(
-                    provider_id = provider_id,
-                    "provider options probe failed: {}",
-                    logs::redact_sensitive(&e.to_string())
-                );
-                return Ok(None);
+            for (key, value) in extra {
+                env.insert(key, value);
             }
-        };
+        }
+    }
 
-    if let Some(models) = probe.models.as_ref().and_then(build_model_catalog) {
+    let probe = match probe_crp_models(
+        provider_id,
+        command,
+        args,
+        PathBuf::from(&workspace.root_path),
+        env,
+    )
+    .await
+    {
+        Ok(probe) => probe,
+        Err(e) => {
+            tracing::warn!(
+                provider_id = provider_id,
+                "provider options probe failed: {}",
+                logs::redact_sensitive(&e.to_string())
+            );
+            return Ok(None);
+        }
+    };
+
+    let models_value = serde_json::json!({
+        "models": probe.models,
+        "current_model_id": probe.current_model_id,
+    });
+    if let Some(models) = build_model_catalog(&models_value) {
         let mut value = serde_json::json!({
             "provider_id": provider_id,
             "workspace_id": workspace.id.0,
             "installed": true,
             "probe_ok": true,
-            "supports_load": probe.supports_load,
-            "auth_required": probe.auth_required,
-            "auth_methods": probe.auth_methods,
-            "modes": probe.modes,
-            "models": probe.models,
-            "acp_error": probe.acp_error,
+            "supports_load": false,
+            "auth_required": false,
+            "models": models_value,
             "probed_at": chrono::Utc::now().to_rfc3339(),
         });
         value = redact_json_value(value);
@@ -4577,7 +4506,8 @@ pub(super) async fn authenticate_session(
             let payload = ev.payload_json.clone();
             if matches!(ev.event_type, SessionEventType::Init) {
                 if let Some(ps) = payload
-                    .get("acp_session_id")
+                    .get("provider_session_id")
+                    .or_else(|| payload.get("crp_session_id"))
                     .and_then(serde_json::Value::as_str)
                 {
                     let _ = store_for_events

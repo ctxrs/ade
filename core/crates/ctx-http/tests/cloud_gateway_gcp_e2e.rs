@@ -253,13 +253,7 @@ async fn wait_for_worker_ready(
         if let Ok(resp) = client.get(&url).send().await {
             if resp.status().is_success() {
                 let info: GatewayWorkerInfo = resp.json().await.context("parsing worker info")?;
-                if matches!(info.state, GatewayWorkerState::Running)
-                    && (info
-                        .acp_log_dir
-                        .as_ref()
-                        .is_some_and(|v| !v.trim().is_empty())
-                        || info.last_diff_at.is_some())
-                {
+                if matches!(info.state, GatewayWorkerState::Running) {
                     return Ok(info);
                 }
             }

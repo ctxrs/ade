@@ -21,9 +21,8 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info};
 
 use ctx_worker_protocol::{
-    new_worker_id, DiffArtifact, ExportPatchResponse, RelayMessage, StartWorkerRequest,
-    StartWorkerResponse, TerminalControlMessage, TerminalOpenRequest, WorkerInfo,
-    WorkerRegistration, WorkerState,
+    new_worker_id, DiffArtifact, ExportPatchResponse, StartWorkerRequest, StartWorkerResponse,
+    TerminalControlMessage, TerminalOpenRequest, WorkerInfo, WorkerRegistration, WorkerState,
 };
 use serde::Deserialize;
 use tokio_util::io::ReaderStream;
@@ -511,30 +510,11 @@ struct AppState {
     session_mount_path: String,
     workdir_path: String,
     auth_token: Option<String>,
-    relays: Arc<RwLock<HashMap<String, Arc<Mutex<RelayState>>>>>,
     terminal_relays: Arc<RwLock<HashMap<String, Arc<Mutex<TerminalRelayState>>>>>,
 }
 
 struct WorkerStore {
     workers: RwLock<HashMap<String, WorkerRecord>>,
-}
-
-struct RelayState {
-    worker_tx: Option<mpsc::UnboundedSender<RelayMessage>>,
-    sessions: HashMap<String, mpsc::UnboundedSender<RelayMessage>>,
-    pending_for_worker: VecDeque<RelayMessage>,
-    pending_for_daemon: HashMap<String, VecDeque<RelayMessage>>,
-}
-
-impl RelayState {
-    fn new() -> Self {
-        Self {
-            worker_tx: None,
-            sessions: HashMap::new(),
-            pending_for_worker: VecDeque::new(),
-            pending_for_daemon: HashMap::new(),
-        }
-    }
 }
 
 #[derive(Default)]
@@ -545,7 +525,6 @@ struct TerminalRelayState {
 }
 
 const MAX_PENDING_TERMINAL_MESSAGES: usize = 256;
-const MAX_PENDING_RELAY_MESSAGES: usize = 256;
 
 #[derive(Default)]
 struct TerminalSessionRelay {
@@ -569,5 +548,4 @@ struct WorkerRecord {
     last_diff_at: Option<DateTime<Utc>>,
     last_diff: Option<DiffArtifact>,
     ssh: Option<ctx_worker_protocol::SshInfo>,
-    acp_log_dir: Option<String>,
 }

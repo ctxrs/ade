@@ -74,7 +74,7 @@ describe("buildWorkbenchThreadViewModel", () => {
         run_id: "r1",
         turn_id: "t1",
         event_type: "tool_call",
-        payload_json: { tool_call_id: "tool-1", acp_update: { toolCallId: "tool-1", title: "ls" } },
+        payload_json: { tool_call_id: "tool-1", title: "ls" },
         created_at: "2025-12-15T00:00:01.000Z",
       },
       {
@@ -94,7 +94,7 @@ describe("buildWorkbenchThreadViewModel", () => {
         run_id: "r1",
         turn_id: "t1",
         event_type: "tool_call",
-        payload_json: { tool_call_id: "tool-2", acp_update: { toolCallId: "tool-2", title: "pwd" } },
+        payload_json: { tool_call_id: "tool-2", title: "pwd" },
         created_at: "2025-12-15T00:00:03.000Z",
       },
     ];
@@ -218,7 +218,7 @@ describe("buildWorkbenchThreadViewModel", () => {
         run_id: "r1",
         turn_id: "t1",
         event_type: "tool_call",
-        payload_json: { tool_call_id: "tool-1", acp_update: { toolCallId: "tool-1", title: "ls" } },
+        payload_json: { tool_call_id: "tool-1", title: "ls" },
         created_at: "2025-12-15T00:00:02.000Z",
       },
       {
@@ -279,7 +279,7 @@ describe("buildWorkbenchThreadViewModel", () => {
         run_id: "r1",
         turn_id: "t1",
         event_type: "tool_call",
-        payload_json: { tool_call_id: "tool-1", acp_update: { toolCallId: "tool-1", title: "first" } },
+        payload_json: { tool_call_id: "tool-1", title: "first" },
         created_at: "2025-12-15T00:00:01.000Z",
       },
       {
@@ -289,7 +289,7 @@ describe("buildWorkbenchThreadViewModel", () => {
         run_id: "r1",
         turn_id: "t1",
         event_type: "tool_call",
-        payload_json: { tool_call_id: "tool-2", acp_update: { toolCallId: "tool-2", title: "second" } },
+        payload_json: { tool_call_id: "tool-2", title: "second" },
         created_at: "2025-12-15T00:00:02.000Z",
       },
     ];
@@ -399,12 +399,9 @@ describe("buildWorkbenchThreadViewModel", () => {
         event_type: "tool_call",
         payload_json: {
           tool_call_id: "tool-1",
-          acp_update: {
-            toolCallId: "tool-1",
-            kind: "search",
-            status: "running",
-            input: { query: "alpha" },
-          },
+          kind: "search",
+          status: "running",
+          input: { query: "alpha" },
         },
         created_at: "2025-12-15T00:00:01.000Z",
       },

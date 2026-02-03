@@ -189,12 +189,7 @@ function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> 
   const extractNoticeStatusText = (ev: SessionEvent): string | null => {
     if (ev.event_type !== "notice") return null;
     const payload = ev.payload_json ?? {};
-    const meta =
-      payload?.acp_update?._meta ??
-      payload?.acp_update?.meta ??
-      payload?._meta ??
-      payload?.meta ??
-      {};
+    const meta = payload?._meta ?? payload?.meta ?? {};
     return (
       normalize(meta?.statusText) ??
       normalize(meta?.status_text) ??
@@ -281,7 +276,7 @@ function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> 
       continue;
     }
 
-    const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+    const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
     const toolCallId =
       normalize(
         ev.payload_json?.tool_call_id ??
@@ -714,12 +709,7 @@ export function buildWorkbenchThreadViewModel(
 
 function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
   const payload = ev.payload_json ?? {};
-  const meta =
-    payload?.acp_update?._meta ??
-    payload?.acp_update?.meta ??
-    payload?._meta ??
-    payload?.meta ??
-    {};
+  const meta = payload?._meta ?? payload?.meta ?? {};
   if (meta?.heartbeat === true) return false;
   if (isStatusUpdateMeta(meta)) return false;
   const reasoningKind = meta?.codex?.reasoning_kind ?? meta?.codex?.reasoningKind;
@@ -729,12 +719,7 @@ function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
 
 function shouldRenderAssistantChunk(ev: SessionEvent): boolean {
   const payload = ev.payload_json ?? {};
-  const meta =
-    payload?.acp_update?._meta ??
-    payload?.acp_update?.meta ??
-    payload?._meta ??
-    payload?.meta ??
-    {};
+  const meta = payload?._meta ?? payload?.meta ?? {};
   if (meta?.heartbeat === true) return false;
   if (isStatusUpdateMeta(meta)) return false;
   return true;
@@ -876,7 +861,7 @@ function buildTurnActivityTimeline(opts: {
     }
 
     if (ev.event_type === "tool_call" || ev.event_type === "tool_call_update" || ev.event_type === "tool_result") {
-      const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+      const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
       const toolCallId =
         String(
           ev.payload_json?.tool_call_id ??
@@ -1286,7 +1271,7 @@ function buildWorkbenchThreadViewModelFromEvents(
             if (isCrpThoughtEvent(ev)) thoughtIsCrp = true;
           }
         }
-        const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+        const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
         const toolCallId =
           String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
         if (!toolCallId) continue;
@@ -1433,7 +1418,7 @@ function buildWorkbenchThreadViewModelFromEvents(
           case "tool_call":
           case "tool_call_update":
           case "tool_result": {
-            const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+            const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
             const toolCallId =
               String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
             if (!toolCallId) {
@@ -1658,7 +1643,7 @@ function buildWorkbenchThreadViewModelFromEvents(
         case "tool_call":
         case "tool_call_update":
         case "tool_result": {
-          const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+          const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
           const toolCallId =
             String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
           if (!toolCallId) {
@@ -1784,7 +1769,7 @@ function buildWorkbenchThreadViewModelFromEvents(
           askInserted.add(askItem.tool_call_id);
         }
       }
-      const update = ev.payload_json?.acp_update ?? ev.payload_json ?? {};
+      const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
       const toolCallId =
         String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
       if (!toolCallId) continue;
@@ -2068,25 +2053,7 @@ function extractErrorMessage(payload: any): string | null {
     return direct;
   }
 
-  const acpError = payload.acp_error ?? payload.acpError;
-  if (acpError && typeof acpError === "object") {
-    const acpDataText = extractErrorMessageFromObject((acpError as any).data);
-    if (acpDataText) {
-      if (details && !acpDataText.includes(details)) {
-        return `${acpDataText}\nDetails: ${details}`;
-      }
-      return acpDataText;
-    }
-  }
-  const acpErrorText = extractErrorMessageFromObject(acpError);
-  if (acpErrorText) {
-    if (details && !acpErrorText.includes(details)) {
-      return `${acpErrorText}\nDetails: ${details}`;
-    }
-    return acpErrorText;
-  }
-
-  const update = payload.acp_update ?? payload.acpUpdate ?? payload.update;
+  const update = payload.update ?? payload;
   const updateText = extractErrorMessageFromObject(update);
   if (updateText) {
     if (details && !updateText.includes(details)) {

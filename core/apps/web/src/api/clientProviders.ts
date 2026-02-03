@@ -44,7 +44,6 @@ export type ProviderOptions = {
   auth_methods?: any;
   modes?: any;
   models?: any;
-  acp_error?: any;
   verify?: any;
   probed_at: string;
 };
@@ -58,7 +57,6 @@ export type ProviderAuthCheck = {
   status: string;
   auth_required?: boolean;
   auth_methods?: any;
-  acp_error?: any;
   checked_at?: string;
 };
 

@@ -21,7 +21,6 @@ pub mod oracle;
 pub mod perf_telemetry;
 pub mod provider_accounts;
 pub mod provider_child_reclassifier;
-pub mod provider_debug;
 pub mod provider_guard;
 pub mod provider_matrix;
 pub mod provider_restart;

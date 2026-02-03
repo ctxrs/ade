@@ -24,7 +24,6 @@ use crate::installer;
 use crate::ops_events::OpsEvent;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::provider_accounts;
-use crate::provider_debug::apply_acp_heap_profile_env;
 use crate::settings::{self, ProviderControlMode};
 use crate::telemetry::TelemetryEvent;
 use crate::workspace_config;
@@ -408,13 +407,6 @@ async fn start_turn(
             }
         }
     }
-    if !provider_env.contains_key("CTX_WORKER_GATEWAY_URL") {
-        apply_acp_heap_profile_env(
-            &session.provider_id,
-            &mut provider_env,
-            &state.core.data_root,
-        );
-    }
 
     let prompt_config = workspace_config::load_agent_system_prompt_append(workdir)
         .await
@@ -602,7 +594,6 @@ async fn start_turn(
                 let provider_session_id = payload
                     .get("provider_session_id")
                     .or_else(|| payload.get("crp_session_id"))
-                    .or_else(|| payload.get("acp_session_id"))
                     .and_then(Value::as_str);
                 if let Some(ps) = provider_session_id {
                     provider_session_ref = Some(ps.to_string());
@@ -1407,12 +1398,7 @@ async fn emit_event(
 }
 
 fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
-    let meta = payload
-        .get("acp_update")
-        .and_then(|v| v.get("_meta"))
-        .or_else(|| payload.get("acp_update").and_then(|v| v.get("meta")))
-        .or_else(|| payload.get("_meta"))
-        .or_else(|| payload.get("meta"));
+    let meta = payload.get("_meta").or_else(|| payload.get("meta"));
     if meta
         .and_then(|v| v.get("heartbeat"))
         .and_then(Value::as_bool)

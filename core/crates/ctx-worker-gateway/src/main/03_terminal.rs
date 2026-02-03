@@ -118,14 +118,6 @@ async fn handle_terminal_data_socket(
     }
 }
 
-async fn relay_for(state: &AppState, worker_id: &str) -> Arc<Mutex<RelayState>> {
-    let mut relays = state.relays.write().await;
-    relays
-        .entry(worker_id.to_string())
-        .or_insert_with(|| Arc::new(Mutex::new(RelayState::new())))
-        .clone()
-}
-
 async fn terminal_relay_for(state: &AppState, worker_id: &str) -> Arc<Mutex<TerminalRelayState>> {
     let mut relays = state.terminal_relays.write().await;
     relays

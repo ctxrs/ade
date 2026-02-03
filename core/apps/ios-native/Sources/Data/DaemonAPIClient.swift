@@ -231,7 +231,6 @@ actor DaemonAPIClient {
         let authMethods: JSONValue?
         let modes: JSONValue?
         let models: JSONValue?
-        let acpError: JSONValue?
         let verify: JSONValue?
         let probedAt: String
     }

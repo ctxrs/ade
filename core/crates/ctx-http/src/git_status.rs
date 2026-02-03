@@ -167,8 +167,6 @@ pub async fn emit_git_status_snapshot_for_sessions(
             }
         } else {
             let since_change = now.duration_since(entry.value.last_change_at);
-            entry.value.payload = payload_raw;
-            entry.value.last_change_at = now;
             let since_emit = now.duration_since(entry.value.emitted_at);
             if !is_first
                 && since_emit < Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS)
@@ -176,6 +174,8 @@ pub async fn emit_git_status_snapshot_for_sessions(
             {
                 return;
             }
+            entry.value.payload = payload_raw;
+            entry.value.last_change_at = now;
             entry.value.emitted_at = now;
         }
     }

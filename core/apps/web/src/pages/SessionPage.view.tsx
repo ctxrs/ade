@@ -1381,52 +1381,8 @@ export function SessionView({
     }
   }, [authUi.methods, authMethodId]);
 
-  const acpSessionInfo = useMemo(() => {
-    return [...events]
-      .reverse()
-      .find((e) => e.event_type === "init" && (e.payload_json?.models || e.payload_json?.modes));
-  }, [eventsKey]);
-
-  const acpModels = entry?.acpModels ?? acpSessionInfo?.payload_json?.models;
-  const acpCurrentModelId =
-    entry?.acpCurrentModelId ??
-    acpModels?.currentModelId ??
-    acpModels?.current_model_id ??
-    acpModels?.models?.currentModelId ??
-    acpModels?.models?.current_model_id;
-  const modelOptions = useMemo(() => {
-    const raw = acpModels as any;
-    if (!raw) return [];
-    const list =
-      raw.availableModels ??
-      raw.available_models ??
-      raw.models ??
-      raw;
-    const normalized =
-      Array.isArray(list) || list == null || typeof list !== "object"
-        ? list
-        : list.availableModels ?? list.available_models ?? list.models ?? list;
-    if (!Array.isArray(normalized)) return [];
-    return normalized
-      .map((m: any) => ({
-        id: m.modelId ?? m.model_id ?? m.id,
-        name: m.name ?? (m.modelId ?? m.model_id ?? m.id),
-      }))
-      .filter((m: any) => typeof m.id === "string" && m.id.length > 0);
-  }, [acpModels]);
-  const modelOptionIds = useMemo(() => new Set(modelOptions.map((m) => String(m.id))), [modelOptions]);
-
-  const currentModelId = useMemo(() => {
-    const sessionModelId = String(session?.model_id ?? "").trim();
-    const acpModelId = String(acpCurrentModelId ?? "").trim();
-    if (!sessionModelId || sessionModelId === "default") {
-      return acpModelId || sessionModelId;
-    }
-    if (modelOptionIds.size > 0 && !modelOptionIds.has(sessionModelId)) {
-      return acpModelId || sessionModelId;
-    }
-    return sessionModelId || acpModelId;
-  }, [acpCurrentModelId, modelOptionIds, session?.model_id]);
+  const modelOptions = useMemo(() => [] as Array<{ id: string; name: string }>, []);
+  const currentModelId = useMemo(() => String(session?.model_id ?? "").trim(), [session?.model_id]);
 
   const restoreStateFrom =
     preserveScrollOnFocus || scrollState?.stickToBottom !== false || !restorePendingRef.current
@@ -1702,22 +1658,6 @@ export function SessionView({
     }
   };
 
-  const acpAvailableCommands = useMemo<SlashCommandDescriptor[]>(() => {
-    const last = [...events].reverse().find((e) => {
-      const update = e.payload_json?.acp_update;
-      return update?.sessionUpdate === "available_commands_update";
-    });
-    const update = last?.payload_json?.acp_update ?? {};
-    const list = update.availableCommands ?? update.available_commands ?? [];
-    if (!Array.isArray(list)) return [];
-    return list
-      .map((c: any) => ({
-        name: String(c?.name ?? "").replace(/^\//, ""),
-        description: typeof c?.description === "string" ? c.description : undefined,
-      }))
-      .filter((c: any) => typeof c.name === "string" && c.name.length > 0);
-  }, [eventsKey]);
-
   const fallbackSlashCommands = useMemo<SlashCommandDescriptor[]>(() => {
     const provider = session?.provider_id;
     if (provider === "codex") {
@@ -1748,7 +1688,7 @@ export function SessionView({
     return [{ name: "compact", description: "Summarize conversation to save context" }];
   }, [session?.provider_id]);
 
-  const slashCommands = acpAvailableCommands.length > 0 ? acpAvailableCommands : fallbackSlashCommands;
+  const slashCommands = fallbackSlashCommands;
 
   const virtuosoStyle = useMemo(() => ({ flex: 1, minHeight: 0 } as const), []);
   const workbenchViewportBy = useMemo(() => ({ top: 1000, bottom: 1000 }), []);

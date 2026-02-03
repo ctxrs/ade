@@ -8241,19 +8241,6 @@ fn is_transient_session_event(
         }
     }
 
-    let update = payload_json
-        .get("acp_update")
-        .or_else(|| payload_json.get("acpUpdate"));
-    if let Some(update) = update {
-        if let Some(session_update) = update
-            .get("sessionUpdate")
-            .or_else(|| update.get("session_update"))
-            .and_then(|v| v.as_str())
-        {
-            return session_update == "available_commands_update";
-        }
-    }
-
     false
 }
 
@@ -8673,7 +8660,7 @@ fn normalize_tool_status(status: &str, event_type: SessionEventType) -> String {
 }
 
 fn extract_tool_update(payload: &Value) -> &Value {
-    payload.get("acp_update").unwrap_or(payload)
+    payload
 }
 
 fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Value) -> Value {

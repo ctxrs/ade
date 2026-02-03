@@ -292,36 +292,6 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("  fi\n");
     script.push_str("}\n\n");
 
-    script.push_str("install_codex_acp() {\n");
-    script.push_str("  if command -v codex-acp >/dev/null 2>&1; then\n");
-    script.push_str("    return 0\n");
-    script.push_str("  fi\n");
-    script.push_str("  local arch\n");
-    script.push_str("  arch=$(uname -m || true)\n");
-    script.push_str("  local url=\"\"\n");
-    script.push_str("  case \"$arch\" in\n");
-    script.push_str("    x86_64|amd64)\n");
-    script.push_str("      url=\"https://github.com/ctxrs/codex-acp/releases/download/v0.9.0-ctx.2/codex-acp-0.9.0-ctx.2-x86_64-unknown-linux-gnu.tar.gz\"\n");
-    script.push_str("      ;;\n");
-    script.push_str("    aarch64|arm64)\n");
-    script.push_str("      url=\"https://github.com/ctxrs/codex-acp/releases/download/v0.7.4-ctx.4/codex-acp-0.7.4-ctx.4-aarch64-unknown-linux-gnu.tar.gz\"\n");
-    script.push_str("      ;;\n");
-    script.push_str("    *)\n");
-    script.push_str("      log \"unsupported arch for codex-acp: $arch\"\n");
-    script.push_str("      return 0\n");
-    script.push_str("      ;;\n");
-    script.push_str("  esac\n");
-    script.push_str("  curl -fsSL \"$url\" -o /tmp/ctx-codex-acp.tgz\n");
-    script.push_str("  tar -xzf /tmp/ctx-codex-acp.tgz -C /tmp\n");
-    script.push_str("  if [ -f /tmp/codex-acp ]; then\n");
-    script.push_str("    mkdir -p /usr/local/bin\n");
-    script.push_str("    chmod +x /tmp/codex-acp\n");
-    script.push_str("    mv /tmp/codex-acp /usr/local/bin/codex-acp\n");
-    script.push_str("  else\n");
-    script.push_str("    log \"codex-acp binary missing after extract\"\n");
-    script.push_str("  fi\n");
-    script.push_str("}\n\n");
-
     script.push_str("install_node() {\n");
     script
         .push_str("  if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then\n");
@@ -337,31 +307,6 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("  elif command -v yum >/dev/null 2>&1; then\n");
     script.push_str("    yum install -y nodejs npm >/dev/null 2>&1 || true\n");
     script.push_str("  fi\n");
-    script.push_str("}\n\n");
-
-    script.push_str("install_claude_acp() {\n");
-    script.push_str("  if command -v claude-code-acp >/dev/null 2>&1; then\n");
-    script.push_str("    return 0\n");
-    script.push_str("  fi\n");
-    script.push_str("  install_node\n");
-    script.push_str("  if command -v npm >/dev/null 2>&1; then\n");
-    script.push_str("    npm install -g @zed-industries/claude-code-acp >/dev/null 2>&1 || true\n");
-    script.push_str("  else\n");
-    script.push_str("    log \"npm not available; skipping claude-code-acp install\"\n");
-    script.push_str("  fi\n");
-    script.push_str("}\n\n");
-
-    script.push_str("install_providers() {\n");
-    script.push_str("  case \"${CTX_PROVIDER_ID:-}\" in\n");
-    script.push_str("    codex)\n");
-    script.push_str("      install_codex_acp\n");
-    script.push_str("      ;;\n");
-    script.push_str("    claude)\n");
-    script.push_str("      install_claude_acp\n");
-    script.push_str("      ;;\n");
-    script.push_str("    *)\n");
-    script.push_str("      ;;\n");
-    script.push_str("  esac\n");
     script.push_str("}\n\n");
 
     if !spec.mount_device_candidates.is_empty() {
@@ -548,7 +493,6 @@ pub fn render_bootstrap_script(spec: &BootstrapSpec<'_>) -> String {
     script.push_str("  install_codex_auth\n");
     script.push_str("  install_codex_config\n");
     script.push_str("  install_codex_compact_prompt\n");
-    script.push_str("  install_providers\n");
     script.push_str("  mount_session_disk\n");
     script.push_str("  hydrate_repo\n");
     script.push_str("  ensure_git_repo\n");

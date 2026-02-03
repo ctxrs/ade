@@ -8,7 +8,6 @@ use std::time::Duration;
 use anyhow::Context;
 use anyhow::Result;
 #[cfg(target_os = "linux")]
-use sysinfo::Process;
 use sysinfo::{Pid, System};
 use tokio::time::MissedTickBehavior;
 
@@ -127,13 +126,7 @@ async fn reclassify_once(
     }
 
     system.refresh_processes();
-    let mut provider_roots: HashSet<u32> = provider_pids.iter().copied().collect();
-    #[cfg(target_os = "linux")]
-    for (pid, process) in system.processes() {
-        if looks_like_acp_agent(process) {
-            provider_roots.insert(pid.as_u32());
-        }
-    }
+    let provider_roots: HashSet<u32> = provider_pids.iter().copied().collect();
     let mut child_pids = collect_child_pids(system, &provider_pids, cfg.child_limit);
     child_pids.retain(|pid| !provider_roots.contains(pid));
 
@@ -230,24 +223,6 @@ fn collect_child_pids(system: &System, provider_pids: &[u32], limit: usize) -> H
     }
 
     output
-}
-
-#[cfg(target_os = "linux")]
-fn looks_like_acp_agent(process: &Process) -> bool {
-    if let Some(exe) = process.exe() {
-        let exe = exe.to_string_lossy();
-        if exe.contains("/providers/agent-servers/") && exe.contains("acp") {
-            return true;
-        }
-    }
-    let name = process.name().to_ascii_lowercase();
-    if name.contains("codex-acp") || name.contains("claude-code-acp") || name == "gemini" {
-        return true;
-    }
-    process
-        .cmd()
-        .iter()
-        .any(|part| part.contains("codex-acp") || part.contains("claude-code-acp"))
 }
 
 #[cfg(target_os = "linux")]

@@ -190,7 +190,6 @@ fn default_caps(id: &str) -> ProviderCapabilities {
         supports_fork_or_rewind: false,
         supports_headless: true,
         supports_server_mode: false,
-        supports_acp: false,
         supports_interactive_tui: false,
         supports_private_state_dir: false,
         supports_sandbox_flags: false,

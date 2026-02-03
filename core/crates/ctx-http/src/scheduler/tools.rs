@@ -1052,7 +1052,7 @@ fn normalize_tool_status(status: &str, event_type: SessionEventType) -> String {
 }
 
 fn extract_tool_update(payload: &Value) -> &Value {
-    payload.get("acp_update").unwrap_or(payload)
+    payload
 }
 
 fn tool_call_id_from_payload(payload: &Value) -> Option<String> {

@@ -160,7 +160,6 @@ async fn main() -> Result<()> {
         session_mount_path: resolved.session_mount_path.clone(),
         workdir_path: resolved.workdir_path.clone(),
         auth_token,
-        relays: Arc::new(RwLock::new(HashMap::new())),
         terminal_relays: Arc::new(RwLock::new(HashMap::new())),
     };
 
@@ -173,8 +172,6 @@ async fn main() -> Result<()> {
         .route("/workers/:id/diff", get(get_diff).post(post_diff))
         .route("/workers/:id/export", post(export_patch))
         .route("/workers/:id/register", post(register_worker))
-        .route("/workers/:id/acp/worker", get(acp_worker_ws))
-        .route("/workers/:id/acp/daemon", get(acp_daemon_ws))
         .route("/workers/:id/terminals", post(open_terminal))
         .route(
             "/workers/:id/terminals/:terminal_id/close",
@@ -301,7 +298,6 @@ async fn auth_middleware(
         // Requires auth; fall through.
     } else if method == "GET"
         && (path.starts_with("/workers/")
-            && !path.contains("/acp/")
             && !path.contains("/terminals/")
             && !path.ends_with("/export"))
     {
@@ -364,7 +360,6 @@ async fn start_worker(
         last_diff_at: None,
         last_diff: None,
         ssh: None,
-        acp_log_dir: None,
     };
 
     {
@@ -421,7 +416,6 @@ async fn get_worker(
         updated_at: record.updated_at,
         last_diff_at: record.last_diff_at,
         ssh: record.ssh.clone(),
-        acp_log_dir: record.acp_log_dir.clone(),
     }))
 }
 
@@ -544,184 +538,10 @@ async fn register_worker(
     if reg.ssh.is_some() {
         record.ssh = reg.ssh;
     }
-    record.acp_log_dir = reg.acp_log_dir;
     record.updated_at = Utc::now();
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn acp_worker_ws(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    ws: WebSocketUpgrade,
-) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    ensure_exists(&state, &id).await?;
-    Ok(ws.on_upgrade(move |socket| handle_worker_socket(state, id, socket)))
-}
-
-async fn acp_daemon_ws(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    ws: WebSocketUpgrade,
-) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    ensure_exists(&state, &id).await?;
-    Ok(ws.on_upgrade(move |socket| handle_daemon_socket(state, id, socket)))
-}
-
-async fn handle_worker_socket(state: AppState, worker_id: String, socket: WebSocket) {
-    info!(worker_id = %worker_id, "acp worker websocket connected");
-    let relay = relay_for(&state, &worker_id).await;
-    let (mut sender, mut receiver) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<RelayMessage>();
-
-    {
-        let mut relay_guard = relay.lock().await;
-        relay_guard.worker_tx = Some(tx);
-        let pending = std::mem::take(&mut relay_guard.pending_for_worker);
-        for msg in pending {
-            let _ = relay_guard.worker_tx.as_ref().unwrap().send(msg);
-        }
-    }
-
-    let relay_for_sender = relay.clone();
-    let worker_id_for_sender = worker_id.clone();
-    let send_task = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if let Ok(text) = serde_json::to_string(&msg) {
-                if sender.send(Message::Text(text)).await.is_err() {
-                    break;
-                }
-            }
-        }
-        let mut relay_guard = relay_for_sender.lock().await;
-        if relay_guard.worker_tx.is_some() {
-            relay_guard.worker_tx = None;
-        }
-    });
-
-    while let Some(Ok(msg)) = receiver.next().await {
-        if let Message::Text(text) = msg {
-            let Ok(relay_msg) = serde_json::from_str::<RelayMessage>(&text) else {
-                continue;
-            };
-            if let RelayMessage::Acp {
-                session_id,
-                payload,
-            } = &relay_msg
-            {
-                debug!(
-                    worker_id = %worker_id,
-                    session_id = %session_id,
-                    payload_len = payload.len(),
-                    "acp relay from worker"
-                );
-            }
-            let session_id = match &relay_msg {
-                RelayMessage::Acp { session_id, .. }
-                | RelayMessage::Close { session_id }
-                | RelayMessage::Init { session_id, .. } => session_id,
-            };
-            let relay_guard = relay.lock().await;
-            if let Some(session_tx) = relay_guard.sessions.get(session_id) {
-                let _ = session_tx.send(relay_msg);
-            } else {
-                drop(relay_guard);
-                let mut relay_guard = relay.lock().await;
-                let queue = relay_guard
-                    .pending_for_daemon
-                    .entry(session_id.clone())
-                    .or_insert_with(VecDeque::new);
-                if queue.len() < MAX_PENDING_RELAY_MESSAGES {
-                    queue.push_back(relay_msg);
-                } else {
-                    info!(
-                        "worker relay message dropped; no daemon session for worker={} session={}",
-                        worker_id_for_sender, session_id
-                    );
-                }
-            }
-        }
-    }
-
-    let _ = send_task.await;
-    info!(worker_id = %worker_id, "acp worker websocket closed");
-}
-
-async fn handle_daemon_socket(state: AppState, worker_id: String, socket: WebSocket) {
-    let relay = relay_for(&state, &worker_id).await;
-    let (mut sender, mut receiver) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<RelayMessage>();
-
-    let mut session_id: Option<String> = None;
-    if let Some(Ok(Message::Text(text))) = receiver.next().await {
-        let relay_msg = match serde_json::from_str::<RelayMessage>(&text) {
-            Ok(msg) => msg,
-            Err(_) => return,
-        };
-        if let RelayMessage::Init {
-            session_id: sid, ..
-        } = &relay_msg
-        {
-            session_id = Some(sid.clone());
-            let mut relay_guard = relay.lock().await;
-            relay_guard.sessions.insert(sid.clone(), tx.clone());
-            if let Some(worker_tx) = relay_guard.worker_tx.as_ref() {
-                let _ = worker_tx.send(relay_msg.clone());
-            } else if relay_guard.pending_for_worker.len() < MAX_PENDING_RELAY_MESSAGES {
-                relay_guard.pending_for_worker.push_back(relay_msg.clone());
-            }
-            if let Some(mut pending) = relay_guard.pending_for_daemon.remove(sid) {
-                while let Some(msg) = pending.pop_front() {
-                    let _ = tx.send(msg);
-                }
-            }
-            info!(
-                worker_id = %worker_id,
-                session_id = %sid,
-                "acp daemon websocket connected"
-            );
-        }
-    }
-
-    let Some(session_id) = session_id else {
-        return;
-    };
-
-    let relay_for_sender = relay.clone();
-    let session_id_for_task = session_id.clone();
-    let send_task = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if let Ok(text) = serde_json::to_string(&msg) {
-                if sender.send(Message::Text(text)).await.is_err() {
-                    break;
-                }
-            }
-        }
-        let mut relay_guard = relay_for_sender.lock().await;
-        relay_guard.sessions.remove(&session_id_for_task);
-    });
-
-    while let Some(Ok(msg)) = receiver.next().await {
-        if let Message::Text(text) = msg {
-            if let Ok(relay_msg) = serde_json::from_str::<RelayMessage>(&text) {
-                let mut relay_guard = relay.lock().await;
-                if let Some(worker_tx) = relay_guard.worker_tx.as_ref() {
-                    let _ = worker_tx.send(relay_msg);
-                } else if relay_guard.pending_for_worker.len() < MAX_PENDING_RELAY_MESSAGES {
-                    relay_guard.pending_for_worker.push_back(relay_msg);
-                }
-            }
-        }
-    }
-
-    let _ = send_task.await;
-    let mut relay_guard = relay.lock().await;
-    relay_guard.sessions.remove(&session_id);
-    info!(
-        worker_id = %worker_id,
-        session_id = %session_id,
-        "acp daemon websocket closed"
-    );
-}
 
 async fn open_terminal(
     State(state): State<AppState>,
@@ -839,4 +659,3 @@ async fn handle_terminal_control_socket(state: AppState, worker_id: String, sock
     let mut relay_guard = relay.lock().await;
     relay_guard.control_tx = None;
 }
-

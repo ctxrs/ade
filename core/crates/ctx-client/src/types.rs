@@ -705,8 +705,6 @@ pub struct ProviderOptions {
     #[serde(default)]
     pub models: Option<Value>,
     #[serde(default)]
-    pub acp_error: Option<Value>,
-    #[serde(default)]
     pub verify: Option<ProviderAuthCheck>,
     #[serde(default)]
     pub probed_at: Option<String>,
@@ -721,8 +719,6 @@ pub struct ProviderAuthCheck {
     pub auth_required: Option<bool>,
     #[serde(default)]
     pub auth_methods: Option<Value>,
-    #[serde(default)]
-    pub acp_error: Option<Value>,
     #[serde(default)]
     pub checked_at: Option<String>,
 }

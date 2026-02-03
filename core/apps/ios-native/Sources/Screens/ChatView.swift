@@ -3182,8 +3182,8 @@ private actor ChatThreadPipeline {
             }
             guard let turnId = event.turnId?.stringValue else { continue }
             guard let payload = objectValue(from: event.payloadJson) else { continue }
-            let update = objectValue(from: payload["acp_update"]) ?? payload
-            guard let toolCallId = extractToolCallId(payload: payload, update: update) else { continue }
+            let update = payload
+            guard let toolCallId = extractToolCallId(payload: payload) else { continue }
 
             let toolCall = objectValue(from: update["toolCall"] ?? update["tool_call"]) ?? [:]
             let toolKind = stringValue(from: update["kind"] ?? toolCall["kind"])
@@ -3211,14 +3211,14 @@ private actor ChatThreadPipeline {
         return Array(byId.values)
     }
 
-    private func extractToolCallId(payload: [String: JSONValue], update: [String: JSONValue]) -> String? {
+    private func extractToolCallId(payload: [String: JSONValue]) -> String? {
         if let id = stringValue(from: payload["tool_call_id"]) { return id }
-        if let id = stringValue(from: update["toolCallId"] ?? update["tool_call_id"]) { return id }
-        if let rawInput = objectValue(from: update["rawInput"] ?? update["raw_input"]),
+        if let id = stringValue(from: payload["toolCallId"] ?? payload["tool_call_id"]) { return id }
+        if let rawInput = objectValue(from: payload["rawInput"] ?? payload["raw_input"]),
            let id = stringValue(from: rawInput["call_id"]) {
             return id
         }
-        if let toolCall = objectValue(from: update["toolCall"] ?? update["tool_call"]),
+        if let toolCall = objectValue(from: payload["toolCall"] ?? payload["tool_call"]),
            let id = stringValue(from: toolCall["id"] ?? toolCall["tool_call_id"]) {
             return id
         }
