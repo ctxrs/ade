@@ -67,9 +67,11 @@ const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] =>
     } as SessionTurn & {
       assistant_partial_provider_message_id?: string | null;
       assistant_last_provider_message_id?: string | null;
+      thought_partial_provider_item_id?: string | null;
     };
     next.assistant_partial_provider_message_id = null;
     next.assistant_last_provider_message_id = null;
+    next.thought_partial_provider_item_id = null;
     return next;
   });
 

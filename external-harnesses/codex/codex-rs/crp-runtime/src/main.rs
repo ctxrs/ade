@@ -2299,6 +2299,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         turn_id: turn.turn_id.clone(),
                         chunk,
                         encoding: None,
+                        item_id: item_id.clone(),
                     },
                 ));
             }
@@ -2309,6 +2310,11 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             if turn.reasoning_item_id.is_none() && !ev.item_id.is_empty() {
                 turn.reasoning_item_id = Some(ev.item_id.clone());
             }
+            let item_id = if ev.item_id.is_empty() {
+                turn.reasoning_item_id.clone()
+            } else {
+                Some(ev.item_id.clone())
+            };
             vec![(
                 CrpChannel::Data,
                 CrpEvent::ReasoningTrace {
@@ -2316,6 +2322,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     chunk: ev.delta,
                     encoding: None,
+                    item_id,
                 },
             )]
         }
@@ -3074,17 +3081,22 @@ mod tests {
         let trace_chunks: Vec<_> = mapped
             .iter()
             .filter_map(|(channel, event)| match event {
-                CrpEvent::ReasoningTrace { chunk, .. } => Some((channel, chunk.clone())),
+                CrpEvent::ReasoningTrace { chunk, item_id, .. } => {
+                    Some((channel, chunk.clone(), item_id.clone()))
+                }
                 _ => None,
             })
             .collect();
         assert_eq!(trace_chunks.len(), 3);
         assert_eq!(trace_chunks[0].0, &CrpChannel::Data);
         assert_eq!(trace_chunks[0].1, "Thinking about bar".to_string());
+        assert_eq!(trace_chunks[0].2.as_deref(), Some("reasoning-1"));
         assert_eq!(trace_chunks[1].0, &CrpChannel::Data);
         assert_eq!(trace_chunks[1].1, "raw".to_string());
+        assert_eq!(trace_chunks[1].2.as_deref(), Some("reasoning-1"));
         assert_eq!(trace_chunks[2].0, &CrpChannel::Data);
         assert_eq!(trace_chunks[2].1, "raw-final".to_string());
+        assert_eq!(trace_chunks[2].2.as_deref(), Some("reasoning-1"));
     }
 
     #[test]

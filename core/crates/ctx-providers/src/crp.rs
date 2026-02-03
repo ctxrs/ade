@@ -1075,6 +1075,8 @@ enum CrpEvent {
         chunk: String,
         #[serde(default)]
         encoding: Option<String>,
+        #[serde(default)]
+        item_id: Option<String>,
     },
     #[serde(rename = "tool.started")]
     ToolStarted {
@@ -1253,13 +1255,22 @@ fn map_crp_event(
             done: false,
         },
         CrpEvent::ReasoningTrace {
-            chunk, encoding, ..
+            chunk,
+            encoding,
+            item_id,
+            ..
         } => {
             let mut payload = json!({
                 "content_fragment": chunk,
                 "encoding": encoding,
                 "crp_seq": seq,
             });
+            // item_id enables deterministic thought chunk grouping/deduping in clients.
+            if let Some(item_id) = item_id {
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("item_id".to_string(), json!(item_id));
+                }
+            }
             if let Some(channel) = crp_channel {
                 if let Some(obj) = payload.as_object_mut() {
                     obj.insert("crp_channel".to_string(), json!(channel));

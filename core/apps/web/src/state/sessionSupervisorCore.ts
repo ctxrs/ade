@@ -1262,6 +1262,7 @@ export class SessionSupervisor {
     const turn = entry.turns[idx] as SessionTurn & {
       assistant_partial_provider_message_id?: string | null;
       assistant_last_provider_message_id?: string | null;
+      thought_partial_provider_item_id?: string | null;
     };
     const prevStatus = turn.status;
     let changed = false;
@@ -1291,7 +1292,19 @@ export class SessionSupervisor {
         if (!shouldRenderThoughtChunk(event)) break;
         const fragment = String(event.payload_json?.content_fragment ?? "");
         if (fragment) {
-          turn.thought_partial = appendFragment(turn.thought_partial, fragment);
+          const itemId = readPayloadString(event.payload_json, ["item_id", "itemId"]);
+          if (
+            itemId &&
+            turn.thought_partial_provider_item_id &&
+            itemId !== turn.thought_partial_provider_item_id
+          ) {
+            turn.thought_partial = fragment;
+          } else {
+            turn.thought_partial = appendFragment(turn.thought_partial, fragment);
+          }
+          if (itemId) {
+            turn.thought_partial_provider_item_id = itemId;
+          }
           changed = true;
         }
         break;
@@ -1635,9 +1648,11 @@ const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] => {
     } as SessionTurn & {
       assistant_partial_provider_message_id?: string | null;
       assistant_last_provider_message_id?: string | null;
+      thought_partial_provider_item_id?: string | null;
     };
     next.assistant_partial_provider_message_id = null;
     next.assistant_last_provider_message_id = null;
+    next.thought_partial_provider_item_id = null;
     return next;
   });
 };

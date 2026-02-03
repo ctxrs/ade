@@ -80,6 +80,12 @@ function isCrpDataEvent(ev: SessionEvent): boolean {
   return String(channel ?? "").toLowerCase() === "data";
 }
 
+function readThoughtItemId(ev: SessionEvent): string | null {
+  const payload = ev.payload_json ?? {};
+  const value = payload?.item_id ?? payload?.itemId;
+  if (typeof value === "string" && value.trim()) return value;
+  return null;
+}
 
 function collectThoughtStream(events: SessionEvent[]): {
   text: string;
@@ -158,12 +164,14 @@ function collectThoughtBlocks(events: SessionEvent[]): ThoughtBlock[] {
 
   const blocks: ThoughtBlock[] = [];
   let current: ThoughtBlock | null = null;
+  let currentItemId: string | null = null;
 
   const flush = () => {
     if (current && current.text.trim()) {
       blocks.push(current);
     }
     current = null;
+    currentItemId = null;
   };
 
   for (const ev of sorted) {
@@ -171,6 +179,13 @@ function collectThoughtBlocks(events: SessionEvent[]): ThoughtBlock[] {
     if (ev.event_type === "thought_chunk" && shouldRenderThoughtChunk(ev) && isCrpThoughtEvent(ev)) {
       const fragment = String(ev.payload_json?.content_fragment ?? "");
       if (fragment) {
+        const itemId = readThoughtItemId(ev);
+        if (itemId && currentItemId && itemId !== currentItemId) {
+          flush();
+        }
+        if (itemId) {
+          currentItemId = itemId;
+        }
         if (!current) {
           current = {
             text: "",

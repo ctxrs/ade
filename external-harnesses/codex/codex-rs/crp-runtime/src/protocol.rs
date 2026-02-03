@@ -190,6 +190,8 @@ pub enum CrpEvent {
         chunk: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         encoding: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        item_id: Option<String>,
     },
     #[serde(rename = "turn.completed")]
     TurnCompleted {
