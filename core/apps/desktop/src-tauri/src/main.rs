@@ -28,7 +28,8 @@ use objc2_app_kit::{
     NSTitlebarAccessoryViewController, NSWindow,
 };
 #[cfg(target_os = "macos")]
-use objc2_foundation::{CGFloat, NSString};
+use objc2_core_foundation::CGFloat;
+use objc2_foundation::NSString;
 #[cfg(feature = "automation")]
 use tauri_plugin_automation::init as automation_init;
 use tauri_plugin_deep_link::DeepLinkExt;

@@ -14,12 +14,11 @@ const waitForTauri = async () => {
 };
 
 const createWorkspace = async (rootPath) => {
-  const result = await browser.executeAsync(async (root, done) => {
+  const result = await browser.execute(async (root) => {
     try {
       const invoke = window.__TAURI__?.core?.invoke;
       if (!invoke) {
-        done({ error: "Tauri invoke not available" });
-        return;
+        return { error: "Tauri invoke not available" };
       }
       await invoke("desktop_connect_local");
       const resp = await invoke("desktop_daemon_request", {
@@ -31,9 +30,9 @@ const createWorkspace = async (rootPath) => {
         },
       });
       const payload = JSON.parse(resp.body || "{}");
-      done(payload.id || null);
+      return payload.id || null;
     } catch (err) {
-      done({ error: String(err) });
+      return { error: String(err) };
     }
   }, rootPath);
 

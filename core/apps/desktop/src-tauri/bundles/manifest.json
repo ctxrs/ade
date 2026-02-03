@@ -1,6 +1,46 @@
 {
   "version": 1,
-  "generated_at": null,
-  "providers": [],
-  "runtimes": []
+  "generated_at": "2026-02-03T20:28:55Z",
+  "providers": [
+    {
+      "id": "acp-crp-bridge",
+      "protocol": "acp",
+      "version": "local",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "084baf6d82df276c8bac9c2d704cfe5b2aeefdd1e70a6f011b6fdff802a925b4",
+      "command": "providers/acp-crp-bridge/macos/aarch64/acp-crp-bridge",
+      "args": []
+    }
+  ],
+  "runtimes": [
+    {
+      "id": "node",
+      "version": "24.12.0",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "90ee1d271eec831fd38d16c78c19cc36809548ac5cd034a6e0c10c4389c881ef",
+      "root": "runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64",
+      "bin": "bin/node",
+      "npm_cli": "lib/node_modules/npm/bin/npm-cli.js"
+    },
+    {
+      "id": "python",
+      "version": "3.13.11",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "20868a80a9c843db02b445b8e347bff4971fc2133b9260b3c36954f22a5d0a40",
+      "root": "runtimes/python/macos/aarch64/cpython-3.13.11+20251217-aarch64-apple-darwin",
+      "bin": "bin/python3"
+    },
+    {
+      "id": "podman",
+      "version": "5.3.2",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "7d500dc208dd9f8008013669624c7d575fcfed81aeb8df7ffb3a906a05e1717b",
+      "root": "runtimes/podman/macos/aarch64/podman-5.3.2",
+      "bin": "bin/podman"
+    }
+  ]
 }
