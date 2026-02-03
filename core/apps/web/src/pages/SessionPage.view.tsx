@@ -22,6 +22,7 @@ import {
   SubagentInvocation,
   setSessionModel,
   authenticateSession,
+  type ProviderOptions,
   getSettings,
   idToString,
   interruptSession,
@@ -46,6 +47,7 @@ import { useStatsigGate } from "../utils/statsig";
 import { useDictationController } from "../utils/useDictationController";
 import { usePinnedScrollManager } from "./usePinnedScrollManager";
 import { useWorkbenchStore } from "../workbench/store";
+import { buildModelsFromProviderOptions } from "../components/workbenchComposer/WorkbenchComposer.utils";
 import {
   AssistantEntry,
   ThreadItemView,
@@ -1381,8 +1383,20 @@ export function SessionView({
     }
   }, [authUi.methods, authMethodId]);
 
-  const modelOptions = useMemo(() => [] as Array<{ id: string; name: string }>, []);
-  const currentModelId = useMemo(() => String(session?.model_id ?? "").trim(), [session?.model_id]);
+  const modelOptions = useMemo(() => {
+    const models = entry?.acpModels;
+    if (models) {
+      const parsed = buildModelsFromProviderOptions({ models } as ProviderOptions);
+      if (parsed.length > 0) return parsed;
+    }
+    const fallbackId = String(session?.model_id ?? "").trim();
+    return fallbackId ? [{ id: fallbackId, name: fallbackId }] : [];
+  }, [entry?.acpModels, session?.model_id]);
+  const currentModelId = useMemo(() => {
+    const fromMeta = String(entry?.acpCurrentModelId ?? "").trim();
+    if (fromMeta) return fromMeta;
+    return String(session?.model_id ?? "").trim();
+  }, [entry?.acpCurrentModelId, session?.model_id]);
 
   const restoreStateFrom =
     preserveScrollOnFocus || scrollState?.stickToBottom !== false || !restorePendingRef.current
