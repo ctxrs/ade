@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use bytes::Bytes;
 use futures::StreamExt;
-use http::header::{HOST, PROXY_AUTHORIZATION};
+use http::header::{HOST, PROXY_AUTHENTICATE, PROXY_AUTHORIZATION};
 use http::{Method, Request, Response, StatusCode, Uri};
 use http_body::Frame;
 use http_body_util::combinators::BoxBody;
@@ -150,6 +150,9 @@ impl EgressProxy {
         profile: NetworkProfile,
         target_host: &str,
     ) -> HashMap<String, String> {
+        if matches!(profile.mode, ContainerNetworkMode::All) {
+            return HashMap::new();
+        }
         let token = self
             .issue_context_token(workspace_id, context.clone(), profile)
             .await;
@@ -210,14 +213,6 @@ async fn handle(
     req: Request<Incoming>,
     state: Arc<ProxyState>,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, Infallible> {
-    let token = extract_proxy_token(req.headers());
-    let mut permit = if let Some(token) = token.as_deref() {
-        let tokens = state.tokens.lock().await;
-        tokens.get(token).cloned()
-    } else {
-        None
-    };
-
     let (host, port) = match extract_host_port(&req) {
         Some(value) => value,
         None => {
@@ -226,6 +221,18 @@ async fn handle(
                 "missing host",
             ))
         }
+    };
+
+    let token = extract_proxy_token(req.headers());
+    if token.is_none() {
+        emit_denied(&state.ops_events, None, &host, port, "missing_token");
+        return Ok(response_proxy_auth());
+    }
+    let mut permit = if let Some(token) = token.as_deref() {
+        let tokens = state.tokens.lock().await;
+        tokens.get(token).cloned()
+    } else {
+        None
     };
 
     if let (Some(token), Some(permit_ref)) = (token.as_deref(), permit.as_ref()) {
@@ -357,6 +364,19 @@ fn response_empty(status: StatusCode) -> Response<BoxBody<Bytes, Infallible>> {
     Response::builder()
         .status(status)
         .body(BoxBody::new(Full::new(Bytes::new())))
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(BoxBody::new(Full::new(Bytes::from("proxy error"))))
+                .unwrap()
+        })
+}
+
+fn response_proxy_auth() -> Response<BoxBody<Bytes, Infallible>> {
+    Response::builder()
+        .status(StatusCode::PROXY_AUTHENTICATION_REQUIRED)
+        .header(PROXY_AUTHENTICATE, "Basic realm=\"ctx-proxy\"")
+        .body(BoxBody::new(Full::new(Bytes::from("proxy auth required"))))
         .unwrap_or_else(|_| {
             Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -561,5 +581,25 @@ mod tests {
             .get("HTTP_PROXY")
             .map(|v| v.contains("ctx-proxy:"))
             .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn proxy_env_skips_all_mode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proxy = EgressProxy::spawn(OpsEvents::new(tmp.path().to_path_buf())).unwrap();
+        let profile = NetworkProfile {
+            mode: ContainerNetworkMode::All,
+            allowlist: Vec::new(),
+        };
+        let env = proxy
+            .proxy_env_for_context(
+                WorkspaceId(uuid::Uuid::new_v4()),
+                NetworkContext::UserShell,
+                profile,
+                "127.0.0.1",
+            )
+            .await;
+        assert!(!env.contains_key("HTTP_PROXY"));
+        assert!(!env.contains_key("CTX_NETWORK_CONTEXT"));
     }
 }

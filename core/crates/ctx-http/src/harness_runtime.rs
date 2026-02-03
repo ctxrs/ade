@@ -372,7 +372,14 @@ impl HarnessRuntimeManager {
             }
         }
 
-        let egress_guard = configure_egress_guard(&name, proxy_host, proxy_port).await?;
+        let egress_guard = if matches!(settings.network_mode, ContainerNetworkMode::All) {
+            if let Err(err) = clear_egress_guard(&name).await {
+                tracing::warn!("failed to clear egress guard: {err:#}");
+            }
+            false
+        } else {
+            configure_egress_guard(&name, proxy_host, proxy_port).await?
+        };
         let container = HarnessContainer {
             name: name.clone(),
             mount_mode: settings.mount_mode.clone(),
@@ -545,6 +552,33 @@ exit 0
         }
     }
     anyhow::bail!("failed to configure egress guard (status: {status})");
+}
+
+async fn clear_egress_guard(name: &str) -> Result<()> {
+    let script = r#"
+set -e
+if ! command -v iptables >/dev/null 2>&1; then
+  exit 0
+fi
+iptables -F OUTPUT || true
+iptables -P OUTPUT ACCEPT || true
+exit 0
+"#;
+    let status = podman_command()?
+        .arg("exec")
+        .arg("--user")
+        .arg("0")
+        .arg(name)
+        .arg("sh")
+        .arg("-c")
+        .arg(script)
+        .status()
+        .await?;
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!("failed to clear egress guard (status: {status})");
+    }
 }
 
 fn podman_available() -> bool {
