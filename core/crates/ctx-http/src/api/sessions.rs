@@ -34,7 +34,7 @@ use crate::workspace_config;
 use crate::worktree_bootstrap;
 use ctx_core::ids::*;
 use ctx_core::models::*;
-use ctx_fs::git::git_merge_base;
+use ctx_fs::git::git_default_branch;
 use ctx_fs::vcs;
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_providers::events::NormalizedEvent;
@@ -462,37 +462,84 @@ pub(super) async fn resolve_session_diff_base(
         .as_deref()
         .map(|value| !value.trim().is_empty())
         .unwrap_or(false);
-    let target_branch = match query.target_branch.as_deref() {
+    let mut target_branch = match query.target_branch.as_deref() {
         Some(target) if !target.trim().is_empty() => Some(target.trim().to_string()),
-        _ => match workspace_config::load_merge_queue_config(StdPath::new(&workspace.root_path))
-            .await
-        {
-            Ok(cfg) => Some(cfg.target_branch),
-            Err(err) => {
-                tracing::warn!(
-                    workspace_id = %workspace.id.0,
-                    "failed to load merge queue config: {err:#}"
-                );
-                None
-            }
-        },
+        _ => None,
     };
-    if let Some(target_branch) = target_branch {
-        match git_merge_base(&worktree.root_path, &target_branch, "HEAD").await {
-            Ok(base) => return Ok(base),
-            Err(err) => {
-                if explicit_target {
-                    return Err((
-                        StatusCode::BAD_REQUEST,
-                        Json(ApiErrorResp {
-                            error: logs::redact_sensitive(&err.to_string()),
-                        }),
-                    ));
+
+    if target_branch.is_none() {
+        match workspace_config::load_merge_queue_target_branch_override(StdPath::new(
+            &workspace.root_path,
+        ))
+        .await
+        {
+            Ok(Some(branch)) => target_branch = Some(branch),
+            Ok(None) => {}
+            Err(err) => tracing::warn!(
+                workspace_id = %workspace.id.0,
+                "failed to load merge queue target branch override: {err:#}"
+            ),
+        }
+    }
+
+    if target_branch.is_none() {
+        match workspace_config::load_merge_queue_config(StdPath::new(&workspace.root_path)).await {
+            Ok(cfg) if cfg.enabled => target_branch = Some(cfg.target_branch),
+            Ok(_) => {}
+            Err(err) => tracing::warn!(
+                workspace_id = %workspace.id.0,
+                "failed to load merge queue config: {err:#}"
+            ),
+        }
+    }
+
+    let driver = match vcs::driver_for_path(StdPath::new(&worktree.root_path)).await {
+        Ok(driver) => Some(driver),
+        Err(err) => {
+            tracing::warn!(
+                worktree_id = %worktree.id.0,
+                "failed to resolve vcs driver for diff base: {err:#}"
+            );
+            None
+        }
+    };
+
+    if target_branch.is_none() {
+        if let Some(driver) = driver.as_ref() {
+            if driver.kind() == VcsKind::Git {
+                match git_default_branch(&worktree.root_path).await {
+                    Ok(Some(branch)) => target_branch = Some(branch),
+                    Ok(None) => {}
+                    Err(err) => tracing::warn!(
+                        worktree_id = %worktree.id.0,
+                        "failed to resolve git default branch: {err:#}"
+                    ),
                 }
-                tracing::warn!(
-                    worktree_id = %worktree.id.0,
-                    "merge-base failed for target {target_branch}: {err:#}"
-                );
+            }
+        }
+    }
+
+    if let Some(target_branch) = target_branch {
+        if let Some(driver) = driver {
+            match driver
+                .merge_base(StdPath::new(&worktree.root_path), &target_branch, "HEAD")
+                .await
+            {
+                Ok(base) => return Ok(base),
+                Err(err) => {
+                    if explicit_target {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            Json(ApiErrorResp {
+                                error: logs::redact_sensitive(&err.to_string()),
+                            }),
+                        ));
+                    }
+                    tracing::warn!(
+                        worktree_id = %worktree.id.0,
+                        "merge-base failed for target {target_branch}: {err:#}"
+                    );
+                }
             }
         }
     }

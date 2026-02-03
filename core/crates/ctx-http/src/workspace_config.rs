@@ -281,6 +281,27 @@ pub async fn load_merge_queue_config(root: &Path) -> Result<MergeQueueConfig> {
     Ok(cfg)
 }
 
+pub async fn load_merge_queue_target_branch_override(root: &Path) -> Result<Option<String>> {
+    let config_path = root.join(WORKSPACE_CONFIG_REL_PATH);
+    let configured = match tokio::fs::read_to_string(&config_path).await {
+        Ok(text) => {
+            let parsed: WorkspaceConfigFile =
+                toml::from_str(&text).context("parsing .ctx/config.toml")?;
+            parsed.merge_queue.and_then(|mq| mq.target_branch)
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+        Err(err) => return Err(err).context("reading .ctx/config.toml"),
+    };
+    let Some(configured) = configured else {
+        return Ok(None);
+    };
+    let trimmed = configured.trim().to_string();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(trimmed))
+}
+
 pub async fn update_agent_system_prompt_append(
     root: &Path,
     system_prompt_append: Option<String>,

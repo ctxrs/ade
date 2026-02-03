@@ -154,6 +154,13 @@ import {
 const DIFF_LINE_GUARD_LIMIT = 10000;
 const DIFF_FILE_GUARD_LIMIT = 200;
 
+type DiffSummaryState = {
+  summary: Record<string, unknown> | null;
+  error: string | null;
+  summaryLoading: boolean;
+  diffLoading: boolean;
+};
+
 const readDiffSummaryNumber = (summary: Record<string, unknown> | null, keys: string[]): number | null => {
   if (!summary) return null;
   for (const key of keys) {
@@ -171,6 +178,15 @@ const getDiffSummaryStats = (summary: Record<string, unknown> | null) => {
   const lineCount =
     additions !== null && deletions !== null ? additions + deletions : additions ?? deletions ?? null;
   return { fileCount, additions, deletions, lineCount };
+};
+
+const estimateDiffFileCount = (diffText: string): number => {
+  const text = String(diffText ?? "");
+  if (!text.trim()) return 0;
+  const matches = text.match(/^diff --git /gm);
+  if (matches && matches.length > 0) return matches.length;
+  const alt = text.match(/^\+\+\+ /gm);
+  return alt ? alt.length : 0;
 };
 
 const isDiffSummaryTooLarge = (summary: Record<string, unknown> | null) => {
@@ -392,9 +408,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [diffWidth, setDiffWidth] = useState(480);
   const [diffResizing, setDiffResizing] = useState(false);
   const [diffOpenHydrated, setDiffOpenHydrated] = useState(false);
-  const [diffLoading, setDiffLoading] = useState(false);
-  const [diffSummary, setDiffSummary] = useState<null | Record<string, unknown>>(null);
-  const [diffSummaryError, setDiffSummaryError] = useState<string | null>(null);
+  const [diffSummaryBySession, setDiffSummaryBySession] = useState<Record<string, DiffSummaryState>>({});
   const [gitStatusLoading, setGitStatusLoading] = useState(false);
   const [gitStatusError, setGitStatusError] = useState<string | null>(null);
   const [artifactsOpenHydrated, setArtifactsOpenHydrated] = useState(false);
@@ -1881,6 +1895,11 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const activeSessionDiff = activeEntry?.diff ?? "";
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
   const gitStatusSummary = activeEntry?.gitStatusSummary ?? null;
+  const activeDiffSummaryState = activeSessionId ? diffSummaryBySession[activeSessionId] : undefined;
+  const diffSummary = activeDiffSummaryState?.summary ?? null;
+  const diffSummaryError = activeDiffSummaryState?.error ?? null;
+  const diffLoading =
+    activeDiffSummaryState?.summaryLoading === true || activeDiffSummaryState?.diffLoading === true;
   const activeTaskArchived = Boolean(activeTaskSummary?.task?.archived_at);
   const [webSessions, setWebSessions] = useState<WebSessionInfo[]>([]);
   const [webSessionsLoading, setWebSessionsLoading] = useState(false);
@@ -2054,14 +2073,16 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return `Diff too large to display${suffix}.`;
   }, [diffSummaryStats, diffTooLarge]);
 
-  const hasDiff =
-    diffSummaryError !== null
-      ? true
-      : diffSummaryCount !== null
-        ? diffSummaryCount > 0
-        : diffSummaryStats.lineCount !== null
-          ? diffSummaryStats.lineCount > 0
-          : activeSessionDiff.trim().length > 0;
+  const diffSummaryReady = diffSummary !== null || diffSummaryError !== null;
+  const diffHasChanges =
+    diffSummaryCount !== null
+      ? diffSummaryCount > 0
+      : diffSummaryStats.lineCount !== null
+        ? diffSummaryStats.lineCount > 0
+        : false;
+  const hasDiff = diffSummaryError !== null ? true : diffSummaryReady ? diffHasChanges : activeSessionDiff.trim().length > 0;
+  const diffEmptyLabel =
+    diffLoading || !diffSummaryReady ? "Loading changes..." : "No changes on this worktree.";
   const gitStatusSummaryLine = useMemo(() => readGitStatusSummaryLine(gitStatusSummary), [gitStatusSummary]);
   const gitStatusEntries = useMemo(() => {
     if (!gitStatusSummary) return [];
@@ -2086,16 +2107,11 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (Array.isArray(lines) && lines.length > 0) return lines.map((line) => String(line)).join("\n");
     return gitStatusSummaryLine || "";
   }, [gitStatusSummary, gitStatusSummaryLine]);
-  const gitStatusBadgeCount = useMemo(() => {
-    if (!gitStatusSummary) return 0;
-    const entries = gitStatusSummary.entries;
-    if (Array.isArray(entries) && entries.length > 0) return entries.length;
-    const staged = Number(gitStatusSummary.staged ?? 0);
-    const unstaged = Number(gitStatusSummary.unstaged ?? 0);
-    const untracked = Number(gitStatusSummary.untracked ?? 0);
-    if (![staged, unstaged, untracked].every(Number.isFinite)) return 0;
-    return Math.max(0, staged + unstaged + untracked);
-  }, [gitStatusSummary]);
+  const diffBadgeCount = useMemo(() => {
+    if (diffSummaryStats.fileCount !== null) return Math.max(0, diffSummaryStats.fileCount);
+    if (diffSummaryStats.lineCount !== null) return Math.max(0, diffSummaryStats.lineCount);
+    return estimateDiffFileCount(activeSessionDiff);
+  }, [activeSessionDiff, diffSummaryStats]);
   const gitStatusSignature = useMemo(() => {
     if (!gitStatusSummary) return "";
     const entries = gitStatusSummary.entries;
@@ -2187,44 +2203,88 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     [supervisor],
   );
 
-  const diffRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const diffSummaryInFlightRef = useRef<Map<string, Promise<Record<string, unknown> | null>>>(new Map());
+  const diffSummaryPrefetchedRef = useRef<Set<string>>(new Set());
+  const diffContentInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
   const diffRefreshTimerRef = useRef<number | null>(null);
-  const diffRefreshSignatureRef = useRef<string>("");
+  const diffRefreshSignatureRef = useRef<Map<string, string>>(new Map());
+
+  const updateDiffSummaryState = useCallback((sessionId: string, next: Partial<DiffSummaryState>) => {
+    setDiffSummaryBySession((prev) => {
+      const prevState: DiffSummaryState =
+        prev[sessionId] ?? {
+          summary: null,
+          error: null,
+          summaryLoading: false,
+          diffLoading: false,
+        };
+      const updated: DiffSummaryState = { ...prevState, ...next };
+      if (updated === prevState) return prev;
+      return { ...prev, [sessionId]: updated };
+    });
+  }, []);
+
+  const refreshDiffSummary = useCallback(
+    async (sessionId: string, opts?: { silent?: boolean; force?: boolean; resetSummary?: boolean }) => {
+      if (!sessionId) return null;
+      if (sessionId.startsWith("optimistic-")) {
+        diffSummaryPrefetchedRef.current.add(sessionId);
+        return null;
+      }
+      if (!opts?.force && diffSummaryPrefetchedRef.current.has(sessionId)) {
+        return diffSummaryBySession[sessionId]?.summary ?? null;
+      }
+      const existing = diffSummaryInFlightRef.current.get(sessionId);
+      if (existing) return existing;
+      if (opts?.resetSummary) {
+        updateDiffSummaryState(sessionId, { summary: null, error: null });
+      }
+      updateDiffSummaryState(sessionId, { summaryLoading: true, error: null });
+      const request = (async () => {
+        try {
+          const summary = (await getSessionDiffSummary(sessionId)) as any;
+          const cachedSummary = diffSummaryBySession[sessionId]?.summary ?? null;
+          updateDiffSummaryState(sessionId, {
+            summary: summary ?? cachedSummary,
+            error: summary ? null : "Failed to load diff summary.",
+          });
+          if (summary) diffSummaryPrefetchedRef.current.add(sessionId);
+          return summary ?? null;
+        } catch (e: any) {
+          updateDiffSummaryState(sessionId, { error: e?.message ?? "Failed to load diff summary." });
+          return null;
+        } finally {
+          diffSummaryInFlightRef.current.delete(sessionId);
+          updateDiffSummaryState(sessionId, { summaryLoading: false });
+        }
+      })();
+      diffSummaryInFlightRef.current.set(sessionId, request);
+      return request;
+    },
+    [diffSummaryBySession, updateDiffSummaryState],
+  );
 
   const refreshDiff = useCallback(
-    async (sessionId: string, opts?: { silent?: boolean; resetSummary?: boolean }) => {
+    async (sessionId: string, opts?: { silent?: boolean; resetSummary?: boolean; forceSummary?: boolean }) => {
       if (!sessionId) return;
-      if (diffRefreshInFlightRef.current) return diffRefreshInFlightRef.current;
-      const setLoading = (value: boolean) => {
-        if (opts?.silent) return;
-        if (activeSessionIdRef.current !== sessionId) return;
-        setDiffLoading(value);
-      };
-      if (opts?.resetSummary && activeSessionIdRef.current === sessionId) {
-        setDiffSummary(null);
-        setDiffSummaryError(null);
+      const summary = await refreshDiffSummary(sessionId, {
+        silent: opts?.silent,
+        resetSummary: opts?.resetSummary,
+        force: opts?.forceSummary,
+      });
+      // If we can't get a summary, do not fetch the full diff (it can be huge and crash the renderer).
+      if (!summary) {
+        supervisor.setDiff(sessionId, "");
+        return;
       }
-      setLoading(true);
+      if (isDiffSummaryTooLarge(summary)) {
+        supervisor.setDiff(sessionId, "");
+        return;
+      }
+      const existing = diffContentInFlightRef.current.get(sessionId);
+      if (existing) return existing;
+      updateDiffSummaryState(sessionId, { diffLoading: true });
       const request = (async () => {
-        let summary: Record<string, unknown> | null = null;
-        try {
-          summary = (await getSessionDiffSummary(sessionId)) as any;
-        } catch {
-          summary = null;
-        }
-        if (activeSessionIdRef.current === sessionId) {
-          setDiffSummary(summary ?? null);
-          setDiffSummaryError(summary ? null : "Failed to load diff summary.");
-        }
-        // If we can't get a summary, do not fetch the full diff (it can be huge and crash the renderer).
-        if (!summary) {
-          supervisor.setDiff(sessionId, "");
-          return;
-        }
-        if (isDiffSummaryTooLarge(summary)) {
-          supervisor.setDiff(sessionId, "");
-          return;
-        }
         try {
           const resp = await getSessionDiff(sessionId);
           supervisor.setDiff(sessionId, resp.diff ?? "");
@@ -2232,13 +2292,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           supervisor.setDiff(sessionId, "");
         }
       })().finally(() => {
-        diffRefreshInFlightRef.current = null;
-        setLoading(false);
+        diffContentInFlightRef.current.delete(sessionId);
+        updateDiffSummaryState(sessionId, { diffLoading: false });
       });
-      diffRefreshInFlightRef.current = request;
+      diffContentInFlightRef.current.set(sessionId, request);
       return request;
     },
-    [supervisor],
+    [refreshDiffSummary, supervisor, updateDiffSummaryState],
   );
 
 
@@ -2253,6 +2313,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     workspaceSnapshot.fetchState.active,
     workspaceSnapshot.initialized,
   ]);
+
+  useEffect(() => {
+    if (!workspaceSnapshot.initialized) return;
+    if (workspaceSnapshot.fetchState.active === "loading") return;
+    if (!activeSessionId) return;
+    void refreshDiffSummary(activeSessionId, { silent: true });
+  }, [activeSessionId, refreshDiffSummary, workspaceSnapshot.fetchState.active, workspaceSnapshot.initialized]);
 
   const toggleDiffPane = useCallback(() => {
     setRightPaneMode((mode) => (mode === "diff" ? null : "diff"));
@@ -2671,25 +2738,26 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   };
 
   useEffect(() => {
-    if (!diffOpen || !activeSessionId) {
-      setDiffLoading(false);
-      setGitStatusLoading(false);
-      return;
-    }
+    if (!diffOpen || !activeSessionId) return;
     void fetchGitStatusSummary(activeSessionId, { force: true });
-    void refreshDiff(activeSessionId, { resetSummary: true });
+    void refreshDiff(activeSessionId, { resetSummary: true, forceSummary: true });
   }, [activeSessionId, diffOpen, fetchGitStatusSummary, refreshDiff]);
 
   useEffect(() => {
-    if (!diffOpen || !activeSessionId) return;
+    if (!activeSessionId) return;
     if (!gitStatusSignature) return;
-    if (gitStatusSignature === diffRefreshSignatureRef.current) return;
-    diffRefreshSignatureRef.current = gitStatusSignature;
+    const prevSignature = diffRefreshSignatureRef.current.get(activeSessionId) ?? "";
+    if (gitStatusSignature === prevSignature) return;
+    diffRefreshSignatureRef.current.set(activeSessionId, gitStatusSignature);
     if (diffRefreshTimerRef.current) {
       window.clearTimeout(diffRefreshTimerRef.current);
     }
     diffRefreshTimerRef.current = window.setTimeout(() => {
-      void refreshDiff(activeSessionId, { silent: true });
+      if (diffOpen) {
+        void refreshDiff(activeSessionId, { silent: true, forceSummary: true });
+      } else {
+        void refreshDiffSummary(activeSessionId, { silent: true, force: true });
+      }
     }, 400);
     return () => {
       if (diffRefreshTimerRef.current) {
@@ -2697,7 +2765,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         diffRefreshTimerRef.current = null;
       }
     };
-  }, [activeSessionId, diffOpen, gitStatusSignature, refreshDiff]);
+  }, [activeSessionId, diffOpen, gitStatusSignature, refreshDiff, refreshDiffSummary]);
 
   const onSplitterMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -3566,7 +3634,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                         onClick={toggleDiffPane}
                       >
                         <GitBranch size={14} />
-                        {gitStatusBadgeCount > 0 && <span className="wb-icon-badge">{gitStatusBadgeCount}</span>}
+                        {diffBadgeCount > 0 && <span className="wb-icon-badge">{diffBadgeCount}</span>}
                       </button>
                       {/*
                         <button
@@ -3702,7 +3770,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                       ) : (
                         <div className="wb-diff-empty">
                           <div className="wb-muted">
-                            {diffLoading ? "Loading changes..." : "No changes on this worktree."}
+                            {diffEmptyLabel}
                           </div>
                         </div>
                       )}

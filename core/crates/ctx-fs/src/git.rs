@@ -79,6 +79,66 @@ pub async fn git_merge_base(root_path: impl AsRef<Path>, a: &str, b: &str) -> Re
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+pub async fn git_ref_exists(root_path: impl AsRef<Path>, reference: &str) -> Result<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .args(["show-ref", "--verify", "--quiet", reference])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git show-ref")?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    if output.status.code() == Some(1) {
+        return Ok(false);
+    }
+    bail!(
+        "git show-ref failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+pub async fn git_default_branch(root_path: impl AsRef<Path>) -> Result<Option<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .args(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git symbolic-ref refs/remotes/origin/HEAD")?;
+    if output.status.success() {
+        let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if let Some(stripped) = raw.strip_prefix("refs/remotes/") {
+            if !stripped.trim().is_empty() {
+                return Ok(Some(stripped.to_string()));
+            }
+        }
+        if !raw.trim().is_empty() {
+            return Ok(Some(raw));
+        }
+    }
+    let candidates = [
+        ("refs/remotes/origin/main", "origin/main"),
+        ("refs/remotes/origin/master", "origin/master"),
+        ("refs/heads/main", "main"),
+        ("refs/heads/master", "master"),
+    ];
+    for (reference, branch) in candidates {
+        if git_ref_exists(root_path.as_ref(), reference)
+            .await
+            .unwrap_or(false)
+        {
+            return Ok(Some(branch.to_string()));
+        }
+    }
+    Ok(None)
+}
+
 pub async fn git_is_ancestor(
     root_path: impl AsRef<Path>,
     ancestor: &str,
