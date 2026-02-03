@@ -9,6 +9,8 @@ CTX_DAEMON_BIND ?= 127.0.0.1:$(CTX_DAEMON_PORT)
 CTX_DATA_DIR ?=
 CTX_DAEMON_UNIT ?= ctx-daemon-$(CTX_DAEMON_PORT)
 CTX_DAEMON_STOP ?= 0
+CTX_DAEMON_FEATURES ?=
+CTX_DAEMON_MALLOC_CONF ?=
 CTX_DAEMON_DATA_DIR ?= $(if $(CTX_DATA_DIR),$(CTX_DATA_DIR),$(HOME)/.ctx)
 SUPABASE_LOCAL ?= 1
 SUPABASE_FUNCTIONS ?= 1
@@ -64,6 +66,9 @@ DEV_CRP_ENV := CTX_ENABLE_CODEX_CRP=$(if $(CTX_ENABLE_CODEX_CRP),$(CTX_ENABLE_CO
 DEV_CRP_SETENV := --setenv CTX_ENABLE_CODEX_CRP=$(if $(CTX_ENABLE_CODEX_CRP),$(CTX_ENABLE_CODEX_CRP),$(DEV_ENABLE_CODEX_CRP))
 DEV_MISC_ENV := CTX_DEV_MODE=$(if $(CTX_DEV_MODE),$(CTX_DEV_MODE),$(DEV_MODE))
 DEV_MISC_SETENV := --setenv CTX_DEV_MODE=$(if $(CTX_DEV_MODE),$(CTX_DEV_MODE),$(DEV_MODE))
+DEV_MALLOC_CONF_ENV := $(if $(CTX_DAEMON_MALLOC_CONF),MALLOC_CONF=$(CTX_DAEMON_MALLOC_CONF))
+DEV_MALLOC_CONF_SETENV := $(if $(CTX_DAEMON_MALLOC_CONF),--setenv MALLOC_CONF=$(CTX_DAEMON_MALLOC_CONF))
+DEV_DAEMON_FEATURES := $(if $(CTX_DAEMON_FEATURES),--features $(CTX_DAEMON_FEATURES))
 export CARGO_TARGET_DIR
 
 ifeq ($(SUPABASE_PROD),1)
@@ -101,16 +106,17 @@ ifeq ($(shell uname -s),Linux)
 			$(DEV_DEBUG_SETENV) \
 			$(DEV_CRP_SETENV) \
 			$(DEV_MISC_SETENV) \
+			$(DEV_MALLOC_CONF_SETENV) \
 			--setenv CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) \
 			--setenv CTX_BUNDLE_DIR="$$bundle_dir" \
-			cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
+			cargo run -p ctx-http $(DEV_DAEMON_FEATURES) --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
 	else \
 		bundle_dir="$$(../scripts/ensure_bundled_harnesses.sh)"; \
-		$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) $(DEV_MISC_ENV) CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
+		$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) $(DEV_MISC_ENV) $(DEV_MALLOC_CONF_ENV) CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http $(DEV_DAEMON_FEATURES) --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),); \
 	fi
 else
 	bundle_dir="$$(../scripts/ensure_bundled_harnesses.sh)"; \
-	$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) $(DEV_MISC_ENV) CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
+	$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) $(DEV_MISC_ENV) $(DEV_MALLOC_CONF_ENV) CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http $(DEV_DAEMON_FEATURES) --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
 endif
 
 dev-preflight:

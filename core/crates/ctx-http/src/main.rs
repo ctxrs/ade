@@ -13,6 +13,10 @@ use tracing_subscriber::fmt::writer::MakeWriter;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+#[cfg(feature = "daemon-heap-prof")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[derive(Parser)]
 #[command(name = "ctx")]
 #[command(about = "ctx daemon and CLI", long_about = None)]
@@ -52,6 +56,7 @@ enum Commands {
 const DEFAULT_DAEMON_LOG_RETENTION_DAYS: u64 = 14;
 const DEFAULT_DAEMON_LOG_MAX_BYTES: u64 = 50 * 1024 * 1024;
 const DEFAULT_DAEMON_LOG_CHECK_INTERVAL_SECS: u64 = 300;
+const DEFAULT_DAEMON_HEAP_PROFILE_INTERVAL_SECS: u64 = 60;
 const DAEMON_LOG_PREFIX: &str = "daemon.log.";
 
 struct ConditionalWriter<W> {
@@ -219,6 +224,64 @@ fn spawn_daemon_log_maintenance(
     });
 }
 
+#[cfg(feature = "daemon-heap-prof")]
+fn spawn_daemon_heap_profiler(logs_dir: &Path) {
+    if !env_bool("CTX_DAEMON_HEAP_PROFILE").unwrap_or(false) {
+        return;
+    }
+    let interval_secs = env_u64("CTX_DAEMON_HEAP_PROFILE_INTERVAL_SECS")
+        .unwrap_or(DEFAULT_DAEMON_HEAP_PROFILE_INTERVAL_SECS)
+        .max(1);
+    let profile_dir = env_string("CTX_DAEMON_HEAP_PROFILE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| logs_dir.join("daemon-heap"));
+    if let Err(err) = std::fs::create_dir_all(&profile_dir) {
+        warn!("heap profile dir create failed: {err:?}");
+        return;
+    }
+    match tikv_jemalloc_ctl::profiling::prof::read() {
+        Ok(true) => {}
+        Ok(false) => {
+            warn!("jemalloc profiling disabled; set MALLOC_CONF=prof:true before start");
+            return;
+        }
+        Err(err) => {
+            warn!("jemalloc profiling unavailable: {err:?}");
+            return;
+        }
+    }
+
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
+            let path = profile_dir.join(format!("heap-{timestamp}.heap"));
+            if let Err(err) = dump_heap_profile(&path) {
+                warn!("heap profile dump failed: {err:#}");
+            }
+        }
+    });
+}
+
+#[cfg(feature = "daemon-heap-prof")]
+fn dump_heap_profile(path: &Path) -> Result<()> {
+    use std::ffi::CString;
+
+    let path_str = path.to_string_lossy();
+    let c_path = CString::new(path_str.as_bytes())
+        .map_err(|err| anyhow!("heap profile path invalid: {err}"))?;
+    unsafe {
+        tikv_jemalloc_ctl::raw::write(b"prof.dump\0", c_path.as_ptr())
+            .map_err(|err| anyhow!("jemalloc prof.dump failed: {err}"))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "daemon-heap-prof"))]
+fn spawn_daemon_heap_profiler(_logs_dir: &Path) {}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -277,6 +340,7 @@ async fn main() -> Result<()> {
             .init();
 
         spawn_daemon_log_maintenance(logs_dir.clone(), daemon_log_config, file_blocked);
+        spawn_daemon_heap_profiler(logs_dir);
     } else {
         tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
