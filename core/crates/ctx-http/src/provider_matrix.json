@@ -4,7 +4,7 @@
   "providers": [
     {
       "id": "codex-crp",
-      "display_name": "Codex CRP",
+      "display_name": "Codex",
       "tier": "tier2",
       "command": {
         "command": "codex-crp",
@@ -57,7 +57,7 @@
     },
     {
       "id": "claude-crp",
-      "display_name": "Claude CRP",
+      "display_name": "Claude",
       "tier": "tier2",
       "command": {
         "command": "claude-crp",

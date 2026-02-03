@@ -299,7 +299,9 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const installed = providers
       .filter((p) => p.installed && p.health === "ok" && p.details?.ui_hidden !== "true")
       .map((p) => p.provider_id);
+    if (installed.includes("codex-crp")) return "codex-crp";
     if (installed.includes("codex")) return "codex";
+    if (installed.includes("claude-crp")) return "claude-crp";
     if (installed.includes("claude")) return "claude";
     if (installed.includes("gemini")) return "gemini";
     if (installed.includes("qwen")) return "qwen";
@@ -308,7 +310,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (installed.includes("goose")) return "goose";
     if (installed.includes("kimi")) return "kimi";
     if (installed.includes("auggie")) return "auggie";
-    return installed[0] ?? "codex";
+    return installed[0] ?? "codex-crp";
   }, [providers]);
 
   const [taskQuery, setTaskQuery] = useState("");
@@ -883,7 +885,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     if (!providers.length) return;
-    const codexInstalled = providersById["codex"]?.installed === true && providersById["codex"]?.health === "ok";
+    const codexInstalled =
+      providersById["codex"]?.installed === true &&
+      providersById["codex"]?.health === "ok" &&
+      providersById["codex"]?.details?.ui_hidden !== "true";
     if (codexInstalled) return;
     if (defaultProviderId === "codex") return;
     setDraftTracks((prev) => {

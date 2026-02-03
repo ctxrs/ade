@@ -709,13 +709,16 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
           {(() => {
             const ns = props as NewSessionProps;
             const q = harnessSearch.trim().toLowerCase();
-            const order = new Map<string, number>(ns.harnessCatalog.map((h, idx) => [h.id, idx]));
+            const catalog = ns.harnessCatalog.filter(
+              (h) => ns.providersById[h.id]?.details?.ui_hidden !== "true",
+            );
+            const order = new Map<string, number>(catalog.map((h, idx) => [h.id, idx]));
             const extras = Object.keys(ns.providersById)
               .filter((id) => !order.has(id) && ns.providersById[id]?.details?.ui_hidden !== "true")
               .map((id) => ({ id, label: id, logoSrc: "" } as any))
               .sort((a, b) => String(a.id).localeCompare(String(b.id)));
 
-            const all = [...ns.harnessCatalog, ...extras];
+            const all = [...catalog, ...extras];
             const filtered = q
               ? all.filter(
                   (h: any) =>

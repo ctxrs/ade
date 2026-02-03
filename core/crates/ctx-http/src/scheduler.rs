@@ -65,7 +65,7 @@ fn provider_mode_id_for(
 ) -> Option<&'static str> {
     match control_mode {
         ProviderControlMode::Full => match provider_id {
-            "codex" => Some("full-access"),
+            "codex" | "codex-crp" => Some("full-access"),
             "claude" | "claude-crp" => Some("bypassPermissions"),
             _ => None,
         },

@@ -33,6 +33,8 @@ pub(super) async fn list_providers(
     let map = state.providers.statuses.lock().await;
     let mut out: Vec<ProviderStatus> = map.values().cloned().collect();
     drop(map);
+    let has_codex_crp = out.iter().any(|p| p.provider_id == "codex-crp");
+    let has_claude_crp = out.iter().any(|p| p.provider_id == "claude-crp");
 
     let managed = installer::load_agent_server_config(&state.core.data_root)
         .await
@@ -51,6 +53,12 @@ pub(super) async fn list_providers(
                 "ui_hidden".into(),
                 if show_fake { "false" } else { "true" }.into(),
             );
+        }
+        if status.provider_id == "codex" && has_codex_crp {
+            status.details.insert("ui_hidden".into(), "true".into());
+        }
+        if status.provider_id == "claude" && has_claude_crp {
+            status.details.insert("ui_hidden".into(), "true".into());
         }
         status.details.insert(
             "install_supported".into(),

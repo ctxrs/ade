@@ -245,7 +245,7 @@ impl ResourceSampler {
 
             self.proc_cpu.retain(|pid, _| seen.contains(pid));
 
-            return ResourceProcesses { daemon, providers };
+            ResourceProcesses { daemon, providers }
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -261,8 +261,7 @@ impl ResourceSampler {
                     .refresh_process_specifics(pid, process_refresh_kind());
             }
 
-            let daemon =
-                aggregate_process_sysinfo(&self.system, daemon_pid, "ctx daemon");
+            let daemon = aggregate_process_sysinfo(&self.system, daemon_pid, "ctx daemon");
             let providers = providers
                 .iter()
                 .filter_map(|p| {
@@ -281,7 +280,7 @@ impl ResourceSampler {
     ) -> Vec<ProviderMemorySample> {
         #[cfg(target_os = "linux")]
         {
-            return providers
+            providers
                 .iter()
                 .filter_map(|p| {
                     let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
@@ -290,25 +289,21 @@ impl ResourceSampler {
                         provider_id: p.provider_id.clone(),
                         label,
                         pid: p.pid,
-                        memory_bytes: rollup
-                            .rss_bytes
-                            .or(rollup.vm_hwm_bytes)
-                            .unwrap_or(0),
+                        memory_bytes: rollup.rss_bytes.or(rollup.vm_hwm_bytes).unwrap_or(0),
                         tool_memory_bytes: 0,
                     })
                 })
-                .collect();
+                .collect()
         }
 
         #[cfg(not(target_os = "linux"))]
         {
             for provider in providers {
-                let _ = self.system.refresh_process_specifics(
-                    Pid::from_u32(provider.pid),
-                    memory_refresh_kind(),
-                );
+                let _ = self
+                    .system
+                    .refresh_process_specifics(Pid::from_u32(provider.pid), memory_refresh_kind());
             }
-            return providers
+            providers
                 .iter()
                 .filter_map(|p| {
                     let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
@@ -321,7 +316,7 @@ impl ResourceSampler {
                         tool_memory_bytes: 0,
                     })
                 })
-                .collect();
+                .collect()
         }
     }
 
@@ -445,10 +440,7 @@ fn proc_snapshot_from_proc(
     let rollup = read_proc_memory_rollup(pid)?;
     let cpu_pct = read_proc_cpu_pct(pid, now, proc_cpu, clock_ticks);
     let memory_bytes = rollup.rss_bytes.or(rollup.vm_hwm_bytes).unwrap_or(0);
-    let virtual_memory_bytes = rollup
-        .vm_size_bytes
-        .or(rollup.vm_hwm_bytes)
-        .unwrap_or(0);
+    let virtual_memory_bytes = rollup.vm_size_bytes.or(rollup.vm_hwm_bytes).unwrap_or(0);
     seen.insert(pid);
     Some(ResourceProcess {
         label: label.to_string(),
@@ -463,11 +455,7 @@ fn proc_snapshot_from_proc(
 }
 
 #[cfg(not(target_os = "linux"))]
-fn aggregate_process_sysinfo(
-    system: &System,
-    pid: u32,
-    label: &str,
-) -> Option<ResourceProcess> {
+fn aggregate_process_sysinfo(system: &System, pid: u32, label: &str) -> Option<ResourceProcess> {
     let proc = system.process(Pid::from_u32(pid))?;
     Some(ResourceProcess {
         label: label.to_string(),

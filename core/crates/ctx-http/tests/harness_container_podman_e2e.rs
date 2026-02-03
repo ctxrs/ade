@@ -10,7 +10,7 @@ use tokio::process::Command;
 use tower::ServiceExt;
 
 use ctx_core::models::SessionEventType;
-use ctx_providers::tier1::Tier1AcpAdapter;
+use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_store::StoreManager;
 
 use ctx_http::api;
@@ -82,21 +82,26 @@ async fn setup_git_repo() -> tempfile::TempDir {
     dir
 }
 
-fn write_fake_acp_script(root: &Path) -> PathBuf {
+fn write_fake_crp_script(root: &Path) -> PathBuf {
     let script_dir = root
         .join("providers")
         .join("agent-servers")
-        .join("codex")
+        .join("codex-crp")
         .join("fake");
     std::fs::create_dir_all(&script_dir).unwrap();
-    let script_path = script_dir.join("fake_acp.py");
+    let script_path = script_dir.join("fake_crp.py");
     let script = r#"
 import json
 import sys
 
 next_session = 1
+seq = 1
 
 def send(msg):
+    global seq
+    msg["seq"] = seq
+    seq += 1
+    msg.setdefault("channel", "control")
     sys.stdout.write(json.dumps(msg))
     sys.stdout.write("\n")
     sys.stdout.flush()
@@ -109,50 +114,44 @@ for line in sys.stdin:
         msg = json.loads(line)
     except Exception:
         continue
-    method = msg.get("method")
-    req_id = msg.get("id")
-    if method == "initialize":
-        send({
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "protocolVersion": 1,
-                "agentCapabilities": {
-                    "promptCapabilities": {"image": False, "embeddedContext": True},
-                    "loadSession": True,
-                },
-            },
-        })
-    elif method in ("session/new", "session/load"):
-        session_id = msg.get("params", {}).get("sessionId")
+    command_type = msg.get("type")
+    if command_type == "session.open":
+        session_id = msg.get("session_id")
         if not session_id:
             session_id = "sess_%d" % next_session
             next_session += 1
         send({
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {"sessionId": session_id},
+            "type": "session.opened",
+            "session_id": session_id,
+            "provider_session_id": session_id,
         })
-    elif method == "session/prompt":
-        session_id = msg.get("params", {}).get("sessionId", "sess_1")
+    elif command_type == "session.prompt":
+        session_id = msg.get("session_id") or "sess_1"
+        turn_id = msg.get("turn_id") or "turn_1"
         send({
-            "jsonrpc": "2.0",
-            "method": "session/update",
-            "params": {
-                "sessionId": session_id,
-                "update": {
-                    "sessionUpdate": "agent_message_chunk",
-                    "content": {"type": "text", "text": "done"},
-                },
-            },
+            "type": "turn.started",
+            "session_id": session_id,
+            "turn_id": turn_id,
         })
         send({
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {"stopReason": "end_turn"},
+            "type": "message.final",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "message_id": "msg_1",
+            "content": "done",
         })
-    elif method == "session/cancel":
-        continue
+        send({
+            "type": "turn.completed",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "status": "success",
+        })
+    elif command_type == "models.list":
+        send({
+            "type": "models.list",
+            "models": [{"id": "fake-model"}],
+            "current_model_id": "fake-model",
+        })
 "#;
     std::fs::write(&script_path, script.trim_start()).unwrap();
     script_path
@@ -161,7 +160,7 @@ for line in sys.stdin:
 async fn configure_fake_provider(data_root: &Path, script_path: &Path) {
     let mut cfg = AgentServerConfigFile::default();
     cfg.providers.insert(
-        "codex".to_string(),
+        "codex-crp".to_string(),
         AgentServerCommand {
             command: "python3".to_string(),
             args: vec![script_path.to_string_lossy().to_string()],
@@ -319,7 +318,7 @@ async fn harness_container_podman_fake_acp() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
-    let script_path = write_fake_acp_script(data_dir.path());
+    let script_path = write_fake_crp_script(data_dir.path());
     configure_fake_provider(data_dir.path(), &script_path).await;
     configure_container_settings(
         data_dir.path(),
@@ -331,9 +330,9 @@ async fn harness_container_podman_fake_acp() {
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
     providers.insert(
-        "codex".into(),
-        Arc::new(Tier1AcpAdapter::from_raw(
-            "codex",
+        "codex-crp".into(),
+        Arc::new(Tier1CrpAdapter::from_raw(
+            "codex-crp",
             "python3".to_string(),
             vec![script_path.to_string_lossy().to_string()],
         )),
@@ -347,7 +346,7 @@ async fn harness_container_podman_fake_acp() {
         None,
     ));
     let mut app = api::router(state.clone());
-    let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
+    let session = create_session_with_provider(&mut app, git_repo.path(), "codex-crp").await;
 
     let session_id = session.id.0.to_string();
     post_message(&mut app, &session_id, PROMPT).await;
@@ -371,16 +370,16 @@ async fn harness_container_podman_sealed_mounts() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
-    let script_path = write_fake_acp_script(data_dir.path());
+    let script_path = write_fake_crp_script(data_dir.path());
     configure_fake_provider(data_dir.path(), &script_path).await;
     configure_container_settings(data_dir.path(), ContainerMountMode::Sealed, "python:3.11").await;
 
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
     providers.insert(
-        "codex".into(),
-        Arc::new(Tier1AcpAdapter::from_raw(
-            "codex",
+        "codex-crp".into(),
+        Arc::new(Tier1CrpAdapter::from_raw(
+            "codex-crp",
             "python3".to_string(),
             vec![script_path.to_string_lossy().to_string()],
         )),
@@ -394,7 +393,7 @@ async fn harness_container_podman_sealed_mounts() {
         None,
     ));
     let mut app = api::router(state.clone());
-    let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
+    let session = create_session_with_provider(&mut app, git_repo.path(), "codex-crp").await;
 
     let session_id = session.id.0.to_string();
     post_message(&mut app, &session_id, PROMPT).await;

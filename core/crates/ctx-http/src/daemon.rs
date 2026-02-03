@@ -265,12 +265,24 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     let bridge_cmd = installer::resolve_provider_command(&agent_cfg, "acp-crp-bridge")
         .unwrap_or_else(|| fallback_provider_command("acp-crp-bridge", vec![]));
-    let codex_cmd = installer::resolve_provider_command(&agent_cfg, "codex")
-        .unwrap_or_else(|| fallback_provider_command("codex-acp", vec![]));
-    let codex_adapter = acp_bridge_adapter("codex", &bridge_cmd, codex_cmd);
-    let claude_cmd = installer::resolve_provider_command(&agent_cfg, "claude")
-        .unwrap_or_else(|| fallback_provider_command("claude-code-acp", vec![]));
-    let claude_adapter = acp_bridge_adapter("claude", &bridge_cmd, claude_cmd);
+    let codex_crp_cmd = installer::resolve_provider_command(&agent_cfg, "codex-crp");
+    let codex_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(match codex_crp_cmd.clone() {
+        Some(cmd) => Tier1CrpAdapter::from_raw("codex-crp", cmd.command, cmd.args),
+        None => Tier1CrpAdapter::codex(),
+    });
+    let codex_adapter: Arc<Tier1CrpAdapter> = Arc::new(match codex_crp_cmd {
+        Some(cmd) => Tier1CrpAdapter::from_raw("codex", cmd.command, cmd.args),
+        None => Tier1CrpAdapter::from_raw("codex", "codex-crp".to_string(), Vec::new()),
+    });
+    let claude_crp_cmd = installer::resolve_provider_command(&agent_cfg, "claude-crp");
+    let claude_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(match claude_crp_cmd.clone() {
+        Some(cmd) => Tier1CrpAdapter::from_raw("claude-crp", cmd.command, cmd.args),
+        None => Tier1CrpAdapter::claude(),
+    });
+    let claude_adapter: Arc<Tier1CrpAdapter> = Arc::new(match claude_crp_cmd {
+        Some(cmd) => Tier1CrpAdapter::from_raw("claude", cmd.command, cmd.args),
+        None => Tier1CrpAdapter::from_raw("claude", "claude-crp".to_string(), Vec::new()),
+    });
 
     let gemini_cmd =
         installer::resolve_provider_command(&agent_cfg, "gemini").unwrap_or_else(|| {
@@ -330,8 +342,10 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     }
     let cagent_adapter = acp_bridge_adapter("cagent", &bridge_cmd, cagent_cmd);
 
-    providers.insert("codex".into(), codex_adapter.clone());
-    providers.insert("claude".into(), claude_adapter.clone());
+    providers.insert("codex-crp".into(), codex_crp_adapter);
+    providers.insert("codex".into(), codex_adapter);
+    providers.insert("claude-crp".into(), claude_crp_adapter);
+    providers.insert("claude".into(), claude_adapter);
     providers.insert("gemini".into(), gemini_adapter.clone());
     providers.insert("qwen".into(), qwen_adapter.clone());
     providers.insert("opencode".into(), opencode_adapter.clone());
@@ -360,33 +374,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         providers.insert(id.into(), adapter);
     }
 
-    let enable_codex_crp = std::env::var("CTX_ENABLE_CODEX_CRP")
-        .ok()
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    if enable_codex_crp {
-        let codex_crp_cmd = installer::resolve_provider_command(&agent_cfg, "codex-crp");
-        let codex_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(match codex_crp_cmd {
-            Some(cmd) => Tier1CrpAdapter::from_raw("codex-crp", cmd.command, cmd.args),
-            None => Tier1CrpAdapter::codex(),
-        });
-        providers.insert("codex-crp".into(), codex_crp_adapter);
-    }
-
-    let enable_claude_crp = std::env::var("CTX_ENABLE_CLAUDE_CRP")
-        .ok()
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    if enable_claude_crp {
-        let claude_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(
-            agent_cfg
-                .providers
-                .get("claude-crp")
-                .map(|c| Tier1CrpAdapter::from_raw("claude-crp", c.command.clone(), c.args.clone()))
-                .unwrap_or_else(Tier1CrpAdapter::claude),
-        );
-        providers.insert("claude-crp".into(), claude_crp_adapter);
-    }
+    // codex/claude CRP adapters are always registered now (legacy ACP bridge removed).
 
     if std::env::var("CTX_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1") {
         providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));

@@ -36,7 +36,9 @@ export type HarnessCatalogEntry = {
 // Curated list of popular harnesses shown in the selector. Entries without a logo use the fallback slot.
 export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "claude", label: "Claude Code", logoSrc: claudeLogo },
+  { id: "claude-crp", label: "Claude", logoSrc: claudeLogo },
   { id: "codex", label: "Codex", logoSrc: codexLogo, invertInDark: true },
+  { id: "codex-crp", label: "Codex", logoSrc: codexLogo, invertInDark: true },
   { id: "qwen", label: "Qwen Code", logoSrc: qwenLogo },
   { id: "cursor", label: "Cursor", logoSrc: cursorLogo, invertInDark: true },
   { id: "amp", label: "Amp", logoSrc: ampLogo },
