@@ -1450,17 +1450,19 @@ fn build_tool_started_payload(
     if let Some(input_preview) = input_preview.clone() {
         payload.insert("input_preview".to_string(), input_preview);
     }
-    payload.insert(
-        "toolCall".to_string(),
-        json!({
-            "id": tool_call_id,
-            "name": tool_name_for_call.clone(),
-            "kind": tool_name_for_call,
-            "tool_label": tool_label,
-            "rawInput": raw_input,
-            "status": "running",
-        }),
+    let mut tool_call_obj = serde_json::Map::new();
+    tool_call_obj.insert("id".to_string(), json!(tool_call_id));
+    tool_call_obj.insert("name".to_string(), json!(tool_name_for_call.clone()));
+    tool_call_obj.insert("kind".to_string(), json!(tool_name_for_call));
+    tool_call_obj.insert(
+        "rawInput".to_string(),
+        raw_input.clone().unwrap_or(Value::Null),
     );
+    tool_call_obj.insert("status".to_string(), json!("running"));
+    if let Some(label) = tool_label {
+        tool_call_obj.insert("tool_label".to_string(), json!(label));
+    }
+    payload.insert("toolCall".to_string(), Value::Object(tool_call_obj));
     payload.insert("crp_seq".to_string(), json!(seq));
     Value::Object(payload)
 }
@@ -1507,18 +1509,29 @@ fn build_tool_completed_payload(
     if let Some(err) = error {
         payload.insert("error".to_string(), json!(err));
     }
-    payload.insert(
-        "toolCall".to_string(),
-        json!({
-            "id": tool_call_id,
-            "name": tool_name_for_call.clone(),
-            "kind": tool_name_for_call,
-            "tool_label": tool_label,
-            "rawInput": raw_input,
-            "rawOutput": payload.get("rawOutput").cloned(),
-            "status": payload.get("status").cloned(),
-        }),
+    if let Some(label) = tool_label.clone() {
+        payload.insert("tool_label".to_string(), json!(label));
+    }
+    let mut tool_call_obj = serde_json::Map::new();
+    tool_call_obj.insert("id".to_string(), json!(tool_call_id));
+    tool_call_obj.insert("name".to_string(), json!(tool_name_for_call.clone()));
+    tool_call_obj.insert("kind".to_string(), json!(tool_name_for_call));
+    tool_call_obj.insert(
+        "rawInput".to_string(),
+        raw_input.clone().unwrap_or(Value::Null),
     );
+    tool_call_obj.insert(
+        "rawOutput".to_string(),
+        payload.get("rawOutput").cloned().unwrap_or(Value::Null),
+    );
+    tool_call_obj.insert(
+        "status".to_string(),
+        payload.get("status").cloned().unwrap_or(Value::Null),
+    );
+    if let Some(label) = tool_label {
+        tool_call_obj.insert("tool_label".to_string(), json!(label));
+    }
+    payload.insert("toolCall".to_string(), Value::Object(tool_call_obj));
     payload.insert("crp_seq".to_string(), json!(seq));
     Value::Object(payload)
 }

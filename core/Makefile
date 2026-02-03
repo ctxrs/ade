@@ -86,7 +86,8 @@ ifeq ($(SUPABASE_FUNCTIONS),1)
 endif
 
 dev: dev-preflight supabase-local supabase-functions
-	@CTX_DATA_DIR="$(CTX_DATA_DIR)" CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" ../scripts/dev_install_codex_crp.sh
+	@CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" pnpm turbo run crp:codex crp:claude --filter=ctx-monorepo --cache-dir=$${TURBO_CACHE_DIR:-$$HOME/.cache/turbo/ctx-monorepo} --output-logs=new-only --log-order=grouped --concurrency=1 --ui=stream --cache=local:r,remote:r
+	@CTX_DATA_DIR=$(CTX_DAEMON_DATA_DIR) CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" ../scripts/dev_install_crp_harnesses.sh
 	cargo build -p ctx-mcp
 ifeq ($(shell uname -s),Linux)
 	@if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then \

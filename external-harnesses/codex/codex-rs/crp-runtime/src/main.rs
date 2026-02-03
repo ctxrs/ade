@@ -1760,6 +1760,7 @@ fn handle_tool_request(
         respond_to,
     } = request;
 
+    let tool_labels = tool_label_pair_for_name(&tool_name);
     let _ = router.send_control(CrpEvent::ToolRequest {
         session_id: session_id.clone(),
         turn_id: turn_id.clone(),
@@ -1767,13 +1768,12 @@ fn handle_tool_request(
         tool_name: tool_name.clone(),
         input: input.clone(),
     });
-    let label = tool_label_pair_for_name(&tool_name).active.to_string();
     let _ = router.send_control(CrpEvent::ToolStarted {
         session_id: session_id.clone(),
         turn_id: turn_id.clone(),
         tool_call_id: tool_call_id.clone(),
         tool_name: tool_name.clone(),
-        tool_label: Some(label),
+        tool_label: Some(tool_labels.active.to_string()),
         input,
         input_preview: None,
     });
@@ -2022,20 +2022,20 @@ struct ToolLabelPair {
 }
 
 fn tool_label_pair_for_name(tool_name: &str) -> ToolLabelPair {
-    if tool_name.starts_with("mcp.") {
-        return ToolLabelPair {
-            active: "Call",
-            completed: "Called",
-        };
-    }
-
     match tool_name {
-        "exec" | "exec_command" | "shell" | "shell_command" | "local_shell" | "container.exec" => {
-            ToolLabelPair {
-                active: "Running",
-                completed: "Ran",
-            }
-        }
+        "exec"
+        | "exec_command"
+        | "shell"
+        | "shell_command"
+        | "local_shell"
+        | "container.exec" => ToolLabelPair {
+            active: "Running",
+            completed: "Ran",
+        },
+        "write_stdin" => ToolLabelPair {
+            active: "Sending input",
+            completed: "Input sent",
+        },
         "web_search" => ToolLabelPair {
             active: "Search",
             completed: "Searched",
@@ -2043,10 +2043,6 @@ fn tool_label_pair_for_name(tool_name: &str) -> ToolLabelPair {
         "view_image" => ToolLabelPair {
             active: "View",
             completed: "Viewed",
-        },
-        "write_stdin" => ToolLabelPair {
-            active: "Sending input",
-            completed: "Input sent",
         },
         "list_mcp_resources" => ToolLabelPair {
             active: "Listing MCP resources",
@@ -2099,6 +2095,10 @@ fn tool_label_pair_for_name(tool_name: &str) -> ToolLabelPair {
         "test_sync_tool" => ToolLabelPair {
             active: "Syncing tests",
             completed: "Synced tests",
+        },
+        _ if tool_name.starts_with("mcp.") => ToolLabelPair {
+            active: "Call",
+            completed: "Called",
         },
         _ => ToolLabelPair {
             active: "Running tool",
@@ -2217,7 +2217,7 @@ fn tool_label_for_patch(changes: &HashMap<PathBuf, FileChange>) -> String {
     "Edited".to_string()
 }
 
-fn tool_label_for_patch_end(changes: &HashMap<PathBuf, FileChange>, success: bool) -> String {
+fn tool_label_for_patch_completed(changes: &HashMap<PathBuf, FileChange>, success: bool) -> String {
     if success {
         tool_label_for_patch(changes)
     } else {
@@ -2477,7 +2477,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
         EventMsg::PatchApplyEnd(ev) => {
             let turn = ensure_turn(tracker, &event.id);
             let preview = patch_input_preview(&ev.changes);
-            let tool_label = tool_label_for_patch_end(&ev.changes, ev.success);
+            let tool_label = tool_label_for_patch_completed(&ev.changes, ev.success);
             let status = if ev.success {
                 CrpToolStatus::Success
             } else {
@@ -2511,7 +2511,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
         }
         EventMsg::WebSearchBegin(ev) => {
             let turn = ensure_turn(tracker, &event.id);
-            let tool_label = tool_label_pair_for_name("web_search").active.to_string();
+            let tool_labels = tool_label_pair_for_name("web_search");
             vec![(
                 CrpChannel::Control,
                 CrpEvent::ToolStarted {
@@ -2519,7 +2519,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name: "web_search".to_string(),
-                    tool_label: Some(tool_label),
+                    tool_label: Some(tool_labels.active.to_string()),
                     input: None,
                     input_preview: None,
                 },
@@ -2531,7 +2531,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             let output = json!({
                 "query": ev.query,
             });
-            let tool_label = tool_label_pair_for_name("web_search").completed.to_string();
+            let tool_labels = tool_label_pair_for_name("web_search");
             vec![(
                 CrpChannel::Control,
                 CrpEvent::ToolCompleted {
@@ -2539,7 +2539,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name: "web_search".to_string(),
-                    tool_label: Some(tool_label),
+                    tool_label: Some(tool_labels.completed.to_string()),
                     status: CrpToolStatus::Success,
                     output: Some(output),
                     error: None,
@@ -2553,7 +2553,6 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             let server = invocation.server;
             let tool = invocation.tool;
             let tool_name = format!("mcp.{server}.{tool}");
-            let tool_label = tool_label_pair_for_name(&tool_name).active.to_string();
             let input = json!({
                 "server": server,
                 "tool": tool,
@@ -2563,6 +2562,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                 "server": server,
                 "tool": tool,
             });
+            let tool_labels = tool_label_pair_for_name(&tool_name);
             vec![(
                 CrpChannel::Control,
                 CrpEvent::ToolStarted {
@@ -2570,7 +2570,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name,
-                    tool_label: Some(tool_label),
+                    tool_label: Some(tool_labels.active.to_string()),
                     input: Some(input),
                     input_preview: Some(input_preview),
                 },
@@ -2582,7 +2582,6 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             let server = invocation.server;
             let tool = invocation.tool;
             let tool_name = format!("mcp.{server}.{tool}");
-            let tool_label = tool_label_pair_for_name(&tool_name).completed.to_string();
             let duration_ms = ev.duration.as_millis();
             let (status, error, output) = match ev.result {
                 Ok(result) => (
@@ -2605,6 +2604,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                 "server": server,
                 "tool": tool,
             });
+            let tool_labels = tool_label_pair_for_name(&tool_name);
             vec![(
                 CrpChannel::Control,
                 CrpEvent::ToolCompleted {
@@ -2612,7 +2612,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     tool_call_id: ev.call_id,
                     tool_name,
-                    tool_label: Some(tool_label),
+                    tool_label: Some(tool_labels.completed.to_string()),
                     status,
                     output,
                     error,
@@ -2625,7 +2625,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             let payload = json!({
                 "path": ev.path,
             });
-            let tool_label = tool_label_pair_for_name("view_image");
+            let tool_labels = tool_label_pair_for_name("view_image");
             vec![
                 (
                     CrpChannel::Control,
@@ -2634,7 +2634,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         turn_id: turn.turn_id.clone(),
                         tool_call_id: ev.call_id.clone(),
                         tool_name: "view_image".to_string(),
-                        tool_label: Some(tool_label.active.to_string()),
+                        tool_label: Some(tool_labels.active.to_string()),
                         input: Some(payload.clone()),
                         input_preview: Some(payload.clone()),
                     },
@@ -2646,7 +2646,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         turn_id: turn.turn_id.clone(),
                         tool_call_id: ev.call_id,
                         tool_name: "view_image".to_string(),
-                        tool_label: Some(tool_label.completed.to_string()),
+                        tool_label: Some(tool_labels.completed.to_string()),
                         status: CrpToolStatus::Success,
                         output: Some(payload),
                         error: None,

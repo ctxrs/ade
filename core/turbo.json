@@ -71,6 +71,25 @@
         "../supabase/functions/**"
       ],
       "outputs": []
+    },
+    "crp:codex": {
+      "inputs": [
+        "../external-harnesses/codex/codex-rs/**",
+        "!../external-harnesses/codex/codex-rs/target/**"
+      ],
+      "outputs": [
+        "../external-harnesses/codex/codex-rs/target/**/codex-crp"
+      ]
+    },
+    "crp:claude": {
+      "inputs": [
+        "../external-harnesses/claude-crp/**",
+        "!../external-harnesses/claude-crp/dist/**",
+        "!../external-harnesses/claude-crp/node_modules/**"
+      ],
+      "outputs": [
+        "../external-harnesses/claude-crp/dist/**"
+      ]
     }
   }
 }
