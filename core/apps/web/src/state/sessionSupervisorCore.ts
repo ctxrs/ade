@@ -1259,7 +1259,10 @@ export class SessionSupervisor {
     const idx = entry.turns.findIndex((t) => idToString(t.turn_id) === turnId);
     if (idx < 0) return false;
 
-    const turn = entry.turns[idx];
+    const turn = entry.turns[idx] as SessionTurn & {
+      assistant_partial_provider_message_id?: string | null;
+      assistant_last_provider_message_id?: string | null;
+    };
     const prevStatus = turn.status;
     let changed = false;
     switch (String(event.event_type)) {
@@ -1267,7 +1270,19 @@ export class SessionSupervisor {
         if (!shouldRenderAssistantChunk(event)) break;
         const fragment = String(event.payload_json?.content_fragment ?? "");
         if (fragment) {
-          turn.assistant_partial = appendFragment(turn.assistant_partial, fragment);
+          const providerMessageId = readPayloadString(event.payload_json, ["message_id", "messageId"]);
+          if (
+            providerMessageId &&
+            turn.assistant_partial_provider_message_id &&
+            providerMessageId !== turn.assistant_partial_provider_message_id
+          ) {
+            turn.assistant_partial = fragment;
+          } else {
+            turn.assistant_partial = appendFragment(turn.assistant_partial, fragment);
+          }
+          if (providerMessageId) {
+            turn.assistant_partial_provider_message_id = providerMessageId;
+          }
           changed = true;
         }
         break;
@@ -1283,6 +1298,14 @@ export class SessionSupervisor {
       }
       case "assistant_message_inserted": {
         turn.assistant_partial = "";
+        const providerMessageId = readPayloadString(event.payload_json, [
+          "provider_message_id",
+          "providerMessageId",
+        ]);
+        if (providerMessageId) {
+          turn.assistant_last_provider_message_id = providerMessageId;
+        }
+        turn.assistant_partial_provider_message_id = null;
         changed = true;
         break;
       }
@@ -1291,8 +1314,14 @@ export class SessionSupervisor {
           event.payload_json?.full_content ??
           event.payload_json?.content ??
           turn.assistant_partial;
-        if (full) {
+        const providerMessageId = readPayloadString(event.payload_json, ["message_id", "messageId"]);
+        const shouldUpdatePartial =
+          !providerMessageId || providerMessageId !== turn.assistant_last_provider_message_id;
+        if (full && shouldUpdatePartial) {
           turn.assistant_partial = String(full);
+        }
+        if (providerMessageId) {
+          turn.assistant_partial_provider_message_id = providerMessageId;
         }
         if (turn.status !== "completed") turn.status = "completed";
         changed = true;
@@ -1598,11 +1627,19 @@ const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
 };
 
 const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] => {
-  return turns.map((turn) => ({
-    ...turn,
-    assistant_partial: null,
-    thought_partial: null,
-  }));
+  return turns.map((turn) => {
+    const next = {
+      ...turn,
+      assistant_partial: null,
+      thought_partial: null,
+    } as SessionTurn & {
+      assistant_partial_provider_message_id?: string | null;
+      assistant_last_provider_message_id?: string | null;
+    };
+    next.assistant_partial_provider_message_id = null;
+    next.assistant_last_provider_message_id = null;
+    return next;
+  });
 };
 
 const stripPartialEvents = (events: SessionEvent[]): SessionEvent[] => {
@@ -1615,6 +1652,18 @@ const appendFragment = (p: string | null | undefined, f: string | null | undefin
   if (f.startsWith(p)) return f;
   if (p.endsWith(f)) return p;
   return `${p}${f}`;
+};
+
+const readPayloadString = (
+  payload: any,
+  keys: string[],
+): string | null => {
+  if (!payload || typeof payload !== "object") return null;
+  for (const key of keys) {
+    const value = (payload as any)?.[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return null;
 };
 
 const pickFirstString = (...values: any[]): string | null => {

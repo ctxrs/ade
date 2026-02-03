@@ -47,6 +47,22 @@ function appendStreamingFragment(prev: string, fragment: string): string {
   return `${p}${f}`;
 }
 
+type TurnStreamingMeta = {
+  pendingProviderId: string | null;
+  lastProviderId: string | null;
+};
+
+function readTurnStreamingMeta(turn: SessionTurn): TurnStreamingMeta {
+  const t = turn as SessionTurn & {
+    assistant_partial_provider_message_id?: string | null;
+    assistant_last_provider_message_id?: string | null;
+  };
+  return {
+    pendingProviderId: t.assistant_partial_provider_message_id ?? null,
+    lastProviderId: t.assistant_last_provider_message_id ?? null,
+  };
+}
+
 function isCrpThoughtEvent(ev: SessionEvent): boolean {
   if (ev.event_type !== "thought_chunk") return false;
   const payload = ev.payload_json ?? {};
@@ -1081,7 +1097,11 @@ export function buildWorkbenchThreadViewModelFromTurns(
     const pendingContent = String(turn.assistant_partial ?? "");
     const pendingTrimmed = pendingContent.trim();
     const statusTrimmed = statusText?.trim() ?? "";
-    if (pendingTrimmed.length > 0 && pendingTrimmed !== statusTrimmed) {
+    const { pendingProviderId, lastProviderId } = readTurnStreamingMeta(turn);
+    // provider_message_id lets us drop the streaming partial once the final message is inserted.
+    const isDuplicatePending =
+      !!pendingProviderId && !!lastProviderId && pendingProviderId === lastProviderId;
+    if (pendingTrimmed.length > 0 && pendingTrimmed !== statusTrimmed && !isDuplicatePending) {
       timeline.push({
         item: {
           kind: "assistant",

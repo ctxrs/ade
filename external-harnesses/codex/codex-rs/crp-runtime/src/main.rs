@@ -623,6 +623,14 @@ mod replay_golden_tests {
             "wal_title_then_body_trace_no_title.expected.jsonl",
         );
     }
+
+    #[test]
+    fn message_delta_and_final_emits_crp_messages() {
+        assert_fixture(
+            "message_delta_final.input.jsonl",
+            "message_delta_final.expected.jsonl",
+        );
+    }
 }
 
 fn extract_summary_title_and_body_offset(text: &str) -> Option<(String, usize)> {

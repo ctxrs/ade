@@ -59,11 +59,19 @@ const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
 };
 
 const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] =>
-  turns.map((turn) => ({
-    ...turn,
-    assistant_partial: null,
-    thought_partial: null,
-  }));
+  turns.map((turn) => {
+    const next = {
+      ...turn,
+      assistant_partial: null,
+      thought_partial: null,
+    } as SessionTurn & {
+      assistant_partial_provider_message_id?: string | null;
+      assistant_last_provider_message_id?: string | null;
+    };
+    next.assistant_partial_provider_message_id = null;
+    next.assistant_last_provider_message_id = null;
+    return next;
+  });
 
 const stripPartialEvents = (events: SessionEvent[]): SessionEvent[] =>
   events.filter((event) => !isPartialEvent(event));

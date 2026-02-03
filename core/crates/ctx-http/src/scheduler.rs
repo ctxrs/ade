@@ -558,6 +558,7 @@ async fn start_turn(
 
     tokio::spawn(async move {
         let mut assistant_partial = String::new();
+        let mut assistant_partial_message_id: Option<String> = None;
         let mut assistant_sequence: i64 = 0;
         let mut assistant_emitted = String::new();
         let mut thought_partial = String::new();
@@ -725,6 +726,13 @@ async fn start_turn(
                             raw_payload.get("content_fragment").and_then(Value::as_str)
                         {
                             assistant_partial.push_str(fragment);
+                            if let Some(message_id) = raw_payload
+                                .get("message_id")
+                                .and_then(Value::as_str)
+                                .map(|value| value.to_string())
+                            {
+                                assistant_partial_message_id = Some(message_id);
+                            }
                         }
                     }
                     SessionEventType::ThoughtChunk => {
@@ -783,19 +791,32 @@ async fn start_turn(
                                 assistant_sequence += 1;
                                 assistant_emitted.push_str(&saved.content);
                                 assistant_partial.clear();
+                                // provider_message_id lets clients drop the streaming partial once the
+                                // final assistant message is inserted.
+                                let mut payload = json!({
+                                    "message_id": saved.id.0,
+                                    "content": saved.content,
+                                    "delivery": saved.delivery,
+                                    "attachments": saved.attachments,
+                                    "turn_sequence": saved.turn_sequence,
+                                });
+                                if let Some(provider_message_id) =
+                                    assistant_partial_message_id.take()
+                                {
+                                    if let Some(obj) = payload.as_object_mut() {
+                                        obj.insert(
+                                            "provider_message_id".to_string(),
+                                            json!(provider_message_id),
+                                        );
+                                    }
+                                }
                                 let _ = emit_event(
                                     &state_for_events,
                                     session_id,
                                     Some(run_id),
                                     Some(turn_id),
                                     SessionEventType::AssistantMessageInserted,
-                                    json!({
-                                        "message_id": saved.id.0,
-                                        "content": saved.content,
-                                        "delivery": saved.delivery,
-                                        "attachments": saved.attachments,
-                                        "turn_sequence": saved.turn_sequence,
-                                    }),
+                                    payload,
                                 )
                                 .await;
                             }
@@ -862,6 +883,13 @@ async fn start_turn(
                         }
                     }
                     SessionEventType::AssistantComplete => {
+                        let provider_message_id = event
+                            .payload_json
+                            .get("message_id")
+                            .or_else(|| event.payload_json.get("messageId"))
+                            .and_then(Value::as_str)
+                            .map(|s: &str| s.to_string())
+                            .or_else(|| assistant_partial_message_id.clone());
                         let content: Option<String> = event
                             .payload_json
                             .get("full_content")
@@ -894,24 +922,35 @@ async fn start_turn(
                                     assistant_sequence += 1;
                                     assistant_emitted.push_str(&saved.content);
                                     assistant_partial.clear();
+                                    let mut payload = json!({
+                                        "message_id": saved.id.0,
+                                        "content": saved.content,
+                                        "delivery": saved.delivery,
+                                        "attachments": saved.attachments,
+                                        "turn_sequence": saved.turn_sequence,
+                                    });
+                                    if let Some(provider_message_id) = provider_message_id {
+                                        if let Some(obj) = payload.as_object_mut() {
+                                            obj.insert(
+                                                "provider_message_id".to_string(),
+                                                json!(provider_message_id),
+                                            );
+                                        }
+                                    }
                                     let _ = emit_event(
                                         &state_for_events,
                                         session_id,
                                         Some(run_id),
                                         Some(turn_id),
                                         SessionEventType::AssistantMessageInserted,
-                                        json!({
-                                            "message_id": saved.id.0,
-                                            "content": saved.content,
-                                            "delivery": saved.delivery,
-                                            "attachments": saved.attachments,
-                                            "turn_sequence": saved.turn_sequence,
-                                        }),
+                                        payload,
                                     )
                                     .await;
+                                    assistant_partial_message_id = None;
                                 }
                             } else {
                                 assistant_partial.clear();
+                                assistant_partial_message_id = None;
                             }
                         }
                         if terminal_status.is_none() {
