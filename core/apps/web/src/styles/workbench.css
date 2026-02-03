@@ -21,6 +21,7 @@
   --wb-artifact-modal-bg: rgba(18, 18, 18, 0.96);
   --wb-artifact-modal-header-bg: rgba(12, 12, 12, 0.9);
   --wb-artifact-modal-body-bg: rgba(8, 8, 8, 0.9);
+  --wb-tool-rest-color: rgba(255, 255, 255, 0.75);
   height: 100vh;
   position: relative;
   display: grid;
@@ -46,6 +47,7 @@
   --wb-artifact-modal-bg: var(--panel);
   --wb-artifact-modal-header-bg: var(--panel-2);
   --wb-artifact-modal-body-bg: var(--panel-2);
+  --wb-tool-rest-color: rgba(0, 0, 0, 0.75);
 }
 
 .wb-root.wb-root-collapsed {
@@ -3017,7 +3019,7 @@
 }
 
 .wb-tool-rest {
-  color: inherit;
+  color: var(--wb-tool-rest-color);
 }
 
 .wb-tool-rest,
