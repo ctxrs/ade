@@ -8,6 +8,7 @@
     "test:e2e": "pnpm -C apps/web test:e2e",
     "test:providers:e2e": "cargo test -p ctx-providers --test real_acp_e2e -- --ignored --nocapture --test-threads=1",
     "test:providers:e2e:runner": "cargo test -p ctx-http --test provider_runner_acp_e2e -- --ignored --nocapture --test-threads=1",
+    "test:providers:tokens": "CTX_E2E_TIER=tokens cargo test -p ctx-http --test acp_crp_bridge_tokens_e2e -- --ignored --nocapture --test-threads=1",
     "coverage:daemon": "mkdir -p coverage && CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=${CARGO_TARGET_DIR_COVERAGE:-$PWD/target/llvm-cov} cargo llvm-cov --workspace --lcov --output-path coverage/daemon.lcov",
     "coverage:web": "pnpm -C apps/web test:coverage",
     "coverage": "pnpm coverage:daemon && pnpm coverage:web",

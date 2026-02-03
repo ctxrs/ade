@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,11 +14,14 @@ use ctx_lsp::LspManagerConfig;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
+use ctx_providers::tier1::Tier1AcpAdapter;
 use ctx_store::{StoreManager, StoreManagerConfig};
 
 use crate::api;
 use crate::installer;
+use crate::provider_accounts;
 use crate::provider_child_reclassifier;
+use crate::provider_debug::apply_acp_heap_profile_env;
 use crate::provider_guard;
 use crate::provider_restart;
 use crate::provider_usage;
@@ -40,6 +43,89 @@ pub use state::{
     CachedProviderVerify, GitStatusSnapshotCacheEntry, SessionHeadCacheKey, TimedEntry,
     WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
 };
+
+fn fallback_provider_command(command: &str, args: Vec<String>) -> installer::AgentServerCommand {
+    installer::AgentServerCommand {
+        command: command.to_string(),
+        args,
+        dependencies: Vec::new(),
+        managed: None,
+    }
+}
+
+fn command_exists(command: &str) -> bool {
+    if command.contains(std::path::MAIN_SEPARATOR)
+        || command.contains('/')
+        || command.contains('\\')
+    {
+        return PathBuf::from(command).exists();
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    for dir in std::env::split_paths(&path) {
+        if dir.join(command).exists() {
+            return true;
+        }
+    }
+    false
+}
+
+fn escape_shell_arg(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    let is_simple = value
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"@%_-+=:,./".contains(&b));
+    if is_simple {
+        return value.to_string();
+    }
+    let mut out = String::from("'");
+    for ch in value.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+fn format_shell_command(command: &str, args: &[String]) -> String {
+    let mut parts = Vec::with_capacity(1 + args.len());
+    parts.push(escape_shell_arg(command));
+    for arg in args {
+        parts.push(escape_shell_arg(arg));
+    }
+    parts.join(" ")
+}
+
+fn acp_bridge_adapter(
+    id: &str,
+    bridge_cmd: &installer::AgentServerCommand,
+    acp_cmd: installer::AgentServerCommand,
+) -> Arc<dyn ProviderAdapter> {
+    let acp_command = format_shell_command(&acp_cmd.command, &acp_cmd.args);
+    let mut args = bridge_cmd.args.clone();
+    args.push("--acp-command".to_string());
+    args.push(acp_command);
+    Arc::new(Tier1CrpAdapter::from_raw(
+        id,
+        bridge_cmd.command.clone(),
+        args,
+    ))
+}
+
+fn maybe_acp_bridge_adapter(
+    id: &str,
+    bridge_cmd: Option<&installer::AgentServerCommand>,
+    acp_cmd: installer::AgentServerCommand,
+) -> Arc<dyn ProviderAdapter> {
+    match bridge_cmd {
+        Some(bridge_cmd) => acp_bridge_adapter(id, bridge_cmd, acp_cmd),
+        None => Arc::new(Tier1AcpAdapter::from_raw(id, acp_cmd.command, acp_cmd.args)),
+    }
+}
 
 async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
     let workspaces = state.global_store().list_workspaces().await?;
@@ -206,23 +292,181 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         .await
         .unwrap_or_default();
 
-    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    let codex_crp_cmd = installer::resolve_provider_command(&agent_cfg, "codex-crp");
-    let codex_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(match codex_crp_cmd {
-        Some(cmd) => Tier1CrpAdapter::from_raw("codex-crp", cmd.command, cmd.args),
-        None => Tier1CrpAdapter::codex(),
-    });
-    providers.insert("codex-crp".into(), codex_crp_adapter);
+    match installer::ensure_claude_code_acp_ask_user_question_patched(&agent_cfg).await {
+        Ok(true) => tracing::info!("patched claude-code-acp to enable AskUserQuestion over ACP"),
+        Ok(false) => {}
+        Err(e) => tracing::warn!("failed to patch claude-code-acp for AskUserQuestion: {e:#}"),
+    }
 
-    let claude_crp_cmd = installer::resolve_provider_command(&agent_cfg, "claude-crp");
-    let claude_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(match claude_crp_cmd {
-        Some(cmd) => Tier1CrpAdapter::from_raw("claude-crp", cmd.command, cmd.args),
-        None => Tier1CrpAdapter::claude(),
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    let bridge_cmd = installer::resolve_provider_command(&agent_cfg, "acp-crp-bridge")
+        .unwrap_or_else(|| fallback_provider_command("acp-crp-bridge", vec![]));
+    let bridge_available = command_exists(&bridge_cmd.command);
+    if !bridge_available {
+        tracing::warn!(
+            "acp-crp-bridge not found ({}); falling back to ACP adapters",
+            bridge_cmd.command
+        );
+    }
+    let bridge_cmd_ref = if bridge_available {
+        Some(&bridge_cmd)
+    } else {
+        None
+    };
+    let codex_cmd = installer::resolve_provider_command(&agent_cfg, "codex")
+        .unwrap_or_else(|| fallback_provider_command("codex-acp", vec![]));
+    let codex_adapter: Arc<Tier1AcpAdapter> = Arc::new(Tier1AcpAdapter::from_raw(
+        "codex",
+        codex_cmd.command,
+        codex_cmd.args,
+    ));
+
+    let claude_cmd =
+        installer::resolve_provider_command(&agent_cfg, "claude").map(|c| (c.command, c.args));
+
+    let gemini_cmd =
+        installer::resolve_provider_command(&agent_cfg, "gemini").unwrap_or_else(|| {
+            fallback_provider_command("gemini", vec!["--experimental-acp".to_string()])
+        });
+    let gemini_adapter = maybe_acp_bridge_adapter("gemini", bridge_cmd_ref, gemini_cmd);
+
+    let qwen_cmd = installer::resolve_provider_command(&agent_cfg, "qwen").unwrap_or_else(|| {
+        fallback_provider_command("qwen", vec!["--experimental-acp".to_string()])
     });
-    providers.insert("claude-crp".into(), claude_crp_adapter);
+    let qwen_adapter = maybe_acp_bridge_adapter("qwen", bridge_cmd_ref, qwen_cmd);
+
+    let opencode_cmd = installer::resolve_provider_command(&agent_cfg, "opencode")
+        .unwrap_or_else(|| fallback_provider_command("opencode", vec!["acp".to_string()]));
+    let opencode_adapter = maybe_acp_bridge_adapter("opencode", bridge_cmd_ref, opencode_cmd);
+
+    let mistral_cmd = installer::resolve_provider_command(&agent_cfg, "mistral")
+        .unwrap_or_else(|| fallback_provider_command("vibe-acp", vec![]));
+    let mistral_adapter = maybe_acp_bridge_adapter("mistral", bridge_cmd_ref, mistral_cmd);
+
+    let goose_cmd = installer::resolve_provider_command(&agent_cfg, "goose")
+        .unwrap_or_else(|| fallback_provider_command("goose", vec!["acp".to_string()]));
+    let goose_adapter = maybe_acp_bridge_adapter("goose", bridge_cmd_ref, goose_cmd);
+
+    let kimi_cmd = installer::resolve_provider_command(&agent_cfg, "kimi")
+        .unwrap_or_else(|| fallback_provider_command("kimi", vec!["--acp".to_string()]));
+    let kimi_adapter = maybe_acp_bridge_adapter("kimi", bridge_cmd_ref, kimi_cmd);
+
+    let auggie_cmd = installer::resolve_provider_command(&agent_cfg, "auggie")
+        .unwrap_or_else(|| fallback_provider_command("auggie", vec!["--acp".to_string()]));
+    let auggie_adapter = maybe_acp_bridge_adapter("auggie", bridge_cmd_ref, auggie_cmd);
+
+    let cagent_cfg_path = installer::cagent_config_path(&data_root);
+    if !cagent_cfg_path.exists() {
+        if let Some(parent) = cagent_cfg_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let cfg = r#"agents:
+  root:
+    model: openai/gpt-5-mini
+    description: ctx default agent
+    instruction: |
+      You are a helpful coding assistant.
+"#;
+        std::fs::write(&cagent_cfg_path, cfg).ok();
+    }
+    let mut cagent_cmd =
+        installer::resolve_provider_command(&agent_cfg, "cagent").unwrap_or_else(|| {
+            let cfg = cagent_cfg_path.to_string_lossy().to_string();
+            fallback_provider_command("cagent", vec!["acp".to_string(), cfg])
+        });
+    let cfg_path_str = cagent_cfg_path.to_string_lossy().to_string();
+    for arg in &mut cagent_cmd.args {
+        if arg == "{{cagent_config}}" {
+            *arg = cfg_path_str.clone();
+        }
+    }
+    let cagent_adapter = maybe_acp_bridge_adapter("cagent", bridge_cmd_ref, cagent_cmd);
+
+    providers.insert("codex".into(), codex_adapter.clone());
+    providers.insert("gemini".into(), gemini_adapter.clone());
+    providers.insert("qwen".into(), qwen_adapter.clone());
+    providers.insert("opencode".into(), opencode_adapter.clone());
+    providers.insert("mistral".into(), mistral_adapter.clone());
+    providers.insert("goose".into(), goose_adapter.clone());
+    providers.insert("kimi".into(), kimi_adapter.clone());
+    providers.insert("auggie".into(), auggie_adapter.clone());
+    providers.insert("cagent".into(), cagent_adapter.clone());
+
+    let extra_acp_bridge_providers: Vec<(&str, &str, Vec<String>)> = vec![
+        ("amp", "amp-acp", vec![]),
+        ("droid", "droid-acp", vec![]),
+        ("copilot", "copilot-cli-acp", vec![]),
+        ("kiro", "kiro-acp", vec![]),
+        ("rovo", "rovo-dev-acp", vec![]),
+        ("cody", "cody-acp", vec![]),
+        ("continue", "cn", vec!["acp".to_string()]),
+        ("cline", "cline-acp", vec![]),
+        ("swe-agent", "sweagent", vec!["acp".to_string()]),
+        ("openhands", "openhands", vec!["acp".to_string()]),
+    ];
+    for (id, fallback_cmd, fallback_args) in extra_acp_bridge_providers {
+        let cmd = installer::resolve_provider_command(&agent_cfg, id)
+            .unwrap_or_else(|| fallback_provider_command(fallback_cmd, fallback_args));
+        let adapter = maybe_acp_bridge_adapter(id, bridge_cmd_ref, cmd);
+        providers.insert(id.into(), adapter);
+    }
+
+    let enable_codex_crp = std::env::var("CTX_ENABLE_CODEX_CRP")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if enable_codex_crp {
+        let codex_crp_cmd = installer::resolve_provider_command(&agent_cfg, "codex-crp");
+        let codex_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(match codex_crp_cmd {
+            Some(cmd) => Tier1CrpAdapter::from_raw("codex-crp", cmd.command, cmd.args),
+            None => Tier1CrpAdapter::codex(),
+        });
+        providers.insert("codex-crp".into(), codex_crp_adapter);
+    }
+
+    let enable_claude_crp = std::env::var("CTX_ENABLE_CLAUDE_CRP")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if enable_claude_crp {
+        let claude_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(
+            agent_cfg
+                .providers
+                .get("claude-crp")
+                .map(|c| Tier1CrpAdapter::from_raw("claude-crp", c.command.clone(), c.args.clone()))
+                .unwrap_or_else(Tier1CrpAdapter::claude),
+        );
+        providers.insert("claude-crp".into(), claude_crp_adapter);
+    }
 
     if std::env::var("CTX_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1") {
         providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+    }
+
+    // Register additional harnesses as ACP adapters so they appear in /providers even if not installed.
+    // These binaries are expected to support ACP over stdio.
+    for (id, command, args) in [
+        ("qwen", "qwen", vec!["--experimental-acp"]),
+        ("opencode", "opencode", vec!["acp"]),
+        ("openhands", "openhands", vec!["acp"]),
+        ("goose", "goose", vec!["acp"]),
+        ("mistral", "vibe-acp", vec![]),
+        ("amp", "amp-acp", vec![]),
+        ("droid", "droid-acp", vec![]),
+        ("copilot", "copilot-cli-acp", vec![]),
+        ("kiro", "kiro-acp", vec![]),
+        ("rovo", "rovo-dev-acp", vec![]),
+        ("cody", "cody-acp", vec![]),
+        ("continue", "cn", vec!["acp"]),
+        ("cline", "cline-acp", vec![]),
+        ("swe-agent", "sweagent", vec!["acp"]),
+    ] {
+        let cmd = installer::resolve_provider_command(&agent_cfg, id).unwrap_or_else(|| {
+            fallback_provider_command(command, args.into_iter().map(|s| s.to_string()).collect())
+        });
+        let adapter: Arc<Tier1AcpAdapter> =
+            Arc::new(Tier1AcpAdapter::from_raw(id, cmd.command, cmd.args));
+        providers.insert(id.to_string(), adapter);
     }
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
@@ -236,6 +480,8 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
 
     let mut auth = auth::load_or_init_daemon_auth(&data_root)?;
     let auth_token = Some(auth.token.clone());
+    let auth_token_for_env = auth_token.clone();
+    let prewarm_workdir = data_root.clone();
 
     let mut lsp_cfg = LspManagerConfig::default();
     let _ = installer::apply_managed_lsp_server_config(&data_root, &mut lsp_cfg).await;
@@ -331,7 +577,113 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         });
     }
 
+    let codex_adapter: Arc<Tier1AcpAdapter> = Arc::new(
+        installer::resolve_provider_command(&agent_cfg, "codex")
+            .map(|c| {
+                Tier1AcpAdapter::from_raw_with_ask_user_question(
+                    "codex",
+                    c.command,
+                    c.args,
+                    Arc::clone(&state.core.ask_user_question),
+                )
+            })
+            .unwrap_or_else(|| {
+                Tier1AcpAdapter::codex_with_ask_user_question(Arc::clone(
+                    &state.core.ask_user_question,
+                ))
+            }),
+    );
+    {
+        let mut map = state.providers.adapters.lock().await;
+        map.insert("codex".into(), codex_adapter.clone());
+    }
+
+    // Claude-only extension plumbing: AskUserQuestion is implemented via a Claude-specific ACP
+    // extension method and should not be threaded into other providers.
+    let claude_adapter: Arc<Tier1AcpAdapter> = Arc::new(match claude_cmd {
+        Some((command, args)) => Tier1AcpAdapter::claude_from_raw_with_ask_user_question(
+            command,
+            args,
+            Arc::clone(&state.core.ask_user_question),
+        ),
+        None => Tier1AcpAdapter::claude_with_ask_user_question(Arc::clone(
+            &state.core.ask_user_question,
+        )),
+    });
+    {
+        let mut map = state.providers.adapters.lock().await;
+        map.insert("claude".into(), claude_adapter.clone());
+    }
     installer::refresh_provider_statuses(&state).await?;
+
+    // Pinned ACP provider warming:
+    // - Always keep these providers warm today: codex, claude
+    // - For future providers, they start on first use and remain alive for daemon lifetime.
+    let prewarm_ids: HashSet<String> = std::env::var("CTX_ACP_PREWARM_PROVIDERS")
+        .unwrap_or_else(|_| "codex,claude".to_string())
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if !prewarm_ids.is_empty() {
+        let mut base_env = HashMap::<String, String>::new();
+        base_env.insert("CTX_DAEMON_URL".to_string(), daemon_url.clone());
+        base_env.insert(
+            "CTX_DATA_ROOT".to_string(),
+            state.core.data_root.to_string_lossy().to_string(),
+        );
+        if let Some(token) = auth_token_for_env.clone() {
+            base_env.insert("CTX_AUTH_TOKEN".to_string(), token);
+        }
+        for key in [
+            "RUST_LOG",
+            "RUST_BACKTRACE",
+            "RUST_LOG_SPAN_EVENTS",
+            "RUST_LIB_BACKTRACE",
+        ] {
+            if let Ok(value) = std::env::var(key) {
+                base_env.insert(key.to_string(), value);
+            }
+        }
+        if let Ok(value) = std::env::var("CTX_MCP_COMMAND") {
+            base_env.insert("CTX_MCP_COMMAND".to_string(), value);
+        }
+        if let Ok(value) = std::env::var("CTX_MCP_DISABLED") {
+            base_env.insert("CTX_MCP_DISABLED".to_string(), value);
+        }
+
+        for (id, adapter) in [
+            ("codex", codex_adapter.clone()),
+            ("claude", claude_adapter.clone()),
+        ] {
+            if !prewarm_ids.contains(id) {
+                continue;
+            }
+            let workdir = prewarm_workdir.clone();
+            let mut env = base_env.clone();
+            if id == "codex" {
+                if let Ok(extra) =
+                    provider_accounts::codex_env_for_active_account(&state.core.data_root).await
+                {
+                    env.extend(extra);
+                }
+            }
+            apply_acp_heap_profile_env(id, &mut env, &state.core.data_root);
+            tokio::spawn(async move {
+                let status = adapter.inspect().await;
+                let ok = status.as_ref().is_ok_and(|s| {
+                    s.installed && matches!(s.health, ctx_providers::adapters::ProviderHealth::Ok)
+                });
+                if !ok {
+                    return;
+                }
+                if let Err(e) = adapter.prewarm(workdir, env).await {
+                    tracing::warn!("failed to prewarm provider {id}: {e:#}");
+                }
+            });
+        }
+    }
     let mut shutdown_rx = state.core.shutdown_tx.subscribe();
     let app: Router = api::router(state);
 

@@ -1,0 +1,110 @@
+{
+  "session_id": "acp-session-1",
+  "turn_id": "turn-1",
+  "message_id": "msg-1",
+  "updates": [
+    {
+      "sessionUpdate": "agent_thought_chunk",
+      "content": {
+        "type": "text",
+        "text": "Thinking"
+      }
+    },
+    {
+      "sessionUpdate": "agent_message_chunk",
+      "content": {
+        "type": "text",
+        "text": "Hello"
+      }
+    },
+    {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "tool-1",
+      "title": "Read file",
+      "kind": "read",
+      "rawInput": {
+        "path": "README.md"
+      }
+    },
+    {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "tool-1",
+      "status": "in_progress",
+      "rawOutput": "working"
+    },
+    {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "tool-1",
+      "status": "completed",
+      "rawOutput": {
+        "ok": true
+      }
+    }
+  ],
+  "expected": [
+    {
+      "channel": "data",
+      "type": "reasoning.trace",
+      "session_id": "acp-session-1",
+      "turn_id": "turn-1",
+      "chunk": "Thinking",
+      "encoding": null
+    },
+    {
+      "channel": "data",
+      "type": "message.delta",
+      "session_id": "acp-session-1",
+      "turn_id": "turn-1",
+      "message_id": "msg-1",
+      "delta": "Hello"
+    },
+    {
+      "channel": "control",
+      "type": "tool.started",
+      "session_id": "acp-session-1",
+      "turn_id": "turn-1",
+      "tool_call_id": "tool-1",
+      "tool_name": "read",
+      "tool_label": "Read file",
+      "input": {
+        "path": "README.md"
+      },
+      "input_preview": {
+        "path": "README.md"
+      }
+    },
+    {
+      "channel": "data",
+      "type": "tool.output.delta",
+      "session_id": "acp-session-1",
+      "turn_id": "turn-1",
+      "tool_call_id": "tool-1",
+      "chunk": "working"
+    },
+    {
+      "channel": "control",
+      "type": "tool.completed",
+      "session_id": "acp-session-1",
+      "turn_id": "turn-1",
+      "tool_call_id": "tool-1",
+      "tool_name": "read",
+      "tool_label": "Read file",
+      "status": "success",
+      "output": {
+        "ok": true
+      },
+      "error": null,
+      "input_preview": {
+        "path": "README.md"
+      }
+    }
+  ],
+  "final_event": {
+    "channel": "control",
+    "type": "message.final",
+    "session_id": "acp-session-1",
+    "turn_id": "turn-1",
+    "message_id": "msg-1",
+    "content": "Hello"
+  }
+}
