@@ -509,6 +509,42 @@ async fn start_turn(
                 "error": err.to_string(),
             }));
             state.telemetry.ops_events.emit(fail_event);
+            let failed_at = Utc::now();
+            let _ = store
+                .update_session_turn_status(
+                    session.id,
+                    turn_id,
+                    SessionTurnStatus::Failed,
+                    None,
+                    None,
+                    failed_at,
+                )
+                .await;
+            let _ = emit_event(
+                state,
+                session.id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::Error,
+                json!({
+                    "message_id": message_id.0,
+                    "error": err.to_string(),
+                    "status": "failed",
+                }),
+            )
+            .await;
+            let _ = emit_event(
+                state,
+                session.id,
+                Some(run_id),
+                Some(turn_id),
+                SessionEventType::TurnFinished,
+                json!({
+                    "message_id": message_id.0,
+                    "status": "failed",
+                }),
+            )
+            .await;
             return Err(err);
         }
     };
