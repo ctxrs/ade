@@ -2732,7 +2732,11 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
         }
         EventMsg::StreamError(ev) => {
             let turn = ensure_turn(tracker, &event.id);
-            if mark_completed(turn) {
+            if is_reconnect_notice(&ev.message) {
+                // Codex emits StreamError with "Reconnecting... n/m" for transient retries.
+                // Don't complete the turn; wait for a terminal Error or Success.
+                Vec::new()
+            } else if mark_completed(turn) {
                 let error = build_crp_turn_error(
                     "stream_error",
                     ev.message,
@@ -2781,6 +2785,10 @@ fn build_crp_turn_error(
             Some(details.join("\n"))
         },
     }
+}
+
+fn is_reconnect_notice(message: &str) -> bool {
+    message.trim_start().starts_with("Reconnecting...")
 }
 
 fn format_codex_error_info(info: &CodexErrorInfo) -> String {
