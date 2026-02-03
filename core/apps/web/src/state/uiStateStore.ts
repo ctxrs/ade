@@ -183,6 +183,54 @@ export async function saveSessionHeadV1(
   } satisfies PersistedSessionHeadV1);
 }
 
+export type PersistedThoughtRowV1 = {
+  key: string;
+  event: import("@ctx/types").SessionEvent;
+  updatedAtMs?: number;
+};
+
+export type PersistedSessionThoughtsV1 = {
+  sessionId: string;
+  thoughts: Record<string, PersistedThoughtRowV1>;
+};
+
+export type PersistedTaskThoughtsV1 = {
+  v: 1;
+  taskId: string;
+  sessions: Record<string, PersistedSessionThoughtsV1>;
+  updatedAtMs: number;
+};
+
+export function taskThoughtsKeyV1(taskId: string) {
+  return `wb.task_thoughts.v1.${taskId}`;
+}
+
+export async function loadTaskThoughtsV1(taskId: string): Promise<PersistedTaskThoughtsV1 | null> {
+  const raw = await storage.getSnapshot<PersistedTaskThoughtsV1>(taskThoughtsKeyV1(taskId));
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as PersistedTaskThoughtsV1;
+  if (rec.v !== 1 || rec.taskId !== taskId || !rec.sessions || typeof rec.sessions !== "object") {
+    return null;
+  }
+  return rec;
+}
+
+export async function saveTaskThoughtsV1(
+  taskId: string,
+  payload: Omit<PersistedTaskThoughtsV1, "v" | "taskId" | "updatedAtMs">,
+): Promise<void> {
+  await storage.setSnapshot(taskThoughtsKeyV1(taskId), {
+    v: 1,
+    taskId,
+    updatedAtMs: Date.now(),
+    ...payload,
+  } satisfies PersistedTaskThoughtsV1);
+}
+
+export async function clearTaskThoughtsV1(taskId: string): Promise<void> {
+  await storage.deleteSnapshot(taskThoughtsKeyV1(taskId));
+}
+
 export type PersistedSessionHistoryPageV1 = {
   v: 1;
   sessionId: string;

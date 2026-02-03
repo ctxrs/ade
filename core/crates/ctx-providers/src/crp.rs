@@ -1076,6 +1076,20 @@ enum CrpEvent {
         #[serde(default)]
         encoding: Option<String>,
         #[serde(default)]
+        summary_index: i64,
+        #[serde(default)]
+        item_id: Option<String>,
+    },
+    #[serde(rename = "reasoning.trace.final")]
+    ReasoningTraceFinal {
+        session_id: String,
+        turn_id: String,
+        content: String,
+        #[serde(default)]
+        encoding: Option<String>,
+        #[serde(default)]
+        summary_index: i64,
+        #[serde(default)]
         item_id: Option<String>,
     },
     #[serde(rename = "tool.started")]
@@ -1257,12 +1271,44 @@ fn map_crp_event(
         CrpEvent::ReasoningTrace {
             chunk,
             encoding,
+            summary_index,
             item_id,
             ..
         } => {
             let mut payload = json!({
                 "content_fragment": chunk,
                 "encoding": encoding,
+                "summary_index": summary_index,
+                "item_id": item_id,
+                "crp_seq": seq,
+            });
+            if let Some(channel) = crp_channel {
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("crp_channel".to_string(), json!(channel));
+                }
+            }
+            MappedCrpEvent {
+                events: vec![NormalizedEvent {
+                    event_type: SessionEventType::ThoughtChunk,
+                    payload_json: payload,
+                }],
+                done: false,
+            }
+        }
+        CrpEvent::ReasoningTraceFinal {
+            content,
+            encoding,
+            summary_index,
+            item_id,
+            ..
+        } => {
+            let mut payload = json!({
+                "content_fragment": "",
+                "full_content": content,
+                "is_final": true,
+                "encoding": encoding,
+                "summary_index": summary_index,
+                "item_id": item_id,
                 "crp_seq": seq,
             });
             // item_id enables deterministic thought chunk grouping/deduping in clients.
@@ -1564,6 +1610,7 @@ fn event_turn_id(event: &CrpEvent) -> Option<&str> {
         | CrpEvent::MessageFinal { turn_id, .. }
         | CrpEvent::ReasoningSummary { turn_id, .. }
         | CrpEvent::ReasoningTrace { turn_id, .. }
+        | CrpEvent::ReasoningTraceFinal { turn_id, .. }
         | CrpEvent::ToolStarted { turn_id, .. }
         | CrpEvent::ToolOutputDelta { turn_id, .. }
         | CrpEvent::ToolCompleted { turn_id, .. }
@@ -1580,6 +1627,7 @@ fn event_matches_session(event: &CrpEvent, session_id: &str) -> bool {
         | CrpEvent::MessageFinal { session_id: id, .. }
         | CrpEvent::ReasoningSummary { session_id: id, .. }
         | CrpEvent::ReasoningTrace { session_id: id, .. }
+        | CrpEvent::ReasoningTraceFinal { session_id: id, .. }
         | CrpEvent::ToolStarted { session_id: id, .. }
         | CrpEvent::ToolOutputDelta { session_id: id, .. }
         | CrpEvent::ToolCompleted { session_id: id, .. }

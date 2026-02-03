@@ -190,6 +190,21 @@ pub enum CrpEvent {
         chunk: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         encoding: Option<String>,
+        #[serde(default)]
+        summary_index: i64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        item_id: Option<String>,
+    },
+    /// Final buffered reasoning trace for a summary block (data plane only).
+    #[serde(rename = "reasoning.trace.final")]
+    ReasoningTraceFinal {
+        session_id: String,
+        turn_id: String,
+        content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        encoding: Option<String>,
+        #[serde(default)]
+        summary_index: i64,
         #[serde(skip_serializing_if = "Option::is_none")]
         item_id: Option<String>,
     },
@@ -380,9 +395,23 @@ mod tests {
             turn_id: "turn".to_string(),
             chunk: "trace".to_string(),
             encoding: None,
+            summary_index: 0,
+            item_id: None,
         };
         let value = serde_json::to_value(trace).unwrap();
         let kind = value.get("type").and_then(|value| value.as_str());
         assert_eq!(kind, Some("reasoning.trace"));
+
+        let trace_final = CrpEvent::ReasoningTraceFinal {
+            session_id: "session".to_string(),
+            turn_id: "turn".to_string(),
+            content: "final".to_string(),
+            encoding: None,
+            summary_index: 0,
+            item_id: None,
+        };
+        let value = serde_json::to_value(trace_final).unwrap();
+        let kind = value.get("type").and_then(|value| value.as_str());
+        assert_eq!(kind, Some("reasoning.trace.final"));
     }
 }

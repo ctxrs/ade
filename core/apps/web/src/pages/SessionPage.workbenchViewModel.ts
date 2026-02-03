@@ -63,6 +63,27 @@ function readTurnStreamingMeta(turn: SessionTurn): TurnStreamingMeta {
   };
 }
 
+function readThoughtFullContent(payload: any): string | null {
+  const full =
+    payload?.full_content ??
+    payload?.fullContent ??
+    payload?.full ??
+    payload?.content ??
+    payload?.content_fragment ??
+    payload?.contentFragment;
+  return typeof full === "string" && full.trim() ? full : null;
+}
+
+function isFinalThoughtPayload(payload: any): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  return (
+    payload?.is_final === true ||
+    payload?.isFinal === true ||
+    typeof payload?.full_content === "string" ||
+    typeof payload?.fullContent === "string"
+  );
+}
+
 function isCrpThoughtEvent(ev: SessionEvent): boolean {
   if (ev.event_type !== "thought_chunk") return false;
   const payload = ev.payload_json ?? {};
@@ -74,10 +95,17 @@ function isCrpThoughtEvent(ev: SessionEvent): boolean {
   );
 }
 
-function isCrpDataEvent(ev: SessionEvent): boolean {
+function readThoughtBlockKey(ev: SessionEvent): string | null {
+  const turnId = idToString(ev.turn_id);
+  if (!turnId) return null;
   const payload = ev.payload_json ?? {};
-  const channel = payload?.crp_channel ?? payload?.crpChannel;
-  return String(channel ?? "").toLowerCase() === "data";
+  const rawItemId = String(payload?.item_id ?? payload?.itemId ?? "").trim();
+  const rawSummary = payload?.summary_index ?? payload?.summaryIndex;
+  const parsedSummary = typeof rawSummary === "number" ? rawSummary : Number(rawSummary);
+  const summaryIndex = Number.isFinite(parsedSummary) ? parsedSummary : 0;
+  if (rawItemId) return `${turnId}|${rawItemId}|${summaryIndex}`;
+  const fallbackSeq = readEventOrderSeq(ev) ?? (ev as any).seq ?? ev.created_at;
+  return `${turnId}|unknown-${fallbackSeq}|${summaryIndex}`;
 }
 
 function readThoughtItemId(ev: SessionEvent): string | null {
@@ -110,10 +138,19 @@ function collectThoughtStream(events: SessionEvent[]): {
   let orderSeq: number | undefined;
   let isCrp = false;
 
+  let hasFinal = false;
   for (const ev of sorted) {
-    const fragment = String(ev.payload_json?.content_fragment ?? "");
-    if (!fragment) continue;
-    text = appendStreamingFragment(text, fragment);
+    const payload = ev.payload_json ?? {};
+    const finalText = readThoughtFullContent(payload);
+    if (isFinalThoughtPayload(payload) && finalText) {
+      text = finalText;
+      hasFinal = true;
+    } else if (!hasFinal) {
+      const fragment = String(payload?.content_fragment ?? payload?.contentFragment ?? "");
+      if (fragment) {
+        text = appendStreamingFragment(text, fragment);
+      }
+    }
     createdAt = createdAt ?? ev.created_at;
     if (orderSeq === undefined) {
       const seq = readEventOrderSeq(ev);
@@ -136,79 +173,84 @@ type ThoughtBlock = {
 };
 
 function collectThoughtBlocks(events: SessionEvent[]): ThoughtBlock[] {
-  const hasCrpThought = events.some(
-    (ev) => ev.event_type === "thought_chunk" && shouldRenderThoughtChunk(ev) && isCrpThoughtEvent(ev),
+  const thoughtEvents = events.filter(
+    (ev) => ev.event_type === "thought_chunk" && shouldRenderThoughtChunk(ev),
   );
-  if (!hasCrpThought) {
-    const stream = collectThoughtStream(events);
-    return stream
-      ? [
-        {
-          text: stream.text,
-          orderSeq: stream.orderSeq,
-          createdAt: stream.createdAt,
-          isCrp: stream.isCrp,
-        },
-      ]
-      : [];
-  }
+  if (thoughtEvents.length === 0) return [];
 
-  const sorted = events.slice().sort((a, b) => {
-    const sa = readEventOrderSeq(a);
-    const sb = readEventOrderSeq(b);
-    if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return (sa ?? 0) - (sb ?? 0);
-    if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
-    if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
-    return String(a.created_at).localeCompare(String(b.created_at));
-  });
+  const crpThoughtEvents = thoughtEvents.filter(isCrpThoughtEvent);
+  const nonCrpThoughtEvents = thoughtEvents.filter((ev) => !isCrpThoughtEvent(ev));
 
   const blocks: ThoughtBlock[] = [];
-  let current: ThoughtBlock | null = null;
-  let currentItemId: string | null = null;
 
-  const flush = () => {
-    if (current && current.text.trim()) {
-      blocks.push(current);
+  if (crpThoughtEvents.length > 0) {
+    const groups = new Map<string, SessionEvent[]>();
+    for (const ev of crpThoughtEvents) {
+      const key = readThoughtBlockKey(ev);
+      if (!key) continue;
+      const list = groups.get(key) ?? [];
+      list.push(ev);
+      groups.set(key, list);
     }
-    current = null;
-    currentItemId = null;
-  };
-
-  for (const ev of sorted) {
-    const isBoundary = !isCrpDataEvent(ev);
-    if (ev.event_type === "thought_chunk" && shouldRenderThoughtChunk(ev) && isCrpThoughtEvent(ev)) {
-      const fragment = String(ev.payload_json?.content_fragment ?? "");
-      if (fragment) {
-        const itemId = readThoughtItemId(ev);
-        if (itemId && currentItemId && itemId !== currentItemId) {
-          flush();
+    for (const list of groups.values()) {
+      const sorted = list.slice().sort((a, b) => {
+        const sa = readEventOrderSeq(a);
+        const sb = readEventOrderSeq(b);
+        if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return (sa ?? 0) - (sb ?? 0);
+        if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
+        if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
+        return String(a.created_at).localeCompare(String(b.created_at));
+      });
+      let text = "";
+      let createdAt: string | undefined;
+      let orderSeq: number | undefined;
+      let hasFinal = false;
+      for (const ev of sorted) {
+        const payload = ev.payload_json ?? {};
+        const finalText = readThoughtFullContent(payload);
+        if (isFinalThoughtPayload(payload) && finalText) {
+          text = finalText;
+          hasFinal = true;
+        } else if (!hasFinal) {
+          const fragment = String(payload?.content_fragment ?? payload?.contentFragment ?? "");
+          if (fragment) {
+            text = appendStreamingFragment(text, fragment);
+          }
         }
-        if (itemId) {
-          currentItemId = itemId;
-        }
-        if (!current) {
-          current = {
-            text: "",
-            createdAt: ev.created_at,
-            orderSeq: readEventOrderSeq(ev) ?? undefined,
-            isCrp: true,
-          };
-        }
-        current.text = appendStreamingFragment(current.text, fragment);
-        current.createdAt = current.createdAt ?? ev.created_at;
-        if (current.orderSeq === undefined) {
+        createdAt = createdAt ?? ev.created_at;
+        if (orderSeq === undefined) {
           const seq = readEventOrderSeq(ev);
-          if (Number.isFinite(seq)) current.orderSeq = seq as number;
+          if (Number.isFinite(seq)) orderSeq = seq as number;
         }
       }
-    }
-    if (isBoundary) {
-      flush();
+      if (text.trim()) {
+        blocks.push({ text, orderSeq, createdAt, isCrp: true });
+      }
     }
   }
-  flush();
 
-  return blocks;
+  if (nonCrpThoughtEvents.length > 0) {
+    const stream = collectThoughtStream(nonCrpThoughtEvents);
+    if (stream) {
+      blocks.push({
+        text: stream.text,
+        orderSeq: stream.orderSeq,
+        createdAt: stream.createdAt,
+        isCrp: stream.isCrp,
+      });
+    }
+  }
+
+  return blocks
+    .slice()
+    .sort((a, b) => {
+      const sa = a.orderSeq;
+      const sb = b.orderSeq;
+      if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return (sa ?? 0) - (sb ?? 0);
+      if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
+      if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
+      return String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? ""));
+    });
 }
 
 function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> {
