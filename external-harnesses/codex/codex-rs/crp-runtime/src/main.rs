@@ -2287,7 +2287,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         turn_id: turn.turn_id.clone(),
                         summary_index: ev.summary_index,
                         text: title,
-                        item_id,
+                        item_id: item_id.clone(),
                     },
                 ));
             }
