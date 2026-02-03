@@ -2926,7 +2926,6 @@
   color: var(--muted);
   font-size: 12px;
   font-family: inherit;
-  font-style: italic;
   min-width: 0;
   max-width: 100%;
 }
@@ -3074,7 +3073,7 @@
 
 .wb-thought-row {
   padding: 8px 4px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   font-style: italic;
   white-space: pre-wrap;
