@@ -48,14 +48,26 @@ const normalizeId = (value: unknown): string => {
   return String(idToString(value as { 0?: string } | string) || "").trim();
 };
 
-const PARTIAL_EVENT_TYPES: Set<SessionEvent["event_type"]> = new Set([
-  "assistant_chunk",
-  "thought_chunk",
-]);
+const isFinalThoughtEvent = (event: SessionEvent | null | undefined): boolean => {
+  if (!event) return false;
+  if (String(event.event_type ?? "") !== "thought_chunk") return false;
+  const payload = event.payload_json ?? {};
+  return (
+    payload?.is_final === true ||
+    payload?.isFinal === true ||
+    typeof payload?.full_content === "string" ||
+    typeof payload?.fullContent === "string"
+  );
+};
+
+const PARTIAL_EVENT_TYPES: Set<SessionEvent["event_type"]> = new Set(["assistant_chunk"]);
 
 const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
   if (!event) return false;
-  return PARTIAL_EVENT_TYPES.has(String(event.event_type ?? ""));
+  const type = String(event.event_type ?? "");
+  if (PARTIAL_EVENT_TYPES.has(type)) return true;
+  if (type === "thought_chunk") return !isFinalThoughtEvent(event);
+  return false;
 };
 
 const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] =>

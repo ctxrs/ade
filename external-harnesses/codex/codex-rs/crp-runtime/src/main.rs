@@ -303,6 +303,7 @@ struct ReasoningSummaryState {
     body_offset: usize,
     // Number of bytes emitted from the body region (buffer[body_offset..]).
     body_sent: usize,
+    final_emitted: bool,
 }
 
 impl ReasoningSummaryState {
@@ -1749,6 +1750,7 @@ fn event_session_id(event: &CrpEvent) -> Option<&str> {
     match event {
         CrpEvent::MessageDelta { session_id, .. }
         | CrpEvent::ReasoningTrace { session_id, .. }
+        | CrpEvent::ReasoningTraceFinal { session_id, .. }
         | CrpEvent::ToolOutputDelta { session_id, .. } => Some(session_id),
         _ => None,
     }
@@ -2299,6 +2301,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         turn_id: turn.turn_id.clone(),
                         chunk,
                         encoding: None,
+                        summary_index: ev.summary_index,
                         item_id: item_id.clone(),
                     },
                 ));
@@ -2322,6 +2325,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                     turn_id: turn.turn_id.clone(),
                     chunk: ev.delta,
                     encoding: None,
+                    summary_index: turn.current_summary_index,
                     item_id,
                 },
             )]
@@ -2342,6 +2346,85 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         content,
                     },
                 )]
+            }
+            TurnItem::Reasoning(item) => {
+                let turn = ensure_turn(tracker, &event.id);
+                let mut out = Vec::new();
+                let item_id = if item.id.is_empty() {
+                    None
+                } else {
+                    Some(item.id.clone())
+                };
+                if let Some(id) = item_id.clone() {
+                    turn.reasoning_item_id = Some(id);
+                }
+                let key_item_id = item_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown_reasoning_item".to_string());
+                for (summary_index, summary_text) in item.summary_text.iter().enumerate() {
+                    let summary_index = summary_index as i64;
+                    let state = turn
+                        .reasoning_summaries
+                        .entry((key_item_id.clone(), summary_index))
+                        .or_default();
+                    let prior_title = state.title.clone();
+                    let prior_emitted = state.title_emitted;
+                    let (title_opt, body_offset) =
+                        match extract_summary_title_and_body_offset(summary_text) {
+                            Some((title, offset)) => (Some(title), offset),
+                            None => {
+                                let trimmed = summary_text.trim_start();
+                                let offset = summary_text.len().saturating_sub(trimmed.len());
+                                (None, offset)
+                            }
+                        };
+
+                    state.buffer = summary_text.clone();
+                    state.body_offset = body_offset;
+                    let body = if summary_text.len() > body_offset {
+                        summary_text[body_offset..].to_string()
+                    } else {
+                        String::new()
+                    };
+                    state.body_sent = body.len();
+
+                    if let Some(title) = title_opt.clone() {
+                        state.title = Some(title.clone());
+                        state.title_emitted = true;
+                        if (!prior_emitted || prior_title.as_deref() != Some(title.as_str()))
+                            && !title.trim().is_empty()
+                        {
+                            out.push((
+                                CrpChannel::Control,
+                                CrpEvent::ReasoningSummary {
+                                    session_id: session_id.clone(),
+                                    turn_id: turn.turn_id.clone(),
+                                    summary_index,
+                                    text: title,
+                                    item_id: item_id.clone(),
+                                },
+                            ));
+                        }
+                    }
+
+                    if !state.final_emitted {
+                        if !body.is_empty() {
+                            out.push((
+                                CrpChannel::Data,
+                                CrpEvent::ReasoningTraceFinal {
+                                    session_id: session_id.clone(),
+                                    turn_id: turn.turn_id.clone(),
+                                    content: body,
+                                    encoding: None,
+                                    summary_index,
+                                    item_id: item_id.clone(),
+                                },
+                            ));
+                        }
+                        state.final_emitted = true;
+                    }
+                }
+                out
             }
             _ => Vec::new(),
         },
@@ -2854,10 +2937,12 @@ mod tests {
     use codex_core::protocol::ExecCommandEndEvent;
     use codex_core::protocol::ExecCommandOutputDeltaEvent;
     use codex_core::protocol::ExecCommandSource;
+    use codex_core::protocol::ItemCompletedEvent;
     use codex_core::protocol::ReasoningContentDeltaEvent;
     use codex_core::protocol::ReasoningRawContentDeltaEvent;
     use codex_core::protocol::TurnCompleteEvent;
     use codex_core::protocol::TurnStartedEvent;
+    use codex_protocol::items::ReasoningItem;
     use codex_protocol::parse_command::ParsedCommand;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
@@ -3053,6 +3138,20 @@ mod tests {
                     content_index: 1,
                 }),
             },
+            Event {
+                id: "turn-1".to_string(),
+                msg: EventMsg::ItemCompleted(ItemCompletedEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".to_string(),
+                    item: TurnItem::Reasoning(ReasoningItem {
+                        id: "reasoning-1".to_string(),
+                        summary_text: vec![
+                            "**Reading foo**\n\nThinking about bar".to_string(),
+                        ],
+                        raw_content: vec![],
+                    }),
+                }),
+            },
         ];
 
         let mut mapped = Vec::new();
@@ -3097,6 +3196,23 @@ mod tests {
         assert_eq!(trace_chunks[2].0, &CrpChannel::Data);
         assert_eq!(trace_chunks[2].1, "raw-final".to_string());
         assert_eq!(trace_chunks[2].2.as_deref(), Some("reasoning-1"));
+
+        let trace_final = mapped
+            .iter()
+            .find_map(|(channel, event)| match event {
+                CrpEvent::ReasoningTraceFinal {
+                    content,
+                    summary_index,
+                    item_id,
+                    ..
+                } => Some((channel, content.clone(), *summary_index, item_id.clone())),
+                _ => None,
+            })
+            .expect("expected reasoning.trace.final event");
+        assert_eq!(trace_final.0, &CrpChannel::Data);
+        assert_eq!(trace_final.1, "Thinking about bar".to_string());
+        assert_eq!(trace_final.2, 0);
+        assert_eq!(trace_final.3.as_deref(), Some("reasoning-1"));
     }
 
     #[test]

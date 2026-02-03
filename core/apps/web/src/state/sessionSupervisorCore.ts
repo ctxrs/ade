@@ -1,4 +1,5 @@
 import {
+  getProviderOptions,
   getSessionHead,
   getSessionHistory,
   getSessionSnapshot,
@@ -11,6 +12,7 @@ import {
   type GitStatusSummary,
   type Message,
   type MessageAttachment,
+  type ProviderOptions,
   type Session,
   type SessionEvent,
   type SessionHead,
@@ -25,7 +27,18 @@ import {
   type WorkspaceActiveSnapshotEvent,
 } from "../api/client";
 import type { WorkspaceActiveSnapshotEventSource, WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
-import { loadSessionHeadV1, loadSessionHistoryPageV1, saveSessionHeadV1, saveSessionHistoryPageV1 } from "./uiStateStore";
+import {
+  loadSessionAcpMetaV1,
+  loadSessionHeadV1,
+  loadSessionHistoryPageV1,
+  loadTaskThoughtsV1,
+  saveTaskThoughtsV1,
+  clearTaskThoughtsV1,
+  saveSessionAcpMetaV1,
+  saveSessionHeadV1,
+  saveSessionHistoryPageV1,
+} from "./uiStateStore";
+import type { PersistedTaskThoughtsV1 } from "./uiStateStore";
 import { getClientSettings } from "./clientSettings";
 import { SessionReplicaBridge } from "./sessionReplicaBridge";
 import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
@@ -54,6 +67,9 @@ export type SessionSupervisorSnapshot = {
 export type SessionCacheEntry = {
   sessionId: string;
   session?: Session;
+  acpModels?: any;
+  acpModes?: any;
+  acpCurrentModelId?: string;
   turns: SessionTurn[];
   turnToolsByTurnId: Record<string, SessionTurnTool[]>;
   turnToolsLoading: string[];
@@ -81,10 +97,36 @@ export type SessionCacheEntry = {
   updatedAtMs: number;
 };
 
+type ThoughtCacheEntry = {
+  key: string;
+  event: SessionEvent;
+  updatedAtMs?: number;
+};
+
 type OpenOptions = {
   watchDiff?: boolean;
   force?: boolean;
   silent?: boolean;
+};
+
+type AcpMeta = {
+  models?: any;
+  modes?: any;
+  currentModelId?: string;
+};
+
+const readAcpCurrentModelId = (models: any): string | undefined => {
+  if (!models || typeof models !== "object") return;
+  return models.currentModelId ?? models.current_model_id ?? undefined;
+};
+
+const hasModelList = (models: any): boolean => {
+  const list =
+    models?.availableModels ??
+    models?.available_models ??
+    models?.models ??
+    [];
+  return Array.isArray(list) && list.length > 0;
 };
 
 const readString = (value: unknown): string | undefined => {
@@ -165,9 +207,23 @@ const messagesMatchForOptimistic = (optimistic: Message, incoming: Message): boo
   return buildAttachmentSignature(optimistic.attachments) === buildAttachmentSignature(incoming.attachments);
 };
 
+const extractAcpMetaFromEvent = (event: SessionEvent): AcpMeta | null => {
+  if (event.event_type !== "init") return null;
+  const payload = (event as any)?.payload_json ?? {};
+  const models = payload?.models ?? undefined;
+  const modes = payload?.modes ?? undefined;
+  if (!models && !modes) return null;
+  return {
+    models,
+    modes,
+    currentModelId: readAcpCurrentModelId(models),
+  };
+};
+
 type InternalEntry = SessionCacheEntry & {
   refCount: number;
   warmUntilMs: number;
+  acpMetaUpdatedAtMs?: number;
   seqSet: Set<number>;
   startedTurnIds: Set<string>;
   turnsHydrated: boolean;
@@ -188,6 +244,12 @@ type InternalEntry = SessionCacheEntry & {
   diagnosticsByPath: Record<string, any[]>;
   loadedFromCache: boolean;
   headFromCache: boolean;
+  thoughtCacheByKey: Record<string, ThoughtCacheEntry>;
+  thoughtCacheLoaded: boolean;
+  thoughtCacheLoading: boolean;
+  thoughtCacheDirty: boolean;
+  thoughtCacheTaskId?: string;
+  thoughtCacheLoadToken: number;
   fetching: {
     head: boolean;
     history: boolean;
@@ -215,6 +277,10 @@ export class SessionSupervisor {
   private activeTaskSessionIds: string[] = [];
   private warmSessionIds: string[] = [];
   private subscribedSessionIds: string[] = [];
+  private providerOptionsCache = new Map<string, ProviderOptions>();
+  private providerOptionsInFlight = new Map<string, Promise<ProviderOptions | undefined>>();
+  private taskThoughtCache = new Map<string, PersistedTaskThoughtsV1>();
+  private taskThoughtCacheLoading = new Map<string, Promise<PersistedTaskThoughtsV1>>();
 
   constructor() {
     this.replica = new SessionReplicaBridge(this.handleReplicaPatches, {
@@ -318,6 +384,7 @@ export class SessionSupervisor {
     if (!sessionId) return;
     const entry = this.ensureEntry(sessionId);
     entry.session = session;
+    void this.ensureThoughtCache(entry);
     entry.updatedAtMs = Date.now();
     this.publish();
   };
@@ -515,6 +582,9 @@ export class SessionSupervisor {
       sessions[id] = {
         sessionId: e.sessionId,
         session: e.session,
+        acpModels: e.acpModels,
+        acpModes: e.acpModes,
+        acpCurrentModelId: e.acpCurrentModelId,
         turns: e.turns,
         turnToolsByTurnId: e.turnToolsByTurnId,
         turnToolsLoading: [...e.turnToolsLoadingSet],
@@ -586,6 +656,7 @@ export class SessionSupervisor {
       const data = patch.data;
       if (data.session) {
         entry.session = data.session;
+        void this.ensureThoughtCache(entry);
       }
       if (data.turns && data.turns.length > 0) {
         this.mergeTurns(entry, data.turns);
@@ -608,6 +679,12 @@ export class SessionSupervisor {
       }
       if (data.toolSummaries && data.toolSummaries.length > 0) {
         this.applyToolSummaries(entry, data.toolSummaries);
+      }
+      if (data.acpMeta) {
+        entry.acpModels = data.acpMeta.models ?? entry.acpModels;
+        entry.acpModes = data.acpMeta.modes ?? entry.acpModes;
+        entry.acpCurrentModelId = data.acpMeta.currentModelId ?? entry.acpCurrentModelId;
+        entry.acpMetaUpdatedAtMs = Date.now();
       }
       if (data.gitStatusSummary !== undefined) {
         entry.gitStatusSummary = data.gitStatusSummary ?? null;
@@ -657,6 +734,9 @@ export class SessionSupervisor {
       if (data.subagentNotice) {
         void this.ensureSubagentInvocations(entry, { force: true });
       }
+      if (!entry.acpModels || !hasModelList(entry.acpModels)) {
+        void this.ensureProviderOptions(entry);
+      }
       entry.queue = entry.messages.filter((m) => m.delivery === "queued");
       entry.updatedAtMs = Date.now();
       changed = true;
@@ -684,6 +764,9 @@ export class SessionSupervisor {
     const entry: InternalEntry = {
       sessionId,
       session: undefined,
+      acpModels: undefined,
+      acpModes: undefined,
+      acpCurrentModelId: undefined,
       turns: [],
       turnToolsByTurnId: {},
       turnToolsLoading: [],
@@ -713,6 +796,7 @@ export class SessionSupervisor {
       updatedAtMs: Date.now(),
       refCount: 0,
       warmUntilMs: Date.now() + WARM_TTL_MS,
+      acpMetaUpdatedAtMs: undefined,
       seqSet: new Set<number>(),
       startedTurnIds: new Set<string>(),
       turnsHydrated: false,
@@ -727,6 +811,12 @@ export class SessionSupervisor {
       subagentInvocationsFetchedAtMs: undefined,
       loadedFromCache: false,
       headFromCache: false,
+      thoughtCacheByKey: {},
+      thoughtCacheLoaded: false,
+      thoughtCacheLoading: false,
+      thoughtCacheDirty: false,
+      thoughtCacheTaskId: undefined,
+      thoughtCacheLoadToken: 0,
       fetching: {
         head: false,
         history: false,
@@ -734,6 +824,40 @@ export class SessionSupervisor {
     };
     this.entries.set(sessionId, entry);
     return entry;
+  }
+
+  private applyAcpMeta(entry: InternalEntry, meta: AcpMeta, opts?: { persist?: boolean }): boolean {
+    const nextModels = meta.models ?? entry.acpModels;
+    const nextModes = meta.modes ?? entry.acpModes;
+    const nextCurrent =
+      meta.currentModelId ?? readAcpCurrentModelId(nextModels) ?? entry.acpCurrentModelId;
+    const modelsChanged = JSON.stringify(nextModels ?? null) !== JSON.stringify(entry.acpModels ?? null);
+    const modesChanged = JSON.stringify(nextModes ?? null) !== JSON.stringify(entry.acpModes ?? null);
+    const currentChanged = nextCurrent !== entry.acpCurrentModelId;
+    if (!modelsChanged && !modesChanged && !currentChanged) return false;
+
+    entry.acpModels = nextModels;
+    entry.acpModes = nextModes;
+    entry.acpCurrentModelId = nextCurrent;
+    entry.acpMetaUpdatedAtMs = Date.now();
+    if (opts?.persist !== false && (nextModels || nextModes || nextCurrent)) {
+      saveSessionAcpMetaV1(entry.sessionId, {
+        models: nextModels,
+        modes: nextModes,
+        currentModelId: nextCurrent,
+      }).catch(() => {});
+    }
+    return true;
+  }
+
+  private applyAcpMetaFromEvents(entry: InternalEntry, events: SessionEvent[]): boolean {
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const meta = extractAcpMetaFromEvent(events[i]);
+      if (meta) {
+        return this.applyAcpMeta(entry, meta);
+      }
+    }
+    return false;
   }
 
   private applyGitStatusSnapshotFromEvents(entry: InternalEntry, events: SessionEvent[]): boolean {
@@ -748,6 +872,62 @@ export class SessionSupervisor {
       return true;
     }
     return false;
+  }
+
+  private providerOptionsKey(session: Session): string {
+    return `${idToString(session.workspace_id)}:${session.provider_id}`;
+  }
+
+  private seedAcpMetaFromProviderOptions(entry: InternalEntry, opts?: ProviderOptions): boolean {
+    if (!opts?.models && !opts?.modes) return false;
+    return this.applyAcpMeta(entry, {
+      models: opts.models,
+      modes: opts.modes,
+      currentModelId: readAcpCurrentModelId(opts.models),
+    });
+  }
+
+  private async ensureProviderOptions(entry: InternalEntry) {
+    if (entry.acpModels && hasModelList(entry.acpModels)) return;
+    const session = entry.session;
+    if (!session) return;
+    const key = this.providerOptionsKey(session);
+    const cached = this.providerOptionsCache.get(key);
+    if (cached) {
+      if (this.seedAcpMetaFromProviderOptions(entry, cached)) {
+        entry.updatedAtMs = Date.now();
+        this.publish();
+      }
+      return;
+    }
+    const existing = this.providerOptionsInFlight.get(key);
+    if (existing) {
+      const opts = await existing.catch(() => undefined);
+      if (opts && this.seedAcpMetaFromProviderOptions(entry, opts)) {
+        entry.updatedAtMs = Date.now();
+        this.publish();
+      }
+      return;
+    }
+    const workspaceId = idToString(session.workspace_id);
+    if (!workspaceId) return;
+    const request = getProviderOptions(workspaceId, session.provider_id)
+      .then((opts) => {
+        this.providerOptionsCache.set(key, opts);
+        return opts;
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.providerOptionsInFlight.get(key) === request) {
+          this.providerOptionsInFlight.delete(key);
+        }
+      });
+    this.providerOptionsInFlight.set(key, request);
+    const opts = await request;
+    if (opts && this.seedAcpMetaFromProviderOptions(entry, opts)) {
+      entry.updatedAtMs = Date.now();
+      this.publish();
+    }
   }
 
   private async ensureLoaded(sessionId: string, opts?: OpenOptions) {
@@ -880,6 +1060,22 @@ export class SessionSupervisor {
       if (currentSeq >= 0 && cachedSeq >= 0 && cachedSeq < currentSeq) return;
       if (entry.turnsHydrated && !entry.headFromCache) return;
       this.applyHead(entry, cached.head, { fromCache: true });
+      const cachedMeta = await loadSessionAcpMetaV1(entry.sessionId);
+      if (cachedMeta) {
+        const changed = this.applyAcpMeta(
+          entry,
+          {
+            models: cachedMeta.models,
+            modes: cachedMeta.modes,
+            currentModelId: cachedMeta.currentModelId,
+          },
+          { persist: false },
+        );
+        if (changed) {
+          entry.updatedAtMs = Date.now();
+          this.publish();
+        }
+      }
     } catch {
       // ignore cache errors
     }
@@ -941,7 +1137,11 @@ export class SessionSupervisor {
     this.mergeTurns(entry, head.turns ?? []);
     this.mergeEvents(entry, head.events ?? [], { notify: false });
     this.mergeMessages(entry, head.messages ?? []);
+    this.applyAcpMetaFromEvents(entry, head.events ?? []);
     this.applyGitStatusSnapshotFromEvents(entry, head.events ?? []);
+    if (!entry.acpModels || !hasModelList(entry.acpModels)) {
+      void this.ensureProviderOptions(entry);
+    }
     if (head.tool_summaries && head.tool_summaries.length > 0) {
       const hydrated = entry.turnToolsHydratedByTurnId;
       const nextByTurn: Record<string, SessionTurnTool[]> = {};
@@ -979,6 +1179,7 @@ export class SessionSupervisor {
     if (!opts?.fromCache) {
       entry.error = undefined;
     }
+    void this.ensureThoughtCache(entry);
     entry.updatedAtMs = Date.now();
     this.publish();
   }
@@ -1079,6 +1280,139 @@ export class SessionSupervisor {
     await saveSessionHeadV1(entry.sessionId, head);
   }
 
+  private async getTaskThoughtCache(taskId: string): Promise<PersistedTaskThoughtsV1> {
+    const cached = this.taskThoughtCache.get(taskId);
+    if (cached) return cached;
+    const inflight = this.taskThoughtCacheLoading.get(taskId);
+    if (inflight) return inflight;
+    const loader = (async () => {
+      const existing = await loadTaskThoughtsV1(taskId);
+      return (
+        existing ?? {
+          v: 1,
+          taskId,
+          sessions: {},
+          updatedAtMs: Date.now(),
+        }
+      );
+    })();
+    this.taskThoughtCacheLoading.set(taskId, loader);
+    try {
+      const resolved = await loader;
+      this.taskThoughtCache.set(taskId, resolved);
+      return resolved;
+    } finally {
+      this.taskThoughtCacheLoading.delete(taskId);
+    }
+  }
+
+  private async ensureThoughtCache(entry: InternalEntry) {
+    const taskId = idToString(entry.session?.task_id);
+    if (!taskId) return;
+    if (entry.thoughtCacheLoaded && entry.thoughtCacheTaskId === taskId) {
+      const overlayed = this.overlayThoughtCacheOnEvents(entry, entry.events);
+      if (overlayed !== entry.events) {
+        entry.events = overlayed;
+        entry.seqSet = new Set(overlayed.map((ev) => ev.seq));
+        entry.updatedAtMs = Date.now();
+        this.publish();
+      }
+      if (entry.thoughtCacheDirty) {
+        void this.persistThoughtCache(entry);
+      }
+      return;
+    }
+    if (entry.thoughtCacheLoading) return;
+    entry.thoughtCacheLoading = true;
+    const token = (entry.thoughtCacheLoadToken += 1);
+    try {
+      const cache = await this.getTaskThoughtCache(taskId);
+      if (entry.thoughtCacheLoadToken !== token) return;
+      const sessionCache = cache.sessions?.[entry.sessionId]?.thoughts ?? {};
+      entry.thoughtCacheByKey = {
+        ...sessionCache,
+        ...entry.thoughtCacheByKey,
+      };
+      entry.thoughtCacheLoaded = true;
+      entry.thoughtCacheTaskId = taskId;
+      const overlayed = this.overlayThoughtCacheOnEvents(entry, entry.events);
+      if (overlayed !== entry.events) {
+        entry.events = overlayed;
+        entry.seqSet = new Set(overlayed.map((ev) => ev.seq));
+        entry.updatedAtMs = Date.now();
+      }
+      if (entry.thoughtCacheDirty) {
+        void this.persistThoughtCache(entry);
+      }
+      this.publish();
+    } finally {
+      entry.thoughtCacheLoading = false;
+    }
+  }
+
+  private async persistThoughtCache(entry: InternalEntry) {
+    if (!entry.thoughtCacheDirty) return;
+    const taskId = idToString(entry.session?.task_id);
+    if (!taskId) return;
+    const cache = await this.getTaskThoughtCache(taskId);
+    const existingSession = cache.sessions?.[entry.sessionId];
+    const mergedThoughts = {
+      ...(existingSession?.thoughts ?? {}),
+      ...entry.thoughtCacheByKey,
+    };
+    cache.sessions = {
+      ...cache.sessions,
+      [entry.sessionId]: {
+        sessionId: entry.sessionId,
+        thoughts: mergedThoughts,
+      },
+    };
+    cache.updatedAtMs = Date.now();
+    this.taskThoughtCache.set(taskId, cache);
+    entry.thoughtCacheDirty = false;
+    await saveTaskThoughtsV1(taskId, { sessions: cache.sessions });
+  }
+
+  private async clearTaskThoughts(taskId: string) {
+    this.taskThoughtCache.delete(taskId);
+    this.taskThoughtCacheLoading.delete(taskId);
+    await clearTaskThoughtsV1(taskId);
+    let changed = false;
+    for (const entry of this.entries.values()) {
+      if (idToString(entry.session?.task_id) !== taskId) continue;
+      if (Object.keys(entry.thoughtCacheByKey).length > 0) {
+        entry.thoughtCacheByKey = {};
+        entry.thoughtCacheDirty = false;
+        entry.thoughtCacheLoaded = true;
+        changed = true;
+      }
+      if (entry.turns.length > 0) {
+        const nextTurns = entry.turns.map((turn) => {
+          const current = String(turn.thought_partial ?? "");
+          if (!current.trim()) return turn;
+          changed = true;
+          return { ...turn, thought_partial: "" };
+        });
+        entry.turns = nextTurns;
+      }
+      if (entry.events.length > 0) {
+        const nextEvents = entry.events.filter((ev) => ev.event_type !== "thought_chunk");
+        if (nextEvents.length !== entry.events.length) {
+          entry.events = nextEvents;
+          entry.seqSet = new Set(
+            nextEvents
+              .map((ev) => (typeof ev.seq === "number" ? ev.seq : Number.NaN))
+              .filter((seq) => Number.isFinite(seq)) as number[],
+          );
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      this.publish();
+    }
+  }
+
   private refreshSubscriptions() {
     const openIds = Array.from(this.entries.values())
       .filter((entry) => entry.refCount > 0)
@@ -1104,6 +1438,44 @@ export class SessionSupervisor {
     this.publish();
   }
 
+  private overlayThoughtCacheOnEvents(entry: InternalEntry, events: SessionEvent[]): SessionEvent[] {
+    if (!entry.thoughtCacheLoaded) return events;
+    const cache = entry.thoughtCacheByKey;
+    if (!cache || Object.keys(cache).length === 0) return events;
+    const bySeq = new Map<number, SessionEvent>();
+    for (const ev of events) {
+      if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
+    }
+    let changed = false;
+    for (const cached of Object.values(cache)) {
+      const ev = cached.event;
+      if (!ev || typeof ev.seq !== "number") continue;
+      if (bySeq.has(ev.seq)) continue;
+      bySeq.set(ev.seq, ev);
+      changed = true;
+    }
+    if (!changed) return events;
+    return Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+  }
+
+  private overlayThoughtCacheOnTurns(entry: InternalEntry, turns: SessionTurn[]): SessionTurn[] {
+    if (!entry.thoughtCacheLoaded) return turns;
+    const cache = entry.thoughtCacheByKey;
+    const keys = cache ? Object.keys(cache) : [];
+    if (keys.length === 0) return turns;
+    const turnIdsWithThoughts = new Set(keys.map((key) => key.split("|")[0]));
+    let changed = false;
+    const next = turns.map((turn) => {
+      const turnId = idToString(turn.turn_id);
+      if (!turnId || !turnIdsWithThoughts.has(turnId)) return turn;
+      const current = String(turn.thought_partial ?? "");
+      if (!current.trim()) return turn;
+      changed = true;
+      return { ...turn, thought_partial: "" };
+    });
+    return changed ? next : turns;
+  }
+
   private mergeTurns(entry: InternalEntry, incoming: SessionTurn[]) {
     if (incoming.length === 0) return;
     const byId = new Map<string, SessionTurn>();
@@ -1121,7 +1493,12 @@ export class SessionSupervisor {
       const prev = byId.get(id);
       byId.set(id, prev ? mergeTurn(prev, t) : t);
     }
-    const next = Array.from(byId.values()).sort(this.compareTurnOrder.bind(this));
+    let next = Array.from(byId.values()).sort(this.compareTurnOrder.bind(this));
+    const overlayed = this.overlayThoughtCacheOnTurns(entry, next);
+    if (overlayed !== next) {
+      next = overlayed;
+      entry.updatedAtMs = Date.now();
+    }
     entry.turns = next;
     entry.oldestTurnSeq = next[0]?.start_seq ?? entry.oldestTurnSeq;
   }
@@ -1174,7 +1551,13 @@ export class SessionSupervisor {
       if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
     }
     const next = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
-    const trimmed = next.length > EVENT_BUFFER_LIMIT ? next.slice(-EVENT_BUFFER_LIMIT) : next;
+    let trimmed = next.length > EVENT_BUFFER_LIMIT ? next.slice(-EVENT_BUFFER_LIMIT) : next;
+    if (entry.thoughtCacheLoaded && Object.keys(entry.thoughtCacheByKey).length > 0) {
+      const overlayed = this.overlayThoughtCacheOnEvents(entry, trimmed);
+      if (overlayed !== trimmed) {
+        trimmed = overlayed;
+      }
+    }
     entry.events = trimmed;
     entry.seqSet = new Set(trimmed.map((ev) => ev.seq));
     for (const ev of incoming) {
@@ -1222,6 +1605,31 @@ export class SessionSupervisor {
     return String(a.started_at).localeCompare(String(b.started_at));
   }
 
+  private recordFinalThought(entry: InternalEntry, event: SessionEvent): boolean {
+    if (!isFinalThoughtEvent(event)) return false;
+    const key = buildThoughtCacheKey(event);
+    if (!key) return false;
+    const payload = normalizeFinalThoughtPayload(event.payload_json ?? {});
+    if (!readThoughtFullContent(payload)) return false;
+    const normalizedEvent: SessionEvent = {
+      ...event,
+      payload_json: payload,
+    };
+    const existing = entry.thoughtCacheByKey[key];
+    if (existing && existing.event.seq === normalizedEvent.seq) return false;
+    entry.thoughtCacheByKey = {
+      ...entry.thoughtCacheByKey,
+      [key]: {
+        key,
+        event: normalizedEvent,
+        updatedAtMs: Date.now(),
+      },
+    };
+    entry.thoughtCacheDirty = true;
+    void this.persistThoughtCache(entry);
+    return true;
+  }
+
   private ensureTurnFromEvent(entry: InternalEntry, event: SessionEvent): SessionTurn | null {
     const turnId = idToString(event.turn_id);
     if (!turnId) return null;
@@ -1240,6 +1648,8 @@ export class SessionSupervisor {
       started_at: createdAt,
       updated_at: createdAt,
       assistant_partial: "",
+      // Streaming-only placeholder for in-flight thought chunks.
+      // Completed thought rows are emitted separately; do not persist this.
       thought_partial: "",
       metrics_json: null,
       tool_total: 0,
@@ -1290,22 +1700,10 @@ export class SessionSupervisor {
       }
       case "thought_chunk": {
         if (!shouldRenderThoughtChunk(event)) break;
-        const fragment = String(event.payload_json?.content_fragment ?? "");
-        if (fragment) {
-          const itemId = readPayloadString(event.payload_json, ["item_id", "itemId"]);
-          if (
-            itemId &&
-            turn.thought_partial_provider_item_id &&
-            itemId !== turn.thought_partial_provider_item_id
-          ) {
-            turn.thought_partial = fragment;
-          } else {
-            turn.thought_partial = appendFragment(turn.thought_partial, fragment);
+        if (isFinalThoughtEvent(event)) {
+          if (this.recordFinalThought(entry, event)) {
+            changed = true;
           }
-          if (itemId) {
-            turn.thought_partial_provider_item_id = itemId;
-          }
-          changed = true;
         }
         break;
       }
@@ -1535,6 +1933,17 @@ export class SessionSupervisor {
   }
 
   private handleWorkspaceEvent(evt: WorkspaceActiveSnapshotEvent) {
+    if (evt.type === "archived_task_upsert") {
+      const taskId = idToString(evt.task?.task?.id);
+      if (taskId) {
+        void this.clearTaskThoughts(taskId);
+      }
+    } else if (evt.type === "archived_task_delete") {
+      const taskId = idToString(evt.task_id);
+      if (taskId) {
+        void this.clearTaskThoughts(taskId);
+      }
+    }
     this.replica.dispatch({ type: "workspace_event", event: evt });
   }
 
@@ -1632,11 +2041,14 @@ const mergePartial = (p: string, n: string): string => {
   return n.length >= p.length ? n : p;
 };
 
-const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk", "thought_chunk"]);
+const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk"]);
 
 const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
   if (!event) return false;
-  return PARTIAL_EVENT_TYPES.has(String(event.event_type ?? ""));
+  const type = String(event.event_type ?? "");
+  if (PARTIAL_EVENT_TYPES.has(type)) return true;
+  if (type === "thought_chunk") return !isFinalThoughtEvent(event);
+  return false;
 };
 
 const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] => {
@@ -1688,6 +2100,56 @@ const pickFirstString = (...values: any[]): string | null => {
   return null;
 };
 
+const readThoughtFullContent = (payload: any): string | null => {
+  return pickFirstString(
+    payload?.full_content,
+    payload?.fullContent,
+    payload?.full,
+    payload?.content,
+    payload?.content_fragment,
+    payload?.contentFragment,
+  );
+};
+
+const isFinalThoughtPayload = (payload: any): boolean => {
+  if (!payload || typeof payload !== "object") return false;
+  return (
+    payload?.is_final === true ||
+    payload?.isFinal === true ||
+    typeof payload?.full_content === "string" ||
+    typeof payload?.fullContent === "string"
+  );
+};
+
+const isFinalThoughtEvent = (event: SessionEvent | null | undefined): boolean => {
+  if (!event) return false;
+  if (String(event.event_type ?? "") !== "thought_chunk") return false;
+  const payload = event.payload_json ?? {};
+  return isFinalThoughtPayload(payload);
+};
+
+const normalizeFinalThoughtPayload = (payload: any): any => {
+  const full = readThoughtFullContent(payload);
+  if (!full) return payload;
+  return {
+    ...payload,
+    full_content: full,
+    is_final: true,
+  };
+};
+
+const buildThoughtCacheKey = (event: SessionEvent): string | null => {
+  const turnId = idToString(event.turn_id);
+  if (!turnId) return null;
+  const payload = event.payload_json ?? {};
+  const itemId = pickFirstString(payload?.item_id, payload?.itemId);
+  const rawSummary = payload?.summary_index ?? payload?.summaryIndex;
+  const parsedSummary = typeof rawSummary === "number" ? rawSummary : Number(rawSummary);
+  const summaryIndex = Number.isFinite(parsedSummary) ? parsedSummary : 0;
+  const fallback = `unknown-${event.seq}`;
+  return `${turnId}|${itemId ?? fallback}|${summaryIndex}`;
+};
+
 const isNonToolStatus = (value: string): boolean => {
   const s = value.trim().toLowerCase();
   return ![
@@ -1735,7 +2197,12 @@ function isStatusUpdateMeta(meta: any): boolean {
 
 function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
   const payload = ev.payload_json ?? {};
-  const meta = payload?._meta ?? payload?.meta ?? {};
+  const meta =
+    payload?.acp_update?._meta ??
+    payload?.acp_update?.meta ??
+    payload?._meta ??
+    payload?.meta ??
+    {};
   if (meta?.heartbeat === true) return false;
   if (isStatusUpdateMeta(meta)) return false;
   const reasoningKind = meta?.codex?.reasoning_kind ?? meta?.codex?.reasoningKind;
@@ -1745,7 +2212,12 @@ function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
 
 function shouldRenderAssistantChunk(ev: SessionEvent): boolean {
   const payload = ev.payload_json ?? {};
-  const meta = payload?._meta ?? payload?.meta ?? {};
+  const meta =
+    payload?.acp_update?._meta ??
+    payload?.acp_update?.meta ??
+    payload?._meta ??
+    payload?.meta ??
+    {};
   if (meta?.heartbeat === true) return false;
   if (isStatusUpdateMeta(meta)) return false;
   return true;
@@ -1755,6 +2227,8 @@ const extractToolCallId = (event: SessionEvent): string | null => {
   const payload = event.payload_json ?? {};
   const direct = payload?.tool_call_id ?? payload?.tool_call?.id ?? payload?.tool?.id;
   if (typeof direct === "string" && direct.trim()) return String(direct);
+  const fromUpdate = payload?.acp_update?.tool_call_id ?? payload?.acp_update?.tool_call?.id;
+  if (typeof fromUpdate === "string" && fromUpdate.trim()) return String(fromUpdate);
   return null;
 };
 
@@ -1772,6 +2246,8 @@ const extractToolStatus = (event: SessionEvent): string | null => {
   const payload = event.payload_json ?? {};
   const direct = payload?.tool_status ?? payload?.tool?.status ?? payload?.status;
   if (typeof direct === "string" && direct.trim()) return normalizeToolStatus(direct, String(event.event_type ?? ""));
+  const fromUpdate = payload?.acp_update?.tool_status ?? payload?.acp_update?.tool?.status;
+  if (typeof fromUpdate === "string" && fromUpdate.trim()) return normalizeToolStatus(fromUpdate, String(event.event_type ?? ""));
   if (event.event_type === "tool_result") return "completed";
   if (event.event_type === "tool_call") return "pending";
   return null;

@@ -539,10 +539,12 @@ async fn handle_mobile_secure_ws(
                                 continue;
                             };
                             if let Some(ev) = &delta.event {
-                                if ev.seq <= cursor.last_sent {
-                                    continue;
+                                if ev.seq >= 0 {
+                                    if ev.seq <= cursor.last_sent {
+                                        continue;
+                                    }
+                                    cursor.last_sent = ev.seq;
                                 }
-                                cursor.last_sent = ev.seq;
                             } else if delta.last_event_seq <= cursor.last_sent {
                                 continue;
                             } else {
