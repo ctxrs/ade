@@ -929,6 +929,9 @@ async fn resource_utilization(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ResourceUtilizationQuery>,
 ) -> Result<Json<resource_utilization::ResourceUtilizationSnapshot>, StatusCode> {
+    if resource_utilization_disabled() {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let workspace_id = WorkspaceId(
         uuid::Uuid::parse_str(&query.workspace_id).map_err(|_| StatusCode::BAD_REQUEST)?,
     );
@@ -959,7 +962,7 @@ async fn resource_utilization(
     let (system, disks, cache_age_ms, processes, disk_cache) = {
         let mut sampler = state.telemetry.resource_sampler.lock().await;
         let (system, disks, cache_age_ms) = sampler.system_snapshot();
-        let processes = sampler.processes_snapshot(std::process::id(), &provider_processes);
+        let processes = sampler.processes_snapshot_light(std::process::id(), &provider_processes);
         let disk_cache = sampler.disk_cache_entry(workspace_id);
         (system, disks, cache_age_ms, processes, disk_cache)
     };
@@ -1011,6 +1014,18 @@ async fn resource_utilization(
         processes,
         workspace: workspace_snapshot,
     }))
+}
+
+fn resource_utilization_disabled() -> bool {
+    env_bool("CTX_RESOURCE_UTILIZATION_DISABLED").unwrap_or(false)
+}
+
+fn env_bool(key: &str) -> Option<bool> {
+    std::env::var(key).ok().and_then(|v| match v.trim() {
+        "1" | "true" | "TRUE" | "yes" | "YES" => Some(true),
+        "0" | "false" | "FALSE" | "no" | "NO" => Some(false),
+        _ => None,
+    })
 }
 
 #[derive(Debug, Deserialize)]

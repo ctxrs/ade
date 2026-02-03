@@ -69,6 +69,9 @@ struct ResourceTelemetryEvent {
 }
 
 pub fn spawn_resource_telemetry(state: Arc<AppState>) {
+    if resource_utilization_disabled() {
+        return;
+    }
     let cfg = ResourceTelemetryConfig::from_env();
     if !cfg.enabled() {
         return;
@@ -371,4 +374,16 @@ fn env_u64(key: &str) -> Option<u64> {
     std::env::var(key)
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
+}
+
+fn resource_utilization_disabled() -> bool {
+    env_bool("CTX_RESOURCE_UTILIZATION_DISABLED").unwrap_or(false)
+}
+
+fn env_bool(key: &str) -> Option<bool> {
+    std::env::var(key).ok().and_then(|v| match v.trim() {
+        "1" | "true" | "TRUE" | "yes" | "YES" => Some(true),
+        "0" | "false" | "FALSE" | "no" | "NO" => Some(false),
+        _ => None,
+    })
 }

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -197,20 +197,7 @@ impl ResourceSampler {
         daemon_pid: u32,
         providers: &[ProviderProcessInfo],
     ) -> ResourceProcesses {
-        self.system
-            .refresh_processes_specifics(process_refresh_kind());
-        let children = build_process_children(&self.system);
-
-        let daemon = aggregate_process(&self.system, &children, daemon_pid, "ctx daemon");
-        let providers = providers
-            .iter()
-            .filter_map(|p| {
-                let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
-                aggregate_process(&self.system, &children, p.pid, &label)
-            })
-            .collect();
-
-        ResourceProcesses { daemon, providers }
+        self.processes_snapshot_light(daemon_pid, providers)
     }
 
     pub fn processes_snapshot_light(
@@ -228,8 +215,8 @@ impl ResourceSampler {
                 .system
                 .refresh_process_specifics(pid, process_refresh_kind());
         }
-        // Skip child aggregation to avoid full process table scans in telemetry.
-        let children = HashMap::new();
+    // Skip child aggregation to avoid full process table scans.
+    let children = HashMap::new();
 
         let daemon = aggregate_process(&self.system, &children, daemon_pid, "ctx daemon");
         let providers = providers
@@ -486,34 +473,6 @@ fn aggregate_provider_memory(
         memory_bytes,
         tool_memory_bytes,
     })
-}
-
-fn build_process_children(system: &System) -> HashMap<Pid, Vec<Pid>> {
-    let mut task_pids = HashSet::new();
-    for (pid, process) in system.processes() {
-        if let Some(tasks) = process.tasks() {
-            for task_pid in tasks {
-                if task_pid != pid {
-                    task_pids.insert(*task_pid);
-                }
-            }
-        }
-    }
-
-    let mut children: HashMap<Pid, Vec<Pid>> = HashMap::new();
-    for (pid, process) in system.processes() {
-        if task_pids.contains(pid) {
-            continue;
-        }
-        if let Some(parent) = process.parent() {
-            if task_pids.contains(&parent) {
-                continue;
-            }
-            children.entry(parent).or_default().push(*pid);
-        }
-    }
-
-    children
 }
 
 #[cfg(target_os = "linux")]
