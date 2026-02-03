@@ -989,7 +989,7 @@ function buildTurnActivityTimeline(opts: {
         kind: "thought",
         id: `thought-${opts.turnId}-fallback`,
         turn_id: opts.turnId,
-        created_at: opts.turn.updated_at ?? opts.turn.started_at,
+        created_at: opts.turn.started_at ?? opts.turn.updated_at,
         content: fallbackThoughtRaw,
       };
       activity.push({
@@ -1159,17 +1159,18 @@ export function buildWorkbenchThreadViewModelFromTurns(
     const isDuplicatePending =
       !!pendingProviderId && !!lastProviderId && pendingProviderId === lastProviderId;
     if (pendingTrimmed.length > 0 && pendingTrimmed !== statusTrimmed && !isDuplicatePending) {
+      const pendingCreatedAt = turn.started_at ?? turn.updated_at;
       timeline.push({
         item: {
           kind: "assistant",
           id: `assistant-${turnId}-pending`,
           turn_id: turnId,
-          created_at: turn.updated_at ?? turn.started_at,
+          created_at: pendingCreatedAt,
           content: pendingContent,
           thought: "",
           is_complete: false,
         },
-        created_at: turn.updated_at ?? turn.started_at,
+        created_at: pendingCreatedAt,
         kind: "assistant",
         turn_sequence: Number.MAX_SAFE_INTEGER,
       });
