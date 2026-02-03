@@ -56,6 +56,7 @@ enum Commands {
 const DEFAULT_DAEMON_LOG_RETENTION_DAYS: u64 = 14;
 const DEFAULT_DAEMON_LOG_MAX_BYTES: u64 = 50 * 1024 * 1024;
 const DEFAULT_DAEMON_LOG_CHECK_INTERVAL_SECS: u64 = 300;
+#[cfg(feature = "daemon-heap-prof")]
 const DEFAULT_DAEMON_HEAP_PROFILE_INTERVAL_SECS: u64 = 60;
 const DAEMON_LOG_PREFIX: &str = "daemon.log.";
 
