@@ -2854,6 +2854,26 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                 Vec::new()
             }
         }
+        EventMsg::ContextCompacted(_) => {
+            let turn = ensure_turn(tracker, &event.id);
+            let notice = CrpEvent::SessionNotice {
+                session_id: session_id.clone(),
+                turn_id: Some(turn.turn_id.clone()),
+                code: "context.compacted".to_string(),
+                severity: Some("info".to_string()),
+                message: Some("Context compacted. Earlier turns were summarized.".to_string()),
+                details: None,
+                transient: None,
+            };
+            let gap = CrpEvent::SessionGap {
+                session_id,
+                reason: Some("context_compacted".to_string()),
+            };
+            vec![
+                (CrpChannel::Control, notice),
+                (CrpChannel::Control, gap),
+            ]
+        }
         _ => Vec::new(),
     }
 }

@@ -153,6 +153,21 @@ pub enum CrpEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
+    #[serde(rename = "session.notice")]
+    SessionNotice {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
+        code: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        severity: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        details: Option<Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        transient: Option<bool>,
+    },
     #[serde(rename = "turn.started")]
     TurnStarted { session_id: String, turn_id: String },
     #[serde(rename = "message.delta")]

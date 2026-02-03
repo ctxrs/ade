@@ -900,6 +900,28 @@ function buildAskUserQuestionItem(
   };
 }
 
+function buildNoticeMessageItem(
+  ev: SessionEvent,
+  turnId: string,
+): Extract<ThreadItem, { kind: "message" }> | null {
+  if (ev.event_type !== "notice") return null;
+  const payload = ev.payload_json ?? {};
+  const code = String(payload?.kind ?? payload?.code ?? "").trim().toLowerCase();
+  if (code !== "context.compacted" && code !== "context_compacted") return null;
+  const message =
+    pickFirstString(payload?.message, payload?.text, payload?.summary, payload?.content) ??
+    "Context compacted. Earlier turns were summarized.";
+  const eventId = idToString(ev.id) || `${ev.created_at}`;
+  return {
+    kind: "message",
+    id: `notice-${turnId}-${eventId}`,
+    role: "system",
+    content: message,
+    attachments: [],
+    created_at: ev.created_at,
+  };
+}
+
 function buildTurnActivityTimeline(opts: {
   turnId: string;
   turn: SessionTurn;
@@ -1332,12 +1354,19 @@ function buildWorkbenchThreadViewModelFromEvents(
       let thoughtIsCrp = false;
       const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
       const askInserted = new Set<string>();
+      const noticeItems: Array<Extract<ThreadItem, { kind: "message" }>> = [];
+      const noticeInserted = new Set<string>();
       for (const ev of events) {
         if (ev.event_type === "notice") {
           const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
           if (askItem && !askInserted.has(askItem.tool_call_id)) {
             askItems.push(askItem);
             askInserted.add(askItem.tool_call_id);
+          }
+          const noticeItem = buildNoticeMessageItem(ev, g.key);
+          if (noticeItem && !noticeInserted.has(noticeItem.id)) {
+            noticeItems.push(noticeItem);
+            noticeInserted.add(noticeItem.id);
           }
         }
         if (ev.event_type === "thought_chunk") {
@@ -1366,7 +1395,7 @@ function buildWorkbenchThreadViewModelFromEvents(
           content: thoughtContent,
         });
       }
-      const activityItems = [...g.toolItems, ...askItems];
+      const activityItems = [...g.toolItems, ...askItems, ...noticeItems];
       activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
       items.push(...activityItems);
       if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
@@ -1407,6 +1436,8 @@ function buildWorkbenchThreadViewModelFromEvents(
       const evs = eventsInRangeExclusive(u.created_at, nextUser?.created_at ?? null);
       const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
       const askInserted = new Set<string>();
+      const noticeItems: Array<Extract<ThreadItem, { kind: "message" }>> = [];
+      const noticeInserted = new Set<string>();
 
       for (const ev of evs) {
         const eventId = idToString(ev.id) || `${ev.created_at}`;
@@ -1418,6 +1449,11 @@ function buildWorkbenchThreadViewModelFromEvents(
             if (askItem && !askInserted.has(askItem.tool_call_id)) {
               askItems.push(askItem);
               askInserted.add(askItem.tool_call_id);
+            }
+            const noticeItem = buildNoticeMessageItem(ev, g.key);
+            if (noticeItem && !noticeInserted.has(noticeItem.id)) {
+              noticeItems.push(noticeItem);
+              noticeInserted.add(noticeItem.id);
             }
             break;
           }
@@ -1544,7 +1580,7 @@ function buildWorkbenchThreadViewModelFromEvents(
       }
 
       const items: ThreadItem[] = [];
-      const activityItems = [...g.toolItems, ...askItems];
+      const activityItems = [...g.toolItems, ...askItems, ...noticeItems];
       activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
       items.push(...activityItems);
       if (g.assistant?.thought.trim()) {
@@ -1631,6 +1667,8 @@ function buildWorkbenchThreadViewModelFromEvents(
     const evs = eventsInRange(u.created_at, endAt);
     const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
     const askInserted = new Set<string>();
+    const noticeItems: Array<Extract<ThreadItem, { kind: "message" }>> = [];
+    const noticeInserted = new Set<string>();
 
     for (const ev of evs) {
       const eventId = idToString(ev.id) || `${ev.created_at}`;
@@ -1642,6 +1680,11 @@ function buildWorkbenchThreadViewModelFromEvents(
           if (askItem && !askInserted.has(askItem.tool_call_id)) {
             askItems.push(askItem);
             askInserted.add(askItem.tool_call_id);
+          }
+          const noticeItem = buildNoticeMessageItem(ev, g.key);
+          if (noticeItem && !noticeInserted.has(noticeItem.id)) {
+            noticeItems.push(noticeItem);
+            noticeInserted.add(noticeItem.id);
           }
           break;
         }
@@ -1786,7 +1829,7 @@ function buildWorkbenchThreadViewModelFromEvents(
     }
 
     const items: ThreadItem[] = [];
-    const activityItems = [...g.toolItems, ...askItems];
+    const activityItems = [...g.toolItems, ...askItems, ...noticeItems];
     activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
     items.push(...activityItems);
     if (g.assistant?.thought.trim()) {
@@ -1839,12 +1882,19 @@ function buildWorkbenchThreadViewModelFromEvents(
     };
     const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
     const askInserted = new Set<string>();
+    const noticeItems: Array<Extract<ThreadItem, { kind: "message" }>> = [];
+    const noticeInserted = new Set<string>();
     for (const ev of events) {
       if (ev.event_type === "notice") {
         const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
         if (askItem && !askInserted.has(askItem.tool_call_id)) {
           askItems.push(askItem);
           askInserted.add(askItem.tool_call_id);
+        }
+        const noticeItem = buildNoticeMessageItem(ev, g.key);
+        if (noticeItem && !noticeInserted.has(noticeItem.id)) {
+          noticeItems.push(noticeItem);
+          noticeInserted.add(noticeItem.id);
         }
       }
       const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
@@ -1853,7 +1903,7 @@ function buildWorkbenchThreadViewModelFromEvents(
       if (!toolCallId) continue;
       ensureTool(g, toolCallId, ev.created_at);
     }
-    const activityItems = [...g.toolItems, ...askItems];
+    const activityItems = [...g.toolItems, ...askItems, ...noticeItems];
     activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
     const items: ThreadItem[] = [...activityItems];
     if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });

@@ -1157,6 +1157,21 @@ enum CrpEvent {
         #[serde(default)]
         reason: Option<String>,
     },
+    #[serde(rename = "session.notice")]
+    SessionNotice {
+        session_id: String,
+        #[serde(default)]
+        turn_id: Option<String>,
+        code: String,
+        #[serde(default)]
+        severity: Option<String>,
+        #[serde(default)]
+        message: Option<String>,
+        #[serde(default)]
+        details: Option<Value>,
+        #[serde(default)]
+        transient: Option<bool>,
+    },
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1475,6 +1490,38 @@ fn map_crp_event(
             events: Vec::new(),
             done: false,
         },
+        CrpEvent::SessionNotice {
+            code,
+            severity,
+            message,
+            details,
+            transient,
+            ..
+        } => {
+            let mut payload = serde_json::Map::new();
+            payload.insert("kind".to_string(), json!(code.clone()));
+            payload.insert("code".to_string(), json!(code));
+            if let Some(severity) = severity {
+                payload.insert("severity".to_string(), json!(severity));
+            }
+            if let Some(message) = message {
+                payload.insert("message".to_string(), json!(message));
+            }
+            if let Some(details) = details {
+                payload.insert("details".to_string(), details);
+            }
+            if let Some(transient) = transient {
+                payload.insert("transient".to_string(), json!(transient));
+            }
+            payload.insert("crp_seq".to_string(), json!(seq));
+            MappedCrpEvent {
+                events: vec![NormalizedEvent {
+                    event_type: SessionEventType::Notice,
+                    payload_json: Value::Object(payload),
+                }],
+                done: false,
+            }
+        }
         CrpEvent::SessionGap { reason, .. } => MappedCrpEvent {
             events: vec![NormalizedEvent {
                 event_type: SessionEventType::Notice,
@@ -1611,6 +1658,7 @@ fn extract_output_text(output: &Value) -> Option<String> {
 fn event_turn_id(event: &CrpEvent) -> Option<&str> {
     match event {
         CrpEvent::SessionGap { turn_id, .. } => turn_id.as_deref(),
+        CrpEvent::SessionNotice { turn_id, .. } => turn_id.as_deref(),
         CrpEvent::TurnStarted { turn_id, .. }
         | CrpEvent::MessageDelta { turn_id, .. }
         | CrpEvent::MessageFinal { turn_id, .. }
@@ -1638,7 +1686,8 @@ fn event_matches_session(event: &CrpEvent, session_id: &str) -> bool {
         | CrpEvent::ToolOutputDelta { session_id: id, .. }
         | CrpEvent::ToolCompleted { session_id: id, .. }
         | CrpEvent::TurnCompleted { session_id: id, .. }
-        | CrpEvent::SessionGap { session_id: id, .. } => id == session_id,
+        | CrpEvent::SessionGap { session_id: id, .. }
+        | CrpEvent::SessionNotice { session_id: id, .. } => id == session_id,
         CrpEvent::ModelsList { .. } => false,
     }
 }
