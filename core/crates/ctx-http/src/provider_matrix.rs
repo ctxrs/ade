@@ -326,7 +326,12 @@ pub fn get_entry<'a>(
     matrix: &'a ProviderMatrix,
     provider_id: &str,
 ) -> Option<&'a ProviderMatrixEntry> {
-    matrix.providers.iter().find(|p| p.id == provider_id)
+    let lookup_id = match provider_id {
+        "codex" => "codex-crp",
+        "claude" => "claude-crp",
+        _ => provider_id,
+    };
+    matrix.providers.iter().find(|p| p.id == lookup_id)
 }
 
 pub fn is_managed_supported(matrix: &ProviderMatrix, provider_id: &str) -> bool {

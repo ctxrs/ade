@@ -25,7 +25,6 @@ use crate::installer;
 use crate::ops_events::OpsEvent;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::provider_accounts;
-use crate::provider_debug::apply_acp_heap_profile_env;
 use crate::settings::{self, NetworkContext, ProviderControlMode};
 use crate::telemetry::TelemetryEvent;
 use crate::workspace_config;
@@ -476,14 +475,6 @@ async fn start_turn(
             }
         }
     }
-    if !provider_env.contains_key("CTX_WORKER_GATEWAY_URL") {
-        apply_acp_heap_profile_env(
-            &session.provider_id,
-            &mut provider_env,
-            &state.core.data_root,
-        );
-    }
-
     let prompt_config = workspace_config::load_agent_system_prompt_append(workdir)
         .await
         .unwrap_or_else(|_| workspace_config::AgentSystemPromptAppendConfig::new_default(workdir));

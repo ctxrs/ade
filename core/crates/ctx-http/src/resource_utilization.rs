@@ -1,22 +1,22 @@
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use serde::Serialize;
-use sysinfo::{Disk, Disks, Pid, ProcessRefreshKind, System};
+use sysinfo::{Disk, Disks, System};
+
+#[cfg(not(target_os = "linux"))]
+use sysinfo::{Pid, ProcessRefreshKind};
 
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_providers::adapters::ProviderProcessInfo;
 
-#[cfg(target_os = "linux")]
-use crate::tool_cgroup::TOOL_SLICE_UNIT;
-
 const SYSTEM_CACHE_TTL: Duration = Duration::from_millis(750);
 const DISK_CACHE_TTL: Duration = Duration::from_secs(30);
-const MAX_CHILD_PROCESSES: usize = 2000;
-
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemSnapshot {
     pub cpu_pct: f32,
@@ -120,11 +120,19 @@ pub struct WorkspaceDiskCache {
     pub snapshot: WorkspaceDiskSnapshot,
 }
 
+#[derive(Debug, Clone)]
+struct ProcCpuSample {
+    total_ticks: u64,
+    at: Instant,
+}
+
 pub struct ResourceSampler {
     system: System,
     disks: Disks,
     last_refresh: Option<Instant>,
     disk_cache: HashMap<WorkspaceId, WorkspaceDiskCache>,
+    proc_cpu: HashMap<u32, ProcCpuSample>,
+    clock_ticks: u64,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -153,11 +161,14 @@ impl ResourceSampler {
         let system = System::new();
         let mut disks = Disks::new_with_refreshed_list();
         disks.refresh();
+        let clock_ticks = clock_ticks_per_second();
         Self {
             system,
             disks,
             last_refresh: None,
             disk_cache: HashMap::new(),
+            proc_cpu: HashMap::new(),
+            clock_ticks,
         }
     }
 
@@ -205,49 +216,113 @@ impl ResourceSampler {
         daemon_pid: u32,
         providers: &[ProviderProcessInfo],
     ) -> ResourceProcesses {
-        let mut pids = Vec::with_capacity(1 + providers.len());
-        pids.push(Pid::from_u32(daemon_pid));
-        for provider in providers {
-            pids.push(Pid::from_u32(provider.pid));
-        }
-        for pid in pids {
-            let _ = self
-                .system
-                .refresh_process_specifics(pid, process_refresh_kind());
-        }
-    // Skip child aggregation to avoid full process table scans.
-    let children = HashMap::new();
+        #[cfg(target_os = "linux")]
+        {
+            let now = Instant::now();
+            let mut seen = HashSet::new();
+            let daemon = proc_snapshot_from_proc(
+                daemon_pid,
+                "ctx daemon",
+                now,
+                &mut self.proc_cpu,
+                self.clock_ticks,
+                &mut seen,
+            );
+            let providers = providers
+                .iter()
+                .filter_map(|p| {
+                    let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
+                    proc_snapshot_from_proc(
+                        p.pid,
+                        &label,
+                        now,
+                        &mut self.proc_cpu,
+                        self.clock_ticks,
+                        &mut seen,
+                    )
+                })
+                .collect();
 
-        let daemon = aggregate_process(&self.system, &children, daemon_pid, "ctx daemon");
-        let providers = providers
-            .iter()
-            .filter_map(|p| {
-                let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
-                aggregate_process(&self.system, &children, p.pid, &label)
-            })
-            .collect();
+            self.proc_cpu.retain(|pid, _| seen.contains(pid));
 
-        ResourceProcesses { daemon, providers }
+            return ResourceProcesses { daemon, providers };
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut pids = Vec::with_capacity(1 + providers.len());
+            pids.push(Pid::from_u32(daemon_pid));
+            for provider in providers {
+                pids.push(Pid::from_u32(provider.pid));
+            }
+            for pid in pids {
+                let _ = self
+                    .system
+                    .refresh_process_specifics(pid, process_refresh_kind());
+            }
+
+            let daemon =
+                aggregate_process_sysinfo(&self.system, daemon_pid, "ctx daemon");
+            let providers = providers
+                .iter()
+                .filter_map(|p| {
+                    let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
+                    aggregate_process_sysinfo(&self.system, p.pid, &label)
+                })
+                .collect();
+
+            ResourceProcesses { daemon, providers }
+        }
     }
 
     pub fn provider_memory_snapshot(
         &mut self,
         providers: &[ProviderProcessInfo],
     ) -> Vec<ProviderMemorySample> {
-        for provider in providers {
-            let _ = self
-                .system
-                .refresh_process_specifics(Pid::from_u32(provider.pid), memory_refresh_kind());
+        #[cfg(target_os = "linux")]
+        {
+            return providers
+                .iter()
+                .filter_map(|p| {
+                    let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
+                    let rollup = read_proc_memory_rollup(p.pid)?;
+                    Some(ProviderMemorySample {
+                        provider_id: p.provider_id.clone(),
+                        label,
+                        pid: p.pid,
+                        memory_bytes: rollup
+                            .rss_bytes
+                            .or(rollup.vm_hwm_bytes)
+                            .unwrap_or(0),
+                        tool_memory_bytes: 0,
+                    })
+                })
+                .collect();
         }
-        // Limit to provider PIDs to avoid expensive full-process refreshes.
-        let children = HashMap::new();
-        providers
-            .iter()
-            .filter_map(|p| {
-                let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
-                aggregate_provider_memory(&self.system, &children, p.pid, &p.provider_id, &label)
-            })
-            .collect()
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            for provider in providers {
+                let _ = self.system.refresh_process_specifics(
+                    Pid::from_u32(provider.pid),
+                    memory_refresh_kind(),
+                );
+            }
+            return providers
+                .iter()
+                .filter_map(|p| {
+                    let label = p.label.clone().unwrap_or_else(|| p.provider_id.clone());
+                    let proc = self.system.process(Pid::from_u32(p.pid))?;
+                    Some(ProviderMemorySample {
+                        provider_id: p.provider_id.clone(),
+                        label,
+                        pid: p.pid,
+                        memory_bytes: proc.memory(),
+                        tool_memory_bytes: 0,
+                    })
+                })
+                .collect();
+        }
     }
 
     pub fn provider_memory_rollups(
@@ -358,135 +433,62 @@ pub fn compute_workspace_disk_snapshot(
     }
 }
 
-fn aggregate_process(
-    system: &System,
-    children: &HashMap<Pid, Vec<Pid>>,
+#[cfg(target_os = "linux")]
+fn proc_snapshot_from_proc(
     pid: u32,
     label: &str,
+    now: Instant,
+    proc_cpu: &mut HashMap<u32, ProcCpuSample>,
+    clock_ticks: u64,
+    seen: &mut HashSet<u32>,
 ) -> Option<ResourceProcess> {
-    let root = Pid::from_u32(pid);
-    system.process(root)?;
-    let mut stack = vec![root];
-    let mut cpu_pct = 0.0f32;
-    let mut memory_bytes = 0u64;
-    let mut virtual_memory_bytes = 0u64;
-    let mut child_count = 0u64;
-    let mut child_processes = Vec::new();
-    let mut children_truncated = false;
-    while let Some(next) = stack.pop() {
-        if let Some(proc) = system.process(next) {
-            cpu_pct += proc.cpu_usage();
-            // sysinfo reports process memory values in bytes.
-            memory_bytes = memory_bytes.saturating_add(proc.memory());
-            virtual_memory_bytes = virtual_memory_bytes.saturating_add(proc.virtual_memory());
-
-            if next != root && !children_truncated {
-                if child_processes.len() >= MAX_CHILD_PROCESSES {
-                    children_truncated = true;
-                } else {
-                    let cmd = proc.cmd();
-                    let cmdline = cmd.first().map(|first| {
-                        let basename = Path::new(first)
-                            .file_name()
-                            .map(|name| name.to_string_lossy().to_string())
-                            .unwrap_or_else(|| first.clone());
-                        if cmd.len() > 1 {
-                            format!("{basename} (args redacted)")
-                        } else {
-                            basename
-                        }
-                    });
-                    child_processes.push(ResourceChildProcess {
-                        pid: next.as_u32(),
-                        parent_pid: proc.parent().map(|p| p.as_u32()),
-                        name: proc.name().to_string(),
-                        cmdline,
-                        cpu_pct: proc.cpu_usage(),
-                        memory_bytes: proc.memory(),
-                        virtual_memory_bytes: proc.virtual_memory(),
-                    });
-                }
-            }
-        }
-        if let Some(next_children) = children.get(&next) {
-            child_count = child_count.saturating_add(next_children.len() as u64);
-            stack.extend(next_children.iter().copied());
-        }
-    }
-
-    child_processes.sort_by(|a, b| {
-        b.memory_bytes
-            .cmp(&a.memory_bytes)
-            .then_with(|| b.cpu_pct.total_cmp(&a.cpu_pct))
-            .then_with(|| a.pid.cmp(&b.pid))
-    });
+    let rollup = read_proc_memory_rollup(pid)?;
+    let cpu_pct = read_proc_cpu_pct(pid, now, proc_cpu, clock_ticks);
+    let memory_bytes = rollup.rss_bytes.or(rollup.vm_hwm_bytes).unwrap_or(0);
+    let virtual_memory_bytes = rollup
+        .vm_size_bytes
+        .or(rollup.vm_hwm_bytes)
+        .unwrap_or(0);
+    seen.insert(pid);
     Some(ResourceProcess {
         label: label.to_string(),
         pid,
         cpu_pct,
         memory_bytes,
         virtual_memory_bytes,
-        child_count,
-        children: child_processes,
-        children_truncated,
+        child_count: 0,
+        children: Vec::new(),
+        children_truncated: false,
     })
 }
 
+#[cfg(not(target_os = "linux"))]
+fn aggregate_process_sysinfo(
+    system: &System,
+    pid: u32,
+    label: &str,
+) -> Option<ResourceProcess> {
+    let proc = system.process(Pid::from_u32(pid))?;
+    Some(ResourceProcess {
+        label: label.to_string(),
+        pid,
+        cpu_pct: proc.cpu_usage(),
+        memory_bytes: proc.memory(),
+        virtual_memory_bytes: proc.virtual_memory(),
+        child_count: 0,
+        children: Vec::new(),
+        children_truncated: false,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
 fn process_refresh_kind() -> ProcessRefreshKind {
     ProcessRefreshKind::new().with_memory().with_cpu()
 }
 
+#[cfg(not(target_os = "linux"))]
 fn memory_refresh_kind() -> ProcessRefreshKind {
     ProcessRefreshKind::new().with_memory()
-}
-
-fn aggregate_provider_memory(
-    system: &System,
-    children: &HashMap<Pid, Vec<Pid>>,
-    pid: u32,
-    provider_id: &str,
-    label: &str,
-) -> Option<ProviderMemorySample> {
-    let root = Pid::from_u32(pid);
-    system.process(root)?;
-    let mut stack = vec![root];
-    let mut memory_bytes = 0u64;
-    let mut tool_memory_bytes = 0u64;
-    while let Some(next) = stack.pop() {
-        if let Some(proc) = system.process(next) {
-            let bytes = proc.memory();
-            if next != root && pid_in_tool_slice(next.as_u32()) {
-                tool_memory_bytes = tool_memory_bytes.saturating_add(bytes);
-            } else {
-                memory_bytes = memory_bytes.saturating_add(bytes);
-            }
-        }
-        if let Some(next_children) = children.get(&next) {
-            stack.extend(next_children.iter().copied());
-        }
-    }
-
-    Some(ProviderMemorySample {
-        provider_id: provider_id.to_string(),
-        label: label.to_string(),
-        pid,
-        memory_bytes,
-        tool_memory_bytes,
-    })
-}
-
-#[cfg(target_os = "linux")]
-fn pid_in_tool_slice(pid: u32) -> bool {
-    let path = format!("/proc/{pid}/cgroup");
-    std::fs::read_to_string(path)
-        .ok()
-        .map(|contents| contents.lines().any(|line| line.contains(TOOL_SLICE_UNIT)))
-        .unwrap_or(false)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn pid_in_tool_slice(_pid: u32) -> bool {
-    false
 }
 
 impl From<&Disk> for DiskSnapshot {
@@ -582,4 +584,57 @@ fn parse_kb_line(line: &str, key: &str) -> Option<u64> {
     }
     let value = parts.next()?.parse::<u64>().ok()?;
     Some(value.saturating_mul(1024))
+}
+
+#[cfg(target_os = "linux")]
+fn read_proc_cpu_pct(
+    pid: u32,
+    now: Instant,
+    proc_cpu: &mut HashMap<u32, ProcCpuSample>,
+    clock_ticks: u64,
+) -> f32 {
+    let total_ticks = match read_proc_cpu_ticks(pid) {
+        Some(total) => total,
+        None => return 0.0,
+    };
+    let prev = proc_cpu.insert(
+        pid,
+        ProcCpuSample {
+            total_ticks,
+            at: now,
+        },
+    );
+    let Some(prev) = prev else {
+        return 0.0;
+    };
+    let delta_ticks = total_ticks.saturating_sub(prev.total_ticks);
+    let delta_secs = now.duration_since(prev.at).as_secs_f64();
+    if delta_secs <= 0.0 || clock_ticks == 0 {
+        return 0.0;
+    }
+    let cpu = (delta_ticks as f64 / clock_ticks as f64) / delta_secs * 100.0;
+    cpu as f32
+}
+
+#[cfg(target_os = "linux")]
+fn read_proc_cpu_ticks(pid: u32) -> Option<u64> {
+    let stat_path = format!("/proc/{pid}/stat");
+    let contents = std::fs::read_to_string(stat_path).ok()?;
+    let end = contents.rfind(')')?;
+    let rest = contents.get(end + 2..)?;
+    let fields: Vec<&str> = rest.split_whitespace().collect();
+    let utime: u64 = fields.get(11)?.parse().ok()?;
+    let stime: u64 = fields.get(12)?.parse().ok()?;
+    Some(utime.saturating_add(stime))
+}
+
+fn clock_ticks_per_second() -> u64 {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        let ticks = libc::sysconf(libc::_SC_CLK_TCK);
+        if ticks > 0 {
+            return ticks as u64;
+        }
+    }
+    100
 }
