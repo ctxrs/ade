@@ -8,6 +8,8 @@ use tokio::sync::{broadcast, mpsc, watch, Mutex, Notify};
 
 use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
+use crate::egress_proxy::EgressProxy;
+use crate::harness_runtime::HarnessRuntimeManager;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
 use crate::mobile_tunnel::MobileTunnelManager;
 use crate::ops_events::OpsEvents;
@@ -106,6 +108,11 @@ pub struct TransportRuntime {
     pub lsp_diag_forwarders: Mutex<HashSet<String>>,
 }
 
+pub struct ExecutionRuntime {
+    pub harness: Arc<HarnessRuntimeManager>,
+    pub egress_proxy: Arc<EgressProxy>,
+}
+
 pub struct AppState {
     pub core: CoreState,
     pub sessions: SessionRuntime,
@@ -113,6 +120,7 @@ pub struct AppState {
     pub providers: ProviderRuntime,
     pub telemetry: TelemetryRuntime,
     pub transport: TransportRuntime,
+    pub execution: ExecutionRuntime,
 }
 
 pub(crate) struct WorktreeBootstrapGate {
@@ -335,6 +343,12 @@ impl AppState {
         let telemetry = Telemetry::new(data_root.clone());
         let ops_events = OpsEvents::new(data_root.clone());
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
+        let egress_proxy = Arc::new(EgressProxy::spawn(ops_events.clone()).expect("egress proxy"));
+        let harness_runtime = Arc::new(HarnessRuntimeManager::new(
+            data_root.clone(),
+            egress_proxy.clone(),
+        ));
+        harness_runtime.spawn_background_podman_machine_download();
         let workspace_active_snapshot = Arc::new(WorkspaceActiveSnapshotHub::new());
         let web_sessions = Arc::new(WebSessionManager::new());
         let merge_queue_notify = Arc::new(Notify::new());
@@ -401,6 +415,10 @@ impl AppState {
                 merge_queue_notify,
                 lsp_diag_broadcaster,
                 lsp_diag_forwarders: Mutex::new(HashSet::new()),
+            },
+            execution: ExecutionRuntime {
+                harness: harness_runtime,
+                egress_proxy,
             },
         }
     }

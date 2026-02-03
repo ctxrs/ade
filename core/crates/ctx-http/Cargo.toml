@@ -19,6 +19,7 @@ ctx-store = { path = "../ctx-store" }
 directories.workspace = true
 futures.workspace = true
 http = "1"
+http-body = "1"
 reqwest.workspace = true
 rcgen.workspace = true
 rustls.workspace = true
@@ -47,6 +48,8 @@ zip = "2"
 sha2 = "0.10"
 hex = "0.4"
 base64 = "0.22"
+bytes = "1"
+libc = "0.2"
 mime_guess = "2"
 chacha20poly1305 = { version = "0.10", features = ["std"] }
 hkdf = "0.12"
@@ -71,13 +74,15 @@ aws-sdk-sts = "1"
 aws-credential-types = "1"
 notify.workspace = true
 toml_edit = "0.22"
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio", "server"] }
+http-body-util = "0.1"
 
 [dev-dependencies]
 azure_identity = { version = "0.21", default-features = false, features = ["development", "old_azure_cli", "enable_reqwest_rustls"] }
 azure_core = { version = "0.21", default-features = false, features = ["enable_reqwest_rustls"] }
 gcp_auth = "0.12"
 tempfile = "3"
-hyper = { version = "1", features = ["full"] }
 reqwest.workspace = true
 
 [features]

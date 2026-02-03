@@ -15,6 +15,7 @@ use ctx_store::WorktreeBootstrapResultUpdate;
 
 use crate::daemon::AppState;
 use crate::logs;
+use crate::settings::{self, NetworkContext};
 
 const CONFIG_REL_PATH: &str = ".ctx/config.toml";
 const DEFAULT_TIMEOUT_SEC: u64 = 60;
@@ -231,6 +232,19 @@ async fn run_worktree_bootstrap_plan(
         steps,
         ..
     } = plan;
+    let settings = settings::load_settings(&state.core.data_root).await;
+    let network_profiles = settings.network_profiles.unwrap_or_default();
+    let network_profile = network_profiles.profile(NetworkContext::WorktreeSetup);
+    let proxy_env = state
+        .execution
+        .egress_proxy
+        .proxy_env_for_context(
+            workspace.id,
+            NetworkContext::WorktreeSetup,
+            network_profile,
+            "127.0.0.1",
+        )
+        .await;
 
     let started_at = Utc::now();
     let mut log = String::new();
@@ -249,7 +263,8 @@ async fn run_worktree_bootstrap_plan(
         last_step = Some(step.clone());
         log.push_str(&format!("$ {}\n", step.label));
 
-        let result = match run_bootstrap_step(step, workspace, worktree, timeout).await {
+        let result = match run_bootstrap_step(step, workspace, worktree, timeout, &proxy_env).await
+        {
             Ok(result) => result,
             Err(err) => {
                 failure_status = Some(WorktreeBootstrapStatus::Failed);
@@ -462,6 +477,7 @@ async fn run_bootstrap_step(
     workspace: &Workspace,
     worktree: &Worktree,
     timeout: Duration,
+    proxy_env: &std::collections::HashMap<String, String>,
 ) -> Result<BootstrapCommandResult> {
     let mut cmd = match &step.kind {
         BootstrapStepKind::Script { path, .. } => command_for_script(path),
@@ -495,6 +511,9 @@ async fn run_bootstrap_step(
                 .as_deref()
                 .unwrap_or(&worktree.base_commit_sha),
         );
+    for (key, value) in proxy_env {
+        cmd.env(key, value);
+    }
 
     let mut child = cmd
         .stdout(Stdio::piped())

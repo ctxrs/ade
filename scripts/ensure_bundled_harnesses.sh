@@ -51,21 +51,46 @@ read_const() {
 NODE_VERSION="$(read_const NODE_VERSION "$INSTALLER_RS")"
 PYTHON_VERSION="$(read_const PYTHON_VERSION "$INSTALLER_RS")"
 PYTHON_BUILD_TAG="$(read_const PYTHON_BUILD_TAG "$INSTALLER_RS")"
+PODMAN_VERSION="${PODMAN_VERSION:-}"
+PODMAN_ARCHIVE_URL="${PODMAN_ARCHIVE_URL:-}"
+PODMAN_ARCHIVE_PATH="${PODMAN_ARCHIVE_PATH:-}"
+PODMAN_BIN_REL="${PODMAN_BIN_REL:-}"
+PODMAN_EXTRACT_SUBDIR="${PODMAN_EXTRACT_SUBDIR:-}"
 
-os_raw="$(uname -s)"
-case "$os_raw" in
-  Linux) os="linux"; matrix_os="linux";;
-  Darwin) os="macos"; matrix_os="darwin";;
-  MINGW*|MSYS*|CYGWIN*|Windows_NT) os="windows"; matrix_os="windows";;
-  *) log "error: unsupported OS: $os_raw"; exit 3;;
-esac
+bundle_os="${CTX_BUNDLE_OS:-}"
+bundle_arch="${CTX_BUNDLE_ARCH:-}"
 
-arch_raw="$(uname -m)"
-case "$arch_raw" in
-  x86_64|amd64) arch="x86_64"; matrix_arch="x86_64";;
-  aarch64|arm64) arch="aarch64"; matrix_arch="aarch64";;
-  *) log "error: unsupported architecture: $arch_raw"; exit 3;;
-esac
+if [[ -n "$bundle_os" ]]; then
+  case "$bundle_os" in
+    linux) os="linux"; matrix_os="linux";;
+    macos|darwin) os="macos"; matrix_os="darwin";;
+    windows|win32) os="windows"; matrix_os="windows";;
+    *) log "error: unsupported CTX_BUNDLE_OS: $bundle_os"; exit 3;;
+  esac
+else
+  os_raw="$(uname -s)"
+  case "$os_raw" in
+    Linux) os="linux"; matrix_os="linux";;
+    Darwin) os="macos"; matrix_os="darwin";;
+    MINGW*|MSYS*|CYGWIN*|Windows_NT) os="windows"; matrix_os="windows";;
+    *) log "error: unsupported OS: $os_raw"; exit 3;;
+  esac
+fi
+
+if [[ -n "$bundle_arch" ]]; then
+  case "$bundle_arch" in
+    x86_64|amd64) arch="x86_64"; matrix_arch="x86_64";;
+    aarch64|arm64) arch="aarch64"; matrix_arch="aarch64";;
+    *) log "error: unsupported CTX_BUNDLE_ARCH: $bundle_arch"; exit 3;;
+  esac
+else
+  arch_raw="$(uname -m)"
+  case "$arch_raw" in
+    x86_64|amd64) arch="x86_64"; matrix_arch="x86_64";;
+    aarch64|arm64) arch="aarch64"; matrix_arch="aarch64";;
+    *) log "error: unsupported architecture: $arch_raw"; exit 3;;
+  esac
+fi
 
 target_key="${matrix_os}-${matrix_arch}"
 
@@ -273,6 +298,109 @@ ensure_python_runtime() {
   fi
 }
 
+resolve_podman_root() {
+  local extract_dir="$1"
+  if [[ -n "$PODMAN_EXTRACT_SUBDIR" ]]; then
+    printf '%s' "${extract_dir}/${PODMAN_EXTRACT_SUBDIR}"
+    return
+  fi
+  local entries
+  entries=("$extract_dir"/*)
+  if [[ ${#entries[@]} -eq 1 && -d "${entries[0]}" ]]; then
+    printf '%s' "${entries[0]}"
+    return
+  fi
+  printf '%s' "$extract_dir"
+}
+
+ensure_podman_runtime() {
+  if [[ "${CTX_BUNDLE_PODMAN:-0}" != "1" ]]; then
+    return
+  fi
+  if [[ -z "$PODMAN_VERSION" ]]; then
+    log "error: PODMAN_VERSION is required when CTX_BUNDLE_PODMAN=1"
+    exit 3
+  fi
+
+  local podman_root="runtimes/podman/${os}/${arch}/podman-${PODMAN_VERSION}"
+  local podman_root_abs="$bundle_dir/$podman_root"
+  local podman_bin_rel
+  if [[ -n "$PODMAN_BIN_REL" ]]; then
+    podman_bin_rel="$PODMAN_BIN_REL"
+  elif [[ "$os" == "windows" ]]; then
+    podman_bin_rel="podman.exe"
+  else
+    podman_bin_rel="bin/podman"
+  fi
+  local podman_bin_abs="$podman_root_abs/$podman_bin_rel"
+
+  if [[ -f "$podman_bin_abs" ]]; then
+    return
+  fi
+
+  local archive_path=""
+  if [[ -n "$PODMAN_ARCHIVE_PATH" ]]; then
+    archive_path="$PODMAN_ARCHIVE_PATH"
+  elif [[ -n "$PODMAN_ARCHIVE_URL" ]]; then
+    local dest_dir
+    dest_dir="$(dirname "$podman_root_abs")"
+    mkdir -p "$dest_dir"
+    local ext="tar.gz"
+    if [[ "$PODMAN_ARCHIVE_URL" == *.zip ]]; then
+      ext="zip"
+    elif [[ "$PODMAN_ARCHIVE_URL" == *.tar ]]; then
+      ext="tar"
+    elif [[ "$PODMAN_ARCHIVE_URL" == *.tgz ]]; then
+      ext="tgz"
+    fi
+    archive_path="$(mktemp -p "$dest_dir" "podman-${PODMAN_VERSION}.XXXXXX.${ext}")"
+    fetch_file "$PODMAN_ARCHIVE_URL" "$archive_path"
+  else
+    log "error: PODMAN_ARCHIVE_URL or PODMAN_ARCHIVE_PATH is required when CTX_BUNDLE_PODMAN=1"
+    exit 3
+  fi
+
+  local extract_dir
+  extract_dir="$(mktemp -d "$(dirname "$podman_root_abs")/podman-${PODMAN_VERSION}.extract.XXXXXX")"
+  case "$archive_path" in
+    *.zip)
+      require_cmd unzip
+      unzip -q "$archive_path" -d "$extract_dir"
+      ;;
+    *.tar)
+      require_cmd tar
+      tar -xf "$archive_path" -C "$extract_dir"
+      ;;
+    *.tgz|*.tar.gz)
+      require_cmd tar
+      tar -xzf "$archive_path" -C "$extract_dir"
+      ;;
+    *)
+      log "error: unsupported podman archive type: $archive_path"
+      exit 4
+      ;;
+  esac
+
+  local extracted_root
+  extracted_root="$(resolve_podman_root "$extract_dir")"
+  if [[ ! -d "$extracted_root" ]]; then
+    log "error: podman extraction failed (missing root at $extracted_root)"
+    exit 4
+  fi
+
+  rm -rf "$podman_root_abs"
+  mv "$extracted_root" "$podman_root_abs"
+  rm -rf "$extract_dir"
+  if [[ "$archive_path" != "$PODMAN_ARCHIVE_PATH" ]]; then
+    rm -f "$archive_path"
+  fi
+
+  if [[ ! -f "$podman_bin_abs" ]]; then
+    log "error: podman runtime incomplete after extract (missing $podman_bin_rel)"
+    exit 4
+  fi
+}
+
 venv_bin_dir() {
   local venv_dir="$1"
   if [[ "$os" == "windows" ]]; then
@@ -326,6 +454,7 @@ npm_install_bundle() {
 
 ensure_node_runtime
 ensure_python_runtime
+ensure_podman_runtime
 
 node_root_rel="runtimes/node/${os}/${arch}/node-v${NODE_VERSION}-${node_target}"
 if [[ "$os" == "windows" ]]; then
@@ -350,6 +479,23 @@ else
 fi
 python_root="$bundle_dir/$python_root_rel"
 python_bin="$python_root/$python_bin_rel"
+
+podman_root_rel=""
+podman_bin_rel=""
+podman_root=""
+podman_bin=""
+if [[ "${CTX_BUNDLE_PODMAN:-0}" == "1" ]]; then
+  podman_root_rel="runtimes/podman/${os}/${arch}/podman-${PODMAN_VERSION}"
+  if [[ -n "$PODMAN_BIN_REL" ]]; then
+    podman_bin_rel="$PODMAN_BIN_REL"
+  elif [[ "$os" == "windows" ]]; then
+    podman_bin_rel="podman.exe"
+  else
+    podman_bin_rel="bin/podman"
+  fi
+  podman_root="$bundle_dir/$podman_root_rel"
+  podman_bin="$podman_root/$podman_bin_rel"
+fi
 
 providers_src="$(mktemp /tmp/ctx-bundle-providers.XXXXXX)"
 run_python - "$MATRIX_JSON" "$target_key" "$ROOT/core/crates/ctx-http/Cargo.toml" > "$providers_src" <<'PY'
@@ -721,12 +867,42 @@ entry = {
 print(json.dumps(entry, separators=(",", ":")))
 PY
 
+if [[ "${CTX_BUNDLE_PODMAN:-0}" == "1" ]]; then
+  if [[ ! -f "$podman_bin" ]]; then
+    log "error: podman binary missing at $podman_bin"
+    exit 4
+  fi
+  podman_sha="$(sha256_file "$podman_bin")"
+  PODMAN_VERSION_ENV="$PODMAN_VERSION" \
+  PODMAN_OS_ENV="$os" \
+  PODMAN_ARCH_ENV="$arch" \
+  PODMAN_SHA_ENV="$podman_sha" \
+  PODMAN_ROOT_REL_ENV="$podman_root_rel" \
+  PODMAN_BIN_REL_ENV="$podman_bin_rel" \
+  run_python - <<'PY' >> "$runtimes_out"
+import json
+import os
+
+entry = {
+    "id": "podman",
+    "version": os.environ["PODMAN_VERSION_ENV"],
+    "os": os.environ["PODMAN_OS_ENV"],
+    "arch": os.environ["PODMAN_ARCH_ENV"],
+    "sha256": os.environ["PODMAN_SHA_ENV"],
+    "root": os.environ["PODMAN_ROOT_REL_ENV"],
+    "bin": os.environ["PODMAN_BIN_REL_ENV"],
+}
+print(json.dumps(entry, separators=(",", ":")))
+PY
+fi
+
 manifest_path="$bundle_dir/manifest.json"
 GENERATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 PROVIDERS_OUT="$providers_out" \
 RUNTIMES_OUT="$runtimes_out" \
 GENERATED_AT_ENV="$GENERATED_AT" \
 MANIFEST_PATH="$manifest_path" \
+BUNDLE_APPEND_ENV="${CTX_BUNDLE_APPEND:-}" \
 run_python - <<'PY'
 import json
 import os
@@ -754,6 +930,51 @@ manifest = {
     "providers": providers,
     "runtimes": runtimes,
 }
+
+append = os.environ.get("BUNDLE_APPEND_ENV", "").strip().lower() in ("1", "true", "yes")
+if append and manifest_path.exists():
+    try:
+        existing = json.loads(manifest_path.read_text())
+    except Exception:
+        existing = None
+    if isinstance(existing, dict) and existing.get("version") == manifest["version"]:
+        providers_by_key = {}
+        for entry in existing.get("providers", []) or []:
+            key = (
+                entry.get("id"),
+                entry.get("protocol"),
+                entry.get("os"),
+                entry.get("arch"),
+            )
+            providers_by_key[key] = entry
+        for entry in providers:
+            key = (
+                entry.get("id"),
+                entry.get("protocol"),
+                entry.get("os"),
+                entry.get("arch"),
+            )
+            providers_by_key[key] = entry
+        runtimes_by_key = {}
+        for entry in existing.get("runtimes", []) or []:
+            key = (entry.get("id"), entry.get("os"), entry.get("arch"))
+            runtimes_by_key[key] = entry
+        for entry in runtimes:
+            key = (entry.get("id"), entry.get("os"), entry.get("arch"))
+            runtimes_by_key[key] = entry
+        manifest["providers"] = sorted(
+            providers_by_key.values(),
+            key=lambda e: (
+                e.get("id", ""),
+                e.get("protocol", ""),
+                e.get("os", ""),
+                e.get("arch", ""),
+            ),
+        )
+        manifest["runtimes"] = sorted(
+            runtimes_by_key.values(),
+            key=lambda e: (e.get("id", ""), e.get("os", ""), e.get("arch", "")),
+        )
 
 manifest_path.write_text(json.dumps(manifest, indent=2))
 PY

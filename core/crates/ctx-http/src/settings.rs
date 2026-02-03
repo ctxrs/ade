@@ -30,6 +30,10 @@ pub struct Settings {
     pub cloud_workers: Option<CloudWorkersSettings>,
     #[serde(default)]
     pub storage: Option<StorageSettings>,
+    #[serde(default)]
+    pub execution: Option<ExecutionSettings>,
+    #[serde(default)]
+    pub network_profiles: Option<NetworkProfilesSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -232,6 +236,169 @@ impl Default for SandboxingSettings {
         Self {
             provider_control_mode: ProviderControlMode::Full,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionMode {
+    #[default]
+    Auto,
+    Host,
+    Container,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerRuntimeKind {
+    #[default]
+    Podman,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerMountMode {
+    #[default]
+    HostMounted,
+    Sealed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerNetworkMode {
+    #[default]
+    LlmOnly,
+    Allowlist,
+    All,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerExecutionSettings {
+    pub runtime: ContainerRuntimeKind,
+    pub mount_mode: ContainerMountMode,
+    pub network_mode: ContainerNetworkMode,
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+}
+
+impl Default for ContainerExecutionSettings {
+    fn default() -> Self {
+        Self {
+            runtime: ContainerRuntimeKind::Podman,
+            mount_mode: ContainerMountMode::HostMounted,
+            network_mode: ContainerNetworkMode::LlmOnly,
+            allowlist: Vec::new(),
+            image: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionSettings {
+    pub mode: ExecutionMode,
+    #[serde(default)]
+    pub container: ContainerExecutionSettings,
+}
+
+impl Default for ExecutionSettings {
+    fn default() -> Self {
+        Self {
+            mode: ExecutionMode::Auto,
+            container: ContainerExecutionSettings::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkContext {
+    AgentDefault,
+    MergeQueue,
+    WorktreeSetup,
+    UserShell,
+}
+
+impl NetworkContext {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NetworkContext::AgentDefault => "agent_default",
+            NetworkContext::MergeQueue => "merge_queue",
+            NetworkContext::WorktreeSetup => "worktree_setup",
+            NetworkContext::UserShell => "user_shell",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkProfile {
+    pub mode: ContainerNetworkMode,
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+}
+
+impl Default for NetworkProfile {
+    fn default() -> Self {
+        Self {
+            mode: ContainerNetworkMode::LlmOnly,
+            allowlist: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkProfilesSettings {
+    pub agent_default: NetworkProfile,
+    pub merge_queue: NetworkProfile,
+    pub worktree_setup: NetworkProfile,
+    pub user_shell: NetworkProfile,
+}
+
+impl Default for NetworkProfilesSettings {
+    fn default() -> Self {
+        Self {
+            agent_default: NetworkProfile::default(),
+            merge_queue: NetworkProfile {
+                mode: ContainerNetworkMode::All,
+                allowlist: Vec::new(),
+            },
+            worktree_setup: NetworkProfile {
+                mode: ContainerNetworkMode::All,
+                allowlist: Vec::new(),
+            },
+            user_shell: NetworkProfile {
+                mode: ContainerNetworkMode::All,
+                allowlist: Vec::new(),
+            },
+        }
+    }
+}
+
+impl NetworkProfilesSettings {
+    pub fn profile(&self, context: NetworkContext) -> NetworkProfile {
+        match context {
+            NetworkContext::AgentDefault => self.agent_default.clone(),
+            NetworkContext::MergeQueue => self.merge_queue.clone(),
+            NetworkContext::WorktreeSetup => self.worktree_setup.clone(),
+            NetworkContext::UserShell => self.user_shell.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn network_profiles_defaults_are_safe_for_system_tasks() {
+        let settings = NetworkProfilesSettings::default();
+        assert_eq!(settings.agent_default.mode, ContainerNetworkMode::LlmOnly);
+        assert_eq!(settings.merge_queue.mode, ContainerNetworkMode::All);
+        assert_eq!(settings.worktree_setup.mode, ContainerNetworkMode::All);
+        assert_eq!(settings.user_shell.mode, ContainerNetworkMode::All);
+        assert!(settings.merge_queue.allowlist.is_empty());
+        assert!(settings.worktree_setup.allowlist.is_empty());
     }
 }
 
@@ -508,6 +675,10 @@ pub struct PublicSettings {
     pub subagents: Option<PublicSubagentSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sandboxing: Option<PublicSandboxingSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<PublicExecutionSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_profiles: Option<PublicNetworkProfilesSettings>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -557,6 +728,30 @@ pub struct PublicOracleSettings {
 #[derive(Debug, Clone, Serialize)]
 pub struct PublicSandboxingSettings {
     pub provider_control_mode: ProviderControlMode,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicExecutionSettings {
+    pub mode: ExecutionMode,
+    pub container: PublicContainerExecutionSettings,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicNetworkProfilesSettings {
+    pub agent_default: NetworkProfile,
+    pub merge_queue: NetworkProfile,
+    pub worktree_setup: NetworkProfile,
+    pub user_shell: NetworkProfile,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicContainerExecutionSettings {
+    pub runtime: ContainerRuntimeKind,
+    pub mount_mode: ContainerMountMode,
+    pub network_mode: ContainerNetworkMode,
+    pub allowlist: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -675,6 +870,10 @@ pub struct UpdateSettingsReq {
     pub subagents: Option<UpdateSubagentSettingsReq>,
     #[serde(default)]
     pub sandboxing: Option<UpdateSandboxingSettingsReq>,
+    #[serde(default)]
+    pub execution: Option<UpdateExecutionSettingsReq>,
+    #[serde(default)]
+    pub network_profiles: Option<NetworkProfilesSettings>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -835,6 +1034,13 @@ pub struct UpdateSandboxingSettingsReq {
     pub provider_control_mode: ProviderControlMode,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateExecutionSettingsReq {
+    pub mode: ExecutionMode,
+    #[serde(default)]
+    pub container: ContainerExecutionSettings,
+}
+
 fn settings_path(data_root: &Path) -> PathBuf {
     data_root.join(SETTINGS_FILE_NAME)
 }
@@ -862,6 +1068,12 @@ pub async fn load_settings(data_root: &Path) -> Settings {
     }
     if settings.storage.is_none() {
         settings.storage = Some(StorageSettings::default());
+    }
+    if settings.execution.is_none() {
+        settings.execution = Some(ExecutionSettings::default());
+    }
+    if settings.network_profiles.is_none() {
+        settings.network_profiles = Some(NetworkProfilesSettings::default());
     }
 
     // Environment overrides (optional) for easy local bring-up.
@@ -1146,6 +1358,29 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
         .map(|s| PublicSandboxingSettings {
             provider_control_mode: s.provider_control_mode.clone(),
         });
+    let execution = settings
+        .execution
+        .as_ref()
+        .map(|e| PublicExecutionSettings {
+            mode: e.mode.clone(),
+            container: PublicContainerExecutionSettings {
+                runtime: e.container.runtime.clone(),
+                mount_mode: e.container.mount_mode.clone(),
+                network_mode: e.container.network_mode.clone(),
+                allowlist: e.container.allowlist.clone(),
+                image: e.container.image.clone(),
+            },
+        });
+    let network_profiles =
+        settings
+            .network_profiles
+            .as_ref()
+            .map(|p| PublicNetworkProfilesSettings {
+                agent_default: p.agent_default.clone(),
+                merge_queue: p.merge_queue.clone(),
+                worktree_setup: p.worktree_setup.clone(),
+                user_shell: p.user_shell.clone(),
+            });
     PublicSettings {
         dictation,
         telemetry,
@@ -1157,6 +1392,8 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
         provider_restart,
         subagents,
         sandboxing,
+        execution,
+        network_profiles,
     }
 }
 
@@ -1254,6 +1491,15 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
         let mut next = current.sandboxing.unwrap_or_default();
         next.provider_control_mode = s.provider_control_mode;
         current.sandboxing = Some(next);
+    }
+    if let Some(e) = req.execution {
+        current.execution = Some(ExecutionSettings {
+            mode: e.mode,
+            container: e.container,
+        });
+    }
+    if let Some(p) = req.network_profiles {
+        current.network_profiles = Some(p);
     }
     current
 }

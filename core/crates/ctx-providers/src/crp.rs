@@ -22,6 +22,7 @@ use crate::adapters::{
     ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderProcessInfo,
     ProviderRestartMode, ProviderStatus, RunHandle, TurnInput,
 };
+use crate::container_exec::{build_container_exec_command, container_exec_spec};
 use crate::events::NormalizedEvent;
 
 const CRP_VERSION: u32 = 1;
@@ -673,9 +674,14 @@ impl CrpProcess {
         workdir: &PathBuf,
         env: &HashMap<String, String>,
     ) -> Result<Arc<Self>> {
-        let mut cmd = Command::new(&agent.command);
-        cmd.args(&agent.args);
-        cmd.current_dir(workdir);
+        let mut cmd = if let Some(spec) = container_exec_spec(env) {
+            build_container_exec_command(&spec, workdir, env, &agent.command, &agent.args)
+        } else {
+            let mut cmd = Command::new(&agent.command);
+            cmd.args(&agent.args);
+            cmd.current_dir(workdir);
+            cmd
+        };
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
@@ -781,11 +787,11 @@ impl CrpProcess {
 }
 
 fn crp_log_paths(env: &HashMap<String, String>, provider_id: &str) -> Option<CrpLogPaths> {
-    let data_root = env.get("CTX_DATA_ROOT")?;
+    let data_root = crate::env::data_root_for_host(env)?;
     let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%SZ");
     let suffix = Uuid::new_v4().simple().to_string();
     let base = format!("crp-{}-{}-{}", provider_id, timestamp, suffix);
-    let dir = Path::new(data_root).join("logs").join("providers");
+    let dir = Path::new(&data_root).join("logs").join("providers");
     Some(CrpLogPaths {
         codex_events: dir.join(format!("{base}.codex-events.jsonl")),
         crp_events: dir.join(format!("{base}.crp-events.jsonl")),
@@ -1746,9 +1752,14 @@ pub async fn probe_crp_models(
     workdir: PathBuf,
     env: HashMap<String, String>,
 ) -> Result<CrpModelsProbe> {
-    let mut cmd = Command::new(&command);
-    cmd.args(&args);
-    cmd.current_dir(&workdir);
+    let mut cmd = if let Some(spec) = container_exec_spec(&env) {
+        build_container_exec_command(&spec, &workdir, &env, &command, &args)
+    } else {
+        let mut cmd = Command::new(&command);
+        cmd.args(&args);
+        cmd.current_dir(&workdir);
+        cmd
+    };
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -1843,7 +1854,7 @@ async fn build_prompt_items(
         }
     }
 
-    let data_root = env.get("CTX_DATA_ROOT").cloned();
+    let data_root = crate::env::data_root_for_host(env);
     for att in input.attachments.iter() {
         match att {
             ctx_core::models::MessageAttachment::Image {
@@ -1860,7 +1871,7 @@ async fn build_prompt_items(
                 blob_id, mime_type, ..
             } => {
                 let Some(data_root) = data_root.as_deref() else {
-                    anyhow::bail!("missing CTX_DATA_ROOT for image attachment");
+                    anyhow::bail!("missing CTX_DATA_ROOT_HOST/CTX_DATA_ROOT for image attachment");
                 };
                 let path = std::path::Path::new(data_root).join("blobs").join(blob_id);
                 let bytes = tokio::fs::read(&path)

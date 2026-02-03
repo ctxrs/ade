@@ -8,7 +8,7 @@ use std::time::Instant;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde_json::{json, Value};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{
@@ -20,11 +20,13 @@ use ctx_providers::events::NormalizedEvent;
 use ctx_store::store::SessionTurnToolCountDeltas;
 
 use crate::daemon::AppState;
+use crate::harness_runtime::{HarnessExecutionPlan, HarnessRuntimeKind};
 use crate::installer;
 use crate::ops_events::OpsEvent;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::provider_accounts;
-use crate::settings::{self, ProviderControlMode};
+use crate::provider_debug::apply_acp_heap_profile_env;
+use crate::settings::{self, NetworkContext, ProviderControlMode};
 use crate::telemetry::TelemetryEvent;
 use crate::workspace_config;
 mod tools;
@@ -361,8 +363,8 @@ async fn start_turn(
     provider_env.insert("CTX_MODEL_ID".to_string(), session.model_id.clone());
     let mcp_token = uuid::Uuid::new_v4().to_string();
     provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
-    let provider_control_mode = settings::load_settings(&state.core.data_root)
-        .await
+    let settings = settings::load_settings(&state.core.data_root).await;
+    let provider_control_mode = settings
         .sandboxing
         .as_ref()
         .map(|s| s.provider_control_mode.clone())
@@ -376,7 +378,74 @@ async fn start_turn(
     if let Ok(v) = std::env::var("CTX_MCP_DISABLED") {
         provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
     }
-    if session.provider_id == "codex" || session.provider_id == "codex-crp" {
+
+    let workspace = store
+        .get_workspace(session.workspace_id)
+        .await
+        .ok()
+        .flatten();
+    let worktree_for_runtime = store.get_worktree(session.worktree_id).await.ok().flatten();
+    let execution_settings = settings.execution.clone().unwrap_or_default();
+    let runtime_plan = if let Some(workspace) = workspace.as_ref() {
+        if let Some(worktree) = worktree_for_runtime.as_ref() {
+            state
+                .execution
+                .harness
+                .prepare(
+                    workspace,
+                    worktree,
+                    &execution_settings,
+                    &state.core.daemon_url,
+                )
+                .await
+                .unwrap_or_else(|err| {
+                    tracing::warn!("failed to prepare harness runtime: {err:#}");
+                    HarnessExecutionPlan {
+                        runtime: HarnessRuntimeKind::Host,
+                        env_overrides: HashMap::new(),
+                        sealed_root: None,
+                    }
+                })
+        } else {
+            HarnessExecutionPlan {
+                runtime: HarnessRuntimeKind::Host,
+                env_overrides: HashMap::new(),
+                sealed_root: None,
+            }
+        }
+    } else {
+        HarnessExecutionPlan {
+            runtime: HarnessRuntimeKind::Host,
+            env_overrides: HashMap::new(),
+            sealed_root: None,
+        }
+    };
+    let is_container = matches!(runtime_plan.runtime, HarnessRuntimeKind::Container { .. });
+    for (key, value) in runtime_plan.env_overrides.iter() {
+        provider_env.insert(key.clone(), value.clone());
+    }
+    let network_profiles = settings.network_profiles.clone().unwrap_or_default();
+    let network_profile = network_profiles.profile(NetworkContext::AgentDefault);
+    let proxy_host = if is_container {
+        "host.containers.internal"
+    } else {
+        "127.0.0.1"
+    };
+    let proxy_env = state
+        .execution
+        .egress_proxy
+        .proxy_env_for_context(
+            session.workspace_id,
+            NetworkContext::AgentDefault,
+            network_profile,
+            proxy_host,
+        )
+        .await;
+    for (key, value) in proxy_env {
+        provider_env.insert(key, value);
+    }
+
+    if (session.provider_id == "codex" || session.provider_id == "codex-crp") && !is_container {
         if let Ok(env) =
             provider_accounts::codex_env_for_active_account(&state.core.data_root).await
         {
@@ -406,6 +475,13 @@ async fn start_turn(
                 }
             }
         }
+    }
+    if !provider_env.contains_key("CTX_WORKER_GATEWAY_URL") {
+        apply_acp_heap_profile_env(
+            &session.provider_id,
+            &mut provider_env,
+            &state.core.data_root,
+        );
     }
 
     let prompt_config = workspace_config::load_agent_system_prompt_append(workdir)
@@ -437,9 +513,24 @@ async fn start_turn(
         provider_env.insert("CTX_SYSTEM_PROMPT_APPEND".to_string(), append.to_string());
     }
 
+    let sealed_worktree_root = runtime_plan
+        .sealed_root
+        .as_ref()
+        .map(|base| base.join(session.worktree_id.0.to_string()));
+    if let Some(sealed_root) = sealed_worktree_root.as_ref() {
+        if let Err(err) = state
+            .execution
+            .harness
+            .sync_worktree_to_sealed(workdir, sealed_root)
+            .await
+        {
+            tracing::warn!("failed to sync worktree to sealed runtime: {err:#}");
+        }
+    }
+
     let run_started_at = Instant::now();
     let spawn_started_at = Instant::now();
-    let handle = match adapter
+    let mut handle = match adapter
         .run(
             TurnInput {
                 content: prompt,
@@ -540,6 +631,21 @@ async fn start_turn(
             return Err(err);
         }
     };
+
+    if let Some(sealed_root) = sealed_worktree_root {
+        let (done_tx, done_rx) = oneshot::channel();
+        let mut original_done = handle.done;
+        let harness = Arc::clone(&state.execution.harness);
+        let host_root = workdir.to_path_buf();
+        tokio::spawn(async move {
+            let _ = (&mut original_done).await;
+            if let Err(err) = harness.sync_sealed_to_host(&sealed_root, &host_root).await {
+                tracing::warn!("failed to sync sealed runtime to worktree: {err:#}");
+            }
+            let _ = done_tx.send(());
+        });
+        handle.done = done_rx;
+    }
 
     let state_for_events = Arc::clone(state);
     let store = store.clone();
@@ -791,8 +897,6 @@ async fn start_turn(
                                 assistant_sequence += 1;
                                 assistant_emitted.push_str(&saved.content);
                                 assistant_partial.clear();
-                                // provider_message_id lets clients drop the streaming partial once the
-                                // final assistant message is inserted.
                                 let mut payload = json!({
                                     "message_id": saved.id.0,
                                     "content": saved.content,
@@ -1437,7 +1541,12 @@ async fn emit_event(
 }
 
 fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
-    let meta = payload.get("_meta").or_else(|| payload.get("meta"));
+    let meta = payload
+        .get("acp_update")
+        .and_then(|v| v.get("_meta"))
+        .or_else(|| payload.get("acp_update").and_then(|v| v.get("meta")))
+        .or_else(|| payload.get("_meta"))
+        .or_else(|| payload.get("meta"));
     if meta
         .and_then(|v| v.get("heartbeat"))
         .and_then(Value::as_bool)
