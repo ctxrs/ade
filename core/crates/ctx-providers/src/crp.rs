@@ -1458,9 +1458,6 @@ fn build_tool_started_payload(
         raw_input.clone().unwrap_or(Value::Null),
     );
     tool_call_obj.insert("status".to_string(), json!("running"));
-    if let Some(label) = tool_label {
-        tool_call_obj.insert("tool_label".to_string(), json!(label));
-    }
     payload.insert("toolCall".to_string(), Value::Object(tool_call_obj));
     payload.insert("crp_seq".to_string(), json!(seq));
     Value::Object(payload)
@@ -1527,9 +1524,6 @@ fn build_tool_completed_payload(
         "status".to_string(),
         payload.get("status").cloned().unwrap_or(Value::Null),
     );
-    if let Some(label) = tool_label {
-        tool_call_obj.insert("tool_label".to_string(), json!(label));
-    }
     payload.insert("toolCall".to_string(), Value::Object(tool_call_obj));
     payload.insert("crp_seq".to_string(), json!(seq));
     Value::Object(payload)

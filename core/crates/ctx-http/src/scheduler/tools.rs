@@ -651,12 +651,11 @@ pub(super) fn sanitize_tool_event_payload(
         .and_then(|v| v.as_str())
         .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
         .map(|s| s.to_string());
-    let title = update
-        .get("title")
+    let tool_label = update
+        .get("tool_label")
         .and_then(|v| v.as_str())
-        .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
-        .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
         .map(|s| s.to_string());
+    let title = tool_label.clone();
 
     let raw_status = update
         .get("status")
@@ -696,7 +695,8 @@ pub(super) fn sanitize_tool_event_payload(
     if let Some(v) = tool_kind {
         obj.insert("kind".to_string(), Value::String(v));
     }
-    if let Some(v) = title {
+    if let Some(v) = tool_label {
+        obj.insert("tool_label".to_string(), Value::String(v.clone()));
         obj.insert("title".to_string(), Value::String(v));
     }
     obj.insert("status".to_string(), Value::String(status));
@@ -763,10 +763,8 @@ pub(super) fn build_tool_ops_meta(
         .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
         .map(|s| s.to_string());
     let title = update
-        .get("title")
+        .get("tool_label")
         .and_then(|v| v.as_str())
-        .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
-        .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
         .map(|s| s.to_string());
     let raw_status = update
         .get("status")

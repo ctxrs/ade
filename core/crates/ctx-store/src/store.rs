@@ -8676,14 +8676,6 @@ fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Valu
     let title = update
         .get("tool_label")
         .and_then(|v| v.as_str())
-        .or_else(|| {
-            update
-                .pointer("/toolCall/tool_label")
-                .and_then(|v| v.as_str())
-        })
-        .or_else(|| update.get("title").and_then(|v| v.as_str()))
-        .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
-        .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
         .map(|v| v.to_string());
 
     let raw_status = update
@@ -8821,14 +8813,6 @@ fn build_turn_tool_from_event(event: &SessionEvent, turn_id: TurnId) -> Option<S
     let title = update
         .get("tool_label")
         .and_then(|v| v.as_str())
-        .or_else(|| {
-            update
-                .pointer("/toolCall/tool_label")
-                .and_then(|v| v.as_str())
-        })
-        .or_else(|| update.get("title").and_then(|v| v.as_str()))
-        .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
-        .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
         .map(|v| v.to_string());
 
     let raw_status = update
@@ -9049,18 +9033,7 @@ fn build_turn_tools_from_events(
         {
             entry.tool_kind = Some(kind.to_string());
         }
-        if let Some(title) = update
-            .get("tool_label")
-            .and_then(|v| v.as_str())
-            .or_else(|| {
-                update
-                    .pointer("/toolCall/tool_label")
-                    .and_then(|v| v.as_str())
-            })
-            .or_else(|| update.get("title").and_then(|v| v.as_str()))
-            .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
-            .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
-        {
+        if let Some(title) = update.get("tool_label").and_then(|v| v.as_str()) {
             entry.title = Some(title.to_string());
         }
 
