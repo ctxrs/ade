@@ -677,14 +677,6 @@ pub(super) fn default_agent_server_command(
     Some((cmd.command, cmd.args))
 }
 
-fn is_crp_provider(provider_id: &str) -> bool {
-    provider_id.ends_with("-crp") || matches!(provider_id, "codex" | "claude")
-}
-
-fn is_codex_provider(provider_id: &str) -> bool {
-    matches!(provider_id, "codex" | "codex-crp")
-}
-
 pub(super) async fn get_provider_options(
     State(state): State<Arc<AppState>>,
     Path((ws_id, provider_id)): Path<(String, String)>,
@@ -779,7 +771,7 @@ pub(super) async fn get_provider_options(
         }
     }
 
-    let use_crp_probe = is_crp_provider(&provider_id);
+    let use_crp_probe = provider_id == "codex-crp" || provider_id == "claude-crp";
     if !use_crp_probe {
         let mut raw_resp = serde_json::json!({
             "provider_id": provider_id,
@@ -866,7 +858,7 @@ pub(super) async fn get_provider_options(
         if let Some(token) = state.core.auth_token.as_ref() {
             env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
         }
-        if is_codex_provider(&provider_id) {
+        if provider_id == "codex-crp" {
             // codex-crp relies on Codex auth material (via CODEX_HOME). Without it, probing can
             // return empty models even when Codex is otherwise configured.
             if let Ok(extra) =
@@ -941,128 +933,13 @@ pub(super) async fn get_provider_options(
         }
         return Ok(Json(out));
     }
-    unreachable!("provider options probe fell through");
-}
 
-#[derive(Debug, Deserialize)]
-pub(super) struct AuthenticateProviderReq {
-    #[serde(default)]
-    method_id: Option<String>,
-}
-
-pub(super) async fn authenticate_provider_for_workspace(
-    State(state): State<Arc<AppState>>,
-    Path((ws_id, provider_id)): Path<(String, String)>,
-    Json(_req): Json<AuthenticateProviderReq>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResp>)> {
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&ws_id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-
-    let _ws = state
-        .global_store()
-        .get_workspace(ws_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load workspace".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ))?;
-    if !is_crp_provider(&provider_id) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "provider does not support authentication".to_string(),
-            }),
-        ));
-    }
-
-    let resp = redact_json_value(serde_json::json!({
-        "provider_id": provider_id,
-        "workspace_id": ws_id.0,
-        "status": "ok",
-        "auth_required": false,
-        "auth_methods": null,
-        "acp_error": null,
-        "checked_at": chrono::Utc::now().to_rfc3339(),
-    }));
-    Ok(Json(resp))
-}
-
-pub(super) async fn verify_provider_for_workspace(
-    State(state): State<Arc<AppState>>,
-    Path((ws_id, provider_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResp>)> {
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&ws_id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-
-    let _ws = state
-        .global_store()
-        .get_workspace(ws_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load workspace".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ))?;
-    if !is_crp_provider(&provider_id) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "provider does not support verification".to_string(),
-            }),
-        ));
-    }
-
-    let resp = redact_json_value(serde_json::json!({
-        "provider_id": provider_id.clone(),
-        "workspace_id": ws_id.0,
-        "status": "ok",
-        "auth_required": false,
-        "auth_methods": null,
-        "acp_error": null,
-        "checked_at": chrono::Utc::now().to_rfc3339(),
-    }));
-
-    let cache_key = format!("{}/{}", ws_id.0, provider_id);
-    state.providers.verify_cache.lock().await.insert(
-        cache_key,
-        crate::daemon::CachedProviderVerify {
-            cached_at: std::time::Instant::now(),
-            value: resp.clone(),
-        },
-    );
-
-    Ok(Json(resp))
+    Err((
+        StatusCode::BAD_REQUEST,
+        Json(ApiErrorResp {
+            error: "unsupported provider id".to_string(),
+        }),
+    ))
 }
 
 pub(super) async fn install_provider(

@@ -866,7 +866,20 @@ async fn desktop_connect_local(app: tauri::AppHandle) -> Result<DesktopConnectio
             return Ok(state.info());
         }
         let data_dir = daemon_data_dir(&app).map_err(to_err)?;
-        let (url, child, systemd_scope) = spawn_daemon(&app, &data_dir, false).map_err(to_err)?;
+        if let Some((url, token)) = resolve_existing_local_daemon(&data_dir).map_err(to_err)? {
+            state.set_local_external(url, token);
+            return Ok(state.info());
+        }
+        let (url, child, systemd_scope) = match spawn_daemon(&app, &data_dir, false) {
+            Ok(value) => value,
+            Err(err) => {
+                if let Ok(Some((url, token))) = resolve_existing_local_daemon(&data_dir) {
+                    state.set_local_external(url, token);
+                    return Ok(state.info());
+                }
+                return Err(to_err(err));
+            }
+        };
         let auth = read_daemon_auth_with_retry(&data_dir).map_err(to_err)?;
         state.set_local(url.clone(), auth.token.clone(), child, systemd_scope);
         Ok(state.info())
@@ -933,13 +946,26 @@ fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) ->
     if !matches!(state.info().kind, DesktopConnectionKind::None) {
         return Ok(());
     }
+    let data_dir = daemon_data_dir(app)?;
     if let Some((url, token)) = resolve_env_local_daemon(app)? {
         probe_daemon_health(&url)?;
         state.set_local_external(url, token);
         return Ok(());
     }
-    let data_dir = daemon_data_dir(app)?;
-    let (url, child, systemd_scope) = spawn_daemon(app, &data_dir, true)?;
+    if let Some((url, token)) = resolve_existing_local_daemon(&data_dir)? {
+        state.set_local_external(url, token);
+        return Ok(());
+    }
+    let (url, child, systemd_scope) = match spawn_daemon(app, &data_dir, true) {
+        Ok(value) => value,
+        Err(err) => {
+            if let Some((url, token)) = resolve_existing_local_daemon(&data_dir)? {
+                state.set_local_external(url, token);
+                return Ok(());
+            }
+            return Err(err);
+        }
+    };
     let auth = read_daemon_auth_with_retry(&data_dir)?;
     state.set_local(url, auth.token, child, systemd_scope);
     Ok(())
@@ -2694,6 +2720,19 @@ fn resolve_env_local_daemon(app: &tauri::AppHandle) -> Result<Option<(String, St
         }
     };
     Ok(Some((url, token)))
+}
+
+fn resolve_existing_local_daemon(data_dir: &Path) -> Result<Option<(String, String)>> {
+    let Some(auth) = read_daemon_auth_if_present(data_dir)? else {
+        return Ok(None);
+    };
+    let Some(url) = auth.daemon_url.as_deref() else {
+        return Ok(None);
+    };
+    match probe_daemon_health(url) {
+        Ok(()) => Ok(Some((url.to_string(), auth.token))),
+        Err(_) => Ok(None),
+    }
 }
 
 fn read_remote_daemon_auth(

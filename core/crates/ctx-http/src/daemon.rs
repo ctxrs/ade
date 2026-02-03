@@ -50,22 +50,6 @@ fn fallback_provider_command(command: &str, args: Vec<String>) -> installer::Age
     }
 }
 
-fn command_exists(command: &str) -> bool {
-    if command.contains(std::path::MAIN_SEPARATOR)
-        || command.contains('/')
-        || command.contains('\\')
-    {
-        return PathBuf::from(command).exists();
-    }
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    for dir in std::env::split_paths(&path) {
-        if dir.join(command).exists() {
-            return true;
-        }
-    }
-    false
-}
-
 fn escape_shell_arg(value: &str) -> String {
     if value.is_empty() {
         return "''".to_string();
@@ -111,20 +95,6 @@ fn acp_bridge_adapter(
         bridge_cmd.command.clone(),
         args,
     ))
-}
-
-fn resolve_crp_command(
-    agent_cfg: &installer::AgentServerConfigFile,
-    provider_id: &str,
-    fallback_command: &str,
-) -> installer::AgentServerCommand {
-    installer::resolve_provider_command(agent_cfg, provider_id)
-        .or_else(|| match provider_id {
-            "codex" => installer::resolve_provider_command(agent_cfg, "codex-crp"),
-            "claude" => installer::resolve_provider_command(agent_cfg, "claude-crp"),
-            _ => None,
-        })
-        .unwrap_or_else(|| fallback_provider_command(fallback_command, vec![]))
 }
 
 async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
@@ -295,25 +265,12 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     let bridge_cmd = installer::resolve_provider_command(&agent_cfg, "acp-crp-bridge")
         .unwrap_or_else(|| fallback_provider_command("acp-crp-bridge", vec![]));
-    let bridge_available = command_exists(&bridge_cmd.command);
-    if !bridge_available {
-        tracing::warn!(
-            "acp-crp-bridge not found ({}); ACP providers will be unavailable",
-            bridge_cmd.command
-        );
-    }
-    let codex_cmd = resolve_crp_command(&agent_cfg, "codex", "codex-crp");
-    let codex_adapter: Arc<Tier1CrpAdapter> = Arc::new(Tier1CrpAdapter::from_raw(
-        "codex",
-        codex_cmd.command,
-        codex_cmd.args,
-    ));
-    let claude_cmd = resolve_crp_command(&agent_cfg, "claude", "claude-crp");
-    let claude_adapter: Arc<Tier1CrpAdapter> = Arc::new(Tier1CrpAdapter::from_raw(
-        "claude",
-        claude_cmd.command,
-        claude_cmd.args,
-    ));
+    let codex_cmd = installer::resolve_provider_command(&agent_cfg, "codex")
+        .unwrap_or_else(|| fallback_provider_command("codex-acp", vec![]));
+    let codex_adapter = acp_bridge_adapter("codex", &bridge_cmd, codex_cmd);
+    let claude_cmd = installer::resolve_provider_command(&agent_cfg, "claude")
+        .unwrap_or_else(|| fallback_provider_command("claude-code-acp", vec![]));
+    let claude_adapter = acp_bridge_adapter("claude", &bridge_cmd, claude_cmd);
 
     let gemini_cmd =
         installer::resolve_provider_command(&agent_cfg, "gemini").unwrap_or_else(|| {
@@ -540,6 +497,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
             }
         });
     }
+
     installer::refresh_provider_statuses(&state).await?;
     let mut shutdown_rx = state.core.shutdown_tx.subscribe();
     let app: Router = api::router(state);

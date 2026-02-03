@@ -475,6 +475,7 @@ async fn start_turn(
             }
         }
     }
+
     let prompt_config = workspace_config::load_agent_system_prompt_append(workdir)
         .await
         .unwrap_or_else(|_| workspace_config::AgentSystemPromptAppendConfig::new_default(workdir));

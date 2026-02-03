@@ -108,6 +108,7 @@ pub fn spawn_provider_child_reclassifier(state: Arc<AppState>) {
     }
 }
 
+#[cfg(target_os = "linux")]
 async fn reclassify_once(
     state: &Arc<AppState>,
     system: &mut System,
@@ -174,6 +175,7 @@ async fn list_provider_pids(state: &Arc<AppState>) -> Vec<u32> {
     pids
 }
 
+#[cfg(target_os = "linux")]
 fn collect_child_pids(system: &System, provider_pids: &[u32], limit: usize) -> HashSet<u32> {
     if provider_pids.is_empty() || limit == 0 {
         return HashSet::new();
