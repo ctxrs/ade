@@ -266,6 +266,29 @@ fn resolve_data_root() -> PathBuf {
     PathBuf::from(home).join(".ctx")
 }
 
+fn ensure_cagent_config(data_root: &Path) -> Option<PathBuf> {
+    let cfg_path = data_root
+        .join("providers")
+        .join("agent-servers")
+        .join("cagent")
+        .join("config.yaml");
+    if cfg_path.exists() {
+        return Some(cfg_path);
+    }
+    if let Some(parent) = cfg_path.parent() {
+        fs::create_dir_all(parent).ok()?;
+    }
+    let cfg = r#"agents:
+  root:
+    model: openai/gpt-5-mini
+    description: ctx default agent
+    instruction: |
+      You are a helpful coding assistant.
+"#;
+    fs::write(&cfg_path, cfg).ok()?;
+    Some(cfg_path)
+}
+
 fn load_openrouter_settings(data_root: &Path) -> Option<(String, String)> {
     let settings_path = data_root.join("settings.json");
     let raw = std::fs::read_to_string(settings_path).ok()?;
@@ -310,16 +333,30 @@ fn format_shell_command(command: &str, args: &[String]) -> String {
 
 fn resolve_command(
     cfg: &ctx_http::installer::AgentServerConfigFile,
+    data_root: &Path,
     provider_id: &str,
     fallback_cmd: &str,
     fallback_args: &[&str],
 ) -> AgentServerCommand {
-    resolve_provider_command(cfg, provider_id).unwrap_or_else(|| AgentServerCommand {
-        command: fallback_cmd.to_string(),
-        args: fallback_args.iter().map(|s| s.to_string()).collect(),
-        dependencies: Vec::new(),
-        managed: None,
-    })
+    let mut cmd =
+        resolve_provider_command(cfg, provider_id).unwrap_or_else(|| AgentServerCommand {
+            command: fallback_cmd.to_string(),
+            args: fallback_args.iter().map(|s| s.to_string()).collect(),
+            dependencies: Vec::new(),
+            managed: None,
+        });
+    if provider_id == "cagent" {
+        let cfg_path = ensure_cagent_config(data_root);
+        if let Some(cfg_path) = cfg_path {
+            let cfg_str = cfg_path.to_string_lossy().to_string();
+            for arg in &mut cmd.args {
+                if arg == "{{cagent_config}}" {
+                    *arg = cfg_str.clone();
+                }
+            }
+        }
+    }
+    cmd
 }
 
 fn command_exists(command: &str) -> bool {
@@ -446,6 +483,18 @@ fn create_qwen_settings_home() -> std::io::Result<tempfile::TempDir> {
     Ok(dir)
 }
 
+fn env_truthy(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn env_present(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+}
+
 fn provider_skip_reason(provider: ProviderSpec) -> Option<String> {
     if provider.id == "gemini" {
         let has_gemini_auth = std::env::var("GEMINI_API_KEY")
@@ -483,11 +532,41 @@ fn provider_skip_reason(provider: ProviderSpec) -> Option<String> {
     if provider.id == "auggie" {
         return Some("requires Augment login; not OpenRouter-compatible".to_string());
     }
+    if provider.id == "amp" {
+        let allow = env_truthy("AMP_TOKEN_TESTS");
+        let has_amp_auth = env_present("AMP_API_KEY") || env_present("AMP_SETTINGS_FILE");
+        if !allow && !has_amp_auth {
+            return Some(
+                "missing AMP_API_KEY/AMP_SETTINGS_FILE; set AMP_TOKEN_TESTS=1 to attempt"
+                    .to_string(),
+            );
+        }
+    }
+    if provider.id == "droid" {
+        let allow = env_truthy("DROID_TOKEN_TESTS");
+        let has_droid_auth = env_present("FACTORY_API_KEY");
+        if !allow && !has_droid_auth {
+            return Some("missing FACTORY_API_KEY; set DROID_TOKEN_TESTS=1 to attempt".to_string());
+        }
+    }
     if provider.id == "copilot" {
         return Some("requires GitHub Copilot login; not OpenRouter-compatible".to_string());
     }
+    if provider.id == "kiro" {
+        let allow = env_truthy("KIRO_TOKEN_TESTS");
+        if !allow {
+            return Some("requires Kiro CLI login; set KIRO_TOKEN_TESTS=1 to attempt".to_string());
+        }
+    }
     if provider.id == "rovo" {
         return Some("requires Atlassian auth; not OpenRouter-compatible".to_string());
+    }
+    if provider.id == "cody" {
+        let allow = env_truthy("CODY_TOKEN_TESTS");
+        let has_cody_auth = env_present("SRC_ACCESS_TOKEN");
+        if !allow && !has_cody_auth {
+            return Some("missing SRC_ACCESS_TOKEN; set CODY_TOKEN_TESTS=1 to attempt".to_string());
+        }
     }
     if provider.id == "continue" {
         let has_continue_auth = std::env::var("CONTINUE_API_KEY")
@@ -498,9 +577,7 @@ fn provider_skip_reason(provider: ProviderSpec) -> Option<String> {
         }
     }
     if provider.id == "cline" {
-        let allow = std::env::var("CLINE_TOKEN_TESTS")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let allow = env_truthy("CLINE_TOKEN_TESTS");
         if !allow {
             return Some(
                 "cline-acp bundle missing deps (vscode/grpc-health-check/package.json); set CLINE_TOKEN_TESTS=1 to attempt".to_string(),
@@ -508,9 +585,7 @@ fn provider_skip_reason(provider: ProviderSpec) -> Option<String> {
         }
     }
     if provider.id == "swe-agent" {
-        let allow = std::env::var("SWE_AGENT_TOKEN_TESTS")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let allow = env_truthy("SWE_AGENT_TOKEN_TESTS");
         if !allow {
             return Some(
                 "swe-agent ACP spins up SWEEnv and can hang; set SWE_AGENT_TOKEN_TESTS=1 to run"
@@ -635,7 +710,7 @@ async fn acp_crp_bridge_token_providers() {
     let cfg = load_agent_server_config(&data_root)
         .await
         .unwrap_or_default();
-    let bridge_cmd = resolve_command(&cfg, "acp-crp-bridge", "acp-crp-bridge", &[]);
+    let bridge_cmd = resolve_command(&cfg, &data_root, "acp-crp-bridge", "acp-crp-bridge", &[]);
 
     if !command_exists(&bridge_cmd.command) {
         panic!("acp-crp-bridge not found: {}", bridge_cmd.command);
@@ -650,6 +725,7 @@ async fn acp_crp_bridge_token_providers() {
     for provider in PROVIDERS {
         let acp_cmd = resolve_command(
             &cfg,
+            &data_root,
             provider.id,
             provider.fallback_cmd,
             provider.fallback_args,

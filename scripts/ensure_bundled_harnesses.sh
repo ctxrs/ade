@@ -15,6 +15,20 @@ require_cmd() {
   fi
 }
 
+is_truthy() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|on|ON) return 0;;
+    *) return 1;;
+  esac
+}
+
+is_falsy() {
+  case "${1:-}" in
+    0|false|FALSE|no|NO|off|OFF) return 0;;
+    *) return 1;;
+  esac
+}
+
 require_cmd curl
 
 PYTHON_HOST_CMD=()
@@ -52,30 +66,54 @@ NODE_VERSION="$(read_const NODE_VERSION "$INSTALLER_RS")"
 PYTHON_VERSION="$(read_const PYTHON_VERSION "$INSTALLER_RS")"
 PYTHON_BUILD_TAG="$(read_const PYTHON_BUILD_TAG "$INSTALLER_RS")"
 
-os_raw="$(uname -s)"
-case "$os_raw" in
-  Linux) os="linux"; matrix_os="linux";;
-  Darwin) os="macos"; matrix_os="darwin";;
-  MINGW*|MSYS*|CYGWIN*|Windows_NT) os="windows"; matrix_os="windows";;
-  *) log "error: unsupported OS: $os_raw"; exit 3;;
-esac
+os_override="${CTX_BUNDLE_TARGET_OS:-}"
+if [[ -n "$os_override" ]]; then
+  case "$os_override" in
+    linux|Linux) os="linux"; matrix_os="linux";;
+    macos|darwin|Darwin) os="macos"; matrix_os="darwin";;
+    windows|Windows_NT|MINGW*|MSYS*|CYGWIN*) os="windows"; matrix_os="windows";;
+    *) log "error: unsupported CTX_BUNDLE_TARGET_OS: $os_override"; exit 3;;
+  esac
+else
+  os_raw="$(uname -s)"
+  case "$os_raw" in
+    Linux) os="linux"; matrix_os="linux";;
+    Darwin) os="macos"; matrix_os="darwin";;
+    MINGW*|MSYS*|CYGWIN*|Windows_NT) os="windows"; matrix_os="windows";;
+    *) log "error: unsupported OS: $os_raw"; exit 3;;
+  esac
+fi
 
-arch_raw="$(uname -m)"
-case "$arch_raw" in
-  x86_64|amd64) arch="x86_64"; matrix_arch="x86_64";;
-  aarch64|arm64) arch="aarch64"; matrix_arch="aarch64";;
-  *) log "error: unsupported architecture: $arch_raw"; exit 3;;
-esac
+arch_override="${CTX_BUNDLE_TARGET_ARCH:-}"
+if [[ -n "$arch_override" ]]; then
+  case "$arch_override" in
+    x86_64|amd64) arch="x86_64"; matrix_arch="x86_64";;
+    aarch64|arm64) arch="aarch64"; matrix_arch="aarch64";;
+    *) log "error: unsupported CTX_BUNDLE_TARGET_ARCH: $arch_override"; exit 3;;
+  esac
+else
+  arch_raw="$(uname -m)"
+  case "$arch_raw" in
+    x86_64|amd64) arch="x86_64"; matrix_arch="x86_64";;
+    aarch64|arm64) arch="aarch64"; matrix_arch="aarch64";;
+    *) log "error: unsupported architecture: $arch_raw"; exit 3;;
+  esac
+fi
+
+BIN_EXT=""
+if [[ "$os" == "windows" ]]; then
+  BIN_EXT=".exe"
+fi
 
 target_key="${matrix_os}-${matrix_arch}"
 
 case "${os}/${arch}" in
-  linux/x86_64) node_target="linux-x64"; python_target="x86_64-unknown-linux-gnu";;
-  linux/aarch64) node_target="linux-arm64"; python_target="aarch64-unknown-linux-gnu";;
-  macos/x86_64) node_target="darwin-x64"; python_target="x86_64-apple-darwin";;
-  macos/aarch64) node_target="darwin-arm64"; python_target="aarch64-apple-darwin";;
-  windows/x86_64) node_target="win-x64"; python_target="x86_64-pc-windows-msvc";;
-  windows/aarch64) node_target="win-arm64"; python_target="aarch64-pc-windows-msvc";;
+  linux/x86_64) node_target="linux-x64"; python_target="x86_64-unknown-linux-gnu"; rust_target="x86_64-unknown-linux-gnu";;
+  linux/aarch64) node_target="linux-arm64"; python_target="aarch64-unknown-linux-gnu"; rust_target="aarch64-unknown-linux-gnu";;
+  macos/x86_64) node_target="darwin-x64"; python_target="x86_64-apple-darwin"; rust_target="x86_64-apple-darwin";;
+  macos/aarch64) node_target="darwin-arm64"; python_target="aarch64-apple-darwin"; rust_target="aarch64-apple-darwin";;
+  windows/x86_64) node_target="win-x64"; python_target="x86_64-pc-windows-msvc"; rust_target="x86_64-pc-windows-msvc";;
+  windows/aarch64) node_target="win-arm64"; python_target="aarch64-pc-windows-msvc"; rust_target="aarch64-pc-windows-msvc";;
   *) log "error: unsupported platform: ${os}/${arch}"; exit 3;;
 esac
 
@@ -163,6 +201,100 @@ if not rel:
 resolved = os.path.normpath(os.path.join(pkg_dir, rel))
 print(resolved)
 PY
+}
+
+LOCAL_ADAPTERS_DIR="${CTX_BUNDLE_ADAPTERS_DIR:-$ROOT/harness-adapters}"
+LOCAL_ADAPTER_MODE="${CTX_BUNDLE_LOCAL_ADAPTERS:-auto}"
+BUILD_LOCAL_ADAPTERS="${CTX_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
+
+declare -A LOCAL_ADAPTER_DIR=(
+  ["amp"]="amp-acp"
+  ["droid"]="droid-acp"
+  ["copilot"]="copilot-cli-acp"
+  ["kiro"]="kiro-acp"
+  ["rovo"]="rovo-dev-acp"
+  ["cody"]="cody-acp"
+)
+
+declare -A LOCAL_ADAPTER_BIN=(
+  ["droid"]="droid-acp"
+  ["copilot"]="copilot-cli-acp"
+  ["kiro"]="kiro-acp"
+  ["rovo"]="rovo-dev-acp"
+  ["cody"]="cody-acp"
+)
+
+get_matrix_version() {
+  local provider_id="$1"
+  run_python - "$MATRIX_JSON" "$provider_id" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+provider_id = sys.argv[2]
+data = json.loads(open(path, "r", encoding="utf-8").read())
+for provider in data.get("providers", []):
+    if provider.get("id") == provider_id:
+        mi = provider.get("managed_install") or {}
+        print(mi.get("version") or "")
+        sys.exit(0)
+print("")
+PY
+}
+
+local_adapter_binary_path() {
+  local provider_id="$1"
+  local dir="${LOCAL_ADAPTER_DIR[$provider_id]}"
+  local bin="${LOCAL_ADAPTER_BIN[$provider_id]}"
+  if [[ -z "$dir" || -z "$bin" ]]; then
+    return 1
+  fi
+  if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+    if [[ -n "${rust_target:-}" ]]; then
+      printf '%s' "$CARGO_TARGET_DIR/$rust_target/release/${bin}${BIN_EXT}"
+    else
+      printf '%s' "$CARGO_TARGET_DIR/release/${bin}${BIN_EXT}"
+    fi
+    return 0
+  fi
+  printf '%s' "$LOCAL_ADAPTERS_DIR/$dir/target/$rust_target/release/${bin}${BIN_EXT}"
+}
+
+local_adapter_amp_entrypoint() {
+  printf '%s' "$LOCAL_ADAPTERS_DIR/${LOCAL_ADAPTER_DIR[amp]}/dist/bin/amp-acp.js"
+}
+
+build_local_adapters() {
+  if [[ ! -d "$LOCAL_ADAPTERS_DIR" ]]; then
+    log "error: local adapters dir missing: $LOCAL_ADAPTERS_DIR"
+    exit 4
+  fi
+
+  local amp_js
+  amp_js="$(local_adapter_amp_entrypoint)"
+  if [[ ! -f "$amp_js" ]]; then
+    if [[ -d "$LOCAL_ADAPTERS_DIR/${LOCAL_ADAPTER_DIR[amp]}" ]]; then
+      require_cmd npm
+      (cd "$LOCAL_ADAPTERS_DIR/${LOCAL_ADAPTER_DIR[amp]}" && npm install)
+      (cd "$LOCAL_ADAPTERS_DIR/${LOCAL_ADAPTER_DIR[amp]}" && npm run build)
+    fi
+  fi
+
+  local id
+  for id in droid copilot kiro rovo cody; do
+    local dir="${LOCAL_ADAPTER_DIR[$id]}"
+    local bin="${LOCAL_ADAPTER_BIN[$id]}"
+    if [[ -z "$dir" || -z "$bin" ]]; then
+      continue
+    fi
+    local out
+    out="$(local_adapter_binary_path "$id" || true)"
+    if [[ -f "$out" ]]; then
+      continue
+    fi
+    require_cmd cargo
+    (cd "$LOCAL_ADAPTERS_DIR/$dir" && cargo build --release --target "$rust_target")
+  done
 }
 
 ensure_node_runtime() {
@@ -327,6 +459,13 @@ npm_install_bundle() {
 ensure_node_runtime
 ensure_python_runtime
 
+if is_truthy "$BUILD_LOCAL_ADAPTERS"; then
+  if is_falsy "$LOCAL_ADAPTER_MODE"; then
+    log "warn: CTX_BUNDLE_BUILD_LOCAL_ADAPTERS set but CTX_BUNDLE_LOCAL_ADAPTERS=off"
+  fi
+  build_local_adapters
+fi
+
 node_root_rel="runtimes/node/${os}/${arch}/node-v${NODE_VERSION}-${node_target}"
 if [[ "$os" == "windows" ]]; then
   node_bin_rel="node.exe"
@@ -477,17 +616,148 @@ for provider in data.get("providers", []):
         print(line)
 PY
 
+local_providers_src="$(mktemp /tmp/ctx-bundle-local-providers.XXXXXX)"
+local_ids=()
+
+add_local_provider() {
+  local provider_id="$1"
+  local kind="$2"
+  local version="$3"
+  local source_path="$4"
+  local bin_path="$5"
+  local args_json="${6:-[]}"
+  local sep=$'\x1f'
+  printf '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$provider_id" "$sep" "$kind" "$sep" "$version" "$sep" \
+    "$source_path" "$sep" "" "$sep" "$bin_path" "$sep" "" "$sep" "" "$sep" \
+    "$args_json" >> "$local_providers_src"
+  local_ids+=("$provider_id")
+}
+
+if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
+  local_adapter_required=0
+  if is_truthy "$LOCAL_ADAPTER_MODE"; then
+    local_adapter_required=1
+  fi
+
+  adapter_version_override="${CTX_BUNDLE_ADAPTER_VERSION:-}"
+  for id in amp droid copilot kiro rovo cody; do
+    version="$adapter_version_override"
+    if [[ -z "$version" ]]; then
+      version="$(get_matrix_version "$id")"
+    fi
+    if [[ -z "$version" ]]; then
+      version="local"
+    fi
+
+    if [[ "$id" == "amp" ]]; then
+      src="$(local_adapter_amp_entrypoint)"
+      if [[ -f "$src" ]]; then
+        add_local_provider "$id" "local-node" "$version" "$src" "amp-acp.js" "[]"
+      elif [[ "$local_adapter_required" == "1" ]]; then
+        log "error: missing amp adapter entrypoint at $src"
+        exit 5
+      fi
+      continue
+    fi
+
+    src="$(local_adapter_binary_path "$id" || true)"
+    if [[ -f "$src" ]]; then
+      add_local_provider "$id" "local-bin" "$version" "$src" "$(basename "$src")" "[]"
+    elif [[ "$local_adapter_required" == "1" ]]; then
+      log "error: missing local adapter binary for $id at $src"
+      exit 5
+    fi
+  done
+
+  if [[ ${#local_ids[@]} -gt 0 ]]; then
+    ids_csv="$(IFS=,; echo "${local_ids[*]}")"
+    run_python - "$providers_src" "$ids_csv" <<'PY'
+import sys
+
+path = sys.argv[1]
+ids = {v for v in sys.argv[2].split(",") if v}
+sep = "\x1f"
+
+lines = []
+with open(path, "r", encoding="utf-8") as fh:
+    for line in fh:
+        if not line.strip():
+            continue
+        provider_id = line.split(sep, 1)[0]
+        if provider_id in ids:
+            continue
+        lines.append(line)
+
+with open(path, "w", encoding="utf-8") as fh:
+    fh.writelines(lines)
+PY
+    cat "$local_providers_src" >> "$providers_src"
+  fi
+fi
+
 providers_out="$(mktemp /tmp/ctx-bundle-providers-out.XXXXXX)"
+skip_providers_raw="${CTX_BUNDLE_SKIP_PROVIDERS:-}"
+skip_providers_raw="${skip_providers_raw// /}"
 
 while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package entrypoint args_json; do
   if [[ -z "$provider_id" || -z "$kind" ]]; then
     continue
+  fi
+  if [[ -n "$skip_providers_raw" ]]; then
+    if [[ ",$skip_providers_raw," == *",$provider_id,"* ]]; then
+      continue
+    fi
   fi
 
   provider_root="$bundle_dir/providers/${provider_id}/${os}/${arch}"
   version_marker="$provider_root/.version"
 
   case "$kind" in
+    local-bin)
+      if [[ -z "$url" ]]; then
+        log "error: missing local adapter path for $provider_id"
+        exit 5
+      fi
+      if [[ -z "$bin_path" ]]; then
+        bin_path="$(basename "$url")"
+      fi
+      mkdir -p "$provider_root"
+      dest="$provider_root/$bin_path"
+      mkdir -p "$(dirname "$dest")"
+      cp "$url" "$dest"
+      if [[ "$os" != "windows" ]]; then
+        chmod +x "$dest" || true
+      fi
+      echo "$version" > "$version_marker"
+      command_path="$dest"
+      ;;
+    local-node)
+      if [[ -z "$url" ]]; then
+        log "error: missing local adapter entrypoint for $provider_id"
+        exit 5
+      fi
+      if [[ -z "$bin_path" ]]; then
+        bin_path="$(basename "$url")"
+      fi
+      mkdir -p "$provider_root"
+      dest="$provider_root/$bin_path"
+      mkdir -p "$(dirname "$dest")"
+      cp "$url" "$dest"
+      echo "$version" > "$version_marker"
+      command_path="$node_bin"
+      entrypoint_rel="${dest#"$bundle_dir/"}"
+      args_json="$(PROVIDER_ENTRYPOINT="$entrypoint_rel" PROVIDER_ARGS_JSON="$args_json" run_python - <<'PY'
+import json
+import os
+
+args = [os.environ["PROVIDER_ENTRYPOINT"]]
+extra = json.loads(os.environ["PROVIDER_ARGS_JSON"] or "[]")
+args.extend(extra)
+print(json.dumps(args, separators=(",", ":")))
+PY
+)"
+      ;;
     archive)
       if [[ -z "$version" || -z "$url" ]]; then
         continue
@@ -735,6 +1005,7 @@ from pathlib import Path
 providers_path = Path(os.environ["PROVIDERS_OUT"])
 runtimes_path = Path(os.environ["RUNTIMES_OUT"])
 manifest_path = Path(os.environ.get("MANIFEST_PATH", "manifest.json"))
+append = os.environ.get("CTX_BUNDLE_APPEND", "").lower() in {"1", "true", "yes", "on"}
 
 providers = []
 if providers_path.exists():
@@ -748,6 +1019,25 @@ if runtimes_path.exists():
         if line.strip():
             runtimes.append(json.loads(line))
 
+if append and manifest_path.exists():
+    try:
+        existing = json.loads(manifest_path.read_text())
+    except Exception:
+        existing = {}
+
+    def merge_entries(existing_entries, new_entries, key_fields):
+        merged = {}
+        for entry in existing_entries or []:
+            key = tuple(entry.get(field) for field in key_fields)
+            merged[key] = entry
+        for entry in new_entries or []:
+            key = tuple(entry.get(field) for field in key_fields)
+            merged[key] = entry
+        return list(merged.values())
+
+    providers = merge_entries(existing.get("providers", []), providers, ["id", "os", "arch"])
+    runtimes = merge_entries(existing.get("runtimes", []), runtimes, ["id", "os", "arch"])
+
 manifest = {
     "version": 1,
     "generated_at": os.environ["GENERATED_AT_ENV"],
@@ -758,6 +1048,6 @@ manifest = {
 manifest_path.write_text(json.dumps(manifest, indent=2))
 PY
 
-rm -f "$providers_src" "$providers_out" "$runtimes_out" || true
+rm -f "$providers_src" "$providers_out" "$runtimes_out" "$local_providers_src" || true
 
 echo "$bundle_dir"

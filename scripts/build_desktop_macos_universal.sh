@@ -36,6 +36,26 @@ echo "Building sidecars (both arch)..."
 cargo build --manifest-path core/Cargo.toml -p ctx-http -p ctx-mcp --release --target "$ARM_TARGET"
 cargo build --manifest-path core/Cargo.toml -p ctx-http -p ctx-mcp --release --target "$INTEL_TARGET"
 
+echo "Preparing bundled harnesses..."
+BUNDLE_DIR="$ROOT/core/apps/desktop/src-tauri/bundles"
+rm -rf "$BUNDLE_DIR/providers" "$BUNDLE_DIR/runtimes"
+rm -f "$BUNDLE_DIR/manifest.json"
+
+CTX_BUNDLE_DIR="$BUNDLE_DIR" \
+CTX_BUNDLE_LOCAL_ADAPTERS=1 \
+CTX_BUNDLE_BUILD_LOCAL_ADAPTERS=1 \
+CTX_BUNDLE_TARGET_OS=macos \
+CTX_BUNDLE_TARGET_ARCH=aarch64 \
+./scripts/ensure_bundled_harnesses.sh
+
+CTX_BUNDLE_DIR="$BUNDLE_DIR" \
+CTX_BUNDLE_LOCAL_ADAPTERS=1 \
+CTX_BUNDLE_BUILD_LOCAL_ADAPTERS=1 \
+CTX_BUNDLE_TARGET_OS=macos \
+CTX_BUNDLE_TARGET_ARCH=x86_64 \
+CTX_BUNDLE_APPEND=1 \
+./scripts/ensure_bundled_harnesses.sh
+
 echo "Syncing universal sidecars + web dist into desktop resources..."
 node core/scripts/desktop_sync_resources_universal_macos.cjs --profile release
 
