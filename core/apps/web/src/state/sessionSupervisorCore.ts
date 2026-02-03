@@ -1458,6 +1458,24 @@ export class SessionSupervisor {
     return Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
   }
 
+  private overlayThoughtCacheOnTurns(entry: InternalEntry, turns: SessionTurn[]): SessionTurn[] {
+    if (!entry.thoughtCacheLoaded) return turns;
+    const cache = entry.thoughtCacheByKey;
+    const keys = cache ? Object.keys(cache) : [];
+    if (keys.length === 0) return turns;
+    const turnIdsWithThoughts = new Set(keys.map((key) => key.split("|")[0]));
+    let changed = false;
+    const next = turns.map((turn) => {
+      const turnId = idToString(turn.turn_id);
+      if (!turnId || !turnIdsWithThoughts.has(turnId)) return turn;
+      const current = String(turn.thought_partial ?? "");
+      if (!current.trim()) return turn;
+      changed = true;
+      return { ...turn, thought_partial: "" };
+    });
+    return changed ? next : turns;
+  }
+
   private mergeTurns(entry: InternalEntry, incoming: SessionTurn[]) {
     if (incoming.length === 0) return;
     const byId = new Map<string, SessionTurn>();

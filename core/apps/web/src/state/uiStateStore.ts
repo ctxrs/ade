@@ -183,6 +183,39 @@ export async function saveSessionHeadV1(
   } satisfies PersistedSessionHeadV1);
 }
 
+export type PersistedSessionAcpMetaV1 = {
+  v: 1;
+  sessionId: string;
+  models?: any;
+  modes?: any;
+  currentModelId?: string;
+  updatedAtMs: number;
+};
+
+export function sessionAcpMetaKeyV1(sessionId: string) {
+  return `wb.session_acp_meta.v1.${sessionId}`;
+}
+
+export async function loadSessionAcpMetaV1(sessionId: string): Promise<PersistedSessionAcpMetaV1 | null> {
+  const raw = await storage.getSnapshot<PersistedSessionAcpMetaV1>(sessionAcpMetaKeyV1(sessionId));
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as PersistedSessionAcpMetaV1;
+  if (rec.v !== 1 || rec.sessionId !== sessionId) return null;
+  return rec;
+}
+
+export async function saveSessionAcpMetaV1(
+  sessionId: string,
+  payload: Omit<PersistedSessionAcpMetaV1, "v" | "sessionId" | "updatedAtMs">,
+): Promise<void> {
+  await storage.setSnapshot(sessionAcpMetaKeyV1(sessionId), {
+    v: 1,
+    sessionId,
+    updatedAtMs: Date.now(),
+    ...payload,
+  } satisfies PersistedSessionAcpMetaV1);
+}
+
 export type PersistedThoughtRowV1 = {
   key: string;
   event: import("@ctx/types").SessionEvent;
