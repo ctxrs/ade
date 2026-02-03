@@ -2,11 +2,13 @@ use codex_protocol::config_types::SandboxMode;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::user_input::UserInput;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use ts_rs::TS;
 
 #[derive(Debug, Deserialize)]
 pub struct CrpCommandEnvelope {

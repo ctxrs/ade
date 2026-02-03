@@ -1453,12 +1453,14 @@ dependencies = [
  "codex-protocol",
  "mcp-types",
  "pretty_assertions",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "tokio",
  "toml 0.9.11+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "ts-rs",
 ]
 
 [[package]]
