@@ -33,6 +33,7 @@ const DEFAULT_TOKEN_TTL: Duration = Duration::from_secs(60 * 60);
 
 const LLM_ALLOWLIST: &[&str] = &[
     "api.anthropic.com",
+    "chatgpt.com",
     "api.openai.com",
     "api.mistral.ai",
     "api.groq.com",
