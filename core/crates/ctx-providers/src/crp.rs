@@ -176,6 +176,28 @@ impl ProviderAdapter for Tier1CrpAdapter {
     async fn has_live_session(&self, session_key: &str) -> bool {
         self.pool.has_session(session_key).await
     }
+
+    async fn authenticate_session(
+        &self,
+        session_key: String,
+        workdir: PathBuf,
+        env: HashMap<String, String>,
+        method_id: Option<String>,
+        _event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<()> {
+        let session = self
+            .pool
+            .get_or_create_session(&session_key, &workdir, &env)
+            .await?;
+        session
+            .process
+            .send(CrpCommand::SessionAuthenticate {
+                session_id: Some(session_key),
+                method_id,
+            })
+            .await?;
+        Ok(())
+    }
 }
 
 fn default_caps(id: &str) -> ProviderCapabilities {
@@ -352,13 +374,14 @@ impl CrpSessionPool {
             return Ok(());
         }
 
-        if !session.opened.load(Ordering::SeqCst) {
+        if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
             let config = build_crp_session_config(&req.env, &req.workdir);
             let provider_session_id = req
                 .env
                 .get("CTX_PROVIDER_SESSION_REF")
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty());
+            session.opening.store(true, Ordering::SeqCst);
             session
                 .process
                 .send(CrpCommand::SessionOpen {
@@ -367,7 +390,6 @@ impl CrpSessionPool {
                     config: Some(config),
                 })
                 .await?;
-            session.opened.store(true, Ordering::SeqCst);
         }
         match parse_crp_slash_command(&req.input.content) {
             Some(CrpSlashCommand::Compact) => {
@@ -481,6 +503,17 @@ impl CrpSessionPool {
                                 continue;
                             }
                             last_seq = env.seq;
+                            if matches!(&env.event, CrpEvent::SessionOpened { .. }) {
+                                session.opened.store(true, Ordering::SeqCst);
+                                session.opening.store(false, Ordering::SeqCst);
+                            }
+                            let auth_required = matches!(
+                                &env.event,
+                                CrpEvent::SessionNotice { code, .. } if code == "auth_required"
+                            );
+                            if auth_required {
+                                session.opening.store(false, Ordering::SeqCst);
+                            }
                             let mapped = map_crp_event(
                                 env.event,
                                 env.channel,
@@ -504,6 +537,18 @@ impl CrpSessionPool {
                                     );
                                 }
                                 let _ = req.event_sink.send(event).await;
+                            }
+                            if auth_required {
+                                let _ = req
+                                    .event_sink
+                                    .send(NormalizedEvent {
+                                        event_type: SessionEventType::TurnInterrupted,
+                                        payload_json: json!({
+                                            "reason": "auth_required",
+                                        }),
+                                    })
+                                    .await;
+                                break;
                             }
                             if mapped.done {
                                 break;
@@ -563,6 +608,7 @@ impl CrpSessionPool {
         let session = Arc::new(CrpSession {
             process,
             opened: AtomicBool::new(false),
+            opening: AtomicBool::new(false),
             draining: AtomicBool::new(false),
         });
         let mut sessions = self.sessions.lock().await;
@@ -602,6 +648,7 @@ impl Drop for ActivePromptGuard {
 struct CrpSession {
     process: Arc<CrpProcess>,
     opened: AtomicBool,
+    opening: AtomicBool,
     draining: AtomicBool,
 }
 
@@ -966,6 +1013,12 @@ enum CrpCommand {
         turn_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         instructions: Option<String>,
+    },
+    #[serde(rename = "session.authenticate")]
+    SessionAuthenticate {
+        session_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        method_id: Option<String>,
     },
     #[serde(rename = "session.cancel")]
     SessionCancel {
@@ -1508,6 +1561,16 @@ fn map_crp_event(
                 payload.insert("message".to_string(), json!(message));
             }
             if let Some(details) = details {
+                if let Value::Object(map) = &details {
+                    if let Some(auth_methods) =
+                        map.get("auth_methods").or_else(|| map.get("authMethods"))
+                    {
+                        payload.insert("auth_methods".to_string(), auth_methods.clone());
+                    }
+                    if let Some(provider) = map.get("provider") {
+                        payload.insert("provider".to_string(), provider.clone());
+                    }
+                }
                 payload.insert("details".to_string(), details);
             }
             if let Some(transient) = transient {
