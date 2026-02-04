@@ -12,6 +12,7 @@ use crate::harness_runtime::HarnessRuntimeManager;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
 use crate::mobile_tunnel::MobileTunnelManager;
 use crate::ops_events::OpsEvents;
+use crate::order_seq::OrderSeqState;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::provider_accounts;
 use crate::provider_guard;
@@ -55,6 +56,7 @@ pub struct SessionRuntime {
     pub schedulers: Mutex<HashMap<SessionId, TimedEntry<mpsc::Sender<SchedulerCommand>>>>,
     pub broadcasters: Mutex<HashMap<SessionId, TimedEntry<broadcast::Sender<SessionEvent>>>>,
     pub session_event_heads: Mutex<HashMap<SessionId, TimedEntry<watch::Sender<i64>>>>,
+    pub order_seq_states: Mutex<HashMap<SessionId, TimedEntry<Arc<Mutex<OrderSeqState>>>>>,
     pub(crate) active_head_projections: Mutex<HashMap<SessionId, ActiveHeadProjectionEntry>>,
     pub(crate) active_task_refreshes: Mutex<HashMap<TaskId, ActiveTaskRefreshEntry>>,
     pub running_sessions: Mutex<HashSet<SessionId>>,
@@ -367,6 +369,7 @@ impl AppState {
                 schedulers: Mutex::new(HashMap::new()),
                 broadcasters: Mutex::new(HashMap::new()),
                 session_event_heads: Mutex::new(HashMap::new()),
+                order_seq_states: Mutex::new(HashMap::new()),
                 active_head_projections: Mutex::new(HashMap::new()),
                 active_task_refreshes: Mutex::new(HashMap::new()),
                 running_sessions: Mutex::new(HashSet::new()),

@@ -32,9 +32,38 @@ function readEventOrderSeq(ev: SessionEvent): number | null {
   };
 
   const payload = ev.payload_json ?? {};
-  const crpSeq = parse((payload as any)?.crp_seq ?? (payload as any)?.crpSeq);
-  if (crpSeq != null) return crpSeq;
-  return parse((ev as any).seq);
+  return parse((payload as any)?.order_seq ?? (payload as any)?.orderSeq);
+}
+
+type AssistantOrderSeqLookup = {
+  byProviderId: Map<string, number>;
+};
+
+function collectAssistantOrderSeq(events: SessionEvent[]): AssistantOrderSeqLookup {
+  const byProviderId = new Map<string, number>();
+  for (const ev of events) {
+    const payload = ev.payload_json ?? {};
+    if (ev.event_type === "assistant_message_inserted") {
+      const orderSeq = readEventOrderSeq(ev);
+      if (!Number.isFinite(orderSeq)) continue;
+      const providerId = String(payload?.provider_message_id ?? payload?.providerMessageId ?? "").trim();
+      if (providerId) byProviderId.set(providerId, orderSeq as number);
+      continue;
+    }
+    if (ev.event_type === "assistant_chunk" || ev.event_type === "assistant_complete") {
+      const orderSeq = readEventOrderSeq(ev);
+      if (!Number.isFinite(orderSeq)) continue;
+      const providerId = String(
+        payload?.message_id ??
+          payload?.messageId ??
+          payload?.provider_message_id ??
+          payload?.providerMessageId ??
+          "",
+      ).trim();
+      if (providerId) byProviderId.set(providerId, orderSeq as number);
+    }
+  }
+  return { byProviderId };
 }
 
 function appendStreamingFragment(prev: string, fragment: string): string {
@@ -104,8 +133,13 @@ function readThoughtBlockKey(ev: SessionEvent): string | null {
   const parsedSummary = typeof rawSummary === "number" ? rawSummary : Number(rawSummary);
   const summaryIndex = Number.isFinite(parsedSummary) ? parsedSummary : 0;
   if (rawItemId) return `${turnId}|${rawItemId}|${summaryIndex}`;
-  const fallbackSeq = readEventOrderSeq(ev) ?? (ev as any).seq ?? ev.created_at;
-  return `${turnId}|unknown-${fallbackSeq}|${summaryIndex}`;
+  const fallbackSeq = readEventOrderSeq(ev);
+  if (Number.isFinite(fallbackSeq)) {
+    return `${turnId}|unknown-${fallbackSeq}|${summaryIndex}`;
+  }
+  const fallbackId = idToString(ev.id);
+  if (!fallbackId) return null;
+  return `${turnId}|unknown-${fallbackId}|${summaryIndex}`;
 }
 
 function readThoughtItemId(ev: SessionEvent): string | null {
@@ -121,16 +155,17 @@ function collectThoughtStream(events: SessionEvent[]): {
   createdAt?: string;
   isCrp: boolean;
 } | null {
-  const thoughtEvents = events.filter((ev) => ev.event_type === "thought_chunk" && shouldRenderThoughtChunk(ev));
+  const thoughtEvents = events
+    .filter((ev) => ev.event_type === "thought_chunk" && shouldRenderThoughtChunk(ev))
+    .map((ev) => ({ ev, orderSeq: readEventOrderSeq(ev) }))
+    .filter((entry) => Number.isFinite(entry.orderSeq));
   if (thoughtEvents.length === 0) return null;
 
   const sorted = thoughtEvents.slice().sort((a, b) => {
-    const sa = readEventOrderSeq(a);
-    const sb = readEventOrderSeq(b);
-    if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return (sa ?? 0) - (sb ?? 0);
-    if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
-    if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
-    return String(a.created_at).localeCompare(String(b.created_at));
+    const sa = a.orderSeq as number;
+    const sb = b.orderSeq as number;
+    if (sa !== sb) return sa - sb;
+    return String(a.ev.created_at).localeCompare(String(b.ev.created_at));
   });
 
   let text = "";
@@ -139,7 +174,7 @@ function collectThoughtStream(events: SessionEvent[]): {
   let isCrp = false;
 
   let hasFinal = false;
-  for (const ev of sorted) {
+  for (const { ev, orderSeq: seq } of sorted) {
     const payload = ev.payload_json ?? {};
     const finalText = readThoughtFullContent(payload);
     if (isFinalThoughtPayload(payload) && finalText) {
@@ -152,10 +187,7 @@ function collectThoughtStream(events: SessionEvent[]): {
       }
     }
     createdAt = createdAt ?? ev.created_at;
-    if (orderSeq === undefined) {
-      const seq = readEventOrderSeq(ev);
-      if (Number.isFinite(seq)) orderSeq = seq as number;
-    }
+    if (orderSeq === undefined) orderSeq = seq as number;
     if (isCrpThoughtEvent(ev)) isCrp = true;
   }
 
@@ -186,6 +218,8 @@ function collectThoughtBlocks(events: SessionEvent[]): ThoughtBlock[] {
   if (crpThoughtEvents.length > 0) {
     const groups = new Map<string, SessionEvent[]>();
     for (const ev of crpThoughtEvents) {
+      const orderSeq = readEventOrderSeq(ev);
+      if (!Number.isFinite(orderSeq)) continue;
       const key = readThoughtBlockKey(ev);
       if (!key) continue;
       const list = groups.get(key) ?? [];
@@ -194,11 +228,9 @@ function collectThoughtBlocks(events: SessionEvent[]): ThoughtBlock[] {
     }
     for (const list of groups.values()) {
       const sorted = list.slice().sort((a, b) => {
-        const sa = readEventOrderSeq(a);
-        const sb = readEventOrderSeq(b);
-        if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return (sa ?? 0) - (sb ?? 0);
-        if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
-        if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
+        const sa = readEventOrderSeq(a) as number;
+        const sb = readEventOrderSeq(b) as number;
+        if (sa !== sb) return sa - sb;
         return String(a.created_at).localeCompare(String(b.created_at));
       });
       let text = "";
@@ -218,12 +250,9 @@ function collectThoughtBlocks(events: SessionEvent[]): ThoughtBlock[] {
           }
         }
         createdAt = createdAt ?? ev.created_at;
-        if (orderSeq === undefined) {
-          const seq = readEventOrderSeq(ev);
-          if (Number.isFinite(seq)) orderSeq = seq as number;
-        }
+        if (orderSeq === undefined) orderSeq = readEventOrderSeq(ev) as number;
       }
-      if (text.trim()) {
+      if (text.trim() && Number.isFinite(orderSeq)) {
         blocks.push({ text, orderSeq, createdAt, isCrp: true });
       }
     }
@@ -246,10 +275,13 @@ function collectThoughtBlocks(events: SessionEvent[]): ThoughtBlock[] {
     .sort((a, b) => {
       const sa = a.orderSeq;
       const sb = b.orderSeq;
-      if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return (sa ?? 0) - (sb ?? 0);
+      if (Number.isFinite(sa) && Number.isFinite(sb)) {
+        if (sa !== sb) return (sa as number) - (sb as number);
+        return String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? ""));
+      }
       if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
       if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
-      return String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? ""));
+      return 0;
     });
 }
 
@@ -714,22 +746,31 @@ export function filterThreadItemsForVerbosity(items: ThreadItem[], verbosity: Se
 }
 
 type SortableThreadGroup = {
-  sort_at: string;
+  sort_seq: number;
   group: WorkbenchThreadView["groups"][number];
 };
 
 function buildSystemMessageGroups(messages: Message[]): SortableThreadGroup[] {
   const systemMessages = messages
     .filter((m) => m.role === "system")
-    .slice()
-    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
-  return systemMessages.map((m, idx) => {
+    .map((m, idx) => ({
+      message: m,
+      orderSeq: Number(m.order_seq ?? Number.NaN),
+      idx,
+    }))
+    .filter((entry) => Number.isFinite(entry.orderSeq))
+    .sort((a, b) => {
+      if (a.orderSeq !== b.orderSeq) return (a.orderSeq as number) - (b.orderSeq as number);
+      return a.idx - b.idx;
+    });
+  return systemMessages.map((entry, idx) => {
+    const m = entry.message;
     const id = idToString(m.id) || `system-${idx}`;
     const attachments = Array.isArray((m as any).attachments)
       ? ((m as any).attachments as MessageAttachment[])
       : [];
     return {
-      sort_at: m.created_at,
+      sort_seq: entry.orderSeq as number,
       group: {
         key: `system-${id}`,
         header: null,
@@ -758,8 +799,7 @@ function mergeGroupsWithSystemMessages(
   }
   const combined = [...groups, ...systemGroups];
   combined.sort((a, b) => {
-    const cmp = String(a.sort_at).localeCompare(String(b.sort_at));
-    if (cmp !== 0) return cmp;
+    if (a.sort_seq !== b.sort_seq) return a.sort_seq - b.sort_seq;
     return String(a.group.key).localeCompare(String(b.group.key));
   });
   return combined.map((g) => g.group);
@@ -801,7 +841,7 @@ function shouldRenderAssistantChunk(ev: SessionEvent): boolean {
 type ActivityEntry = {
   item: ThreadItem;
   created_at: string;
-  kind: "tool" | "thought" | "ask_user_question";
+  kind: "tool" | "thought" | "ask_user_question" | "message";
   order_seq?: number;
 };
 
@@ -941,21 +981,24 @@ function buildTurnActivityTimeline(opts: {
   const askInserted = new Set<string>();
 
   for (const ev of opts.events) {
-    const orderSeq = readEventOrderSeq(ev) ?? undefined;
     if (ev.event_type === "notice") {
+      const orderSeq = readEventOrderSeq(ev);
+      if (!Number.isFinite(orderSeq)) continue;
       const askItem = buildAskUserQuestionItem(ev, opts.turnId, opts.askUserQuestionAnswers);
       if (askItem && !askInserted.has(askItem.tool_call_id)) {
         activity.push({
           item: askItem,
           created_at: ev.created_at,
           kind: "ask_user_question",
-          order_seq: orderSeq,
+          order_seq: orderSeq as number,
         });
         askInserted.add(askItem.tool_call_id);
       }
     }
 
     if (ev.event_type === "tool_call" || ev.event_type === "tool_call_update" || ev.event_type === "tool_result") {
+      const orderSeq = readEventOrderSeq(ev);
+      if (!Number.isFinite(orderSeq)) continue;
       const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
       const toolCallId =
         String(
@@ -977,7 +1020,7 @@ function buildTurnActivityTimeline(opts: {
           item: tool,
           created_at: tool.created_at,
           kind: "tool",
-          order_seq: orderSeq,
+          order_seq: orderSeq as number,
         });
         toolInserted.add(toolCallId);
       }
@@ -987,6 +1030,7 @@ function buildTurnActivityTimeline(opts: {
 
   if (thoughtBlocks.length > 0) {
     thoughtBlocks.forEach((block, index) => {
+      if (!Number.isFinite(block.orderSeq)) return;
       const thoughtText = block.text ?? "";
       if (!thoughtText.trim()) return;
       const thoughtItem: Extract<ThreadItem, { kind: "thought" }> = {
@@ -1003,29 +1047,6 @@ function buildTurnActivityTimeline(opts: {
         order_seq: block.orderSeq,
       });
     });
-  } else {
-    const fallbackThoughtRaw = String(opts.turn.thought_partial ?? "");
-    const fallbackThought = fallbackThoughtRaw.trim();
-    if (fallbackThought && !activity.some((entry) => entry.item.kind === "thought")) {
-      const fallbackItem: Extract<ThreadItem, { kind: "thought" }> = {
-        kind: "thought",
-        id: `thought-${opts.turnId}-fallback`,
-        turn_id: opts.turnId,
-        created_at: opts.turn.started_at ?? opts.turn.updated_at,
-        content: fallbackThoughtRaw,
-      };
-      activity.push({
-        item: fallbackItem,
-        created_at: fallbackItem.created_at,
-        kind: "thought",
-      });
-    }
-  }
-
-  const remainingTools = Array.from(toolById.values()).filter((tool) => !toolInserted.has(tool.tool_call_id));
-  remainingTools.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
-  for (const tool of remainingTools) {
-    activity.push({ item: tool, created_at: tool.created_at, kind: "tool" });
   }
 
   return { activity, tools: Array.from(toolById.values()) };
@@ -1086,11 +1107,15 @@ export function buildWorkbenchThreadViewModelFromTurns(
     const turnId = idToString(turn.turn_id) || `turn-${turn.started_at}`;
     const userMessageId = turn.user_message_id ? idToString(turn.user_message_id) : "";
 
-    const userMessage = userMessageId ? messageById.get(userMessageId) : undefined;
+    const turnMessages = messagesByTurnId.get(turnId) ?? [];
+    const fallbackUserMessage =
+      !userMessageId ? turnMessages.find((m) => m.role === "user") : undefined;
+    const userMessage = userMessageId ? messageById.get(userMessageId) : fallbackUserMessage;
+    const headerId = userMessageId || idToString(userMessage?.id) || turnId;
 
     const header: WorkbenchTurnHeader | null = userMessage
       ? {
-        id: userMessageId || turnId,
+        id: headerId,
         content: userMessage.content ?? "",
         attachments: Array.isArray((userMessage as any).attachments)
           ? ((userMessage as any).attachments as MessageAttachment[])
@@ -1098,6 +1123,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
         created_at: userMessage.created_at,
       }
       : null;
+    const headerOrderSeq = Number(userMessage?.order_seq ?? Number.NaN);
 
     let tools = (toolsByTurnId[turnId] ?? []).map((tool) => {
       const toolKind = String(tool.tool_kind ?? "tool");
@@ -1123,13 +1149,15 @@ export function buildWorkbenchThreadViewModelFromTurns(
       } satisfies Extract<ThreadItem, { kind: "tool" }>;
     });
 
+    const eventsForTurn = eventsByTurnId.get(turnId) ?? [];
     const { activity } = buildTurnActivityTimeline({
       turnId,
       turn,
       tools,
-      events: eventsByTurnId.get(turnId) ?? [],
+      events: eventsForTurn,
       askUserQuestionAnswers,
     });
+    const assistantOrderSeq = collectAssistantOrderSeq(eventsForTurn);
 
     const assistantMessages = (messagesByTurnId.get(turnId) ?? [])
       .filter((m) => m.role === "assistant")
@@ -1153,6 +1181,8 @@ export function buildWorkbenchThreadViewModelFromTurns(
 
     const timeline: TimelineEntry[] = [];
     for (const m of assistantMessages) {
+      const orderSeq = Number(m.order_seq ?? Number.NaN);
+      if (!Number.isFinite(orderSeq)) continue;
       timeline.push({
         item: {
           kind: "assistant",
@@ -1166,6 +1196,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
         created_at: m.created_at,
         kind: "assistant",
         turn_sequence: Number(m.turn_sequence ?? Number.NaN),
+        order_seq: orderSeq as number,
       });
     }
 
@@ -1181,6 +1212,12 @@ export function buildWorkbenchThreadViewModelFromTurns(
     const isDuplicatePending =
       !!pendingProviderId && !!lastProviderId && pendingProviderId === lastProviderId;
     if (pendingTrimmed.length > 0 && pendingTrimmed !== statusTrimmed && !isDuplicatePending) {
+      const pendingOrderSeq = pendingProviderId
+        ? assistantOrderSeq.byProviderId.get(pendingProviderId)
+        : undefined;
+      if (!Number.isFinite(pendingOrderSeq)) {
+        // Skip rendering partials without order_seq to avoid fallback ordering.
+      } else {
       const pendingCreatedAt = turn.started_at ?? turn.updated_at;
       timeline.push({
         item: {
@@ -1195,7 +1232,9 @@ export function buildWorkbenchThreadViewModelFromTurns(
         created_at: pendingCreatedAt,
         kind: "assistant",
         turn_sequence: Number.MAX_SAFE_INTEGER,
+        order_seq: pendingOrderSeq as number,
       });
+      }
     }
 
     for (const entry of activity) {
@@ -1210,12 +1249,15 @@ export function buildWorkbenchThreadViewModelFromTurns(
     timeline.sort((a, b) => {
       const aSeq = a.order_seq;
       const bSeq = b.order_seq;
-      if (Number.isFinite(aSeq) && Number.isFinite(bSeq) && aSeq !== bSeq) {
-        return (aSeq ?? 0) - (bSeq ?? 0);
+      if (Number.isFinite(aSeq) && Number.isFinite(bSeq)) {
+        if (aSeq !== bSeq) return (aSeq as number) - (bSeq as number);
+        const tcmp = String(a.created_at).localeCompare(String(b.created_at));
+        if (tcmp !== 0) return tcmp;
+      } else if (Number.isFinite(aSeq) && !Number.isFinite(bSeq)) {
+        return -1;
+      } else if (!Number.isFinite(aSeq) && Number.isFinite(bSeq)) {
+        return 1;
       }
-
-      const tcmp = String(a.created_at).localeCompare(String(b.created_at));
-      if (tcmp !== 0) return tcmp;
       if (a.kind === "assistant" && b.kind === "assistant") {
         const sa = Number(a.turn_sequence ?? Number.NaN);
         const sb = Number(b.turn_sequence ?? Number.NaN);
@@ -1249,8 +1291,19 @@ export function buildWorkbenchThreadViewModelFromTurns(
       assistant_messages_content: assistantMessagesContent,
     });
 
+    const timelineOrderSeq = timeline
+      .map((entry) => entry.order_seq)
+      .filter((seq): seq is number => Number.isFinite(seq));
+    const groupOrderSeq = Number.isFinite(headerOrderSeq)
+      ? (headerOrderSeq as number)
+      : timelineOrderSeq.length > 0
+        ? Math.min(...timelineOrderSeq)
+        : Number.NaN;
+    if (!Number.isFinite(groupOrderSeq)) {
+      continue;
+    }
     groups.push({
-      sort_at: header?.created_at ?? turn.started_at,
+      sort_seq: groupOrderSeq as number,
       group: { key: `turn-${turnId}`, header, items },
     });
   }
@@ -1282,13 +1335,29 @@ function buildWorkbenchThreadViewModelFromEvents(
 
   const userMessages = messages
     .filter((m) => m.role === "user")
-    .slice()
-    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    .map((m, idx) => ({ message: m, orderSeq: Number(m.order_seq ?? Number.NaN), idx }))
+    .filter((entry) => Number.isFinite(entry.orderSeq))
+    .sort((a, b) => {
+      if (a.orderSeq !== b.orderSeq) return (a.orderSeq as number) - (b.orderSeq as number);
+      const aId = idToString(a.message.id) ?? "";
+      const bId = idToString(b.message.id) ?? "";
+      if (aId !== bId) return aId.localeCompare(bId);
+      return a.idx - b.idx;
+    })
+    .map((entry) => entry.message);
 
   const assistantMessages = messages
     .filter((m) => m.role === "assistant")
-    .slice()
-    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    .map((m, idx) => ({ message: m, orderSeq: Number(m.order_seq ?? Number.NaN), idx }))
+    .filter((entry) => Number.isFinite(entry.orderSeq))
+    .sort((a, b) => {
+      if (a.orderSeq !== b.orderSeq) return (a.orderSeq as number) - (b.orderSeq as number);
+      const aId = idToString(a.message.id) ?? "";
+      const bId = idToString(b.message.id) ?? "";
+      if (aId !== bId) return aId.localeCompare(bId);
+      return a.idx - b.idx;
+    })
+    .map((entry) => entry.message);
 
   const ensureTool = (g: TurnGroup, toolCallId: string, createdAt: string) => {
     const existing = g.toolById.get(toolCallId);
@@ -1319,8 +1388,16 @@ function buildWorkbenchThreadViewModelFromEvents(
   if (userMessages.length === 0) {
     const userEvents = events
       .filter((e) => e.event_type === "user_message")
+      .map((ev) => ({ ev, orderSeq: readEventOrderSeq(ev) }))
+      .filter((entry) => Number.isFinite(entry.orderSeq))
       .slice()
-      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      .sort((a, b) => {
+        const sa = a.orderSeq as number;
+        const sb = b.orderSeq as number;
+        if (sa !== sb) return sa - sb;
+        return String(a.ev.created_at).localeCompare(String(b.ev.created_at));
+      })
+      .map((entry) => entry.ev);
 
     const eventsInRangeExclusive = (startIso: string, endIso: string | null) => {
       const start = Date.parse(startIso);
@@ -1352,60 +1429,174 @@ function buildWorkbenchThreadViewModelFromEvents(
       let thought = "";
       let thoughtAt: string | null = null;
       let thoughtIsCrp = false;
+      let thoughtOrderSeq: number | undefined;
+      let assistantOrderSeq: number | undefined;
+      const activity: ActivityEntry[] = [];
       const askItems: Array<Extract<ThreadItem, { kind: "ask_user_question" }>> = [];
       const askInserted = new Set<string>();
-      const noticeItems: Array<Extract<ThreadItem, { kind: "message" }>> = [];
       const noticeInserted = new Set<string>();
+      const toolInserted = new Set<string>();
       for (const ev of events) {
         if (ev.event_type === "notice") {
+          const orderSeq = readEventOrderSeq(ev);
+          if (!Number.isFinite(orderSeq)) continue;
           const askItem = buildAskUserQuestionItem(ev, g.key, askUserQuestionAnswers);
           if (askItem && !askInserted.has(askItem.tool_call_id)) {
             askItems.push(askItem);
+            activity.push({
+              item: askItem,
+              created_at: ev.created_at,
+              kind: "ask_user_question",
+              order_seq: orderSeq as number,
+            });
             askInserted.add(askItem.tool_call_id);
           }
           const noticeItem = buildNoticeMessageItem(ev, g.key);
           if (noticeItem && !noticeInserted.has(noticeItem.id)) {
-            noticeItems.push(noticeItem);
+            activity.push({
+              item: noticeItem,
+              created_at: noticeItem.created_at,
+              kind: "message",
+              order_seq: orderSeq as number,
+            });
             noticeInserted.add(noticeItem.id);
           }
         }
         if (ev.event_type === "thought_chunk") {
           if (!shouldRenderThoughtChunk(ev)) continue;
+          const orderSeq = readEventOrderSeq(ev);
+          if (!Number.isFinite(orderSeq)) continue;
           const fragment = String(ev.payload_json?.content_fragment ?? "");
           if (fragment) {
             thought = appendStreamingFragment(thought, fragment);
             thoughtAt = thoughtAt ?? ev.created_at;
+            thoughtOrderSeq = thoughtOrderSeq ?? (orderSeq as number);
             if (isCrpThoughtEvent(ev)) thoughtIsCrp = true;
+          }
+        }
+        if (ev.event_type === "assistant_chunk" || ev.event_type === "assistant_complete") {
+          const orderSeq = readEventOrderSeq(ev);
+          if (!Number.isFinite(orderSeq)) continue;
+          assistantOrderSeq = assistantOrderSeq ?? (orderSeq as number);
+          if (!g.assistant) {
+            g.assistant = {
+              kind: "assistant",
+              id: `assistant-${g.key}`,
+              turn_id: g.key,
+              created_at: ev.created_at,
+              content: "",
+              thought: "",
+              is_complete: false,
+            };
+          }
+          if (ev.event_type === "assistant_chunk") {
+            if (!shouldRenderAssistantChunk(ev)) continue;
+            const fragment = String(ev.payload_json?.content_fragment ?? "");
+            if (fragment) {
+              g.assistant_first_at = g.assistant_first_at ?? ev.created_at;
+              g.assistant.content += fragment;
+            }
+          } else {
+            const full = String(ev.payload_json?.full_content ?? ev.payload_json?.content ?? "");
+            g.assistant_complete_at = ev.created_at;
+            if (full) g.assistant.content = full;
+            g.assistant.is_complete = true;
           }
         }
         const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
         const toolCallId =
           String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
         if (!toolCallId) continue;
-        ensureTool(g, toolCallId, ev.created_at);
+        const orderSeq = readEventOrderSeq(ev);
+        if (!Number.isFinite(orderSeq)) continue;
+        const tool = ensureTool(g, toolCallId, ev.created_at);
+        if (!toolInserted.has(toolCallId)) {
+          activity.push({
+            item: tool,
+            created_at: tool.created_at,
+            kind: "tool",
+            order_seq: orderSeq as number,
+          });
+          toolInserted.add(toolCallId);
+        }
       }
-      const items: ThreadItem[] = [];
-      const thoughtContent = thought;
-      if (thoughtContent.trim()) {
-        items.push({
-          kind: "thought",
-          id: `thought-${g.key}`,
-          turn_id: g.key,
-          created_at: thoughtAt ?? g.first_at,
-          content: thoughtContent,
+      type TimelineEntry = {
+        item: ThreadItem;
+        created_at: string;
+        kind: "assistant" | "tool" | "thought" | "ask_user_question" | "message";
+        order_seq?: number;
+      };
+      const timeline: TimelineEntry[] = [];
+      for (const entry of activity) {
+        timeline.push({
+          item: entry.item,
+          created_at: entry.created_at,
+          kind: entry.kind,
+          order_seq: entry.order_seq,
         });
       }
-      const activityItems = [...g.toolItems, ...askItems, ...noticeItems];
-      activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
-      items.push(...activityItems);
+      const thoughtContent = thought;
+      if (thoughtContent.trim() && Number.isFinite(thoughtOrderSeq)) {
+        timeline.push({
+          item: {
+            kind: "thought",
+            id: `thought-${g.key}`,
+            turn_id: g.key,
+            created_at: thoughtAt ?? g.first_at,
+            content: thoughtContent,
+          },
+          created_at: thoughtAt ?? g.first_at,
+          kind: "thought",
+          order_seq: thoughtOrderSeq,
+        });
+      }
+      if (g.assistant && Number.isFinite(assistantOrderSeq)) {
+        timeline.push({
+          item: {
+            ...g.assistant,
+            thought_seconds: (() => {
+              if (!g.thought_first_at) return undefined;
+              const start = Date.parse(g.thought_first_at);
+              const endRaw = g.assistant_first_at ?? g.assistant_complete_at ?? g.thought_last_at;
+              if (!endRaw) return undefined;
+              const end = Date.parse(endRaw);
+              if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 1;
+              return Math.max(1, Math.round((end - start) / 1000));
+            })(),
+          },
+          created_at: g.assistant.created_at,
+          kind: "assistant",
+          order_seq: assistantOrderSeq,
+        });
+      }
+      timeline.sort((a, b) => {
+        const aSeq = a.order_seq;
+        const bSeq = b.order_seq;
+        if (Number.isFinite(aSeq) && Number.isFinite(bSeq)) {
+          if (aSeq !== bSeq) return (aSeq as number) - (bSeq as number);
+          return String(a.created_at).localeCompare(String(b.created_at));
+        }
+        if (Number.isFinite(aSeq) && !Number.isFinite(bSeq)) return -1;
+        if (!Number.isFinite(aSeq) && Number.isFinite(bSeq)) return 1;
+        return 0;
+      });
+      const items: ThreadItem[] = timeline.map((entry) => entry.item);
       if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
-      groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
+      const groupOrderSeq = timeline
+        .map((entry) => entry.order_seq)
+        .filter((seq): seq is number => Number.isFinite(seq))
+        .reduce((min, seq) => Math.min(min, seq), Number.POSITIVE_INFINITY);
+      if (!Number.isFinite(groupOrderSeq)) {
+        return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
+      }
+      groups.push({ sort_seq: groupOrderSeq, group: { key: g.key, header: g.header, items } });
       return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
     }
 
     for (let i = 0; i < userEvents.length; i++) {
       const u = userEvents[i];
       const nextUser = userEvents[i + 1] ?? null;
+      const userOrderSeq = readEventOrderSeq(u);
       const mid =
         String(u.payload_json?.message_id ?? "").trim() ||
         (idToString(u.id) || `msg-${u.created_at}`);
@@ -1613,7 +1804,10 @@ function buildWorkbenchThreadViewModelFromEvents(
         items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
       }
 
-      groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
+      if (!Number.isFinite(userOrderSeq)) {
+        continue;
+      }
+      groups.push({ sort_seq: userOrderSeq as number, group: { key: g.key, header: g.header, items } });
     }
 
     return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
@@ -1633,6 +1827,7 @@ function buildWorkbenchThreadViewModelFromEvents(
   for (let i = 0; i < userMessages.length; i++) {
     const u = userMessages[i];
     const nextUser = userMessages[i + 1] ?? null;
+    const userOrderSeq = Number(u.order_seq ?? Number.NaN);
 
     const mid = idToString(u.id) || `msg-${u.created_at}`;
     const g: TurnGroup = {
@@ -1654,13 +1849,14 @@ function buildWorkbenchThreadViewModelFromEvents(
       assistant_complete_at: null,
     };
 
+    const nextUserOrderSeq = nextUser ? Number(nextUser.order_seq ?? Number.NaN) : Number.NaN;
     const assistant = assistantMessages.find((a) => {
-      const ta = Date.parse(String(a.created_at));
-      const tu = Date.parse(String(u.created_at));
-      if (!Number.isFinite(ta) || !Number.isFinite(tu) || ta <= tu) return false;
+      const aSeq = Number(a.order_seq ?? Number.NaN);
+      if (!Number.isFinite(userOrderSeq) || !Number.isFinite(aSeq)) return false;
+      if (aSeq <= (userOrderSeq as number)) return false;
       if (!nextUser) return true;
-      const tn = Date.parse(String(nextUser.created_at));
-      return !Number.isFinite(tn) || ta < tn;
+      if (Number.isFinite(nextUserOrderSeq)) return aSeq < (nextUserOrderSeq as number);
+      return true;
     });
 
     const endAt = assistant?.created_at ?? nextUser?.created_at ?? null;
@@ -1862,7 +2058,10 @@ function buildWorkbenchThreadViewModelFromEvents(
       items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
     }
 
-    groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
+    if (!Number.isFinite(userOrderSeq)) {
+      continue;
+    }
+    groups.push({ sort_seq: userOrderSeq as number, group: { key: g.key, header: g.header, items } });
   }
 
   // If there are no user messages (should be rare), fall back to an event-only group.
@@ -1907,7 +2106,13 @@ function buildWorkbenchThreadViewModelFromEvents(
     activityItems.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
     const items: ThreadItem[] = [...activityItems];
     if (items.length === 0) items.push({ kind: "spacer", id: `spacer-${g.key}`, created_at: g.first_at });
-    groups.push({ sort_at: g.first_at, group: { key: g.key, header: g.header, items } });
+    const groupOrderSeq = events
+      .map((ev) => readEventOrderSeq(ev))
+      .filter((seq): seq is number => Number.isFinite(seq))
+      .reduce((min, seq) => Math.min(min, seq), Number.POSITIVE_INFINITY);
+    if (Number.isFinite(groupOrderSeq)) {
+      groups.push({ sort_seq: groupOrderSeq, group: { key: g.key, header: g.header, items } });
+    }
   }
 
   return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };

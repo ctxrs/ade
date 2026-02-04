@@ -2,15 +2,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch, Mutex};
 
 use ctx_core::ids::{SessionId, TaskId};
 use ctx_core::models::{
     Message, MessageAttachment, MessageDelivery, MessageRole, Session, SessionEvent,
     SessionEventType, SessionHeadDelta, SessionHeadSnapshot, SessionTurn, SessionTurnStatus,
 };
+use ctx_store::Store;
 
 use crate::scheduler::session_worker;
+use crate::order_seq::OrderSeqState;
 
 use super::state::{
     ActiveHeadProjectionEntry, ActiveTaskRefreshEntry, AppState, SessionHeadCacheKey,
@@ -65,6 +67,11 @@ fn message_from_event(event: &SessionEvent, session: &Session) -> Option<Message
         .get("attachments")
         .and_then(|v| serde_json::from_value::<Vec<MessageAttachment>>(v.clone()).ok())
         .unwrap_or_default();
+    let order_seq = event
+        .payload_json
+        .get("order_seq")
+        .or_else(|| event.payload_json.get("orderSeq"))
+        .and_then(|v| v.as_i64());
     let role = match event.event_type {
         SessionEventType::UserMessage => MessageRole::User,
         SessionEventType::AssistantMessageInserted => MessageRole::Assistant,
@@ -84,6 +91,7 @@ fn message_from_event(event: &SessionEvent, session: &Session) -> Option<Message
             .payload_json
             .get("turn_sequence")
             .and_then(|v| v.as_i64()),
+        order_seq,
         role,
         content,
         attachments,
@@ -128,6 +136,22 @@ fn turn_from_event(event: &SessionEvent, message: Option<&Message>) -> Option<Se
 }
 
 impl SessionRuntime {
+    pub async fn get_order_seq_state(
+        &self,
+        store: &Store,
+        session_id: SessionId,
+    ) -> Arc<Mutex<OrderSeqState>> {
+        let mut map = self.order_seq_states.lock().await;
+        if let Some(entry) = map.get_mut(&session_id) {
+            entry.touch();
+            return entry.value.clone();
+        }
+        let start_seq = store.get_session_last_event_seq(session_id).await.unwrap_or(0);
+        let state = Arc::new(Mutex::new(OrderSeqState::new(start_seq.saturating_add(1))));
+        map.insert(session_id, TimedEntry::new(state.clone()));
+        state
+    }
+
     pub async fn cached_session_head_snapshot(
         &self,
         session_id: SessionId,

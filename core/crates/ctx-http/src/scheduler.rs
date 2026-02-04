@@ -8,7 +8,7 @@ use std::time::Instant;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde_json::{json, Value};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{
@@ -22,6 +22,7 @@ use ctx_store::store::SessionTurnToolCountDeltas;
 use crate::daemon::AppState;
 use crate::harness_runtime::HarnessRuntimeKind;
 use crate::installer;
+use crate::order_seq::OrderSeqState;
 use crate::ops_events::OpsEvent;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::provider_accounts;
@@ -84,6 +85,10 @@ pub async fn session_worker(
         Ok(store) => store,
         Err(_) => return,
     };
+    let order_seq_state = state
+        .sessions
+        .get_order_seq_state(&store, session.id)
+        .await;
     if let Ok(mut queued) = store.list_queued_messages_for_session(session.id).await {
         for m in queued.drain(..) {
             queue.push_back(QueuedMessage {
@@ -143,7 +148,16 @@ pub async fn session_worker(
                     )
                     .await;
                 }
-                match start_turn(&state, &session_for_turn, &workdir, &env_target, msg).await {
+                match start_turn(
+                    &state,
+                    &session_for_turn,
+                    &workdir,
+                    &env_target,
+                    msg,
+                    Arc::clone(&order_seq_state),
+                )
+                .await
+                {
                     Ok(turn) => {
                         state.set_running(session.id, true).await;
                         running = Some(turn);
@@ -257,6 +271,7 @@ async fn start_turn(
     workdir: &Path,
     env_target: &str,
     queued: QueuedMessage,
+    order_seq_state: Arc<Mutex<OrderSeqState>>,
 ) -> Result<RunningTurn> {
     state.wait_for_worktree_bootstrap(session.worktree_id).await;
 
@@ -615,6 +630,7 @@ async fn start_turn(
     let workdir_str = workdir_str.clone();
     let mut telemetry_emitted = false;
 
+    let order_seq_state = Arc::clone(&order_seq_state);
     tokio::spawn(async move {
         let mut assistant_partial = String::new();
         let mut assistant_partial_message_id: Option<String> = None;
@@ -767,6 +783,16 @@ async fn start_turn(
                     output_spool_path.as_deref(),
                 );
             }
+            {
+                let mut order_seq_state = order_seq_state.lock().await;
+                attach_order_seq(
+                    &mut order_seq_state,
+                    &event_type,
+                    &mut payload,
+                    &turn_id,
+                    assistant_sequence,
+                );
+            }
             let appended = store
                 .append_session_event(
                     session_id,
@@ -835,8 +861,18 @@ async fn start_turn(
                     | SessionEventType::ToolCallUpdate
                     | SessionEventType::ToolResult => {
                         if !assistant_partial.is_empty() {
+                            let message_id = ctx_core::ids::MessageId::new();
+                            let order_seq = {
+                                let mut order_seq_state = order_seq_state.lock().await;
+                                order_seq_state.get_or_assign(
+                                    format!("message:{}", message_id.0),
+                                    None,
+                                )
+                            };
                             if let Ok(saved) = persist_assistant_message(
                                 &store,
+                                message_id,
+                                order_seq,
                                 session_id,
                                 task_id,
                                 run_id,
@@ -856,6 +892,7 @@ async fn start_turn(
                                     "delivery": saved.delivery,
                                     "attachments": saved.attachments,
                                     "turn_sequence": saved.turn_sequence,
+                                    "order_seq": saved.order_seq,
                                 });
                                 if let Some(provider_message_id) =
                                     assistant_partial_message_id.take()
@@ -866,6 +903,16 @@ async fn start_turn(
                                             json!(provider_message_id),
                                         );
                                     }
+                                }
+                                {
+                                    let mut order_seq_state = order_seq_state.lock().await;
+                                    attach_order_seq(
+                                        &mut order_seq_state,
+                                        &SessionEventType::AssistantMessageInserted,
+                                        &mut payload,
+                                        &turn_id,
+                                        assistant_sequence,
+                                    );
                                 }
                                 let _ = emit_event(
                                     &state_for_events,
@@ -964,8 +1011,18 @@ async fn start_turn(
                             if let Some(content) =
                                 strip_emitted_prefix(&content, &assistant_emitted)
                             {
+                                let message_id = ctx_core::ids::MessageId::new();
+                                let order_seq = {
+                                    let mut order_seq_state = order_seq_state.lock().await;
+                                    order_seq_state.get_or_assign(
+                                        format!("message:{}", message_id.0),
+                                        None,
+                                    )
+                                };
                                 if let Ok(saved) = persist_assistant_message(
                                     &store,
+                                    message_id,
+                                    order_seq,
                                     session_id,
                                     task_id,
                                     run_id,
@@ -985,6 +1042,7 @@ async fn start_turn(
                                         "delivery": saved.delivery,
                                         "attachments": saved.attachments,
                                         "turn_sequence": saved.turn_sequence,
+                                        "order_seq": saved.order_seq,
                                     });
                                     if let Some(provider_message_id) = provider_message_id {
                                         if let Some(obj) = payload.as_object_mut() {
@@ -1493,6 +1551,155 @@ async fn emit_event(
     Ok(event)
 }
 
+fn read_payload_string(payload: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = payload.get(*key).and_then(Value::as_str) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn read_payload_i64(payload: &Value, keys: &[&str]) -> Option<i64> {
+    for key in keys {
+        if let Some(value) = payload.get(*key) {
+            if let Some(num) = value.as_i64() {
+                return Some(num);
+            }
+            if let Some(text) = value.as_str() {
+                if let Ok(parsed) = text.trim().parse::<i64>() {
+                    return Some(parsed);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn read_order_seq(payload: &Value) -> Option<i64> {
+    read_payload_i64(payload, &["order_seq", "orderSeq"])
+}
+
+fn insert_order_seq(payload: &mut Value, order_seq: i64) {
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("order_seq".to_string(), json!(order_seq));
+    }
+}
+
+fn build_order_seq_key(
+    event_type: &SessionEventType,
+    payload: &Value,
+    turn_id: &TurnId,
+    assistant_sequence: i64,
+) -> Option<String> {
+    match event_type {
+        SessionEventType::UserMessage => {
+            let message_id = read_payload_string(payload, &["message_id", "messageId"]);
+            if let Some(id) = message_id {
+                return Some(format!("message:{id}"));
+            }
+            None
+        }
+        SessionEventType::AssistantChunk | SessionEventType::AssistantComplete => {
+            let message_id = read_payload_string(
+                payload,
+                &[
+                    "message_id",
+                    "messageId",
+                    "provider_message_id",
+                    "providerMessageId",
+                ],
+            );
+            if let Some(id) = message_id {
+                return Some(format!("message:{id}"));
+            }
+            Some(format!(
+                "message:turn:{}:{}",
+                turn_id.0,
+                assistant_sequence.saturating_add(1)
+            ))
+        }
+        SessionEventType::AssistantMessageInserted => {
+            if let Some(id) = read_payload_string(payload, &["provider_message_id", "providerMessageId"])
+            {
+                return Some(format!("message:{id}"));
+            }
+            if let Some(id) = read_payload_string(payload, &["message_id", "messageId"]) {
+                return Some(format!("message:{id}"));
+            }
+            Some(format!(
+                "message:turn:{}:{}",
+                turn_id.0,
+                assistant_sequence.saturating_add(1)
+            ))
+        }
+        SessionEventType::ThoughtChunk => {
+            let item_id = read_payload_string(payload, &["item_id", "itemId"]);
+            let summary_index =
+                read_payload_i64(payload, &["summary_index", "summaryIndex"]).unwrap_or(0);
+            if let Some(id) = item_id {
+                return Some(format!("thought:{id}:{summary_index}"));
+            }
+            Some(format!("thought:turn:{}:{summary_index}", turn_id.0))
+        }
+        SessionEventType::Notice => {
+            let kind = read_payload_string(payload, &["kind"]);
+            if kind.as_deref() == Some("reasoning_summary") {
+                let item_id = read_payload_string(payload, &["item_id", "itemId"]);
+                let summary_index =
+                    read_payload_i64(payload, &["summary_index", "summaryIndex"]).unwrap_or(0);
+                if let Some(id) = item_id {
+                    return Some(format!("thought:{id}:{summary_index}"));
+                }
+                return Some(format!("thought:turn:{}:{summary_index}", turn_id.0));
+            }
+            if kind.as_deref() == Some("ask_user_question") {
+                if let Some(tool_call_id) =
+                    read_payload_string(payload, &["tool_call_id", "toolCallId"])
+                {
+                    return Some(format!("tool:{tool_call_id}"));
+                }
+            }
+            None
+        }
+        SessionEventType::ToolCall
+        | SessionEventType::ToolCallUpdate
+        | SessionEventType::ToolResult => {
+            if let Some(tool_call_id) =
+                read_payload_string(payload, &["tool_call_id", "toolCallId"])
+            {
+                return Some(format!("tool:{tool_call_id}"));
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn attach_order_seq(
+    order_seq_state: &mut OrderSeqState,
+    event_type: &SessionEventType,
+    payload: &mut Value,
+    turn_id: &TurnId,
+    assistant_sequence: i64,
+) {
+    if !payload.is_object() {
+        return;
+    }
+    let key = match build_order_seq_key(event_type, payload, turn_id, assistant_sequence) {
+        Some(key) => key,
+        None => return,
+    };
+    let existing = read_order_seq(payload);
+    let seq = order_seq_state.get_or_assign(key, existing);
+    if existing.is_none() {
+        insert_order_seq(payload, seq);
+    }
+}
+
 fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
     let meta = payload
         .get("acp_update")
@@ -1582,6 +1789,8 @@ fn strip_emitted_prefix(full_content: &str, emitted: &str) -> Option<String> {
 #[allow(clippy::too_many_arguments)]
 async fn persist_assistant_message(
     store: &ctx_store::Store,
+    message_id: ctx_core::ids::MessageId,
+    order_seq: i64,
     session_id: ctx_core::ids::SessionId,
     task_id: ctx_core::ids::TaskId,
     run_id: RunId,
@@ -1594,12 +1803,13 @@ async fn persist_assistant_message(
         return Err(anyhow!("assistant message content empty"));
     }
     let msg = Message {
-        id: ctx_core::ids::MessageId::new(),
+        id: message_id,
         session_id,
         task_id,
         run_id: Some(run_id),
         turn_id: Some(turn_id),
         turn_sequence: Some(turn_sequence),
+        order_seq: Some(order_seq),
         role: MessageRole::Assistant,
         content,
         attachments: vec![],

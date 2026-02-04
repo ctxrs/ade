@@ -412,6 +412,8 @@ pub struct Message {
     pub turn_id: Option<TurnId>,
     #[serde(default)]
     pub turn_sequence: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_seq: Option<i64>,
     pub role: MessageRole,
     pub content: String,
     #[serde(default)]
@@ -960,7 +962,7 @@ pub enum SessionEventType {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SessionEvent {
     pub seq: i64,
     pub id: SessionEventId,
@@ -972,6 +974,33 @@ pub struct SessionEvent {
     #[serde(default)]
     pub transient: bool,
     pub created_at: DateTime<Utc>,
+}
+
+impl Serialize for SessionEvent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        let mut state = serializer.serialize_struct("SessionEvent", 9)?;
+        if self.transient {
+            state.serialize_field("seq", &Option::<i64>::None)?;
+        } else {
+            state.serialize_field("seq", &self.seq)?;
+        }
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("session_id", &self.session_id)?;
+        state.serialize_field("run_id", &self.run_id)?;
+        state.serialize_field("turn_id", &self.turn_id)?;
+        state.serialize_field("event_type", &self.event_type)?;
+        state.serialize_field("payload_json", &self.payload_json)?;
+        if self.transient {
+            state.serialize_field("transient", &true)?;
+        }
+        state.serialize_field("created_at", &self.created_at)?;
+        state.end()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

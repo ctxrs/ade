@@ -492,6 +492,7 @@ export type Message = {
   task_id: { 0: string } | string;
   turn_id?: { 0: string } | string | null;
   turn_sequence?: number | null;
+  order_seq?: number | null;
   role: "user" | "assistant" | "system";
   content: string;
   attachments?: MessageAttachment[];
@@ -570,7 +571,7 @@ export type MessageQueueEventPayload = {
 };
 
 export type SessionEvent = {
-  seq: number;
+  seq: number | null;
   id: { 0: string } | string;
   session_id: { 0: string } | string;
   run_id?: { 0: string } | string | null;

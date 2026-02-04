@@ -41,6 +41,7 @@ type SessionReplicaEntry = {
   loading: boolean;
   requestToken: number;
   hydrated: boolean;
+  nextTransientSeq: number;
 };
 
 const normalizeId = (value: unknown): string => {
@@ -178,7 +179,7 @@ const mergeEvents = (base: SessionEvent[], incoming: SessionEvent[]): SessionEve
   for (const ev of incoming) {
     if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
   }
-  return Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+  return Array.from(bySeq.values()).sort((a, b) => Number(a.seq ?? 0) - Number(b.seq ?? 0));
 };
 
 const headToData = (head: SessionHead | SessionHeadSnapshot): SessionReplicaData => {
@@ -279,9 +280,22 @@ export class SessionReplicaCore {
       loading: false,
       requestToken: 0,
       hydrated: false,
+      nextTransientSeq: -1,
     };
     this.entries.set(id, entry);
     return entry;
+  }
+
+  private ensureEventSeq(entry: SessionReplicaEntry, event: SessionEvent): SessionEvent {
+    if (typeof event.seq === "number") return event;
+    const nextSeq = entry.nextTransientSeq;
+    entry.nextTransientSeq = nextSeq - 1;
+    return { ...event, seq: nextSeq };
+  }
+
+  private normalizeEvents(entry: SessionReplicaEntry, events: SessionEvent[]): SessionEvent[] {
+    if (events.length === 0) return events;
+    return events.map((event) => this.ensureEventSeq(entry, event));
   }
 
   private setSession(session: Session) {
@@ -346,7 +360,8 @@ export class SessionReplicaCore {
     const data = headToData(head);
     let turns = data.turns ?? [];
     let messages = data.messages ?? [];
-    let events = data.events ?? [];
+    entry.events = this.normalizeEvents(entry, entry.events);
+    let events = this.normalizeEvents(entry, data.events ?? []);
     const incomingSeq = typeof data.lastEventSeq === "number" ? data.lastEventSeq : -1;
     const existingSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
     if (existingSeq > incomingSeq) {
@@ -512,10 +527,13 @@ export class SessionReplicaCore {
     const events: SessionEvent[] = [];
     if (delta.turn) turns.push(delta.turn);
     if (delta.message) messages.push(delta.message);
-    if (delta.event) events.push(delta.event);
+    if (delta.event) events.push(this.ensureEventSeq(entry, delta.event));
     if (turns.length) entry.turns = mergeTurns(entry.turns, turns);
     if (messages.length) entry.messages = mergeMessages(entry.messages, messages);
-    if (events.length) entry.events = mergeEvents(entry.events, events);
+    if (events.length) {
+      entry.events = this.normalizeEvents(entry, entry.events);
+      entry.events = mergeEvents(entry.events, events);
+    }
     if (entry.events.length > this.config.eventBufferLimit) {
       const trimmed = entry.events.slice(-this.config.eventBufferLimit);
       const beforeSeq = trimmed[0]?.seq;
