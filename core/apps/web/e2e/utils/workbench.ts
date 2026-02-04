@@ -10,12 +10,7 @@ type CreateWorkspaceArgs = {
   token?: string;
 };
 
-const readId = (v: any): string => {
-  if (!v) return "";
-  if (typeof v === "string") return v;
-  if (typeof v === "object" && typeof v["0"] === "string") return v["0"];
-  return "";
-};
+const readId = (v: any): string => (typeof v === "string" ? v : "");
 
 const normalizePath = (value: string): string => {
   if (!value) return "";

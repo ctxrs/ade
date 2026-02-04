@@ -4,12 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execFileSync, execSync } from "child_process";
 
-const readId = (v: any): string => {
-  if (!v) return "";
-  if (typeof v === "string") return v;
-  if (typeof v === "object" && typeof v["0"] === "string") return v["0"];
-  return "";
-};
+const readId = (v: any): string => (typeof v === "string" ? v : "");
 
 test("workbench: refresh keeps selection, even for older sessions", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));

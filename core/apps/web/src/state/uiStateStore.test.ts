@@ -104,10 +104,10 @@ describe("uiStateStore", () => {
   it("stores session heads via snapshot storage", async () => {
     const head = {
       session: {
-        id: { 0: "session-1" },
-        task_id: { 0: "task-1" },
-        workspace_id: { 0: "ws-1" },
-        worktree_id: { 0: "wt-1" },
+        id: "session-1",
+        task_id: "task-1",
+        workspace_id: "ws-1",
+        worktree_id: "wt-1",
         provider_id: "fake",
         model_id: "fake-model",
         title: "New Task",

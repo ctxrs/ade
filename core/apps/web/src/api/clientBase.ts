@@ -558,5 +558,10 @@ export const daemonFetchRaw = async (path: string, init?: RequestInit): Promise<
   }
 };
 
-export const idToString = (id: any): string =>
-  typeof id === "string" ? id : id?.["0"];
+export const idToString = (id: string | null | undefined): string => {
+  if (id === null || id === undefined) return "";
+  if (typeof id !== "string") {
+    throw new Error("Expected id to be a string");
+  }
+  return id;
+};

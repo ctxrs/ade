@@ -46,7 +46,7 @@ type SessionReplicaEntry = {
 
 const normalizeId = (value: unknown): string => {
   if (typeof value === "string") return value.trim();
-  return String(idToString(value as { 0?: string } | string) || "").trim();
+  return "";
 };
 
 const isFinalThoughtEvent = (event: SessionEvent | null | undefined): boolean => {

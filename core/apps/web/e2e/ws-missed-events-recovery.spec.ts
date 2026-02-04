@@ -68,12 +68,7 @@ test("workbench: recovers when workspace stream drops once", async ({ page }) =>
   const workspaceId = url.pathname.split("/").filter(Boolean).pop();
   expect(workspaceId).toBeTruthy();
 
-  const readId = (v: any): string => {
-    if (!v) return "";
-    if (typeof v === "string") return v;
-    if (typeof v === "object" && typeof v["0"] === "string") return v["0"];
-    return "";
-  };
+  const readId = (v: any): string => (typeof v === "string" ? v : "");
 
   let sessionId = "";
   await expect

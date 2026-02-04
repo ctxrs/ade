@@ -12,7 +12,13 @@ import type {
 import type { WorkspaceActiveSnapshotEventSource } from "./workspaceActiveSnapshotStore";
 
 vi.mock("../api/client", () => {
-  const idToString = (id: any): string => (typeof id === "string" ? id : id?.["0"]);
+  const idToString = (id: string | null | undefined): string => {
+    if (id === null || id === undefined) return "";
+    if (typeof id !== "string") {
+      throw new Error("Expected id to be a string");
+    }
+    return id;
+  };
   return {
     authToken: vi.fn(() => null),
     idToString,
@@ -46,10 +52,10 @@ import { getSessionHead, getSessionSnapshot } from "../api/client";
 import { saveSessionHeadV1 } from "./uiStateStore";
 
 const mkSession = (sessionId: string): Session => ({
-  id: { 0: sessionId },
-  task_id: { 0: "task-1" },
-  workspace_id: { 0: "ws-1" },
-  worktree_id: { 0: "wt-1" },
+  id: sessionId,
+  task_id: "task-1",
+  workspace_id: "ws-1",
+  worktree_id: "wt-1",
   provider_id: "fake",
   model_id: "fake-model",
   title: "New Task",
@@ -69,8 +75,8 @@ describe("SessionSupervisor", () => {
     const sessionId = "session-1";
     const headMessages: Message[] = [
       {
-        id: { 0: "m1" },
-        session_id: { 0: sessionId },
+        id: "m1",
+        session_id: sessionId,
         role: "user",
         content: "queued",
         delivery: "queued",
@@ -156,17 +162,17 @@ describe("SessionSupervisor", () => {
     const now = new Date().toISOString();
     const event: SessionEvent = {
       seq: 2,
-      id: { 0: "e1" },
-      session_id: { 0: sessionId },
-      turn_id: { 0: "turn-1" },
+      id: "e1",
+      session_id: sessionId,
+      turn_id: "turn-1",
       event_type: "assistant_chunk",
       payload_json: { content_fragment: "hello" },
       created_at: now,
     };
     const message: Message = {
-      id: { 0: "m2" },
-      session_id: { 0: sessionId },
-      turn_id: { 0: "turn-1" },
+      id: "m2",
+      session_id: sessionId,
+      turn_id: "turn-1",
       role: "assistant",
       content: "hello",
       delivery: "immediate",
@@ -175,10 +181,10 @@ describe("SessionSupervisor", () => {
 
     const deltaEvent: WorkspaceActiveSnapshotEvent = {
       type: "session_head_delta",
-      workspace_id: { 0: "ws-1" },
+      workspace_id: "ws-1",
       snapshot_rev: 1,
       delta: {
-        session_id: { 0: sessionId },
+        session_id: sessionId,
         last_event_seq: 2,
         state_rev: 2,
         event,
@@ -249,17 +255,17 @@ describe("SessionSupervisor", () => {
     const now = new Date().toISOString();
     const event: SessionEvent = {
       seq: 3,
-      id: { 0: "e2" },
-      session_id: { 0: sessionId },
-      turn_id: { 0: "turn-2" },
+      id: "e2",
+      session_id: sessionId,
+      turn_id: "turn-2",
       event_type: "assistant_chunk",
       payload_json: { content_fragment: "partial" },
       created_at: now,
     };
     const message: Message = {
-      id: { 0: "m3" },
-      session_id: { 0: sessionId },
-      turn_id: { 0: "turn-2" },
+      id: "m3",
+      session_id: sessionId,
+      turn_id: "turn-2",
       role: "assistant",
       content: "final",
       delivery: "immediate",
@@ -268,10 +274,10 @@ describe("SessionSupervisor", () => {
 
     const deltaEvent: WorkspaceActiveSnapshotEvent = {
       type: "session_head_delta",
-      workspace_id: { 0: "ws-1" },
+      workspace_id: "ws-1",
       snapshot_rev: 2,
       delta: {
-        session_id: { 0: sessionId },
+        session_id: sessionId,
         last_event_seq: 3,
         state_rev: 3,
         event,
@@ -300,9 +306,9 @@ describe("SessionSupervisor", () => {
       events: [] as SessionEvent[],
       messages: [
         {
-          id: { 0: "msg-gap" },
-          session_id: { 0: sessionId },
-          turn_id: { 0: "turn-gap" },
+          id: "msg-gap",
+          session_id: sessionId,
+          turn_id: "turn-gap",
           role: "assistant",
           content: "hello",
           delivery: "immediate",
@@ -349,9 +355,9 @@ describe("SessionSupervisor", () => {
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     const gapEvent: WorkspaceActiveSnapshotEvent = {
       type: "session_gap",
-      workspace_id: { 0: "ws-1" },
+      workspace_id: "ws-1",
       snapshot_rev: 2,
-      session_id: { 0: sessionId },
+      session_id: sessionId,
       after_seq: 5,
     };
     listeners.forEach((listener) => listener(gapEvent));
@@ -370,8 +376,8 @@ describe("SessionSupervisor", () => {
     const sessionId = "session-4";
     const now = new Date().toISOString();
     const task = {
-      id: { 0: "task-4" },
-      workspace_id: { 0: "ws-1" },
+      id: "task-4",
+      workspace_id: "ws-1",
       title: "Active task",
       status: "running",
       created_at: now,
@@ -379,9 +385,9 @@ describe("SessionSupervisor", () => {
     };
     const session = mkSession(sessionId);
     const message = {
-      id: { 0: "m4" },
-      session_id: { 0: sessionId },
-      task_id: { 0: "task-4" },
+      id: "m4",
+      session_id: sessionId,
+      task_id: "task-4",
       role: "assistant",
       content: "hello",
       delivery: "immediate",
@@ -435,7 +441,7 @@ describe("SessionSupervisor", () => {
 
     const upsertEvent: WorkspaceActiveSnapshotEvent = {
       type: "active_task_upsert",
-      workspace_id: { 0: "ws-1" },
+      workspace_id: "ws-1",
       snapshot_rev: 1,
       task: summary,
     };
@@ -461,8 +467,8 @@ describe("SessionSupervisor", () => {
       session: mkSession(sessionId),
       turns: [
         {
-          turn_id: { 0: turnId },
-          session_id: { 0: sessionId },
+          turn_id: turnId,
+          session_id: sessionId,
           run_id: null,
           user_message_id: null,
           status: "completed",
@@ -482,9 +488,9 @@ describe("SessionSupervisor", () => {
       ],
       tool_summaries: [
         {
-          session_id: { 0: sessionId },
+          session_id: sessionId,
           tool_call_id: "tool-1",
-          turn_id: { 0: turnId },
+          turn_id: turnId,
           tool_kind: "execute",
           title: "Run",
           status: "completed",

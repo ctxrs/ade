@@ -150,7 +150,13 @@ vi.mock("../api/client", () => ({
   getSettings: vi.fn(async () => ({ dictation: { enabled: false } })),
   getWorktree: vi.fn(async () => ({})),
   getWorkspace: vi.fn(async () => ({ id: workspaceId, name: "Mock Workspace", root_path: "/tmp/mock" })),
-  idToString: (id: any) => (typeof id === "string" ? id : id?.["0"]),
+  idToString: (id: string | null | undefined) => {
+    if (id === null || id === undefined) return "";
+    if (typeof id !== "string") {
+      throw new Error("Expected id to be a string");
+    }
+    return id;
+  },
   installAllProviders: vi.fn(async () => ({})),
   installProvider: vi.fn(async () => ({ install_id: "install-1" })),
   listProviders: vi.fn(async () => []),

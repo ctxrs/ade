@@ -761,7 +761,11 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   seedCachedSnapshot(cached: PersistedWorkspaceActiveSnapshotV1) {
     if (!cached || this.destroyed) return;
-    this.applyCachedActiveSnapshot(cached);
+    try {
+      this.applyCachedActiveSnapshot(cached);
+    } catch {
+      // ignore invalid cache payloads
+    }
   }
 
   private async hydrateFromCache() {

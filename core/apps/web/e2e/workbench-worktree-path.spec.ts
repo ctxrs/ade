@@ -1,12 +1,7 @@
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
-const readId = (value: any): string => {
-  if (!value) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "object" && typeof value["0"] === "string") return value["0"];
-  return "";
-};
+const readId = (value: any): string => (typeof value === "string" ? value : "");
 
 const worktreeSlugFromPath = (worktreePath: string): string => {
   const trimmed = worktreePath.trim().replace(/[\\/]+$/, "");
