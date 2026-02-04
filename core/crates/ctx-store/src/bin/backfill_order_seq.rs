@@ -104,7 +104,8 @@ fn build_item_key(
         }
         "thought_chunk" => {
             let item_id = read_payload_string(payload, &["item_id", "itemId"]);
-            let summary_index = read_payload_i64(payload, &["summary_index", "summaryIndex"]).unwrap_or(0);
+            let summary_index =
+                read_payload_i64(payload, &["summary_index", "summaryIndex"]).unwrap_or(0);
             if let Some(id) = item_id {
                 return Some(format!("thought:{id}:{summary_index}"));
             }

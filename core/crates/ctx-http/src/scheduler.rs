@@ -22,8 +22,8 @@ use ctx_store::store::SessionTurnToolCountDeltas;
 use crate::daemon::AppState;
 use crate::harness_runtime::HarnessRuntimeKind;
 use crate::installer;
-use crate::order_seq::OrderSeqState;
 use crate::ops_events::OpsEvent;
+use crate::order_seq::OrderSeqState;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::provider_accounts;
 use crate::settings::{self, ProviderControlMode};
@@ -85,10 +85,7 @@ pub async fn session_worker(
         Ok(store) => store,
         Err(_) => return,
     };
-    let order_seq_state = state
-        .sessions
-        .get_order_seq_state(&store, session.id)
-        .await;
+    let order_seq_state = state.sessions.get_order_seq_state(&store, session.id).await;
     if let Ok(mut queued) = store.list_queued_messages_for_session(session.id).await {
         for m in queued.drain(..) {
             queue.push_back(QueuedMessage {
@@ -864,10 +861,8 @@ async fn start_turn(
                             let message_id = ctx_core::ids::MessageId::new();
                             let order_seq = {
                                 let mut order_seq_state = order_seq_state.lock().await;
-                                order_seq_state.get_or_assign(
-                                    format!("message:{}", message_id.0),
-                                    None,
-                                )
+                                order_seq_state
+                                    .get_or_assign(format!("message:{}", message_id.0), None)
                             };
                             if let Ok(saved) = persist_assistant_message(
                                 &store,
@@ -1014,10 +1009,8 @@ async fn start_turn(
                                 let message_id = ctx_core::ids::MessageId::new();
                                 let order_seq = {
                                     let mut order_seq_state = order_seq_state.lock().await;
-                                    order_seq_state.get_or_assign(
-                                        format!("message:{}", message_id.0),
-                                        None,
-                                    )
+                                    order_seq_state
+                                        .get_or_assign(format!("message:{}", message_id.0), None)
                                 };
                                 if let Ok(saved) = persist_assistant_message(
                                     &store,
@@ -1623,7 +1616,8 @@ fn build_order_seq_key(
             ))
         }
         SessionEventType::AssistantMessageInserted => {
-            if let Some(id) = read_payload_string(payload, &["provider_message_id", "providerMessageId"])
+            if let Some(id) =
+                read_payload_string(payload, &["provider_message_id", "providerMessageId"])
             {
                 return Some(format!("message:{id}"));
             }

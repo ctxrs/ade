@@ -1362,10 +1362,7 @@ pub(super) async fn create_session_for_task(
         let run_id = RunId::new();
         let turn_id = TurnId::new();
         let message_id = MessageId::new();
-        let order_seq_state = state
-            .sessions
-            .get_order_seq_state(&store, session.id)
-            .await;
+        let order_seq_state = state.sessions.get_order_seq_state(&store, session.id).await;
         let order_seq = {
             let mut order_seq_state = order_seq_state.lock().await;
             order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)

@@ -11,8 +11,8 @@ use ctx_core::models::{
 };
 use ctx_store::Store;
 
-use crate::scheduler::session_worker;
 use crate::order_seq::OrderSeqState;
+use crate::scheduler::session_worker;
 
 use super::state::{
     ActiveHeadProjectionEntry, ActiveTaskRefreshEntry, AppState, SessionHeadCacheKey,
@@ -146,7 +146,10 @@ impl SessionRuntime {
             entry.touch();
             return entry.value.clone();
         }
-        let start_seq = store.get_session_last_event_seq(session_id).await.unwrap_or(0);
+        let start_seq = store
+            .get_session_last_event_seq(session_id)
+            .await
+            .unwrap_or(0);
         let state = Arc::new(Mutex::new(OrderSeqState::new(start_seq.saturating_add(1))));
         map.insert(session_id, TimedEntry::new(state.clone()));
         state
