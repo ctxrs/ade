@@ -203,22 +203,16 @@ async fn workspace_active_snapshot_includes_worktree_vcs_for_active_tasks_only()
     let mut next = HashSet::new();
     next.insert(worktree_active.id);
     next.insert(worktree_archived.id);
-    state.update_worktree_vcs_activity(&HashSet::new(), &next).await;
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .await;
 
-    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(
-        &state,
-        &worktree_active,
-        true,
-    )
-    .await
-    .unwrap();
-    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(
-        &state,
-        &worktree_archived,
-        true,
-    )
-    .await
-    .unwrap();
+    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree_active, true)
+        .await
+        .unwrap();
+    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree_archived, true)
+        .await
+        .unwrap();
 
     let resp = client
         .post(format!("{base}/api/tasks/{}/archive", task_archived.id.0))
@@ -1087,15 +1081,11 @@ async fn workspace_stream_emits_worktree_vcs_snapshot_on_activation() {
                 Some(event) => event,
                 None => continue,
             };
-            if event.get("type").and_then(|value| value.as_str())
-                != Some("worktree_vcs_snapshot")
-            {
+            if event.get("type").and_then(|value| value.as_str()) != Some("worktree_vcs_snapshot") {
                 continue;
             }
             let snapshot = event.get("snapshot").expect("missing snapshot");
-            let event_worktree_id = snapshot
-                .get("worktree_id")
-                .and_then(|value| value.as_str());
+            let event_worktree_id = snapshot.get("worktree_id").and_then(|value| value.as_str());
             if event_worktree_id != Some(worktree_id.as_str()) {
                 continue;
             }
