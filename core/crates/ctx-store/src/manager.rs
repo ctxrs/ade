@@ -28,13 +28,13 @@ pub struct StoreManager {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct StoreManagerStats {
-    pub global_pool_size: u32,
-    pub global_pool_idle: u32,
+    pub global_pool_size: usize,
+    pub global_pool_idle: usize,
     pub workspace_store_count: usize,
-    pub workspace_pool_size_total: u32,
-    pub workspace_pool_idle_total: u32,
-    pub workspace_pool_size_max: u32,
-    pub workspace_pool_idle_max: u32,
+    pub workspace_pool_size_total: usize,
+    pub workspace_pool_idle_total: usize,
+    pub workspace_pool_size_max: usize,
+    pub workspace_pool_idle_max: usize,
 }
 
 #[derive(Clone)]
@@ -105,10 +105,10 @@ impl StoreManager {
         let global_stats = self.global.stats();
         let stores = self.workspace_stores.lock().await;
         let workspace_store_count = stores.len();
-        let mut workspace_pool_size_total: u32 = 0;
-        let mut workspace_pool_idle_total: u32 = 0;
-        let mut workspace_pool_size_max: u32 = 0;
-        let mut workspace_pool_idle_max: u32 = 0;
+        let mut workspace_pool_size_total: usize = 0;
+        let mut workspace_pool_idle_total: usize = 0;
+        let mut workspace_pool_size_max: usize = 0;
+        let mut workspace_pool_idle_max: usize = 0;
         for entry in stores.values() {
             let stats = entry.store.stats();
             workspace_pool_size_total = workspace_pool_size_total.saturating_add(stats.pool_size);

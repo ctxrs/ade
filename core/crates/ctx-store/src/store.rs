@@ -24,8 +24,8 @@ pub struct Store {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct StoreStats {
-    pub pool_size: u32,
-    pub pool_idle: u32,
+    pub pool_size: usize,
+    pub pool_idle: usize,
 }
 
 pub struct SessionRetentionPruneStats {
@@ -947,7 +947,7 @@ impl Store {
 
     pub fn stats(&self) -> StoreStats {
         StoreStats {
-            pool_size: self.pool.size(),
+            pool_size: self.pool.size() as usize,
             pool_idle: self.pool.num_idle(),
         }
     }
