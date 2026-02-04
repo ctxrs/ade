@@ -3532,6 +3532,7 @@ impl Store {
             + bytes_opt_str(run_id.as_deref())
             + bytes_opt_str(turn_id.as_deref())
             + bytes_opt_i64(message.turn_sequence)
+            + bytes_opt_i64(message.order_seq)
             + bytes_str(role)
             + bytes_str(&message.content)
             + bytes_opt_str(attachments_json.as_deref())
@@ -3539,8 +3540,8 @@ impl Store {
             + bytes_opt_str(delivered_at.as_deref())
             + bytes_str(&created_at);
         let result = self.query(
-            r#"INSERT INTO messages (id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO messages (id, session_id, task_id, run_id, turn_id, turn_sequence, order_seq, role, content, attachments_json, delivery, delivered_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(&id)
         .bind(&session_id)
@@ -3548,6 +3549,7 @@ impl Store {
         .bind(run_id)
         .bind(turn_id)
         .bind(message.turn_sequence)
+        .bind(message.order_seq)
         .bind(role)
         .bind(&message.content)
         .bind(attachments_json)
@@ -4755,7 +4757,7 @@ impl Store {
 
     pub async fn list_messages_for_session(&self, session_id: SessionId) -> Result<Vec<Message>> {
         let rows = self.query(
-            r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
+            r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, order_seq, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages
                WHERE session_id = ?
                ORDER BY created_at ASC, turn_sequence ASC"#,
@@ -4774,6 +4776,7 @@ impl Store {
             let run_id: Option<String> = r.try_get("run_id")?;
             let turn_id: Option<String> = r.try_get("turn_id")?;
             let turn_sequence: Option<i64> = r.try_get("turn_sequence")?;
+            let order_seq: Option<i64> = r.try_get("order_seq")?;
             let attachments_json: Option<String> = r.try_get("attachments_json")?;
             let attachments = attachments_json
                 .as_deref()
@@ -4792,6 +4795,7 @@ impl Store {
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
                     .map(TurnId),
                 turn_sequence,
+                order_seq,
                 role: parse_message_role(r.try_get::<String, _>("role")?.as_str()),
                 content: r.try_get("content")?,
                 attachments,
@@ -4809,7 +4813,7 @@ impl Store {
         run_id: RunId,
     ) -> Result<Option<Message>> {
         let row = self.query(
-            r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
+            r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, order_seq, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages
                WHERE session_id = ? AND run_id = ? AND role = 'assistant'
                ORDER BY created_at DESC, turn_sequence DESC
@@ -4829,6 +4833,7 @@ impl Store {
             let run_id: Option<String> = r.try_get("run_id").ok()?;
             let turn_id: Option<String> = r.try_get("turn_id").ok()?;
             let turn_sequence: Option<i64> = r.try_get("turn_sequence").ok()?;
+            let order_seq: Option<i64> = r.try_get("order_seq").ok()?;
             let attachments_json: Option<String> = r.try_get("attachments_json").ok()?;
             let attachments = attachments_json
                 .as_deref()
@@ -4847,6 +4852,7 @@ impl Store {
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
                     .map(TurnId),
                 turn_sequence,
+                order_seq,
                 role: parse_message_role(r.try_get::<String, _>("role").ok()?.as_str()),
                 content: r.try_get("content").ok()?,
                 attachments,
@@ -4891,7 +4897,7 @@ impl Store {
         turn_ids: &[TurnId],
     ) -> Result<Vec<Message>> {
         let mut sql = String::from(
-            "SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
+            "SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, order_seq, role, content, attachments_json, delivery, delivered_at, created_at
              FROM messages
              WHERE session_id = ?",
         );
@@ -4927,6 +4933,7 @@ impl Store {
             let run_id: Option<String> = r.try_get("run_id")?;
             let turn_id: Option<String> = r.try_get("turn_id")?;
             let turn_sequence: Option<i64> = r.try_get("turn_sequence")?;
+            let order_seq: Option<i64> = r.try_get("order_seq")?;
             let attachments_json: Option<String> = r.try_get("attachments_json")?;
             let attachments = attachments_json
                 .as_deref()
@@ -4945,6 +4952,7 @@ impl Store {
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
                     .map(TurnId),
                 turn_sequence,
+                order_seq,
                 role: parse_message_role(r.try_get::<String, _>("role")?.as_str()),
                 content: r.try_get("content")?,
                 attachments,
@@ -5425,7 +5433,7 @@ impl Store {
         session_id: SessionId,
     ) -> Result<Vec<Message>> {
         let rows = self.query(
-            r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
+            r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, order_seq, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages
                WHERE session_id = ? AND delivery = 'queued' AND delivered_at IS NULL
                ORDER BY created_at ASC, turn_sequence ASC"#,
@@ -5443,6 +5451,7 @@ impl Store {
             let run_id: Option<String> = r.try_get("run_id")?;
             let turn_id: Option<String> = r.try_get("turn_id")?;
             let turn_sequence: Option<i64> = r.try_get("turn_sequence")?;
+            let order_seq: Option<i64> = r.try_get("order_seq")?;
             let attachments_json: Option<String> = r.try_get("attachments_json")?;
             let attachments = attachments_json
                 .as_deref()
@@ -5461,6 +5470,7 @@ impl Store {
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
                     .map(TurnId),
                 turn_sequence,
+                order_seq,
                 role: parse_message_role(r.try_get::<String, _>("role")?.as_str()),
                 content: r.try_get("content")?,
                 attachments,
@@ -5474,7 +5484,7 @@ impl Store {
 
     pub async fn get_message(&self, id: MessageId) -> Result<Option<Message>> {
         let row = self.query(
-            r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, role, content, attachments_json, delivery, delivered_at, created_at
+            r#"SELECT id, session_id, task_id, run_id, turn_id, turn_sequence, order_seq, role, content, attachments_json, delivery, delivered_at, created_at
                FROM messages WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -5490,6 +5500,7 @@ impl Store {
             let run_id: Option<String> = r.try_get("run_id").ok()?;
             let turn_id: Option<String> = r.try_get("turn_id").ok()?;
             let turn_sequence: Option<i64> = r.try_get("turn_sequence").ok()?;
+            let order_seq: Option<i64> = r.try_get("order_seq").ok()?;
             let attachments_json: Option<String> = r.try_get("attachments_json").ok()?;
             let attachments = attachments_json
                 .as_deref()
@@ -5508,6 +5519,7 @@ impl Store {
                     .and_then(|s| uuid::Uuid::parse_str(s).ok())
                     .map(TurnId),
                 turn_sequence,
+                order_seq,
                 role: parse_message_role(r.try_get::<String, _>("role").ok()?.as_str()),
                 content: r.try_get("content").ok()?,
                 attachments,
@@ -8816,6 +8828,14 @@ fn sanitize_tool_event_payload(event_type: &SessionEventType, raw_payload: &Valu
         .or_else(|| update.get("crpSeq"))
     {
         obj.insert("crp_seq".to_string(), value.clone());
+    }
+    if let Some(value) = raw_payload
+        .get("order_seq")
+        .or_else(|| raw_payload.get("orderSeq"))
+        .or_else(|| update.get("order_seq"))
+        .or_else(|| update.get("orderSeq"))
+    {
+        obj.insert("order_seq".to_string(), value.clone());
     }
     if let Some(value) = raw_payload
         .get("crp_channel")

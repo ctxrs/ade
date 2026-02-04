@@ -225,6 +225,7 @@ type InternalEntry = SessionCacheEntry & {
   warmUntilMs: number;
   acpMetaUpdatedAtMs?: number;
   seqSet: Set<number>;
+  nextTransientSeq: number;
   startedTurnIds: Set<string>;
   turnsHydrated: boolean;
   oldestTurnSeq?: number;
@@ -646,8 +647,14 @@ export class SessionSupervisor {
       if (patch.op === "evict") {
         const beforeSeq = patch.data.eventsBeforeSeq;
         if (typeof beforeSeq === "number") {
-          entry.events = entry.events.filter((event) => event.seq >= beforeSeq);
-          entry.seqSet = new Set(entry.events.map((event) => event.seq));
+          entry.events = entry.events.filter(
+            (event) => typeof event.seq === "number" && event.seq >= beforeSeq,
+          );
+          entry.seqSet = new Set(
+            entry.events
+              .map((event) => (typeof event.seq === "number" ? event.seq : Number.NaN))
+              .filter((seq) => Number.isFinite(seq)) as number[],
+          );
           entry.updatedAtMs = Date.now();
           changed = true;
         }
@@ -798,6 +805,7 @@ export class SessionSupervisor {
       warmUntilMs: Date.now() + WARM_TTL_MS,
       acpMetaUpdatedAtMs: undefined,
       seqSet: new Set<number>(),
+      nextTransientSeq: -1,
       startedTurnIds: new Set<string>(),
       turnsHydrated: false,
       oldestTurnSeq: undefined,
@@ -1313,7 +1321,11 @@ export class SessionSupervisor {
       const overlayed = this.overlayThoughtCacheOnEvents(entry, entry.events);
       if (overlayed !== entry.events) {
         entry.events = overlayed;
-        entry.seqSet = new Set(overlayed.map((ev) => ev.seq));
+        entry.seqSet = new Set(
+          overlayed
+            .map((ev) => (typeof ev.seq === "number" ? ev.seq : Number.NaN))
+            .filter((seq) => Number.isFinite(seq)) as number[],
+        );
         entry.updatedAtMs = Date.now();
         this.publish();
       }
@@ -1338,7 +1350,11 @@ export class SessionSupervisor {
       const overlayed = this.overlayThoughtCacheOnEvents(entry, entry.events);
       if (overlayed !== entry.events) {
         entry.events = overlayed;
-        entry.seqSet = new Set(overlayed.map((ev) => ev.seq));
+        entry.seqSet = new Set(
+          overlayed
+            .map((ev) => (typeof ev.seq === "number" ? ev.seq : Number.NaN))
+            .filter((seq) => Number.isFinite(seq)) as number[],
+        );
         entry.updatedAtMs = Date.now();
       }
       if (entry.thoughtCacheDirty) {
@@ -1455,7 +1471,7 @@ export class SessionSupervisor {
       changed = true;
     }
     if (!changed) return events;
-    return Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+    return Array.from(bySeq.values()).sort((a, b) => Number(a.seq ?? 0) - Number(b.seq ?? 0));
   }
 
   private overlayThoughtCacheOnTurns(entry: InternalEntry, turns: SessionTurn[]): SessionTurn[] {
@@ -1529,12 +1545,24 @@ export class SessionSupervisor {
     entry.queue = next.filter((m) => m.delivery === "queued");
   }
 
+  private ensureEventSeq(entry: InternalEntry, event: SessionEvent): SessionEvent {
+    if (typeof event.seq === "number") return event;
+    const nextSeq = entry.nextTransientSeq;
+    entry.nextTransientSeq = nextSeq - 1;
+    return { ...event, seq: nextSeq };
+  }
+
   private mergeEvents(entry: InternalEntry, incoming: SessionEvent[], opts?: { notify?: boolean }) {
     if (incoming.length === 0) return;
     const shouldNotify = opts?.notify ?? true;
     const existingSeqs = entry.seqSet;
+    const normalizedExisting = entry.events.map((ev) => this.ensureEventSeq(entry, ev));
+    const normalizedIncoming = incoming.map((ev) => this.ensureEventSeq(entry, ev));
+    if (normalizedExisting !== entry.events) {
+      entry.events = normalizedExisting;
+    }
     const newEvents: SessionEvent[] = [];
-    for (const ev of incoming) {
+    for (const ev of normalizedIncoming) {
       if (typeof ev.seq === "number") {
         if (!existingSeqs.has(ev.seq)) {
           newEvents.push(ev);
@@ -1547,10 +1575,10 @@ export class SessionSupervisor {
     for (const ev of entry.events) {
       if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
     }
-    for (const ev of incoming) {
+    for (const ev of normalizedIncoming) {
       if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
     }
-    const next = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+    const next = Array.from(bySeq.values()).sort((a, b) => Number(a.seq ?? 0) - Number(b.seq ?? 0));
     let trimmed = next.length > EVENT_BUFFER_LIMIT ? next.slice(-EVENT_BUFFER_LIMIT) : next;
     if (entry.thoughtCacheLoaded && Object.keys(entry.thoughtCacheByKey).length > 0) {
       const overlayed = this.overlayThoughtCacheOnEvents(entry, trimmed);
@@ -1559,8 +1587,12 @@ export class SessionSupervisor {
       }
     }
     entry.events = trimmed;
-    entry.seqSet = new Set(trimmed.map((ev) => ev.seq));
-    for (const ev of incoming) {
+    entry.seqSet = new Set(
+      trimmed
+        .map((ev) => (typeof ev.seq === "number" ? ev.seq : Number.NaN))
+        .filter((seq) => Number.isFinite(seq)) as number[],
+    );
+    for (const ev of normalizedIncoming) {
       const turnId = idToString(ev.turn_id);
       if (!turnId) continue;
       const seq = typeof ev.seq === "number" ? ev.seq : Number.NaN;
@@ -2146,7 +2178,7 @@ const buildThoughtCacheKey = (event: SessionEvent): string | null => {
   const rawSummary = payload?.summary_index ?? payload?.summaryIndex;
   const parsedSummary = typeof rawSummary === "number" ? rawSummary : Number(rawSummary);
   const summaryIndex = Number.isFinite(parsedSummary) ? parsedSummary : 0;
-  const fallback = `unknown-${event.seq}`;
+  const fallback = `unknown-${payload?.order_seq ?? payload?.orderSeq ?? idToString(event.id) ?? "missing"}`;
   return `${turnId}|${itemId ?? fallback}|${summaryIndex}`;
 };
 

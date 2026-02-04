@@ -325,7 +325,7 @@ async fn notify_sessions(
             continue;
         }
 
-        let message_id = insert_system_message(&store, &session, message_text).await;
+        let message_id = insert_system_message(state, &store, &session, message_text).await;
         let payload = json!({
             "provider": sample.provider_id,
             "kind": kind,
@@ -357,18 +357,29 @@ async fn notify_sessions(
 }
 
 async fn insert_system_message(
+    state: &crate::daemon::AppState,
     store: &ctx_store::Store,
     session: &ctx_core::models::Session,
     content: &str,
 ) -> Option<MessageId> {
     let now = Utc::now();
+    let message_id = MessageId::new();
+    let order_seq_state = state
+        .sessions
+        .get_order_seq_state(store, session.id)
+        .await;
+    let order_seq = {
+        let mut order_seq_state = order_seq_state.lock().await;
+        order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
+    };
     let msg = Message {
-        id: MessageId::new(),
+        id: message_id,
         session_id: session.id,
         task_id: session.task_id,
         run_id: None,
         turn_id: None,
         turn_sequence: None,
+        order_seq: Some(order_seq),
         role: MessageRole::System,
         content: content.to_string(),
         attachments: vec![],

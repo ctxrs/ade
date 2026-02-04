@@ -732,6 +732,14 @@ pub(super) fn sanitize_tool_event_payload(
     {
         obj.insert("crp_channel".to_string(), value.clone());
     }
+    if let Some(value) = raw_payload
+        .get("order_seq")
+        .or_else(|| raw_payload.get("orderSeq"))
+        .or_else(|| update.get("order_seq"))
+        .or_else(|| update.get("orderSeq"))
+    {
+        obj.insert("order_seq".to_string(), value.clone());
+    }
     if let Some(path) = output_spool_path {
         obj.insert(
             "output_spool_path".to_string(),

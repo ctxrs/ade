@@ -1458,13 +1458,23 @@ pub(super) async fn post_message(
 
     let run_id = RunId::new();
     let turn_id = TurnId::new();
+    let message_id = MessageId::new();
+    let order_seq_state = state
+        .sessions
+        .get_order_seq_state(&store, session_id)
+        .await;
+    let order_seq = {
+        let mut order_seq_state = order_seq_state.lock().await;
+        order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
+    };
     let msg = Message {
-        id: MessageId::new(),
+        id: message_id,
         session_id,
         task_id: session.task_id,
         run_id: Some(run_id),
         turn_id: Some(turn_id),
         turn_sequence: Some(0),
+        order_seq: Some(order_seq),
         role: MessageRole::User,
         content: req.content,
         attachments,
@@ -1488,6 +1498,7 @@ pub(super) async fn post_message(
                 "content": saved.content.clone(),
                 "delivery": saved.delivery.clone(),
                 "attachments": saved.attachments,
+                "order_seq": order_seq,
             }),
         )
         .await
@@ -2938,13 +2949,23 @@ async fn enqueue_subagent_prompt(
     })?;
     let run_id = RunId::new();
     let turn_id = TurnId::new();
+    let message_id = MessageId::new();
+    let order_seq_state = state
+        .sessions
+        .get_order_seq_state(&store, session.id)
+        .await;
+    let order_seq = {
+        let mut order_seq_state = order_seq_state.lock().await;
+        order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
+    };
     let msg = Message {
-        id: MessageId::new(),
+        id: message_id,
         session_id: session.id,
         task_id: session.task_id,
         run_id: Some(run_id),
         turn_id: Some(turn_id),
         turn_sequence: Some(0),
+        order_seq: Some(order_seq),
         role: MessageRole::User,
         content: prompt,
         attachments: vec![],
@@ -2972,6 +2993,7 @@ async fn enqueue_subagent_prompt(
                 "content": saved.content.clone(),
                 "delivery": saved.delivery.clone(),
                 "attachments": saved.attachments,
+                "order_seq": order_seq,
             }),
         )
         .await

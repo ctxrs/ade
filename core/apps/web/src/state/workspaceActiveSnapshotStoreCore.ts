@@ -345,7 +345,7 @@ const mergeEvents = (prev: SessionEvent[], incoming: SessionEvent[]): SessionEve
   for (const ev of incoming) {
     if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
   }
-  const next = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+  const next = Array.from(bySeq.values()).sort((a, b) => Number(a.seq ?? 0) - Number(b.seq ?? 0));
   return next.length > HEAD_EVENT_BUFFER_LIMIT ? next.slice(-HEAD_EVENT_BUFFER_LIMIT) : next;
 };
 
