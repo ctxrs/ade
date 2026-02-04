@@ -17,8 +17,8 @@ use ctx_http::api;
 use ctx_http::daemon::AppState;
 use ctx_http::installer::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_http::settings::{
-    save_settings, ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode,
-    ExecutionMode, ExecutionSettings, Settings,
+    load_settings, save_settings, ContainerExecutionSettings, ContainerMountMode,
+    ContainerNetworkMode, ExecutionMode, ExecutionSettings, Settings,
 };
 
 struct EnvGuard {
@@ -190,6 +190,42 @@ async fn configure_container_settings(
         ..Default::default()
     };
     save_settings(data_root, &settings).await.unwrap();
+}
+
+async fn configure_container_network_settings(
+    data_root: &Path,
+    mount_mode: ContainerMountMode,
+    image: &str,
+    network_mode: ContainerNetworkMode,
+    allowlist: Vec<String>,
+) {
+    let settings = Settings {
+        execution: Some(ExecutionSettings {
+            mode: ExecutionMode::Container,
+            container: ContainerExecutionSettings {
+                mount_mode,
+                network_mode,
+                allowlist,
+                image: Some(image.to_string()),
+                ..Default::default()
+            },
+        }),
+        ..Default::default()
+    };
+    save_settings(data_root, &settings).await.unwrap();
+}
+
+async fn run_container_python(container_name: &str, script: &str) -> std::process::Output {
+    let podman = podman_binary_for_tests().expect("podman required for e2e");
+    Command::new(podman)
+        .arg("exec")
+        .arg(container_name)
+        .arg("python3")
+        .arg("-c")
+        .arg(script)
+        .output()
+        .await
+        .unwrap()
 }
 
 async fn inspect_container_mount_sources(container_name: &str) -> Vec<String> {
@@ -418,4 +454,407 @@ async fn harness_container_podman_sealed_mounts() {
         mounts.iter().any(|source| source == &sealed_root),
         "sealed worktree should be mounted"
     );
+}
+
+#[tokio::test]
+#[ignore]
+async fn harness_container_podman_egress_allowlist() {
+    let _ = tracing_subscriber::fmt::try_init();
+    if std::env::var("CTX_E2E_PODMAN").ok().as_deref() != Some("1") {
+        eprintln!("skipping: CTX_E2E_PODMAN not set");
+        return;
+    }
+    if podman_binary_for_tests().is_none() {
+        eprintln!("skipping: podman not found");
+        return;
+    }
+    if std::env::var("CTX_EGRESS_PROXY_PATH").ok().is_none() {
+        eprintln!("skipping: CTX_EGRESS_PROXY_PATH not set");
+        return;
+    }
+    let _guard = EnvGuard::set("CTX_ALLOW_SYSTEM_PODMAN", "1");
+
+    let image = std::env::var("CTX_E2E_PODMAN_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
+    let allow_host = "example.com";
+
+    let git_repo = setup_git_repo().await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+
+    let script_path = write_fake_crp_script(data_dir.path());
+    configure_fake_provider(data_dir.path(), &script_path).await;
+    configure_container_network_settings(
+        data_dir.path(),
+        ContainerMountMode::HostMounted,
+        &image,
+        ContainerNetworkMode::Allowlist,
+        vec![allow_host.to_string()],
+    )
+    .await;
+    let settings = load_settings(data_dir.path()).await;
+    let execution_settings = settings.execution.clone().unwrap_or_default();
+    assert_eq!(
+        settings
+            .execution
+            .as_ref()
+            .expect("execution settings")
+            .container
+            .network_mode,
+        ContainerNetworkMode::Allowlist
+    );
+
+    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+        HashMap::new();
+    providers.insert(
+        "codex-crp".into(),
+        Arc::new(Tier1CrpAdapter::from_raw(
+            "codex-crp",
+            "python3".to_string(),
+            vec![script_path.to_string_lossy().to_string()],
+        )),
+    );
+
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:4399".to_string(),
+        None,
+    ));
+    let mut app = api::router(state.clone());
+    let session = create_session_with_provider(&mut app, git_repo.path(), "codex-crp").await;
+    let workspace = state
+        .core
+        .stores
+        .global()
+        .get_workspace(session.workspace_id)
+        .await
+        .unwrap()
+        .expect("workspace");
+    let workspace_store = state
+        .core
+        .stores
+        .workspace(session.workspace_id)
+        .await
+        .unwrap();
+    let worktree = workspace_store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("worktree");
+    state
+        .execution
+        .harness
+        .prepare(
+            &workspace,
+            &worktree,
+            &execution_settings,
+            &state.core.daemon_url,
+        )
+        .await
+        .expect("failed to prepare container runtime");
+
+    let session_id = session.id.0.to_string();
+    post_message(&mut app, &session_id, PROMPT).await;
+    wait_for_done(&state, session.id).await;
+    let container_status = state
+        .execution
+        .harness
+        .container_status(session.workspace_id)
+        .await
+        .unwrap();
+    assert!(
+        container_status
+            .as_ref()
+            .and_then(|status| status.egress_guard)
+            .unwrap_or(false),
+        "egress guard was not configured"
+    );
+
+    let container_name = format!("ctx-harness-{}", session.workspace_id.0);
+    let allow_script = r#"
+import socket, ssl
+host = "example.com"
+ctx = ssl.create_default_context()
+sock = ctx.wrap_socket(socket.socket(), server_hostname=host)
+sock.settimeout(5)
+sock.connect((host, 443))
+sock.sendall(b"GET / HTTP/1.1\r\nHost: " + host.encode() + b"\r\nConnection: close\r\n\r\n")
+sock.recv(4)
+"#;
+    let allow_output = run_container_python(&container_name, allow_script).await;
+    assert!(
+        allow_output.status.success(),
+        "allowlist host failed: {}",
+        String::from_utf8_lossy(&allow_output.stderr)
+    );
+
+    let deny_script = r#"
+import socket, ssl, sys
+host = "example.net"
+ctx = ssl.create_default_context()
+sock = ctx.wrap_socket(socket.socket(), server_hostname=host)
+sock.settimeout(5)
+try:
+    sock.connect((host, 443))
+    sock.sendall(b"GET / HTTP/1.1\r\nHost: " + host.encode() + b"\r\nConnection: close\r\n\r\n")
+    sock.recv(4)
+    sys.exit(0)
+except Exception:
+    sys.exit(2)
+"#;
+    let deny_output = run_container_python(&container_name, deny_script).await;
+    assert_eq!(deny_output.status.code(), Some(2));
+}
+
+#[tokio::test]
+#[ignore]
+async fn harness_container_podman_egress_allow_all() {
+    let _ = tracing_subscriber::fmt::try_init();
+    if std::env::var("CTX_E2E_PODMAN").ok().as_deref() != Some("1") {
+        eprintln!("skipping: CTX_E2E_PODMAN not set");
+        return;
+    }
+    if podman_binary_for_tests().is_none() {
+        eprintln!("skipping: podman not found");
+        return;
+    }
+    if std::env::var("CTX_EGRESS_PROXY_PATH").ok().is_none() {
+        eprintln!("skipping: CTX_EGRESS_PROXY_PATH not set");
+        return;
+    }
+    let _guard = EnvGuard::set("CTX_ALLOW_SYSTEM_PODMAN", "1");
+
+    let image = std::env::var("CTX_E2E_PODMAN_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
+
+    let git_repo = setup_git_repo().await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+
+    let script_path = write_fake_crp_script(data_dir.path());
+    configure_fake_provider(data_dir.path(), &script_path).await;
+    configure_container_network_settings(
+        data_dir.path(),
+        ContainerMountMode::HostMounted,
+        &image,
+        ContainerNetworkMode::All,
+        Vec::new(),
+    )
+    .await;
+    let settings = load_settings(data_dir.path()).await;
+    let execution_settings = settings.execution.clone().unwrap_or_default();
+
+    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+        HashMap::new();
+    providers.insert(
+        "codex-crp".into(),
+        Arc::new(Tier1CrpAdapter::from_raw(
+            "codex-crp",
+            "python3".to_string(),
+            vec![script_path.to_string_lossy().to_string()],
+        )),
+    );
+
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:4399".to_string(),
+        None,
+    ));
+    let mut app = api::router(state.clone());
+    let session = create_session_with_provider(&mut app, git_repo.path(), "codex-crp").await;
+    let workspace = state
+        .core
+        .stores
+        .global()
+        .get_workspace(session.workspace_id)
+        .await
+        .unwrap()
+        .expect("workspace");
+    let workspace_store = state
+        .core
+        .stores
+        .workspace(session.workspace_id)
+        .await
+        .unwrap();
+    let worktree = workspace_store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("worktree");
+    state
+        .execution
+        .harness
+        .prepare(
+            &workspace,
+            &worktree,
+            &execution_settings,
+            &state.core.daemon_url,
+        )
+        .await
+        .expect("failed to prepare container runtime");
+
+    let session_id = session.id.0.to_string();
+    post_message(&mut app, &session_id, PROMPT).await;
+    wait_for_done(&state, session.id).await;
+    let container_status = state
+        .execution
+        .harness
+        .container_status(session.workspace_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        container_status
+            .as_ref()
+            .and_then(|status| status.egress_guard),
+        Some(false),
+        "egress guard should be disabled for allow-all"
+    );
+
+    let container_name = format!("ctx-harness-{}", session.workspace_id.0);
+    for host in ["example.com", "example.net"] {
+        let allow_script = format!(
+            r#"
+import socket, ssl
+host = "{host}"
+ctx = ssl.create_default_context()
+sock = ctx.wrap_socket(socket.socket(), server_hostname=host)
+sock.settimeout(5)
+sock.connect((host, 443))
+sock.sendall(b"GET / HTTP/1.1\r\nHost: " + host.encode() + b"\r\nConnection: close\r\n\r\n")
+sock.recv(4)
+"#
+        );
+        let allow_output = run_container_python(&container_name, &allow_script).await;
+        assert!(
+            allow_output.status.success(),
+            "allow-all host failed ({host}): {}",
+            String::from_utf8_lossy(&allow_output.stderr)
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn harness_container_podman_egress_deny_all() {
+    let _ = tracing_subscriber::fmt::try_init();
+    if std::env::var("CTX_E2E_PODMAN").ok().as_deref() != Some("1") {
+        eprintln!("skipping: CTX_E2E_PODMAN not set");
+        return;
+    }
+    if podman_binary_for_tests().is_none() {
+        eprintln!("skipping: podman not found");
+        return;
+    }
+    if std::env::var("CTX_EGRESS_PROXY_PATH").ok().is_none() {
+        eprintln!("skipping: CTX_EGRESS_PROXY_PATH not set");
+        return;
+    }
+    let _guard = EnvGuard::set("CTX_ALLOW_SYSTEM_PODMAN", "1");
+
+    let image = std::env::var("CTX_E2E_PODMAN_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
+
+    let git_repo = setup_git_repo().await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+
+    let script_path = write_fake_crp_script(data_dir.path());
+    configure_fake_provider(data_dir.path(), &script_path).await;
+    configure_container_network_settings(
+        data_dir.path(),
+        ContainerMountMode::HostMounted,
+        &image,
+        ContainerNetworkMode::Allowlist,
+        Vec::new(),
+    )
+    .await;
+    let settings = load_settings(data_dir.path()).await;
+    let execution_settings = settings.execution.clone().unwrap_or_default();
+
+    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+        HashMap::new();
+    providers.insert(
+        "codex-crp".into(),
+        Arc::new(Tier1CrpAdapter::from_raw(
+            "codex-crp",
+            "python3".to_string(),
+            vec![script_path.to_string_lossy().to_string()],
+        )),
+    );
+
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:4399".to_string(),
+        None,
+    ));
+    let mut app = api::router(state.clone());
+    let session = create_session_with_provider(&mut app, git_repo.path(), "codex-crp").await;
+    let workspace = state
+        .core
+        .stores
+        .global()
+        .get_workspace(session.workspace_id)
+        .await
+        .unwrap()
+        .expect("workspace");
+    let workspace_store = state
+        .core
+        .stores
+        .workspace(session.workspace_id)
+        .await
+        .unwrap();
+    let worktree = workspace_store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("worktree");
+    state
+        .execution
+        .harness
+        .prepare(
+            &workspace,
+            &worktree,
+            &execution_settings,
+            &state.core.daemon_url,
+        )
+        .await
+        .expect("failed to prepare container runtime");
+
+    let session_id = session.id.0.to_string();
+    post_message(&mut app, &session_id, PROMPT).await;
+    wait_for_done(&state, session.id).await;
+    let container_status = state
+        .execution
+        .harness
+        .container_status(session.workspace_id)
+        .await
+        .unwrap();
+    assert!(
+        container_status
+            .as_ref()
+            .and_then(|status| status.egress_guard)
+            .unwrap_or(false),
+        "egress guard was not configured"
+    );
+
+    let container_name = format!("ctx-harness-{}", session.workspace_id.0);
+    let deny_script = r#"
+import socket, ssl, sys
+host = "example.com"
+ctx = ssl.create_default_context()
+sock = ctx.wrap_socket(socket.socket(), server_hostname=host)
+sock.settimeout(5)
+try:
+    sock.connect((host, 443))
+    sock.sendall(b"GET / HTTP/1.1\r\nHost: " + host.encode() + b"\r\nConnection: close\r\n\r\n")
+    sock.recv(4)
+    sys.exit(0)
+except Exception:
+    sys.exit(2)
+"#;
+    let deny_output = run_container_python(&container_name, deny_script).await;
+    assert_eq!(deny_output.status.code(), Some(2));
 }

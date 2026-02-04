@@ -23,7 +23,6 @@ use ctx_fs::worktrees::{create_worktree, remove_worktree};
 
 use crate::daemon::AppState;
 use crate::ops_events::OpsEvent;
-use crate::settings::{self, NetworkContext};
 #[cfg(target_os = "linux")]
 use crate::tool_cgroup::TOOL_SLICE_UNIT;
 #[cfg(not(target_os = "linux"))]
@@ -2214,23 +2213,6 @@ fn emit_merge_queue_tool_event(
     state.telemetry.ops_events.emit(event);
 }
 
-async fn merge_queue_proxy_env(state: &AppState, entry: &MergeQueueEntry) -> Vec<(String, String)> {
-    let settings = settings::load_settings(&state.core.data_root).await;
-    let network_profiles = settings.network_profiles.unwrap_or_default();
-    let network_profile = network_profiles.profile(NetworkContext::MergeQueue);
-    let env = state
-        .execution
-        .egress_proxy
-        .proxy_env_for_context(
-            entry.workspace_id,
-            NetworkContext::MergeQueue,
-            network_profile,
-            "127.0.0.1",
-        )
-        .await;
-    env.into_iter().collect()
-}
-
 async fn merge_queue_command(
     state: &AppState,
     entry: &MergeQueueEntry,
@@ -2239,11 +2221,7 @@ async fn merge_queue_command(
     workdir: Option<&Path>,
     envs: &[(String, String)],
 ) -> Command {
-    let proxy_env = merge_queue_proxy_env(state, entry).await;
-    let mut merged: HashMap<String, String> = envs.iter().cloned().collect();
-    for (key, value) in proxy_env {
-        merged.insert(key, value);
-    }
+    let merged: HashMap<String, String> = envs.iter().cloned().collect();
     let merged: Vec<(String, String)> = merged.into_iter().collect();
     let (cmd, used_tool_slice) = tool_slice_command(program, workdir, &merged).await;
     emit_merge_queue_tool_event(state, entry, command_label, workdir, used_tool_slice);
