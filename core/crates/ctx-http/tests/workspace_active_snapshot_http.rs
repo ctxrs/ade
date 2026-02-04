@@ -33,10 +33,12 @@ fn git_status_untracked_from_message(
     session_id: SessionId,
 ) -> Option<i64> {
     match message {
-        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-            event: ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. },
-            ..
-        } => {
+        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+            let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } =
+                event.as_ref()
+            else {
+                return None;
+            };
             if delta.session_id != session_id {
                 None
             } else {
@@ -420,17 +422,19 @@ async fn workspace_stream_replays_from_after_seq() {
             {
                 match message {
                     ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                        event:
-                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                                delta,
-                                ..
-                            },
-                        ..
+                        event, ..
                     } => {
+                        let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                            delta,
+                            ..
+                        } = event.as_ref()
+                        else {
+                            continue;
+                        };
                         if delta.session_id != session.id {
                             continue;
                         }
-                        if let Some(event) = delta.event {
+                        if let Some(event) = delta.event.as_ref() {
                             if event.seq == ev3.seq {
                                 seen_replay = true;
                             }
@@ -581,17 +585,19 @@ async fn workspace_stream_replays_tool_events() {
             {
                 match message {
                     ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                        event:
-                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                                delta,
-                                ..
-                            },
-                        ..
+                        event, ..
                     } => {
+                        let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                            delta,
+                            ..
+                        } = event.as_ref()
+                        else {
+                            continue;
+                        };
                         if delta.session_id != session.id {
                             continue;
                         }
-                        if let Some(event) = delta.event {
+                        if let Some(event) = delta.event.as_ref() {
                             match event.event_type {
                                 SessionEventType::ToolCall => saw_call = true,
                                 SessionEventType::ToolResult => saw_result = true,
@@ -973,10 +979,11 @@ async fn workspace_stream_emits_gap_on_large_replay() {
             {
                 if matches!(
                     message,
-                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                        event: ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadReset { .. },
-                        ..
-                    }
+                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { ref event, .. }
+                        if matches!(
+                            event.as_ref(),
+                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadReset { .. }
+                        )
                 ) {
                     seen_reset = true;
                     break;
@@ -1015,10 +1022,12 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
         let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
             serde_json::from_str(&txt).unwrap();
         match message {
-            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                event: ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. },
-                ..
-            } => {}
+            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+                match event.as_ref() {
+                    ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. } => {}
+                    other => panic!("expected ready, got {other:?}"),
+                }
+            }
             other => panic!("expected ready, got {other:?}"),
         }
     } else {
@@ -1056,18 +1065,19 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
             if let Ok(ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                event:
-                    ctx_core::models::WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
-                        task: summary,
-                        ..
-                    },
-                ..
+                event, ..
             }) =
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if summary.task.id == task.id {
-                    saw_upsert = true;
-                    break;
+                if let ctx_core::models::WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+                    task: summary,
+                    ..
+                } = event.as_ref()
+                {
+                    if summary.task.id == task.id {
+                        saw_upsert = true;
+                        break;
+                    }
                 }
             }
         }
@@ -1122,10 +1132,12 @@ async fn workspace_stream_archived_task_upsert_has_no_snapshot_payload() {
         let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
             serde_json::from_str(&txt).unwrap();
         match message {
-            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                event: ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. },
-                ..
-            } => {}
+            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+                match event.as_ref() {
+                    ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. } => {}
+                    other => panic!("expected ready, got {other:?}"),
+                }
+            }
             other => panic!("expected ready, got {other:?}"),
         }
     } else {
@@ -1297,13 +1309,15 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
             {
                 match message {
                     ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                        event:
-                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                                delta,
-                                ..
-                            },
-                        ..
+                        event, ..
                     } => {
+                        let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                            delta,
+                            ..
+                        } = event.as_ref()
+                        else {
+                            continue;
+                        };
                         if delta.session_id == session_a.id {
                             seen_a = true;
                         }

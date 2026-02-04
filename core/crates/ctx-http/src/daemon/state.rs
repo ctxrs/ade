@@ -28,6 +28,7 @@ use crate::workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Session, SessionEvent, SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
+    WorktreeVcsSnapshot,
 };
 use ctx_lsp::{LspManager, LspManagerConfig};
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
@@ -68,6 +69,10 @@ pub struct WorkspaceRuntime {
     pub workspace_file_completions_cache:
         Mutex<HashMap<WorkspaceId, TimedEntry<CachedFileCompletions>>>,
     pub git_status_snapshots: Mutex<HashMap<WorktreeId, TimedEntry<GitStatusSnapshotCacheEntry>>>,
+    pub worktree_vcs_snapshots:
+        Mutex<HashMap<WorktreeId, TimedEntry<WorktreeVcsSnapshotCacheEntry>>>,
+    pub worktree_vcs_active: Mutex<HashMap<WorktreeId, usize>>,
+    pub worktree_vcs_summary_gen: Mutex<HashMap<WorktreeId, u64>>,
     pub git_status_watchers: Mutex<HashSet<WorktreeId>>,
     pub workspace_active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
     pub workspace_active_snapshot_cache:
@@ -149,6 +154,14 @@ pub struct GitStatusSnapshotCacheEntry {
     pub last_change_at: Instant,
 }
 
+pub struct WorktreeVcsSnapshotCacheEntry {
+    pub snapshot: WorktreeVcsSnapshot,
+    pub fingerprint: String,
+    pub emitted_at: Instant,
+    pub last_change_at: Instant,
+    pub last_summary_at: Option<Instant>,
+}
+
 #[derive(Clone, Debug)]
 pub struct WorkspaceActiveSnapshotCacheEntry {
     pub snapshot: WorkspaceActiveSnapshot,
@@ -220,6 +233,7 @@ pub struct CacheSweepStats {
     pub file_completions_evicted: usize,
     pub workspace_file_completions_evicted: usize,
     pub git_status_evicted: usize,
+    pub worktree_vcs_evicted: usize,
     pub workspace_snapshot_evicted: usize,
     pub workspace_heads_evicted: usize,
     pub worktree_bootstrap_evicted: usize,
@@ -236,6 +250,7 @@ impl CacheSweepStats {
             + self.file_completions_evicted
             + self.workspace_file_completions_evicted
             + self.git_status_evicted
+            + self.worktree_vcs_evicted
             + self.workspace_snapshot_evicted
             + self.workspace_heads_evicted
             + self.worktree_bootstrap_evicted
@@ -379,6 +394,9 @@ impl AppState {
                 file_completions_cache: Mutex::new(HashMap::new()),
                 workspace_file_completions_cache: Mutex::new(HashMap::new()),
                 git_status_snapshots: Mutex::new(HashMap::new()),
+                worktree_vcs_snapshots: Mutex::new(HashMap::new()),
+                worktree_vcs_active: Mutex::new(HashMap::new()),
+                worktree_vcs_summary_gen: Mutex::new(HashMap::new()),
                 git_status_watchers: Mutex::new(HashSet::new()),
                 workspace_active_snapshot,
                 workspace_active_snapshot_cache: Mutex::new(HashMap::new()),
@@ -673,6 +691,23 @@ impl AppState {
                 cache.remove(worktree_id);
             }
             stats.git_status_evicted += expired.len();
+        }
+        {
+            let mut cache = self.workspaces.worktree_vcs_snapshots.lock().await;
+            let expired: Vec<WorktreeId> = cache
+                .iter()
+                .filter_map(|(worktree_id, entry)| {
+                    if now.duration_since(entry.last_access) >= config.session_ttl {
+                        Some(*worktree_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for worktree_id in &expired {
+                cache.remove(worktree_id);
+            }
+            stats.worktree_vcs_evicted += expired.len();
         }
         {
             let mut cache = self.workspaces.workspace_active_snapshot_cache.lock().await;

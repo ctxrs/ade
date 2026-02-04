@@ -17,7 +17,10 @@ use ctx_core::ids::*;
 use ctx_core::models::*;
 
 use crate::daemon::AppState;
-use crate::git_status::{emit_git_status_snapshot_for_sessions, load_git_status_snapshot};
+use crate::git_status::{
+    emit_git_status_snapshot_for_sessions, emit_worktree_vcs_snapshot_for_worktree,
+    load_git_status_snapshot,
+};
 use crate::terminals::{TerminalClientMessage, TerminalServerMessage};
 use crate::web_sessions::WebSessionManager;
 use crate::workspace_active_snapshot::SessionReplayResult;
@@ -74,6 +77,7 @@ async fn handle_mobile_secure_ws(
         .await;
     let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
     let mut subscription_state = WorkspaceActiveSubscriptionState::default();
+    let mut active_worktrees: HashSet<WorktreeId> = HashSet::new();
     let control = Arc::new(StreamQueue::new(
         WORKSPACE_STREAM_QUEUE_LIMIT,
         WORKSPACE_STREAM_QUEUE_MAX_AGE,
@@ -96,7 +100,7 @@ async fn handle_mobile_secure_ws(
         "ready_secure",
         WorkspaceActiveSnapshotStreamMessage::Event {
             rev: 0,
-            event: ready,
+            event: Box::new(ready),
         },
     )
     .await
@@ -339,31 +343,46 @@ async fn handle_mobile_secure_ws(
                                         async move {
                                             match event {
                                                 WorkspaceActiveSnapshotStreamMessage::Event {
-                                                    event:
-                                                        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                                                            snapshot_rev,
-                                                            delta,
-                                                            ..
-                                                        },
+                                                    event,
                                                     ..
-                                                } => {
-                                                    let delta =
-                                                        filter_partial_delta_for_active_tasks(
-                                                            *delta,
-                                                            &active_task_sessions,
-                                                        );
-                                                    if let Err(err) =
-                                                        head_buffer.push(snapshot_rev, delta).await
-                                                    {
-                                                        log_head_batch_push_error(
-                                                            "replay_secure",
-                                                            workspace_id,
-                                                            &err,
-                                                        );
-                                                        return Err(());
+                                                } => match *event {
+                                                    WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                                        snapshot_rev,
+                                                        delta,
+                                                        ..
+                                                    } => {
+                                                        let delta =
+                                                            filter_partial_delta_for_active_tasks(
+                                                                *delta,
+                                                                &active_task_sessions,
+                                                            );
+                                                        if let Err(err) = head_buffer
+                                                            .push(snapshot_rev, delta)
+                                                            .await
+                                                        {
+                                                            log_head_batch_push_error(
+                                                                "replay_secure",
+                                                                workspace_id,
+                                                                &err,
+                                                            );
+                                                            return Err(());
+                                                        }
+                                                        Ok(())
                                                     }
-                                                    Ok(())
-                                                }
+                                                    other => {
+                                                        push_stream_message(
+                                                            &control,
+                                                            workspace_id,
+                                                            Some(session_id),
+                                                            "replay_secure",
+                                                            WorkspaceActiveSnapshotStreamMessage::Event {
+                                                                rev: 0,
+                                                                event: Box::new(other),
+                                                            },
+                                                        )
+                                                        .await
+                                                    }
+                                                },
                                                 other => {
                                                     push_stream_message(
                                                         &control,
@@ -415,7 +434,16 @@ async fn handle_mobile_secure_ws(
                                 .iter()
                                 .map(|sub| sub.session_id)
                                 .collect();
-                            ensure_git_status_watchers_for_sessions(&state, &git_status_session_ids)
+                            sync_active_worktrees(
+                                &state,
+                                &mut active_worktrees,
+                                &git_status_session_ids,
+                            )
+                            .await;
+                            ensure_worktree_vcs_watchers_for_sessions(
+                                &state,
+                                &git_status_session_ids,
+                            )
                                 .await;
                         }
                         Some(Ok(WsMessage::Close(_))) => break,
@@ -460,6 +488,7 @@ async fn handle_mobile_secure_ws(
                         continue;
                     }
 
+                    let mut refresh_active_worktrees = false;
                     if subscription_state.active_scope {
                         match &event {
                             WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
@@ -467,6 +496,7 @@ async fn handle_mobile_secure_ws(
                                 subscription_state
                                     .active_task_sessions
                                     .insert(task.task.id, session_id);
+                                refresh_active_worktrees = true;
                                 if let std::collections::hash_map::Entry::Vacant(entry) =
                                     subscriptions.entry(session_id)
                                 {
@@ -480,6 +510,7 @@ async fn handle_mobile_secure_ws(
                                 if let Some(session_id) =
                                     subscription_state.active_task_sessions.remove(task_id)
                                 {
+                                    refresh_active_worktrees = true;
                                     let still_active = subscription_state
                                         .active_task_sessions
                                         .values()
@@ -495,6 +526,21 @@ async fn handle_mobile_secure_ws(
                             }
                             _ => {}
                         }
+                    }
+                    if refresh_active_worktrees {
+                        let session_ids: Vec<SessionId> =
+                            subscriptions.keys().copied().collect();
+                        sync_active_worktrees(
+                            &state,
+                            &mut active_worktrees,
+                            &session_ids,
+                        )
+                        .await;
+                        ensure_worktree_vcs_watchers_for_sessions(
+                            &state,
+                            &session_ids,
+                        )
+                        .await;
                     }
 
                     if let Some(foreground_task_id) = subscription_state.foreground_task_id {
@@ -614,7 +660,10 @@ async fn handle_mobile_secure_ws(
                                 workspace_id,
                                 session_id,
                                 "event_secure",
-                                WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: other },
+                                WorkspaceActiveSnapshotStreamMessage::Event {
+                                    rev: 0,
+                                    event: Box::new(other),
+                                },
                             )
                             .await
                             .is_err()
@@ -648,6 +697,10 @@ async fn handle_mobile_secure_ws(
     if let Some(send_task) = send_task {
         let _ = send_task.await;
     }
+
+    state
+        .update_worktree_vcs_activity(&active_worktrees, &HashSet::new())
+        .await;
 
     recv_result.unwrap_or(Ok(()))
 }
@@ -727,7 +780,8 @@ fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option<i64> {
         | WorkspaceActiveSnapshotEvent::SessionHeadDelta { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionHeadReset { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionGap { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::WorktreeBootstrap { snapshot_rev, .. } => {
+        | WorkspaceActiveSnapshotEvent::WorktreeBootstrap { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot { snapshot_rev, .. } => {
             Some(*snapshot_rev)
         }
         WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert { .. }
@@ -1550,7 +1604,7 @@ where
                     .map_err(|_| ())?;
                 emit(WorkspaceActiveSnapshotStreamMessage::Event {
                     rev: 0,
-                    event: wrapped,
+                    event: Box::new(wrapped),
                 })
                 .await?;
             }
@@ -1568,7 +1622,7 @@ where
                 };
                 emit(WorkspaceActiveSnapshotStreamMessage::Event {
                     rev: 0,
-                    event: reset,
+                    event: Box::new(reset),
                 })
                 .await?;
                 return Ok(ReplayOutcome::Replay {
@@ -1582,7 +1636,11 @@ where
                 after_seq,
                 reason,
             };
-            emit(WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: gap }).await?;
+            emit(WorkspaceActiveSnapshotStreamMessage::Event {
+                rev: 0,
+                event: Box::new(gap),
+            })
+            .await?;
             Ok(ReplayOutcome::Replay {
                 last_sent: last_known_seq.max(after_seq),
             })
@@ -1732,7 +1790,10 @@ async fn resolve_workspace_active_snapshot_subscriptions(
     }
 }
 
-async fn ensure_git_status_watchers_for_sessions(state: &Arc<AppState>, session_ids: &[SessionId]) {
+async fn ensure_worktree_vcs_watchers_for_sessions(
+    state: &Arc<AppState>,
+    session_ids: &[SessionId],
+) {
     if session_ids.is_empty() {
         return;
     }
@@ -1758,15 +1819,46 @@ async fn ensure_git_status_watchers_for_sessions(state: &Arc<AppState>, session_
 
     for (worktree_id, (worktree, sessions)) in worktree_sessions {
         state.ensure_git_status_watcher(worktree.clone()).await;
-        let snapshot = match load_git_status_snapshot(&worktree).await {
-            Ok(snapshot) => snapshot,
-            Err(err) => {
-                tracing::warn!(worktree_id = %worktree_id.0, "git status snapshot failed: {err:#}");
-                continue;
-            }
-        };
-        emit_git_status_snapshot_for_sessions(state, &sessions, worktree_id, &snapshot, true).await;
+        if let Err(err) = emit_worktree_vcs_snapshot_for_worktree(state, &worktree, true).await {
+            tracing::warn!(worktree_id = %worktree_id.0, "worktree vcs snapshot failed: {err:#}");
+        }
+        // Preserve session-level notices for explicitly subscribed sessions.
+        if let Ok(snapshot) = load_git_status_snapshot(&worktree).await {
+            emit_git_status_snapshot_for_sessions(state, &sessions, worktree_id, &snapshot, true)
+                .await;
+        }
     }
+}
+
+async fn resolve_worktree_ids_for_sessions(
+    state: &Arc<AppState>,
+    session_ids: &[SessionId],
+) -> HashSet<WorktreeId> {
+    let mut worktree_ids = HashSet::new();
+    for session_id in session_ids {
+        let store = match state.store_for_session(*session_id).await {
+            Ok(store) => store,
+            Err(_) => continue,
+        };
+        let session = match store.get_session(*session_id).await {
+            Ok(Some(session)) => session,
+            _ => continue,
+        };
+        worktree_ids.insert(session.worktree_id);
+    }
+    worktree_ids
+}
+
+async fn sync_active_worktrees(
+    state: &Arc<AppState>,
+    active_worktrees: &mut HashSet<WorktreeId>,
+    session_ids: &[SessionId],
+) {
+    let next = resolve_worktree_ids_for_sessions(state, session_ids).await;
+    state
+        .update_worktree_vcs_activity(active_worktrees, &next)
+        .await;
+    *active_worktrees = next;
 }
 
 async fn handle_workspace_active_snapshot_ws(
@@ -1788,6 +1880,7 @@ async fn handle_workspace_active_snapshot_ws(
         .await;
     let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
     let mut subscription_state = WorkspaceActiveSubscriptionState::default();
+    let mut active_worktrees: HashSet<WorktreeId> = HashSet::new();
     let mut reset_queued = false;
 
     let (snapshot_rev, archived_rev) =
@@ -1804,7 +1897,7 @@ async fn handle_workspace_active_snapshot_ws(
         "ready",
         WorkspaceActiveSnapshotStreamMessage::Event {
             rev: 0,
-            event: ready,
+            event: Box::new(ready),
         },
     )
     .await
@@ -2022,13 +2115,13 @@ async fn handle_workspace_active_snapshot_ws(
                                                 active_task_sessions.clone();
                                             async move {
                                                 match event {
-                                                        WorkspaceActiveSnapshotStreamMessage::Event {
-                                                            event:
-                                                                WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                                                                    snapshot_rev,
-                                                                    delta,
-                                                                    ..
-                                                                },
+                                                    WorkspaceActiveSnapshotStreamMessage::Event {
+                                                        event,
+                                                        ..
+                                                    } => match *event {
+                                                        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                                            snapshot_rev,
+                                                            delta,
                                                             ..
                                                         } => {
                                                             let delta =
@@ -2036,18 +2129,33 @@ async fn handle_workspace_active_snapshot_ws(
                                                                     *delta,
                                                                     &active_task_sessions,
                                                                 );
-                                                            if let Err(err) =
-                                                                head_buffer.push(snapshot_rev, delta).await
+                                                            if let Err(err) = head_buffer
+                                                                .push(snapshot_rev, delta)
+                                                                .await
                                                             {
                                                                 log_head_batch_push_error(
                                                                     "replay",
                                                                     workspace_id,
-                                                                &err,
-                                                            );
-                                                            return Err(());
+                                                                    &err,
+                                                                );
+                                                                return Err(());
+                                                            }
+                                                            Ok(())
                                                         }
-                                                        Ok(())
-                                                    }
+                                                        other => {
+                                                            push_stream_message(
+                                                                &control,
+                                                                workspace_id,
+                                                                Some(session_id),
+                                                                "replay",
+                                                                WorkspaceActiveSnapshotStreamMessage::Event {
+                                                                    rev: 0,
+                                                                    event: Box::new(other),
+                                                                },
+                                                            )
+                                                            .await
+                                                        }
+                                                    },
                                                     other => {
                                                         push_stream_message(
                                                             &control,
@@ -2099,11 +2207,17 @@ async fn handle_workspace_active_snapshot_ws(
                                     .iter()
                                     .map(|sub| sub.session_id)
                                     .collect();
-                                ensure_git_status_watchers_for_sessions(
+                                sync_active_worktrees(
                                     &state,
+                                    &mut active_worktrees,
                                     &git_status_session_ids,
                                 )
                                 .await;
+                                ensure_worktree_vcs_watchers_for_sessions(
+                                    &state,
+                                    &git_status_session_ids,
+                                )
+                                    .await;
                             }
                         }
                         Some(Ok(WsMessage::Binary(bytes))) => {
@@ -2207,13 +2321,13 @@ async fn handle_workspace_active_snapshot_ws(
                                                     active_task_sessions.clone();
                                                 async move {
                                                     match event {
-                                                            WorkspaceActiveSnapshotStreamMessage::Event {
-                                                                event:
-                                                                    WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                                                                        snapshot_rev,
-                                                                        delta,
-                                                                        ..
-                                                                    },
+                                                        WorkspaceActiveSnapshotStreamMessage::Event {
+                                                            event,
+                                                            ..
+                                                        } => match *event {
+                                                            WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                                                snapshot_rev,
+                                                                delta,
                                                                 ..
                                                             } => {
                                                                 let delta =
@@ -2221,18 +2335,33 @@ async fn handle_workspace_active_snapshot_ws(
                                                                         *delta,
                                                                         &active_task_sessions,
                                                                     );
-                                                                if let Err(err) =
-                                                                    head_buffer.push(snapshot_rev, delta).await
+                                                                if let Err(err) = head_buffer
+                                                                    .push(snapshot_rev, delta)
+                                                                    .await
                                                                 {
                                                                     log_head_batch_push_error(
                                                                         "replay_binary",
                                                                         workspace_id,
-                                                                    &err,
-                                                                );
-                                                                return Err(());
+                                                                        &err,
+                                                                    );
+                                                                    return Err(());
+                                                                }
+                                                                Ok(())
                                                             }
-                                                            Ok(())
-                                                        }
+                                                            other => {
+                                                                push_stream_message(
+                                                                    &control,
+                                                                    workspace_id,
+                                                                    Some(session_id),
+                                                                    "replay_binary",
+                                                                    WorkspaceActiveSnapshotStreamMessage::Event {
+                                                                        rev: 0,
+                                                                        event: Box::new(other),
+                                                                    },
+                                                                )
+                                                                .await
+                                                            }
+                                                        },
                                                         other => {
                                                             push_stream_message(
                                                                 &control,
@@ -2284,11 +2413,17 @@ async fn handle_workspace_active_snapshot_ws(
                                     .iter()
                                     .map(|sub| sub.session_id)
                                     .collect();
-                                ensure_git_status_watchers_for_sessions(
+                                sync_active_worktrees(
                                     &state,
+                                    &mut active_worktrees,
                                     &git_status_session_ids,
                                 )
                                 .await;
+                                ensure_worktree_vcs_watchers_for_sessions(
+                                    &state,
+                                    &git_status_session_ids,
+                                )
+                                    .await;
                                 }
                             }
                         }
@@ -2334,6 +2469,7 @@ async fn handle_workspace_active_snapshot_ws(
                         continue;
                     }
 
+                    let mut refresh_active_worktrees = false;
                     if subscription_state.active_scope {
                         match &event {
                             WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
@@ -2341,6 +2477,7 @@ async fn handle_workspace_active_snapshot_ws(
                                 subscription_state
                                     .active_task_sessions
                                     .insert(task.task.id, session_id);
+                                refresh_active_worktrees = true;
                                 if let std::collections::hash_map::Entry::Vacant(entry) =
                                     subscriptions.entry(session_id)
                                 {
@@ -2354,6 +2491,7 @@ async fn handle_workspace_active_snapshot_ws(
                                 if let Some(session_id) =
                                     subscription_state.active_task_sessions.remove(task_id)
                                 {
+                                    refresh_active_worktrees = true;
                                     let still_active = subscription_state
                                         .active_task_sessions
                                         .values()
@@ -2369,6 +2507,21 @@ async fn handle_workspace_active_snapshot_ws(
                             }
                             _ => {}
                         }
+                    }
+                    if refresh_active_worktrees {
+                        let session_ids: Vec<SessionId> =
+                            subscriptions.keys().copied().collect();
+                        sync_active_worktrees(
+                            &state,
+                            &mut active_worktrees,
+                            &session_ids,
+                        )
+                        .await;
+                        ensure_worktree_vcs_watchers_for_sessions(
+                            &state,
+                            &session_ids,
+                        )
+                        .await;
                     }
 
                     if let Some(foreground_task_id) = subscription_state.foreground_task_id {
@@ -2488,7 +2641,10 @@ async fn handle_workspace_active_snapshot_ws(
                                 workspace_id,
                                 session_id,
                                 "event",
-                                WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: other },
+                                WorkspaceActiveSnapshotStreamMessage::Event {
+                                    rev: 0,
+                                    event: Box::new(other),
+                                },
                             )
                             .await
                             .is_err()
@@ -2521,6 +2677,10 @@ async fn handle_workspace_active_snapshot_ws(
     if let Some(send_task) = send_task {
         let _ = send_task.await;
     }
+
+    state
+        .update_worktree_vcs_activity(&active_worktrees, &HashSet::new())
+        .await;
 }
 
 async fn replay_session_events_secure<F, Fut>(
@@ -2559,7 +2719,7 @@ where
                 };
                 emit(WorkspaceActiveSnapshotStreamMessage::Event {
                     rev: 0,
-                    event: wrapped,
+                    event: Box::new(wrapped),
                 })
                 .await?;
             }
@@ -2577,7 +2737,7 @@ where
                 };
                 emit(WorkspaceActiveSnapshotStreamMessage::Event {
                     rev: 0,
-                    event: reset,
+                    event: Box::new(reset),
                 })
                 .await?;
                 return Ok(ReplayOutcome::Replay {
@@ -2591,7 +2751,11 @@ where
                 after_seq,
                 reason,
             };
-            emit(WorkspaceActiveSnapshotStreamMessage::Event { rev: 0, event: gap }).await?;
+            emit(WorkspaceActiveSnapshotStreamMessage::Event {
+                rev: 0,
+                event: Box::new(gap),
+            })
+            .await?;
             Ok(ReplayOutcome::Replay {
                 last_sent: last_known_seq.max(after_seq),
             })

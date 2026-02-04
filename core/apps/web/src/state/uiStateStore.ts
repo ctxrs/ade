@@ -92,6 +92,7 @@ export type PersistedWorkspaceActiveSnapshotV1 = {
   workspaceId: string;
   snapshotRev?: number;
   archivedRev?: number;
+  worktreeVcsSnapshots?: import("@ctx/types").WorktreeVcsSnapshot[];
   active: {
     tasks: PersistedWorkspaceActiveTaskSummaryV1[];
     totalCount?: number;

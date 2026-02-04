@@ -22,7 +22,6 @@ import {
 import {
   InstallInfo,
   type ArchiveTaskResponse,
-  type GitStatusSummary,
   type Message,
   MessageAttachment,
   ProviderOptions,
@@ -41,8 +40,6 @@ import {
   getDaemonBaseUrl,
   getHealth,
   getSessionDiff,
-  getSessionDiffSummary,
-  getSessionGitStatusSummary,
   getInstall,
   getProviderOptions,
   getWorktree,
@@ -143,9 +140,7 @@ import {
   modelIdsFromOptions,
   normalizeAnchorRect,
   normalizeGitStatusCode,
-  normalizeGitStatusSummary,
   parseMs,
-  readGitStatusSummaryLine,
   sanitizeFileName,
   saveMarkdownExport,
   spinnerDelayForNow,
@@ -153,13 +148,6 @@ import {
 
 const DIFF_LINE_GUARD_LIMIT = 10000;
 const DIFF_FILE_GUARD_LIMIT = 200;
-
-type DiffSummaryState = {
-  summary: Record<string, unknown> | null;
-  error: string | null;
-  summaryLoading: boolean;
-  diffLoading: boolean;
-};
 
 const readDiffSummaryNumber = (summary: Record<string, unknown> | null, keys: string[]): number | null => {
   if (!summary) return null;
@@ -178,15 +166,6 @@ const getDiffSummaryStats = (summary: Record<string, unknown> | null) => {
   const lineCount =
     additions !== null && deletions !== null ? additions + deletions : additions ?? deletions ?? null;
   return { fileCount, additions, deletions, lineCount };
-};
-
-const estimateDiffFileCount = (diffText: string): number => {
-  const text = String(diffText ?? "");
-  if (!text.trim()) return 0;
-  const matches = text.match(/^diff --git /gm);
-  if (matches && matches.length > 0) return matches.length;
-  const alt = text.match(/^\+\+\+ /gm);
-  return alt ? alt.length : 0;
 };
 
 const isDiffSummaryTooLarge = (summary: Record<string, unknown> | null) => {
@@ -410,9 +389,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [diffWidth, setDiffWidth] = useState(480);
   const [diffResizing, setDiffResizing] = useState(false);
   const [diffOpenHydrated, setDiffOpenHydrated] = useState(false);
-  const [diffSummaryBySession, setDiffSummaryBySession] = useState<Record<string, DiffSummaryState>>({});
-  const [gitStatusLoading, setGitStatusLoading] = useState(false);
-  const [gitStatusError, setGitStatusError] = useState<string | null>(null);
+  const [diffContentLoading, setDiffContentLoading] = useState(false);
   const [artifactsOpenHydrated, setArtifactsOpenHydrated] = useState(false);
   const [artifactsOpenSeeded, setArtifactsOpenSeeded] = useState(false);
   const [, setArtifactsAutoOpenPending] = useState(false);
@@ -1899,12 +1876,27 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const activeEntry = useSessionEntry(activeSessionId ?? "");
   const activeSessionDiff = activeEntry?.diff ?? "";
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
-  const gitStatusSummary = activeEntry?.gitStatusSummary ?? null;
-  const activeDiffSummaryState = activeSessionId ? diffSummaryBySession[activeSessionId] : undefined;
-  const diffSummary = activeDiffSummaryState?.summary ?? null;
-  const diffSummaryError = activeDiffSummaryState?.error ?? null;
-  const diffLoading =
-    activeDiffSummaryState?.summaryLoading === true || activeDiffSummaryState?.diffLoading === true;
+  const activeWorktreeVcsSnapshot = activeWorktreeId
+    ? workspaceSnapshot.worktreeVcsById?.[activeWorktreeId] ?? null
+    : null;
+  const activeWorktreeVcsSummary: Record<string, unknown> | null = activeWorktreeVcsSnapshot
+    ? { ...activeWorktreeVcsSnapshot.summary }
+    : null;
+  const activeWorktreeVcsComputeState = activeWorktreeVcsSnapshot?.compute_state ?? null;
+  const snapshotSummaryStats = useMemo(
+    () => getDiffSummaryStats(activeWorktreeVcsSummary),
+    [activeWorktreeVcsSummary],
+  );
+  const snapshotReady = activeWorktreeVcsComputeState === "ready";
+  const snapshotHasCounts =
+    snapshotReady && (snapshotSummaryStats.fileCount !== null || snapshotSummaryStats.lineCount !== null);
+  const diffSummary = snapshotHasCounts ? activeWorktreeVcsSummary : null;
+  const diffSummaryError =
+    activeWorktreeVcsComputeState === "error" ? "Failed to compute diff summary." : null;
+  const diffSummaryLoading =
+    !diffSummaryError &&
+    (!activeWorktreeVcsSnapshot || activeWorktreeVcsComputeState === "computing" || !snapshotHasCounts);
+  const diffLoading = diffSummaryLoading || diffContentLoading;
   const activeTaskArchived = Boolean(activeTaskSummary?.task?.archived_at);
   const [webSessions, setWebSessions] = useState<WebSessionInfo[]>([]);
   const [webSessionsLoading, setWebSessionsLoading] = useState(false);
@@ -2078,59 +2070,61 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return `Diff too large to display${suffix}.`;
   }, [diffSummaryStats, diffTooLarge]);
 
-  const diffSummaryReady = diffSummary !== null || diffSummaryError !== null;
+  const diffSummaryReady = snapshotHasCounts || diffSummary !== null || diffSummaryError !== null;
   const diffHasChanges =
     diffSummaryCount !== null
       ? diffSummaryCount > 0
       : diffSummaryStats.lineCount !== null
         ? diffSummaryStats.lineCount > 0
         : false;
-  const hasDiff = diffSummaryError !== null ? true : diffSummaryReady ? diffHasChanges : activeSessionDiff.trim().length > 0;
+  const hasDiff = diffSummaryError !== null ? true : diffSummaryReady ? diffHasChanges : false;
   const diffEmptyLabel =
     diffLoading || !diffSummaryReady ? "Loading changes..." : "No changes on this worktree.";
-  const gitStatusSummaryLine = useMemo(() => readGitStatusSummaryLine(gitStatusSummary), [gitStatusSummary]);
+  const activeWorktreeGitStatus = activeWorktreeVcsSnapshot?.git_status ?? null;
+  const touchedFiles = activeWorktreeVcsSnapshot?.touched_files ?? null;
+  const touchedItems = useMemo(() => {
+    const items = touchedFiles?.items;
+    return Array.isArray(items) ? items : [];
+  }, [touchedFiles]);
+  const touchedTruncated = touchedFiles?.truncated === true;
+  const touchedRemaining = useMemo(() => {
+    if (!touchedTruncated) return null;
+    const total = typeof touchedFiles?.total_count === "number" ? touchedFiles.total_count : null;
+    if (total === null) return null;
+    return Math.max(0, total - touchedItems.length);
+  }, [touchedFiles, touchedItems.length, touchedTruncated]);
+  const gitStatusSummaryLine = useMemo(() => {
+    const line = activeWorktreeGitStatus?.summary_line;
+    return line && line.trim() ? line : "";
+  }, [activeWorktreeGitStatus]);
   const gitStatusEntries = useMemo(() => {
-    if (!gitStatusSummary) return [];
-    const entries = gitStatusSummary.entries;
-    return Array.isArray(entries) ? entries : [];
-  }, [gitStatusSummary]);
+    return touchedItems;
+  }, [touchedItems]);
   const hasGitStatusEntries = gitStatusEntries.length > 0;
   const gitStatusText = useMemo(() => {
-    if (!gitStatusSummary) return "";
-    const raw =
-      gitStatusSummary.raw ??
-      gitStatusSummary.summary ??
-      gitStatusSummary.status ??
-      "";
-    const entries = gitStatusSummary.entries;
-    if (Array.isArray(entries) && entries.length > 0) {
+    if (!activeWorktreeGitStatus) return "";
+    const raw = activeWorktreeGitStatus.raw ?? "";
+    if (gitStatusEntries.length > 0) {
       const header = gitStatusSummaryLine || "git status -sb";
-      return [header, ...entries.map(formatGitStatusEntry)].join("\n");
+      return [header, ...gitStatusEntries.map(formatGitStatusEntry)].join("\n");
     }
     if (raw) return String(raw).trim();
-    const lines = gitStatusSummary.lines;
-    if (Array.isArray(lines) && lines.length > 0) return lines.map((line) => String(line)).join("\n");
     return gitStatusSummaryLine || "";
-  }, [gitStatusSummary, gitStatusSummaryLine]);
+  }, [activeWorktreeGitStatus, gitStatusEntries, gitStatusSummaryLine]);
   const diffBadgeCount = useMemo(() => {
-    if (diffSummaryStats.fileCount !== null) return Math.max(0, diffSummaryStats.fileCount);
-    if (diffSummaryStats.lineCount !== null) return Math.max(0, diffSummaryStats.lineCount);
-    return estimateDiffFileCount(activeSessionDiff);
-  }, [activeSessionDiff, diffSummaryStats]);
+    if (!snapshotHasCounts) return 0;
+    if (snapshotSummaryStats.fileCount !== null) return Math.max(0, snapshotSummaryStats.fileCount);
+    if (snapshotSummaryStats.lineCount !== null) return Math.max(0, snapshotSummaryStats.lineCount);
+    return 0;
+  }, [snapshotHasCounts, snapshotSummaryStats]);
+  const gitStatusUpdating =
+    !activeWorktreeVcsSnapshot || activeWorktreeVcsComputeState === "computing";
   const gitStatusSignature = useMemo(() => {
-    if (!gitStatusSummary) return "";
-    const entries = gitStatusSummary.entries;
-    if (Array.isArray(entries) && entries.length > 0) {
-      return entries
-        .map((entry) => `${entry.index_status ?? " "}${entry.worktree_status ?? " "}:${entry.orig_path ?? ""}:${entry.path}`)
-        .join("|");
+    if (activeWorktreeVcsSnapshot) {
+      return `rev:${activeWorktreeVcsSnapshot.rev ?? 0}`;
     }
-    const staged = Number(gitStatusSummary.staged ?? 0);
-    const unstaged = Number(gitStatusSummary.unstaged ?? 0);
-    const untracked = Number(gitStatusSummary.untracked ?? 0);
-    const summaryLine = gitStatusSummary.summary_line ?? gitStatusSummary.summaryLine ?? "";
-    return `${summaryLine}:${staged}:${unstaged}:${untracked}`;
-  }, [gitStatusSummary]);
+    return "";
+  }, [activeWorktreeVcsSnapshot]);
   const showReviewPane = diffOpen;
   const showArtifactsPane = artifactsOpen;
   const showSessionsPane = webSessionsEnabled && sessionsOpen;
@@ -2153,142 +2147,27 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     artifactPrefetcher.prefetch(activeSessionId ?? null, artifacts, !activeTaskArchived);
   }, [activeSessionId, activeTaskArchived, artifacts]);
   const sessionsCount = webSessionsEnabled ? webSessions.length : 0;
-  const gitStatusInFlightRef = useRef<Map<string, Promise<GitStatusSummary | null>>>(new Map());
-  const gitStatusPrefetchedRef = useRef<Set<string>>(new Set());
-  const activeSessionIdRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    activeSessionIdRef.current = activeSessionId ?? null;
-    setGitStatusLoading(false);
-    setGitStatusError(null);
-  }, [activeSessionId]);
-
-  const fetchGitStatusSummary = useCallback(
-    async (sessionId: string, opts?: { silent?: boolean; force?: boolean }) => {
-      if (!sessionId) return null;
-      if (sessionId.startsWith("optimistic-")) {
-        gitStatusPrefetchedRef.current.add(sessionId);
-        return null;
-      }
-      if (!opts?.force && gitStatusPrefetchedRef.current.has(sessionId)) {
-        return null;
-      }
-      const existing = gitStatusInFlightRef.current.get(sessionId);
-      if (existing) return existing;
-      const setLoading = (value: boolean) => {
-        if (opts?.silent) return;
-        if (activeSessionIdRef.current !== sessionId) return;
-        setGitStatusLoading(value);
-      };
-      const setError = (value: string | null) => {
-        if (opts?.silent) return;
-        if (activeSessionIdRef.current !== sessionId) return;
-        setGitStatusError(value);
-      };
-      setLoading(true);
-      setError(null);
-      const request = getSessionGitStatusSummary(sessionId)
-        .then((resp) => {
-          const summary = normalizeGitStatusSummary(resp);
-          if (summary) supervisor.setGitStatusSummary(sessionId, summary);
-          gitStatusPrefetchedRef.current.add(sessionId);
-          return summary;
-        })
-        .catch((e: any) => {
-          setError(e?.message ?? "Failed to load git status.");
-          return null;
-        })
-        .finally(() => {
-          gitStatusInFlightRef.current.delete(sessionId);
-          setLoading(false);
-        });
-      gitStatusInFlightRef.current.set(sessionId, request);
-      return request;
-    },
-    [supervisor],
-  );
-
-  const diffSummaryInFlightRef = useRef<Map<string, Promise<Record<string, unknown> | null>>>(new Map());
-  const diffSummaryPrefetchedRef = useRef<Set<string>>(new Set());
   const diffContentInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
   const diffRefreshTimerRef = useRef<number | null>(null);
   const diffRefreshSignatureRef = useRef<Map<string, string>>(new Map());
 
-  const updateDiffSummaryState = useCallback((sessionId: string, next: Partial<DiffSummaryState>) => {
-    setDiffSummaryBySession((prev) => {
-      const prevState: DiffSummaryState =
-        prev[sessionId] ?? {
-          summary: null,
-          error: null,
-          summaryLoading: false,
-          diffLoading: false,
-        };
-      const updated: DiffSummaryState = { ...prevState, ...next };
-      if (updated === prevState) return prev;
-      return { ...prev, [sessionId]: updated };
-    });
-  }, []);
-
-  const refreshDiffSummary = useCallback(
-    async (sessionId: string, opts?: { silent?: boolean; force?: boolean; resetSummary?: boolean }) => {
-      if (!sessionId) return null;
-      if (sessionId.startsWith("optimistic-")) {
-        diffSummaryPrefetchedRef.current.add(sessionId);
-        return null;
-      }
-      if (!opts?.force && diffSummaryPrefetchedRef.current.has(sessionId)) {
-        return diffSummaryBySession[sessionId]?.summary ?? null;
-      }
-      const existing = diffSummaryInFlightRef.current.get(sessionId);
-      if (existing) return existing;
-      if (opts?.resetSummary) {
-        updateDiffSummaryState(sessionId, { summary: null, error: null });
-      }
-      updateDiffSummaryState(sessionId, { summaryLoading: true, error: null });
-      const request = (async () => {
-        try {
-          const summary = (await getSessionDiffSummary(sessionId)) as any;
-          const cachedSummary = diffSummaryBySession[sessionId]?.summary ?? null;
-          updateDiffSummaryState(sessionId, {
-            summary: summary ?? cachedSummary,
-            error: summary ? null : "Failed to load diff summary.",
-          });
-          if (summary) diffSummaryPrefetchedRef.current.add(sessionId);
-          return summary ?? null;
-        } catch (e: any) {
-          updateDiffSummaryState(sessionId, { error: e?.message ?? "Failed to load diff summary." });
-          return null;
-        } finally {
-          diffSummaryInFlightRef.current.delete(sessionId);
-          updateDiffSummaryState(sessionId, { summaryLoading: false });
-        }
-      })();
-      diffSummaryInFlightRef.current.set(sessionId, request);
-      return request;
-    },
-    [diffSummaryBySession, updateDiffSummaryState],
-  );
-
   const refreshDiff = useCallback(
-    async (sessionId: string, opts?: { silent?: boolean; resetSummary?: boolean; forceSummary?: boolean }) => {
+    async (sessionId: string) => {
       if (!sessionId) return;
-      const summary = await refreshDiffSummary(sessionId, {
-        silent: opts?.silent,
-        resetSummary: opts?.resetSummary,
-        force: opts?.forceSummary,
-      });
+      if (sessionId.startsWith("optimistic-")) return;
+      if (sessionId !== activeSessionId) return;
       // If we can't get a summary, do not fetch the full diff (it can be huge and crash the renderer).
-      if (!summary) {
+      if (!snapshotHasCounts || !activeWorktreeVcsSummary) {
         supervisor.setDiff(sessionId, "");
         return;
       }
-      if (isDiffSummaryTooLarge(summary)) {
+      if (isDiffSummaryTooLarge(activeWorktreeVcsSummary)) {
         supervisor.setDiff(sessionId, "");
         return;
       }
       const existing = diffContentInFlightRef.current.get(sessionId);
       if (existing) return existing;
-      updateDiffSummaryState(sessionId, { diffLoading: true });
+      setDiffContentLoading(true);
       const request = (async () => {
         try {
           const resp = await getSessionDiff(sessionId);
@@ -2298,33 +2177,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         }
       })().finally(() => {
         diffContentInFlightRef.current.delete(sessionId);
-        updateDiffSummaryState(sessionId, { diffLoading: false });
+        setDiffContentLoading(false);
       });
       diffContentInFlightRef.current.set(sessionId, request);
       return request;
     },
-    [refreshDiffSummary, supervisor, updateDiffSummaryState],
+    [activeSessionId, activeWorktreeVcsSummary, snapshotHasCounts, supervisor],
   );
-
-
-  useEffect(() => {
-    if (!workspaceSnapshot.initialized) return;
-    if (workspaceSnapshot.fetchState.active === "loading") return;
-    if (!activeSessionId) return;
-    void fetchGitStatusSummary(activeSessionId, { silent: true });
-  }, [
-    activeSessionId,
-    fetchGitStatusSummary,
-    workspaceSnapshot.fetchState.active,
-    workspaceSnapshot.initialized,
-  ]);
-
-  useEffect(() => {
-    if (!workspaceSnapshot.initialized) return;
-    if (workspaceSnapshot.fetchState.active === "loading") return;
-    if (!activeSessionId) return;
-    void refreshDiffSummary(activeSessionId, { silent: true });
-  }, [activeSessionId, refreshDiffSummary, workspaceSnapshot.fetchState.active, workspaceSnapshot.initialized]);
 
   const toggleDiffPane = useCallback(() => {
     setRightPaneMode((mode) => (mode === "diff" ? null : "diff"));
@@ -2744,9 +2603,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     if (!diffOpen || !activeSessionId) return;
-    void fetchGitStatusSummary(activeSessionId, { force: true });
-    void refreshDiff(activeSessionId, { resetSummary: true, forceSummary: true });
-  }, [activeSessionId, diffOpen, fetchGitStatusSummary, refreshDiff]);
+    void refreshDiff(activeSessionId);
+  }, [activeSessionId, diffOpen, refreshDiff]);
 
   useEffect(() => {
     if (!activeSessionId) return;
@@ -2759,9 +2617,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
     diffRefreshTimerRef.current = window.setTimeout(() => {
       if (diffOpen) {
-        void refreshDiff(activeSessionId, { silent: true, forceSummary: true });
-      } else {
-        void refreshDiffSummary(activeSessionId, { silent: true, force: true });
+        void refreshDiff(activeSessionId);
       }
     }, 400);
     return () => {
@@ -2770,7 +2626,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         diffRefreshTimerRef.current = null;
       }
     };
-  }, [activeSessionId, diffOpen, gitStatusSignature, refreshDiff, refreshDiffSummary]);
+  }, [activeSessionId, diffOpen, gitStatusSignature, refreshDiff]);
 
   const onSplitterMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -3718,11 +3574,9 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                         <div className="wb-diff-status">
                           <div className="wb-diff-status-header">
                             <span className="wb-diff-status-title">git status -sb</span>
-                            {gitStatusLoading && <span className="wb-diff-status-meta">Updating...</span>}
+                            {gitStatusUpdating && <span className="wb-diff-status-meta">Updating...</span>}
                           </div>
-                          {gitStatusError ? (
-                            <div className="wb-diff-status-error">{gitStatusError}</div>
-                          ) : hasGitStatusEntries ? (
+                          {hasGitStatusEntries ? (
                             <div className="wb-git-status-body">
                               {gitStatusSummaryLine && (
                                 <div className="wb-git-status-line wb-git-status-summary">
@@ -3751,10 +3605,15 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                                   </div>
                                 );
                               })}
+                              {touchedTruncated && touchedItems.length > 0 && (
+                                <div className="wb-git-status-line wb-muted">
+                                  {touchedRemaining !== null ? `…and ${touchedRemaining} more` : "…and more files"}
+                                </div>
+                              )}
                             </div>
                           ) : (
                             <pre className="wb-diff-status-body">
-                              {gitStatusText || (gitStatusLoading ? "Loading git status..." : "No status data.")}
+                              {gitStatusText || (gitStatusUpdating ? "Loading git status..." : "No status data.")}
                             </pre>
                           )}
                         </div>
@@ -4035,7 +3894,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               if (!activeTaskId) return;
               setConvoMenu(null);
               const anchor = e.currentTarget.getBoundingClientRect();
-              onToggleArchive(activeTaskId, true, anchor).catch(() => { });
+              onToggleArchive(activeTaskId, true, anchor).catch(() => {});
             }}
             role="menuitem"
           >

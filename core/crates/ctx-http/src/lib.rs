@@ -339,27 +339,28 @@ mod tests {
                     serde_json::from_value(value).unwrap();
                 match message {
                     ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                        event:
-                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                                delta,
-                                ..
-                            },
-                        ..
+                        event, ..
                     } => {
-                        if delta.session_id == session.id
-                            && delta
-                                .event
-                                .as_ref()
-                                .map(|event| {
-                                    matches!(
-                                        event.event_type,
-                                        ctx_core::models::SessionEventType::Done
-                                    )
-                                })
-                                .unwrap_or(false)
+                        if let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                            delta,
+                            ..
+                        } = event.as_ref()
                         {
-                            seen_done = true;
-                            break;
+                            if delta.session_id == session.id
+                                && delta
+                                    .event
+                                    .as_ref()
+                                    .map(|event| {
+                                        matches!(
+                                            event.event_type,
+                                            ctx_core::models::SessionEventType::Done
+                                        )
+                                    })
+                                    .unwrap_or(false)
+                            {
+                                seen_done = true;
+                                break;
+                            }
                         }
                     }
                     ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {

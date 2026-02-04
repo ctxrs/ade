@@ -300,6 +300,72 @@ export type SessionState = {
   git_status?: SessionGitStatusSummary | null;
 };
 
+export type WorktreeVcsComputeState = "computing" | "ready" | "error";
+
+export type WorktreeVcsBaseResolutionKind = "explicit_base" | "merge_base" | "worktree_base";
+
+export type WorktreeVcsTargetSource =
+  | "explicit"
+  | "merge_queue_override"
+  | "merge_queue_config"
+  | "default_branch";
+
+export type WorktreeVcsBaseResolution = {
+  kind: WorktreeVcsBaseResolutionKind;
+  target_source?: WorktreeVcsTargetSource | null;
+  error?: string | null;
+};
+
+export type WorktreeVcsSummary = {
+  file_count?: number | null;
+  line_additions?: number | null;
+  line_deletions?: number | null;
+  line_count?: number | null;
+};
+
+export type WorktreeVcsTouchedFile = {
+  path: string;
+  orig_path?: string | null;
+  index_status?: string | null;
+  worktree_status?: string | null;
+};
+
+export type WorktreeVcsTouchedFiles = {
+  items?: WorktreeVcsTouchedFile[];
+  truncated?: boolean;
+  total_count?: number | null;
+};
+
+export type WorktreeVcsGitStatusSummary = {
+  raw?: string;
+  summary_line?: string;
+  branch?: string | null;
+  upstream?: string | null;
+  ahead: number;
+  behind: number;
+  detached: boolean;
+  staged: number;
+  unstaged: number;
+  untracked: number;
+  entries?: WorktreeVcsTouchedFile[];
+};
+
+export type WorktreeVcsSnapshot = {
+  worktree_id: { 0: string } | string;
+  rev: number;
+  emitted_at_ms: number;
+  base_commit_sha: string;
+  head_commit_sha: string;
+  target_branch?: string | null;
+  target_branch_commit_sha?: string | null;
+  base_resolution: WorktreeVcsBaseResolution;
+  compute_state: WorktreeVcsComputeState;
+  summary: WorktreeVcsSummary;
+  git_status: WorktreeVcsGitStatusSummary;
+  touched_files: WorktreeVcsTouchedFiles;
+  schema_version: number;
+};
+
 export type WorkspaceActiveTaskSummary = {
   task: Task;
   primary_session: SessionSnapshotSummary;
@@ -318,6 +384,7 @@ export type WorkspaceActiveSnapshot = {
   snapshot_rev: number;
   archived_rev?: number;
   active: WorkspaceActivePage;
+  worktree_vcs_snapshots?: WorktreeVcsSnapshot[];
 };
 
 export type WorkspaceActiveHeadBatch = {
@@ -452,6 +519,12 @@ export type WorkspaceActiveSnapshotEvent =
       workspace_id: { 0: string } | string;
       snapshot_rev: number;
       notice: WorktreeBootstrapNotice;
+    }
+  | {
+      type: "worktree_vcs_snapshot";
+      workspace_id: { 0: string } | string;
+      snapshot_rev: number;
+      snapshot: WorktreeVcsSnapshot;
     }
   | {
       type: "archived_task_upsert";

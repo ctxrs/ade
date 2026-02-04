@@ -39,6 +39,7 @@ pub use state::{
     AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions, CachedProviderOptions,
     CachedProviderVerify, GitStatusSnapshotCacheEntry, SessionHeadCacheKey, TimedEntry,
     WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
+    WorktreeVcsSnapshotCacheEntry,
 };
 
 fn fallback_provider_command(command: &str, args: Vec<String>) -> installer::AgentServerCommand {
