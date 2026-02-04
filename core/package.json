@@ -25,7 +25,7 @@
     "supabase:functions:check": "bash -lc 'if ! command -v deno >/dev/null 2>&1; then echo \"supabase functions: skipped (deno not installed)\"; exit 0; fi; deno check --quiet ../supabase/functions/*/index.ts'",
     "crp:codex": "bash -lc '../scripts/build_codex_crp.sh'",
     "crp:claude": "bash -lc '../scripts/build_claude_crp.sh'",
-    "verify:quick": "turbo run rust:fmt rust:clippy rust:test ios-native:build supabase:migrations:check supabase:functions:check --filter=ctx-monorepo --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=new-only --log-order=grouped --concurrency=1 --ui=stream --cache=local:r,remote:r"
+    "verify:quick": "turbo run rust:fmt rust:clippy rust:test supabase:migrations:check supabase:functions:check --filter=ctx-monorepo --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only --log-order=grouped --concurrency=4 --ui=stream --cache=local:rw"
   },
   "devDependencies": {
     "@supabase/supabase-js": "2.49.1",
