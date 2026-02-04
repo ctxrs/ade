@@ -18,6 +18,7 @@ use ctx_store::{StoreManager, StoreManagerConfig};
 
 use crate::api;
 use crate::installer;
+use crate::memleak_debug;
 use crate::provider_child_reclassifier;
 use crate::provider_guard;
 use crate::provider_restart;
@@ -446,6 +447,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     }
 
     resource_telemetry::spawn_resource_telemetry(state.clone());
+    memleak_debug::spawn_memleak_debug(state.clone());
     provider_guard::spawn_provider_guard(state.clone());
     provider_restart::spawn_provider_restart(state.clone());
     provider_child_reclassifier::spawn_provider_child_reclassifier(state.clone());

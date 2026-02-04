@@ -101,6 +101,13 @@ pub struct PerfSummary {
     pub metrics: Vec<PerfMetricSummary>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PerfTelemetryStats {
+    pub metric_keys: usize,
+    pub total_samples: usize,
+    pub max_samples: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct PerfTelemetryConfig {
     pub remote_enabled: bool,
@@ -342,6 +349,24 @@ impl PerfTelemetry {
             generated_at: Utc::now().to_rfc3339(),
             window_ms,
             metrics,
+        }
+    }
+
+    pub fn stats(&self) -> PerfTelemetryStats {
+        let agg = self.aggregator.lock().unwrap();
+        let mut total_samples = 0;
+        let mut max_samples = 0;
+        for window in agg.metrics.values() {
+            let count = window.samples.len();
+            total_samples += count;
+            if count > max_samples {
+                max_samples = count;
+            }
+        }
+        PerfTelemetryStats {
+            metric_keys: agg.metrics.len(),
+            total_samples,
+            max_samples,
         }
     }
 }

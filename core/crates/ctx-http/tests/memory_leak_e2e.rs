@@ -9,7 +9,9 @@ use serde_json::json;
 use ctx_http::provider_guard;
 use ctx_http::provider_restart;
 use ctx_http::resource_telemetry;
-use ctx_http::settings::{ProviderGuardSettings, ProviderRestartSettings, ResourceGovernanceMode, Settings};
+use ctx_http::settings::{
+    ProviderGuardSettings, ProviderRestartSettings, ResourceGovernanceMode, Settings,
+};
 
 mod common;
 
@@ -92,8 +94,7 @@ async fn run_scenario(label: &'static str, monitoring_enabled: bool) -> LeakRepo
     );
     let _telemetry_interval =
         EnvGuard::set_if_missing("CTX_RESOURCE_TELEMETRY_INTERVAL_MS", "1000");
-    let _telemetry_max =
-        EnvGuard::set_if_missing("CTX_RESOURCE_TELEMETRY_LOCAL_MAX_BYTES", "0");
+    let _telemetry_max = EnvGuard::set_if_missing("CTX_RESOURCE_TELEMETRY_LOCAL_MAX_BYTES", "0");
     let _telemetry_children = EnvGuard::set_if_missing("CTX_RESOURCE_TELEMETRY_CHILD_LIMIT", "0");
 
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
@@ -116,25 +117,31 @@ async fn run_scenario(label: &'static str, monitoring_enabled: bool) -> LeakRepo
         sessions.push(session);
     }
 
-    let mut settings = Settings::default();
-    settings.provider_guard = Some(ProviderGuardSettings {
-        enabled: monitoring_enabled,
-        mode: ResourceGovernanceMode::Auto,
-        memory_high_mb: None,
-        memory_max_mb: None,
-        interval_ms: Some(500),
-        grace_period_ms: Some(60_000),
-    });
-    settings.provider_restart = Some(ProviderRestartSettings {
-        enabled: monitoring_enabled,
-        mode: ResourceGovernanceMode::Auto,
-        memory_high_mb: None,
-        memory_max_mb: None,
-        interval_ms: Some(500),
-        grace_period_ms: Some(60_000),
-    });
-    provider_guard::apply_settings(&state, &settings).await.unwrap();
-    provider_restart::apply_settings(&state, &settings).await.unwrap();
+    let settings = Settings {
+        provider_guard: Some(ProviderGuardSettings {
+            enabled: monitoring_enabled,
+            mode: ResourceGovernanceMode::Auto,
+            memory_high_mb: None,
+            memory_max_mb: None,
+            interval_ms: Some(500),
+            grace_period_ms: Some(60_000),
+        }),
+        provider_restart: Some(ProviderRestartSettings {
+            enabled: monitoring_enabled,
+            mode: ResourceGovernanceMode::Auto,
+            memory_high_mb: None,
+            memory_max_mb: None,
+            interval_ms: Some(500),
+            grace_period_ms: Some(60_000),
+        }),
+        ..Default::default()
+    };
+    provider_guard::apply_settings(&state, &settings)
+        .await
+        .unwrap();
+    provider_restart::apply_settings(&state, &settings)
+        .await
+        .unwrap();
 
     resource_telemetry::spawn_resource_telemetry(state.clone());
     provider_guard::spawn_provider_guard(state.clone());
@@ -162,7 +169,7 @@ async fn run_scenario(label: &'static str, monitoring_enabled: bool) -> LeakRepo
         .await;
         assert_eq!(status, StatusCode::OK);
 
-        if idx % snapshot_every == 0 {
+        if idx.is_multiple_of(snapshot_every) {
             let req = Request::builder()
                 .method(Method::GET)
                 .uri(format!(
@@ -176,7 +183,7 @@ async fn run_scenario(label: &'static str, monitoring_enabled: bool) -> LeakRepo
             assert_eq!(status, StatusCode::OK);
         }
 
-        if idx % sample_every == 0 {
+        if idx.is_multiple_of(sample_every) {
             peak_rss = peak_rss.max(read_rss_bytes());
         }
 

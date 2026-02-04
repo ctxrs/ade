@@ -57,6 +57,15 @@ pub struct BufferState {
     pub watchers: HashSet<SessionId>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct BufferStoreStats {
+    pub buffers: usize,
+    pub total_text_bytes: usize,
+    pub max_text_bytes: usize,
+    pub total_watchers: usize,
+    pub total_open_count: usize,
+}
+
 #[derive(Debug, Serialize)]
 pub struct BufferOpenResp {
     pub buffer_id: String,
@@ -198,6 +207,30 @@ impl BufferStore {
             .await
             .retain(|k, v| !(k.worktree_id == st.worktree_id && v == &id));
         Some(st)
+    }
+
+    pub async fn stats(&self) -> BufferStoreStats {
+        let by_id = self.by_id.lock().await;
+        let mut total_text_bytes = 0;
+        let mut max_text_bytes = 0;
+        let mut total_watchers = 0;
+        let mut total_open_count = 0;
+        for st in by_id.values() {
+            let len = st.text.len();
+            total_text_bytes += len;
+            if len > max_text_bytes {
+                max_text_bytes = len;
+            }
+            total_watchers += st.watchers.len();
+            total_open_count += st.open_count as usize;
+        }
+        BufferStoreStats {
+            buffers: by_id.len(),
+            total_text_bytes,
+            max_text_bytes,
+            total_watchers,
+            total_open_count,
+        }
     }
 
     pub async fn watchers_for_abs_path(&self, abs_path: &Path) -> Vec<(SessionId, PathBuf)> {

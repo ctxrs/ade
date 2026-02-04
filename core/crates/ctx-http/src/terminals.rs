@@ -125,6 +125,14 @@ pub struct TerminalSessionHandle {
     backend: TerminalBackend,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TerminalManagerStats {
+    pub session_count: usize,
+    pub output_buffer_bytes: usize,
+    pub max_output_buffer_bytes: usize,
+    pub connected_clients: usize,
+}
+
 impl TerminalSessionHandle {
     pub fn snapshot(&self) -> TerminalSession {
         let runtime = self.runtime.lock().expect("terminal runtime lock");
@@ -252,6 +260,32 @@ impl TerminalManager {
             .filter(|sess| sess.info.workspace_id == workspace_id)
             .map(|sess| sess.snapshot())
             .collect()
+    }
+
+    pub async fn stats(&self) -> TerminalManagerStats {
+        let sessions = self.sessions.lock().await;
+        let mut output_buffer_bytes = 0;
+        let mut max_output_buffer_bytes = 0;
+        let mut connected_clients = 0;
+        for handle in sessions.values() {
+            let buffer_len = handle
+                .output_buffer
+                .lock()
+                .expect("terminal buffer lock")
+                .len();
+            output_buffer_bytes += buffer_len;
+            if buffer_len > max_output_buffer_bytes {
+                max_output_buffer_bytes = buffer_len;
+            }
+            let runtime = handle.runtime.lock().expect("terminal runtime lock");
+            connected_clients += runtime.connected_clients;
+        }
+        TerminalManagerStats {
+            session_count: sessions.len(),
+            output_buffer_bytes,
+            max_output_buffer_bytes,
+            connected_clients,
+        }
     }
 
     pub async fn start_reaper(self: Arc<Self>) {
