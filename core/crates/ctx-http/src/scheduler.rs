@@ -20,12 +20,12 @@ use ctx_providers::events::NormalizedEvent;
 use ctx_store::store::SessionTurnToolCountDeltas;
 
 use crate::daemon::AppState;
-use crate::harness_runtime::{HarnessExecutionPlan, HarnessRuntimeKind};
+use crate::harness_runtime::HarnessRuntimeKind;
 use crate::installer;
 use crate::ops_events::OpsEvent;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::provider_accounts;
-use crate::settings::{self, NetworkContext, ProviderControlMode};
+use crate::settings::{self, ProviderControlMode};
 use crate::telemetry::TelemetryEvent;
 use crate::workspace_config;
 mod tools;
@@ -148,7 +148,11 @@ pub async fn session_worker(
                         state.set_running(session.id, true).await;
                         running = Some(turn);
                     }
-                    Err(_) => {
+                    Err(err) => {
+                        tracing::error!(
+                            session_id = %session.id.0,
+                            "failed to start turn: {err:#}"
+                        );
                         state.set_running(session.id, false).await;
                         running = None;
                     }
@@ -380,70 +384,27 @@ async fn start_turn(
 
     let workspace = store
         .get_workspace(session.workspace_id)
-        .await
-        .ok()
-        .flatten();
-    let worktree_for_runtime = store.get_worktree(session.worktree_id).await.ok().flatten();
+        .await?
+        .ok_or_else(|| anyhow!("workspace not found: {}", session.workspace_id.0))?;
+    let worktree_for_runtime = store
+        .get_worktree(session.worktree_id)
+        .await?
+        .ok_or_else(|| anyhow!("worktree not found: {}", session.worktree_id.0))?;
     let execution_settings = settings.execution.clone().unwrap_or_default();
-    let runtime_plan = if let Some(workspace) = workspace.as_ref() {
-        if let Some(worktree) = worktree_for_runtime.as_ref() {
-            state
-                .execution
-                .harness
-                .prepare(
-                    workspace,
-                    worktree,
-                    &execution_settings,
-                    &state.core.daemon_url,
-                )
-                .await
-                .unwrap_or_else(|err| {
-                    tracing::warn!("failed to prepare harness runtime: {err:#}");
-                    HarnessExecutionPlan {
-                        runtime: HarnessRuntimeKind::Host,
-                        env_overrides: HashMap::new(),
-                        sealed_root: None,
-                    }
-                })
-        } else {
-            HarnessExecutionPlan {
-                runtime: HarnessRuntimeKind::Host,
-                env_overrides: HashMap::new(),
-                sealed_root: None,
-            }
-        }
-    } else {
-        HarnessExecutionPlan {
-            runtime: HarnessRuntimeKind::Host,
-            env_overrides: HashMap::new(),
-            sealed_root: None,
-        }
-    };
+    let runtime_plan = state
+        .execution
+        .harness
+        .prepare(
+            &workspace,
+            &worktree_for_runtime,
+            &execution_settings,
+            &state.core.daemon_url,
+        )
+        .await?;
     let is_container = matches!(runtime_plan.runtime, HarnessRuntimeKind::Container { .. });
     for (key, value) in runtime_plan.env_overrides.iter() {
         provider_env.insert(key.clone(), value.clone());
     }
-    let network_profiles = settings.network_profiles.clone().unwrap_or_default();
-    let network_profile = network_profiles.profile(NetworkContext::AgentDefault);
-    let proxy_host = if is_container {
-        "host.containers.internal"
-    } else {
-        "127.0.0.1"
-    };
-    let proxy_env = state
-        .execution
-        .egress_proxy
-        .proxy_env_for_context(
-            session.workspace_id,
-            NetworkContext::AgentDefault,
-            network_profile,
-            proxy_host,
-        )
-        .await;
-    for (key, value) in proxy_env {
-        provider_env.insert(key, value);
-    }
-
     if (session.provider_id == "codex" || session.provider_id == "codex-crp") && !is_container {
         if let Ok(env) =
             provider_accounts::codex_env_for_active_account(&state.core.data_root).await

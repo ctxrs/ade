@@ -20,6 +20,7 @@ directories.workspace = true
 futures.workspace = true
 http = "1"
 http-body = "1"
+httparse = "1.9"
 reqwest.workspace = true
 rcgen.workspace = true
 rustls.workspace = true
@@ -93,3 +94,7 @@ daemon-heap-prof = ["dep:tikv-jemalloc-ctl", "dep:tikv-jemallocator"]
 [[bin]]
 name = "ctx"
 path = "src/main.rs"
+
+[[bin]]
+name = "ctx-egress-proxy"
+path = "src/transparent_proxy.rs"

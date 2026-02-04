@@ -1,10 +1,12 @@
 use std::collections::{HashMap, HashSet};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::process::Command;
 use tokio::sync::Mutex;
+use tokio::{fs, io::AsyncWriteExt};
 
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
@@ -12,16 +14,19 @@ use ctx_fs::worktrees::worktrees_root;
 use serde::Serialize;
 
 use crate::bundled_assets;
-use crate::egress_proxy::EgressProxy;
 use crate::settings::{
     ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ExecutionMode,
     ExecutionSettings,
 };
 use url::Url;
 
-const DEFAULT_CONTAINER_IMAGE: &str = "ubuntu:22.04";
+const DEFAULT_CONTAINER_IMAGE: &str = "ubuntu:24.04";
 const PODMAN_PATH_ENV: &str = "CTX_PODMAN_PATH";
 const PODMAN_ALLOW_SYSTEM_ENV: &str = "CTX_ALLOW_SYSTEM_PODMAN";
+const EGRESS_PROXY_BINARY: &str = "ctx-egress-proxy";
+const EGRESS_PROXY_RUNTIME_ID: &str = "ctx-egress-proxy";
+const EGRESS_PROXY_CONFIG_NAME: &str = "egress-proxy.json";
+const TRANSPARENT_PROXY_PORT: u16 = 15001;
 
 #[derive(Debug, Clone)]
 pub enum HarnessRuntimeKind {
@@ -57,17 +62,23 @@ pub struct HarnessContainerStatus {
     pub egress_guard: Option<bool>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct TransparentProxyConfig {
+    listen: String,
+    mode: ContainerNetworkMode,
+    allowlist: Vec<String>,
+    max_peek_bytes: usize,
+}
+
 pub struct HarnessRuntimeManager {
     data_root: PathBuf,
-    proxy: Arc<EgressProxy>,
     containers: Mutex<HashMap<WorkspaceId, HarnessContainer>>,
 }
 
 impl HarnessRuntimeManager {
-    pub fn new(data_root: PathBuf, proxy: Arc<EgressProxy>) -> Self {
+    pub fn new(data_root: PathBuf) -> Self {
         Self {
             data_root,
-            proxy,
             containers: Mutex::new(HashMap::new()),
         }
     }
@@ -113,7 +124,6 @@ impl HarnessRuntimeManager {
         daemon_url: &str,
     ) -> Result<HarnessExecutionPlan> {
         let mode = resolve_execution_mode(settings);
-        let allow_fallback = matches!(settings.mode, ExecutionMode::Auto);
         let mut env_overrides = HashMap::new();
         env_overrides.insert(
             "CTX_DATA_ROOT_HOST".to_string(),
@@ -134,46 +144,21 @@ impl HarnessRuntimeManager {
         }
 
         if !podman_available() {
-            if !allow_fallback {
-                anyhow::bail!(
-                    "podman unavailable and execution mode is container; refusing host fallback"
-                );
-            }
-            tracing::warn!("podman unavailable; falling back to host runtime (auto mode)");
-            return Ok(HarnessExecutionPlan {
-                runtime: HarnessRuntimeKind::Host,
-                env_overrides,
-                sealed_root: None,
-            });
+            anyhow::bail!("podman unavailable and execution mode is container");
         }
 
-        let proxy_addr = self.proxy.addr();
         let proxy_host = "host.containers.internal";
-        let container = match self
+        let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
+        let container = self
             .ensure_container(
                 workspace,
                 worktree,
                 &settings.container,
                 proxy_host,
-                proxy_addr.port(),
+                daemon_port,
             )
             .await
-        {
-            Ok(container) => container,
-            Err(err) => {
-                tracing::warn!("failed to start harness container: {err:#}");
-                if !allow_fallback {
-                    anyhow::bail!(
-                        "container runtime failed and execution mode is container: {err:#}"
-                    );
-                }
-                return Ok(HarnessExecutionPlan {
-                    runtime: HarnessRuntimeKind::Host,
-                    env_overrides,
-                    sealed_root: None,
-                });
-            }
-        };
+            .map_err(|err| anyhow::anyhow!("container runtime failed: {err:#}"))?;
 
         let container_data_root = container_data_root(&self.data_root, workspace.id);
         tokio::fs::create_dir_all(&container_data_root).await.ok();
@@ -307,8 +292,8 @@ impl HarnessRuntimeManager {
         workspace: &Workspace,
         worktree: &Worktree,
         settings: &ContainerExecutionSettings,
-        proxy_host: &str,
-        proxy_port: u16,
+        daemon_host: &str,
+        daemon_port: u16,
     ) -> Result<HarnessContainer> {
         let name = format!("ctx-harness-{}", workspace.id.0);
         let mount_plan = build_mounts(&self.data_root, workspace, worktree, settings);
@@ -373,12 +358,34 @@ impl HarnessRuntimeManager {
         }
 
         let egress_guard = if matches!(settings.network_mode, ContainerNetworkMode::All) {
+            if let Err(err) = stop_transparent_proxy(&name).await {
+                tracing::warn!("failed to stop transparent proxy: {err:#}");
+            }
             if let Err(err) = clear_egress_guard(&name).await {
                 tracing::warn!("failed to clear egress guard: {err:#}");
             }
             false
         } else {
-            configure_egress_guard(&name, proxy_host, proxy_port).await?
+            let proxy_bin = ensure_egress_proxy_binary(&self.data_root).await?;
+            let proxy_config = TransparentProxyConfig {
+                listen: format!("127.0.0.1:{TRANSPARENT_PROXY_PORT}"),
+                mode: settings.network_mode.clone(),
+                allowlist: settings.allowlist.clone(),
+                max_peek_bytes: 16 * 1024,
+            };
+            let config_path = write_transparent_proxy_config(
+                &container_data_root(&self.data_root, workspace.id),
+                proxy_config,
+            )
+            .await?;
+            start_transparent_proxy(&name, &proxy_bin, &config_path).await?;
+            configure_transparent_egress_guard(
+                &name,
+                TRANSPARENT_PROXY_PORT,
+                daemon_host,
+                daemon_port,
+            )
+            .await?
         };
         let container = HarnessContainer {
             name: name.clone(),
@@ -511,22 +518,153 @@ fn rewrite_daemon_url_for_container(daemon_url: &str, host: &str) -> String {
     daemon_url.to_string()
 }
 
-async fn configure_egress_guard(name: &str, proxy_host: &str, proxy_port: u16) -> Result<bool> {
+fn daemon_port_from_url(daemon_url: &str) -> Option<u16> {
+    Url::parse(daemon_url).ok()?.port_or_known_default()
+}
+
+fn proxy_runtime_root(data_root: &Path) -> PathBuf {
+    data_root.join("runtimes").join(EGRESS_PROXY_RUNTIME_ID)
+}
+
+fn proxy_runtime_path(data_root: &Path) -> PathBuf {
+    proxy_runtime_root(data_root).join(EGRESS_PROXY_BINARY)
+}
+
+async fn ensure_egress_proxy_binary(data_root: &Path) -> Result<PathBuf> {
+    let runtime_root = proxy_runtime_root(data_root);
+    fs::create_dir_all(&runtime_root).await?;
+    let dest = proxy_runtime_path(data_root);
+    let src = if let Ok(path) = std::env::var("CTX_EGRESS_PROXY_PATH") {
+        PathBuf::from(path)
+    } else {
+        let mut path = std::env::current_exe()?;
+        path.set_file_name(EGRESS_PROXY_BINARY);
+        path
+    };
+    if !src.exists() {
+        anyhow::bail!("missing {EGRESS_PROXY_BINARY} binary at {}", src.display());
+    }
+    if src != dest {
+        fs::copy(&src, &dest).await?;
+    }
+    let mut perms = fs::metadata(&dest).await?.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&dest, perms).await?;
+    Ok(dest)
+}
+
+async fn write_transparent_proxy_config(
+    root: &Path,
+    config: TransparentProxyConfig,
+) -> Result<PathBuf> {
+    fs::create_dir_all(root).await?;
+    let path = root.join(EGRESS_PROXY_CONFIG_NAME);
+    let raw = serde_json::to_string_pretty(&config)?;
+    let mut file = fs::File::create(&path).await?;
+    file.write_all(raw.as_bytes()).await?;
+    Ok(path)
+}
+
+async fn start_transparent_proxy(name: &str, bin_path: &Path, config_path: &Path) -> Result<()> {
+    let bin = bin_path.to_string_lossy();
+    let config = config_path.to_string_lossy();
+    let script = format!(
+        r#"
+set -e
+pid_file="/tmp/ctx-egress-proxy.pid"
+if [ -f "$pid_file" ]; then
+  old_pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [ -n "$old_pid" ]; then
+    kill "$old_pid" || true
+  fi
+  rm -f "$pid_file"
+fi
+if command -v nohup >/dev/null 2>&1; then
+  nohup '{bin}' --config '{config}' >/tmp/ctx-egress-proxy.log 2>&1 &
+elif command -v setsid >/dev/null 2>&1; then
+  setsid '{bin}' --config '{config}' >/tmp/ctx-egress-proxy.log 2>&1 &
+else
+  '{bin}' --config '{config}' >/tmp/ctx-egress-proxy.log 2>&1 &
+fi
+echo $! > "$pid_file"
+exit 0
+"#
+    );
+    let status = podman_command()?
+        .arg("exec")
+        .arg("--user")
+        .arg("0")
+        .arg(name)
+        .arg("sh")
+        .arg("-c")
+        .arg(script)
+        .status()
+        .await?;
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!("failed to start transparent proxy (status: {status})");
+    }
+}
+
+async fn stop_transparent_proxy(name: &str) -> Result<()> {
+    let script = r#"
+pid_file="/tmp/ctx-egress-proxy.pid"
+if [ -f "$pid_file" ]; then
+  old_pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [ -n "$old_pid" ]; then
+    kill "$old_pid" || true
+  fi
+  rm -f "$pid_file"
+fi
+exit 0
+"#;
+    let status = podman_command()?
+        .arg("exec")
+        .arg("--user")
+        .arg("0")
+        .arg(name)
+        .arg("sh")
+        .arg("-c")
+        .arg(script)
+        .status()
+        .await?;
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!("failed to stop transparent proxy (status: {status})");
+    }
+}
+
+async fn configure_transparent_egress_guard(
+    name: &str,
+    proxy_port: u16,
+    daemon_host: &str,
+    daemon_port: u16,
+) -> Result<bool> {
     let script = format!(
         r#"
 set -e
 if ! command -v iptables >/dev/null 2>&1; then
   exit 43
 fi
-proxy_ip="$(getent hosts {proxy_host} | awk '{{print $1}}' | head -n1)"
-if [ -z "$proxy_ip" ]; then
+daemon_ip="$(getent hosts {daemon_host} | awk '{{print $1}}' | head -n1)"
+if [ -z "$daemon_ip" ]; then
   exit 44
 fi
+iptables -t nat -F OUTPUT || true
 iptables -F OUTPUT || true
 iptables -P OUTPUT DROP
-iptables -A OUTPUT -d "$proxy_ip" -p tcp --dport {proxy_port} -j ACCEPT
+iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A OUTPUT -d 127.0.0.1/8 -j ACCEPT
 iptables -A OUTPUT -o lo -j ACCEPT
+iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
+iptables -A OUTPUT -d "$daemon_ip" -p tcp --dport {daemon_port} -j ACCEPT
+iptables -A OUTPUT -m owner --uid-owner 0 -j ACCEPT
+iptables -t nat -A OUTPUT -m owner --uid-owner 0 -j RETURN
+iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-ports {proxy_port}
+iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports {proxy_port}
 exit 0
 "#
     );
@@ -548,7 +686,7 @@ exit 0
             anyhow::bail!("iptables missing in harness container");
         }
         if code == 44 {
-            anyhow::bail!("proxy host not resolvable inside harness container");
+            anyhow::bail!("daemon host not resolvable inside harness container");
         }
     }
     anyhow::bail!("failed to configure egress guard (status: {status})");
@@ -560,6 +698,7 @@ set -e
 if ! command -v iptables >/dev/null 2>&1; then
   exit 0
 fi
+iptables -t nat -F OUTPUT || true
 iptables -F OUTPUT || true
 iptables -P OUTPUT ACCEPT || true
 exit 0
@@ -747,9 +886,7 @@ mod tests {
     }
 
     async fn runtime_manager(tmp: &TempDir) -> HarnessRuntimeManager {
-        let ops_events = crate::ops_events::OpsEvents::new(tmp.path().to_path_buf());
-        let proxy = Arc::new(crate::egress_proxy::EgressProxy::spawn(ops_events).unwrap());
-        HarnessRuntimeManager::new(tmp.path().to_path_buf(), proxy)
+        HarnessRuntimeManager::new(tmp.path().to_path_buf())
     }
 
     #[tokio::test]
