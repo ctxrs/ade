@@ -3,8 +3,8 @@ pub mod manager;
 pub mod store;
 
 pub use active_snapshot_observer::{register_active_snapshot_observer, ActiveSnapshotObserver};
-pub use manager::{StoreManager, StoreManagerConfig};
-pub use store::{Store, WorktreeBootstrapResultUpdate};
+pub use manager::{StoreManager, StoreManagerConfig, StoreManagerStats};
+pub use store::{Store, StoreStats, WorktreeBootstrapResultUpdate};
 
 #[cfg(feature = "fault_injection")]
 pub mod fault_injection;

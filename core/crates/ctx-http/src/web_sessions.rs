@@ -350,12 +350,54 @@ pub struct WebSessionManager {
     next_display: Mutex<u32>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct WebSessionManagerStats {
+    pub session_count: usize,
+    pub running: usize,
+    pub closed: usize,
+    pub error: usize,
+    pub total_viewers: u32,
+    pub active_children: usize,
+}
+
 impl WebSessionManager {
     pub fn new() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
             client: Client::new(),
             next_display: Mutex::new(90),
+        }
+    }
+
+    pub async fn stats(&self) -> WebSessionManagerStats {
+        let handles = {
+            let sessions = self.sessions.lock().await;
+            sessions.values().cloned().collect::<Vec<_>>()
+        };
+        let mut running = 0;
+        let mut closed = 0;
+        let mut error = 0;
+        let mut total_viewers = 0;
+        let mut active_children = 0;
+        for handle in handles.iter() {
+            let runtime = handle.runtime.lock().await;
+            match runtime.status {
+                WebSessionStatus::Running => running += 1,
+                WebSessionStatus::Closed => closed += 1,
+                WebSessionStatus::Error => error += 1,
+            }
+            total_viewers += runtime.viewers;
+            if runtime.child.is_some() {
+                active_children += 1;
+            }
+        }
+        WebSessionManagerStats {
+            session_count: handles.len(),
+            running,
+            closed,
+            error,
+            total_viewers,
+            active_children,
         }
     }
 

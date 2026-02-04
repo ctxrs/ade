@@ -10,6 +10,7 @@ use lsp_types::{
     PublishDiagnosticsParams, TextDocumentContentChangeEvent, TextDocumentItem, Uri,
     VersionedTextDocumentIdentifier, WorkspaceEdit, WorkspaceFolder,
 };
+use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -185,6 +186,15 @@ async fn sync_open_doc_text(
 #[derive(Debug, Clone)]
 pub(crate) struct OpenDoc {
     pub(crate) uri: Uri,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct LspSessionStats {
+    pub(crate) open_docs: usize,
+    pub(crate) diagnostics_docs: usize,
+    pub(crate) diagnostics_entries: usize,
+    pub(crate) pending_requests: usize,
+    pub(crate) diag_receivers: usize,
 }
 
 pub(crate) struct LspSession {
@@ -387,6 +397,23 @@ impl LspSession {
         };
         session.initialize().await?;
         Ok(session)
+    }
+
+    pub(crate) async fn stats(&self) -> LspSessionStats {
+        let open_docs = self.open_docs.lock().await.len();
+        let diagnostics = self.diagnostics.lock().await;
+        let diagnostics_docs = diagnostics.len();
+        let diagnostics_entries = diagnostics.values().map(|items| items.len()).sum();
+        drop(diagnostics);
+        let pending_requests = self.pending.lock().await.len();
+        let diag_receivers = self.diag_tx.receiver_count();
+        LspSessionStats {
+            open_docs,
+            diagnostics_docs,
+            diagnostics_entries,
+            pending_requests,
+            diag_receivers,
+        }
     }
 
     async fn initialize(&mut self) -> Result<()> {

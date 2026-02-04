@@ -9,10 +9,14 @@ use tokio::time::MissedTickBehavior;
 
 use crate::buffers::BufferStoreStats;
 use crate::daemon::AppState;
+use crate::harness_runtime::HarnessRuntimeStats;
 use crate::logs;
 use crate::perf_telemetry::PerfTelemetryStats;
 use crate::terminals::TerminalManagerStats;
+use crate::web_sessions::WebSessionManagerStats;
 use crate::workspace_active_snapshot::WorkspaceActiveSnapshotStats;
+use ctx_lsp::LspManagerStats;
+use ctx_store::StoreManagerStats;
 
 const DEFAULT_INTERVAL_MS: u64 = 5_000;
 
@@ -27,6 +31,12 @@ struct MemleakDebugSnapshot {
     buffers: BufferStoreStats,
     terminals: TerminalManagerStats,
     perf_telemetry: PerfTelemetryStats,
+    lsp: LspManagerStats,
+    web_sessions: WebSessionManagerStats,
+    harness_runtime: HarnessRuntimeStats,
+    stores: StoreManagerStats,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    jemalloc: Option<JemallocStats>,
 }
 
 #[derive(Debug, Serialize)]
@@ -78,6 +88,15 @@ struct ProviderCacheStats {
     verify_cache: usize,
     usage_cache: usize,
     installs: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct JemallocStats {
+    allocated: u64,
+    active: u64,
+    resident: u64,
+    retained: u64,
+    mapped: u64,
 }
 
 pub fn spawn_memleak_debug(state: Arc<AppState>) {
@@ -284,6 +303,11 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
     let buffers = state.core.buffers.stats().await;
     let terminals = state.transport.terminals.stats().await;
     let perf_telemetry = state.telemetry.perf_telemetry.stats();
+    let lsp = state.core.lsp.stats().await;
+    let web_sessions = state.transport.web_sessions.stats().await;
+    let harness_runtime = state.execution.harness.stats().await;
+    let stores = state.core.stores.stats().await;
+    let jemalloc = read_jemalloc_stats();
 
     let snapshot = MemleakDebugSnapshot {
         occurred_at: Utc::now(),
@@ -295,6 +319,11 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
         buffers,
         terminals,
         perf_telemetry,
+        lsp,
+        web_sessions,
+        harness_runtime,
+        stores,
+        jemalloc,
     };
 
     append_local_log(&state.core.data_root, &snapshot).await?;
@@ -340,6 +369,28 @@ fn json_bytes<T: serde::Serialize>(value: &T) -> usize {
     serde_json::to_vec(value)
         .map(|bytes| bytes.len())
         .unwrap_or(0)
+}
+
+#[cfg(feature = "daemon-heap-prof")]
+fn read_jemalloc_stats() -> Option<JemallocStats> {
+    use tikv_jemalloc_ctl::stats;
+    let allocated = stats::allocated::read().ok()? as u64;
+    let active = stats::active::read().ok()? as u64;
+    let resident = stats::resident::read().ok()? as u64;
+    let retained = stats::retained::read().ok()? as u64;
+    let mapped = stats::mapped::read().ok()? as u64;
+    Some(JemallocStats {
+        allocated,
+        active,
+        resident,
+        retained,
+        mapped,
+    })
+}
+
+#[cfg(not(feature = "daemon-heap-prof"))]
+fn read_jemalloc_stats() -> Option<JemallocStats> {
+    None
 }
 
 #[cfg(target_os = "linux")]

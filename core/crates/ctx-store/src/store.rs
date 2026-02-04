@@ -22,6 +22,12 @@ pub struct Store {
     event_log: Arc<EventLogRuntime>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct StoreStats {
+    pub pool_size: u32,
+    pub pool_idle: u32,
+}
+
 pub struct SessionRetentionPruneStats {
     pub tool_summaries_deleted: u64,
     pub turn_thoughts_cleared: u64,
@@ -937,6 +943,13 @@ impl Store {
 
     pub fn pool(&self) -> &Pool<Sqlite> {
         &self.pool
+    }
+
+    pub fn stats(&self) -> StoreStats {
+        StoreStats {
+            pool_size: self.pool.size(),
+            pool_idle: self.pool.num_idle(),
+        }
     }
 
     pub async fn close(&self) {

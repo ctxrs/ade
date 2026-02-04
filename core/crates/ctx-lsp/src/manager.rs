@@ -13,11 +13,12 @@ use lsp_types::{
     TypeHierarchyPrepareParams, TypeHierarchySubtypesParams, TypeHierarchySupertypesParams,
     WorkspaceEdit, WorkspaceSymbolParams,
 };
+use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex};
 
 use crate::config::LspManagerConfig;
-use crate::session::{DiagnosticsUpdate, Language, LspSession, OpenDoc};
+use crate::session::{DiagnosticsUpdate, Language, LspSession, LspSessionStats, OpenDoc};
 
 type LspSessionKey = (PathBuf, Language);
 type LspSessionMap = HashMap<LspSessionKey, Arc<LspSession>>;
@@ -27,6 +28,17 @@ type SharedLspSessionMap = Arc<Mutex<LspSessionMap>>;
 pub struct LspManager {
     cfg: LspManagerConfig,
     sessions: SharedLspSessionMap,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LspManagerStats {
+    pub session_count: usize,
+    pub open_docs: usize,
+    pub diagnostics_docs: usize,
+    pub diagnostics_entries: usize,
+    pub pending_requests: usize,
+    pub diag_receivers_total: usize,
+    pub diag_receivers_max: usize,
 }
 
 impl LspManager {
@@ -39,6 +51,48 @@ impl LspManager {
 
     pub fn enabled(&self) -> bool {
         self.cfg.enabled
+    }
+
+    pub async fn stats(&self) -> LspManagerStats {
+        let sessions = {
+            let guard = self.sessions.lock().await;
+            guard.values().cloned().collect::<Vec<_>>()
+        };
+        let session_count = sessions.len();
+        let mut open_docs = 0;
+        let mut diagnostics_docs = 0;
+        let mut diagnostics_entries = 0;
+        let mut pending_requests = 0;
+        let mut diag_receivers_total = 0;
+        let mut diag_receivers_max = 0;
+
+        for session in sessions {
+            let LspSessionStats {
+                open_docs: open,
+                diagnostics_docs: docs,
+                diagnostics_entries: entries,
+                pending_requests: pending,
+                diag_receivers,
+            } = session.stats().await;
+            open_docs += open;
+            diagnostics_docs += docs;
+            diagnostics_entries += entries;
+            pending_requests += pending;
+            diag_receivers_total += diag_receivers;
+            if diag_receivers > diag_receivers_max {
+                diag_receivers_max = diag_receivers;
+            }
+        }
+
+        LspManagerStats {
+            session_count,
+            open_docs,
+            diagnostics_docs,
+            diagnostics_entries,
+            pending_requests,
+            diag_receivers_total,
+            diag_receivers_max,
+        }
     }
 
     pub async fn diagnostics_for_file(&self, root: &Path, file: &Path) -> Result<Vec<Diagnostic>> {

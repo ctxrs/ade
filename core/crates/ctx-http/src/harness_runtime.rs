@@ -75,11 +75,39 @@ pub struct HarnessRuntimeManager {
     containers: Mutex<HashMap<WorkspaceId, HarnessContainer>>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct HarnessRuntimeStats {
+    pub container_count: usize,
+    pub container_allowlist_entries: usize,
+    pub container_external_mounts: usize,
+    pub container_egress_guards: usize,
+}
+
 impl HarnessRuntimeManager {
     pub fn new(data_root: PathBuf) -> Self {
         Self {
             data_root,
             containers: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub async fn stats(&self) -> HarnessRuntimeStats {
+        let containers = self.containers.lock().await;
+        let mut container_allowlist_entries = 0;
+        let mut container_external_mounts = 0;
+        let mut container_egress_guards = 0;
+        for container in containers.values() {
+            container_allowlist_entries += container.allowlist.len();
+            container_external_mounts += container.external_mounts.len();
+            if container.egress_guard {
+                container_egress_guards += 1;
+            }
+        }
+        HarnessRuntimeStats {
+            container_count: containers.len(),
+            container_allowlist_entries,
+            container_external_mounts,
+            container_egress_guards,
         }
     }
 

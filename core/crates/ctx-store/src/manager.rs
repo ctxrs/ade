@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use tokio::sync::Mutex;
 
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
@@ -23,6 +24,17 @@ pub struct StoreManager {
     global_db_path: PathBuf,
     workspace_stores: Arc<Mutex<HashMap<WorkspaceId, TimedStoreEntry>>>,
     config: StoreManagerConfig,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct StoreManagerStats {
+    pub global_pool_size: u32,
+    pub global_pool_idle: u32,
+    pub workspace_store_count: usize,
+    pub workspace_pool_size_total: u32,
+    pub workspace_pool_idle_total: u32,
+    pub workspace_pool_size_max: u32,
+    pub workspace_pool_idle_max: u32,
 }
 
 #[derive(Clone)]
@@ -87,6 +99,36 @@ impl StoreManager {
 
     pub fn global(&self) -> &Store {
         &self.global
+    }
+
+    pub async fn stats(&self) -> StoreManagerStats {
+        let global_stats = self.global.stats();
+        let stores = self.workspace_stores.lock().await;
+        let workspace_store_count = stores.len();
+        let mut workspace_pool_size_total: u32 = 0;
+        let mut workspace_pool_idle_total: u32 = 0;
+        let mut workspace_pool_size_max: u32 = 0;
+        let mut workspace_pool_idle_max: u32 = 0;
+        for entry in stores.values() {
+            let stats = entry.store.stats();
+            workspace_pool_size_total = workspace_pool_size_total.saturating_add(stats.pool_size);
+            workspace_pool_idle_total = workspace_pool_idle_total.saturating_add(stats.pool_idle);
+            if stats.pool_size > workspace_pool_size_max {
+                workspace_pool_size_max = stats.pool_size;
+            }
+            if stats.pool_idle > workspace_pool_idle_max {
+                workspace_pool_idle_max = stats.pool_idle;
+            }
+        }
+        StoreManagerStats {
+            global_pool_size: global_stats.pool_size,
+            global_pool_idle: global_stats.pool_idle,
+            workspace_store_count,
+            workspace_pool_size_total,
+            workspace_pool_idle_total,
+            workspace_pool_size_max,
+            workspace_pool_idle_max,
+        }
     }
 
     pub async fn workspace(&self, workspace_id: WorkspaceId) -> Result<Store> {
