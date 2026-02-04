@@ -9,12 +9,7 @@ const getWorkspaceIdFromUrl = (url: string): string => {
   return parts[parts.length - 1] ?? "";
 };
 
-const readId = (v: any): string => {
-  if (!v) return "";
-  if (typeof v === "string") return v;
-  if (typeof v === "object" && typeof v["0"] === "string") return v["0"];
-  return "";
-};
+const readId = (v: any): string => (typeof v === "string" ? v : "");
 
 test("workbench: stale cached events do not re-show running", async ({ page }) => {
   test.setTimeout(120000);

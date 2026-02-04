@@ -3,12 +3,7 @@ import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 const scrollSelector = ".wb-session-slot[aria-hidden=\"false\"] .wb-thread-scroller";
 
-const readId = (v: any): string => {
-  if (!v) return "";
-  if (typeof v === "string") return v;
-  if (typeof v === "object" && typeof v["0"] === "string") return v["0"];
-  return "";
-};
+const readId = (v: any): string => (typeof v === "string" ? v : "");
 
 async function addLongMessages(request: any, sessionId: string) {
   const longText = Array.from({ length: 200 }, (_, i) => `fixture line ${i + 1}`).join("\n");

@@ -184,7 +184,7 @@ const normalizeGitStatusSummaryInput = (value: unknown, entries?: unknown): Part
 };
 
 const isOptimisticMessageId = (value: unknown): boolean => {
-  const id = idToString(value as { 0?: string } | string);
+  const id = idToString(typeof value === "string" ? value : "");
   return Boolean(id && id.startsWith("optimistic-"));
 };
 

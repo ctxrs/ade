@@ -1,5 +1,5 @@
 export type Workspace = {
-  id: { 0: string } | string;
+  id: string;
   name: string;
   root_path: string;
   created_at: string;
@@ -17,8 +17,8 @@ export type AttachmentUpdatePolicy = "manual" | "on_open" | "scheduled";
 export type WorkspaceAttachmentStatus = "pending" | "syncing" | "ready" | "error";
 
 export type WorkspaceAttachment = {
-  id: { 0: string } | string;
-  workspace_id: { 0: string } | string;
+  id: string;
+  workspace_id: string;
   kind: WorkspaceAttachmentKind;
   name: string;
   source: string;
@@ -35,13 +35,13 @@ export type WorkspaceAttachment = {
 };
 
 export type Task = {
-  id: { 0: string } | string;
-  workspace_id: { 0: string } | string;
+  id: string;
+  workspace_id: string;
   title: string;
   description?: string | null;
   status: string;
-  primary_session_id?: { 0: string } | string | null;
-  primary_worktree_id?: { 0: string } | string | null;
+  primary_session_id?: string | null;
+  primary_worktree_id?: string | null;
   created_at: string;
   updated_at: string;
   archived_at?: string | null;
@@ -52,8 +52,8 @@ export type Task = {
 };
 
 export type Worktree = {
-  id: { 0: string } | string;
-  workspace_id: { 0: string } | string;
+  id: string;
+  workspace_id: string;
   root_path: string;
   base_commit_sha: string;
   git_branch?: string | null;
@@ -86,10 +86,10 @@ export type MergeQueueEntryStatus =
 export type MergeQueuePatchSource = "generated" | "provided";
 
 export type MergeQueueEntry = {
-  id: { 0: string } | string;
-  workspace_id: { 0: string } | string;
-  worktree_id?: { 0: string } | string | null;
-  session_id?: { 0: string } | string | null;
+  id: string;
+  workspace_id: string;
+  worktree_id?: string | null;
+  session_id?: string | null;
   target_branch: string;
   message?: string | null;
   patch_source: MergeQueuePatchSource;
@@ -112,8 +112,8 @@ export type MergeQueueRunStatus =
   | "cancelled";
 
 export type MergeQueueRun = {
-  id: { 0: string } | string;
-  entry_id: { 0: string } | string;
+  id: string;
+  entry_id: string;
   status: MergeQueueRunStatus;
   started_at: string;
   finished_at?: string | null;
@@ -124,11 +124,11 @@ export type MergeQueueRun = {
 };
 
 export type Session = {
-  id: { 0: string } | string;
-  task_id: { 0: string } | string;
-  workspace_id: { 0: string } | string;
-  worktree_id: { 0: string } | string;
-  parent_session_id?: { 0: string } | string | null;
+  id: string;
+  task_id: string;
+  workspace_id: string;
+  worktree_id: string;
+  parent_session_id?: string | null;
   relationship?: string | null;
   provider_id: string;
   model_id: string;
@@ -146,11 +146,11 @@ export type SessionMetadata = Session;
 export type TerminalStatus = "running" | "exited";
 
 export type TerminalSession = {
-  id: { 0: string } | string;
-  workspace_id: { 0: string } | string;
-  task_id?: { 0: string } | string | null;
-  session_id?: { 0: string } | string | null;
-  worktree_id?: { 0: string } | string | null;
+  id: string;
+  workspace_id: string;
+  task_id?: string | null;
+  session_id?: string | null;
+  worktree_id?: string | null;
   cwd: string;
   shell: string;
   title: string;
@@ -161,10 +161,10 @@ export type TerminalSession = {
 };
 
 export type SessionSummary = {
-  id: { 0: string } | string;
-  task_id: { 0: string } | string;
-  workspace_id: { 0: string } | string;
-  parent_session_id?: { 0: string } | string | null;
+  id: string;
+  task_id: string;
+  workspace_id: string;
+  parent_session_id?: string | null;
   relationship?: string | null;
   provider_id: string;
   model_id: string;
@@ -176,8 +176,8 @@ export type SessionSummary = {
 
 export type SubagentInvocationChild = {
   invocation_id: string;
-  child_session_id: { 0: string } | string;
-  run_id?: { 0: string } | string | null;
+  child_session_id: string;
+  run_id?: string | null;
   position: number;
   status: string;
   label?: string | null;
@@ -192,8 +192,8 @@ export type SubagentInvocationChild = {
 export type SubagentInvocation = {
   id: string;
   tool_call_id: string;
-  parent_session_id: { 0: string } | string;
-  parent_turn_id?: { 0: string } | string | null;
+  parent_session_id: string;
+  parent_turn_id?: string | null;
   requested_count: number;
   request_json?: any;
   status: string;
@@ -211,11 +211,11 @@ export type WorkspaceTaskSummary = {
 
 export type WorkspaceIndexCursor = {
   sort_at: string;
-  task_id: { 0: string } | string;
+  task_id: string;
 };
 
 export type WorkspaceIndexPage = {
-  workspace_id: { 0: string } | string;
+  workspace_id: string;
   snapshot_rev: number;
   tasks: WorkspaceTaskSummary[];
   next_cursor?: WorkspaceIndexCursor | null;
@@ -224,7 +224,7 @@ export type WorkspaceIndexPage = {
 };
 
 export type WorkspaceArchivedPage = {
-  workspace_id: { 0: string } | string;
+  workspace_id: string;
   archived_rev?: number;
   tasks: WorkspaceTaskSummary[];
   next_cursor?: WorkspaceIndexCursor | null;
@@ -234,21 +234,21 @@ export type WorkspaceArchivedPage = {
 export type WorkspaceIndexEvent =
   | {
       type: "ready";
-      workspace_id: { 0: string } | string;
+      workspace_id: string;
       snapshot_rev: number;
       archived_rev: number;
     }
   | {
       type: "task_upsert";
-      workspace_id: { 0: string } | string;
+      workspace_id: string;
       snapshot_rev: number;
       task: WorkspaceTaskSummary;
     }
   | {
       type: "task_delete";
-      workspace_id: { 0: string } | string;
+      workspace_id: string;
       snapshot_rev: number;
-      task_id: { 0: string } | string;
+      task_id: string;
     };
 
 export type SessionSnapshotSummary = {
@@ -300,6 +300,72 @@ export type SessionState = {
   git_status?: SessionGitStatusSummary | null;
 };
 
+export type WorktreeVcsComputeState = "computing" | "ready" | "error";
+
+export type WorktreeVcsBaseResolutionKind = "explicit_base" | "merge_base" | "worktree_base";
+
+export type WorktreeVcsTargetSource =
+  | "explicit"
+  | "merge_queue_override"
+  | "merge_queue_config"
+  | "default_branch";
+
+export type WorktreeVcsBaseResolution = {
+  kind: WorktreeVcsBaseResolutionKind;
+  target_source?: WorktreeVcsTargetSource | null;
+  error?: string | null;
+};
+
+export type WorktreeVcsSummary = {
+  file_count?: number | null;
+  line_additions?: number | null;
+  line_deletions?: number | null;
+  line_count?: number | null;
+};
+
+export type WorktreeVcsTouchedFile = {
+  path: string;
+  orig_path?: string | null;
+  index_status?: string | null;
+  worktree_status?: string | null;
+};
+
+export type WorktreeVcsTouchedFiles = {
+  items?: WorktreeVcsTouchedFile[];
+  truncated?: boolean;
+  total_count?: number | null;
+};
+
+export type WorktreeVcsGitStatusSummary = {
+  raw?: string;
+  summary_line?: string;
+  branch?: string | null;
+  upstream?: string | null;
+  ahead: number;
+  behind: number;
+  detached: boolean;
+  staged: number;
+  unstaged: number;
+  untracked: number;
+  entries?: WorktreeVcsTouchedFile[];
+};
+
+export type WorktreeVcsSnapshot = {
+  worktree_id: string;
+  rev: number;
+  emitted_at_ms: number;
+  base_commit_sha: string;
+  head_commit_sha: string;
+  target_branch?: string | null;
+  target_branch_commit_sha?: string | null;
+  base_resolution: WorktreeVcsBaseResolution;
+  compute_state: WorktreeVcsComputeState;
+  summary: WorktreeVcsSummary;
+  git_status: WorktreeVcsGitStatusSummary;
+  touched_files: WorktreeVcsTouchedFiles;
+  schema_version: number;
+};
+
 export type WorkspaceActiveTaskSummary = {
   task: Task;
   primary_session: SessionSnapshotSummary;
@@ -314,23 +380,24 @@ export type WorkspaceActivePage = {
 };
 
 export type WorkspaceActiveSnapshot = {
-  workspace_id: { 0: string } | string;
+  workspace_id: string;
   snapshot_rev: number;
   archived_rev?: number;
   active: WorkspaceActivePage;
+  worktree_vcs_snapshots?: WorktreeVcsSnapshot[];
 };
 
 export type WorkspaceActiveHeadBatch = {
-  workspace_id: { 0: string } | string;
+  workspace_id: string;
   snapshot_rev: number;
   heads: SessionHeadSnapshot[];
 };
 
 export type SessionSummaryCheckpoint = {
-  session_id: { 0: string } | string;
+  session_id: string;
   checkpoint_id: string;
   summary: string;
-  last_turn_id?: { 0: string } | string | null;
+  last_turn_id?: string | null;
   last_event_seq?: number | null;
   created_at: string;
   updated_at: string;
@@ -362,7 +429,7 @@ export type SessionHead = {
 };
 
 export type SessionHeadDelta = {
-  session_id: { 0: string } | string;
+  session_id: string;
   last_event_seq: number;
   state_rev?: number;
   event?: SessionEvent | null;
@@ -371,7 +438,7 @@ export type SessionHeadDelta = {
 };
 
 export type SessionHistoryPage = {
-  session_id: { 0: string } | string;
+  session_id: string;
   turns: SessionTurn[];
   messages: Message[];
   next_cursor?: number | null;
@@ -379,14 +446,14 @@ export type SessionHistoryPage = {
 };
 
 export type SessionEventsPage = {
-  session_id: { 0: string } | string;
+  session_id: string;
   events: SessionEvent[];
   next_cursor?: number | null;
   has_more: boolean;
 };
 
 export type WorktreeBootstrapNotice = {
-  worktree_id: { 0: string } | string;
+  worktree_id: string;
   worktree_root: string;
   status: "success" | "failed" | "timeout";
   started_at: string;
@@ -405,71 +472,77 @@ export type WorktreeBootstrapNotice = {
 export type WorkspaceActiveSnapshotEvent =
   | {
       type: "ready";
-      workspace_id: { 0: string } | string;
+      workspace_id: string;
       snapshot_rev: number;
       archived_rev?: number;
     }
   | {
       type: "active_task_upsert";
-      workspace_id: { 0: string } | string;
+      workspace_id: string;
       snapshot_rev: number;
       task: WorkspaceActiveTaskSummary;
     }
   | {
       type: "active_task_delete";
-      workspace_id: { 0: string } | string;
+      workspace_id: string;
       snapshot_rev: number;
-      task_id: { 0: string } | string;
+      task_id: string;
     }
   | {
       type: "session_summary";
-      workspace_id: { 0: string } | string;
+      workspace_id: string;
       snapshot_rev: number;
       summary: SessionSnapshotSummary;
     }
   | {
       type: "session_head_delta";
-      workspace_id: { 0: string } | string;
+      workspace_id: string;
       snapshot_rev: number;
       delta: SessionHeadDelta;
     }
   | {
       type: "session_head_reset";
-      workspace_id: { 0: string } | string;
+      workspace_id: string;
       snapshot_rev: number;
       head: SessionHeadSnapshot;
     }
   | {
       type: "session_gap";
-      workspace_id: { 0: string } | string;
+      workspace_id: string;
       snapshot_rev: number;
-      session_id: { 0: string } | string;
+      session_id: string;
       after_seq: number;
       reason?: string | null;
     }
   | {
       type: "worktree_bootstrap";
-      workspace_id: { 0: string } | string;
+      workspace_id: string;
       snapshot_rev: number;
       notice: WorktreeBootstrapNotice;
     }
   | {
+      type: "worktree_vcs_snapshot";
+      workspace_id: string;
+      snapshot_rev: number;
+      snapshot: WorktreeVcsSnapshot;
+    }
+  | {
       type: "archived_task_upsert";
-      workspace_id: { 0: string } | string;
+      workspace_id: string;
       snapshot_rev?: number;
       archived_rev: number;
       task: WorkspaceTaskSummary;
     }
   | {
       type: "archived_task_delete";
-      workspace_id: { 0: string } | string;
+      workspace_id: string;
       snapshot_rev?: number;
       archived_rev: number;
-      task_id: { 0: string } | string;
+      task_id: string;
     };
 
 export type WorkspaceActiveSnapshotSessionSubscription = {
-  session_id: { 0: string } | string;
+  session_id: string;
   after_seq?: number | null;
 };
 
@@ -478,21 +551,20 @@ export type WorkspaceActiveSnapshotSubscribeScope = "active";
 export type WorkspaceActiveSnapshotClientMessage =
   | {
       type: "subscribe";
-      session_ids?: ({ 0: string } | string)[];
+      session_ids?: (string)[];
       sessions?: WorkspaceActiveSnapshotSessionSubscription[];
-      task_ids?: ({ 0: string } | string)[];
-      foreground_task_id?: { 0: string } | string;
+      task_ids?: (string)[];
+      foreground_task_id?: string;
       scope?: WorkspaceActiveSnapshotSubscribeScope | null;
       include_active_heads?: boolean;
     };
 
 export type Message = {
-  id: { 0: string } | string;
-  session_id: { 0: string } | string;
-  task_id: { 0: string } | string;
-  turn_id?: { 0: string } | string | null;
+  id: string;
+  session_id: string;
+  task_id: string;
+  turn_id?: string | null;
   turn_sequence?: number | null;
-  order_seq?: number | null;
   role: "user" | "assistant" | "system";
   content: string;
   attachments?: MessageAttachment[];
@@ -501,11 +573,11 @@ export type Message = {
 };
 
 export type Artifact = {
-  id: { 0: string } | string;
-  session_id: { 0: string } | string;
-  task_id: { 0: string } | string;
-  workspace_id: { 0: string } | string;
-  worktree_id: { 0: string } | string;
+  id: string;
+  session_id: string;
+  task_id: string;
+  workspace_id: string;
+  worktree_id: string;
   name?: string | null;
   absolute_path: string;
   mime_type: string;
@@ -571,11 +643,11 @@ export type MessageQueueEventPayload = {
 };
 
 export type SessionEvent = {
-  seq: number | null;
-  id: { 0: string } | string;
-  session_id: { 0: string } | string;
-  run_id?: { 0: string } | string | null;
-  turn_id?: { 0: string } | string | null;
+  seq: number;
+  id: string;
+  session_id: string;
+  run_id?: string | null;
+  turn_id?: string | null;
   event_type: SessionEventType;
   payload_json: any;
   transient?: boolean;
@@ -590,10 +662,10 @@ export type SessionActivityState = {
 };
 
 export type SessionTurn = {
-  turn_id: { 0: string } | string;
-  session_id: { 0: string } | string;
-  run_id?: { 0: string } | string | null;
-  user_message_id?: { 0: string } | string | null;
+  turn_id: string;
+  session_id: string;
+  run_id?: string | null;
+  user_message_id?: string | null;
   status: SessionTurnStatus;
   start_seq?: number | null;
   end_seq?: number | null;
@@ -610,9 +682,9 @@ export type SessionTurn = {
 };
 
 export type SessionTurnTool = {
-  session_id: { 0: string } | string;
+  session_id: string;
   tool_call_id: string;
-  turn_id: { 0: string } | string;
+  turn_id: string;
   tool_kind?: string | null;
   title?: string | null;
   status?: string | null;
@@ -627,9 +699,9 @@ export type SessionTurnTool = {
 };
 
 export type SessionTurnToolSummary = {
-  session_id: { 0: string } | string;
+  session_id: string;
   tool_call_id: string;
-  turn_id: { 0: string } | string;
+  turn_id: string;
   tool_kind?: string | null;
   title?: string | null;
   status?: string | null;

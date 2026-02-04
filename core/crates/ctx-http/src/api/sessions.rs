@@ -337,6 +337,30 @@ pub(super) async fn get_session_diff_summary(
         },
         Err(_) => base_commit_sha.clone(),
     };
+    if let Some(snapshot) = state.get_worktree_vcs_snapshot(worktree.id).await {
+        if snapshot.compute_state == WorktreeVcsComputeState::Ready
+            && snapshot.base_commit_sha == base_commit_sha
+        {
+            let summary = &snapshot.summary;
+            let mismatch = summary.file_count != Some(file_count)
+                || summary.line_additions != Some(line_additions)
+                || summary.line_deletions != Some(line_deletions);
+            if mismatch {
+                tracing::warn!(
+                    worktree_id = %worktree.id.0,
+                    snapshot_rev = snapshot.rev,
+                    base_commit_sha = %base_commit_sha,
+                    snapshot_file_count = ?summary.file_count,
+                    snapshot_additions = ?summary.line_additions,
+                    snapshot_deletions = ?summary.line_deletions,
+                    summary_file_count = file_count,
+                    summary_additions = line_additions,
+                    summary_deletions = line_deletions,
+                    "worktree vcs snapshot summary mismatch"
+                );
+            }
+        }
+    }
     Ok(Json(SessionDiffSummaryResponse {
         base_commit_sha,
         head_commit_sha,
@@ -446,17 +470,34 @@ pub(super) async fn get_session_git_status(
     Ok(Json(resp))
 }
 
-pub(super) async fn resolve_session_diff_base(
+pub(crate) struct WorktreeDiffBaseResolution {
+    pub base_commit_sha: String,
+    pub target_branch: Option<String>,
+    pub target_source: Option<WorktreeVcsTargetSource>,
+    pub kind: WorktreeVcsBaseResolutionKind,
+    pub error: Option<String>,
+    pub explicit_target: bool,
+}
+
+pub(crate) async fn resolve_diff_base_with_meta(
     workspace: &Workspace,
     worktree: &Worktree,
     query: &SessionDiffQuery,
-) -> Result<String, (StatusCode, Json<ApiErrorResp>)> {
+) -> WorktreeDiffBaseResolution {
     if let Some(base) = query.base_commit_sha.as_deref() {
         let trimmed = base.trim();
         if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
+            return WorktreeDiffBaseResolution {
+                base_commit_sha: trimmed.to_string(),
+                target_branch: None,
+                target_source: None,
+                kind: WorktreeVcsBaseResolutionKind::ExplicitBase,
+                error: None,
+                explicit_target: false,
+            };
         }
     }
+
     let explicit_target = query
         .target_branch
         .as_deref()
@@ -466,6 +507,11 @@ pub(super) async fn resolve_session_diff_base(
         Some(target) if !target.trim().is_empty() => Some(target.trim().to_string()),
         _ => None,
     };
+    let mut target_source = if target_branch.is_some() {
+        Some(WorktreeVcsTargetSource::Explicit)
+    } else {
+        None
+    };
 
     if target_branch.is_none() {
         match workspace_config::load_merge_queue_target_branch_override(StdPath::new(
@@ -473,7 +519,10 @@ pub(super) async fn resolve_session_diff_base(
         ))
         .await
         {
-            Ok(Some(branch)) => target_branch = Some(branch),
+            Ok(Some(branch)) => {
+                target_branch = Some(branch);
+                target_source = Some(WorktreeVcsTargetSource::MergeQueueOverride);
+            }
             Ok(None) => {}
             Err(err) => tracing::warn!(
                 workspace_id = %workspace.id.0,
@@ -484,7 +533,10 @@ pub(super) async fn resolve_session_diff_base(
 
     if target_branch.is_none() {
         match workspace_config::load_merge_queue_config(StdPath::new(&workspace.root_path)).await {
-            Ok(cfg) if cfg.enabled => target_branch = Some(cfg.target_branch),
+            Ok(cfg) if cfg.enabled => {
+                target_branch = Some(cfg.target_branch);
+                target_source = Some(WorktreeVcsTargetSource::MergeQueueConfig);
+            }
             Ok(_) => {}
             Err(err) => tracing::warn!(
                 workspace_id = %workspace.id.0,
@@ -508,7 +560,10 @@ pub(super) async fn resolve_session_diff_base(
         if let Some(driver) = driver.as_ref() {
             if driver.kind() == VcsKind::Git {
                 match git_default_branch(&worktree.root_path).await {
-                    Ok(Some(branch)) => target_branch = Some(branch),
+                    Ok(Some(branch)) => {
+                        target_branch = Some(branch);
+                        target_source = Some(WorktreeVcsTargetSource::DefaultBranch);
+                    }
                     Ok(None) => {}
                     Err(err) => tracing::warn!(
                         worktree_id = %worktree.id.0,
@@ -519,22 +574,26 @@ pub(super) async fn resolve_session_diff_base(
         }
     }
 
-    if let Some(target_branch) = target_branch {
+    let mut error: Option<String> = None;
+    if let Some(target_branch) = target_branch.clone() {
         if let Some(driver) = driver {
             match driver
                 .merge_base(StdPath::new(&worktree.root_path), &target_branch, "HEAD")
                 .await
             {
-                Ok(base) => return Ok(base),
+                Ok(base) => {
+                    return WorktreeDiffBaseResolution {
+                        base_commit_sha: base,
+                        target_branch: Some(target_branch),
+                        target_source,
+                        kind: WorktreeVcsBaseResolutionKind::MergeBase,
+                        error: None,
+                        explicit_target,
+                    };
+                }
                 Err(err) => {
-                    if explicit_target {
-                        return Err((
-                            StatusCode::BAD_REQUEST,
-                            Json(ApiErrorResp {
-                                error: logs::redact_sensitive(&err.to_string()),
-                            }),
-                        ));
-                    }
+                    let redacted = logs::redact_sensitive(&err.to_string());
+                    error = Some(redacted);
                     tracing::warn!(
                         worktree_id = %worktree.id.0,
                         "merge-base failed for target {target_branch}: {err:#}"
@@ -543,7 +602,29 @@ pub(super) async fn resolve_session_diff_base(
             }
         }
     }
-    Ok(worktree.base_commit_sha.clone())
+
+    WorktreeDiffBaseResolution {
+        base_commit_sha: worktree.base_commit_sha.clone(),
+        target_branch,
+        target_source,
+        kind: WorktreeVcsBaseResolutionKind::WorktreeBase,
+        error,
+        explicit_target,
+    }
+}
+
+pub(super) async fn resolve_session_diff_base(
+    workspace: &Workspace,
+    worktree: &Worktree,
+    query: &SessionDiffQuery,
+) -> Result<String, (StatusCode, Json<ApiErrorResp>)> {
+    let resolution = resolve_diff_base_with_meta(workspace, worktree, query).await;
+    if resolution.explicit_target {
+        if let Some(error) = resolution.error.clone() {
+            return Err((StatusCode::BAD_REQUEST, Json(ApiErrorResp { error })));
+        }
+    }
+    Ok(resolution.base_commit_sha)
 }
 
 pub(super) async fn maybe_emit_git_status_snapshot(
@@ -936,7 +1017,7 @@ pub(super) struct SessionDiffResponse {
     diff: String,
 }
 #[derive(Debug, Deserialize, Default)]
-pub(super) struct SessionDiffQuery {
+pub(crate) struct SessionDiffQuery {
     base_commit_sha: Option<String>,
     target_branch: Option<String>,
 }

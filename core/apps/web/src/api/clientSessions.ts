@@ -46,7 +46,7 @@ export type WebSessionInfo = {
 };
 
 export type EditPlanSummary = {
-  id: { 0: string } | string;
+  id: string;
   title: string;
   created_at: string;
   remaining_files: number;

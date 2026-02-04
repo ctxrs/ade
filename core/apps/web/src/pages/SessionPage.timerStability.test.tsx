@@ -28,7 +28,13 @@ vi.mock("../api/client", () => ({
   setSessionModel: vi.fn(async () => ({})),
   authenticateSession: vi.fn(async () => ({})),
   getSettings: vi.fn(async () => ({ dictation: { enabled: false } })),
-  idToString: (id: any) => (typeof id === "string" ? id : id?.["0"]),
+  idToString: (id: string | null | undefined) => {
+    if (id === null || id === undefined) return "";
+    if (typeof id !== "string") {
+      throw new Error("Expected id to be a string");
+    }
+    return id;
+  },
   interruptSession: vi.fn(async () => ({})),
   submitAskUserQuestion: vi.fn(async () => ({})),
   uploadBlob: vi.fn(async () => ({ blob_id: "blob-1" })),

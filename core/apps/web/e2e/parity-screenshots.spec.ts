@@ -67,17 +67,11 @@ async function readAuthToken(): Promise<string> {
 }
 
 function idToString(value: any): string {
-  if (!value) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "object") {
-    if (Object.prototype.hasOwnProperty.call(value, 0)) {
-      return String((value as any)[0] ?? "");
-    }
-    if (Object.prototype.hasOwnProperty.call(value, "0")) {
-      return String((value as any)["0"] ?? "");
-    }
+  if (value === null || value === undefined) return "";
+  if (typeof value !== "string") {
+    throw new Error("Expected id to be a string");
   }
-  return String(value ?? "");
+  return value;
 }
 
 function workspaceIdFromPath(pathname: string): string {

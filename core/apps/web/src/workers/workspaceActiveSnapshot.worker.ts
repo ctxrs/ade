@@ -11,7 +11,13 @@ const setAuth = (baseUrl?: string | null, authToken?: string | null, runId?: str
   setWorkerClientConfig({ baseUrl, authToken, runId });
 };
 
-const idToString = (id: any): string => (typeof id === "string" ? id : id?.["0"]);
+const idToString = (id: string | null | undefined): string => {
+  if (id === null || id === undefined) return "";
+  if (typeof id !== "string") {
+    throw new Error("Expected id to be a string");
+  }
+  return id;
+};
 
 const listWorkspaceArchivedTaskSummaries = (
   workspaceId: string,

@@ -216,14 +216,14 @@ async fn run_e2e(
     )?;
     let message: WorkspaceActiveSnapshotStreamMessage = serde_json::from_slice(&ws_payload)?;
     match message {
-        WorkspaceActiveSnapshotStreamMessage::Event {
-            event: WorkspaceActiveSnapshotEvent::Ready { workspace_id, .. },
-            ..
-        } => {
-            if workspace_id.0.to_string() != expected_workspace_id {
-                return Err(anyhow!("workspace id mismatch in ws ready event"));
+        WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => match event.as_ref() {
+            WorkspaceActiveSnapshotEvent::Ready { workspace_id, .. } => {
+                if workspace_id.0.to_string() != expected_workspace_id {
+                    return Err(anyhow!("workspace id mismatch in ws ready event"));
+                }
             }
-        }
+            other => return Err(anyhow!("unexpected ws message: {other:?}")),
+        },
         other => return Err(anyhow!("unexpected ws message: {other:?}")),
     }
 

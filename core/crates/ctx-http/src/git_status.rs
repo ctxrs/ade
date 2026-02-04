@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -8,10 +8,15 @@ use serde::Serialize;
 use tokio::sync::mpsc;
 
 use ctx_core::ids::{SessionId, WorktreeId};
-use ctx_core::models::{SessionEventType, SessionGitStatusSummary, SessionStatus, Worktree};
+use ctx_core::models::{
+    SessionEventType, SessionGitStatusSummary, SessionStatus, Worktree, WorktreeVcsBaseResolution,
+    WorktreeVcsComputeState, WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary,
+    WorktreeVcsTouchedFile, WorktreeVcsTouchedFiles,
+};
 use ctx_fs::patch::should_ignore_path;
 use ctx_fs::vcs::{self, VcsDriver};
 
+use crate::api::sessions::{resolve_diff_base_with_meta, SessionDiffQuery};
 use crate::daemon::AppState;
 
 const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
@@ -19,6 +24,8 @@ const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
 const GIT_STATUS_WATCH_DEBOUNCE_MS: u64 = 500;
 const GIT_STATUS_POLL_INTERVAL_MS: u64 = 1000;
 const GIT_STATUS_SAFETY_POLL_INTERVAL_MS: u64 = 2000;
+const WORKTREE_VCS_SUMMARY_DEBOUNCE_MS: u64 = 750;
+const WORKTREE_VCS_TOUCHED_FILES_CAP: usize = 200;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GitStatusSnapshot {
@@ -58,6 +65,127 @@ fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
     vcs::driver_for_kind(worktree.vcs_kind.clone())
 }
 
+fn now_epoch_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn snapshot_fingerprint(snapshot: &WorktreeVcsSnapshot) -> String {
+    let mut copy = snapshot.clone();
+    copy.rev = 0;
+    copy.emitted_at_ms = 0;
+    serde_json::to_string(&copy).unwrap_or_default()
+}
+
+fn build_touched_files(entries: &[GitStatusEntry]) -> WorktreeVcsTouchedFiles {
+    let total = entries.len();
+    let mut items = Vec::new();
+    for entry in entries.iter().take(WORKTREE_VCS_TOUCHED_FILES_CAP) {
+        items.push(WorktreeVcsTouchedFile {
+            path: entry.path.clone(),
+            orig_path: entry.orig_path.clone(),
+            index_status: Some(entry.index_status.clone()),
+            worktree_status: Some(entry.worktree_status.clone()),
+        });
+    }
+    WorktreeVcsTouchedFiles {
+        items,
+        truncated: total > WORKTREE_VCS_TOUCHED_FILES_CAP,
+        total_count: Some(total as i64),
+    }
+}
+
+fn build_git_status_summary(
+    snapshot: &GitStatusSnapshot,
+    touched: &WorktreeVcsTouchedFiles,
+) -> WorktreeVcsGitStatusSummary {
+    WorktreeVcsGitStatusSummary {
+        raw: snapshot.raw.clone(),
+        summary_line: snapshot.summary_line.clone(),
+        branch: snapshot.branch.clone(),
+        upstream: snapshot.upstream.clone(),
+        ahead: snapshot.ahead,
+        behind: snapshot.behind,
+        detached: snapshot.detached,
+        staged: snapshot.staged,
+        unstaged: snapshot.unstaged,
+        untracked: snapshot.untracked,
+        entries: touched.items.clone(),
+    }
+}
+
+async fn build_worktree_vcs_snapshot_from_parts(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    git_status: WorktreeVcsGitStatusSummary,
+    touched_files: WorktreeVcsTouchedFiles,
+    summary: WorktreeVcsSummary,
+    compute_state: WorktreeVcsComputeState,
+    resolution: Option<crate::api::sessions::WorktreeDiffBaseResolution>,
+) -> Result<WorktreeVcsSnapshot> {
+    let resolution = match resolution {
+        Some(resolution) => resolution,
+        None => {
+            let workspace = state
+                .global_store()
+                .get_workspace(worktree.workspace_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
+            resolve_diff_base_with_meta(&workspace, worktree, &SessionDiffQuery::default()).await
+        }
+    };
+    let base_commit_sha = resolution.base_commit_sha.clone();
+    let root = Path::new(&worktree.root_path);
+    let driver = vcs::driver_for_path(root).await.ok();
+    let head_commit_sha = match driver.as_ref() {
+        Some(driver) => driver
+            .rev_parse_head(root)
+            .await
+            .unwrap_or_else(|_| base_commit_sha.clone()),
+        None => base_commit_sha.clone(),
+    };
+    let target_branch_commit_sha = match (driver.as_ref(), resolution.target_branch.as_ref()) {
+        (Some(driver), Some(target_branch)) => driver.rev_parse_ref(root, target_branch).await.ok(),
+        _ => None,
+    };
+    let base_resolution = WorktreeVcsBaseResolution {
+        kind: resolution.kind,
+        target_source: resolution.target_source,
+        error: resolution.error,
+    };
+    Ok(WorktreeVcsSnapshot {
+        worktree_id: worktree.id,
+        rev: 0,
+        emitted_at_ms: 0,
+        base_commit_sha,
+        head_commit_sha,
+        target_branch: resolution.target_branch,
+        target_branch_commit_sha,
+        base_resolution,
+        compute_state,
+        summary,
+        git_status,
+        touched_files,
+        schema_version: 1,
+    })
+}
+
+fn summary_from_counts(
+    file_count: i64,
+    line_additions: i64,
+    line_deletions: i64,
+) -> WorktreeVcsSummary {
+    let line_count = line_additions + line_deletions;
+    WorktreeVcsSummary {
+        file_count: Some(file_count),
+        line_additions: Some(line_additions),
+        line_deletions: Some(line_deletions),
+        line_count: Some(line_count),
+    }
+}
+
 pub async fn load_git_status_snapshot(worktree: &Worktree) -> Result<GitStatusSnapshot> {
     let vcs = vcs_driver_for_worktree(worktree);
     let root = Path::new(&worktree.root_path);
@@ -81,9 +209,153 @@ pub async fn load_git_status_snapshot(worktree: &Worktree) -> Result<GitStatusSn
     })
 }
 
-pub async fn emit_git_status_snapshot_for_worktree(
+async fn upsert_worktree_vcs_snapshot(
+    state: &Arc<AppState>,
+    mut snapshot: WorktreeVcsSnapshot,
+    force_emit: bool,
+    summary_at: Option<Instant>,
+) -> Option<WorktreeVcsSnapshot> {
+    let now = Instant::now();
+    let fingerprint = snapshot_fingerprint(&snapshot);
+    let mut cache = state.workspaces.worktree_vcs_snapshots.lock().await;
+    let entry = cache.entry(snapshot.worktree_id).or_insert_with(|| {
+        crate::daemon::TimedEntry::new(crate::daemon::WorktreeVcsSnapshotCacheEntry {
+            snapshot: snapshot.clone(),
+            fingerprint: String::new(),
+            emitted_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
+            last_change_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
+            last_summary_at: None,
+        })
+    });
+    entry.touch_at(now);
+    let is_first = entry.value.fingerprint.is_empty();
+    if entry.value.fingerprint == fingerprint && !force_emit {
+        return None;
+    }
+    let since_change = now.duration_since(entry.value.last_change_at);
+    let since_emit = now.duration_since(entry.value.emitted_at);
+    if !force_emit
+        && !is_first
+        && since_emit < Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS)
+        && since_change < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS)
+    {
+        return None;
+    }
+    let next_rev = entry.value.snapshot.rev.saturating_add(1);
+    snapshot.rev = next_rev;
+    snapshot.emitted_at_ms = now_epoch_ms();
+    if snapshot.schema_version == 0 {
+        snapshot.schema_version = 1;
+    }
+    entry.value.snapshot = snapshot.clone();
+    entry.value.fingerprint = fingerprint;
+    entry.value.emitted_at = now;
+    entry.value.last_change_at = now;
+    if let Some(summary_at) = summary_at {
+        entry.value.last_summary_at = Some(summary_at);
+    }
+    Some(snapshot)
+}
+
+async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
+    let cached_snapshot = {
+        let mut cache = state.workspaces.worktree_vcs_snapshots.lock().await;
+        cache.get_mut(&worktree.id).map(|entry| {
+            entry.touch();
+            entry.value.snapshot.clone()
+        })
+    };
+    let cached_summary = cached_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.summary.clone())
+        .unwrap_or_default();
+    let (git_status, touched_files) = if let Some(snapshot) = cached_snapshot {
+        (snapshot.git_status, snapshot.touched_files)
+    } else {
+        let snapshot = load_git_status_snapshot(&worktree).await?;
+        let touched = build_touched_files(&snapshot.entries);
+        let git_status = build_git_status_summary(&snapshot, &touched);
+        (git_status, touched)
+    };
+    let workspace = state
+        .global_store()
+        .get_workspace(worktree.workspace_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
+    let resolution =
+        resolve_diff_base_with_meta(&workspace, &worktree, &SessionDiffQuery::default()).await;
+    let summary_result =
+        ctx_fs::worktrees::diff_worktree_summary(&worktree.root_path, &resolution.base_commit_sha)
+            .await;
+    let (summary, compute_state, summary_at) = match summary_result {
+        Ok((file_count, line_additions, line_deletions)) => (
+            summary_from_counts(file_count, line_additions, line_deletions),
+            WorktreeVcsComputeState::Ready,
+            Some(Instant::now()),
+        ),
+        Err(err) => {
+            tracing::warn!(
+                worktree_id = %worktree.id.0,
+                "worktree diff summary failed: {err:#}"
+            );
+            (cached_summary, WorktreeVcsComputeState::Error, None)
+        }
+    };
+    let snapshot = build_worktree_vcs_snapshot_from_parts(
+        &state,
+        &worktree,
+        git_status,
+        touched_files,
+        summary,
+        compute_state,
+        Some(resolution),
+    )
+    .await?;
+    if let Some(snapshot) = upsert_worktree_vcs_snapshot(&state, snapshot, true, summary_at).await {
+        if state.is_worktree_vcs_active(worktree.id).await {
+            state
+                .workspaces
+                .workspace_active_snapshot
+                .publish_worktree_vcs_snapshot(worktree.workspace_id, snapshot)
+                .await;
+        }
+    }
+    Ok(())
+}
+
+async fn schedule_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) {
+    let worktree_id = worktree.id;
+    let generation = {
+        let mut gens = state.workspaces.worktree_vcs_summary_gen.lock().await;
+        let entry = gens.entry(worktree_id).or_insert(0);
+        *entry += 1;
+        *entry
+    };
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(WORKTREE_VCS_SUMMARY_DEBOUNCE_MS)).await;
+        let current = {
+            let gens = state.workspaces.worktree_vcs_summary_gen.lock().await;
+            gens.get(&worktree_id).copied().unwrap_or(0)
+        };
+        if current != generation {
+            return;
+        }
+        if !state.is_worktree_vcs_active(worktree_id).await {
+            return;
+        }
+        if let Err(err) = refresh_worktree_vcs_summary(state.clone(), worktree).await {
+            tracing::warn!(
+                worktree_id = %worktree_id.0,
+                "worktree diff summary refresh failed: {err:#}"
+            );
+        }
+    });
+}
+
+pub async fn emit_worktree_vcs_snapshot_for_worktree(
     state: &Arc<AppState>,
     worktree: &Worktree,
+    force_emit: bool,
 ) -> Result<()> {
     let store = state.store_for_worktree(worktree.id).await?;
     let sessions = store.list_sessions_for_worktree(worktree.id).await?;
@@ -92,18 +364,65 @@ pub async fn emit_git_status_snapshot_for_worktree(
         .filter(|session| matches!(session.status, SessionStatus::Active))
         .map(|session| session.id)
         .collect();
-    if active_session_ids.is_empty() {
+    let active = state.is_worktree_vcs_active(worktree.id).await;
+    if active_session_ids.is_empty() && !active {
         return Ok(());
     }
-    let snapshot = load_git_status_snapshot(worktree).await?;
-    emit_git_status_snapshot_for_sessions(
+    let git_snapshot = load_git_status_snapshot(worktree).await?;
+    if !active_session_ids.is_empty() {
+        emit_git_status_snapshot_for_sessions(
+            state,
+            &active_session_ids,
+            worktree.id,
+            &git_snapshot,
+            force_emit,
+        )
+        .await;
+    }
+
+    let touched_files = build_touched_files(&git_snapshot.entries);
+    let git_status = build_git_status_summary(&git_snapshot, &touched_files);
+    let cached_summary = {
+        let cache = state.workspaces.worktree_vcs_snapshots.lock().await;
+        cache
+            .get(&worktree.id)
+            .map(|entry| entry.value.snapshot.summary.clone())
+            .unwrap_or_default()
+    };
+    let compute_state = if active {
+        WorktreeVcsComputeState::Computing
+    } else {
+        let has_summary = cached_summary.file_count.is_some()
+            || cached_summary.line_additions.is_some()
+            || cached_summary.line_deletions.is_some();
+        if has_summary {
+            WorktreeVcsComputeState::Ready
+        } else {
+            WorktreeVcsComputeState::Computing
+        }
+    };
+    let snapshot = build_worktree_vcs_snapshot_from_parts(
         state,
-        &active_session_ids,
-        worktree.id,
-        &snapshot,
-        false,
+        worktree,
+        git_status,
+        touched_files,
+        cached_summary,
+        compute_state,
+        None,
     )
-    .await;
+    .await?;
+    if let Some(snapshot) = upsert_worktree_vcs_snapshot(state, snapshot, force_emit, None).await {
+        if active {
+            state
+                .workspaces
+                .workspace_active_snapshot
+                .publish_worktree_vcs_snapshot(worktree.workspace_id, snapshot)
+                .await;
+        }
+    }
+    if active {
+        schedule_worktree_vcs_summary(state.clone(), worktree.clone()).await;
+    }
     Ok(())
 }
 
@@ -252,13 +571,13 @@ pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) ->
                 timer.as_mut().reset(tokio::time::Instant::now() + debounce);
             }
             _ = poll.tick() => {
-                if let Err(err) = emit_git_status_snapshot_for_worktree(&state, &worktree).await {
+                if let Err(err) = emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, false).await {
                     tracing::warn!(worktree_id = %worktree.id.0, "git status snapshot failed: {err:#}");
                 }
             }
             _ = &mut timer, if pending => {
                 pending = false;
-                if let Err(err) = emit_git_status_snapshot_for_worktree(&state, &worktree).await {
+                if let Err(err) = emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, false).await {
                     tracing::warn!(worktree_id = %worktree.id.0, "git status snapshot failed: {err:#}");
                 }
             }
@@ -272,7 +591,7 @@ async fn run_git_status_poller(state: Arc<AppState>, worktree: Worktree) -> Resu
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         interval.tick().await;
-        if let Err(err) = emit_git_status_snapshot_for_worktree(&state, &worktree).await {
+        if let Err(err) = emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, false).await {
             tracing::warn!(worktree_id = %worktree.id.0, "git status snapshot failed: {err:#}");
         }
     }

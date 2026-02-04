@@ -112,6 +112,118 @@ pub struct Worktree {
     pub bootstrap_script_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeVcsComputeState {
+    Computing,
+    Ready,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeVcsBaseResolutionKind {
+    ExplicitBase,
+    MergeBase,
+    #[default]
+    WorktreeBase,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeVcsTargetSource {
+    Explicit,
+    MergeQueueOverride,
+    MergeQueueConfig,
+    DefaultBranch,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorktreeVcsBaseResolution {
+    pub kind: WorktreeVcsBaseResolutionKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_source: Option<WorktreeVcsTargetSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorktreeVcsSummary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_additions: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_deletions: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_count: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorktreeVcsTouchedFile {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orig_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorktreeVcsTouchedFiles {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<WorktreeVcsTouchedFile>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_count: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorktreeVcsGitStatusSummary {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub raw: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub summary_line: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<String>,
+    pub ahead: i64,
+    pub behind: i64,
+    pub detached: bool,
+    pub staged: i64,
+    pub unstaged: i64,
+    pub untracked: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entries: Vec<WorktreeVcsTouchedFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Invariant: summary counts align with default session diff summary semantics.
+pub struct WorktreeVcsSnapshot {
+    pub worktree_id: WorktreeId,
+    pub rev: i64,
+    pub emitted_at_ms: i64,
+    pub base_commit_sha: String,
+    pub head_commit_sha: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_branch_commit_sha: Option<String>,
+    pub base_resolution: WorktreeVcsBaseResolution,
+    pub compute_state: WorktreeVcsComputeState,
+    #[serde(default)]
+    pub summary: WorktreeVcsSummary,
+    #[serde(default)]
+    pub git_status: WorktreeVcsGitStatusSummary,
+    #[serde(default)]
+    pub touched_files: WorktreeVcsTouchedFiles,
+    #[serde(default)]
+    pub schema_version: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceAttachmentKind {
@@ -626,6 +738,8 @@ pub struct WorkspaceActiveSnapshot {
     #[serde(default)]
     pub archived_rev: i64,
     pub active: WorkspaceActivePage,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub worktree_vcs_snapshots: Vec<WorktreeVcsSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -864,6 +978,11 @@ pub enum WorkspaceActiveSnapshotEvent {
         snapshot_rev: i64,
         notice: WorktreeBootstrapNotice,
     },
+    WorktreeVcsSnapshot {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        snapshot: Box<WorktreeVcsSnapshot>,
+    },
     ArchivedTaskUpsert {
         workspace_id: WorkspaceId,
         archived_rev: i64,
@@ -887,7 +1006,7 @@ pub enum WorkspaceActiveSnapshotStreamMessage {
     },
     Event {
         rev: i64,
-        event: WorkspaceActiveSnapshotEvent,
+        event: Box<WorkspaceActiveSnapshotEvent>,
     },
     HeadsBatch {
         rev: i64,

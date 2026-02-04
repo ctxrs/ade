@@ -9,6 +9,7 @@ import type {
   SessionSnapshotSummary,
   SessionTurn,
   Task,
+  WorktreeVcsSnapshot,
   WorkspaceActiveSnapshot,
   WorkspaceActiveSnapshotEvent,
   WorkspaceActiveTaskSummary,
@@ -60,6 +61,7 @@ export type WorkspaceActiveSnapshotState = {
   totalActive: number;
   totalArchived: number;
   archivedRev: number;
+  worktreeVcsById: Record<string, WorktreeVcsSnapshot>;
   fetchState: {
     active: "idle" | "loading" | "error";
     archived: "idle" | "loading" | "error";
@@ -75,6 +77,7 @@ export type WorkspaceActiveSnapshotEventSource = {
   getSnapshot: () => WorkspaceActiveSnapshotState;
   getSessionHeadSnapshot: (sessionId: string) => SessionHeadSnapshot | null;
   getWorktreeRoot: (worktreeId: string) => string | null;
+  getWorktreeVcsSnapshot: (worktreeId: string) => WorktreeVcsSnapshot | null;
   setSubscribedSessionIds?: (sessionIds: string[]) => void;
   setForegroundTaskId?: (taskId: string | null) => void;
 };
@@ -137,6 +140,19 @@ const sortSessionSummaries = (summaries: SessionSnapshotSummary[]): SessionSnaps
   return summaries
     .slice()
     .sort((a, b) => String(a.session.created_at ?? "").localeCompare(String(b.session.created_at ?? "")));
+};
+
+const mapWorktreeVcsSnapshots = (
+  snapshots?: WorktreeVcsSnapshot[] | null,
+): Record<string, WorktreeVcsSnapshot> => {
+  const out: Record<string, WorktreeVcsSnapshot> = {};
+  if (!Array.isArray(snapshots)) return out;
+  for (const snapshot of snapshots) {
+    const id = idToString(snapshot?.worktree_id ?? "");
+    if (!id) continue;
+    out[id] = snapshot;
+  }
+  return out;
 };
 
 const hasOwnProperty = (value: unknown, key: string): boolean => {
@@ -419,6 +435,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       totalActive: 0,
       totalArchived: 0,
       archivedRev: 0,
+      worktreeVcsById: {},
       fetchState: { active: "idle", archived: "idle" },
       hasMoreActive: true,
       hasMoreArchived: false,
@@ -457,6 +474,12 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     return this.worktreeRootsById.get(id) ?? null;
   };
 
+  getWorktreeVcsSnapshot = (worktreeId: string): WorktreeVcsSnapshot | null => {
+    const id = idToString(worktreeId);
+    if (!id) return null;
+    return this.snapshot.worktreeVcsById[id] ?? null;
+  };
+
   getSessionHeadsSnapshot = (): Record<string, SessionHeadSnapshot> => {
     const out: Record<string, SessionHeadSnapshot> = {};
     for (const [id, head] of this.sessionHeadsById.entries()) {
@@ -471,6 +494,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       out[id] = root;
     }
     return out;
+  };
+
+  getWorktreeVcsSnapshots = (): WorktreeVcsSnapshot[] => {
+    return Object.values(this.snapshot.worktreeVcsById ?? {});
   };
 
   getSnapshotRev = (): number => this.snapshotRev;
@@ -734,7 +761,11 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   seedCachedSnapshot(cached: PersistedWorkspaceActiveSnapshotV1) {
     if (!cached || this.destroyed) return;
-    this.applyCachedActiveSnapshot(cached);
+    try {
+      this.applyCachedActiveSnapshot(cached);
+    } catch {
+      // ignore invalid cache payloads
+    }
   }
 
   private async hydrateFromCache() {
@@ -786,6 +817,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.totalActive = Math.max(totalCount, nextActiveIds.size);
     this.snapshotRev = Math.max(this.snapshotRev, cached.snapshotRev ?? 0);
     this.activeSessionIds = this.collectActiveSessionIds();
+    this.snapshot.worktreeVcsById = mapWorktreeVcsSnapshots(cached.worktreeVcsSnapshots ?? []);
     this.snapshot.initialized = true;
     this.publish();
     if (this.needsCacheMigration(cached)) {
@@ -890,6 +922,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       await saveWorkspaceActiveSnapshotV1(this.workspaceId, {
         snapshotRev: this.snapshotRev,
         archivedRev: this.archivedRev,
+        worktreeVcsSnapshots: this.getWorktreeVcsSnapshots(),
         active: {
           tasks,
           totalCount,
@@ -1041,6 +1074,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.applyActiveHeads(heads);
     }
     this.activeSessionIds = this.collectActiveSessionIds();
+    this.snapshot.worktreeVcsById = mapWorktreeVcsSnapshots(snapshot.worktree_vcs_snapshots ?? []);
     this.snapshot.initialized = true;
     this.liveSnapshotApplied = true;
     this.clearSnapshotWarning();
@@ -1369,6 +1403,19 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
           this.worktreeRootsById.set(worktreeId, root);
           this.publish();
         }
+        break;
+      }
+      case "worktree_vcs_snapshot": {
+        const worktreeId = idToString(evt.snapshot.worktree_id);
+        if (!worktreeId) break;
+        const prev = this.snapshot.worktreeVcsById[worktreeId];
+        if (prev?.rev === evt.snapshot.rev) break;
+        this.snapshot.worktreeVcsById = {
+          ...this.snapshot.worktreeVcsById,
+          [worktreeId]: evt.snapshot,
+        };
+        this.publish();
+        this.schedulePersistCache();
         break;
       }
       default:

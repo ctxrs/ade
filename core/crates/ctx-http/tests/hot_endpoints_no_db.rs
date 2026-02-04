@@ -195,10 +195,8 @@ async fn hot_endpoints_use_cache_when_db_unavailable() {
     let ready: WorkspaceActiveSnapshotStreamMessage = serde_json::from_str(&txt).unwrap();
     assert!(matches!(
         ready,
-        WorkspaceActiveSnapshotStreamMessage::Event {
-            event: WorkspaceActiveSnapshotEvent::Ready { .. },
-            ..
-        }
+        WorkspaceActiveSnapshotStreamMessage::Event { ref event, .. }
+            if matches!(event.as_ref(), WorkspaceActiveSnapshotEvent::Ready { .. })
     ));
 
     let subscribe = WorkspaceActiveSnapshotClientMessage::Subscribe {

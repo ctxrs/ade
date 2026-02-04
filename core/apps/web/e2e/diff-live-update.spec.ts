@@ -42,12 +42,7 @@ async function createWorkspaceAndStartRun(opts: {
   const sessionComposer = page.locator(".wb-session textarea.wb-active-textarea");
   await expect(sessionComposer).toBeVisible({ timeout: 20_000 });
 
-  const readId = (v: any): string => {
-    if (!v) return "";
-    if (typeof v === "string") return v;
-    if (typeof v === "object" && typeof v["0"] === "string") return v["0"];
-    return "";
-  };
+  const readId = (v: any): string => (typeof v === "string" ? v : "");
 
   let workspaceId = "";
   await expect

@@ -103,7 +103,7 @@ const PENDING_MATCH_WINDOW_MS = 15_000;
 const PENDING_MATCH_EARLY_SKEW_MS = 2_000;
 
 const isClientMessageId = (value: unknown): boolean => {
-  const id = idToString(value as { 0?: string } | string);
+  const id = typeof value === "string" ? value : "";
   return Boolean(id && id.startsWith("client-"));
 };
 

@@ -176,14 +176,16 @@ async fn property_replay_respects_after_seq_and_monotonicity() {
                 continue;
             };
             match message {
-                ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                    event: WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. },
-                    ..
-                } => {
+                ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+                    let WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } =
+                        event.as_ref()
+                    else {
+                        continue;
+                    };
                     if delta.session_id != session.id {
                         continue;
                     }
-                    let Some(event) = delta.event else {
+                    let Some(event) = delta.event.as_ref() else {
                         continue;
                     };
                     assert_eq!(delta.last_event_seq, event.seq);

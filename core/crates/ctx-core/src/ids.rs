@@ -1,12 +1,32 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
 macro_rules! id_type {
     ($name:ident) => {
-        #[derive(
-            Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord,
-        )]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[repr(transparent)]
         pub struct $name(pub Uuid);
+
+        impl Serialize for $name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                let value = self.0.to_string();
+                serializer.serialize_str(&value)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let value = String::deserialize(deserializer)?;
+                let uuid = Uuid::parse_str(&value).map_err(serde::de::Error::custom)?;
+                Ok(Self(uuid))
+            }
+        }
 
         impl $name {
             pub fn new() -> Self {

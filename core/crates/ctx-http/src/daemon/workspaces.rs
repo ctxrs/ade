@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -5,7 +6,9 @@ use anyhow::Result;
 use tokio::sync::watch;
 
 use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
-use ctx_core::models::{Task, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, Worktree};
+use ctx_core::models::{
+    Task, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, Worktree, WorktreeVcsSnapshot,
+};
 use ctx_lsp::Language as LspLanguage;
 
 use crate::git_status;
@@ -68,6 +71,67 @@ impl WorkspaceRuntime {
             workspace_id,
             TimedEntry::new(WorkspaceActiveHeadCacheEntry { batch }),
         );
+    }
+
+    pub async fn get_worktree_vcs_snapshot(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Option<WorktreeVcsSnapshot> {
+        let mut cache = self.worktree_vcs_snapshots.lock().await;
+        cache.get_mut(&worktree_id).map(|entry| {
+            entry.touch();
+            entry.value.snapshot.clone()
+        })
+    }
+
+    pub async fn update_worktree_vcs_activity(
+        &self,
+        previous: &HashSet<WorktreeId>,
+        next: &HashSet<WorktreeId>,
+    ) {
+        if previous == next {
+            return;
+        }
+        let mut evicted = Vec::new();
+        {
+            let mut active = self.worktree_vcs_active.lock().await;
+            for worktree_id in previous.difference(next) {
+                if let Some(count) = active.get_mut(worktree_id) {
+                    if *count <= 1 {
+                        active.remove(worktree_id);
+                        evicted.push(*worktree_id);
+                    } else {
+                        *count -= 1;
+                    }
+                }
+            }
+            for worktree_id in next.difference(previous) {
+                let entry = active.entry(*worktree_id).or_insert(0);
+                *entry += 1;
+            }
+        }
+        if !evicted.is_empty() {
+            {
+                let mut cache = self.worktree_vcs_snapshots.lock().await;
+                for worktree_id in &evicted {
+                    cache.remove(worktree_id);
+                }
+            }
+            {
+                let mut gens = self.worktree_vcs_summary_gen.lock().await;
+                for worktree_id in &evicted {
+                    gens.remove(worktree_id);
+                }
+            }
+            self.workspace_active_snapshot
+                .drop_worktree_vcs_snapshots(&evicted)
+                .await;
+        }
+    }
+
+    pub async fn is_worktree_vcs_active(&self, worktree_id: WorktreeId) -> bool {
+        let active = self.worktree_vcs_active.lock().await;
+        active.get(&worktree_id).copied().unwrap_or(0) > 0
     }
 
     pub async fn ensure_workspace_active_snapshot_hydrated(
@@ -390,6 +454,27 @@ impl AppState {
 
     pub async fn cache_workspace_active_heads(&self, batch: WorkspaceActiveHeadBatch) {
         self.workspaces.cache_workspace_active_heads(batch).await;
+    }
+
+    pub async fn get_worktree_vcs_snapshot(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Option<WorktreeVcsSnapshot> {
+        self.workspaces.get_worktree_vcs_snapshot(worktree_id).await
+    }
+
+    pub async fn update_worktree_vcs_activity(
+        &self,
+        previous: &HashSet<WorktreeId>,
+        next: &HashSet<WorktreeId>,
+    ) {
+        self.workspaces
+            .update_worktree_vcs_activity(previous, next)
+            .await;
+    }
+
+    pub async fn is_worktree_vcs_active(&self, worktree_id: WorktreeId) -> bool {
+        self.workspaces.is_worktree_vcs_active(worktree_id).await
     }
 
     pub async fn ensure_workspace_active_snapshot_hydrated(&self, workspace_id: WorkspaceId) {

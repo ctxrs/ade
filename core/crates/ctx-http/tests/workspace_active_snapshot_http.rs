@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,10 +34,12 @@ fn git_status_untracked_from_message(
     session_id: SessionId,
 ) -> Option<i64> {
     match message {
-        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-            event: ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. },
-            ..
-        } => {
+        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+            let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } =
+                event.as_ref()
+            else {
+                return None;
+            };
             if delta.session_id != session_id {
                 None
             } else {
@@ -126,6 +129,128 @@ async fn workspace_active_snapshot_includes_sessions() {
     assert_eq!(summary.primary_session.session.id, session.id);
     assert!(summary.primary_session_head.is_none());
     assert_eq!(snapshot.active.total_count, 1);
+}
+
+#[tokio::test]
+async fn workspace_active_snapshot_includes_worktree_vcs_for_active_tasks_only() {
+    let (repo, _data_dir, state, server) = setup().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task_active: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
+        .json(&json!({"title":"active-task"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let session_active: ctx_core::models::Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task_active.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task_archived: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
+        .json(&json!({"title":"archived-task"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let session_archived: ctx_core::models::Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task_archived.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let store_active = state.store_for_session(session_active.id).await.unwrap();
+    let worktree_active = store_active
+        .get_worktree(session_active.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing active worktree");
+    let store_archived = state.store_for_session(session_archived.id).await.unwrap();
+    let worktree_archived = store_archived
+        .get_worktree(session_archived.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing archived worktree");
+
+    let mut next = HashSet::new();
+    next.insert(worktree_active.id);
+    next.insert(worktree_archived.id);
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .await;
+
+    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree_active, true)
+        .await
+        .unwrap();
+    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree_archived, true)
+        .await
+        .unwrap();
+
+    let resp = client
+        .post(format!("{base}/api/tasks/{}/archive", task_archived.id.0))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    let snapshot: ctx_core::models::WorkspaceActiveSnapshot = client
+        .get(format!(
+            "{base}/api/workspaces/{}/active_snapshot?limit=5",
+            ws.id.0
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let worktree_ids: HashSet<_> = snapshot
+        .worktree_vcs_snapshots
+        .iter()
+        .map(|snapshot| snapshot.worktree_id)
+        .collect();
+    assert!(worktree_ids.contains(&worktree_active.id));
+    assert!(!worktree_ids.contains(&worktree_archived.id));
+
+    assert!(snapshot
+        .active
+        .tasks
+        .iter()
+        .any(|summary| summary.task.id == task_active.id));
+    assert!(!snapshot
+        .active
+        .tasks
+        .iter()
+        .any(|summary| summary.task.id == task_archived.id));
 }
 
 #[tokio::test]
@@ -420,17 +545,19 @@ async fn workspace_stream_replays_from_after_seq() {
             {
                 match message {
                     ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                        event:
-                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                                delta,
-                                ..
-                            },
-                        ..
+                        event, ..
                     } => {
+                        let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                            delta,
+                            ..
+                        } = event.as_ref()
+                        else {
+                            continue;
+                        };
                         if delta.session_id != session.id {
                             continue;
                         }
-                        if let Some(event) = delta.event {
+                        if let Some(event) = delta.event.as_ref() {
                             if event.seq == ev3.seq {
                                 seen_replay = true;
                             }
@@ -581,17 +708,19 @@ async fn workspace_stream_replays_tool_events() {
             {
                 match message {
                     ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                        event:
-                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                                delta,
-                                ..
-                            },
-                        ..
+                        event, ..
                     } => {
+                        let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                            delta,
+                            ..
+                        } = event.as_ref()
+                        else {
+                            continue;
+                        };
                         if delta.session_id != session.id {
                             continue;
                         }
-                        if let Some(event) = delta.event {
+                        if let Some(event) = delta.event.as_ref() {
                             match event.event_type {
                                 SessionEventType::ToolCall => saw_call = true,
                                 SessionEventType::ToolResult => saw_result = true,
@@ -881,6 +1010,99 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
 }
 
 #[tokio::test]
+async fn workspace_stream_emits_worktree_vcs_snapshot_on_activation() {
+    let (repo, _data_dir, _state, server) = setup().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
+        .json(&json!({"title":"vcs-snapshot"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let session: ctx_core::models::Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe = json!({
+        "type": "subscribe",
+        "sessions": [{
+            "session_id": session.id.0,
+        }],
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let worktree_id = session.worktree_id.0.to_string();
+    let mut saw_snapshot = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            let value: Value = serde_json::from_str(&txt).unwrap();
+            let event = match value.get("event") {
+                Some(event) => event,
+                None => continue,
+            };
+            if event.get("type").and_then(|value| value.as_str()) != Some("worktree_vcs_snapshot") {
+                continue;
+            }
+            let snapshot = event.get("snapshot").expect("missing snapshot");
+            let event_worktree_id = snapshot.get("worktree_id").and_then(|value| value.as_str());
+            if event_worktree_id != Some(worktree_id.as_str()) {
+                continue;
+            }
+            assert!(snapshot
+                .get("compute_state")
+                .and_then(|value| value.as_str())
+                .is_some());
+            assert!(snapshot.get("summary").is_some());
+            saw_snapshot = true;
+            break;
+        }
+    }
+
+    assert!(saw_snapshot, "expected worktree_vcs_snapshot on activation");
+}
+
+#[tokio::test]
 async fn workspace_stream_emits_gap_on_large_replay() {
     let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
@@ -973,10 +1195,11 @@ async fn workspace_stream_emits_gap_on_large_replay() {
             {
                 if matches!(
                     message,
-                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                        event: ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadReset { .. },
-                        ..
-                    }
+                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { ref event, .. }
+                        if matches!(
+                            event.as_ref(),
+                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadReset { .. }
+                        )
                 ) {
                     seen_reset = true;
                     break;
@@ -1015,10 +1238,12 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
         let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
             serde_json::from_str(&txt).unwrap();
         match message {
-            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                event: ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. },
-                ..
-            } => {}
+            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+                match event.as_ref() {
+                    ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. } => {}
+                    other => panic!("expected ready, got {other:?}"),
+                }
+            }
             other => panic!("expected ready, got {other:?}"),
         }
     } else {
@@ -1056,18 +1281,19 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
             if let Ok(ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                event:
-                    ctx_core::models::WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
-                        task: summary,
-                        ..
-                    },
-                ..
+                event, ..
             }) =
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if summary.task.id == task.id {
-                    saw_upsert = true;
-                    break;
+                if let ctx_core::models::WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+                    task: summary,
+                    ..
+                } = event.as_ref()
+                {
+                    if summary.task.id == task.id {
+                        saw_upsert = true;
+                        break;
+                    }
                 }
             }
         }
@@ -1122,10 +1348,12 @@ async fn workspace_stream_archived_task_upsert_has_no_snapshot_payload() {
         let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
             serde_json::from_str(&txt).unwrap();
         match message {
-            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                event: ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. },
-                ..
-            } => {}
+            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+                match event.as_ref() {
+                    ctx_core::models::WorkspaceActiveSnapshotEvent::Ready { .. } => {}
+                    other => panic!("expected ready, got {other:?}"),
+                }
+            }
             other => panic!("expected ready, got {other:?}"),
         }
     } else {
@@ -1297,13 +1525,15 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
             {
                 match message {
                     ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                        event:
-                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                                delta,
-                                ..
-                            },
-                        ..
+                        event, ..
                     } => {
+                        let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                            delta,
+                            ..
+                        } = event.as_ref()
+                        else {
+                            continue;
+                        };
                         if delta.session_id == session_a.id {
                             seen_a = true;
                         }

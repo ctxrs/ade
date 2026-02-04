@@ -28,7 +28,7 @@ mod auth;
 mod errors;
 mod extractors;
 mod providers;
-mod sessions;
+pub(crate) mod sessions;
 mod settings;
 mod shared;
 mod tasks;

@@ -11,7 +11,13 @@ import type {
 import { waitForCondition } from "../testUtils/waitForCondition";
 
 vi.mock("../api/client", () => {
-  const idToString = (id: any): string => (typeof id === "string" ? id : id?.["0"]);
+  const idToString = (id: string | null | undefined): string => {
+    if (id === null || id === undefined) return "";
+    if (typeof id !== "string") {
+      throw new Error("Expected id to be a string");
+    }
+    return id;
+  };
   return {
     idToString,
     authToken: vi.fn(() => null),
@@ -61,8 +67,8 @@ vi.mock("./uiStateStore", () => ({
 }));
 
 const mkTask = (taskId: string, workspaceId: string, now: string): Task => ({
-  id: { 0: taskId },
-  workspace_id: { 0: workspaceId },
+  id: taskId,
+  workspace_id: workspaceId,
   title: "Active task",
   status: "running",
   created_at: now,
@@ -70,10 +76,10 @@ const mkTask = (taskId: string, workspaceId: string, now: string): Task => ({
 });
 
 const mkSession = (sessionId: string, taskId: string, workspaceId: string, now: string): Session => ({
-  id: { 0: sessionId },
-  task_id: { 0: taskId },
-  workspace_id: { 0: workspaceId },
-  worktree_id: { 0: "wt-1" },
+  id: sessionId,
+  task_id: taskId,
+  workspace_id: workspaceId,
+  worktree_id: "wt-1",
   provider_id: "fake",
   model_id: "fake-model",
   title: "Session",

@@ -68,14 +68,14 @@ pub(crate) async fn spawn_ws_listener(
                 };
             let mut deltas = Vec::new();
             match message {
-                ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                    event:
-                        ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                            delta, ..
-                        },
-                    ..
-                } => {
-                    deltas.push(*delta);
+                ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+                    if let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                        delta,
+                        ..
+                    } = event.as_ref()
+                    {
+                        deltas.push((**delta).clone());
+                    }
                 }
                 ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
                     deltas: batch,

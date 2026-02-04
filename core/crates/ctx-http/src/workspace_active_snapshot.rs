@@ -5,13 +5,13 @@ use async_trait::async_trait;
 use serde::Serialize;
 use tokio::sync::{broadcast, Mutex};
 
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Message, Session, SessionActivityState, SessionEvent, SessionEventType, SessionHeadDelta,
     SessionHeadSnapshot, SessionMetadata, SessionSnapshotSummary, SessionTurn,
     SessionTurnToolSummary, WorkspaceActiveHeadBatch, WorkspaceActivePage, WorkspaceActiveSnapshot,
     WorkspaceActiveSnapshotEvent, WorkspaceActiveTaskSummary, WorkspaceTaskSummary,
-    WorktreeBootstrapNotice,
+    WorktreeBootstrapNotice, WorktreeVcsSnapshot,
 };
 use ctx_store::ActiveSnapshotObserver;
 
@@ -152,6 +152,7 @@ struct WorkspaceActiveSnapshotEntry {
     active_tasks: HashMap<TaskId, WorkspaceActiveTaskSummary>,
     active_heads: HashMap<SessionId, SessionHeadSnapshot>,
     session_replay: HashMap<SessionId, SessionReplayState>,
+    worktree_vcs_snapshots: HashMap<WorktreeId, WorktreeVcsSnapshot>,
 }
 
 impl WorkspaceActiveSnapshotEntry {
@@ -165,6 +166,7 @@ impl WorkspaceActiveSnapshotEntry {
             active_tasks: HashMap::new(),
             active_heads: HashMap::new(),
             session_replay: HashMap::new(),
+            worktree_vcs_snapshots: HashMap::new(),
         }
     }
 
@@ -377,7 +379,7 @@ impl WorkspaceActiveSnapshotHub {
         limit: i64,
     ) -> WorkspaceActiveSnapshot {
         let limit = limit.clamp(1, 200) as usize;
-        let (snapshot_rev, archived_rev, total_count, mut tasks) = {
+        let (snapshot_rev, archived_rev, total_count, mut tasks, worktree_vcs_snapshots) = {
             let guard = self.inner.lock().await;
             match guard.get(&workspace_id) {
                 Some(entry) => (
@@ -385,8 +387,9 @@ impl WorkspaceActiveSnapshotHub {
                     entry.archived_rev,
                     entry.active_tasks.len() as i64,
                     entry.active_tasks.values().cloned().collect::<Vec<_>>(),
+                    entry.worktree_vcs_snapshots.clone(),
                 ),
-                None => (0, 0, 0, Vec::new()),
+                None => (0, 0, 0, Vec::new(), HashMap::new()),
             }
         };
         tasks.sort_by(|a, b| {
@@ -400,11 +403,25 @@ impl WorkspaceActiveSnapshotHub {
         if tasks.len() > limit {
             tasks.truncate(limit);
         }
+        let mut active_worktree_ids = HashSet::new();
+        for task in &tasks {
+            active_worktree_ids.insert(task.primary_session.session.worktree_id);
+            for summary in &task.sessions {
+                active_worktree_ids.insert(summary.session.worktree_id);
+            }
+        }
+        let mut snapshots = Vec::new();
+        for worktree_id in active_worktree_ids {
+            if let Some(snapshot) = worktree_vcs_snapshots.get(&worktree_id) {
+                snapshots.push(snapshot.clone());
+            }
+        }
         WorkspaceActiveSnapshot {
             workspace_id,
             snapshot_rev,
             archived_rev,
             active: WorkspaceActivePage { tasks, total_count },
+            worktree_vcs_snapshots: snapshots,
         }
     }
 
@@ -766,6 +783,41 @@ impl WorkspaceActiveSnapshotHub {
             snapshot_rev,
             notice,
         });
+    }
+
+    pub async fn publish_worktree_vcs_snapshot(
+        &self,
+        workspace_id: WorkspaceId,
+        snapshot: WorktreeVcsSnapshot,
+    ) {
+        let (tx, snapshot_rev) = {
+            let mut guard = self.inner.lock().await;
+            let entry = guard
+                .entry(workspace_id)
+                .or_insert_with(WorkspaceActiveSnapshotEntry::new);
+            entry.snapshot_rev += 1;
+            entry
+                .worktree_vcs_snapshots
+                .insert(snapshot.worktree_id, snapshot.clone());
+            (entry.tx.clone(), entry.snapshot_rev)
+        };
+        let _ = tx.send(WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot {
+            workspace_id,
+            snapshot_rev,
+            snapshot: Box::new(snapshot),
+        });
+    }
+
+    pub async fn drop_worktree_vcs_snapshots(&self, worktree_ids: &[WorktreeId]) {
+        if worktree_ids.is_empty() {
+            return;
+        }
+        let mut guard = self.inner.lock().await;
+        for entry in guard.values_mut() {
+            for worktree_id in worktree_ids {
+                entry.worktree_vcs_snapshots.remove(worktree_id);
+            }
+        }
     }
 
     pub async fn publish_archived_task_upsert(
