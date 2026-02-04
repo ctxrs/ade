@@ -1025,7 +1025,7 @@ async fn resource_utilization(
 }
 
 fn resource_utilization_disabled() -> bool {
-    env_bool("CTX_RESOURCE_UTILIZATION_DISABLED").unwrap_or(false)
+    env_bool("CTX_RESOURCE_UTILIZATION_DISABLED").unwrap_or(true)
 }
 
 fn env_bool(key: &str) -> Option<bool> {

@@ -586,7 +586,7 @@ pub struct SubagentSettings {
 impl Default for ResourceGovernanceSettings {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             mode: ResourceGovernanceMode::Auto,
             cpu_quota_pct: None,
             memory_high_mb: None,
@@ -598,7 +598,7 @@ impl Default for ResourceGovernanceSettings {
 impl Default for ProviderGuardSettings {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             mode: ResourceGovernanceMode::Auto,
             memory_high_mb: None,
             memory_max_mb: None,
@@ -611,7 +611,7 @@ impl Default for ProviderGuardSettings {
 impl Default for ToolLimitsSettings {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             mode: ResourceGovernanceMode::Auto,
             memory_high_mb: None,
             memory_max_mb: None,
@@ -622,7 +622,7 @@ impl Default for ToolLimitsSettings {
 impl Default for ProviderRestartSettings {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             mode: ResourceGovernanceMode::Auto,
             memory_high_mb: None,
             memory_max_mb: None,
