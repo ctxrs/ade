@@ -44,6 +44,7 @@ impl Drop for EnvGuard {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct LeakReport {
     label: &'static str,
     start_rss: u64,
