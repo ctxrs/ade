@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::collections::HashMap;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,12 @@ pub enum CrpCommand {
         session_id: Option<String>,
         turn_id: Option<String>,
     },
+    #[serde(rename = "session.authenticate")]
+    SessionAuthenticate {
+        session_id: Option<String>,
+        #[serde(default)]
+        method_id: Option<String>,
+    },
     #[serde(rename = "models.list")]
     ModelsList {
         #[serde(default)]
@@ -52,6 +59,21 @@ pub struct CrpSessionConfig {
     pub model: Option<String>,
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub mcp_servers: Option<HashMap<String, CrpMcpServerConfig>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CrpMcpServerConfig {
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+    #[serde(default)]
+    pub env: Option<HashMap<String, String>>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub tool_timeout_sec: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -162,6 +184,21 @@ pub enum CrpEvent {
         turn_id: Option<String>,
         #[serde(default)]
         reason: Option<String>,
+    },
+    #[serde(rename = "session.notice")]
+    SessionNotice {
+        session_id: String,
+        #[serde(default)]
+        turn_id: Option<String>,
+        code: String,
+        #[serde(default)]
+        severity: Option<String>,
+        #[serde(default)]
+        message: Option<String>,
+        #[serde(default)]
+        details: Option<Value>,
+        #[serde(default)]
+        transient: Option<bool>,
     },
 }
 

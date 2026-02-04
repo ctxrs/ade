@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agent_client_protocol::{
-    Agent, CancelNotification, Client, ClientCapabilities, ClientSideConnection, ContentBlock,
-    ImageContent, InitializeRequest, NewSessionRequest, PermissionOptionKind, PromptRequest,
+    Agent, AuthMethod, AuthenticateRequest, CancelNotification, Client, ClientCapabilities,
+    ClientSideConnection, ContentBlock, EnvVariable, ErrorCode, ImageContent, InitializeRequest,
+    McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind, PromptRequest,
     ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     ResourceLink, SelectedPermissionOutcome, SessionNotification, TextContent,
 };
@@ -19,13 +20,21 @@ use tracing::{error, warn};
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::crp::{CrpChannel, CrpCommand, CrpEnvelope, CrpEvent, CrpTurnStatus, CrpWriter};
+use crate::crp::{
+    CrpChannel, CrpCommand, CrpEnvelope, CrpEvent, CrpMcpServerConfig, CrpTurnStatus, CrpWriter,
+};
 use crate::translate::Translator;
 
 struct SessionState {
     translator: Translator,
     cwd: PathBuf,
     active_turn_id: Option<String>,
+}
+
+#[derive(Default)]
+struct BridgeState {
+    auth_methods: Vec<AuthMethod>,
+    provider_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -86,7 +95,7 @@ impl Client for BridgeClient {
 fn normalize_agent_message_block(value: Value) -> Value {
     match value {
         Value::String(text) => json!({"type":"text","text": text}),
-        Value::Object(mut obj) => {
+        Value::Object(obj) => {
             if obj.get("type").is_some() {
                 return Value::Object(obj);
             }
@@ -163,10 +172,12 @@ async fn forward_acp_stdout(
             for entry in rewrites {
                 writer.write_all(entry.as_bytes()).await?;
                 writer.write_all(b"\n").await?;
+                writer.flush().await?;
             }
         } else {
             writer.write_all(line.as_bytes()).await?;
             writer.write_all(b"\n").await?;
+            writer.flush().await?;
         }
     }
     writer.flush().await?;
@@ -203,6 +214,7 @@ pub async fn run_bridge(config: Config) -> Result<()> {
 
     let (events_tx, mut events_rx) = mpsc::channel::<CrpEnvelope>(256);
     let sessions = Arc::new(Mutex::new(Sessions::default()));
+    let bridge_state = Arc::new(Mutex::new(BridgeState::default()));
 
     let client = BridgeClient {
         events_tx: events_tx.clone(),
@@ -236,8 +248,16 @@ pub async fn run_bridge(config: Config) -> Result<()> {
 
             let init = InitializeRequest::new(ProtocolVersion::LATEST)
                 .client_capabilities(ClientCapabilities::default());
-            if let Err(err) = acp.initialize(init).await {
-                return Err(anyhow!("acp initialize failed: {err}"));
+            let init_response = match acp.initialize(init).await {
+                Ok(response) => response,
+                Err(err) => {
+                    return Err(anyhow!("acp initialize failed: {err}"));
+                }
+            };
+            {
+                let mut state = bridge_state.lock().await;
+                state.auth_methods = init_response.auth_methods;
+                state.provider_id = std::env::var("CTX_PROVIDER_ID").ok();
             }
 
             let mut writer = CrpWriter::new(tokio::io::stdout());
@@ -268,7 +288,8 @@ pub async fn run_bridge(config: Config) -> Result<()> {
                 };
 
                 if let Err(err) =
-                    handle_command(command, &acp, &events_tx, &sessions, &config).await
+                    handle_command(command, &acp, &events_tx, &sessions, &bridge_state, &config)
+                        .await
                 {
                     warn!("crp command error: {err}");
                 }
@@ -286,6 +307,7 @@ async fn handle_command(
     acp: &ClientSideConnection,
     events_tx: &mpsc::Sender<CrpEnvelope>,
     sessions: &Arc<Mutex<Sessions>>,
+    bridge_state: &Arc<Mutex<BridgeState>>,
     config: &Config,
 ) -> Result<()> {
     match command {
@@ -295,14 +317,37 @@ async fn handle_command(
         } => {
             let crp_session_id = session_id.unwrap_or_else(|| Uuid::new_v4().to_string());
             let cwd = crp_config
-                .and_then(|cfg| cfg.cwd)
+                .as_ref()
+                .and_then(|cfg| cfg.cwd.clone())
                 .or_else(|| config.cwd.clone())
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-            let response = acp
-                .new_session(NewSessionRequest::new(cwd.clone()))
-                .await
-                .context("acp new_session")?;
+            let mcp_servers = crp_config
+                .and_then(|cfg| cfg.mcp_servers)
+                .map(crp_mcp_servers_to_acp)
+                .unwrap_or_default();
+
+            let mut new_session_req = NewSessionRequest::new(cwd.clone());
+            if !mcp_servers.is_empty() {
+                new_session_req = new_session_req.mcp_servers(mcp_servers);
+            }
+
+            let response = match acp.new_session(new_session_req).await {
+                Ok(response) => response,
+                Err(err) => {
+                    if err.code == ErrorCode::AuthRequired {
+                        emit_auth_required_notice(
+                            events_tx,
+                            bridge_state,
+                            &crp_session_id,
+                            err,
+                        )
+                        .await;
+                        return Ok(());
+                    }
+                    return Err(anyhow!("acp new_session failed: {err}"));
+                }
+            };
 
             let acp_session_id = response.session_id.to_string();
 
@@ -430,6 +475,29 @@ async fn handle_command(
             let cancel = CancelNotification::new(acp_session_id);
             let _ = acp.cancel(cancel).await;
         }
+        CrpCommand::SessionAuthenticate {
+            session_id,
+            method_id,
+        } => {
+            let _crp_session_id =
+                session_id.ok_or_else(|| anyhow!("session.authenticate missing session_id"))?;
+
+            let method_id = if let Some(method_id) = method_id {
+                method_id
+            } else {
+                let state = bridge_state.lock().await;
+                state
+                    .auth_methods
+                    .first()
+                    .map(|method| method.id.to_string())
+                    .ok_or_else(|| anyhow!("session.authenticate missing method_id"))?
+            };
+
+            let request = AuthenticateRequest::new(method_id);
+            acp.authenticate(request)
+                .await
+                .context("acp authenticate")?;
+        }
         CrpCommand::ModelsList { .. } => {
             let _ = events_tx
                 .send(CrpEnvelope {
@@ -444,6 +512,76 @@ async fn handle_command(
     }
 
     Ok(())
+}
+
+fn crp_mcp_servers_to_acp(
+    servers: HashMap<String, CrpMcpServerConfig>,
+) -> Vec<McpServer> {
+    let mut out = Vec::new();
+    for (name, config) in servers {
+        let Some(command) = config.command else {
+            continue;
+        };
+        let mut server = McpServerStdio::new(name, command);
+        if let Some(args) = config.args {
+            server = server.args(args);
+        }
+        if let Some(env) = config.env {
+            let env_vars = env
+                .into_iter()
+                .map(|(key, value)| EnvVariable::new(key, value))
+                .collect::<Vec<_>>();
+            server = server.env(env_vars);
+        }
+        out.push(McpServer::Stdio(server));
+    }
+    out
+}
+
+async fn emit_auth_required_notice(
+    events_tx: &mpsc::Sender<CrpEnvelope>,
+    bridge_state: &Arc<Mutex<BridgeState>>,
+    session_id: &str,
+    err: agent_client_protocol::Error,
+) {
+    let (auth_methods, provider_id) = {
+        let state = bridge_state.lock().await;
+        (state.auth_methods.clone(), state.provider_id.clone())
+    };
+    let message = err
+        .data
+        .as_ref()
+        .and_then(|value| value.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| err.message.clone());
+
+    let mut details = serde_json::Map::new();
+    if !auth_methods.is_empty() {
+        if let Ok(value) = serde_json::to_value(auth_methods) {
+            details.insert("auth_methods".to_string(), value);
+        }
+    }
+    if let Some(provider_id) = provider_id {
+        details.insert("provider".to_string(), json!(provider_id));
+    }
+
+    let notice = CrpEnvelope {
+        channel: CrpChannel::Control,
+        event: CrpEvent::SessionNotice {
+            session_id: session_id.to_string(),
+            turn_id: None,
+            code: "auth_required".to_string(),
+            severity: None,
+            message: Some(message),
+            details: if details.is_empty() {
+                None
+            } else {
+                Some(Value::Object(details))
+            },
+            transient: None,
+        },
+    };
+    let _ = events_tx.send(notice).await;
 }
 
 fn build_prompt_blocks(
