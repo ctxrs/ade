@@ -22,7 +22,13 @@ export function WorkbenchSessionSlot({
   const workbenchStore = useWorkbenchStore();
   const draft = useWorkbenchDraft(sessionDraftKey(sessionId), { text: "", modeId: "default" });
   const handleScrollStateChange = useCallback(
-    (next: { stickToBottom: boolean; anchorItemId: string | null; scrollTop: number | null; virtuosoState?: unknown | null }) => {
+    (next: {
+      stickToBottom: boolean;
+      anchorItemId: string | null;
+      anchorOffset: number | null;
+      scrollTop: number | null;
+      virtuosoState?: unknown | null;
+    }) => {
       workbenchStore.setScrollState(scrollKey(sessionId), next);
     },
     [sessionId, workbenchStore],
@@ -69,6 +75,7 @@ export function WorkbenchSessionSlot({
             ? {
                 stickToBottom: scrollState.stickToBottom,
                 anchorItemId: scrollState.anchorItemId,
+                anchorOffset: scrollState.anchorOffset ?? null,
                 scrollTop: scrollState.scrollTop ?? null,
                 virtuosoState: scrollState.virtuosoState ?? null,
               }

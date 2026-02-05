@@ -4,6 +4,7 @@ import type { IndexLocationWithAlign, VirtuosoHandle } from "react-virtuoso";
 export type PinnedScrollPersistState = {
   stickToBottom: boolean;
   anchorItemId: string | null;
+  anchorOffset: number | null;
   scrollTop: number | null;
 };
 
@@ -23,6 +24,7 @@ export type UsePinnedScrollManagerArgs = {
   setAtBottom: (next: boolean) => void;
 
   latestAnchorIdRef: MutableRefObject<string | null>;
+  latestAnchorOffsetRef: MutableRefObject<number | null>;
   liveScrollTopRef: MutableRefObject<number | null>;
   userScrollIntentRef: MutableRefObject<number>;
   scrollbarDraggingRef: MutableRefObject<boolean>;
@@ -64,6 +66,7 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     setStickToBottom,
     setAtBottom,
     latestAnchorIdRef,
+    latestAnchorOffsetRef,
     liveScrollTopRef,
     userScrollIntentRef,
     scrollbarDraggingRef,
@@ -94,33 +97,42 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     if (itemsLength === 0) return;
     const handle = virtuosoRef.current;
     const el = scrollerRef.current;
-    if (handle) {
-      markAutoScroll();
-      handle.scrollToIndex({ index: firstItemIndex + itemsLength - 1, align: "end" });
-      return;
-    }
     if (el) {
       markAutoScroll();
       el.scrollTop = el.scrollHeight;
+      if (handle) {
+        handle.scrollTo({ top: el.scrollTop });
+      }
+      return;
+    }
+    if (handle) {
+      markAutoScroll();
+      handle.scrollToIndex({ index: firstItemIndex + itemsLength - 1, align: "end" });
     }
   }, [firstItemIndex, itemsLength, markAutoScroll, scrollerRef, virtuosoRef]);
 
   const syncAtBottom = useCallback(() => {
+    const node = scrollerRef.current;
+    if (node) {
+      const remaining = node.scrollHeight - (node.scrollTop + node.clientHeight);
+      const nearBottom = remaining <= bottomThresholdPx;
+      setAtBottom(nearBottom);
+      return nearBottom;
+    }
     if (sentinelMeasuredRef.current) {
       const visible = sentinelVisibleRef.current;
       setAtBottom(visible);
       return visible;
     }
-    const node = scrollerRef.current;
-    if (!node) return null;
-    const remaining = node.scrollHeight - (node.scrollTop + node.clientHeight);
-    const nearBottom = remaining <= bottomThresholdPx;
-    setAtBottom(nearBottom);
-    return nearBottom;
+    return null;
   }, [bottomThresholdPx, scrollerRef, sentinelMeasuredRef, sentinelVisibleRef, setAtBottom]);
 
   const scheduleAutoScroll = useCallback(() => {
     if (itemsLength === 0) return;
+    if (scrollStateStickToBottom === false) {
+      autoScrollAttemptRef.current = 0;
+      return;
+    }
     if (!stickToBottomRef.current) {
       autoScrollAttemptRef.current = 0;
       return;
@@ -154,7 +166,7 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
         if (!el) return;
         const remaining = el.scrollHeight - (el.scrollTop + el.clientHeight);
         const nearBottom = remaining <= bottomThresholdPx;
-        if (!nearBottom && autoScrollAttemptRef.current < 6) {
+        if (!nearBottom && autoScrollAttemptRef.current < 12) {
           autoScrollAttemptRef.current += 1;
           scheduleAutoScroll();
           return;
@@ -169,6 +181,7 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     itemsLength,
     preserveScrollOnFocus,
     restoreInProgress,
+    scrollStateStickToBottom,
     scrollerRef,
     scrollToBottomNow,
     setAtBottom,
@@ -177,6 +190,7 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
 
   useLayoutEffect(() => {
     if (preserveScrollOnFocus && !isActive) return;
+    if (scrollStateStickToBottom === false) return;
     const nearBottom = syncAtBottom();
     if (stickToBottomRef.current && nearBottom === false) {
       scheduleAutoScroll();
@@ -184,17 +198,26 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     if (stickToBottomRef.current && nearBottom === true) {
       autoScrollAttemptRef.current = 0;
     }
-  }, [isActive, preserveScrollOnFocus, scheduleAutoScroll, syncAtBottom, syncKey]);
+  }, [
+    isActive,
+    preserveScrollOnFocus,
+    restoreInProgress,
+    scheduleAutoScroll,
+    scrollStateStickToBottom,
+    syncAtBottom,
+    syncKey,
+  ]);
 
   useEffect(() => {
     if (!isActive) return;
     if (!stickToBottomRef.current) return;
+    if (scrollStateStickToBottom === false) return;
     requestAnimationFrame(() => {
       if (!stickToBottomRef.current) return;
       if (preserveScrollOnFocus && !isActive) return;
       scrollToBottomNow();
     });
-  }, [isActive, preserveScrollOnFocus, scrollToBottomNow, stickToBottomRef]);
+  }, [isActive, preserveScrollOnFocus, scrollStateStickToBottom, scrollToBottomNow, stickToBottomRef]);
 
   useEffect(() => {
     const sentinel = bottomSentinelNode;
@@ -224,6 +247,7 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
           persistScroll({
             stickToBottom: false,
             anchorItemId: latestAnchorIdRef.current,
+            anchorOffset: latestAnchorOffsetRef.current,
             scrollTop,
           });
           return;
@@ -243,6 +267,7 @@ export function usePinnedScrollManager(args: UsePinnedScrollManagerArgs): UsePin
     bottomThresholdPx,
     isActive,
     latestAnchorIdRef,
+    latestAnchorOffsetRef,
     liveScrollTopRef,
     persistScroll,
     preserveScrollOnFocus,

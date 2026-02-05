@@ -39,6 +39,7 @@ export type WorkbenchTab =
 export type WorkbenchScrollState = {
   stickToBottom: boolean;
   anchorItemId: string | null;
+  anchorOffset: number | null;
   scrollTop: number | null;
   virtuosoState?: unknown | null;
   updatedAtMs: number;
