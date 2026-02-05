@@ -1205,6 +1205,20 @@ fn apply_head_delta(head: &mut SessionHeadSnapshot, delta: &SessionHeadDelta) {
             changed = true;
         }
     }
+    if !delta.tool_summaries.is_empty() {
+        for summary in &delta.tool_summaries {
+            if let Some(pos) = head
+                .tool_summaries
+                .iter()
+                .position(|item| item.tool_call_id == summary.tool_call_id)
+            {
+                head.tool_summaries[pos] = summary.clone();
+            } else {
+                head.tool_summaries.push(summary.clone());
+            }
+        }
+        changed = true;
+    }
     if changed {
         strip_snapshot_partials(&mut head.turns, &mut head.events);
         trim_head_window(head);
@@ -1225,6 +1239,7 @@ mod tests {
             event: None,
             turn: None,
             message: None,
+            tool_summaries: Vec::new(),
         };
         let delta_next = SessionHeadDelta {
             session_id,
@@ -1233,6 +1248,7 @@ mod tests {
             event: None,
             turn: None,
             message: None,
+            tool_summaries: Vec::new(),
         };
         let mut state = SessionReplayState::default();
         state.record(&delta);

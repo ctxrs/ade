@@ -2790,6 +2790,7 @@ mod tests {
             event: Some(event),
             turn: None,
             message: None,
+            tool_summaries: Vec::new(),
         }
     }
 

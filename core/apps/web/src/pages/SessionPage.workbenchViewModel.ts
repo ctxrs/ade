@@ -1031,6 +1031,21 @@ function buildTurnActivityTimeline(opts: {
     }
   }
 
+  if (toolById.size > 0) {
+    for (const tool of toolById.values()) {
+      if (toolInserted.has(tool.tool_call_id)) continue;
+      const raw = tool.raw as any;
+      const orderSeq = Number(raw?.first_event_seq ?? raw?.firstEventSeq ?? Number.NaN);
+      activity.push({
+        item: tool,
+        created_at: tool.created_at,
+        kind: "tool",
+        order_seq: Number.isFinite(orderSeq) ? orderSeq : undefined,
+      });
+      toolInserted.add(tool.tool_call_id);
+    }
+  }
+
   if (thoughtBlocks.length > 0) {
     thoughtBlocks.forEach((block, index) => {
       if (!Number.isFinite(block.orderSeq)) return;

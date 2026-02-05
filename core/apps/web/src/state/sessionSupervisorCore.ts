@@ -328,14 +328,31 @@ export class SessionSupervisor {
     entry.refCount += 1;
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
     const seededHead = this.getActiveSnapshotHead(sessionId);
+    const seededHasContent = seededHead
+      ? (seededHead.turns?.length ?? 0) > 0 ||
+        (seededHead.messages?.length ?? 0) > 0 ||
+        (seededHead.tool_summaries?.length ?? 0) > 0
+      : false;
+    const seededEventsStripped = seededHead
+      ? (seededHead.events?.length ?? 0) === 0 && seededHasContent
+      : false;
+    const seededToolsMissing = seededHead
+      ? (seededHead.tool_summaries?.length ?? 0) === 0 &&
+        (seededHead.turns ?? []).some((turn) => (turn.tool_total ?? 0) > 0)
+      : false;
+    const seededEmpty = seededHead
+      ? (seededHead.turns?.length ?? 0) === 0 &&
+        (seededHead.messages?.length ?? 0) === 0 &&
+        (seededHead.events?.length ?? 0) === 0
+      : false;
     if (seededHead) {
       this.replica.dispatch({ type: "seed_head", sessionId, head: seededHead });
     }
-    if (!seededHead || opts?.force) {
+    if (!seededHead || opts?.force || seededEventsStripped || seededToolsMissing || seededEmpty) {
       this.replica.dispatch({
         type: "open_session",
         sessionId,
-        force: opts?.force,
+        force: opts?.force || seededEventsStripped || seededToolsMissing || seededEmpty,
         silent: opts?.silent,
       });
     }
@@ -1105,7 +1122,9 @@ export class SessionSupervisor {
         }
         return false;
       }
-      this.applyHead(entry, head as SessionHead);
+      const strippedEvents =
+        (head.events?.length ?? 0) === 0 && (head.head_window?.event_limit ?? 0) === 0;
+      this.applyHead(entry, head as SessionHead, { fromCache: strippedEvents });
       return true;
     };
 
@@ -1176,6 +1195,11 @@ export class SessionSupervisor {
           status: summary.status,
           input_json: summary.input_preview ?? null,
           output_text: null,
+          first_event_seq: summary.first_event_seq ?? null,
+          input_truncated: summary.input_truncated ?? null,
+          input_original_bytes: summary.input_original_bytes ?? null,
+          output_truncated: summary.output_truncated ?? null,
+          output_original_bytes: summary.output_original_bytes ?? null,
           created_at: summary.created_at,
           updated_at: summary.updated_at,
           summary_only: true,
@@ -1221,6 +1245,7 @@ export class SessionSupervisor {
         status: summary.status ?? null,
         input_json: summary.input_preview ?? null,
         output_text: null,
+        first_event_seq: summary.first_event_seq ?? null,
         input_truncated: summary.input_truncated ?? null,
         input_original_bytes: summary.input_original_bytes ?? null,
         output_truncated: summary.output_truncated ?? null,

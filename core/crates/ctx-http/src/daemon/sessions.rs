@@ -8,6 +8,7 @@ use ctx_core::ids::{SessionId, TaskId};
 use ctx_core::models::{
     Message, MessageAttachment, MessageDelivery, MessageRole, Session, SessionEvent,
     SessionEventType, SessionHeadDelta, SessionHeadSnapshot, SessionTurn, SessionTurnStatus,
+    SessionTurnToolSummary,
 };
 use ctx_store::Store;
 
@@ -320,6 +321,21 @@ impl SessionRuntime {
                 }
             }
         }
+        let mut tool_summaries: Vec<SessionTurnToolSummary> = Vec::new();
+        if matches!(
+            event.event_type,
+            SessionEventType::ToolCall | SessionEventType::ToolCallUpdate | SessionEventType::ToolResult
+        ) {
+            if let Some(turn_id) = event.turn_id {
+                if let Ok(store) = state.store_for_session(event.session_id).await {
+                    if let Ok(list) =
+                        store.list_turn_tool_summaries_for_turns(event.session_id, std::slice::from_ref(&turn_id)).await
+                    {
+                        tool_summaries = list;
+                    }
+                }
+            }
+        }
 
         let last_event_seq = if stream_only {
             state
@@ -343,6 +359,7 @@ impl SessionRuntime {
             event: Some(event.clone()),
             turn,
             message,
+            tool_summaries,
         };
         state
             .workspaces

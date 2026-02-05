@@ -435,6 +435,7 @@ export type SessionHeadDelta = {
   event?: SessionEvent | null;
   turn?: SessionTurn | null;
   message?: Message | null;
+  tool_summaries?: SessionTurnToolSummary[];
 };
 
 export type SessionHistoryPage = {

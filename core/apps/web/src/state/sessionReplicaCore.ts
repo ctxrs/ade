@@ -525,6 +525,7 @@ export class SessionReplicaCore {
     const turns: SessionTurn[] = [];
     const messages: Message[] = [];
     const events: SessionEvent[] = [];
+    const toolSummaries = Array.isArray(delta.tool_summaries) ? delta.tool_summaries : [];
     if (delta.turn) turns.push(delta.turn);
     if (delta.message) messages.push(delta.message);
     if (delta.event) events.push(this.ensureEventSeq(entry, delta.event));
@@ -533,6 +534,13 @@ export class SessionReplicaCore {
     if (events.length) {
       entry.events = this.normalizeEvents(entry, entry.events);
       entry.events = mergeEvents(entry.events, events);
+    }
+    if (toolSummaries.length) {
+      const byId = new Map(entry.toolSummaries.map((summary) => [String(summary.tool_call_id), summary]));
+      for (const summary of toolSummaries) {
+        byId.set(String(summary.tool_call_id), summary);
+      }
+      entry.toolSummaries = Array.from(byId.values());
     }
     if (entry.events.length > this.config.eventBufferLimit) {
       const trimmed = entry.events.slice(-this.config.eventBufferLimit);
@@ -552,6 +560,7 @@ export class SessionReplicaCore {
     if (turns.length) data.turns = turns;
     if (messages.length) data.messages = messages;
     if (events.length) data.events = events;
+    if (toolSummaries.length) data.toolSummaries = toolSummaries;
     if (entry.session) data.session = entry.session;
     if (entry.summaryCheckpoint !== undefined) data.summaryCheckpoint = entry.summaryCheckpoint ?? null;
     if (entry.headWindow !== undefined) data.headWindow = entry.headWindow ?? null;

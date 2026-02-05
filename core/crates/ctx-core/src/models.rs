@@ -880,6 +880,8 @@ pub struct SessionHeadDelta {
     pub event: Option<SessionEvent>,
     pub turn: Option<SessionTurn>,
     pub message: Option<Message>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_summaries: Vec<SessionTurnToolSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
