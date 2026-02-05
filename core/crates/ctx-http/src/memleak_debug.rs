@@ -24,6 +24,7 @@ const DEFAULT_INTERVAL_MS: u64 = 5_000;
 struct MemleakDebugSnapshot {
     occurred_at: DateTime<Utc>,
     rss_bytes: u64,
+    thread_count: u32,
     sessions: SessionCacheStats,
     workspaces: WorkspaceCacheStats,
     providers: ProviderCacheStats,
@@ -35,6 +36,8 @@ struct MemleakDebugSnapshot {
     web_sessions: WebSessionManagerStats,
     harness_runtime: HarnessRuntimeStats,
     stores: StoreManagerStats,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    glibc: Option<GlibcMallinfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     jemalloc: Option<JemallocStats>,
 }
@@ -97,6 +100,17 @@ struct JemallocStats {
     resident: u64,
     retained: u64,
     mapped: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct GlibcMallinfo {
+    arena: u64,
+    ordblks: u64,
+    hblks: u64,
+    hblkhd: u64,
+    uordblks: u64,
+    fordblks: u64,
+    keepcost: u64,
 }
 
 pub fn spawn_memleak_debug(state: Arc<AppState>) {
@@ -307,11 +321,13 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
     let web_sessions = state.transport.web_sessions.stats().await;
     let harness_runtime = state.execution.harness.stats().await;
     let stores = state.core.stores.stats().await;
+    let glibc = read_glibc_mallinfo();
     let jemalloc = read_jemalloc_stats();
 
     let snapshot = MemleakDebugSnapshot {
         occurred_at: Utc::now(),
         rss_bytes: read_rss_bytes(),
+        thread_count: read_thread_count(),
         sessions,
         workspaces,
         providers,
@@ -323,6 +339,7 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
         web_sessions,
         harness_runtime,
         stores,
+        glibc,
         jemalloc,
     };
 
@@ -412,4 +429,45 @@ fn read_rss_bytes() -> u64 {
 #[cfg(not(target_os = "linux"))]
 fn read_rss_bytes() -> u64 {
     0
+}
+
+#[cfg(target_os = "linux")]
+fn read_thread_count() -> u32 {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("Threads:") {
+            return rest
+                .split_whitespace()
+                .next()
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(0);
+        }
+    }
+    0
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_thread_count() -> u32 {
+    0
+}
+
+#[cfg(target_env = "gnu")]
+fn read_glibc_mallinfo() -> Option<GlibcMallinfo> {
+    unsafe {
+        let info = libc::mallinfo2();
+        Some(GlibcMallinfo {
+            arena: info.arena as u64,
+            ordblks: info.ordblks as u64,
+            hblks: info.hblks as u64,
+            hblkhd: info.hblkhd as u64,
+            uordblks: info.uordblks as u64,
+            fordblks: info.fordblks as u64,
+            keepcost: info.keepcost as u64,
+        })
+    }
+}
+
+#[cfg(not(target_env = "gnu"))]
+fn read_glibc_mallinfo() -> Option<GlibcMallinfo> {
+    None
 }
