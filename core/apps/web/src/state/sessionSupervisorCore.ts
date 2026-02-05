@@ -516,17 +516,19 @@ export class SessionSupervisor {
     this.publish();
   };
 
-  async loadMoreTurns(sessionId: string) {
+  async loadMoreTurns(sessionId: string): Promise<number | null> {
     const entry = this.entries.get(String(sessionId));
-    if (!entry) return;
-    if (entry.fetching.history || !entry.hasMoreTurns) return;
+    if (!entry) return null;
+    if (entry.fetching.history) return null;
+    if (!entry.hasMoreTurns) return 0;
     const beforeSeq = entry.oldestTurnSeq;
     if (beforeSeq == null || !Number.isFinite(beforeSeq)) {
       entry.hasMoreTurns = false;
       this.publish();
-      return;
+      return 0;
     }
     entry.fetching.history = true;
+    const beforeLen = entry.turns.length;
     try {
       const cached = await loadSessionHistoryPageV1(sessionId, beforeSeq, TURN_PAGE_LIMIT);
       if (cached?.page) {
@@ -538,7 +540,7 @@ export class SessionSupervisor {
         entry.updatedAtMs = Date.now();
         this.publish();
         await this.persistHead(entry);
-        return;
+        return entry.turns.length - beforeLen;
       }
       const page = await getSessionHistory(sessionId, beforeSeq, TURN_PAGE_LIMIT);
       this.mergeTurns(entry, page.turns);
@@ -549,6 +551,7 @@ export class SessionSupervisor {
       this.publish();
       await saveSessionHistoryPageV1(sessionId, beforeSeq, TURN_PAGE_LIMIT, page);
       await this.persistHead(entry);
+      return entry.turns.length - beforeLen;
     } finally {
       entry.fetching.history = false;
     }

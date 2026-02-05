@@ -1178,7 +1178,7 @@ export function SessionView({
           didShift = true;
         }
         const offset = pendingPrependOffsetRef.current ?? latestAnchorOffsetRef.current;
-        if (offset != null) {
+        if (offset != null && indexShift === 0) {
           adjustAnchorOffset(anchorId, offset);
         }
       }
@@ -1368,7 +1368,7 @@ export function SessionView({
     const restoreAnchorIndex =
       restoreAnchorId ? items.findIndex((it) => it?.id === restoreAnchorId) : -1;
     const hasAnchor = restoreAnchorId != null && restoreAnchorIndex >= 0;
-    const shouldUseAnchor = hasAnchor && restoreAnchorOffset != null;
+    const shouldUseAnchor = hasAnchor && restoreAnchorOffset != null && restoreScrollTop == null;
     if (state.stickToBottom && initialTopMostItemIndex != null) {
       restorePendingRef.current = false;
       didInitialScrollRef.current = true;
@@ -1430,6 +1430,7 @@ export function SessionView({
     });
   }, [
     adjustAnchorOffset,
+    emitScrollDebug,
     id,
     isActive,
     preserveScrollOnFocus,
@@ -1579,8 +1580,14 @@ export function SessionView({
     const anchorMeta = scroller ? readAnchorMetaFromScroller(scroller) : null;
     pendingPrependAnchorRef.current = anchorMeta?.id ?? latestAnchorIdRef.current;
     pendingPrependOffsetRef.current = anchorMeta?.offset ?? latestAnchorOffsetRef.current ?? null;
-    supervisor.loadMoreTurns(id);
-  }, [hasMoreTurns, id, supervisor]);
+    void supervisor.loadMoreTurns(id).then((added) => {
+      if (added === 0) {
+        pendingPrependRef.current = false;
+        pendingPrependAnchorRef.current = null;
+        pendingPrependOffsetRef.current = null;
+      }
+    });
+  }, [hasMoreTurns, id, setAtBottom, setStickToBottom, supervisor]);
 
   const getQueuedAttachments = (message: Message): MessageAttachment[] => {
     return Array.isArray(message.attachments) ? message.attachments : [];
