@@ -455,9 +455,6 @@ impl WorkspaceActiveSnapshotHub {
                 ord
             }
         });
-        for head in &mut heads {
-            strip_active_head_events(head);
-        }
         WorkspaceActiveHeadBatch {
             workspace_id,
             snapshot_rev,
@@ -1088,22 +1085,6 @@ fn strip_snapshot_partials(turns: &mut [SessionTurn], events: &mut Vec<SessionEv
         turn.thought_partial = None;
     }
     events.retain(should_include_event);
-}
-
-fn strip_active_head_events(head: &mut SessionHeadSnapshot) {
-    if head.events.is_empty() {
-        return;
-    }
-    head.events.clear();
-    let bytes = head_window_bytes(
-        &head.turns,
-        &head.tool_summaries,
-        &head.events,
-        &head.messages,
-    );
-    head.head_window.event_limit = 0;
-    head.head_window.event_count = 0;
-    head.head_window.bytes = bytes as i64;
 }
 
 fn trim_head_window(head: &mut SessionHeadSnapshot) {
