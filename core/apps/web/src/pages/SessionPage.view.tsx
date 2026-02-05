@@ -1177,10 +1177,8 @@ export function SessionView({
           setFirstItemIndex((prev) => prev - indexShift);
           didShift = true;
         }
-        const offset = pendingPrependOffsetRef.current ?? latestAnchorOffsetRef.current;
-        if (offset != null && indexShift === 0 && !pendingPrependRef.current) {
-          adjustAnchorOffset(anchorId, offset);
-        }
+        // Do not apply anchor offset corrections during live list mutations.
+        // We rely on firstItemIndex shifts for stability and reserve offset adjustments for explicit restore.
       }
     }
     if (
