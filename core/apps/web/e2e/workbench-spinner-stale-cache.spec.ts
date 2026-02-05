@@ -43,13 +43,6 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
     page.locator('.wb-new-composer-stack button[title="Harness"] .wb-switcher-label'),
   ).toHaveText(/fake/i, { timeout: 20000 });
 
-  // Use Local isolation to keep the test fast and deterministic.
-  await page.locator(".wb-new-composer-stack").getByTitle("Isolation").click();
-  await page.locator(".wb-exec-menu").getByRole("button", { name: "Local" }).click();
-  await expect(
-    page.locator('.wb-new-composer-stack button[title="Isolation"] .wb-switcher-label'),
-  ).toHaveText(/local/i, { timeout: 20000 });
-
   const prompt = "stale-cache-spinner";
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(prompt);
   await page.locator('.wb-new-composer-stack button[aria-label="Send"]').click();

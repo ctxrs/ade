@@ -26,13 +26,6 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
     timeout: 20000,
   });
 
-  // Use Local isolation to keep the test fast and deterministic.
-  await page.locator(".wb-new-composer-stack").getByTitle("Isolation").click();
-  await page.locator(".wb-exec-menu").getByRole("button", { name: "Local" }).click();
-  await expect(page.locator(".wb-new-composer-stack button[title=\"Isolation\"] .wb-switcher-label")).toHaveText(/local/i, {
-    timeout: 20000,
-  });
-
   const msg1 = `task one marker ${Date.now()}`;
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(msg1);
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
