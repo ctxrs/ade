@@ -407,10 +407,6 @@
 }
 
 .wizard-step {
-  border: 1px solid var(--launcher-border);
-  border-radius: 10px;
-  padding: 12px;
-  background: var(--launcher-button);
   display: grid;
   gap: 10px;
 }
@@ -442,6 +438,8 @@
 }
 
 .wizard-option {
+  appearance: none;
+  cursor: pointer;
   border: 1px solid var(--launcher-border);
   border-radius: 8px;
   padding: 8px 10px;
@@ -449,6 +447,12 @@
   display: grid;
   gap: 4px;
   font-size: 12px;
+  text-align: left;
+}
+
+.wizard-option.is-selected {
+  border-color: var(--launcher-text);
+  box-shadow: 0 0 0 1px var(--launcher-text);
 }
 
 .wizard-option-title {
@@ -520,6 +524,12 @@
 .wizard-primary:hover,
 .wizard-secondary:hover {
   background: var(--launcher-button-hover);
+}
+
+.wizard-primary:disabled,
+.wizard-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .crash-course-panel {
