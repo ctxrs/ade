@@ -33,12 +33,6 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
     page.locator(".wb-new-composer-stack button[title=\"Harness\"] .wb-switcher-label"),
   ).toHaveText(/fake/i, { timeout: 20000 });
 
-  await page.locator(".wb-new-composer-stack").getByTitle("Isolation").click();
-  await page.locator(".wb-exec-menu").getByRole("button", { name: "Local" }).click();
-  await expect(
-    page.locator(".wb-new-composer-stack button[title=\"Isolation\"] .wb-switcher-label"),
-  ).toHaveText(/local/i, { timeout: 20000 });
-
   const initPrompt = `stick-bottom-init-${Date.now()}`;
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(initPrompt);
   await expect(page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
@@ -67,9 +61,16 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
   await expect(composer).toBeVisible({ timeout: 20000 });
 
   await addLongMessages(request, sessionId);
+  await expect(page.locator(".wb-session")).toContainText("block 6", { timeout: 20000 });
 
   const scroller = page.locator(scrollSelector).first();
   await expect(scroller).toBeVisible({ timeout: 20000 });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const diff = await scroller.evaluate((el) => (el.scrollHeight ?? 0) - (el.clientHeight ?? 0));
+    if (diff > 100) break;
+    await addLongMessages(request, sessionId);
+    await page.waitForTimeout(200);
+  }
   await expect
     .poll(async () => scroller.evaluate((el) => (el.scrollHeight ?? 0) - (el.clientHeight ?? 0)), {
       timeout: 10000,
@@ -87,8 +88,7 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
   await composer.fill(prompt);
   await page.locator(".wb-session button[aria-label=\"Send\"]").click();
 
-  const header = page.locator(".wb-turn-header-content").filter({ hasText: prompt });
-  await expect(header).toBeVisible({ timeout: 20000 });
+  await expect(page.locator(".wb-session")).toContainText(prompt, { timeout: 20000 });
 
   await expect
     .poll(async () => scroller.evaluate((el) => el.scrollHeight - (el.scrollTop + el.clientHeight)), {

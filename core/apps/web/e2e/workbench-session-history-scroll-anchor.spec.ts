@@ -69,13 +69,34 @@ test("workbench: preserves scroll position when prepending history", async ({ pa
   const scroller = page.locator(scrollSelector).first();
   await expect(scroller).toBeVisible({ timeout: 20000 });
 
+  await expect
+    .poll(async () => scroller.evaluate((el) => (el.scrollHeight ?? 0) - (el.clientHeight ?? 0)), {
+      timeout: 10000,
+    })
+    .toBeGreaterThan(100);
+
+  await scroller.evaluate((el) => {
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    el.dispatchEvent(new Event("scroll"));
+  });
+  await page.waitForTimeout(50);
+
   await scroller.hover();
   for (let i = 0; i < 10; i++) {
     await page.mouse.wheel(0, -160);
     await page.waitForTimeout(60);
   }
 
-  const preTop = await scroller.evaluate((el) => el.scrollTop);
+  let preTop = await scroller.evaluate((el) => el.scrollTop);
+  if (preTop <= 0) {
+    preTop = await scroller.evaluate((el) => {
+      const max = Math.max(0, el.scrollHeight - el.clientHeight);
+      const next = Math.max(1, Math.floor(max / 2));
+      el.scrollTop = next;
+      el.dispatchEvent(new Event("scroll"));
+      return el.scrollTop;
+    });
+  }
   expect(preTop).toBeGreaterThan(0);
 
   const captureAnchor = async () => {

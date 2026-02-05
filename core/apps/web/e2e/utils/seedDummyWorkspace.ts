@@ -188,7 +188,16 @@ export async function seedDummyWorkspace(
                 tool_summaries?: any[];
               };
             }>(request, `/api/sessions/${session.id}/snapshot?limit=1`);
-            const last = snapshot.head.turns[snapshot.head.turns.length - 1];
+            const head = snapshot?.head;
+            const turns = Array.isArray(head?.turns) ? head.turns : [];
+            if (turns.length === 0) {
+              if (Date.now() - start > completionTimeoutMs) {
+                throw new Error(`turn completion timeout for session ${session.id}`);
+              }
+              await sleep(50);
+              continue;
+            }
+            const last = turns[turns.length - 1];
             const done = last?.status === "completed" || last?.status === "done";
             if (done) break;
             if (Date.now() - start > completionTimeoutMs) {

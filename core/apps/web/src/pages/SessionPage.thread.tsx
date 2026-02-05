@@ -104,7 +104,7 @@ export const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
         initialTopMostItemIndex={initialTopMostItemIndex}
         defaultItemHeight={56}
         increaseViewportBy={increaseViewportBy}
-        computeItemKey={(index, item) => item?.id ?? `i:${index}`}
+        computeItemKey={(_, item) => item.id}
         restoreStateFrom={restoreStateFrom}
         startReached={onStartReached}
         rangeChanged={onRangeChanged}

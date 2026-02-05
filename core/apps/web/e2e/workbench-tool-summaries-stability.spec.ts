@@ -3,16 +3,33 @@ import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 test.describe.serial("workbench: tool summaries stability", () => {
   let workspaceId = "";
+  const toolMarker = `[[tool_calls]]\n${JSON.stringify([
+    {
+      kind: "execute",
+      title: "Run pwd",
+      input: { command: "pwd" },
+      output_text: "ok",
+    },
+  ])}\n[[/tool_calls]]`;
+
+  const ensureToolRows = async (page: any) => {
+    const toolRows = page.locator(".wb-tool-row");
+    if ((await toolRows.count()) > 0) return toolRows;
+    const composer = page.locator(".wb-session textarea.wb-active-textarea");
+    await expect(composer).toBeVisible({ timeout: 20000 });
+    await composer.fill(`tool seed ${Date.now()}\n${toolMarker}`);
+    await page.locator(".wb-session button[aria-label=\"Send\"]").click();
+    await expect
+      .poll(async () => toolRows.count(), { timeout: 30000 })
+      .toBeGreaterThan(0);
+    return toolRows;
+  };
 
   test.beforeAll(async ({ request }) => {
     const seed = await seedDummyWorkspace(request, {
       tasks: 1,
       sessionsPerTask: 1,
-      turnsPerSession: 12,
-      throttleMs: 5,
-      includeToolSummaries: true,
-      toolSummariesPerTurn: 8,
-      awaitTurnCompletion: true,
+      turnsPerSession: 0,
     });
     workspaceId = seed.workspaceId;
   });
@@ -21,10 +38,7 @@ test.describe.serial("workbench: tool summaries stability", () => {
     await page.goto(`/workspaces/${workspaceId}`, { waitUntil: "domcontentloaded" });
     await page.locator(".wb-task-row").first().click();
 
-    const toolRows = page.locator(".wb-tool-row");
-    await expect
-      .poll(async () => toolRows.count(), { timeout: 15_000 })
-      .toBeGreaterThan(0);
+    const toolRows = await ensureToolRows(page);
 
     const sampleCounts: number[] = [];
     const delays = [0, 150, 300, 600];
@@ -48,6 +62,8 @@ test.describe.serial("workbench: tool summaries stability", () => {
   test("scroll position does not snap back", async ({ page }) => {
     await page.goto(`/workspaces/${workspaceId}`, { waitUntil: "domcontentloaded" });
     await page.locator(".wb-task-row").first().click();
+
+    await ensureToolRows(page);
 
     const scroller = page
       .locator(".wb-session-slot[aria-hidden=\"false\"] [data-virtuoso-scroller]")

@@ -765,7 +765,10 @@ function buildSystemMessageGroups(messages: Message[]): SortableThreadGroup[] {
     });
   return systemMessages.map((entry, idx) => {
     const m = entry.message;
-    const id = idToString(m.id) || `system-${idx}`;
+    const orderSeq = Number(entry.orderSeq);
+    const createdAt = String(m.created_at ?? "");
+    const stableSuffix = Number.isFinite(orderSeq) ? `${orderSeq}` : createdAt || `${idx}`;
+    const id = idToString(m.id) || `system-${stableSuffix}`;
     const attachments = Array.isArray((m as any).attachments)
       ? ((m as any).attachments as MessageAttachment[])
       : [];

@@ -89,6 +89,7 @@ test("workbench: keeps session slots mounted across task switches", async ({ pag
 
   expect(scrollBefore).not.toBeNull();
   expect((scrollBefore as any).top).toBeLessThan(maxTop - minAwayFromBottom);
+  await page.waitForTimeout(800);
 
   await taskRowB.click();
   await page.waitForTimeout(600);
@@ -114,5 +115,15 @@ test("workbench: keeps session slots mounted across task switches", async ({ pag
   expect(slotStats).not.toBeNull();
   expect((slotStats as any).min).toBeGreaterThanOrEqual(1);
   expect(scrollAfter).not.toBeNull();
-  expect(Math.abs((scrollAfter as number) - scrollBefore.top)).toBeLessThanOrEqual(32);
+  await expect
+    .poll(async () => {
+      const top = await page.evaluate((selector) => {
+        const el = document.querySelector(selector) as HTMLElement | null;
+        if (!el) return null;
+        return el.scrollTop;
+      }, scrollSelector);
+      if (top == null) return Number.POSITIVE_INFINITY;
+      return Math.abs(top - scrollBefore.top);
+    }, { timeout: 5000 })
+    .toBeLessThanOrEqual(32);
 });
