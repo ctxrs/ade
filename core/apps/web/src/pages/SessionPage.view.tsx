@@ -1178,7 +1178,7 @@ export function SessionView({
           didShift = true;
         }
         const offset = pendingPrependOffsetRef.current ?? latestAnchorOffsetRef.current;
-        if (offset != null && indexShift === 0) {
+        if (offset != null && indexShift === 0 && !pendingPrependRef.current) {
           adjustAnchorOffset(anchorId, offset);
         }
       }
@@ -1186,7 +1186,8 @@ export function SessionView({
     if (
       !didShift &&
       listIncreased &&
-      (pendingPrependRef.current || stickToBottomRef.current === false || scrollState?.stickToBottom === false)
+      !pendingPrependRef.current &&
+      (stickToBottomRef.current === false || scrollState?.stickToBottom === false)
     ) {
       const prevFirstId = prevItems[0]?.id;
       if (prevFirstId) {
@@ -1542,10 +1543,11 @@ export function SessionView({
   const handleWorkbenchRangeChanged = useCallback(
     (range: { startIndex: number }) => {
       if (restoringScrollRef.current) return;
-    if (updateAnchorFromScroller(scrollerRef.current)) return;
-    const dataIndex = range.startIndex - firstItemIndex;
-    const item = wbListItems[dataIndex];
-    if (!item) return;
+      if (pendingPrependRef.current) return;
+      if (updateAnchorFromScroller(scrollerRef.current)) return;
+      const dataIndex = range.startIndex - firstItemIndex;
+      const item = wbListItems[dataIndex];
+      if (!item) return;
     const nextId = item.id ?? null;
     latestAnchorIdRef.current = nextId;
     const scroller = scrollerRef.current;
@@ -2201,16 +2203,6 @@ export function SessionView({
             }
             if (scrollerRef.current) {
               liveScrollTopRef.current = scrollerRef.current.scrollTop;
-              if (pendingPrependRef.current && scrollerRef.current.scrollTop <= 1) {
-                const anchorMeta = readAnchorMetaFromScroller(scrollerRef.current);
-                if (anchorMeta?.id) {
-                  pendingPrependAnchorRef.current = anchorMeta.id;
-                  pendingPrependOffsetRef.current = anchorMeta.offset;
-                } else if (!pendingPrependAnchorRef.current) {
-                  pendingPrependAnchorRef.current = latestAnchorIdRef.current;
-                  pendingPrependOffsetRef.current = latestAnchorOffsetRef.current ?? null;
-                }
-              }
             }
             if (!didInitialScrollRef.current) didInitialScrollRef.current = true;
             if (scrollSyncRafRef.current != null) return;
