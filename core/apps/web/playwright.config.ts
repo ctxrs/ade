@@ -19,7 +19,7 @@ const authSetupCommand = `node -e 'const fs = require(\\"fs\\"); const path = re
   dataDir,
 ).replace(/"/g, '\\"')}; fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, \\"daemon_auth.json\\"), JSON.stringify({ token: ${JSON.stringify(
   AUTH_TOKEN,
-).replace(/"/g, '\\"')} }, null, 2));'`;
+).replace(/"/g, '\\"')} }, null, 2)); fs.writeFileSync(path.join(dir, \\"settings.json\\"), JSON.stringify({ execution: { mode: \\"host\\" } }, null, 2));'`;
 const docsMirrorBin = path.resolve(__dirname, "e2e/fixtures/ctx-docs-mirror-fixture.sh");
 const docsMirrorBinEscaped = docsMirrorBin.replace(/"/g, '\\"');
 const cargoTargetDir =
