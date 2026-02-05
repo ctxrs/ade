@@ -128,18 +128,13 @@ import {
   clampNum,
   deriveManagedWorktreeRoot,
   deriveTaskTitle,
-  formatGitStatusEntry,
-  formatGitStatusPath,
   formatWorktreeLabel,
   formatWorktreePath,
-  gitStatusCodeClass,
-  gitStatusCodeLabel,
   isOptimisticTask,
   lastAssistantMessageMs,
   lastRoleMessageMs,
   modelIdsFromOptions,
   normalizeAnchorRect,
-  normalizeGitStatusCode,
   parseMs,
   sanitizeFileName,
   saveMarkdownExport,
@@ -1879,23 +1874,22 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const activeWorktreeVcsSnapshot = activeWorktreeId
     ? workspaceSnapshot.worktreeVcsById?.[activeWorktreeId] ?? null
     : null;
-  const activeWorktreeVcsSummary: Record<string, unknown> | null = activeWorktreeVcsSnapshot
-    ? { ...activeWorktreeVcsSnapshot.summary }
-    : null;
+  const activeWorktreeVcsSummary: Record<string, unknown> | null = useMemo(() => {
+    if (!activeWorktreeVcsSnapshot) return null;
+    return { ...activeWorktreeVcsSnapshot.summary };
+  }, [activeWorktreeVcsSnapshot]);
   const activeWorktreeVcsComputeState = activeWorktreeVcsSnapshot?.compute_state ?? null;
   const snapshotSummaryStats = useMemo(
     () => getDiffSummaryStats(activeWorktreeVcsSummary),
     [activeWorktreeVcsSummary],
   );
-  const snapshotReady = activeWorktreeVcsComputeState === "ready";
   const snapshotHasCounts =
-    snapshotReady && (snapshotSummaryStats.fileCount !== null || snapshotSummaryStats.lineCount !== null);
+    snapshotSummaryStats.fileCount !== null || snapshotSummaryStats.lineCount !== null;
   const diffSummary = snapshotHasCounts ? activeWorktreeVcsSummary : null;
   const diffSummaryError =
     activeWorktreeVcsComputeState === "error" ? "Failed to compute diff summary." : null;
   const diffSummaryLoading =
-    !diffSummaryError &&
-    (!activeWorktreeVcsSnapshot || activeWorktreeVcsComputeState === "computing" || !snapshotHasCounts);
+    !diffSummaryError && (!activeWorktreeVcsSnapshot || !snapshotHasCounts);
   const diffLoading = diffSummaryLoading || diffContentLoading;
   const activeTaskArchived = Boolean(activeTaskSummary?.task?.archived_at);
   const [webSessions, setWebSessions] = useState<WebSessionInfo[]>([]);
@@ -2080,45 +2074,12 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const hasDiff = diffSummaryError !== null ? true : diffSummaryReady ? diffHasChanges : false;
   const diffEmptyLabel =
     diffLoading || !diffSummaryReady ? "Loading changes..." : "No changes on this worktree.";
-  const activeWorktreeGitStatus = activeWorktreeVcsSnapshot?.git_status ?? null;
-  const touchedFiles = activeWorktreeVcsSnapshot?.touched_files ?? null;
-  const touchedItems = useMemo(() => {
-    const items = touchedFiles?.items;
-    return Array.isArray(items) ? items : [];
-  }, [touchedFiles]);
-  const touchedTruncated = touchedFiles?.truncated === true;
-  const touchedRemaining = useMemo(() => {
-    if (!touchedTruncated) return null;
-    const total = typeof touchedFiles?.total_count === "number" ? touchedFiles.total_count : null;
-    if (total === null) return null;
-    return Math.max(0, total - touchedItems.length);
-  }, [touchedFiles, touchedItems.length, touchedTruncated]);
-  const gitStatusSummaryLine = useMemo(() => {
-    const line = activeWorktreeGitStatus?.summary_line;
-    return line && line.trim() ? line : "";
-  }, [activeWorktreeGitStatus]);
-  const gitStatusEntries = useMemo(() => {
-    return touchedItems;
-  }, [touchedItems]);
-  const hasGitStatusEntries = gitStatusEntries.length > 0;
-  const gitStatusText = useMemo(() => {
-    if (!activeWorktreeGitStatus) return "";
-    const raw = activeWorktreeGitStatus.raw ?? "";
-    if (gitStatusEntries.length > 0) {
-      const header = gitStatusSummaryLine || "git status -sb";
-      return [header, ...gitStatusEntries.map(formatGitStatusEntry)].join("\n");
-    }
-    if (raw) return String(raw).trim();
-    return gitStatusSummaryLine || "";
-  }, [activeWorktreeGitStatus, gitStatusEntries, gitStatusSummaryLine]);
   const diffBadgeCount = useMemo(() => {
     if (!snapshotHasCounts) return 0;
     if (snapshotSummaryStats.fileCount !== null) return Math.max(0, snapshotSummaryStats.fileCount);
     if (snapshotSummaryStats.lineCount !== null) return Math.max(0, snapshotSummaryStats.lineCount);
     return 0;
   }, [snapshotHasCounts, snapshotSummaryStats]);
-  const gitStatusUpdating =
-    !activeWorktreeVcsSnapshot || activeWorktreeVcsComputeState === "computing";
   const gitStatusSignature = useMemo(() => {
     if (activeWorktreeVcsSnapshot) {
       return `rev:${activeWorktreeVcsSnapshot.rev ?? 0}`;
@@ -3571,55 +3532,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                     </div>
                   ) : showReviewPane ? (
                     <div className="wb-right-pane wb-diff">
-                      {reviewTab === "git" && (
-                        <div className="wb-diff-status">
-                          <div className="wb-diff-status-header">
-                            <span className="wb-diff-status-title">git status -sb</span>
-                            {gitStatusUpdating && <span className="wb-diff-status-meta">Updating...</span>}
-                          </div>
-                          {hasGitStatusEntries ? (
-                            <div className="wb-git-status-body">
-                              {gitStatusSummaryLine && (
-                                <div className="wb-git-status-line wb-git-status-summary">
-                                  {gitStatusSummaryLine}
-                                </div>
-                              )}
-                              {gitStatusEntries.map((entry) => {
-                                const indexStatus = normalizeGitStatusCode(entry.index_status);
-                                const worktreeStatus = normalizeGitStatusCode(entry.worktree_status);
-                                const entryKey = `${indexStatus}${worktreeStatus}:${entry.orig_path ?? ""}:${entry.path}`;
-                                return (
-                                  <div className="wb-git-status-line" key={entryKey}>
-                                    <span className="wb-git-status-code">
-                                      <span
-                                        className={`wb-git-status-code-char ${gitStatusCodeClass(indexStatus)}`}
-                                      >
-                                        {gitStatusCodeLabel(indexStatus)}
-                                      </span>
-                                      <span
-                                        className={`wb-git-status-code-char ${gitStatusCodeClass(worktreeStatus)}`}
-                                      >
-                                        {gitStatusCodeLabel(worktreeStatus)}
-                                      </span>
-                                    </span>
-                                    <span className="wb-git-status-path">{formatGitStatusPath(entry)}</span>
-                                  </div>
-                                );
-                              })}
-                              {touchedTruncated && touchedItems.length > 0 && (
-                                <div className="wb-git-status-line wb-muted">
-                                  {touchedRemaining !== null ? `…and ${touchedRemaining} more` : "…and more files"}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <pre className="wb-diff-status-body">
-                              {gitStatusText || (gitStatusUpdating ? "Loading git status..." : "No status data.")}
-                            </pre>
-                          )}
-                        </div>
-                      )}
-
                       {reviewTab === "git" && hasDiff ? (
                         diffSummaryError ? (
                           <div className="wb-diff-empty">

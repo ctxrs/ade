@@ -54,6 +54,11 @@ pub trait VcsDriver: Send + Sync {
         worktree_path: &'a Path,
         base_revision: &'a str,
     ) -> VcsFuture<'a, (i64, i64, i64)>;
+    fn diff_name_status<'a>(
+        &'a self,
+        worktree_path: &'a Path,
+        base_revision: &'a str,
+    ) -> VcsFuture<'a, Vec<VcsNameStatusEntry>>;
     fn list_untracked<'a>(&'a self, worktree_path: &'a Path) -> VcsFuture<'a, Vec<String>>;
     fn diff_untracked_file<'a>(
         &'a self,
@@ -80,6 +85,13 @@ pub trait VcsDriver: Send + Sync {
         revision: &'a str,
     ) -> VcsFuture<'a, ()>;
     fn delete_branch<'a>(&'a self, root: &'a Path, branch: &'a str) -> VcsFuture<'a, ()>;
+}
+
+#[derive(Debug, Clone)]
+pub struct VcsNameStatusEntry {
+    pub status: String,
+    pub path: String,
+    pub orig_path: Option<String>,
 }
 
 pub struct GitVcs;
@@ -233,6 +245,24 @@ impl VcsDriver for GitVcs {
                 deletions += del;
             }
             Ok((file_count, additions, deletions))
+        })
+    }
+
+    fn diff_name_status<'a>(
+        &'a self,
+        worktree_path: &'a Path,
+        base_revision: &'a str,
+    ) -> VcsFuture<'a, Vec<VcsNameStatusEntry>> {
+        Box::pin(async move {
+            let entries = git::git_diff_name_status(worktree_path, base_revision).await?;
+            Ok(entries
+                .into_iter()
+                .map(|entry| VcsNameStatusEntry {
+                    status: entry.status,
+                    path: entry.path,
+                    orig_path: entry.orig_path,
+                })
+                .collect())
         })
     }
 
@@ -594,6 +624,24 @@ impl VcsDriver for JjVcs {
             .await?;
             let stdout = String::from_utf8_lossy(&output.stdout);
             Ok(diff_summary_from_git(&stdout))
+        })
+    }
+
+    fn diff_name_status<'a>(
+        &'a self,
+        worktree_path: &'a Path,
+        base_revision: &'a str,
+    ) -> VcsFuture<'a, Vec<VcsNameStatusEntry>> {
+        Box::pin(async move {
+            let paths = jj_diff_name_only(worktree_path, base_revision).await?;
+            Ok(paths
+                .into_iter()
+                .map(|path| VcsNameStatusEntry {
+                    status: "M".to_string(),
+                    path,
+                    orig_path: None,
+                })
+                .collect())
         })
     }
 

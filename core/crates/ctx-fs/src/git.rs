@@ -258,19 +258,16 @@ pub async fn git_diff_numstat(
     }
     let bytes = output.stdout;
     let mut out = Vec::new();
-    let mut parts = bytes.split(|b| *b == 0);
-    loop {
-        let Some(add) = parts.next() else {
-            break;
-        };
-        if add.is_empty() {
+    for entry in bytes.split(|b| *b == 0) {
+        if entry.is_empty() {
             continue;
         }
-        let Some(del) = parts.next() else {
-            break;
-        };
-        let Some(path) = parts.next() else {
-            break;
+        let mut fields = entry.splitn(3, |b| *b == b'\t');
+        let add = fields.next().unwrap_or_default();
+        let del = fields.next();
+        let path = fields.next();
+        let (Some(del), Some(path)) = (del, path) else {
+            continue;
         };
         let add = String::from_utf8_lossy(add);
         let del = String::from_utf8_lossy(del);
@@ -303,6 +300,71 @@ pub async fn git_diff_unstaged(root_path: impl AsRef<Path>) -> Result<String> {
         );
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[derive(Debug, Clone)]
+pub struct GitNameStatusEntry {
+    pub status: String,
+    pub path: String,
+    pub orig_path: Option<String>,
+}
+
+pub async fn git_diff_name_status(
+    root_path: impl AsRef<Path>,
+    base_commit_sha: &str,
+) -> Result<Vec<GitNameStatusEntry>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .arg("diff")
+        .arg("--name-status")
+        .arg("-z")
+        .arg(base_commit_sha)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git diff --name-status")?;
+    if !output.status.success() {
+        bail!(
+            "git diff --name-status failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let mut out = Vec::new();
+    let mut parts = output.stdout.split(|b| *b == 0).filter(|part| !part.is_empty()).peekable();
+    while let Some(part) = parts.next() {
+        let Some(tab_idx) = part.iter().position(|b| *b == b'\t') else {
+            continue;
+        };
+        let status = String::from_utf8_lossy(&part[..tab_idx]).to_string();
+        let path = String::from_utf8_lossy(&part[tab_idx + 1..]).to_string();
+        if status.is_empty() || path.trim().is_empty() {
+            continue;
+        }
+        let status_char = status.chars().next().unwrap_or('M');
+        if status_char == 'R' || status_char == 'C' {
+            let Some(next_path) = parts.next() else {
+                continue;
+            };
+            let new_path = String::from_utf8_lossy(next_path).to_string();
+            if new_path.trim().is_empty() {
+                continue;
+            }
+            out.push(GitNameStatusEntry {
+                status,
+                path: new_path,
+                orig_path: Some(path),
+            });
+        } else {
+            out.push(GitNameStatusEntry {
+                status,
+                path,
+                orig_path: None,
+            });
+        }
+    }
+    Ok(out)
 }
 
 pub async fn git_diff_numstat_unstaged(

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -89,19 +90,12 @@ struct ParsedGitStatusEntries {
     truncated: bool,
 }
 
-fn build_touched_files(
-    entries: &[GitStatusEntry],
-    total_count: i64,
-    truncated: bool,
-) -> WorktreeVcsTouchedFiles {
+fn build_touched_files(entries: &[WorktreeVcsTouchedFile]) -> WorktreeVcsTouchedFiles {
+    let total_count = entries.len() as i64;
+    let truncated = entries.len() > WORKTREE_VCS_TOUCHED_FILES_CAP;
     let mut items = Vec::new();
     for entry in entries.iter().take(WORKTREE_VCS_TOUCHED_FILES_CAP) {
-        items.push(WorktreeVcsTouchedFile {
-            path: entry.path.clone(),
-            orig_path: entry.orig_path.clone(),
-            index_status: Some(entry.index_status.clone()),
-            worktree_status: Some(entry.worktree_status.clone()),
-        });
+        items.push(entry.clone());
     }
     WorktreeVcsTouchedFiles {
         items,
@@ -110,9 +104,22 @@ fn build_touched_files(
     }
 }
 
+fn build_git_status_entries(entries: &[GitStatusEntry]) -> Vec<WorktreeVcsTouchedFile> {
+    let mut out = Vec::new();
+    for entry in entries.iter().take(WORKTREE_VCS_TOUCHED_FILES_CAP) {
+        out.push(WorktreeVcsTouchedFile {
+            path: entry.path.clone(),
+            orig_path: entry.orig_path.clone(),
+            index_status: Some(entry.index_status.clone()),
+            worktree_status: Some(entry.worktree_status.clone()),
+        });
+    }
+    out
+}
+
 fn build_git_status_summary(
     snapshot: &GitStatusSnapshot,
-    touched: &WorktreeVcsTouchedFiles,
+    entries: Vec<WorktreeVcsTouchedFile>,
 ) -> WorktreeVcsGitStatusSummary {
     WorktreeVcsGitStatusSummary {
         raw: snapshot.raw.clone(),
@@ -125,8 +132,52 @@ fn build_git_status_summary(
         staged: snapshot.staged,
         unstaged: snapshot.unstaged,
         untracked: snapshot.untracked,
-        entries: touched.items.clone(),
+        entries,
     }
+}
+
+async fn load_diff_touched_entries(
+    driver: &Arc<dyn VcsDriver>,
+    worktree: &Worktree,
+    base_commit_sha: &str,
+) -> Result<Vec<WorktreeVcsTouchedFile>> {
+    let root = Path::new(&worktree.root_path);
+    let entries = driver.diff_name_status(root, base_commit_sha).await?;
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in entries {
+        let path = entry.path.trim().to_string();
+        if path.is_empty() {
+            continue;
+        }
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let status = entry.status.chars().next().unwrap_or('M').to_string();
+        items.push(WorktreeVcsTouchedFile {
+            path,
+            orig_path: entry.orig_path,
+            index_status: Some(status),
+            worktree_status: None,
+        });
+    }
+    let untracked = driver.list_untracked(root).await.unwrap_or_default();
+    for path in untracked {
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            continue;
+        }
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        items.push(WorktreeVcsTouchedFile {
+            path,
+            orig_path: None,
+            index_status: Some("?".to_string()),
+            worktree_status: None,
+        });
+    }
+    Ok(items)
 }
 
 async fn build_worktree_vcs_snapshot_from_parts(
@@ -279,6 +330,13 @@ async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) 
             entry.value.snapshot.clone()
         })
     };
+    let workspace = state
+        .global_store()
+        .get_workspace(worktree.workspace_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
+    let resolution =
+        resolve_diff_base_with_meta(&workspace, &worktree, &SessionDiffQuery::default()).await;
     let cached_summary = cached_snapshot
         .as_ref()
         .map(|snapshot| snapshot.summary.clone())
@@ -287,21 +345,14 @@ async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) 
         (snapshot.git_status, snapshot.touched_files)
     } else {
         let snapshot = load_git_status_snapshot(&worktree).await?;
-        let touched = build_touched_files(
-            &snapshot.entries,
-            snapshot.entries_total_count,
-            snapshot.entries_truncated,
-        );
-        let git_status = build_git_status_summary(&snapshot, &touched);
+        let git_status_entries = build_git_status_entries(&snapshot.entries);
+        let git_status = build_git_status_summary(&snapshot, git_status_entries);
+        let driver = vcs_driver_for_worktree(&worktree);
+        let diff_entries =
+            load_diff_touched_entries(&driver, &worktree, &resolution.base_commit_sha).await?;
+        let touched = build_touched_files(&diff_entries);
         (git_status, touched)
     };
-    let workspace = state
-        .global_store()
-        .get_workspace(worktree.workspace_id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
-    let resolution =
-        resolve_diff_base_with_meta(&workspace, &worktree, &SessionDiffQuery::default()).await;
     let summary_result =
         ctx_fs::worktrees::diff_worktree_summary(&worktree.root_path, &resolution.base_commit_sha)
             .await;
@@ -386,13 +437,20 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
     if active_session_ids.is_empty() && !active {
         return Ok(());
     }
+    let workspace = state
+        .global_store()
+        .get_workspace(worktree.workspace_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
+    let resolution =
+        resolve_diff_base_with_meta(&workspace, worktree, &SessionDiffQuery::default()).await;
     let git_snapshot = load_git_status_snapshot(worktree).await?;
-    let touched_files = build_touched_files(
-        &git_snapshot.entries,
-        git_snapshot.entries_total_count,
-        git_snapshot.entries_truncated,
-    );
-    let git_status = build_git_status_summary(&git_snapshot, &touched_files);
+    let git_status_entries = build_git_status_entries(&git_snapshot.entries);
+    let git_status = build_git_status_summary(&git_snapshot, git_status_entries);
+    let driver = vcs_driver_for_worktree(worktree);
+    let diff_entries =
+        load_diff_touched_entries(&driver, worktree, &resolution.base_commit_sha).await?;
+    let touched_files = build_touched_files(&diff_entries);
     let cached_summary = {
         let cache = state.workspaces.worktree_vcs_snapshots.lock().await;
         cache
@@ -419,7 +477,7 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
         touched_files,
         cached_summary,
         compute_state,
-        None,
+        Some(resolution),
     )
     .await?;
     let mut published = false;
