@@ -380,7 +380,8 @@ async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) 
         Some(resolution),
     )
     .await?;
-    if let Some(snapshot) = upsert_worktree_vcs_snapshot(&state, snapshot, false, summary_at).await {
+    if let Some(snapshot) = upsert_worktree_vcs_snapshot(&state, snapshot, false, summary_at).await
+    {
         if state.is_worktree_vcs_active(worktree.id).await {
             state
                 .workspaces
@@ -496,7 +497,6 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
     }
     Ok(())
 }
-
 
 pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
     let root = Path::new(&worktree.root_path);

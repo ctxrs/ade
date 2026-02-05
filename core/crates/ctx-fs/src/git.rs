@@ -332,7 +332,11 @@ pub async fn git_diff_name_status(
         );
     }
     let mut out = Vec::new();
-    let mut parts = output.stdout.split(|b| *b == 0).filter(|part| !part.is_empty()).peekable();
+    let mut parts = output
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|part| !part.is_empty())
+        .peekable();
     while let Some(part) = parts.next() {
         let Some(tab_idx) = part.iter().position(|b| *b == b'\t') else {
             continue;

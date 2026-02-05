@@ -19,16 +19,19 @@ fn git_status_untracked_from_message(
     worktree_id: WorktreeId,
 ) -> Option<i64> {
     match message {
-        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot { active_snapshot, .. } => {
-            active_snapshot
-                .worktree_vcs_snapshots
-                .into_iter()
-                .find(|snapshot| snapshot.worktree_id == worktree_id)
-                .map(|snapshot| snapshot.git_status.untracked)
-        }
+        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot {
+            active_snapshot,
+            ..
+        } => active_snapshot
+            .worktree_vcs_snapshots
+            .into_iter()
+            .find(|snapshot| snapshot.worktree_id == worktree_id)
+            .map(|snapshot| snapshot.git_status.untracked),
         ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
-            let ctx_core::models::WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot { snapshot, .. } =
-                event.as_ref()
+            let ctx_core::models::WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot {
+                snapshot,
+                ..
+            } = event.as_ref()
             else {
                 return None;
             };
@@ -821,9 +824,7 @@ async fn workspace_stream_emits_git_status_snapshot_on_change() {
             if let Ok(message) =
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if let Some(untracked) =
-                    git_status_untracked_from_message(message, worktree_id)
-                {
+                if let Some(untracked) = git_status_untracked_from_message(message, worktree_id) {
                     if untracked == 0 {
                         saw_clean_snapshot = true;
                         break;
@@ -850,9 +851,7 @@ async fn workspace_stream_emits_git_status_snapshot_on_change() {
             if let Ok(message) =
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if let Some(untracked) =
-                    git_status_untracked_from_message(message, worktree_id)
-                {
+                if let Some(untracked) = git_status_untracked_from_message(message, worktree_id) {
                     if untracked >= 1 {
                         saw_untracked = true;
                         break;
@@ -941,8 +940,7 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
             if let Ok(message) =
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if let Some(untracked) =
-                    git_status_untracked_from_message(message, worktree_one_id)
+                if let Some(untracked) = git_status_untracked_from_message(message, worktree_one_id)
                 {
                     if untracked == 0 {
                         saw_initial = true;
@@ -1001,8 +999,7 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
             if let Ok(message) =
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if let Some(untracked) =
-                    git_status_untracked_from_message(message, worktree_two_id)
+                if let Some(untracked) = git_status_untracked_from_message(message, worktree_two_id)
                 {
                     if untracked == 0 {
                         saw_second = true;

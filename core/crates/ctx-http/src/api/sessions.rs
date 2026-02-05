@@ -629,7 +629,6 @@ pub(super) async fn resolve_session_diff_base(
     Ok(resolution.base_commit_sha)
 }
 
-
 pub(super) async fn apply_session_diff_patch(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,

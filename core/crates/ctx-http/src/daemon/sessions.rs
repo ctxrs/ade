@@ -324,12 +324,18 @@ impl SessionRuntime {
         let mut tool_summaries: Vec<SessionTurnToolSummary> = Vec::new();
         if matches!(
             event.event_type,
-            SessionEventType::ToolCall | SessionEventType::ToolCallUpdate | SessionEventType::ToolResult
+            SessionEventType::ToolCall
+                | SessionEventType::ToolCallUpdate
+                | SessionEventType::ToolResult
         ) {
             if let Some(turn_id) = event.turn_id {
                 if let Ok(store) = state.store_for_session(event.session_id).await {
-                    if let Ok(list) =
-                        store.list_turn_tool_summaries_for_turns(event.session_id, std::slice::from_ref(&turn_id)).await
+                    if let Ok(list) = store
+                        .list_turn_tool_summaries_for_turns(
+                            event.session_id,
+                            std::slice::from_ref(&turn_id),
+                        )
+                        .await
                     {
                         tool_summaries = list;
                     }
