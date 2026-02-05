@@ -68,7 +68,7 @@ test.describe.serial("workbench: streaming ordering", () => {
     const rows = page.locator(".wb-task-row");
     await expect(rows).toHaveCount(2, { timeout: 20_000 });
     await rows.filter({ hasText: "fixture task 1" }).first().click();
-    await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({
+    await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
       timeout: 20_000,
     });
 
@@ -101,7 +101,7 @@ test.describe.serial("workbench: streaming ordering", () => {
     const rows = page.locator(".wb-task-row");
     await expect(rows).toHaveCount(2, { timeout: 20_000 });
     await rows.filter({ hasText: "fixture task 2" }).first().click();
-    await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({
+    await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
       timeout: 20_000,
     });
 

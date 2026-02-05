@@ -506,7 +506,7 @@ test.describe("parity screenshots (web vs GPUI native)", () => {
 
       console.log("[parity] web: open active session");
       await rows.first().click();
-      await expect(page.locator(".wb-session textarea.wb-active-textarea").first()).toBeVisible({
+      await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea").first()).toBeVisible({
         timeout: 20_000,
       });
       await expect(page.locator(".wb-thread-list").first()).toBeVisible({ timeout: 20_000 });

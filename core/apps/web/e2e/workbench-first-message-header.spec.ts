@@ -69,7 +69,7 @@ test("workbench: first user message renders from stream when head is stale", asy
   await rows.first().click();
   await page.waitForTimeout(400);
 
-  const composer = page.locator(".wb-session textarea.wb-active-textarea");
+  const composer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await expect(composer).toBeVisible({ timeout: 20000 });
 
   await page.waitForFunction(() => (window as any).__contextStreamOpenCount > 0, null, {
@@ -77,7 +77,7 @@ test("workbench: first user message renders from stream when head is stale", asy
   });
 
   await composer.fill(prompt);
-  await page.locator(".wb-session button[aria-label=\"Send\"]").click();
+  await page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]").click();
 
   const header = page.locator(".wb-turn-header-content").filter({ hasText: prompt });
   await expect(header).toBeVisible({ timeout: 20000 });

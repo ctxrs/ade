@@ -94,10 +94,10 @@ test("workbench: recovers when workspace stream drops once", async ({ page }) =>
     })
     .toBeGreaterThan(0);
 
-  const sessionComposer = page.locator(".wb-session textarea.wb-active-textarea");
+  const sessionComposer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await expect(sessionComposer).toBeVisible({ timeout: 20000 });
   await sessionComposer.fill("hello 2");
-  await page.locator(".wb-session button[aria-label=\"Send\"]").click();
+  await page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]").click();
   await expect
     .poll(async () => {
       const resp = await page.request.get(`/api/sessions/${sessionId}/snapshot?limit=50`);

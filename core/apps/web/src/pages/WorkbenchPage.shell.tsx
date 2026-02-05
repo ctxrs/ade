@@ -1841,6 +1841,14 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return pickPreferredSessionId(sessions, null);
   }, [activeSessionIdFromTabResolved, primarySessionId, sessions]);
   const preserveScrollOnFocus = true;
+  const [sessionSlots, setSessionSlots] = useState<string[]>([]);
+  useEffect(() => {
+    if (!activeSessionId) return;
+    setSessionSlots((prev) => {
+      const next = [activeSessionId, ...prev.filter((id) => id !== activeSessionId)];
+      return next.slice(0, 2);
+    });
+  }, [activeSessionId]);
   const openSessionId = activeSessionId && !optimisticSessionIdSet.has(activeSessionId) ? activeSessionId : "";
   useOpenSession(openSessionId, { watchDiff: diffOpen });
 
@@ -3498,15 +3506,17 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               ) : null}
 
               <div className="wb-session">
-                {activeSessionId ? (
+                {sessionSlots.map((sessionId) => (
                   <WorkbenchSessionSlot
-                    sessionId={activeSessionId}
-                    active
-                    scrollState={workbenchSnap.window.scrollByKey[scrollKey(activeSessionId)] ?? null}
+                    key={sessionId}
+                    sessionId={sessionId}
+                    active={sessionId === activeSessionId}
+                    scrollState={workbenchSnap.window.scrollByKey[scrollKey(sessionId)] ?? null}
                     preserveScrollOnFocus={preserveScrollOnFocus}
-                    optimisticFailure={optimisticFailureBySessionId[activeSessionId] ?? null}
+                    optimisticFailure={optimisticFailureBySessionId[sessionId] ?? null}
                   />
-                ) : (
+                ))}
+                {!activeSessionId && (
                   <div className="wb-muted" style={{ padding: 16 }}>
                     Select a session to view this task.
                   </div>

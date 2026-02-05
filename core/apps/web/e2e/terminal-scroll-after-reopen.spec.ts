@@ -35,7 +35,7 @@ test("terminal scroll stays consistent after closing and reopening panel while o
   const rows = page.locator(".wb-task-row");
   await expect(rows).toHaveCount(1, { timeout: 20_000 });
   await rows.first().click();
-  await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({ timeout: 20_000 });
 
   await openTerminalPanel(page);
 

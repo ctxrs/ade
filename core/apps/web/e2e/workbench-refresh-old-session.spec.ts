@@ -39,7 +39,7 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   await expect(page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
 
-  const sessionComposer = page.locator(".wb-session textarea.wb-active-textarea");
+  const sessionComposer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   try {
     await expect(sessionComposer).toBeVisible({ timeout: 20000 });
   } catch (err) {
@@ -115,7 +115,7 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   expect(urlAfter.searchParams.get("session")).toBeNull();
 
   try {
-    await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
+    await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
   } catch (err) {
     await page.screenshot({ path: path.join(tmpdir(), "ctx-e2e-after-reload-session-missing.png"), fullPage: true });
     throw err;
@@ -124,11 +124,11 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
     timeout: 20000,
   });
 
-  const composer = page.locator(".wb-session textarea.wb-active-textarea");
+  const composer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await composer.click();
   await composer.type("hello again");
   await expect(composer).toHaveValue("hello again", { timeout: 20000 });
-  const sendButton = page.locator(".wb-session button[aria-label=\"Send\"]");
+  const sendButton = page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]");
   await expect(sendButton).toBeEnabled({ timeout: 20000 });
   await sendButton.click();
   await expect

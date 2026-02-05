@@ -3,9 +3,26 @@ import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 test.describe.serial("workbench: tool summaries stability", () => {
   let workspaceId = "";
+  const toolMarker = `[[tool_calls]]\n${JSON.stringify([
+    {
+      kind: "execute",
+      title: "Run pwd",
+      input: { command: "pwd" },
+      output_text: "ok",
+    },
+  ])}\n[[/tool_calls]]`;
 
   const ensureToolRows = async (page: any) => {
     const toolRows = page.locator(".wb-tool-row");
+    if ((await toolRows.count()) > 0) return toolRows;
+    const composer = page.locator(
+      ".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea",
+    );
+    await expect(composer).toBeVisible({ timeout: 20000 });
+    await composer.fill(`tool seed ${Date.now()}\n${toolMarker}`);
+    await page
+      .locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]")
+      .click();
     await expect
       .poll(async () => toolRows.count(), { timeout: 30000 })
       .toBeGreaterThan(0);
@@ -16,11 +33,7 @@ test.describe.serial("workbench: tool summaries stability", () => {
     const seed = await seedDummyWorkspace(request, {
       tasks: 1,
       sessionsPerTask: 1,
-      turnsPerSession: 4,
-      includeToolSummaries: true,
-      toolSummariesPerTurn: 1,
-      awaitTurnCompletion: true,
-      messageBytes: 1200,
+      turnsPerSession: 0,
     });
     workspaceId = seed.workspaceId;
   });

@@ -42,14 +42,14 @@ const setupRunningSession = async (page: any) => {
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(slowMessage);
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
 
-  await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator(".wb-session button[aria-label=\"Stop\"]")).toBeVisible({ timeout: 20_000 });
 };
 
 const queueMessage = async (page: any, text: string) => {
-  const sessionComposer = page.locator(".wb-session textarea.wb-active-textarea");
+  const sessionComposer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await sessionComposer.fill(text);
-  await page.locator(".wb-session button[aria-label=\"Send\"]").click();
+  await page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]").click();
 };
 
 const delayDeleteMessage = async (page: any, delayMs: number) => {
@@ -104,7 +104,7 @@ test("workbench: edit queued message hides queue panel immediately", async ({ pa
 
   await queuePanel.getByRole("button", { name: "Edit queued message" }).click();
 
-  await expect(page.locator(".wb-session textarea.wb-active-textarea")).toHaveValue(queuedText);
+  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toHaveValue(queuedText);
   await expect(queuePanel).toHaveCount(0, { timeout: 800 });
 });
 

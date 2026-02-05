@@ -57,7 +57,7 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
   await expect(rows).toHaveCount(1, { timeout: 20000 });
   await rows.first().click();
 
-  const composer = page.locator(".wb-session textarea.wb-active-textarea");
+  const composer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await expect(composer).toBeVisible({ timeout: 20000 });
 
   await addLongMessages(request, sessionId);
@@ -86,7 +86,7 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
 
   const prompt = `stick-bottom-${Date.now()}`;
   await composer.fill(prompt);
-  await page.locator(".wb-session button[aria-label=\"Send\"]").click();
+  await page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]").click();
 
   await expect(page.locator(".wb-session")).toContainText(prompt, { timeout: 20000 });
 

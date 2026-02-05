@@ -12,7 +12,7 @@ import {
 } from "./persistence";
 
 const WINDOW_ID_STORAGE_KEY = "contextUiWindowId.v1";
-const SCROLL_CACHE_LIMIT = 1;
+const SCROLL_CACHE_LIMIT = 2;
 export const NEW_TASK_DRAFT_KEY = "new_task";
 
 export function sessionDraftKey(sessionId: string): string {

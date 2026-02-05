@@ -39,7 +39,7 @@ async function createWorkspaceAndStartRun(opts: {
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(prompt);
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
 
-  const sessionComposer = page.locator(".wb-session textarea.wb-active-textarea");
+  const sessionComposer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await expect(sessionComposer).toBeVisible({ timeout: 20_000 });
 
   const readId = (v: any): string => (typeof v === "string" ? v : "");

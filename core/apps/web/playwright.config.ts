@@ -46,7 +46,7 @@ export default defineConfig({
   webServer: {
     url: baseURL,
     command:
-      `bash -lc "rm -rf ${dataDir} && ${authSetupCommand} && pnpm -C apps/web build && CTX_DOCS_MIRROR_BIN=\\"${docsMirrorBinEscaped}\\" CARGO_TARGET_DIR=${cargoTargetDir} CTX_SHOW_FAKE_PROVIDER=1 CTX_STORAGE_BACKEND=sqlite cargo run -p ctx-http --bin ctx -- serve --bind ${HOST}:${PORT} --data-dir ${dataDir}"`,
+      `bash -lc "rm -rf ${dataDir} && ${authSetupCommand} && pnpm -C apps/web build && CTX_DOCS_MIRROR_BIN=\\"${docsMirrorBinEscaped}\\" CARGO_TARGET_DIR=${cargoTargetDir} CTX_EXECUTION_MODE=host CTX_SHOW_FAKE_PROVIDER=1 CTX_STORAGE_BACKEND=sqlite cargo run -p ctx-http --bin ctx -- serve --bind ${HOST}:${PORT} --data-dir ${dataDir}"`,
     cwd: "../..",
     reuseExistingServer: false,
     timeout: 1_200_000,

@@ -20,7 +20,7 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
   await expect(rows).toHaveCount(1, { timeout: 20000 });
   await rows.first().click();
 
-  const composer = page.locator(".wb-session textarea.wb-active-textarea");
+  const composer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await expect(composer).toBeVisible({ timeout: 20000 });
 
   const scroller = page.locator(scrollSelector).first();
@@ -39,7 +39,7 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
   });
   const layout = await page.evaluate(() => {
     const threadStack = document.querySelector(".wb-thread-stack") as HTMLElement | null;
-    const composer = document.querySelector(".wb-session textarea.wb-active-textarea") as HTMLTextAreaElement | null;
+    const composer = document.querySelector(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea") as HTMLTextAreaElement | null;
     if (!threadStack || !composer) return null;
     const stackRect = threadStack.getBoundingClientRect();
     const composerRect = composer.getBoundingClientRect();
@@ -72,7 +72,7 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
       ".wb-session-slot[aria-hidden=\"false\"] .wb-thread-scroller",
     ) as HTMLElement | null;
     const composer = document.querySelector(
-      ".wb-session textarea.wb-active-textarea",
+      ".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea",
     ) as HTMLTextAreaElement | null;
     if (!scroller || !composer) return;
 
@@ -167,7 +167,7 @@ test("workbench: composer stays visible when expanding long messages", async ({ 
   await expect(rows).toHaveCount(1, { timeout: 20000 });
   await rows.first().click();
 
-  const composer = page.locator(".wb-session textarea.wb-active-textarea");
+  const composer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await expect(composer).toBeVisible({ timeout: 20000 });
 
   const collapsedHeader = page.locator(".wb-turn-header[aria-expanded=\"false\"]").first();
@@ -176,7 +176,7 @@ test("workbench: composer stays visible when expanding long messages", async ({ 
 
   const layout = await page.evaluate(() => {
     const threadStack = document.querySelector(".wb-thread-stack") as HTMLElement | null;
-    const composer = document.querySelector(".wb-session textarea.wb-active-textarea") as HTMLTextAreaElement | null;
+    const composer = document.querySelector(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea") as HTMLTextAreaElement | null;
     if (!threadStack || !composer) return null;
     const stackRect = threadStack.getBoundingClientRect();
     const composerRect = composer.getBoundingClientRect();

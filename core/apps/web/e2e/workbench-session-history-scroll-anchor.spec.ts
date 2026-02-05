@@ -57,7 +57,7 @@ test("workbench: preserves scroll position when prepending history", async ({ pa
   const rows = page.locator(".wb-task-row");
   await expect(rows).toHaveCount(1, { timeout: 20000 });
   await rows.first().click();
-  await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({
+  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
     timeout: 20000,
   });
 

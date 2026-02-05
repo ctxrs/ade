@@ -182,10 +182,13 @@ export async function seedDummyWorkspace(
         if (awaitTurnCompletion) {
           const start = Date.now();
           while (true) {
-            const head = await apiGet<{
-              turns: Array<{ status: string; tool_total?: number | null }>;
-              tool_summaries?: any[];
-            }>(request, `/api/sessions/${session.id}/head?limit=1&include_events=1`);
+            const snapshot = await apiGet<{
+              head: {
+                turns: Array<{ status: string; tool_total?: number | null }>;
+                tool_summaries?: any[];
+              };
+            }>(request, `/api/sessions/${session.id}/snapshot?limit=1`);
+            const head = snapshot?.head;
             const turns = Array.isArray(head?.turns) ? head.turns : [];
             if (turns.length === 0) {
               if (Date.now() - start > completionTimeoutMs) {

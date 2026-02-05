@@ -13,7 +13,7 @@ test("workbench: inline code wraps without horizontal scroll", async ({ page, re
   await expect(rows).toHaveCount(1);
   await rows.first().click();
   await page.waitForTimeout(400);
-  await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
+  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
 
   const sessionId = seed.sessionIdsByTask[seed.taskIds[0]][0];
   const longSegment = "--flag=abcdefghijklmnopqrstuvwxyz0123456789";
@@ -84,7 +84,7 @@ test("workbench: fenced code blocks stay within thread width", async ({ page, re
   await expect(rows).toHaveCount(1);
   await rows.first().click();
   await page.waitForTimeout(400);
-  await expect(page.locator(".wb-session textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
+  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({ timeout: 20000 });
 
   const sessionId = seed.sessionIdsByTask[seed.taskIds[0]][0];
   const marker = `fenced-test-${Date.now()}`;

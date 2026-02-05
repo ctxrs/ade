@@ -1078,6 +1078,21 @@ pub async fn load_settings(data_root: &Path) -> Settings {
 
     // Environment overrides (optional) for easy local bring-up.
     // These are intentionally "best-effort" and do not persist.
+    if let Ok(mode) = std::env::var("CTX_EXECUTION_MODE") {
+        let normalized = mode.trim().to_lowercase();
+        let mode = match normalized.as_str() {
+            "host" => Some(ExecutionMode::Host),
+            "container" => Some(ExecutionMode::Container),
+            "auto" => Some(ExecutionMode::Auto),
+            _ => None,
+        };
+        if let Some(mode) = mode {
+            let execution = settings
+                .execution
+                .get_or_insert_with(ExecutionSettings::default);
+            execution.mode = mode;
+        }
+    }
     if let Ok(v) = std::env::var("CTX_DICTATION_PROVIDER") {
         if v.trim().eq_ignore_ascii_case("disabled") {
             settings.dictation = Some(DictationSettings {
