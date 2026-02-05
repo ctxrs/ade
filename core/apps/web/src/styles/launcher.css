@@ -19,9 +19,10 @@
   overflow: hidden;
   padding: 0;
   display: block;
-  --launcher-panel-width: min(520px, 92vw);
+  --launcher-panel-width: min(700px, 92vw);
   --launcher-stack-padding-x: 24px;
-  --launcher-stack-padding-y: 40px;
+  --launcher-stack-padding-top: 250px;
+  --launcher-stack-padding-bottom: 40px;
   --launcher-stack-gap: 18px;
 }
 
@@ -72,7 +73,7 @@
 .launcher-shell--crt .launcher-panel {
   padding: 0;
   align-items: flex-start;
-  justify-items: flex-start;
+  justify-items: stretch;
   text-align: left;
 }
 
@@ -184,16 +185,20 @@
   height: 100%;
   border-radius: 0;
   display: grid;
-  align-content: center;
+  align-content: flex-start;
   justify-content: center;
+  padding-top: var(--launcher-stack-padding-top);
+  padding-bottom: var(--launcher-stack-padding-bottom);
+  box-sizing: border-box;
 }
 
 .launcher-brand--full .launcher-brand-stack {
   width: var(--launcher-panel-width);
   display: grid;
   gap: var(--launcher-stack-gap);
-  padding: var(--launcher-stack-padding-y) var(--launcher-stack-padding-x);
-  justify-items: flex-start;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 0 var(--launcher-stack-padding-x);
+  justify-items: stretch;
 }
 
 .launcher-brand--full .launcher-panel {
@@ -202,12 +207,21 @@
   z-index: 4;
 }
 
+.launcher-brand--full .wizard-panel {
+  width: var(--launcher-panel-width);
+  position: relative;
+  z-index: 4;
+  justify-items: stretch;
+  text-align: left;
+}
+
 .terminal-content {
   font-family: "VT323", monospace;
   font-size: 4rem;
   color: var(--phosphor-green);
   position: relative;
   z-index: 1;
+  justify-self: flex-start;
   text-shadow:
     0 0 2px var(--phosphor-bloom),
     0 0 8px var(--phosphor-bloom),
@@ -294,7 +308,7 @@
 }
 
 .launcher-recents {
-  width: min(420px, 86vw);
+  width: 100%;
   display: grid;
   gap: 8px;
   margin-top: 6px;
@@ -356,7 +370,7 @@
 }
 
 .launcher-footer {
-  width: min(420px, 86vw);
+  width: 100%;
   display: flex;
   justify-content: flex-end;
   color: var(--launcher-muted);
@@ -399,6 +413,16 @@
   background: var(--launcher-button);
   display: grid;
   gap: 10px;
+}
+
+.wizard-step-body {
+  display: grid;
+  gap: 10px;
+}
+
+.wizard-step-summary {
+  color: var(--launcher-muted);
+  font-size: 12px;
 }
 
 .wizard-step-title {
@@ -457,6 +481,28 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.wizard-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding-top: 6px;
+}
+
+.wizard-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid var(--launcher-border);
+  background: transparent;
+  padding: 0;
+}
+
+.wizard-dot.is-active {
+  background: var(--launcher-text);
+  border-color: var(--launcher-text);
 }
 
 .wizard-primary,
