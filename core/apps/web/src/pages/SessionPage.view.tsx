@@ -1481,6 +1481,26 @@ export function SessionView({
     setSendBusy(next);
   };
 
+  const getNextOptimisticOrderSeq = () => {
+    let maxSeq = 0;
+    const consider = (message: Message) => {
+      const seq = Number(message.order_seq ?? Number.NaN);
+      if (Number.isFinite(seq) && seq > maxSeq) {
+        maxSeq = seq;
+      }
+    };
+    for (const message of messages) {
+      consider(message);
+    }
+    for (const entry of pendingMessages) {
+      consider(entry.message);
+    }
+    for (const entry of pendingQueueMessages) {
+      consider(entry.message);
+    }
+    return Math.max(maxSeq + 1, 1);
+  };
+
   const sendNow = async () => {
     if (!id) return;
     if (sendBusyRef.current) return;
@@ -1510,6 +1530,7 @@ export function SessionView({
       task_id: session?.task_id ?? "",
       turn_id: null,
       turn_sequence: null,
+      order_seq: getNextOptimisticOrderSeq(),
       role: "user",
       content: text,
       attachments: attachmentsToSend,
