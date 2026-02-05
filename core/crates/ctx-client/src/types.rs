@@ -235,6 +235,10 @@ pub struct SessionGitStatusResponse {
     pub untracked: i64,
     #[serde(default)]
     pub entries: Vec<GitStatusEntry>,
+    #[serde(default)]
+    pub entries_truncated: bool,
+    #[serde(default)]
+    pub entries_total_count: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

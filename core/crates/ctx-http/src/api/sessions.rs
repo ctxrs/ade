@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Context;
 use base64::Engine;
@@ -21,7 +21,7 @@ use super::shared::{
 };
 use crate::attachments;
 use crate::completions;
-use crate::daemon::{AppState, GitStatusSnapshotCacheEntry};
+use crate::daemon::AppState;
 use crate::git_status::{load_git_status_snapshot, GitStatusEntry};
 use crate::installer;
 use crate::logs;
@@ -449,6 +449,8 @@ pub(super) async fn get_session_git_status(
         unstaged: snapshot.unstaged,
         untracked: snapshot.untracked,
         entries: snapshot.entries,
+        entries_truncated: snapshot.entries_truncated,
+        entries_total_count: snapshot.entries_total_count,
     };
     let summary = SessionGitStatusSummary {
         summary_line: resp.summary_line.clone(),
@@ -467,7 +469,6 @@ pub(super) async fn get_session_git_status(
     {
         tracing::warn!(session_id = %session_id.0, "git status summary persist failed: {err:?}");
     }
-    maybe_emit_git_status_snapshot(&state, session_id, worktree.id, &resp).await;
     Ok(Json(resp))
 }
 
@@ -628,74 +629,6 @@ pub(super) async fn resolve_session_diff_base(
     Ok(resolution.base_commit_sha)
 }
 
-pub(super) async fn maybe_emit_git_status_snapshot(
-    state: &Arc<AppState>,
-    session_id: SessionId,
-    worktree_id: WorktreeId,
-    snapshot: &SessionGitStatusResponse,
-) {
-    const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
-    const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
-    let summary = serde_json::json!({
-        "summary_line": snapshot.summary_line,
-        "branch": snapshot.branch,
-        "upstream": snapshot.upstream,
-        "ahead": snapshot.ahead,
-        "behind": snapshot.behind,
-        "detached": snapshot.detached,
-        "staged": snapshot.staged,
-        "unstaged": snapshot.unstaged,
-        "untracked": snapshot.untracked,
-    });
-    let payload = serde_json::json!({
-        "kind": "git_status_snapshot",
-        "worktree_id": worktree_id.0.to_string(),
-        "summary": summary,
-        "entries": snapshot.entries,
-    });
-    let payload_raw = match serde_json::to_string(&payload) {
-        Ok(value) => value,
-        Err(_) => return,
-    };
-    let now = Instant::now();
-    {
-        let mut cache = state.workspaces.git_status_snapshots.lock().await;
-        let entry = cache.entry(worktree_id).or_insert_with(|| {
-            crate::daemon::TimedEntry::new(GitStatusSnapshotCacheEntry {
-                payload: String::new(),
-                emitted_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
-                last_change_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
-            })
-        });
-        entry.touch_at(now);
-        let is_first = entry.value.payload.is_empty();
-        if entry.value.payload == payload_raw {
-            return;
-        }
-        let since_change = now.duration_since(entry.value.last_change_at);
-        entry.value.payload = payload_raw;
-        entry.value.last_change_at = now;
-        let since_emit = now.duration_since(entry.value.emitted_at);
-        if !is_first
-            && since_emit < Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS)
-            && since_change < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS)
-        {
-            return;
-        }
-        entry.value.emitted_at = now;
-    }
-    let notice = match state.store_for_session(session_id).await {
-        Ok(store) => {
-            store
-                .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
-                .await
-        }
-        Err(_) => return,
-    };
-    if let Ok(event) = notice {
-        state.publish_event(event).await;
-    }
-}
 
 pub(super) async fn apply_session_diff_patch(
     State(state): State<Arc<AppState>>,
@@ -1044,6 +977,8 @@ pub(super) struct SessionGitStatusResponse {
     untracked: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     entries: Vec<GitStatusEntry>,
+    entries_truncated: bool,
+    entries_total_count: i64,
 }
 
 #[derive(Debug, Deserialize, Default)]

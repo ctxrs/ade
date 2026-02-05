@@ -17,10 +17,7 @@ use ctx_core::ids::*;
 use ctx_core::models::*;
 
 use crate::daemon::AppState;
-use crate::git_status::{
-    emit_git_status_snapshot_for_sessions, emit_worktree_vcs_snapshot_for_worktree,
-    load_git_status_snapshot,
-};
+use crate::git_status::emit_worktree_vcs_snapshot_for_worktree;
 use crate::terminals::{TerminalClientMessage, TerminalServerMessage};
 use crate::web_sessions::WebSessionManager;
 use crate::workspace_active_snapshot::SessionReplayResult;
@@ -1797,7 +1794,7 @@ async fn ensure_worktree_vcs_watchers_for_sessions(
     if session_ids.is_empty() {
         return;
     }
-    let mut worktree_sessions: HashMap<WorktreeId, (Worktree, Vec<SessionId>)> = HashMap::new();
+    let mut worktrees: HashMap<WorktreeId, Worktree> = HashMap::new();
     for session_id in session_ids {
         let store = match state.store_for_session(*session_id).await {
             Ok(store) => store,
@@ -1811,21 +1808,13 @@ async fn ensure_worktree_vcs_watchers_for_sessions(
             Ok(Some(worktree)) => worktree,
             _ => continue,
         };
-        let entry = worktree_sessions
-            .entry(worktree.id)
-            .or_insert_with(|| (worktree, Vec::new()));
-        entry.1.push(*session_id);
+        worktrees.entry(worktree.id).or_insert(worktree);
     }
 
-    for (worktree_id, (worktree, sessions)) in worktree_sessions {
+    for (worktree_id, worktree) in worktrees {
         state.ensure_git_status_watcher(worktree.clone()).await;
         if let Err(err) = emit_worktree_vcs_snapshot_for_worktree(state, &worktree, true).await {
             tracing::warn!(worktree_id = %worktree_id.0, "worktree vcs snapshot failed: {err:#}");
-        }
-        // Preserve session-level notices for explicitly subscribed sessions.
-        if let Ok(snapshot) = load_git_status_snapshot(&worktree).await {
-            emit_git_status_snapshot_for_sessions(state, &sessions, worktree_id, &snapshot, true)
-                .await;
         }
     }
 }

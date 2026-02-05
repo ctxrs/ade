@@ -8,48 +8,36 @@ use serde_json::{json, Value};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use chrono::Utc;
-use ctx_core::ids::{SessionId, TurnId};
+use ctx_core::ids::{SessionId, TurnId, WorktreeId};
 use ctx_core::models::{SessionEventType, SessionTurn, SessionTurnStatus};
 use ctx_http::daemon::AppState;
 
 mod common;
 
-fn git_status_untracked_count(event: &ctx_core::models::SessionEvent) -> Option<i64> {
-    if !matches!(event.event_type, SessionEventType::Notice) {
-        return None;
-    }
-    let kind = event.payload_json.get("kind")?.as_str()?;
-    if kind != "git_status_snapshot" {
-        return None;
-    }
-    event
-        .payload_json
-        .get("summary")
-        .and_then(|value| value.get("untracked"))
-        .and_then(|value| value.as_i64())
-}
-
 fn git_status_untracked_from_message(
     message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
-    session_id: SessionId,
+    worktree_id: WorktreeId,
 ) -> Option<i64> {
     match message {
+        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot { active_snapshot, .. } => {
+            active_snapshot
+                .worktree_vcs_snapshots
+                .into_iter()
+                .find(|snapshot| snapshot.worktree_id == worktree_id)
+                .map(|snapshot| snapshot.git_status.untracked)
+        }
         ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
-            let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } =
+            let ctx_core::models::WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot { snapshot, .. } =
                 event.as_ref()
             else {
                 return None;
             };
-            if delta.session_id != session_id {
+            if snapshot.worktree_id != worktree_id {
                 None
             } else {
-                delta.event.as_ref().and_then(git_status_untracked_count)
+                Some(snapshot.git_status.untracked)
             }
         }
-        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch { deltas, .. } => deltas
-            .into_iter()
-            .filter(|delta| delta.session_id == session_id)
-            .find_map(|delta| delta.event.as_ref().and_then(git_status_untracked_count)),
         _ => None,
     }
 }
@@ -472,6 +460,13 @@ async fn workspace_stream_replays_from_after_seq() {
         .await
         .unwrap();
     state.remember_session_meta(&session).await;
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+    let worktree_id = worktree.id;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let ev1 = store
@@ -826,7 +821,9 @@ async fn workspace_stream_emits_git_status_snapshot_on_change() {
             if let Ok(message) =
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if let Some(untracked) = git_status_untracked_from_message(message, session.id) {
+                if let Some(untracked) =
+                    git_status_untracked_from_message(message, worktree_id)
+                {
                     if untracked == 0 {
                         saw_clean_snapshot = true;
                         break;
@@ -840,12 +837,6 @@ async fn workspace_stream_emits_git_status_snapshot_on_change() {
         "expected initial clean git status snapshot"
     );
 
-    let store = state.store_for_session(session.id).await.unwrap();
-    let worktree = store
-        .get_worktree(session.worktree_id)
-        .await
-        .unwrap()
-        .expect("missing worktree");
     let file_path = Path::new(&worktree.root_path).join("git-status-live.txt");
     tokio::fs::write(&file_path, "change\n").await.unwrap();
 
@@ -859,7 +850,9 @@ async fn workspace_stream_emits_git_status_snapshot_on_change() {
             if let Ok(message) =
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if let Some(untracked) = git_status_untracked_from_message(message, session.id) {
+                if let Some(untracked) =
+                    git_status_untracked_from_message(message, worktree_id)
+                {
                     if untracked >= 1 {
                         saw_untracked = true;
                         break;
@@ -910,6 +903,13 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
         .await
         .unwrap();
     state.remember_session_meta(&session_one).await;
+    let store_one = state.store_for_session(session_one.id).await.unwrap();
+    let worktree_one = store_one
+        .get_worktree(session_one.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+    let worktree_one_id = worktree_one.id;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket_one, _) = connect_async(&ws_url).await.unwrap();
@@ -941,7 +941,8 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
             if let Ok(message) =
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if let Some(untracked) = git_status_untracked_from_message(message, session_one.id)
+                if let Some(untracked) =
+                    git_status_untracked_from_message(message, worktree_one_id)
                 {
                     if untracked == 0 {
                         saw_initial = true;
@@ -963,6 +964,13 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
         .await
         .unwrap();
     state.remember_session_meta(&session_two).await;
+    let store_two = state.store_for_session(session_two.id).await.unwrap();
+    let worktree_two = store_two
+        .get_worktree(session_two.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+    let worktree_two_id = worktree_two.id;
 
     let (mut socket_two, _) = connect_async(&ws_url).await.unwrap();
     let _ = tokio::time::timeout(Duration::from_secs(2), socket_two.next())
@@ -993,7 +1001,8 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
             if let Ok(message) =
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if let Some(untracked) = git_status_untracked_from_message(message, session_two.id)
+                if let Some(untracked) =
+                    git_status_untracked_from_message(message, worktree_two_id)
                 {
                     if untracked == 0 {
                         saw_second = true;

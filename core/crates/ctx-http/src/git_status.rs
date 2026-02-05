@@ -7,11 +7,11 @@ use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use tokio::sync::mpsc;
 
-use ctx_core::ids::{SessionId, WorktreeId};
+use ctx_core::ids::SessionId;
 use ctx_core::models::{
-    SessionEventType, SessionGitStatusSummary, SessionStatus, Worktree, WorktreeVcsBaseResolution,
-    WorktreeVcsComputeState, WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary,
-    WorktreeVcsTouchedFile, WorktreeVcsTouchedFiles,
+    SessionStatus, Worktree, WorktreeVcsBaseResolution, WorktreeVcsComputeState,
+    WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary, WorktreeVcsTouchedFile,
+    WorktreeVcsTouchedFiles,
 };
 use ctx_fs::patch::should_ignore_path;
 use ctx_fs::vcs::{self, VcsDriver};
@@ -22,8 +22,7 @@ use crate::daemon::AppState;
 const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
 const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
 const GIT_STATUS_WATCH_DEBOUNCE_MS: u64 = 500;
-const GIT_STATUS_POLL_INTERVAL_MS: u64 = 1000;
-const GIT_STATUS_SAFETY_POLL_INTERVAL_MS: u64 = 2000;
+const GIT_STATUS_POLL_INTERVAL_MS: u64 = 60_000;
 const WORKTREE_VCS_SUMMARY_DEBOUNCE_MS: u64 = 750;
 const WORKTREE_VCS_TOUCHED_FILES_CAP: usize = 200;
 
@@ -40,6 +39,8 @@ pub struct GitStatusSnapshot {
     pub unstaged: i64,
     pub untracked: i64,
     pub entries: Vec<GitStatusEntry>,
+    pub entries_total_count: i64,
+    pub entries_truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -79,8 +80,20 @@ fn snapshot_fingerprint(snapshot: &WorktreeVcsSnapshot) -> String {
     serde_json::to_string(&copy).unwrap_or_default()
 }
 
-fn build_touched_files(entries: &[GitStatusEntry]) -> WorktreeVcsTouchedFiles {
-    let total = entries.len();
+struct ParsedGitStatusEntries {
+    entries: Vec<GitStatusEntry>,
+    staged: i64,
+    unstaged: i64,
+    untracked: i64,
+    total_count: i64,
+    truncated: bool,
+}
+
+fn build_touched_files(
+    entries: &[GitStatusEntry],
+    total_count: i64,
+    truncated: bool,
+) -> WorktreeVcsTouchedFiles {
     let mut items = Vec::new();
     for entry in entries.iter().take(WORKTREE_VCS_TOUCHED_FILES_CAP) {
         items.push(WorktreeVcsTouchedFile {
@@ -92,8 +105,8 @@ fn build_touched_files(entries: &[GitStatusEntry]) -> WorktreeVcsTouchedFiles {
     }
     WorktreeVcsTouchedFiles {
         items,
-        truncated: total > WORKTREE_VCS_TOUCHED_FILES_CAP,
-        total_count: Some(total as i64),
+        truncated,
+        total_count: Some(total_count),
     }
 }
 
@@ -193,7 +206,6 @@ pub async fn load_git_status_snapshot(worktree: &Worktree) -> Result<GitStatusSn
     let branch_info = parse_git_status_short(&status_text);
     let entries = vcs.status_porcelain(root).await?;
     let parsed_entries = parse_git_status_entries(&entries);
-    let (staged, unstaged, untracked) = count_git_status_entries(&parsed_entries);
     Ok(GitStatusSnapshot {
         raw: status_text,
         summary_line: branch_info.summary_line,
@@ -202,10 +214,12 @@ pub async fn load_git_status_snapshot(worktree: &Worktree) -> Result<GitStatusSn
         ahead: branch_info.ahead,
         behind: branch_info.behind,
         detached: branch_info.detached,
-        staged,
-        unstaged,
-        untracked,
-        entries: parsed_entries,
+        staged: parsed_entries.staged,
+        unstaged: parsed_entries.unstaged,
+        untracked: parsed_entries.untracked,
+        entries: parsed_entries.entries,
+        entries_total_count: parsed_entries.total_count,
+        entries_truncated: parsed_entries.truncated,
     })
 }
 
@@ -273,7 +287,11 @@ async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) 
         (snapshot.git_status, snapshot.touched_files)
     } else {
         let snapshot = load_git_status_snapshot(&worktree).await?;
-        let touched = build_touched_files(&snapshot.entries);
+        let touched = build_touched_files(
+            &snapshot.entries,
+            snapshot.entries_total_count,
+            snapshot.entries_truncated,
+        );
         let git_status = build_git_status_summary(&snapshot, &touched);
         (git_status, touched)
     };
@@ -311,7 +329,7 @@ async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) 
         Some(resolution),
     )
     .await?;
-    if let Some(snapshot) = upsert_worktree_vcs_snapshot(&state, snapshot, true, summary_at).await {
+    if let Some(snapshot) = upsert_worktree_vcs_snapshot(&state, snapshot, false, summary_at).await {
         if state.is_worktree_vcs_active(worktree.id).await {
             state
                 .workspaces
@@ -369,18 +387,11 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
         return Ok(());
     }
     let git_snapshot = load_git_status_snapshot(worktree).await?;
-    if !active_session_ids.is_empty() {
-        emit_git_status_snapshot_for_sessions(
-            state,
-            &active_session_ids,
-            worktree.id,
-            &git_snapshot,
-            force_emit,
-        )
-        .await;
-    }
-
-    let touched_files = build_touched_files(&git_snapshot.entries);
+    let touched_files = build_touched_files(
+        &git_snapshot.entries,
+        git_snapshot.entries_total_count,
+        git_snapshot.entries_truncated,
+    );
     let git_status = build_git_status_summary(&git_snapshot, &touched_files);
     let cached_summary = {
         let cache = state.workspaces.worktree_vcs_snapshots.lock().await;
@@ -411,6 +422,7 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
         None,
     )
     .await?;
+    let mut published = false;
     if let Some(snapshot) = upsert_worktree_vcs_snapshot(state, snapshot, force_emit, None).await {
         if active {
             state
@@ -418,120 +430,22 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
                 .workspace_active_snapshot
                 .publish_worktree_vcs_snapshot(worktree.workspace_id, snapshot)
                 .await;
+            published = true;
         }
     }
-    if active {
+    if active && published {
         schedule_worktree_vcs_summary(state.clone(), worktree.clone()).await;
     }
     Ok(())
 }
 
-pub async fn emit_git_status_snapshot_for_sessions(
-    state: &Arc<AppState>,
-    session_ids: &[SessionId],
-    worktree_id: WorktreeId,
-    snapshot: &GitStatusSnapshot,
-    force_emit: bool,
-) {
-    if session_ids.is_empty() {
-        return;
-    }
-    let summary = serde_json::json!({
-        "summary_line": snapshot.summary_line,
-        "branch": snapshot.branch,
-        "upstream": snapshot.upstream,
-        "ahead": snapshot.ahead,
-        "behind": snapshot.behind,
-        "detached": snapshot.detached,
-        "staged": snapshot.staged,
-        "unstaged": snapshot.unstaged,
-        "untracked": snapshot.untracked,
-    });
-    let payload = serde_json::json!({
-        "kind": "git_status_snapshot",
-        "worktree_id": worktree_id.0.to_string(),
-        "summary": summary,
-        "entries": &snapshot.entries,
-    });
-    let summary_model = SessionGitStatusSummary {
-        summary_line: snapshot.summary_line.clone(),
-        branch: snapshot.branch.clone(),
-        upstream: snapshot.upstream.clone(),
-        ahead: snapshot.ahead,
-        behind: snapshot.behind,
-        detached: snapshot.detached,
-        staged: snapshot.staged,
-        unstaged: snapshot.unstaged,
-        untracked: snapshot.untracked,
-    };
-    let payload_raw = match serde_json::to_string(&payload) {
-        Ok(value) => value,
-        Err(_) => return,
-    };
-    let now = Instant::now();
-    {
-        let mut cache = state.workspaces.git_status_snapshots.lock().await;
-        let entry = cache.entry(worktree_id).or_insert_with(|| {
-            crate::daemon::TimedEntry::new(crate::daemon::GitStatusSnapshotCacheEntry {
-                payload: String::new(),
-                emitted_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
-                last_change_at: now - Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS + 1),
-            })
-        });
-        entry.touch_at(now);
-        let is_first = entry.value.payload.is_empty();
-        if entry.value.payload == payload_raw {
-            if !force_emit {
-                return;
-            }
-        } else {
-            let since_change = now.duration_since(entry.value.last_change_at);
-            let since_emit = now.duration_since(entry.value.emitted_at);
-            if !is_first
-                && since_emit < Duration::from_millis(GIT_STATUS_MAX_INTERVAL_MS)
-                && since_change < Duration::from_millis(GIT_STATUS_DEBOUNCE_MS)
-            {
-                return;
-            }
-            entry.value.payload = payload_raw;
-            entry.value.last_change_at = now;
-            entry.value.emitted_at = now;
-        }
-    }
-
-    for session_id in session_ids {
-        if let Ok(store) = state.store_for_session(*session_id).await {
-            if let Err(err) = store
-                .upsert_session_git_status_summary(*session_id, worktree_id, &summary_model)
-                .await
-            {
-                tracing::warn!(
-                    session_id = %session_id.0,
-                    "git status summary persist failed: {err:?}"
-                );
-            }
-            let notice = store
-                .append_session_event(
-                    *session_id,
-                    None,
-                    None,
-                    SessionEventType::Notice,
-                    payload.clone(),
-                )
-                .await;
-            if let Ok(event) = notice {
-                state.publish_event(event).await;
-            }
-        }
-    }
-}
 
 pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
     let root = Path::new(&worktree.root_path);
     let vcs = vcs_driver_for_worktree(&worktree);
     vcs.assert_repo(root).await?;
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
+    let (tx, mut rx) = mpsc::channel::<()>(1);
     let mut watcher = watcher(tx)?;
     if let Err(err) = watcher.watch(root, RecursiveMode::Recursive) {
         // On hosts with low watch limits (or many concurrent watchers), file watching can fail with
@@ -549,31 +463,14 @@ pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) ->
     let timer = tokio::time::sleep(debounce);
     tokio::pin!(timer);
 
-    // Safety net: notify can succeed but still fail to deliver events under watch pressure
-    // (e.g. partial watch installation, dropped events). Polling keeps git status updates flowing
-    // and avoids flaky tests that rely on live status changes.
-    let mut poll = tokio::time::interval_at(
-        tokio::time::Instant::now() + Duration::from_millis(GIT_STATUS_SAFETY_POLL_INTERVAL_MS),
-        Duration::from_millis(GIT_STATUS_SAFETY_POLL_INTERVAL_MS),
-    );
-    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
     loop {
         tokio::select! {
-            event = rx.recv() => {
-                let Some(event) = event else {
+            signal = rx.recv() => {
+                let Some(()) = signal else {
                     break;
                 };
-                if should_ignore_event(&event) {
-                    continue;
-                }
                 pending = true;
                 timer.as_mut().reset(tokio::time::Instant::now() + debounce);
-            }
-            _ = poll.tick() => {
-                if let Err(err) = emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, false).await {
-                    tracing::warn!(worktree_id = %worktree.id.0, "git status snapshot failed: {err:#}");
-                }
             }
             _ = &mut timer, if pending => {
                 pending = false;
@@ -655,29 +552,12 @@ fn parse_git_status_short(output: &str) -> GitStatusBranchInfo {
     info
 }
 
-fn count_git_status_entries(entries: &[GitStatusEntry]) -> (i64, i64, i64) {
+fn parse_git_status_entries(entries: &[String]) -> ParsedGitStatusEntries {
+    let mut out = Vec::new();
     let mut staged = 0;
     let mut unstaged = 0;
     let mut untracked = 0;
-    for entry in entries {
-        let index_status = entry.index_status.chars().next().unwrap_or(' ');
-        let worktree_status = entry.worktree_status.chars().next().unwrap_or(' ');
-        if index_status == '?' && worktree_status == '?' {
-            untracked += 1;
-            continue;
-        }
-        if index_status != ' ' {
-            staged += 1;
-        }
-        if worktree_status != ' ' {
-            unstaged += 1;
-        }
-    }
-    (staged, unstaged, untracked)
-}
-
-fn parse_git_status_entries(entries: &[String]) -> Vec<GitStatusEntry> {
-    let mut out = Vec::new();
+    let mut total_count = 0;
     let mut i = 0;
     while i < entries.len() {
         let raw = entries[i].trim_end();
@@ -708,15 +588,35 @@ fn parse_git_status_entries(entries: &[String]) -> Vec<GitStatusEntry> {
                 i += 1;
             }
         }
-        out.push(GitStatusEntry {
-            path: current_path,
-            orig_path,
-            index_status: index_status.to_string(),
-            worktree_status: worktree_status.to_string(),
-        });
+        total_count += 1;
+        if index_status == '?' && worktree_status == '?' {
+            untracked += 1;
+        } else {
+            if index_status != ' ' {
+                staged += 1;
+            }
+            if worktree_status != ' ' {
+                unstaged += 1;
+            }
+        }
+        if out.len() < WORKTREE_VCS_TOUCHED_FILES_CAP {
+            out.push(GitStatusEntry {
+                path: current_path,
+                orig_path,
+                index_status: index_status.to_string(),
+                worktree_status: worktree_status.to_string(),
+            });
+        }
         i += 1;
     }
-    out
+    ParsedGitStatusEntries {
+        entries: out,
+        staged,
+        unstaged,
+        untracked,
+        total_count,
+        truncated: total_count as usize > WORKTREE_VCS_TOUCHED_FILES_CAP,
+    }
 }
 
 fn looks_like_porcelain_status(value: &str) -> bool {
@@ -728,10 +628,13 @@ fn should_ignore_event(event: &Event) -> bool {
     event.paths.iter().all(|path| should_ignore_path(path))
 }
 
-fn watcher(tx: mpsc::UnboundedSender<Event>) -> Result<RecommendedWatcher> {
+fn watcher(tx: mpsc::Sender<()>) -> Result<RecommendedWatcher> {
     let watcher = notify::recommended_watcher(move |res| {
         if let Ok(event) = res {
-            let _ = tx.send(event);
+            if should_ignore_event(&event) {
+                return;
+            }
+            let _ = tx.try_send(());
         }
     })?;
     Ok(watcher)
