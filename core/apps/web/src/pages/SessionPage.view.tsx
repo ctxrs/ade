@@ -1430,7 +1430,6 @@ export function SessionView({
     });
   }, [
     adjustAnchorOffset,
-    emitScrollDebug,
     id,
     isActive,
     preserveScrollOnFocus,
