@@ -1061,18 +1061,10 @@ async fn start_turn(
                                 assistant_partial_message_id = None;
                             }
                         }
-                        if terminal_status.is_none() {
-                            let _ = store
-                                .update_session_turn_status(
-                                    session_id,
-                                    turn_id,
-                                    SessionTurnStatus::Completed,
-                                    None,
-                                    None,
-                                    event.created_at,
-                                )
-                                .await;
-                        }
+                        // NOTE: AssistantComplete means the assistant has finished streaming the
+                        // current assistant message, not that the Turn is complete. Tools may
+                        // still be executing, and we only finalize turn status on Done /
+                        // TurnFinished (or interrupt/error paths).
                         let _ = store
                             .delete_session_events_for_turn_types(
                                 session_id,

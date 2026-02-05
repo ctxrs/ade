@@ -1800,7 +1800,6 @@ export class SessionSupervisor {
         if (providerMessageId) {
           turn.assistant_partial_provider_message_id = providerMessageId;
         }
-        if (turn.status !== "completed") turn.status = "completed";
         changed = true;
         break;
       }
@@ -2371,7 +2370,6 @@ const deriveTurnStatusFromEvent = (event: SessionEvent): SessionTurn["status"] =
   const eventType = String(event.event_type ?? "");
   switch (eventType) {
     case "done":
-    case "assistant_complete":
       return "completed";
     case "turn_finished":
       return "completed";

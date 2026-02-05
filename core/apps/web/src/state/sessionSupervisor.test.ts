@@ -42,8 +42,13 @@ vi.mock("../api/client", () => {
 });
 
 vi.mock("./uiStateStore", () => ({
+  loadSessionAcpMetaV1: vi.fn(async () => null),
   loadSessionHeadV1: vi.fn(async () => null),
   loadSessionHistoryPageV1: vi.fn(async () => null),
+  loadTaskThoughtsV1: vi.fn(async () => null),
+  saveTaskThoughtsV1: vi.fn(async () => {}),
+  clearTaskThoughtsV1: vi.fn(async () => {}),
+  saveSessionAcpMetaV1: vi.fn(async () => {}),
   saveSessionHeadV1: vi.fn(async () => {}),
   saveSessionHistoryPageV1: vi.fn(async () => {}),
 }));
@@ -199,6 +204,93 @@ describe("SessionSupervisor", () => {
     expect(entry?.messages.length).toBe(1);
     expect(entry?.turns.length).toBe(1);
     expect(entry?.lastEventSeq).toBe(2);
+  });
+
+  it("does not mark turn completed on assistant_complete before done", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-2b";
+    (getSessionSnapshot as any).mockResolvedValue({
+      summary: {
+        session: mkSession(sessionId),
+      },
+    });
+    (getSessionHead as any).mockResolvedValue({
+      session: mkSession(sessionId),
+      turns: [] as SessionTurn[],
+      events: [] as SessionEvent[],
+      messages: [] as Message[],
+      last_event_seq: 0,
+      has_more_turns: false,
+    });
+
+    const sup = new SessionSupervisor();
+
+    const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (listener: (evt: WorkspaceActiveSnapshotEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      setSubscribedSessionIds: () => {},
+      getSnapshot: () => ({
+        workspaceId: "ws-1",
+        initialized: true,
+        connection: "connected" as const,
+        tasksById: {},
+        activeIds: [],
+        archivedIds: [],
+        totalActive: 0,
+        totalArchived: 0,
+        fetchState: { active: "idle", archived: "idle" },
+        hasMoreActive: false,
+        hasMoreArchived: false,
+        archivedLoaded: false,
+      }),
+    };
+
+    sup.bindWorkspaceActiveSnapshotStore(store);
+    sup.openSession(sessionId);
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.session != null);
+
+    const now = new Date().toISOString();
+    const turnId = "turn-1";
+    const sendDelta = (seq: number, event_type: SessionEvent["event_type"], payload_json: any = {}) => {
+      const event: SessionEvent = {
+        seq,
+        id: "e" + seq,
+        session_id: sessionId,
+        turn_id: turnId,
+        event_type,
+        payload_json,
+        created_at: now,
+      };
+      const deltaEvent: WorkspaceActiveSnapshotEvent = {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 1,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: seq,
+          state_rev: seq,
+          event,
+        },
+      };
+      listeners.forEach((listener) => listener(deltaEvent));
+    };
+
+    sendDelta(1, "turn_started");
+    expect(sup.getSnapshot().sessions[sessionId]?.turns[0]?.status).toBe("running");
+
+    sendDelta(2, "assistant_complete", { full_content: "hello" });
+    expect(sup.getSnapshot().sessions[sessionId]?.turns[0]?.status).toBe("running");
+
+    sendDelta(3, "done");
+    expect(sup.getSnapshot().sessions[sessionId]?.turns[0]?.status).toBe("completed");
   });
 
   it("persists delta heads without partial events", async () => {
