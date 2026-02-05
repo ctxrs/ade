@@ -10,6 +10,8 @@ import CursorDiffDemoPage from "./pages/CursorDiffDemoPage";
 import ProvidersPage from "./pages/ProvidersPage";
 import DiagnosticsPage from "./pages/DiagnosticsPage";
 import SettingsPage from "./pages/SettingsPage";
+import WorkspaceSetupPage from "./pages/WorkspaceSetupPage";
+import CrashCoursePage from "./pages/CrashCoursePage";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
 import { SettingsStoreProvider } from "./state/settingsStore";
 import { preloadHarnessLogos } from "./utils/harnessCatalog";
@@ -109,6 +111,8 @@ export default function App() {
           <DesktopSettingsListener />
           <Routes>
             <Route path="/" element={<LauncherPage />} />
+            <Route path="/crash-course" element={<CrashCoursePage />} />
+            <Route path="/workspace-setup" element={<WorkspaceSetupPage />} />
             <Route path="/app-settings" element={<AppSettingsPage />} />
             <Route path="/workspaces" element={<WorkspacesPage />} />
             <Route path="/settings" element={<SettingsPage />} />

@@ -82,6 +82,7 @@ fn main() {
         ])
         .setup(|app| {
             open_main_window(&app.handle())?;
+            schedule_force_launcher(app.handle().clone());
             schedule_startup_workspaces(app.handle().clone());
             setup_deep_link_listener(&app.handle());
             Ok(())
@@ -236,6 +237,53 @@ fn schedule_startup_workspaces(app: tauri::AppHandle) {
                 serde_json::to_string(&url).unwrap_or_else(|_| "\"/workspaces\"".to_string())
             );
             let _ = window.eval(&js);
+        }
+    });
+}
+
+fn should_force_launcher() -> bool {
+    if let Ok(start_path) = std::env::var("CTX_DESKTOP_START_PATH") {
+        if start_path.trim().starts_with('/') {
+            return false;
+        }
+    }
+    if let Ok(raw) = std::env::var("CTX_DESKTOP_START_WORKSPACE_PATHS") {
+        if !raw.trim().is_empty() {
+            return false;
+        }
+    }
+    true
+}
+
+fn schedule_force_launcher(app: tauri::AppHandle) {
+    if !should_force_launcher() {
+        return;
+    }
+
+    std::thread::spawn(move || {
+        for _ in 0..30 {
+            if let Some(window) = app.get_webview_window("main") {
+                let js = r#"
+(() => {
+  const go = () => {
+    try {
+      const path = window.location.pathname || "/";
+      if (path !== "/") {
+        window.location.replace("/");
+      }
+    } catch {}
+  };
+  if (document.readyState === "loading") {
+    window.addEventListener("DOMContentLoaded", go, { once: true });
+  } else {
+    go();
+  }
+})();
+"#;
+                let _ = window.eval(js);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
     });
 }
@@ -1928,6 +1976,8 @@ fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
     {
         let _ = install_macos_settings_button(app, &window);
     }
+    let _ = window.show();
+    let _ = window.set_focus();
     Ok(())
 }
 

@@ -22,6 +22,8 @@ type VersionMismatch = {
 
 const overlaySuppressed = (pathname: string): boolean => {
   if (pathname === "/") return true;
+  if (pathname === "/workspace-setup") return true;
+  if (pathname === "/crash-course") return true;
   if (pathname === "/app-settings") return true;
   return false;
 };
