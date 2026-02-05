@@ -676,6 +676,7 @@ struct PendingToolRequest {
     turn_id: String,
     tool_name: String,
     tool_label: Option<String>,
+    input_preview: Option<serde_json::Value>,
     respond_to: oneshot::Sender<ToolBridgeResult>,
 }
 
@@ -1774,6 +1775,7 @@ fn handle_tool_request(
     let mcp_label = mcp_label_from_input(&tool_name, &input);
     let tool_labels = tool_label_pair_for_name(&tool_name);
     let active_label = mcp_label.clone().unwrap_or_else(|| tool_labels.active.to_string());
+    let input_preview = mcp_input_preview(&tool_name, &input);
     let _ = router.send_control(CrpEvent::ToolRequest {
         session_id: session_id.clone(),
         turn_id: turn_id.clone(),
@@ -1788,7 +1790,7 @@ fn handle_tool_request(
         tool_name: tool_name.clone(),
         tool_label: Some(active_label),
         input,
-        input_preview: None,
+        input_preview: input_preview.clone(),
     });
 
     if pending
@@ -1799,6 +1801,7 @@ fn handle_tool_request(
                 turn_id,
                 tool_name,
                 tool_label: mcp_label,
+                input_preview,
                 respond_to,
             },
         )
@@ -1879,7 +1882,7 @@ fn handle_tool_result(
             status: result.status.clone(),
             output: result.output.clone(),
             error: result.error.clone(),
-            input_preview: None,
+            input_preview: pending_request.input_preview,
         },
     );
 
@@ -1889,7 +1892,7 @@ fn handle_tool_result(
 #[allow(dead_code)]
 fn tool_name_for_payload(tool_name: &str, payload: &ToolPayload) -> String {
     match payload {
-        ToolPayload::Mcp { .. } => "MCP".to_string(),
+        ToolPayload::Mcp { server, tool, .. } => format!("mcp.{server}.{tool}"),
         _ => tool_name.to_string(),
     }
 }
@@ -2115,8 +2118,8 @@ fn tool_label_pair_for_name(tool_name: &str) -> ToolLabelPair {
             completed: "MCP",
         },
         _ if tool_name.starts_with("mcp.") => ToolLabelPair {
-            active: "Call",
-            completed: "Called",
+            active: "MCP",
+            completed: "MCP",
         },
         _ => ToolLabelPair {
             active: "Running tool",
@@ -2132,10 +2135,24 @@ fn mcp_label_from_input(
     if !tool_name.eq_ignore_ascii_case("mcp") {
         return None;
     }
-    let value = input.as_ref()?;
+    let _ = input.as_ref()?;
+    Some("MCP".to_string())
+}
+
+fn mcp_input_preview(
+    tool_name: &str,
+    input: &Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    if !(tool_name.eq_ignore_ascii_case("mcp") || tool_name.starts_with("mcp.")) {
+        return None;
+    }
+    let value = input.as_ref()?.as_object()?;
     let server = value.get("server")?.as_str()?;
     let tool = value.get("tool")?.as_str()?;
-    Some(format!("{server}/{tool}"))
+    Some(json!({
+        "server": server,
+        "tool": tool,
+    }))
 }
 
 fn tool_label_for_exec(_parsed_cmd: &[ParsedCommand], completed: bool) -> String {
@@ -2671,8 +2688,8 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             let invocation = ev.invocation;
             let server = invocation.server;
             let tool = invocation.tool;
-            let tool_name = "MCP".to_string();
-            let tool_label = format!("{server}/{tool}");
+            let tool_name = format!("mcp.{server}.{tool}");
+            let tool_label = "MCP".to_string();
             let input = json!({
                 "server": server.clone(),
                 "tool": tool.clone(),
@@ -2700,8 +2717,8 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
             let invocation = ev.invocation;
             let server = invocation.server;
             let tool = invocation.tool;
-            let tool_name = "MCP".to_string();
-            let tool_label = format!("{server}/{tool}");
+            let tool_name = format!("mcp.{server}.{tool}");
+            let tool_label = "MCP".to_string();
             let duration_ms = ev.duration.as_millis();
             let (status, error, output) = match ev.result {
                 Ok(result) => (
