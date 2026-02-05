@@ -2467,6 +2467,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       task_id: optimisticTaskId,
       turn_id: null,
       turn_sequence: null,
+      order_seq: 1,
       role: "user",
       content: prompt,
       attachments: attachmentsToSend,
