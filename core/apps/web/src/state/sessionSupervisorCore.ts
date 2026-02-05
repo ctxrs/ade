@@ -73,6 +73,7 @@ export type SessionCacheEntry = {
   turns: SessionTurn[];
   turnToolsByTurnId: Record<string, SessionTurnTool[]>;
   turnToolsLoading: string[];
+  toolSummaries: SessionTurnToolSummary[];
   toolSummariesReady: boolean;
   hasMoreTurns: boolean;
   events: SessionEvent[];
@@ -589,6 +590,7 @@ export class SessionSupervisor {
         turns: e.turns,
         turnToolsByTurnId: e.turnToolsByTurnId,
         turnToolsLoading: [...e.turnToolsLoadingSet],
+        toolSummaries: e.toolSummaries,
         toolSummariesReady: e.toolSummariesReady,
         hasMoreTurns: e.hasMoreTurns,
         events: e.events,
@@ -777,6 +779,7 @@ export class SessionSupervisor {
       turns: [],
       turnToolsByTurnId: {},
       turnToolsLoading: [],
+      toolSummaries: [],
       toolSummariesReady: false,
       hasMoreTurns: true,
       events: [],
@@ -1150,6 +1153,12 @@ export class SessionSupervisor {
     if (!entry.acpModels || !hasModelList(entry.acpModels)) {
       void this.ensureProviderOptions(entry);
     }
+    const incomingToolSummaries = head.tool_summaries;
+    if (Array.isArray(incomingToolSummaries) && incomingToolSummaries.length > 0) {
+      entry.toolSummaries = incomingToolSummaries;
+    } else if (entry.toolSummaries.length === 0) {
+      entry.toolSummaries = incomingToolSummaries ?? [];
+    }
     if (head.tool_summaries && head.tool_summaries.length > 0) {
       const hydrated = entry.turnToolsHydratedByTurnId;
       const nextByTurn: Record<string, SessionTurnTool[]> = {};
@@ -1196,6 +1205,7 @@ export class SessionSupervisor {
     const hydrated = entry.turnToolsHydratedByTurnId;
     let changed = false;
     const nextByTurn: Record<string, SessionTurnTool[]> = {};
+    entry.toolSummaries = summaries;
 
     for (const summary of summaries) {
       const turnId = idToString(summary.turn_id);
@@ -1271,7 +1281,6 @@ export class SessionSupervisor {
 
   private async persistHead(entry: InternalEntry) {
     if (!entry.session) return;
-    const tool_summaries = buildToolSummaries(entry.turnToolsByTurnId);
     const turns = stripTurnPartials(entry.turns);
     const events = stripPartialEvents(entry.events);
     const head = {
@@ -1279,7 +1288,7 @@ export class SessionSupervisor {
       turns,
       events,
       messages: entry.messages,
-      tool_summaries,
+      tool_summaries: entry.toolSummaries,
       last_event_seq: entry.lastEventSeq ?? 0,
       has_more_turns: entry.hasMoreTurns,
       summary_checkpoint: entry.summaryCheckpoint ?? null,
@@ -2405,6 +2414,10 @@ const TOOL_INPUT_PREVIEW_KEYS = [
   "uri",
   "href",
   "method",
+  "server",
+  "tool",
+  "tool_name",
+  "toolName",
   "cwd",
   "root",
 ];
@@ -2431,31 +2444,6 @@ const summarizeToolPayload = (
   output_original_bytes: tool.output_original_bytes ?? null,
   summary_only: true,
 });
-
-const buildToolSummaries = (byTurn: Record<string, SessionTurnTool[]>): SessionTurnToolSummary[] => {
-  const out: SessionTurnToolSummary[] = [];
-  for (const tools of Object.values(byTurn)) {
-    for (const tool of tools) {
-      out.push({
-        session_id: tool.session_id,
-        tool_call_id: tool.tool_call_id,
-        turn_id: tool.turn_id,
-        tool_kind: tool.tool_kind ?? null,
-        title: tool.title ?? null,
-        status: tool.status ?? null,
-        input_preview: toolInputPreview(tool.input_json) ?? undefined,
-        output_preview: tool.output_text ?? undefined,
-        input_truncated: tool.input_truncated ?? undefined,
-        input_original_bytes: tool.input_original_bytes ?? undefined,
-        output_truncated: tool.output_truncated ?? undefined,
-        output_original_bytes: tool.output_original_bytes ?? undefined,
-        created_at: tool.created_at,
-        updated_at: tool.updated_at,
-      });
-    }
-  }
-  return out;
-};
 
 const sameIdList = (a: string[], b: string[]): boolean => {
   if (a === b) return true;
