@@ -26,6 +26,7 @@ use crate::git_status::{load_git_status_snapshot, GitStatusEntry};
 use crate::installer;
 use crate::logs;
 use crate::oracle;
+use crate::order_seq::attach_order_seq;
 use crate::provider_accounts;
 use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
@@ -4647,7 +4648,7 @@ pub(super) async fn authenticate_session(
     let store_for_events = store.clone();
     tokio::spawn(async move {
         while let Some(ev) = ev_rx.recv().await {
-            let payload = ev.payload_json.clone();
+            let mut payload = ev.payload_json.clone();
             if matches!(ev.event_type, SessionEventType::Init) {
                 if let Some(ps) = payload
                     .get("provider_session_id")
@@ -4657,6 +4658,33 @@ pub(super) async fn authenticate_session(
                     let _ = store_for_events
                         .update_session_provider_session_ref(session_id, Some(ps.to_string()))
                         .await;
+                }
+            }
+            if payload.is_object() {
+                let should_attach = matches!(
+                    ev.event_type,
+                    SessionEventType::UserMessage
+                        | SessionEventType::AssistantChunk
+                        | SessionEventType::AssistantComplete
+                        | SessionEventType::AssistantMessageInserted
+                        | SessionEventType::ThoughtChunk
+                        | SessionEventType::ToolCall
+                        | SessionEventType::ToolCallUpdate
+                        | SessionEventType::ToolResult
+                ) || (matches!(ev.event_type, SessionEventType::Notice)
+                    && payload
+                        .get("kind")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|kind| {
+                            kind == "reasoning_summary" || kind == "ask_user_question"
+                        }));
+                if should_attach {
+                    let order_seq_state = state_for_events
+                        .sessions
+                        .get_order_seq_state(&store_for_events, session_id)
+                        .await;
+                    let mut order_seq_state = order_seq_state.lock().await;
+                    attach_order_seq(&mut order_seq_state, &ev.event_type, &mut payload, None, 0);
                 }
             }
             let appended = store_for_events

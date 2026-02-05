@@ -23,7 +23,7 @@ use crate::daemon::AppState;
 use crate::harness_runtime::HarnessRuntimeKind;
 use crate::installer;
 use crate::ops_events::OpsEvent;
-use crate::order_seq::OrderSeqState;
+use crate::order_seq::{attach_order_seq, OrderSeqState};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::provider_accounts;
 use crate::settings::{self, ProviderControlMode};
@@ -786,7 +786,7 @@ async fn start_turn(
                     &mut order_seq_state,
                     &event_type,
                     &mut payload,
-                    &turn_id,
+                    Some(&turn_id),
                     assistant_sequence,
                 );
             }
@@ -905,7 +905,7 @@ async fn start_turn(
                                         &mut order_seq_state,
                                         &SessionEventType::AssistantMessageInserted,
                                         &mut payload,
-                                        &turn_id,
+                                        Some(&turn_id),
                                         assistant_sequence,
                                     );
                                 }
@@ -1542,156 +1542,6 @@ async fn emit_event(
         .await?;
     state.publish_event(event.clone()).await;
     Ok(event)
-}
-
-fn read_payload_string(payload: &Value, keys: &[&str]) -> Option<String> {
-    for key in keys {
-        if let Some(value) = payload.get(*key).and_then(Value::as_str) {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-    None
-}
-
-fn read_payload_i64(payload: &Value, keys: &[&str]) -> Option<i64> {
-    for key in keys {
-        if let Some(value) = payload.get(*key) {
-            if let Some(num) = value.as_i64() {
-                return Some(num);
-            }
-            if let Some(text) = value.as_str() {
-                if let Ok(parsed) = text.trim().parse::<i64>() {
-                    return Some(parsed);
-                }
-            }
-        }
-    }
-    None
-}
-
-fn read_order_seq(payload: &Value) -> Option<i64> {
-    read_payload_i64(payload, &["order_seq", "orderSeq"])
-}
-
-fn insert_order_seq(payload: &mut Value, order_seq: i64) {
-    if let Some(obj) = payload.as_object_mut() {
-        obj.insert("order_seq".to_string(), json!(order_seq));
-    }
-}
-
-fn build_order_seq_key(
-    event_type: &SessionEventType,
-    payload: &Value,
-    turn_id: &TurnId,
-    assistant_sequence: i64,
-) -> Option<String> {
-    match event_type {
-        SessionEventType::UserMessage => {
-            let message_id = read_payload_string(payload, &["message_id", "messageId"]);
-            if let Some(id) = message_id {
-                return Some(format!("message:{id}"));
-            }
-            None
-        }
-        SessionEventType::AssistantChunk | SessionEventType::AssistantComplete => {
-            let message_id = read_payload_string(
-                payload,
-                &[
-                    "message_id",
-                    "messageId",
-                    "provider_message_id",
-                    "providerMessageId",
-                ],
-            );
-            if let Some(id) = message_id {
-                return Some(format!("message:{id}"));
-            }
-            Some(format!(
-                "message:turn:{}:{}",
-                turn_id.0,
-                assistant_sequence.saturating_add(1)
-            ))
-        }
-        SessionEventType::AssistantMessageInserted => {
-            if let Some(id) =
-                read_payload_string(payload, &["provider_message_id", "providerMessageId"])
-            {
-                return Some(format!("message:{id}"));
-            }
-            if let Some(id) = read_payload_string(payload, &["message_id", "messageId"]) {
-                return Some(format!("message:{id}"));
-            }
-            Some(format!(
-                "message:turn:{}:{}",
-                turn_id.0,
-                assistant_sequence.saturating_add(1)
-            ))
-        }
-        SessionEventType::ThoughtChunk => {
-            let item_id = read_payload_string(payload, &["item_id", "itemId"]);
-            let summary_index =
-                read_payload_i64(payload, &["summary_index", "summaryIndex"]).unwrap_or(0);
-            if let Some(id) = item_id {
-                return Some(format!("thought:{id}:{summary_index}"));
-            }
-            Some(format!("thought:turn:{}:{summary_index}", turn_id.0))
-        }
-        SessionEventType::Notice => {
-            let kind = read_payload_string(payload, &["kind"]);
-            if kind.as_deref() == Some("reasoning_summary") {
-                let item_id = read_payload_string(payload, &["item_id", "itemId"]);
-                let summary_index =
-                    read_payload_i64(payload, &["summary_index", "summaryIndex"]).unwrap_or(0);
-                if let Some(id) = item_id {
-                    return Some(format!("thought:{id}:{summary_index}"));
-                }
-                return Some(format!("thought:turn:{}:{summary_index}", turn_id.0));
-            }
-            if kind.as_deref() == Some("ask_user_question") {
-                if let Some(tool_call_id) =
-                    read_payload_string(payload, &["tool_call_id", "toolCallId"])
-                {
-                    return Some(format!("tool:{tool_call_id}"));
-                }
-            }
-            None
-        }
-        SessionEventType::ToolCall
-        | SessionEventType::ToolCallUpdate
-        | SessionEventType::ToolResult => {
-            if let Some(tool_call_id) =
-                read_payload_string(payload, &["tool_call_id", "toolCallId"])
-            {
-                return Some(format!("tool:{tool_call_id}"));
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
-fn attach_order_seq(
-    order_seq_state: &mut OrderSeqState,
-    event_type: &SessionEventType,
-    payload: &mut Value,
-    turn_id: &TurnId,
-    assistant_sequence: i64,
-) {
-    if !payload.is_object() {
-        return;
-    }
-    let key = match build_order_seq_key(event_type, payload, turn_id, assistant_sequence) {
-        Some(key) => key,
-        None => return,
-    };
-    let existing = read_order_seq(payload);
-    let seq = order_seq_state.get_or_assign(key, existing);
-    if existing.is_none() {
-        insert_order_seq(payload, seq);
-    }
 }
 
 fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
