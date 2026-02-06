@@ -381,7 +381,16 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   });
 
   const [rightPaneMode, setRightPaneMode] = useState<"diff" | "artifacts" | "sessions" | null>(null);
-  const [diffWidth, setDiffWidth] = useState(480);
+  const clampDiffWidth = useCallback((value: number) => {
+    const gutterPx = 8;
+    const containerWidth =
+      (document.querySelector(".wb-body") as HTMLElement | null)?.clientWidth ?? window.innerWidth;
+    const min = Math.min(320, containerWidth);
+    const max = Math.max(min, containerWidth - gutterPx);
+    return Math.min(max, Math.max(min, Math.round(value)));
+  }, []);
+
+  const [diffWidth, setDiffWidth] = useState(() => clampDiffWidth(480));
   const [diffResizing, setDiffResizing] = useState(false);
   const [diffOpenHydrated, setDiffOpenHydrated] = useState(false);
   const [diffContentLoading, setDiffContentLoading] = useState(false);
@@ -426,15 +435,23 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return Math.min(max, Math.max(min, Math.round(value)));
   }, []);
 
+  useLayoutEffect(() => {
+    setDiffWidth((w) => {
+      const clamped = clampDiffWidth(w);
+      return clamped === w ? w : clamped;
+    });
+  }, [clampDiffWidth, sidebarCollapsed, sidebarWidth]);
+
   useEffect(() => {
     const onResize = () => {
       const max = Math.max(170, window.innerWidth - 240);
       setSidebarWidth((w) => Math.min(max, Math.max(170, Math.round(w))));
       setTerminalHeight((h) => clampTerminalHeight(h));
+      setDiffWidth((w) => clampDiffWidth(w));
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [clampTerminalHeight]);
+  }, [clampDiffWidth, clampTerminalHeight]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -2605,8 +2622,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setDiffResizing(true);
     const onMove = (ev: MouseEvent) => {
       const dx = startX - ev.clientX;
-      const next = Math.min(900, Math.max(320, startW + dx));
-      setDiffWidth(next);
+      const next = Math.min(900, startW + dx);
+      setDiffWidth(clampDiffWidth(next));
     };
     const onUp = () => {
       setDiffResizing(false);
@@ -3527,7 +3544,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             {rightPaneOpen && (
               <>
                 <div className="wb-splitter" onMouseDown={onSplitterMouseDown} />
-                <div className="wb-right" style={{ width: diffWidth }}>
+                <div className="wb-right" style={{ width: diffWidth, maxWidth: "100%" }}>
                   {showSessionsPane ? (
                     <div className="wb-right-pane">
                       <SessionsPane

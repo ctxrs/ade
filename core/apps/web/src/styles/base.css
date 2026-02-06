@@ -1067,6 +1067,8 @@ button.linklike:hover {
 
 .cursor-diff {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
 }
 
 .cursor-diff-toolbar {
@@ -1118,6 +1120,8 @@ button.linklike:hover {
 .cursor-diff-list {
   display: grid;
   gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
 }
 
 .cursor-diff-file {
@@ -1125,6 +1129,8 @@ button.linklike:hover {
   border-radius: 10px;
   overflow: visible;
   background: rgba(255, 255, 255, 0.02);
+  min-width: 0;
+  max-width: 100%;
 }
 
 :root[data-theme="light"] .cursor-diff-file {
@@ -1140,6 +1146,8 @@ button.linklike:hover {
   padding: 8px 10px;
   position: relative;
   background: rgba(255, 255, 255, 0.02);
+  min-width: 0;
+  max-width: 100%;
 }
 
 :root[data-theme="light"] .cursor-diff-file-header {

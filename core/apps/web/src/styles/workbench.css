@@ -2015,6 +2015,7 @@
   min-height: 0;
   display: flex;
   min-width: 0;
+  max-width: 100%;
 }
 
 .wb-convo {
@@ -3559,6 +3560,7 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  min-width: 0;
   position: relative;
 }
 
@@ -3644,6 +3646,7 @@
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  max-width: 100%;
   border-left: 1px solid var(--border);
   background: var(--surface-sidebar);
   box-sizing: border-box;
@@ -3662,20 +3665,24 @@
 .wb-diff {
   width: 100%;
   height: 100%;
-  min-width: 320px;
-  max-width: 60vw;
+  min-width: min(320px, 100%);
+  max-width: min(60vw, 100%);
   background: var(--surface-sidebar);
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
+.wb-diff .diff-pane {
+  min-width: 0;
+}
+
 
 .wb-sessions {
   width: 100%;
   height: 100%;
-  min-width: 320px;
-  max-width: 60vw;
+  min-width: min(320px, 100%);
+  max-width: min(60vw, 100%);
   background: var(--surface-sidebar);
   min-height: 0;
   display: flex;
