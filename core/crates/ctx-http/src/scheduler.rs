@@ -122,8 +122,11 @@ pub async fn session_worker(
     state.telemetry.ops_events.emit(worktree_event);
 
     loop {
-        if running.is_none() && !suspend_queue {
+            if running.is_none() && !suspend_queue {
             if let Some(msg) = queue.pop_front() {
+                let msg_id = msg.message.id;
+                let msg_run_id = msg.message.run_id;
+                let msg_turn_id = msg.message.turn_id;
                 let session_for_turn = match store.get_session(session.id).await {
                     Ok(Some(fresh)) => {
                         session = fresh.clone();
@@ -160,10 +163,52 @@ pub async fn session_worker(
                         running = Some(turn);
                     }
                     Err(err) => {
+                        let err_string = format!("{err:#}");
                         tracing::error!(
                             session_id = %session.id.0,
                             "failed to start turn: {err:#}"
                         );
+                        if let Some(turn_id) = msg_turn_id {
+                            if let Ok(event) = emit_event(
+                                &state,
+                                session.id,
+                                msg_run_id,
+                                Some(turn_id),
+                                SessionEventType::Error,
+                                json!({
+                                    "kind": "start_failed",
+                                    "message": err_string,
+                                }),
+                            )
+                            .await
+                            {
+                                if let Ok(store) = state.store_for_session(session.id).await {
+                                    let _ = store
+                                        .update_session_turn_status(
+                                            session.id,
+                                            turn_id,
+                                            SessionTurnStatus::Failed,
+                                            Some(event.seq),
+                                            None,
+                                            event.created_at,
+                                        )
+                                        .await;
+                                }
+                                let _ = emit_event(
+                                    &state,
+                                    session.id,
+                                    msg_run_id,
+                                    Some(turn_id),
+                                    SessionEventType::TurnFinished,
+                                    json!({
+                                        "message_id": msg_id.0,
+                                        "status": "failed",
+                                        "reason": "start_failed",
+                                    }),
+                                )
+                                .await;
+                            }
+                        }
                         state.set_running(session.id, false).await;
                         running = None;
                     }
