@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use chrono::Utc;
-use ctx_core::ids::{SessionId, TurnId, WorktreeId};
+use ctx_core::ids::{TurnId, WorktreeId};
 use ctx_core::models::{SessionEventType, SessionTurn, SessionTurnStatus};
 use ctx_http::daemon::AppState;
 
@@ -469,7 +469,7 @@ async fn workspace_stream_replays_from_after_seq() {
         .await
         .unwrap()
         .expect("missing worktree");
-    let worktree_id = worktree.id;
+    let _worktree_id = worktree.id;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let ev1 = store
@@ -793,6 +793,14 @@ async fn workspace_stream_emits_git_status_snapshot_on_change() {
         .await
         .unwrap();
     state.remember_session_meta(&session).await;
+
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+    let worktree_id = worktree.id;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();

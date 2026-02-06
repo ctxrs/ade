@@ -431,7 +431,7 @@ impl HarnessRuntimeManager {
 fn resolve_execution_mode(settings: &ExecutionSettings) -> ExecutionMode {
     match &settings.mode {
         ExecutionMode::Auto => {
-            if cfg!(target_os = "linux") {
+            if cfg!(target_os = "linux") && podman_available() {
                 ExecutionMode::Container
             } else {
                 ExecutionMode::Host

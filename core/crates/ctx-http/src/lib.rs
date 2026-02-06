@@ -332,23 +332,48 @@ mod tests {
             .unwrap();
 
         // consume workspace stream until we see a Done event for the session
-        let mut seen_done = false;
-        while let Some(Ok(frame)) = ws_stream.next().await {
-            if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
-                let value: serde_json::Value = serde_json::from_str(&txt).unwrap();
-                let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
-                    serde_json::from_value(value).unwrap();
-                match message {
-                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                        event, ..
-                    } => {
-                        if let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                            delta,
+        let seen_done = tokio::time::timeout(Duration::from_secs(20), async {
+            while let Some(Ok(frame)) = ws_stream.next().await {
+                if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
+                    let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
+                        serde_json::from_str(&txt).unwrap_or_else(|err| {
+                            let preview = txt.chars().take(500).collect::<String>();
+                            panic!("failed to parse workspace stream frame: {err}; frame={preview}");
+                        });
+                    match message {
+                        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                            event, ..
+                        } => {
+                            if let ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                delta,
+                                ..
+                            } = event.as_ref()
+                            {
+                                if delta.session_id == session.id
+                                    && delta
+                                        .event
+                                        .as_ref()
+                                        .map(|event| {
+                                            matches!(
+                                                event.event_type,
+                                                ctx_core::models::SessionEventType::Done
+                                            )
+                                        })
+                                        .unwrap_or(false)
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                            deltas,
                             ..
-                        } = event.as_ref()
-                        {
-                            if delta.session_id == session.id
-                                && delta
+                        } => {
+                            for delta in deltas {
+                                if delta.session_id != session.id {
+                                    continue;
+                                }
+                                let is_done = delta
                                     .event
                                     .as_ref()
                                     .map(|event| {
@@ -357,44 +382,21 @@ mod tests {
                                             ctx_core::models::SessionEventType::Done
                                         )
                                     })
-                                    .unwrap_or(false)
-                            {
-                                seen_done = true;
-                                break;
+                                    .unwrap_or(false);
+                                if is_done {
+                                    return true;
+                                }
                             }
                         }
+                        _ => {}
                     }
-                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
-                        deltas,
-                        ..
-                    } => {
-                        for delta in deltas {
-                            if delta.session_id != session.id {
-                                continue;
-                            }
-                            let is_done = delta
-                                .event
-                                .as_ref()
-                                .map(|event| {
-                                    matches!(
-                                        event.event_type,
-                                        ctx_core::models::SessionEventType::Done
-                                    )
-                                })
-                                .unwrap_or(false);
-                            if is_done {
-                                seen_done = true;
-                                break;
-                            }
-                        }
-                        if seen_done {
-                            break;
-                        }
-                    }
-                    _ => {}
                 }
             }
-        }
+
+            false
+        })
+        .await
+        .expect("timed out waiting for Done event");
         assert!(seen_done);
 
         let store = state.store_for_session(session.id).await.unwrap();
