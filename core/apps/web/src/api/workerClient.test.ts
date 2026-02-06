@@ -5,25 +5,37 @@ describe("workerClient", () => {
   const fetchMock = vi.fn();
   const originalCrypto = globalThis.crypto;
 
-  beforeEach(() => {
-    fetchMock.mockReset();
-    (globalThis as any).fetch = fetchMock;
-    if (!globalThis.crypto?.getRandomValues) {
-      (globalThis as any).crypto = {
+  const installCryptoStub = () => {
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      enumerable: true,
+      value: {
         getRandomValues: (arr: Uint8Array) => {
           for (let i = 0; i < arr.length; i += 1) {
             arr[i] = (i + 1) % 255;
           }
           return arr;
         },
-      };
+      },
+    });
+  };
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    (globalThis as any).fetch = fetchMock;
+    if (!globalThis.crypto?.getRandomValues) {
+      installCryptoStub();
     }
   });
 
   afterEach(() => {
     fetchMock.mockReset();
     if (originalCrypto) {
-      (globalThis as any).crypto = originalCrypto;
+      Object.defineProperty(globalThis, "crypto", {
+        configurable: true,
+        enumerable: true,
+        value: originalCrypto,
+      });
     } else {
       delete (globalThis as any).crypto;
     }

@@ -89,53 +89,69 @@ const sessionIdB = "session-2";
 const baseIso = "2025-01-01T00:00:00.000Z";
 const baseMs = Date.parse(baseIso);
 
-const buildSessionEntry = (sessionId: string, taskId: string, startedAtMs: number) => ({
-  sessionId,
-  session: {
-    id: sessionId,
-    task_id: taskId,
-    provider_id: "codex",
-    status: "active",
-    created_at: baseIso,
-  },
-  turns: [
-    {
-      turn_id: `${sessionId}-turn-1`,
-      session_id: sessionId,
-      run_id: null,
-      user_message_id: null,
-      status: "running",
-      start_seq: null,
-      end_seq: null,
-      started_at: new Date(startedAtMs).toISOString(),
-      updated_at: new Date(startedAtMs).toISOString(),
-      assistant_partial: "",
-      thought_partial: "",
-      metrics_json: null,
-      tool_total: 0,
-      tool_pending: 0,
-      tool_running: 0,
-      tool_completed: 0,
-      tool_failed: 0,
+const buildSessionEntry = (sessionId: string, taskId: string, startedAtMs: number) => {
+  const turnId = `${sessionId}-turn-1`;
+  const userMessageId = `${sessionId}-user-1`;
+  return {
+    sessionId,
+    session: {
+      id: sessionId,
+      task_id: taskId,
+      provider_id: "codex",
+      status: "active",
+      created_at: baseIso,
     },
-  ],
-  turnToolsByTurnId: {},
-  turnToolsLoading: [],
-  toolSummariesReady: true,
-  hasMoreTurns: false,
-  events: [],
-  messages: [],
-  artifacts: [],
-  artifactsLoading: false,
-  subagentInvocations: [],
-  subagentInvocationsLoading: false,
-  stateLoaded: true,
-  stateLoading: false,
-  queue: [],
-  loading: false,
-  subscribed: true,
-  updatedAtMs: 0,
-});
+    turns: [
+      {
+        turn_id: turnId,
+        session_id: sessionId,
+        run_id: null,
+        user_message_id: userMessageId,
+        status: "running",
+        start_seq: null,
+        end_seq: null,
+        started_at: new Date(startedAtMs).toISOString(),
+        updated_at: new Date(startedAtMs).toISOString(),
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ],
+    turnToolsByTurnId: {},
+    turnToolsLoading: [],
+    toolSummariesReady: true,
+    hasMoreTurns: false,
+    events: [],
+    messages: [
+      {
+        id: userMessageId,
+        session_id: sessionId,
+        role: "user",
+        content: "hello",
+        attachments: [],
+        delivery: "immediate",
+        created_at: baseIso,
+        turn_id: turnId,
+        order_seq: 1,
+      },
+    ],
+    artifacts: [],
+    artifactsLoading: false,
+    subagentInvocations: [],
+    subagentInvocationsLoading: false,
+    stateLoaded: true,
+    stateLoading: false,
+    queue: [],
+    loading: false,
+    subscribed: true,
+    updatedAtMs: 0,
+  };
+};
 
 beforeAll(() => {
   if (typeof (globalThis as any).localStorage?.getItem !== "function") {
@@ -233,9 +249,9 @@ describe("SessionPage timer stability", () => {
     await act(async () => {
       vi.advanceTimersByTime(16);
     });
-    let times = Array.from(document.querySelectorAll(".wb-turn-status-time")).map(
-      (node) => node.textContent,
-    );
+    let times = Array.from(document.querySelectorAll(".wb-turn-status-time"))
+      .map((node) => node.textContent)
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
     expect(times).toEqual(["12s"]);
 
     await act(async () => {
@@ -246,7 +262,9 @@ describe("SessionPage timer stability", () => {
     });
 
     expect(queryByTestId("session-b")).toBeTruthy();
-    times = Array.from(document.querySelectorAll(".wb-turn-status-time")).map((node) => node.textContent);
+    times = Array.from(document.querySelectorAll(".wb-turn-status-time"))
+      .map((node) => node.textContent)
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
     expect(times).toHaveLength(2);
 
     await act(async () => {
@@ -256,7 +274,9 @@ describe("SessionPage timer stability", () => {
       vi.advanceTimersByTime(16);
     });
 
-    times = Array.from(document.querySelectorAll(".wb-turn-status-time")).map((node) => node.textContent);
+    times = Array.from(document.querySelectorAll(".wb-turn-status-time"))
+      .map((node) => node.textContent)
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
     expect(new Set(times)).toEqual(new Set(["13s"]));
   });
 });

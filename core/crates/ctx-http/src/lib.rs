@@ -338,10 +338,7 @@ mod tests {
                 if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
                     let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
                         serde_json::from_str(&txt).unwrap_or_else(|err| {
-                            let excerpt: String = txt.chars().take(512).collect();
-                            panic!(
-                                "failed to parse workspace stream frame: {err}; excerpt={excerpt}"
-                            )
+                            panic!("failed to decode workspace stream message: {err}; raw={txt}")
                         });
                     match message {
                         ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
