@@ -54,6 +54,7 @@ import { useDictationController } from "../utils/useDictationController";
 import { usePinnedScrollManager } from "./usePinnedScrollManager";
 import { useWorkbenchStore } from "../workbench/store";
 import { buildModelsFromProviderOptions } from "../components/workbenchComposer/WorkbenchComposer.utils";
+import { VIRTUOSO_MESSAGE_LIST_LICENSE_KEY } from "../config/licenses";
 import {
   AssistantEntry,
   ThreadItemView,
@@ -429,15 +430,7 @@ export function SessionView({
     }
   }, [id]);
   const useMessageList = true;
-  const messageListLicenseKey = useMemo(() => {
-    const envKey = String(import.meta.env.VITE_VIRTUOSO_MESSAGE_LIST_LICENSE_KEY ?? "");
-    if (envKey.trim()) return envKey.trim();
-    try {
-      return window.localStorage.getItem("ctx_message_list_license") ?? "";
-    } catch {
-      return "";
-    }
-  }, []);
+  const messageListLicenseKey = VIRTUOSO_MESSAGE_LIST_LICENSE_KEY;
   const perfStartRef = useRef<number>(0);
   const bottomThresholdPx = 16;
   const userIntentWindowMs = 1000;

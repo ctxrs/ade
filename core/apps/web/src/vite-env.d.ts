@@ -4,7 +4,6 @@
 interface ImportMetaEnv {
   readonly VITE_CTX_WAL_MODE?: string;
   readonly VITE_CTX_WAL_ENDPOINT?: string;
-  readonly VITE_VIRTUOSO_MESSAGE_LIST_LICENSE_KEY?: string;
 }
 
 interface ImportMeta {
