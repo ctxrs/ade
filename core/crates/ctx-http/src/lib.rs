@@ -333,12 +333,15 @@ mod tests {
 
         // consume workspace stream until we see a Done event for the session
         let seen_done = tokio::time::timeout(Duration::from_secs(20), async {
+            let mut seen_done = false;
             while let Some(Ok(frame)) = ws_stream.next().await {
                 if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
                     let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
                         serde_json::from_str(&txt).unwrap_or_else(|err| {
-                            let preview = txt.chars().take(500).collect::<String>();
-                            panic!("failed to parse workspace stream frame: {err}; frame={preview}");
+                            let excerpt: String = txt.chars().take(512).collect();
+                            panic!(
+                                "failed to parse workspace stream frame: {err}; excerpt={excerpt}"
+                            )
                         });
                     match message {
                         ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
@@ -349,7 +352,7 @@ mod tests {
                                 ..
                             } = event.as_ref()
                             {
-                                if delta.session_id == session.id
+                                let is_done = delta.session_id == session.id
                                     && delta
                                         .event
                                         .as_ref()
@@ -359,9 +362,10 @@ mod tests {
                                                 ctx_core::models::SessionEventType::Done
                                             )
                                         })
-                                        .unwrap_or(false)
-                                {
-                                    return true;
+                                        .unwrap_or(false);
+                                if is_done {
+                                    seen_done = true;
+                                    break;
                                 }
                             }
                         }
@@ -384,16 +388,19 @@ mod tests {
                                     })
                                     .unwrap_or(false);
                                 if is_done {
-                                    return true;
+                                    seen_done = true;
+                                    break;
                                 }
+                            }
+                            if seen_done {
+                                break;
                             }
                         }
                         _ => {}
                     }
                 }
             }
-
-            false
+            seen_done
         })
         .await
         .expect("timed out waiting for Done event");

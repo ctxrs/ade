@@ -30,6 +30,11 @@ const httpsHosts = String(process.env.CTX_DEV_HTTPS_HOSTS ?? "")
   .map((host) => host.trim())
   .filter(Boolean);
 
+const proxyDaemonAuthToken =
+  process.env.CTX_DEV_PROXY_DAEMON_AUTH === "1"
+    ? (process.env.CTX_DEV_PROXY_DAEMON_AUTH_TOKEN ?? null)
+    : null;
+
 const WAL_ROUTE = "/__ctx_wal__";
 const WAL_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -149,6 +154,34 @@ export default defineConfig(({ command }) => {
     process.env.VITE_CTX_DAEMON_URL ??= daemonUrl;
   }
 
+  const devProxyAuthToken =
+    command === "serve" && !isTest && process.env.CTX_DEV_PROXY_DAEMON_AUTH === "1"
+      ? (proxyDaemonAuthToken ?? auth?.token ?? process.env.VITE_CTX_AUTH_TOKEN ?? null)
+      : null;
+
+  const withDaemonAuthHeader = <T extends { configure?: (proxy: any, options: any) => void }>(
+    config: T,
+  ): T => {
+    if (!devProxyAuthToken) return config;
+
+    return {
+      ...config,
+      configure(proxy, options) {
+        proxy.on("proxyReq", (proxyReq: any) => {
+          if (!proxyReq.getHeader("authorization")) {
+            proxyReq.setHeader("authorization", `Bearer ${devProxyAuthToken}`);
+          }
+        });
+        proxy.on("proxyReqWs", (proxyReq: any) => {
+          if (!proxyReq.getHeader("authorization")) {
+            proxyReq.setHeader("authorization", `Bearer ${devProxyAuthToken}`);
+          }
+        });
+        config.configure?.(proxy, options);
+      },
+    };
+  };
+
   const supabaseProxy =
     supabaseProxyTarget.length > 0
       ? {
@@ -189,19 +222,19 @@ export default defineConfig(({ command }) => {
       strictPort: true,
       https: useHttps,
       proxy: {
-        "/api": {
+        "/api": withDaemonAuthHeader({
           target: daemonUrl,
           changeOrigin: true,
           ws: true,
           xfwd: true,
-        },
+        }),
         // Web sessions are served by the daemon; proxy for dev server parity.
-        "/sessions": {
+        "/sessions": withDaemonAuthHeader({
           target: daemonUrl,
           changeOrigin: true,
           ws: true,
           xfwd: true,
-        },
+        }),
         ...supabaseProxy,
       },
     },

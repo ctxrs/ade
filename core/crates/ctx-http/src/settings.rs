@@ -242,9 +242,9 @@ impl Default for SandboxingSettings {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionMode {
+    Host,
     #[default]
     Auto,
-    Host,
     Container,
 }
 
@@ -305,7 +305,7 @@ pub struct ExecutionSettings {
 impl Default for ExecutionSettings {
     fn default() -> Self {
         Self {
-            mode: ExecutionMode::Auto,
+            mode: ExecutionMode::Host,
             container: ContainerExecutionSettings::default(),
         }
     }

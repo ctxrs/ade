@@ -1085,6 +1085,7 @@ pub enum SessionEventType {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SessionEvent {
+    #[serde(deserialize_with = "deserialize_seq_i64_or_null")]
     pub seq: i64,
     pub id: SessionEventId,
     pub session_id: SessionId,
@@ -1095,6 +1096,13 @@ pub struct SessionEvent {
     #[serde(default)]
     pub transient: bool,
     pub created_at: DateTime<Utc>,
+}
+
+fn deserialize_seq_i64_or_null<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<i64>::deserialize(deserializer).map(|value| value.unwrap_or(-1))
 }
 
 impl Serialize for SessionEvent {

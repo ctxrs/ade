@@ -463,13 +463,6 @@ async fn workspace_stream_replays_from_after_seq() {
         .await
         .unwrap();
     state.remember_session_meta(&session).await;
-    let store = state.store_for_session(session.id).await.unwrap();
-    let worktree = store
-        .get_worktree(session.worktree_id)
-        .await
-        .unwrap()
-        .expect("missing worktree");
-    let _worktree_id = worktree.id;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let ev1 = store
@@ -793,6 +786,13 @@ async fn workspace_stream_emits_git_status_snapshot_on_change() {
         .await
         .unwrap();
     state.remember_session_meta(&session).await;
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+    let worktree_id = worktree.id;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let worktree = store

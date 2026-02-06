@@ -8279,6 +8279,9 @@ fn is_transient_session_event(
     if matches!(event_type, SessionEventType::ToolCallUpdate) {
         return true;
     }
+    if matches!(event_type, SessionEventType::AssistantComplete) {
+        return true;
+    }
     if matches!(event_type, SessionEventType::AuthRequired) {
         return true;
     }
