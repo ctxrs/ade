@@ -939,7 +939,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auto_mode_falls_back_to_host_when_podman_unavailable() {
+    async fn auto_mode_errors_when_podman_unavailable() {
         let _guard = EnvGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
         let tmp = tempfile::tempdir().unwrap();
         let manager = runtime_manager(&tmp).await;
@@ -950,11 +950,13 @@ mod tests {
             container: ContainerExecutionSettings::default(),
         };
 
-        let plan = manager
+        let err = manager
             .prepare(&workspace, &worktree, &settings, "http://127.0.0.1:9999")
             .await
-            .expect("auto mode should fall back to host");
-        assert!(matches!(plan.runtime, HarnessRuntimeKind::Host));
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("podman unavailable"));
+        assert!(message.contains("execution mode is container"));
     }
 
     #[test]
