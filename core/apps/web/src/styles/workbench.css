@@ -2773,6 +2773,15 @@
   box-sizing: border-box;
 }
 
+.wb-thread-scroller--message-list [data-testid="virtuoso-list"] {
+  width: 100%;
+  max-width: calc(var(--wb-thread-max-width) + (var(--wb-session-padding-inline) * 2));
+  margin-left: auto;
+  margin-right: auto;
+  padding: 0 var(--wb-session-padding-inline) 8px;
+  box-sizing: border-box;
+}
+
 .wb-scrollbar {
   position: absolute;
   top: 0;

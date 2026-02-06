@@ -14,7 +14,16 @@ import {
   type ReactNode,
 } from "react";
 import { Check, Copy } from "lucide-react";
-import { Virtuoso, type IndexLocationWithAlign, type StateSnapshot, type VirtuosoHandle } from "react-virtuoso";
+import {
+  VirtuosoMessageList,
+  VirtuosoMessageListLicense,
+  type ContextAwareComponent,
+  type DataWithScrollModifier,
+  type FooterWrapperComponent,
+  type ItemLocation,
+  type ItemContent as MessageItemContent,
+  type ScrollElementComponent,
+} from "@virtuoso.dev/message-list";
 import { blobUrl, type MessageAttachment } from "../api/client";
 import { type SessionViewVerbosity } from "../state/uiStateStore";
 import { copyTextToClipboard } from "../utils/clipboard";
@@ -35,22 +44,19 @@ import {
 } from "./SessionPage.helpers";
 import type { ThreadItem, WorkbenchListItem, WorkbenchTurnHeader } from "./SessionPage.types";
 
-type WorkbenchThreadStackProps = {
+type WorkbenchMessageListStackProps = {
   virtuosoStyle: CSSProperties;
-  data: WorkbenchListItem[];
-  firstItemIndex: number;
-  virtuosoRef: MutableRefObject<VirtuosoHandle | null>;
-  initialTopMostItemIndex?: IndexLocationWithAlign | number;
-  restoreStateFrom?: StateSnapshot;
-  increaseViewportBy: { top: number; bottom: number };
-  onStartReached: () => void;
-  onRangeChanged: (range: any) => void;
-  components: any;
+  data: DataWithScrollModifier<WorkbenchListItem> | null | undefined;
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
+  itemIdentity: (item: WorkbenchListItem) => unknown;
+  initialLocation?: ItemLocation;
+  scrollElement: ScrollElementComponent;
+  footer: ContextAwareComponent;
+  footerWrapper: FooterWrapperComponent;
+  increaseViewportBy: number;
   showJumpToLatest: boolean;
   onJumpToLatest: () => void;
-  followOutput?: boolean | "auto" | "smooth" | ((isAtBottom: boolean) => boolean | "auto" | "smooth");
-  onAtBottomStateChange?: (atBottom: boolean) => void;
+  licenseKey: string;
   scrollbarActive: boolean;
   scrollbarDragging: boolean;
   scrollbarNeeded: boolean;
@@ -64,22 +70,19 @@ type WorkbenchThreadStackProps = {
   scheduleScrollbarUpdate: () => void;
 };
 
-export const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
+export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack({
   virtuosoStyle,
   data,
-  firstItemIndex,
-  virtuosoRef,
-  initialTopMostItemIndex,
-  restoreStateFrom,
-  increaseViewportBy,
-  onStartReached,
-  onRangeChanged,
-  components,
   itemContent,
+  itemIdentity,
+  initialLocation,
+  scrollElement,
+  footer,
+  footerWrapper,
+  increaseViewportBy,
   showJumpToLatest,
   onJumpToLatest,
-  followOutput,
-  onAtBottomStateChange,
+  licenseKey,
   scrollbarActive,
   scrollbarDragging,
   scrollbarNeeded,
@@ -91,28 +94,36 @@ export const WorkbenchThreadStack = memo(function WorkbenchThreadStack({
   onScrollbarThumbPointerMove,
   onScrollbarThumbPointerUp,
   scheduleScrollbarUpdate,
-}: WorkbenchThreadStackProps) {
+}: WorkbenchMessageListStackProps) {
+  const ItemContent = useCallback<MessageItemContent<WorkbenchListItem, unknown>>(
+    ({ index, data }) => {
+      if (!data) return <div style={{ height: 1 }} />;
+      return (
+        <div role="listitem" data-thread-item-id={data.id}>
+          {itemContent(index, data)}
+        </div>
+      );
+    },
+    [itemContent],
+  );
+
   return (
     <div className="thread-stack wb-thread-stack" onMouseLeave={onScrollbarMouseLeave}>
-      <Virtuoso
-        style={virtuosoStyle}
-        data={data}
-        firstItemIndex={firstItemIndex}
-        ref={(node) => {
-          virtuosoRef.current = node;
-        }}
-        initialTopMostItemIndex={initialTopMostItemIndex}
-        defaultItemHeight={56}
-        increaseViewportBy={increaseViewportBy}
-        computeItemKey={(_, item) => item.id}
-        restoreStateFrom={restoreStateFrom}
-        startReached={onStartReached}
-        rangeChanged={onRangeChanged}
-        followOutput={followOutput}
-        atBottomStateChange={onAtBottomStateChange}
-        components={components}
-        itemContent={itemContent}
-      />
+      <VirtuosoMessageListLicense licenseKey={licenseKey}>
+        <VirtuosoMessageList<WorkbenchListItem, unknown>
+          style={virtuosoStyle}
+          data={data}
+          itemIdentity={itemIdentity}
+          computeItemKey={({ data }) => data.id}
+          ItemContent={ItemContent}
+          initialLocation={initialLocation}
+          ScrollElement={scrollElement}
+          Footer={footer}
+          FooterWrapper={footerWrapper}
+          shortSizeAlign="bottom"
+          increaseViewportBy={increaseViewportBy}
+        />
+      </VirtuosoMessageListLicense>
 
       <div
         className={`wb-scrollbar${scrollbarActive ? " is-active" : ""}${scrollbarDragging ? " is-dragging" : ""}${scrollbarNeeded ? "" : " is-hidden"}`}
@@ -160,11 +171,13 @@ export function ThreadItemView({
   worktreeId,
   onFileOpenError,
   modifierDown,
+  onToggleMessageExpanded,
 }: {
   item: ThreadItem;
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
   modifierDown: boolean;
+  onToggleMessageExpanded?: (expanded: boolean) => void;
 }) {
   switch (item.kind) {
     case "message":
@@ -177,6 +190,7 @@ export function ThreadItemView({
           worktreeId={worktreeId}
           onFileOpenError={onFileOpenError}
           modifierDown={modifierDown}
+          onToggleExpanded={onToggleMessageExpanded}
         />
       );
     case "assistant":
@@ -294,6 +308,7 @@ function CollapsibleMessage({
   worktreeId,
   onFileOpenError,
   modifierDown,
+  onToggleExpanded,
 }: {
   id: string;
   role: "user" | "assistant" | "system";
@@ -302,6 +317,7 @@ function CollapsibleMessage({
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
   modifierDown: boolean;
+  onToggleExpanded?: (expanded: boolean) => void;
 }) {
   const lines = (content || "").split("\n");
   const isLong = lines.length > 20 || content.length > 1500;
@@ -346,7 +362,13 @@ function CollapsibleMessage({
           className="link"
           aria-expanded={expanded}
           aria-controls={`msg-${id}`}
-          onClick={() => setExpanded((e) => !e)}
+          onClick={() =>
+            setExpanded((e) => {
+              const next = !e;
+              onToggleExpanded?.(next);
+              return next;
+            })
+          }
         >
           {expanded ? "Show less" : "Show more"}
         </button>

@@ -11,6 +11,12 @@ import {
   type PointerEvent,
 } from "react";
 import { ChevronDown, CornerUpRight, Pencil, Trash2 } from "lucide-react";
+import {
+  ScrollModifierOption,
+  type ContextAwareComponent,
+  type DataWithScrollModifier,
+  type FooterWrapperComponent,
+} from "@virtuoso.dev/message-list";
 import type { StateSnapshot, VirtuosoHandle } from "react-virtuoso";
 import {
   deleteMessage,
@@ -51,7 +57,7 @@ import { buildModelsFromProviderOptions } from "../components/workbenchComposer/
 import {
   AssistantEntry,
   ThreadItemView,
-  WorkbenchThreadStack,
+  WorkbenchMessageListStack,
   WorkbenchThoughtRow,
   WorkbenchToolGroupRow,
   WorkbenchToolRow,
@@ -101,7 +107,6 @@ type PendingMessageEntry = {
 // allowing small client/server clock skew.
 const PENDING_MATCH_WINDOW_MS = 15_000;
 const PENDING_MATCH_EARLY_SKEW_MS = 2_000;
-
 const isClientMessageId = (value: unknown): boolean => {
   const id = typeof value === "string" ? value : "";
   return Boolean(id && id.startsWith("client-"));
@@ -112,6 +117,135 @@ const createClientMessageId = (): string => {
     return `client-${crypto.randomUUID()}`;
   }
   return `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
+const getEstimateBucket = (length: number): string => {
+  if (length > 8000) return "xxl";
+  if (length > 4000) return "xl";
+  if (length > 2000) return "l";
+  if (length > 800) return "m";
+  if (length > 200) return "s";
+  return "xs";
+};
+
+const estimateTextHeight = (text: string, attachments = 0): number => {
+  const lineBreaks = text.split("\n").length;
+  const lengthLines = Math.ceil(text.length / 80);
+  const lines = Math.max(1, Math.max(lineBreaks, lengthLines));
+  const base = 28;
+  const lineHeight = 18;
+  const attachmentExtra = attachments > 0 ? 120 * attachments : 0;
+  return base + lines * lineHeight + attachmentExtra;
+};
+
+const estimateItemHeight = (item: WorkbenchListItem): number => {
+  const kind = item.kind ?? "unknown";
+  switch (kind) {
+    case "message": {
+      const msg = item as Extract<WorkbenchListItem, { kind: "message" }>;
+      return estimateTextHeight(msg.content ?? "", msg.attachments?.length ?? 0);
+    }
+    case "assistant":
+    case "thought": {
+      const text = (item as Extract<WorkbenchListItem, { kind: "assistant" | "thought" }>).content ?? "";
+      return estimateTextHeight(text);
+    }
+    case "turn_header": {
+      const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
+      const text = header?.plain_text ?? header?.content ?? "";
+      return estimateTextHeight(text, header?.attachments?.length ?? 0);
+    }
+    case "tool": {
+      const toolItem = item as Extract<WorkbenchListItem, { kind: "tool" }>;
+      const text = `${toolItem.title ?? ""}\n${toolItem.output_text ?? ""}`;
+      return Math.min(900, estimateTextHeight(text));
+    }
+    case "tool_group": {
+      const group = item as Extract<WorkbenchListItem, { kind: "tool_group" }>;
+      const text = String(group.thought ?? "");
+      const toolCount = group.tool_total ?? group.tools?.length ?? 0;
+      return estimateTextHeight(text) + toolCount * 28;
+    }
+    case "turn_status": {
+      return 44;
+    }
+    case "ask_user_question": {
+      const input = String((item as Extract<WorkbenchListItem, { kind: "ask_user_question" }>).input ?? "");
+      return estimateTextHeight(input) + 60;
+    }
+    case "spacer":
+      return 24;
+    default:
+      return 56;
+  }
+};
+
+const shouldLockItem = (item: WorkbenchListItem): boolean => {
+  if (!item) return false;
+  if (item.kind === "turn_header") return true;
+  if (item.kind === "spacer") return true;
+  if (item.kind === "message") {
+    return true;
+  }
+  if (item.kind === "assistant") {
+    return item.is_complete;
+  }
+  if (item.kind === "tool_group") {
+    return item.tool_pending === 0 && item.tool_running === 0;
+  }
+  if (item.kind === "tool") {
+    const status = String(item.status ?? "").toLowerCase();
+    if (!status) return true;
+    if (status.includes("running") || status.includes("pending") || status.includes("queued") || status.includes("starting")) {
+      return false;
+    }
+    return true;
+  }
+  if (item.kind === "turn_status") {
+    const status = String(item.status ?? "").toLowerCase();
+    if (!status) return true;
+    if (status.includes("running") || status.includes("queued")) return false;
+    return true;
+  }
+  if (item.kind === "ask_user_question") {
+    return item.answered;
+  }
+  return true;
+};
+
+const getItemEstimateKey = (item: WorkbenchListItem): string => {
+  const kind = item.kind ?? "unknown";
+  switch (kind) {
+    case "message":
+    case "assistant":
+    case "thought": {
+      const text = (item as Extract<WorkbenchListItem, { kind: "message" | "assistant" | "thought" }>).content ?? "";
+      return `${kind}:${getEstimateBucket(text.length)}`;
+    }
+    case "tool": {
+      const toolItem = item as Extract<WorkbenchListItem, { kind: "tool" }>;
+      const text = String(toolItem.output_text ?? "").length + String(toolItem.title ?? "").length * 2;
+      return `${kind}:${getEstimateBucket(text)}`;
+    }
+    case "tool_group": {
+      const group = item as Extract<WorkbenchListItem, { kind: "tool_group" }>;
+      const text = String(group.thought ?? "");
+      const toolCount = group.tool_total ?? group.tools?.length ?? 0;
+      const len = text.length + toolCount * 60;
+      return `${kind}:${getEstimateBucket(len)}`;
+    }
+    case "ask_user_question": {
+      const input = String((item as Extract<WorkbenchListItem, { kind: "ask_user_question" }>).input ?? "");
+      return `${kind}:${getEstimateBucket(input.length)}`;
+    }
+    case "turn_header": {
+      const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
+      const text = header?.plain_text ?? header?.content ?? "";
+      return `${kind}:${getEstimateBucket(text.length)}`;
+    }
+    default:
+      return `${kind}:base`;
+  }
 };
 
 const normalizeAttachmentKey = (value: MessageAttachment): string => {
@@ -294,6 +428,16 @@ export function SessionView({
       return false;
     }
   }, [id]);
+  const useMessageList = true;
+  const messageListLicenseKey = useMemo(() => {
+    const envKey = String(import.meta.env.VITE_VIRTUOSO_MESSAGE_LIST_LICENSE_KEY ?? "");
+    if (envKey.trim()) return envKey.trim();
+    try {
+      return window.localStorage.getItem("ctx_message_list_license") ?? "";
+    } catch {
+      return "";
+    }
+  }, []);
   const perfStartRef = useRef<number>(0);
   const bottomThresholdPx = 16;
   const userIntentWindowMs = 1000;
@@ -394,6 +538,12 @@ export function SessionView({
   const scrollbarLastScrollTopRef = useRef<number | null>(null);
   const scrollbarDragRef = useRef<ScrollbarDragState | null>(null);
   const latestAnchorIdRef = useRef<string | null>(null);
+  const sizeCacheRef = useRef<Map<string, number>>(new Map());
+  const lockedHeightsRef = useRef<Map<string, number>>(new Map());
+  const sizeStatsRef = useRef<Map<string, { sum: number; count: number }>>(new Map());
+  const sizeStatsByKeyRef = useRef<Map<string, { sum: number; count: number }>>(new Map());
+  const [sizeCacheVersion, setSizeCacheVersion] = useState(0);
+  const [lockedHeightsVersion, setLockedHeightsVersion] = useState(0);
   const restoringScrollRef = useRef(false);
   const dropHideTimerRef = useRef<number | null>(null);
   const restoreCooldownRef = useRef<number | null>(null);
@@ -1086,15 +1236,101 @@ export function SessionView({
     }
     return out;
   }, [wbGroups]);
+  const [displayItems, setDisplayItems] = useState(wbListItems);
+  const displayItemsRef = useRef(displayItems);
+  const [pendingMeasureItems, setPendingMeasureItems] = useState<WorkbenchListItem[] | null>(null);
+  const pendingMeasureTargetRef = useRef<WorkbenchListItem[] | null>(null);
+  const measureContainerRef = useRef<HTMLDivElement | null>(null);
+  const pendingMeasureTokenRef = useRef(0);
+  const premeasureQueueRef = useRef<WorkbenchListItem[]>([]);
+  const premeasureQueuedIdsRef = useRef<Set<string>>(new Set());
+  const [measureWidth, setMeasureWidth] = useState<number | null>(null);
+  const listItems = useMessageList ? wbListItems : displayItems;
+  const prevMessageListItemsRef = useRef<WorkbenchListItem[]>(listItems);
+  const messageListData = useMemo<DataWithScrollModifier<WorkbenchListItem>>(() => {
+    if (!useMessageList) {
+      prevMessageListItemsRef.current = listItems;
+      return { data: listItems };
+    }
+    const prev = prevMessageListItemsRef.current;
+    let scrollModifier: DataWithScrollModifier<WorkbenchListItem>["scrollModifier"];
+    if (prev.length > 0 && listItems.length > prev.length) {
+      const prevFirstId = prev[0]?.id;
+      if (prevFirstId) {
+        const index = listItems.findIndex((item) => item.id === prevFirstId);
+        if (index > 0) {
+          scrollModifier = ScrollModifierOption.prepend;
+        }
+      }
+    }
+    prevMessageListItemsRef.current = listItems;
+    return { data: listItems, scrollModifier };
+  }, [listItems, useMessageList]);
+  const heightEstimates = useMemo(() => {
+    if (listItems.length === 0) return undefined;
+    const fallback = 56;
+    const estimates = new Array(listItems.length);
+    for (let i = 0; i < listItems.length; i += 1) {
+      const item = listItems[i];
+      const locked = lockedHeightsRef.current.get(item.id);
+      if (locked != null) {
+        estimates[i] = locked;
+        continue;
+      }
+      const cached = sizeCacheRef.current.get(item.id);
+      if (cached != null) {
+        estimates[i] = cached;
+        continue;
+      }
+      const key = getItemEstimateKey(item);
+      const keyStats = sizeStatsByKeyRef.current.get(key);
+      if (keyStats && keyStats.count > 0) {
+        estimates[i] = keyStats.sum / keyStats.count;
+        continue;
+      }
+      const kind = item.kind ?? "unknown";
+      const stats = sizeStatsRef.current.get(kind);
+      if (stats && stats.count > 0) {
+        estimates[i] = stats.sum / stats.count;
+      } else {
+        const estimate = estimateItemHeight(item);
+        estimates[i] = estimate || fallback;
+      }
+    }
+    return estimates;
+  }, [listItems, sizeCacheVersion, lockedHeightsVersion]);
+
+  useEffect(() => {
+    if (lockedHeightsRef.current.size === 0) return;
+    const ids = new Set(listItems.map((item) => item.id));
+    let changed = false;
+    for (const id of lockedHeightsRef.current.keys()) {
+      if (!ids.has(id)) {
+        lockedHeightsRef.current.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) setLockedHeightsVersion((v) => v + 1);
+  }, [listItems]);
 
   const [firstItemIndex, setFirstItemIndex] = useState(initialVirtuosoIndex);
+  const firstItemIndexRef = useRef(firstItemIndex);
   const prevSessionForIndexRef = useRef(id);
-  const prevItemsRef = useRef<WorkbenchListItem[]>(wbListItems);
+  const prevItemsRef = useRef<WorkbenchListItem[]>(listItems);
+  const renderedRangeRef = useRef<{ start: number; end: number } | null>(null);
   const pendingPrependRef = useRef(false);
   const pendingPrependAnchorRef = useRef<string | null>(null);
   const pendingPrependOffsetRef = useRef<number | null>(null);
   const latestAnchorOffsetRef = useRef<number | null>(null);
   const lastScrollHeightRef = useRef<number | null>(null);
+  useEffect(() => {
+    firstItemIndexRef.current = firstItemIndex;
+  }, [firstItemIndex]);
+  const clearPendingPrepend = useCallback(() => {
+    pendingPrependRef.current = false;
+    pendingPrependAnchorRef.current = null;
+    pendingPrependOffsetRef.current = null;
+  }, []);
   const updateAnchorFromScroller = useCallback(
     (scroller: HTMLDivElement | null) => {
       const meta = readAnchorMetaFromScroller(scroller);
@@ -1131,49 +1367,307 @@ export function SessionView({
     });
   }, []);
 
+
+
+  const handleItemsRendered = useCallback(
+    (items: Array<{ index: number; data?: WorkbenchListItem; size?: number }>) => {
+      let changed = false;
+      let minIndex = Number.POSITIVE_INFINITY;
+      let maxIndex = Number.NEGATIVE_INFINITY;
+      if (pendingPrependRef.current) {
+        const anchorId = pendingPrependAnchorRef.current;
+        const anchorOffset = pendingPrependOffsetRef.current;
+        if (anchorId && anchorOffset != null) {
+          const hasAnchor = items.some((item) => item.data?.id === anchorId);
+          if (hasAnchor) {
+            adjustAnchorOffset(anchorId, anchorOffset);
+            clearPendingPrepend();
+          }
+        }
+      }
+      for (const item of items) {
+        if (typeof item.index === "number") {
+          minIndex = Math.min(minIndex, item.index);
+          maxIndex = Math.max(maxIndex, item.index);
+        }
+        const data = item.data;
+        if (!data || !data.id || typeof item.size !== "number" || item.size <= 0) continue;
+        const prev = sizeCacheRef.current.get(data.id);
+        if (prev != null && Math.abs(prev - item.size) <= 0.5) continue;
+        sizeCacheRef.current.set(data.id, item.size);
+        const kind = data.kind ?? "unknown";
+        const key = getItemEstimateKey(data);
+        const stats = sizeStatsRef.current.get(kind) ?? { sum: 0, count: 0 };
+        const keyStats = sizeStatsByKeyRef.current.get(key) ?? { sum: 0, count: 0 };
+        if (prev != null) {
+          stats.sum += item.size - prev;
+          keyStats.sum += item.size - prev;
+        } else {
+          stats.sum += item.size;
+          stats.count += 1;
+          keyStats.sum += item.size;
+          keyStats.count += 1;
+        }
+        sizeStatsRef.current.set(kind, stats);
+        sizeStatsByKeyRef.current.set(key, keyStats);
+        changed = true;
+      }
+      if (Number.isFinite(minIndex)) {
+        renderedRangeRef.current = { start: minIndex, end: maxIndex };
+      } else {
+        renderedRangeRef.current = null;
+      }
+      if (changed) setSizeCacheVersion((v) => v + 1);
+    },
+    [],
+  );
+
   useLayoutEffect(() => {
+    if (useMessageList) {
+      if (displayItemsRef.current !== wbListItems) {
+        displayItemsRef.current = wbListItems;
+        setDisplayItems(wbListItems);
+      }
+      return;
+    }
+    if (pendingMeasureItems) return;
+    if (displayItemsRef.current === wbListItems) return;
+    const prev = displayItemsRef.current;
+    if (pendingPrependRef.current && wbListItems.length > prev.length) {
+      const prevFirstId = prev[0]?.id;
+      const startIndex = prevFirstId ? wbListItems.findIndex((item) => item.id === prevFirstId) : -1;
+      if (startIndex > 0) {
+        pendingMeasureTargetRef.current = wbListItems;
+        setPendingMeasureItems(wbListItems.slice(0, startIndex));
+        return;
+      }
+    }
+    displayItemsRef.current = wbListItems;
+    setDisplayItems(wbListItems);
+  }, [pendingMeasureItems, useMessageList, wbListItems]);
+
+  useEffect(() => {
+    if (useMessageList) return;
+    if (!pendingMeasureItems || pendingMeasureItems.length === 0) return;
+    if (!Number.isFinite(measureWidth ?? NaN)) return;
+    const container = measureContainerRef.current;
+    if (!container) return;
+    const token = pendingMeasureTokenRef.current + 1;
+    pendingMeasureTokenRef.current = token;
+    let rafId = 0;
+    let frameCount = 0;
+    let stableFrames = 0;
+    let lastHeights: Map<string, number> | null = null;
+    const maxFrames = 90;
+    const maxMs = 1600;
+    const start = performance.now();
+
+    const readHeights = () => {
+      const nodes = Array.from(container.querySelectorAll<HTMLElement>("[data-measure-id]"));
+      const heights = new Map<string, number>();
+      let missing = false;
+      for (const node of nodes) {
+        const id = node.getAttribute("data-measure-id");
+        if (!id) {
+          missing = true;
+          continue;
+        }
+        const height = node.getBoundingClientRect().height;
+        if (!height || height <= 0) {
+          missing = true;
+          continue;
+        }
+        heights.set(id, height);
+      }
+      const images = Array.from(container.querySelectorAll<HTMLImageElement>("img"));
+      const imagesReady = images.every((img) => img.complete && img.naturalWidth > 0);
+      return { heights, missing, imagesReady, expectedCount: nodes.length };
+    };
+
+    const heightsStable = (
+      next: Map<string, number>,
+      prev: Map<string, number> | null,
+      expectedCount: number,
+    ) => {
+      if (!prev) return false;
+      if (expectedCount === 0) return false;
+      if (next.size !== expectedCount || prev.size !== expectedCount) return false;
+      for (const [id, height] of next.entries()) {
+        const prevHeight = prev.get(id);
+        if (prevHeight == null || Math.abs(prevHeight - height) > 0.5) return false;
+      }
+      return true;
+    };
+
+    const finalize = (measuredHeights: Map<string, number>) => {
+      if (pendingMeasureTokenRef.current !== token) return;
+      let sizeChanged = false;
+      for (const [id, height] of measuredHeights.entries()) {
+        const prev = sizeCacheRef.current.get(id);
+        if (prev != null && Math.abs(prev - height) <= 0.5) continue;
+        sizeCacheRef.current.set(id, height);
+        sizeChanged = true;
+      }
+      if (sizeChanged) setSizeCacheVersion((v) => v + 1);
+      if (pendingMeasureItems.length > 0 && measuredHeights.size > 0) {
+        let lockChanged = false;
+        const nextLocks = new Map(lockedHeightsRef.current);
+        const renderedRange = renderedRangeRef.current;
+        const currentItems = displayItemsRef.current;
+        for (const item of pendingMeasureItems) {
+          if (!shouldLockItem(item)) continue;
+          if (renderedRange && currentItems.length > 0) {
+            const idx = currentItems.findIndex((entry) => entry.id === item.id);
+            if (idx >= 0) {
+              const dataIndex = firstItemIndexRef.current + idx;
+              if (dataIndex >= renderedRange.start && dataIndex <= renderedRange.end) {
+                continue;
+              }
+            }
+          }
+          const height = measuredHeights.get(item.id) ?? sizeCacheRef.current.get(item.id);
+          if (!height || height <= 0) continue;
+          const prev = nextLocks.get(item.id);
+          if (prev == null || Math.abs(prev - height) > 0.5) {
+            nextLocks.set(item.id, height);
+            lockChanged = true;
+          }
+        }
+        if (lockChanged) {
+          lockedHeightsRef.current = nextLocks;
+          setLockedHeightsVersion((v) => v + 1);
+        }
+      }
+      const nextItems = pendingMeasureTargetRef.current ?? wbListItems;
+      pendingMeasureTargetRef.current = null;
+      displayItemsRef.current = nextItems;
+      setPendingMeasureItems(null);
+      setDisplayItems(nextItems);
+    };
+
+    const step = () => {
+      if (pendingMeasureTokenRef.current !== token) return;
+      const { heights, missing, imagesReady, expectedCount } = readHeights();
+      const stable = !missing && imagesReady && heightsStable(heights, lastHeights, expectedCount);
+      if (stable) {
+        stableFrames += 1;
+      } else {
+        stableFrames = 0;
+      }
+      lastHeights = heights;
+      frameCount += 1;
+      const expired = performance.now() - start > maxMs || frameCount >= maxFrames;
+      if (stableFrames >= 2 || expired) {
+        finalize(heights);
+        return;
+      }
+      rafId = requestAnimationFrame(step);
+    };
+
+    rafId = requestAnimationFrame(step);
+    return () => {
+      if (pendingMeasureTokenRef.current === token) {
+        pendingMeasureTokenRef.current += 1;
+      }
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [pendingMeasureItems, useMessageList, wbListItems, measureWidth]);
+
+  useEffect(() => {
+    premeasureQueueRef.current = [];
+    premeasureQueuedIdsRef.current = new Set();
+  }, [id]);
+
+  useEffect(() => {
+    if (useMessageList) return;
+    const queue = premeasureQueueRef.current;
+    const queued = premeasureQueuedIdsRef.current;
+    const renderedRange = renderedRangeRef.current;
+    for (let i = listItems.length - 1; i >= 0; i -= 1) {
+      const item = listItems[i];
+      if (!item?.id) continue;
+      const dataIndex = firstItemIndex + i;
+      if (renderedRange && dataIndex >= renderedRange.start && dataIndex <= renderedRange.end) continue;
+      if (!shouldLockItem(item)) continue;
+      if (sizeCacheRef.current.has(item.id)) continue;
+      if (lockedHeightsRef.current.has(item.id)) continue;
+      if (queued.has(item.id)) continue;
+      queued.add(item.id);
+      queue.push(item);
+    }
+  }, [firstItemIndex, listItems, sizeCacheVersion, lockedHeightsVersion, id, useMessageList]);
+
+  useEffect(() => {
+    if (useMessageList) return;
+    if (pendingMeasureItems) return;
+    if (pendingPrependRef.current) return;
+    const queue = premeasureQueueRef.current;
+    if (queue.length === 0) return;
+    const batch = queue.splice(0, 24);
+    if (batch.length === 0) return;
+    pendingMeasureTargetRef.current = displayItemsRef.current;
+    setPendingMeasureItems(batch);
+  }, [pendingMeasureItems, listItems, useMessageList]);
+
+  useLayoutEffect(() => {
+    if (scrollerNode) setMeasureWidth(scrollerNode.clientWidth);
+  }, [scrollerNode, listItems.length]);
+
+  useLayoutEffect(() => {
+    if (useMessageList) {
+      const prevItems = prevItemsRef.current;
+      if (pendingPrependRef.current && listItems.length > prevItems.length) {
+        clearPendingPrepend();
+      }
+      prevItemsRef.current = listItems;
+      return;
+    }
     if (prevSessionForIndexRef.current !== id) {
       prevSessionForIndexRef.current = id;
       setFirstItemIndex(initialVirtuosoIndex);
-      prevItemsRef.current = wbListItems;
+      prevItemsRef.current = listItems;
       return;
     }
     if (preserveScrollOnFocus && !isActive) {
-      prevItemsRef.current = wbListItems;
+      prevItemsRef.current = listItems;
       return;
     }
-    if (wbListItems.length === 0) {
+    if (listItems.length === 0) {
       setFirstItemIndex(initialVirtuosoIndex);
-      prevItemsRef.current = wbListItems;
+      prevItemsRef.current = listItems;
       return;
     }
     const prevItems = prevItemsRef.current;
     if (prevItems.length === 0) {
       setFirstItemIndex(initialVirtuosoIndex);
-      prevItemsRef.current = wbListItems;
+      prevItemsRef.current = listItems;
       return;
     }
     const idsUnchanged =
-      prevItems.length === wbListItems.length &&
-      prevItems.every((item, index) => item.id === wbListItems[index]?.id);
+      prevItems.length === listItems.length &&
+      prevItems.every((item, index) => item.id === listItems[index]?.id);
     if (idsUnchanged) {
-      prevItemsRef.current = wbListItems;
+      prevItemsRef.current = listItems;
       return;
     }
-    const pendingAnchor = pendingPrependRef.current ? pendingPrependAnchorRef.current : null;
-    const listIncreased = wbListItems.length > prevItems.length;
+    const wasPendingPrepend = pendingPrependRef.current;
+    const pendingAnchor = wasPendingPrepend ? pendingPrependAnchorRef.current : null;
+    const listIncreased = listItems.length > prevItems.length;
     const shouldAnchor =
       pendingPrependRef.current || stickToBottomRef.current === false || scrollState?.stickToBottom === false;
     const anchorId = shouldAnchor
       ? pendingAnchor ?? latestAnchorIdRef.current ?? scrollState?.anchorItemId ?? null
       : null;
     let didShift = false;
+    let indexShift = 0;
+    let nextFirstItemIndex = firstItemIndex;
     if (anchorId) {
       const prevIndex = prevItems.findIndex((item) => item.id === anchorId);
-      const nextIndex = wbListItems.findIndex((item) => item.id === anchorId);
+      const nextIndex = listItems.findIndex((item) => item.id === anchorId);
       if (prevIndex >= 0 && nextIndex >= 0) {
-        const indexShift = nextIndex - prevIndex;
+        indexShift = nextIndex - prevIndex;
         if (indexShift !== 0) {
+          nextFirstItemIndex = firstItemIndex - indexShift;
           setFirstItemIndex((prev) => prev - indexShift);
           didShift = true;
         }
@@ -1189,18 +1683,21 @@ export function SessionView({
     ) {
       const prevFirstId = prevItems[0]?.id;
       if (prevFirstId) {
-        const startIndex = wbListItems.findIndex((item) => item.id === prevFirstId);
+        const startIndex = listItems.findIndex((item) => item.id === prevFirstId);
         if (startIndex > 0) {
+          nextFirstItemIndex = firstItemIndex - startIndex;
           setFirstItemIndex((prev) => prev - startIndex);
         }
       }
     }
-    pendingPrependRef.current = false;
-    pendingPrependAnchorRef.current = null;
-    pendingPrependOffsetRef.current = null;
-    prevItemsRef.current = wbListItems;
+    if (wasPendingPrepend && listIncreased) {
+      if (!pendingPrependAnchorRef.current || pendingPrependOffsetRef.current == null) {
+        clearPendingPrepend();
+      }
+    }
+    prevItemsRef.current = listItems;
   }, [
-    adjustAnchorOffset,
+    clearPendingPrepend,
     firstItemIndex,
     id,
     initialVirtuosoIndex,
@@ -1208,16 +1705,18 @@ export function SessionView({
     preserveScrollOnFocus,
     scrollState?.anchorItemId,
     scrollState?.stickToBottom,
-    wbListItems,
+    listItems,
+    useMessageList,
   ]);
 
   useEffect(() => {
     scheduleScrollbarUpdate();
-  }, [scheduleScrollbarUpdate, wbListItems.length]);
+  }, [scheduleScrollbarUpdate, listItems.length]);
 
   useLayoutEffect(() => {
     updateScrollbar();
-  }, [updateScrollbar, wbListItems.length]);
+  }, [updateScrollbar, listItems.length]);
+
 
 
   const isActiveRef = useRef(isActive);
@@ -1237,7 +1736,7 @@ export function SessionView({
       preserveScrollOnFocus,
       bottomThresholdPx,
       userIntentWindowMs,
-      itemsLength: wbListItems.length,
+      itemsLength: listItems.length,
       firstItemIndex,
       scrollStateStickToBottom: scrollState?.stickToBottom,
       syncKey: scrollSyncKey,
@@ -1262,6 +1761,13 @@ export function SessionView({
       autoScrollRafRef,
       autoScrollAttemptRef,
     });
+
+  const messageListInitialLocation = useMemo(() => {
+    if (!useMessageList) return undefined;
+    if (scrollState?.stickToBottom === false) return undefined;
+    if (listItems.length === 0) return undefined;
+    return { index: "LAST", align: "end" as const };
+  }, [listItems.length, scrollState?.stickToBottom, useMessageList]);
 
   useEffect(() => {
     const scroller = scrollerRef.current;
@@ -1347,7 +1853,7 @@ export function SessionView({
 
   useLayoutEffect(() => {
     if (!isActive) return;
-    const items = wbListItems;
+    const items = listItems;
     if (items.length === 0) return;
     if (scrollState?.virtuosoState && !preserveScrollOnFocus && scrollState?.stickToBottom === false) {
       restorePendingRef.current = false;
@@ -1439,7 +1945,7 @@ export function SessionView({
     scrollState?.virtuosoState,
     initialTopMostItemIndex,
     firstItemIndex,
-    wbListItems.length,
+    listItems.length,
   ]);
 
   const authUi = useMemo(() => deriveAuthUi(events), [eventsKey]);
@@ -1506,7 +2012,7 @@ export function SessionView({
       : (scrollState?.virtuosoState ?? undefined) as StateSnapshot | undefined;
 
   const jumpToLatestWorkbench = useCallback(() => {
-    if (wbListItems.length > 0) {
+    if (listItems.length > 0) {
       stickToBottomRef.current = true;
       setStickToBottom(true);
       setAtBottom(true);
@@ -1515,7 +2021,7 @@ export function SessionView({
       persistScroll({ stickToBottom: true, anchorItemId: null, anchorOffset: null, scrollTop: null });
       scheduleAutoScroll();
     }
-  }, [persistScroll, scheduleAutoScroll, wbListItems.length]);
+  }, [persistScroll, scheduleAutoScroll, listItems.length]);
 
   useEffect(() => {
     if (!pendingScrollToBottomRef.current) return;
@@ -1532,43 +2038,52 @@ export function SessionView({
       }
     }
     if (preserveScrollOnFocus && !isActive) return;
-    if (wbListItems.length === 0) return;
+    if (listItems.length === 0) return;
     pendingScrollToBottomRef.current = false;
     requestAnimationFrame(() => {
       jumpToLatestWorkbench();
     });
-  }, [stickToBottom, restoreInProgress, preserveScrollOnFocus, isActive, wbListItems.length, jumpToLatestWorkbench]);
+  }, [stickToBottom, restoreInProgress, preserveScrollOnFocus, isActive, listItems.length, jumpToLatestWorkbench]);
   const handleWorkbenchRangeChanged = useCallback(
     (range: { startIndex: number }) => {
       if (restoringScrollRef.current) return;
       if (pendingPrependRef.current) return;
-      if (updateAnchorFromScroller(scrollerRef.current)) return;
-      const dataIndex = range.startIndex - firstItemIndex;
-      const item = wbListItems[dataIndex];
-      if (!item) return;
-    const nextId = item.id ?? null;
-    latestAnchorIdRef.current = nextId;
-    const scroller = scrollerRef.current;
-    if (scroller && nextId) {
-      const anchorEl = scroller.querySelector(
-        `[data-thread-item-id=\"${nextId}\"]`,
-      ) as HTMLElement | null;
-      const listItem = anchorEl?.closest('[role="listitem"]') as HTMLElement | null;
-      if (listItem) {
-        const rect = listItem.getBoundingClientRect();
-        const scrollerRect = scroller.getBoundingClientRect();
-        latestAnchorOffsetRef.current = rect.top - scrollerRect.top;
-        return;
+      const anchorUpdated = updateAnchorFromScroller(scrollerRef.current);
+      if (!anchorUpdated) {
+        const dataIndex = range.startIndex - firstItemIndex;
+        const item = listItems[dataIndex];
+        if (item) {
+          const nextId = item.id ?? null;
+          latestAnchorIdRef.current = nextId;
+          const scroller = scrollerRef.current;
+          if (scroller && nextId) {
+            const anchorEl = scroller.querySelector(
+              `[data-thread-item-id=\"${nextId}\"]`,
+            ) as HTMLElement | null;
+            const listItem = anchorEl?.closest('[role="listitem"]') as HTMLElement | null;
+            if (listItem) {
+              const rect = listItem.getBoundingClientRect();
+              const scrollerRect = scroller.getBoundingClientRect();
+              latestAnchorOffsetRef.current = rect.top - scrollerRect.top;
+            } else {
+              latestAnchorOffsetRef.current = null;
+            }
+          } else {
+            latestAnchorOffsetRef.current = null;
+          }
+        }
       }
-    }
-    latestAnchorOffsetRef.current = null;
-  },
-  [firstItemIndex, updateAnchorFromScroller, wbListItems],
-);
+    },
+    [firstItemIndex, updateAnchorFromScroller, listItems],
+  );
 
   const handleStartReached = useCallback(() => {
     if (!hasMoreTurns) return;
     if (pendingPrependRef.current) return;
+    if (pendingMeasureItems) {
+      pendingMeasureTargetRef.current = null;
+      setPendingMeasureItems(null);
+    }
     pendingPrependRef.current = true;
     if (stickToBottomRef.current) {
       stickToBottomRef.current = false;
@@ -1577,16 +2092,23 @@ export function SessionView({
     }
     const scroller = scrollerRef.current;
     const anchorMeta = scroller ? readAnchorMetaFromScroller(scroller) : null;
-    pendingPrependAnchorRef.current = anchorMeta?.id ?? latestAnchorIdRef.current;
-    pendingPrependOffsetRef.current = anchorMeta?.offset ?? latestAnchorOffsetRef.current ?? null;
+    const anchorId = anchorMeta?.id ?? latestAnchorIdRef.current;
+    const anchorOffset = anchorMeta?.offset ?? latestAnchorOffsetRef.current;
+    pendingPrependAnchorRef.current = anchorId;
+    pendingPrependOffsetRef.current = anchorOffset ?? null;
     void supervisor.loadMoreTurns(id).then((added) => {
       if (added === 0) {
-        pendingPrependRef.current = false;
-        pendingPrependAnchorRef.current = null;
-        pendingPrependOffsetRef.current = null;
+        clearPendingPrepend();
       }
     });
-  }, [hasMoreTurns, id, setAtBottom, setStickToBottom, supervisor]);
+  }, [clearPendingPrepend, hasMoreTurns, id, pendingMeasureItems, setAtBottom, setStickToBottom, supervisor]);
+
+  const unlockHeightForItem = useCallback((itemId?: string | null) => {
+    if (!itemId) return;
+    if (!lockedHeightsRef.current.has(itemId)) return;
+    lockedHeightsRef.current.delete(itemId);
+    setLockedHeightsVersion((v) => v + 1);
+  }, [adjustAnchorOffset, clearPendingPrepend]);
 
   const getQueuedAttachments = (message: Message): MessageAttachment[] => {
     return Array.isArray(message.attachments) ? message.attachments : [];
@@ -2020,13 +2542,15 @@ export function SessionView({
           verbosity={verbosity}
           expanded={expanded}
           toolsLoading={toolsLoading}
-          onToggle={() =>
-            setExpandedTurnDetailsById((prev) => ({ ...prev, [item.turn_id]: !expanded }))
-          }
+          onToggle={() => {
+            unlockHeightForItem(item.id);
+            setExpandedTurnDetailsById((prev) => ({ ...prev, [item.turn_id]: !expanded }));
+          }}
           onRequestTools={() => supervisor.loadTurnTools(id, item.turn_id)}
-          onToggleTool={(toolId) =>
-            setExpandedToolById((prev) => ({ ...prev, [toolId]: !prev[toolId] }))
-          }
+          onToggleTool={(toolId) => {
+            unlockHeightForItem(item.id);
+            setExpandedToolById((prev) => ({ ...prev, [toolId]: !prev[toolId] }));
+          }}
           expandedToolById={expandedToolById}
         />
       );
@@ -2038,7 +2562,10 @@ export function SessionView({
           item={item}
           verbosity={verbosity}
           expanded={toolExpanded}
-          onToggle={() => setExpandedToolById((prev) => ({ ...prev, [item.id]: !toolExpanded }))}
+          onToggle={() => {
+            unlockHeightForItem(item.id);
+            setExpandedToolById((prev) => ({ ...prev, [item.id]: !toolExpanded }));
+          }}
         />
       );
     }
@@ -2084,6 +2611,9 @@ export function SessionView({
         worktreeId={worktreeId}
         onFileOpenError={handleFileOpenError}
         modifierDown={modifierDown}
+        onToggleMessageExpanded={(expanded) => {
+          if (expanded) unlockHeightForItem(item.id);
+        }}
       />
     );
   }, [
@@ -2096,6 +2626,7 @@ export function SessionView({
     displayNowMs,
     supervisor,
     turnToolsLoading,
+    unlockHeightForItem,
     worktreeId,
   ]);
 
@@ -2114,24 +2645,34 @@ export function SessionView({
               header={header}
               plainText={plainText}
               expanded={expanded}
-              onToggle={() => setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }))}
+              onToggle={() => {
+                unlockHeightForItem(itemId);
+                setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }));
+              }}
             />
           </div>
         );
       }
       const content = renderThreadItem(item as ThreadItem);
+      const lockedHeight = lockedHeightsRef.current.get(itemId);
       return (
-        <div className="wb-thread-indent" data-thread-item-id={itemId}>
+        <div
+          className="wb-thread-indent"
+          data-thread-item-id={itemId}
+          style={lockedHeight != null ? { height: lockedHeight, overflow: "hidden" } : undefined}
+        >
           {content}
         </div>
       );
     },
-    [expandedTurnHeaders, renderThreadItem],
+    [expandedTurnHeaders, renderThreadItem, lockedHeightsVersion, unlockHeightForItem],
   );
+
+  const messageListItemIdentity = useCallback((item: WorkbenchListItem) => item.id, []);
 
   const workbenchComponents = useMemo(
     () => ({
-    Scroller: forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>((props, ref) => (
+    Scroller: forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement> & { context?: unknown }>((props, ref) => (
         <div
           {...props}
           ref={(node) => {
@@ -2148,7 +2689,7 @@ export function SessionView({
             if (typeof ref === "function") ref(node);
             else if (ref) (ref as MutableRefObject<HTMLDivElement | null>).current = node;
           }}
-          className={`wb-thread-scroller ${props.className ?? ""}`}
+          className={`wb-thread-scroller${useMessageList ? " wb-thread-scroller--message-list" : ""} ${props.className ?? ""}`}
           style={{ ...props.style, overflowX: "hidden" }}
           onWheel={(event) => {
             props.onWheel?.(event);
@@ -2191,6 +2732,9 @@ export function SessionView({
               setRestoreInProgress(false);
             }
             const userScroll = didScroll && userIntent;
+            if (useMessageList && userScroll && scroller && scroller.scrollTop <= 4) {
+              handleStartReached();
+            }
             if (userScroll && stickToBottomRef.current && scroller) {
               const remaining = scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight);
               const nearBottom = remaining <= bottomThresholdPx;
@@ -2282,12 +2826,35 @@ export function SessionView({
     }),
     [
       bottomThresholdPx,
+      handleStartReached,
       persistScroll,
       scheduleScrollbarUpdate,
       showScrollbarTemporarily,
       updateAnchorFromScroller,
       userIntentWindowMs,
+      useMessageList,
     ],
+  );
+
+  const messageListFooter = useMemo<ContextAwareComponent>(() => ({ context: _context }) => null, []);
+
+  const messageListFooterWrapper = useMemo<FooterWrapperComponent>(
+    () =>
+      forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>((props, ref) => (
+        <div
+          {...props}
+          ref={(node) => {
+            bottomSentinelRef.current = node;
+            setBottomSentinelNode((prev) => (prev === node ? prev : node));
+            if (typeof ref === "function") ref(node);
+            else if (ref) (ref as MutableRefObject<HTMLDivElement | null>).current = node;
+          }}
+          aria-hidden="true"
+          data-bottom-sentinel="true"
+          style={{ height: 1, minHeight: 1, ...props.style }}
+        />
+      )),
+    [setBottomSentinelNode],
   );
 
   return (
@@ -2296,7 +2863,7 @@ export function SessionView({
       ref={dropScopeRef}
       data-testid="session-view"
       data-session-id={id}
-      data-thread-count={wbListItems.length}
+      data-thread-count={listItems.length}
     >
       {dropActive && (
         <div className="ctx-drop-overlay" aria-hidden="true">
@@ -2371,7 +2938,7 @@ export function SessionView({
         )}
         {showDebug && (
           <div className="wb-muted" style={{ fontFamily: "var(--mono)" }}>
-            debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} items={wbListItems.length}
+            debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} items={listItems.length}
           </div>
         )}
         {(authUi.status === "required" || authUi.status === "failed") && (
@@ -2498,22 +3065,43 @@ export function SessionView({
           <DebugPanel events={debugEvents} />
         )}
 
-        <WorkbenchThreadStack
+        {pendingMeasureItems && pendingMeasureItems.length > 0 && (
+          <div
+            ref={measureContainerRef}
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: measureWidth ? `${measureWidth}px` : "100%",
+              visibility: "hidden",
+              pointerEvents: "none",
+              zIndex: -1,
+            }}
+          >
+            <div role="list" className="wb-thread-list">
+              {pendingMeasureItems.map((item, index) => (
+                <div key={`measure-${item.id}`} role="listitem" data-measure-id={item.id}>
+                  {workbenchItemContent(index, item)}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <WorkbenchMessageListStack
           virtuosoStyle={virtuosoStyle}
-          data={wbListItems}
-          firstItemIndex={firstItemIndex}
-          virtuosoRef={virtuosoRef}
-          initialTopMostItemIndex={initialTopMostItemIndex}
-          restoreStateFrom={restoreStateFrom}
-          increaseViewportBy={workbenchViewportBy}
-          onStartReached={handleStartReached}
-          onRangeChanged={handleWorkbenchRangeChanged}
-          components={workbenchComponents}
+          data={messageListData}
           itemContent={workbenchItemContent}
+          itemIdentity={messageListItemIdentity}
+          initialLocation={messageListInitialLocation}
+          scrollElement={workbenchComponents.Scroller}
+          footer={messageListFooter}
+          footerWrapper={messageListFooterWrapper}
+          increaseViewportBy={workbenchViewportBy.top}
           showJumpToLatest={!atBottom}
           onJumpToLatest={jumpToLatestWorkbench}
-          followOutput={followOutput}
-          onAtBottomStateChange={setAtBottom}
+          licenseKey={messageListLicenseKey}
           scrollbarActive={scrollbarActive}
           scrollbarDragging={scrollbarDragging}
           scrollbarNeeded={scrollbarNeeded}
