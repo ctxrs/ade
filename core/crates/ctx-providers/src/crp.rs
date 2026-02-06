@@ -791,6 +791,11 @@ impl CrpProcess {
             stderr_pump(stderr_process, stderr, stderr_log_path).await;
         });
 
+        let monitor_process = Arc::clone(&process);
+        tokio::spawn(async move {
+            monitor_crp_child_exit(monitor_process).await;
+        });
+
         Ok(process)
     }
 
@@ -816,7 +821,26 @@ impl CrpProcess {
     }
 
     fn signal_shutdown(&self, reason: &str) {
-        let _ = self.shutdown.send(Some(reason.to_string()));
+        let next = reason.to_string();
+        let prefer_over_stdout_close = next.starts_with("crp_runtime_exited:")
+            || next.starts_with("crp_runtime_wait_failed:");
+
+        // Avoid clobbering an existing shutdown reason (e.g. drain/restart), which is
+        // user-visible via TurnInterrupted. The only exception is upgrading a generic
+        // stdout-close reason to a more specific exit/wait failure.
+        let _ = self.shutdown.send_if_modified(|current| {
+            let should_replace = match current.as_deref() {
+                None => true,
+                Some("crp_runtime_stdout_closed") => prefer_over_stdout_close,
+                Some(_) => false,
+            };
+
+            if should_replace {
+                *current = Some(next.clone());
+            }
+
+            should_replace
+        });
     }
 
     async fn shutdown(&self, reason: &str) {
@@ -830,6 +854,43 @@ impl CrpProcess {
         }
         let _ = child.wait().await;
         self.pid.store(0, Ordering::Relaxed);
+    }
+}
+
+async fn monitor_crp_child_exit(process: Arc<CrpProcess>) {
+    let mut shutdown_rx = process.shutdown.subscribe();
+    loop {
+        if shutdown_rx.borrow().is_some() {
+            return;
+        }
+
+        let status = {
+            let mut child = process.child.lock().await;
+            child.try_wait()
+        };
+
+        match status {
+            Ok(Some(status)) => {
+                process.pid.store(0, Ordering::Relaxed);
+                process.signal_shutdown(&format!("crp_runtime_exited: {status}"));
+                return;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                process.pid.store(0, Ordering::Relaxed);
+                process.signal_shutdown(&format!("crp_runtime_wait_failed: {err}"));
+                return;
+            }
+        }
+
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(500)) => {},
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || shutdown_rx.borrow().is_some() {
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -862,28 +923,43 @@ async fn stdout_pump(process: Arc<CrpProcess>, stdout: impl tokio::io::AsyncRead
     });
 
     let mut lines = BufReader::new(stdout).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Some(f) = dump_file.as_mut() {
-            // Best-effort only; never fail the pump because debug dumping failed.
-            let _ = writeln!(f, "{trimmed}");
-        }
-        match serde_json::from_str::<CrpEventEnvelope>(trimmed) {
-            Ok(env) => {
-                let _ = process.events.send(env);
+    loop {
+        match lines.next_line().await {
+            Ok(Some(line)) => {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if let Some(f) = dump_file.as_mut() {
+                    // Best-effort only; never fail the pump because debug dumping failed.
+                    let _ = writeln!(f, "{trimmed}");
+                }
+                match serde_json::from_str::<CrpEventEnvelope>(trimmed) {
+                    Ok(env) => {
+                        let _ = process.events.send(env);
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            provider_id = %process.agent.provider_id,
+                            error = %err,
+                            "failed to parse CRP event"
+                        );
+                    }
+                }
             }
+            Ok(None) => break,
             Err(err) => {
                 tracing::warn!(
                     provider_id = %process.agent.provider_id,
                     error = %err,
-                    "failed to parse CRP event"
+                    "failed to read CRP stdout"
                 );
+                break;
             }
         }
     }
+
+    process.signal_shutdown("crp_runtime_stdout_closed");
 }
 
 async fn stderr_pump(

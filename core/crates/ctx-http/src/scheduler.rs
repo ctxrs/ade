@@ -350,6 +350,53 @@ async fn start_turn(
     )
     .await;
 
+    async fn emit_turn_start_failed(
+        state: &Arc<AppState>,
+        store: &ctx_store::Store,
+        session: &Session,
+        run_id: RunId,
+        turn_id: TurnId,
+        message_id: MessageId,
+        err: &anyhow::Error,
+    ) {
+        let failed_at = Utc::now();
+        let _ = store
+            .update_session_turn_status(
+                session.id,
+                turn_id,
+                SessionTurnStatus::Failed,
+                None,
+                None,
+                failed_at,
+            )
+            .await;
+        let _ = emit_event(
+            state,
+            session.id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Error,
+            json!({
+                "message_id": message_id.0,
+                "error": err.to_string(),
+                "status": "failed",
+            }),
+        )
+        .await;
+        let _ = emit_event(
+            state,
+            session.id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::TurnFinished,
+            json!({
+                "message_id": message_id.0,
+                "status": "failed",
+            }),
+        )
+        .await;
+    }
+
     let prompt = message.content.clone();
     let mut provider_session_ref = session.provider_session_ref.clone();
     let context_window_metrics =
@@ -394,16 +441,32 @@ async fn start_turn(
         provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
     }
 
-    let workspace = store
-        .get_workspace(session.workspace_id)
-        .await?
-        .ok_or_else(|| anyhow!("workspace not found: {}", session.workspace_id.0))?;
-    let worktree_for_runtime = store
-        .get_worktree(session.worktree_id)
-        .await?
-        .ok_or_else(|| anyhow!("worktree not found: {}", session.worktree_id.0))?;
+    let workspace = match store.get_workspace(session.workspace_id).await {
+        Ok(Some(workspace)) => workspace,
+        Ok(None) => {
+            let err = anyhow!("workspace not found: {}", session.workspace_id.0);
+            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+            return Err(err);
+        }
+        Err(err) => {
+            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+            return Err(err);
+        }
+    };
+    let worktree_for_runtime = match store.get_worktree(session.worktree_id).await {
+        Ok(Some(worktree)) => worktree,
+        Ok(None) => {
+            let err = anyhow!("worktree not found: {}", session.worktree_id.0);
+            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+            return Err(err);
+        }
+        Err(err) => {
+            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+            return Err(err);
+        }
+    };
     let execution_settings = settings.execution.clone().unwrap_or_default();
-    let runtime_plan = state
+    let runtime_plan = match state
         .execution
         .harness
         .prepare(
@@ -412,7 +475,14 @@ async fn start_turn(
             &execution_settings,
             &state.core.daemon_url,
         )
-        .await?;
+        .await
+    {
+        Ok(plan) => plan,
+        Err(err) => {
+            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+            return Err(err);
+        }
+    };
     let is_container = matches!(runtime_plan.runtime, HarnessRuntimeKind::Container { .. });
     for (key, value) in runtime_plan.env_overrides.iter() {
         provider_env.insert(key.clone(), value.clone());

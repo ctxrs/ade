@@ -197,22 +197,12 @@ coreEvents.on(CoreEvent.Output, (payload) => {{\n\
   }}\n\
 }});\n\
 coreEvents.on(CoreEvent.ConsoleLog, (payload) => {{\n\
-  if (payload.type === 'error' || payload.type === 'warn') {{\n\
-    writeToStderr(payload.content + \\\"\\n\\\");\n\
-  }} else {{\n\
-    writeToStdout(payload.content + \\\"\\n\\\");\n\
-  }}\n\
+  writeToStderr(String(payload?.content ?? '') + '\\n');\n\
 }});\n\
 process.env.GEMINI_CLI_NO_RELAUNCH ??= 'true';\n\
-import {{ main }} from 'file://{}';\n\
-await main();\n\
-setInterval(() => {{}}, 60000);\n",
+await import('file://{}');\n",
         core_root.join("dist").join("index.js").to_string_lossy(),
-        cli_root
-            .join("dist")
-            .join("src")
-            .join("gemini.js")
-            .to_string_lossy(),
+        cli_root.join("dist").join("index.js").to_string_lossy(),
     );
 
     let write_wrapper = match fs::read_to_string(&wrapper_path) {
@@ -404,7 +394,16 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
 
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     let bridge_cmd = installer::resolve_provider_command(&agent_cfg, "acp-crp-bridge")
-        .unwrap_or_else(|| fallback_provider_command("acp-crp-bridge", vec![]));
+        .unwrap_or_else(|| {
+            let command = std::env::var("CTX_ACP_CRP_BRIDGE_CMD")
+                .unwrap_or_else(|_| fallback_provider_command("acp-crp-bridge", vec![]).command);
+            installer::AgentServerCommand {
+                command,
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: None,
+            }
+        });
     let codex_crp_cmd = installer::resolve_provider_command(&agent_cfg, "codex-crp");
     let codex_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(match codex_crp_cmd.clone() {
         Some(cmd) => Tier1CrpAdapter::from_raw("codex-crp", cmd.command, cmd.args),
