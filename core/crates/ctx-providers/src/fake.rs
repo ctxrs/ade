@@ -142,6 +142,14 @@ impl ProviderAdapter for FakeProviderAdapter {
                 _ = async {
                     send(SessionEventType::AssistantChunk, json!({"content": format!("echo: {}", input.content)})).await;
                     sleep(delay).await;
+                    if input.content.contains("emit-thought") {
+                        // Exercise thought streaming paths. This is intentionally stream-only
+                        // and should be safe for tests that opt in via the marker.
+                        send(SessionEventType::ThoughtChunk, json!({"content_fragment": "thinking...", "is_final": false})).await;
+                        sleep(delay).await;
+                        send(SessionEventType::ThoughtChunk, json!({"content_fragment": "done thinking", "is_final": true})).await;
+                        sleep(delay).await;
+                    }
                     if let Some(tools) = fixture_tools {
                         for tool in tools {
                             let tool_call_id = Uuid::new_v4().to_string();
