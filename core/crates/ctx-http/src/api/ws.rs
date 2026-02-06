@@ -1484,38 +1484,6 @@ async fn queue_reset_required(
     .await
 }
 
-async fn load_session_head_reset(
-    state: &Arc<AppState>,
-    session_id: SessionId,
-) -> Result<Option<SessionHeadSnapshot>, ()> {
-    if let Some(head) = state
-        .workspaces
-        .workspace_active_snapshot
-        .get_session_head(session_id)
-        .await
-    {
-        return Ok(Some(head));
-    }
-    let store = state.store_for_session(session_id).await.map_err(|_| ())?;
-    match store
-        .get_session_head_snapshot(session_id, u32::MAX, false)
-        .await
-    {
-        Ok(Some(mut head)) => {
-            head.events.clear();
-            head.head_window.event_count = 0;
-            state
-                .workspaces
-                .workspace_active_snapshot
-                .update_session_head(head.clone())
-                .await;
-            Ok(Some(head))
-        }
-        Ok(None) => Ok(None),
-        Err(_) => Err(()),
-    }
-}
-
 async fn queue_snapshot_payload(
     pending: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
     state: &Arc<AppState>,
@@ -1611,19 +1579,12 @@ where
             last_known_seq,
             reason,
         } => {
-            if let Some(head) = load_session_head_reset(state, session_id).await? {
-                let reset = WorkspaceActiveSnapshotEvent::SessionHeadReset {
-                    workspace_id,
-                    snapshot_rev,
-                    head: Box::new(head.clone()),
-                };
-                emit(WorkspaceActiveSnapshotStreamMessage::Event {
-                    rev: 0,
-                    event: Box::new(reset),
-                })
-                .await?;
+            // If the client is not resuming (after_seq <= 0), treat gaps as a no-op.
+            // The workspace stream is expected to provide a fresh snapshot on connect,
+            // and live deltas will continue from the current head.
+            if after_seq <= 0 {
                 return Ok(ReplayOutcome::Replay {
-                    last_sent: head.last_event_seq.max(after_seq),
+                    last_sent: after_seq,
                 });
             }
             let gap = WorkspaceActiveSnapshotEvent::SessionGap {
@@ -2718,19 +2679,9 @@ where
             last_known_seq,
             reason,
         } => {
-            if let Some(head) = load_session_head_reset(state, session_id).await? {
-                let reset = WorkspaceActiveSnapshotEvent::SessionHeadReset {
-                    workspace_id,
-                    snapshot_rev,
-                    head: Box::new(head.clone()),
-                };
-                emit(WorkspaceActiveSnapshotStreamMessage::Event {
-                    rev: 0,
-                    event: Box::new(reset),
-                })
-                .await?;
+            if after_seq <= 0 {
                 return Ok(ReplayOutcome::Replay {
-                    last_sent: head.last_event_seq.max(after_seq),
+                    last_sent: after_seq,
                 });
             }
             let gap = WorkspaceActiveSnapshotEvent::SessionGap {

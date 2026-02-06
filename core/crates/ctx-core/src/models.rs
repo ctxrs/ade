@@ -1103,6 +1103,7 @@ impl<'de> Deserialize<'de> for SessionEvent {
     {
         #[derive(Deserialize)]
         struct Wire {
+            #[serde(default)]
             seq: Option<i64>,
             id: SessionEventId,
             session_id: SessionId,
@@ -1118,6 +1119,9 @@ impl<'de> Deserialize<'de> for SessionEvent {
         }
 
         let wire = Wire::deserialize(deserializer)?;
+        // For stream-only/transient events we serialize `seq` as null. Allow
+        // deserializers (including Rust tests) to accept this by defaulting.
+        let transient = wire.transient || wire.seq.is_none();
         Ok(SessionEvent {
             seq: wire.seq.unwrap_or(0),
             id: wire.id,
@@ -1126,7 +1130,7 @@ impl<'de> Deserialize<'de> for SessionEvent {
             turn_id: wire.turn_id,
             event_type: wire.event_type,
             payload_json: wire.payload_json,
-            transient: wire.transient || wire.seq.is_none(),
+            transient,
             created_at: wire.created_at,
         })
     }

@@ -570,8 +570,12 @@ impl SessionRuntime {
             Ok(store) => store,
             Err(_) => return,
         };
+        // Avoid unbounded head refresh: extremely large conversations can turn the
+        // workspace active heads snapshot into multi-megabyte payloads, which then
+        // backpressure the workspace WS stream.
+        const SESSION_HEAD_REFRESH_TURN_LIMIT: u32 = 200;
         let head = match store
-            .get_session_head_snapshot(session_id, u32::MAX, true)
+            .get_session_head_snapshot(session_id, SESSION_HEAD_REFRESH_TURN_LIMIT, true)
             .await
         {
             Ok(Some(head)) => head,

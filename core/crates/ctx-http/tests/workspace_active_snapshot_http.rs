@@ -751,6 +751,161 @@ async fn workspace_stream_replays_tool_events() {
 }
 
 #[tokio::test]
+async fn workspace_stream_under_load_no_gap_or_reset() {
+    let (repo, _data_dir, state, server) = setup().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
+        .json(&json!({"title":"load"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let session: ctx_core::models::Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    state.remember_session_meta(&session).await;
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe = json!({
+        "type": "subscribe",
+        "sessions": [{
+            "session_id": session.id.0,
+            "after_seq": 1,
+        }],
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let store = state.store_for_session(session.id).await.unwrap();
+    let total_events = 150usize;
+    let mut last_seq = 0;
+    for i in 0..total_events {
+        let ev = store
+            .append_session_event(
+                session.id,
+                None,
+                None,
+                SessionEventType::Notice,
+                json!({"msg": format!("load-{i}")}),
+            )
+            .await
+            .unwrap();
+        last_seq = ev.seq;
+        state.publish_event(ev).await;
+    }
+
+    let mut saw_reset = false;
+    let mut saw_gap = false;
+    let mut last_seen_seq = 0;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let wait = remaining.min(Duration::from_millis(250));
+        match tokio::time::timeout(wait, socket.next()).await {
+            Ok(Some(Ok(WsMessage::Text(txt)))) => {
+                if let Ok(message) = serde_json::from_str::<
+                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
+                >(&txt)
+                {
+                    match message {
+                        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::ResetRequired {
+                            ..
+                        } => {
+                            saw_reset = true;
+                            break;
+                        }
+                        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                            event,
+                            ..
+                        } => match event.as_ref() {
+                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap {
+                                ..
+                            } => {
+                                saw_gap = true;
+                                break;
+                            }
+                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                delta,
+                                ..
+                            } => {
+                                if delta.session_id == session.id {
+                                    last_seen_seq = last_seen_seq.max(delta.last_event_seq);
+                                }
+                            }
+                            _ => {}
+                        },
+                        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                            deltas,
+                            ..
+                        } => {
+                            for delta in deltas {
+                                if delta.session_id == session.id {
+                                    last_seen_seq = last_seen_seq.max(delta.last_event_seq);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Ok(Some(Ok(WsMessage::Close(_)))) => {
+                panic!("workspace stream closed under load");
+            }
+            Ok(Some(Ok(_))) => {}
+            Ok(Some(Err(err))) => panic!("workspace stream error: {err:?}"),
+            Ok(None) => panic!("workspace stream closed under load"),
+            Err(_) => {}
+        }
+
+        if last_seen_seq >= last_seq {
+            break;
+        }
+    }
+
+    assert!(!saw_reset, "unexpected reset_required under load");
+    assert!(!saw_gap, "unexpected session_gap under load");
+    assert!(
+        last_seen_seq >= last_seq,
+        "stream did not deliver events up to last seq"
+    );
+}
+
+#[tokio::test]
 async fn workspace_stream_emits_git_status_snapshot_on_change() {
     let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
@@ -1177,7 +1332,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         "type": "subscribe",
         "sessions": [{
             "session_id": session.id.0,
-            "after_seq": 0,
+            "after_seq": 1,
         }],
     })
     .to_string();
@@ -1186,7 +1341,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         .await
         .unwrap();
 
-    let mut seen_reset = false;
+    let mut seen_gap = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -1204,17 +1359,17 @@ async fn workspace_stream_emits_gap_on_large_replay() {
                     ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { ref event, .. }
                         if matches!(
                             event.as_ref(),
-                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadReset { .. }
+                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap { .. }
                         )
                 ) {
-                    seen_reset = true;
+                    seen_gap = true;
                     break;
                 }
             }
         }
     }
 
-    assert!(seen_reset, "expected session_head_reset for large replay");
+    assert!(seen_gap, "expected session_gap for large replay");
 }
 
 #[tokio::test]

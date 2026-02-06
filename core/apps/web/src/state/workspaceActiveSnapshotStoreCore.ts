@@ -102,6 +102,7 @@ const shouldRequestSnapshot = (reason: string): boolean => {
     case "ws_open":
     case "reset_required":
     case "snapshot_rev_reset":
+    case "session_gap":
     case "stream_seq_gap":
     case "stream_seq_reset":
       return true;

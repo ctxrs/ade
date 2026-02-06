@@ -47,6 +47,7 @@ const ACTIVE_HEAD_TURN_LIMIT: usize = 5;
 const ACTIVE_HEAD_MESSAGE_LIMIT: usize = 200;
 const ACTIVE_HEAD_EVENT_LIMIT: usize = 200;
 const ACTIVE_HEAD_BYTE_LIMIT: usize = 1_500_000;
+const ACTIVE_HEAD_TOOL_SUMMARY_LIMIT: usize = 200;
 
 #[derive(Debug, Clone)]
 struct SessionReplayEntry {
@@ -485,7 +486,9 @@ impl WorkspaceActiveSnapshotHub {
 
         let mut heads_by_id = HashMap::with_capacity(heads.len());
         for head in &heads {
-            heads_by_id.insert(head.session.id, head.clone());
+            // Store a compact head for the workspace active snapshot surface to keep
+            // WS payloads bounded. The full head remains available via session endpoints.
+            heads_by_id.insert(head.session.id, compact_active_head_snapshot(head));
         }
 
         {
@@ -540,7 +543,9 @@ impl WorkspaceActiveSnapshotHub {
             .entry(workspace_id)
             .or_insert_with(WorkspaceActiveSnapshotEntry::new);
         if is_primary_session(entry, session_id) {
-            entry.active_heads.insert(session_id, head);
+            entry
+                .active_heads
+                .insert(session_id, compact_active_head_snapshot(&head));
             entry.seed_session_replay(session_id, last_event_seq);
             let mut index = self.active_head_index.lock().await;
             index.insert(session_id, workspace_id);
@@ -860,12 +865,13 @@ impl ActiveSnapshotObserver for WorkspaceActiveSnapshotHub {
         let workspace_id = head.session.workspace_id;
         let session_id = head.session.id;
         let last_event_seq = head.last_event_seq;
+        let compact = compact_active_head_snapshot(&head);
         {
             let mut guard = self.inner.lock().await;
             let entry = guard
                 .entry(workspace_id)
                 .or_insert_with(WorkspaceActiveSnapshotEntry::new);
-            entry.active_heads.insert(session_id, head);
+            entry.active_heads.insert(session_id, compact);
             entry.seed_session_replay(session_id, last_event_seq);
         }
         let mut index = self.active_head_index.lock().await;
@@ -1077,6 +1083,177 @@ fn retain_tool_summaries_for_turns(
         allowed.insert(turn.turn_id);
     }
     tool_summaries.retain(|tool| allowed.contains(&tool.turn_id));
+}
+
+fn compact_active_head_snapshot(head: &SessionHeadSnapshot) -> SessionHeadSnapshot {
+    // Keep a small, bounded "active head" view for workspace snapshot payloads.
+    // Full heads are still available via `/api/sessions/:id/head`.
+    let mut out = head.clone();
+
+    let keep_turns = ACTIVE_HEAD_TURN_LIMIT.min(out.turns.len());
+    if keep_turns == 0 {
+        out.turns.clear();
+        out.tool_summaries.clear();
+        out.events.clear();
+        out.messages.clear();
+    } else {
+        out.turns = out.turns.split_off(out.turns.len() - keep_turns);
+        retain_messages_for_turns(&mut out.messages, &out.turns);
+        retain_tool_summaries_for_turns(&mut out.tool_summaries, &out.turns);
+
+        // Events are especially expensive and are not required for the workspace
+        // active snapshot surface (session view fetches its own head).
+        out.events.clear();
+
+        // Cap tool summaries defensively in case a handful of turns contain
+        // extremely many tool calls.
+        if out.tool_summaries.len() > ACTIVE_HEAD_TOOL_SUMMARY_LIMIT {
+            out.tool_summaries
+                .sort_by(|a, b| a.updated_at.cmp(&b.updated_at));
+            out.tool_summaries = out
+                .tool_summaries
+                .split_off(out.tool_summaries.len() - ACTIVE_HEAD_TOOL_SUMMARY_LIMIT);
+        }
+
+        if out.messages.len() > ACTIVE_HEAD_MESSAGE_LIMIT {
+            out.messages.sort_by(compare_message_order);
+            out.messages = out
+                .messages
+                .split_off(out.messages.len() - ACTIVE_HEAD_MESSAGE_LIMIT);
+        }
+    }
+
+    out.head_window.turn_limit = ACTIVE_HEAD_TURN_LIMIT as i64;
+    out.head_window.message_limit = ACTIVE_HEAD_MESSAGE_LIMIT as i64;
+    out.head_window.event_limit = 0;
+    out.head_window.byte_limit = ACTIVE_HEAD_BYTE_LIMIT as i64;
+    out.head_window.turn_count = out.turns.len() as i64;
+    out.head_window.message_count = out.messages.len() as i64;
+    out.head_window.event_count = 0;
+    out.head_window.bytes =
+        head_window_bytes(&out.turns, &out.tool_summaries, &out.events, &out.messages) as i64;
+    out.head_window.truncated = head.head_window.truncated
+        || head.has_more_turns
+        || head.turns.len() > out.turns.len()
+        || head.messages.len() > out.messages.len()
+        || head.tool_summaries.len() > out.tool_summaries.len()
+        || head.events.len() > out.events.len();
+    out.has_more_turns = head.has_more_turns || head.turns.len() > out.turns.len();
+    out
+}
+
+#[cfg(test)]
+mod compact_head_tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use ctx_core::ids::{MessageId, TurnId};
+    use ctx_core::models::{MessageDelivery, MessageRole, SessionTurnToolSummary};
+
+    #[test]
+    fn compact_active_head_keeps_last_turns_and_filters_messages_and_tools() {
+        let session = SessionMetadata {
+            id: SessionId::new(),
+            task_id: TaskId::new(),
+            workspace_id: WorkspaceId::new(),
+            worktree_id: WorktreeId::new(),
+            parent_session_id: None,
+            relationship: None,
+            provider_id: "p".to_string(),
+            model_id: "m".to_string(),
+            title: "t".to_string(),
+            agent_role: "assistant".to_string(),
+            status: ctx_core::models::SessionStatus::Active,
+            provider_session_ref: None,
+            created_at: Utc.timestamp_opt(0, 0).unwrap(),
+            updated_at: Utc.timestamp_opt(0, 0).unwrap(),
+        };
+
+        let mut head = SessionHeadSnapshot {
+            session,
+            turns: Vec::new(),
+            tool_summaries: Vec::new(),
+            events: Vec::new(),
+            messages: Vec::new(),
+            last_event_seq: 123,
+            state_rev: 0,
+            activity: SessionActivityState::default(),
+            has_more_turns: false,
+            history_cursor: None,
+            has_more_history: false,
+            summary_checkpoint: None,
+            head_window: ctx_core::models::SessionHeadWindow::default(),
+        };
+
+        // Create 10 turns, each with one message and one tool summary.
+        for i in 0_i64..10 {
+            let turn_id = TurnId::new();
+            head.turns.push(SessionTurn {
+                turn_id,
+                session_id: head.session.id,
+                run_id: None,
+                user_message_id: None,
+                status: ctx_core::models::SessionTurnStatus::Completed,
+                start_seq: Some(i),
+                end_seq: Some(i),
+                started_at: Utc.timestamp_opt(i, 0).unwrap(),
+                updated_at: Utc.timestamp_opt(i, 0).unwrap(),
+                assistant_partial: None,
+                thought_partial: None,
+                metrics_json: None,
+                tool_total: 1,
+                tool_pending: 0,
+                tool_running: 0,
+                tool_completed: 1,
+                tool_failed: 0,
+            });
+            head.messages.push(Message {
+                id: MessageId::new(),
+                session_id: head.session.id,
+                task_id: head.session.task_id,
+                run_id: None,
+                turn_id: Some(turn_id),
+                turn_sequence: Some(i),
+                order_seq: None,
+                role: MessageRole::User,
+                content: format!("m{i}"),
+                attachments: Vec::new(),
+                delivery: MessageDelivery::Immediate,
+                delivered_at: None,
+                created_at: Utc.timestamp_opt(i, 0).unwrap(),
+            });
+            head.tool_summaries.push(SessionTurnToolSummary {
+                session_id: head.session.id,
+                tool_call_id: format!("tool{i}"),
+                turn_id,
+                tool_kind: Some("shell".to_string()),
+                title: Some("x".to_string()),
+                status: Some("completed".to_string()),
+                input_preview: None,
+                output_preview: None,
+                first_event_seq: Some(i),
+                input_truncated: None,
+                input_original_bytes: None,
+                output_truncated: None,
+                output_original_bytes: None,
+                created_at: Utc.timestamp_opt(i, 0).unwrap(),
+                updated_at: Utc.timestamp_opt(i, 0).unwrap(),
+            });
+        }
+
+        let compact = compact_active_head_snapshot(&head);
+        assert_eq!(compact.turns.len(), ACTIVE_HEAD_TURN_LIMIT);
+        assert!(compact.events.is_empty());
+        // Messages and tools should only belong to the kept turns.
+        let kept: std::collections::HashSet<_> = compact.turns.iter().map(|t| t.turn_id).collect();
+        assert!(compact
+            .messages
+            .iter()
+            .all(|m| m.turn_id.map(|id| kept.contains(&id)).unwrap_or(true)));
+        assert!(compact
+            .tool_summaries
+            .iter()
+            .all(|t| kept.contains(&t.turn_id)));
+    }
 }
 
 fn strip_snapshot_partials(turns: &mut [SessionTurn], events: &mut Vec<SessionEvent>) {
