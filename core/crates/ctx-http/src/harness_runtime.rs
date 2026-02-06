@@ -430,13 +430,7 @@ impl HarnessRuntimeManager {
 
 fn resolve_execution_mode(settings: &ExecutionSettings) -> ExecutionMode {
     match &settings.mode {
-        ExecutionMode::Auto => {
-            if cfg!(target_os = "linux") {
-                ExecutionMode::Container
-            } else {
-                ExecutionMode::Host
-            }
-        }
+        ExecutionMode::Auto => ExecutionMode::Host,
         other => other.clone(),
     }
 }
@@ -939,7 +933,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auto_mode_errors_when_podman_unavailable() {
+    async fn auto_mode_uses_host_when_podman_unavailable() {
         let _guard = EnvGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
         let tmp = tempfile::tempdir().unwrap();
         let manager = runtime_manager(&tmp).await;
@@ -950,13 +944,11 @@ mod tests {
             container: ContainerExecutionSettings::default(),
         };
 
-        let err = manager
+        let plan = manager
             .prepare(&workspace, &worktree, &settings, "http://127.0.0.1:9999")
             .await
-            .unwrap_err();
-        let message = err.to_string();
-        assert!(message.contains("podman unavailable"));
-        assert!(message.contains("execution mode is container"));
+            .unwrap();
+        assert!(matches!(plan.runtime, HarnessRuntimeKind::Host));
     }
 
     #[test]

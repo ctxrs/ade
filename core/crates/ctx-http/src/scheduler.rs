@@ -122,7 +122,7 @@ pub async fn session_worker(
     state.telemetry.ops_events.emit(worktree_event);
 
     loop {
-            if running.is_none() && !suspend_queue {
+        if running.is_none() && !suspend_queue {
             if let Some(msg) = queue.pop_front() {
                 let msg_id = msg.message.id;
                 let msg_run_id = msg.message.run_id;
