@@ -1583,6 +1583,14 @@ where
             last_known_seq,
             reason,
         } => {
+            // Treat `after_seq <= 0` as "not resuming": the client is not asking for replay from a
+            // stable cursor. In that mode we avoid emitting `session_gap` noise and instead start
+            // live updates from the current head.
+            if after_seq <= 0 {
+                return Ok(ReplayOutcome::Replay {
+                    last_sent: last_known_seq.max(after_seq),
+                });
+            }
             let gap = WorkspaceActiveSnapshotEvent::SessionGap {
                 workspace_id,
                 snapshot_rev,
@@ -2675,6 +2683,11 @@ where
             last_known_seq,
             reason,
         } => {
+            if after_seq <= 0 {
+                return Ok(ReplayOutcome::Replay {
+                    last_sent: last_known_seq.max(after_seq),
+                });
+            }
             let gap = WorkspaceActiveSnapshotEvent::SessionGap {
                 workspace_id,
                 snapshot_rev,
