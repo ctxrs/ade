@@ -1141,7 +1141,8 @@ fn compact_active_head_snapshot(head: &SessionHeadSnapshot) -> SessionHeadSnapsh
         || head.tool_summaries.len() > out.tool_summaries.len()
         || head.events.len() > out.events.len();
     out.head_window.truncated = out.head_window.truncated || dropped;
-    out.has_more_turns = out.has_more_turns || head.has_more_turns || head.turns.len() > out.turns.len();
+    out.has_more_turns =
+        out.has_more_turns || head.has_more_turns || head.turns.len() > out.turns.len();
     out
 }
 

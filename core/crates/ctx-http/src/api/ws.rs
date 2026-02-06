@@ -783,10 +783,6 @@ fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option<i64> {
         }
         WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert { .. }
         | WorkspaceActiveSnapshotEvent::ArchivedTaskDelete { .. } => None,
-        // Be forward-compatible with new event variants that still carry `snapshot_rev`.
-        _ => serde_json::to_value(event)
-            .ok()
-            .and_then(|value| value.get("snapshot_rev").and_then(Value::as_i64)),
     }
 }
 
