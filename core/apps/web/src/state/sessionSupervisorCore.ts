@@ -268,6 +268,11 @@ const MAX_CACHED_SESSIONS = readTunableInt(
 const WARM_TTL_MS = readTunableInt("contextWarmSessionTtlMs", 10 * 60 * 1000);
 const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
 
+// The daemon serializes transient events with `seq: null` (see Rust `SessionEvent` Serialize).
+// We assign a stable synthetic seq in a negative JS-safe range so sorting never scrambles
+// streaming partials (assistant chunks), and these events never look durable (seq >= 0).
+const TRANSIENT_SEQ_START = -4503599627370496; // -(2 ** 52)
+
 export class SessionSupervisor {
   private listeners = new Set<() => void>();
   private snapshot: SessionSupervisorSnapshot = { connection: "idle", sessions: {} };
@@ -828,7 +833,7 @@ export class SessionSupervisor {
       warmUntilMs: Date.now() + WARM_TTL_MS,
       acpMetaUpdatedAtMs: undefined,
       seqSet: new Set<number>(),
-      nextTransientSeq: -1,
+      nextTransientSeq: TRANSIENT_SEQ_START,
       startedTurnIds: new Set<string>(),
       turnsHydrated: false,
       oldestTurnSeq: undefined,
@@ -1585,7 +1590,7 @@ export class SessionSupervisor {
   private ensureEventSeq(entry: InternalEntry, event: SessionEvent): SessionEvent {
     if (typeof event.seq === "number") return event;
     const nextSeq = entry.nextTransientSeq;
-    entry.nextTransientSeq = nextSeq - 1;
+    entry.nextTransientSeq = nextSeq + 1;
     return { ...event, seq: nextSeq };
   }
 

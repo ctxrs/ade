@@ -182,6 +182,10 @@ const mergeEvents = (base: SessionEvent[], incoming: SessionEvent[]): SessionEve
   return Array.from(bySeq.values()).sort((a, b) => Number(a.seq ?? 0) - Number(b.seq ?? 0));
 };
 
+// The daemon serializes transient events with `seq: null`; keep them in a JS-safe negative range
+// so sorting never scrambles streaming partials and they never look durable (seq >= 0).
+const TRANSIENT_SEQ_START = -4503599627370496; // -(2 ** 52)
+
 const headToData = (head: SessionHead | SessionHeadSnapshot): SessionReplicaData => {
   const data: SessionReplicaData = {
     turns: head.turns ?? [],
@@ -280,7 +284,7 @@ export class SessionReplicaCore {
       loading: false,
       requestToken: 0,
       hydrated: false,
-      nextTransientSeq: -1,
+      nextTransientSeq: TRANSIENT_SEQ_START,
     };
     this.entries.set(id, entry);
     return entry;
@@ -289,7 +293,7 @@ export class SessionReplicaCore {
   private ensureEventSeq(entry: SessionReplicaEntry, event: SessionEvent): SessionEvent {
     if (typeof event.seq === "number") return event;
     const nextSeq = entry.nextTransientSeq;
-    entry.nextTransientSeq = nextSeq - 1;
+    entry.nextTransientSeq = nextSeq + 1;
     return { ...event, seq: nextSeq };
   }
 

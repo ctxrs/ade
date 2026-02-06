@@ -206,6 +206,91 @@ describe("SessionSupervisor", () => {
     expect(entry?.lastEventSeq).toBe(2);
   });
 
+  it("preserves arrival order for transient assistant chunks (seq=null)", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-transient-order";
+    (getSessionSnapshot as any).mockResolvedValue({
+      summary: {
+        session: mkSession(sessionId),
+      },
+    });
+    (getSessionHead as any).mockResolvedValue({
+      session: mkSession(sessionId),
+      turns: [] as SessionTurn[],
+      events: [] as SessionEvent[],
+      messages: [] as Message[],
+      last_event_seq: 1,
+      has_more_turns: false,
+    } as SessionHeadSnapshot);
+
+    const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (listener: (evt: WorkspaceActiveSnapshotEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      setSubscribedSessionIds: () => {},
+      getSnapshot: () => ({
+        workspaceId: "ws-1",
+        initialized: true,
+        connection: "connected" as const,
+        tasksById: {},
+        activeIds: [],
+        archivedIds: [],
+        totalActive: 0,
+        totalArchived: 0,
+        fetchState: { active: "idle", archived: "idle" },
+        hasMoreActive: false,
+        hasMoreArchived: false,
+        archivedLoaded: false,
+      }),
+    };
+
+    const sup = new SessionSupervisor();
+    sup.bindWorkspaceActiveSnapshotStore(store);
+    sup.openSession(sessionId);
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.session != null);
+
+    const now = Date.now();
+    const sendChunk = (id: string, fragment: string, t: number) => {
+      const ev = {
+        seq: null,
+        transient: true,
+        id,
+        session_id: sessionId,
+        turn_id: "turn-1",
+        event_type: "assistant_chunk",
+        payload_json: { content_fragment: fragment },
+        created_at: new Date(t).toISOString(),
+      } as any as SessionEvent;
+      const deltaEvent: WorkspaceActiveSnapshotEvent = {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 1,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 1,
+          state_rev: 1,
+          event: ev,
+        },
+      };
+      listeners.forEach((listener) => listener(deltaEvent));
+    };
+
+    sendChunk("e1", "a", now);
+    sendChunk("e2", "b", now + 1);
+    sendChunk("e3", "c", now + 2);
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    const fragments = (entry?.events ?? []).map((e) => String((e as any).payload_json?.content_fragment ?? ""));
+    expect(fragments).toEqual(["a", "b", "c"]);
+  });
+
   it("does not mark turn completed on assistant_complete before done", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
