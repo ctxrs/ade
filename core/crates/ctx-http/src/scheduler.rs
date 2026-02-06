@@ -300,7 +300,18 @@ pub async fn session_worker(
                     let _ = (&mut turn.handle.done).await;
                 }
             }, if running.is_some() => {
-                running = None;
+                if let Some(turn) = running.take() {
+                    // If the provider process exits without emitting a terminal event, the turn
+                    // would otherwise stay stuck in `Running` forever (UI shows "Working").
+                    let _ = reconcile_turn_failed_on_provider_exit(
+                        &state,
+                        session.id,
+                        Some(turn.run_id),
+                        turn.turn_id,
+                        "provider_exit",
+                    )
+                    .await;
+                }
                 state.set_running(session.id, false).await;
             }
         }
@@ -1576,6 +1587,85 @@ pub async fn reconcile_turn_terminal_state(
         json!({
             "message_id": turn.user_message_id.map(|id| id.0),
             "status": "interrupted",
+            "reason": fallback_reason,
+        }),
+    )
+    .await;
+    Ok(())
+}
+
+pub async fn reconcile_turn_failed_on_provider_exit(
+    state: &Arc<AppState>,
+    session_id: ctx_core::ids::SessionId,
+    run_id: Option<RunId>,
+    turn_id: TurnId,
+    fallback_reason: &str,
+) -> Result<()> {
+    let store = state.store_for_session(session_id).await?;
+    let turn = store.get_session_turn(session_id, turn_id).await?;
+    let Some(turn) = turn else {
+        return Ok(());
+    };
+    if matches!(
+        turn.status,
+        SessionTurnStatus::Completed | SessionTurnStatus::Failed | SessionTurnStatus::Interrupted
+    ) {
+        return Ok(());
+    }
+
+    // If we already have a terminal event in the event log, let the normal reconciler derive the
+    // terminal state from that. The important bit here is the "no terminal events at all" case.
+    let events = store
+        .list_session_events_for_turn(session_id, turn_id, false)
+        .await?;
+    if events.iter().rev().any(|ev| {
+        matches!(
+            ev.event_type,
+            SessionEventType::Done
+                | SessionEventType::Error
+                | SessionEventType::TurnInterrupted
+                | SessionEventType::TurnFinished
+        )
+    }) {
+        return reconcile_turn_terminal_state(state, session_id, run_id, turn_id, fallback_reason)
+            .await;
+    }
+
+    let failed_at = Utc::now();
+    let message_id = turn.user_message_id.map(|id| id.0);
+    let _ = emit_event(
+        state,
+        session_id,
+        run_id,
+        Some(turn_id),
+        SessionEventType::Error,
+        json!({
+            "message_id": message_id,
+            "error": "provider exited without emitting a terminal event",
+            "reason": fallback_reason,
+            "status": "failed",
+        }),
+    )
+    .await;
+    let _ = store
+        .update_session_turn_status(
+            session_id,
+            turn_id,
+            SessionTurnStatus::Failed,
+            None,
+            None,
+            failed_at,
+        )
+        .await;
+    let _ = emit_event(
+        state,
+        session_id,
+        run_id,
+        Some(turn_id),
+        SessionEventType::TurnFinished,
+        json!({
+            "message_id": message_id,
+            "status": "failed",
             "reason": fallback_reason,
         }),
     )

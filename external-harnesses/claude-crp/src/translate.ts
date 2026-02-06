@@ -383,6 +383,17 @@ export function translateClaudeEventsToCrp(records, opts = {}) {
         turn_id: turnId,
         status
       };
+      if (status === "error") {
+        let message = null;
+        if (Array.isArray(ev.errors) && ev.errors.length > 0) {
+          message = String(ev.errors[0]);
+        } else if (typeof ev.error === "string" && ev.error) {
+          message = ev.error;
+        }
+        if (message) {
+          payload.error = { message };
+        }
+      }
       if (ev.usage) payload.usage = ev.usage;
       if (ev.modelUsage) payload.model_usage = ev.modelUsage;
       if (typeof ev.num_turns === "number") payload.num_turns = ev.num_turns;
@@ -390,6 +401,21 @@ export function translateClaudeEventsToCrp(records, opts = {}) {
       emit("control", payload);
       continue;
     }
+  }
+
+  // If the turn started but we never observed a result record, emit an error completion so ctx can
+  // finalize the turn (prevents "Working" hangs on early failures).
+  const hasTurnCompleted = events.some((e) => e && e.type === "turn.completed");
+  if (turnStarted && !hasTurnCompleted && ensureIds()) {
+    const payload = {
+      type: "turn.completed",
+      session_id: sessionId,
+      run_id: runId,
+      turn_id: turnId,
+      status: interrupted ? "canceled" : "error"
+    };
+    if (!interrupted) payload.error = { message: "missing_result" };
+    emit("control", payload);
   }
 
   return events;

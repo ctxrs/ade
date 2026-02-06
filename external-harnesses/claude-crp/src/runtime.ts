@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import * as path from "node:path";
+import * as os from "node:os";
 import * as fs from "node:fs";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
@@ -137,12 +138,27 @@ async function openSession(command: CrpCommand, state: { session: SessionState |
 }
 
 function buildQueryOptions(turn: TurnState) {
+  const claudeConfigDir =
+    typeof process.env.CLAUDE_CONFIG_DIR === "string" && process.env.CLAUDE_CONFIG_DIR.trim()
+      ? process.env.CLAUDE_CONFIG_DIR.trim()
+      : path.join(os.homedir(), ".claude");
+  const projectKey = turn.cwd.replace(/[^a-zA-Z0-9]/g, "-");
+  const sessionFilePath = path.join(
+    claudeConfigDir,
+    "projects",
+    projectKey,
+    `${turn.sessionId}.jsonl`
+  );
+  const shouldResume = fs.existsSync(sessionFilePath);
+
   const options: Record<string, unknown> = {
     cwd: turn.cwd,
     includePartialMessages: true,
     settingSources: ["user", "project", "local"],
     tools: { type: "preset", preset: "claude_code" },
-    extraArgs: { "session-id": turn.sessionId },
+    ...(shouldResume
+      ? { resume: turn.sessionId }
+      : { extraArgs: { "session-id": turn.sessionId } }),
     abortController: turn.abortController,
     canUseTool: async () => ({ behavior: "allow" }),
     stderr: (data: string) => {
@@ -175,12 +191,27 @@ function buildModelsListOptions(params: {
   sessionId: string;
   abortController: AbortController;
 }): Record<string, unknown> {
+  const claudeConfigDir =
+    typeof process.env.CLAUDE_CONFIG_DIR === "string" && process.env.CLAUDE_CONFIG_DIR.trim()
+      ? process.env.CLAUDE_CONFIG_DIR.trim()
+      : path.join(os.homedir(), ".claude");
+  const projectKey = params.cwd.replace(/[^a-zA-Z0-9]/g, "-");
+  const sessionFilePath = path.join(
+    claudeConfigDir,
+    "projects",
+    projectKey,
+    `${params.sessionId}.jsonl`
+  );
+  const shouldResume = fs.existsSync(sessionFilePath);
+
   const options: Record<string, unknown> = {
     cwd: params.cwd,
     includePartialMessages: false,
     settingSources: ["user", "project", "local"],
     tools: { type: "preset", preset: "claude_code" },
-    extraArgs: { "session-id": params.sessionId },
+    ...(shouldResume
+      ? { resume: params.sessionId }
+      : { extraArgs: { "session-id": params.sessionId } }),
     abortController: params.abortController,
     canUseTool: async () => ({ behavior: "allow" }),
     stderr: (data: string) => {
@@ -309,7 +340,26 @@ async function runTurn(turn: TurnState, prompt: string): Promise<void> {
       await emitTranslated(turn);
     }
   } catch (err) {
-    warn(`turn ${turn.turnId} error: ${err}`);
+    const msg =
+      err instanceof Error ? err.message : err == null ? "unknown_error" : String(err);
+    warn(`turn ${turn.turnId} error: ${msg}`);
+
+    // If Claude Code bails before producing a terminal "result" event, the translator won't emit
+    // `turn.completed`, and ctx can keep the turn stuck in "Working". Emit a synthetic result
+    // so downstream sees a terminal event, and preserve the failure reason.
+    const hasResult = turn.records.some((r) => {
+      if (!r || typeof r !== "object") return false;
+      const record = (r as { record?: unknown }).record;
+      if (record !== "event") return false;
+      const ev = (r as { event?: unknown }).event as { type?: unknown } | undefined;
+      return ev?.type === "result";
+    });
+    if (!hasResult) {
+      turn.records.push({
+        record: "event",
+        event: { type: "result", subtype: "error", is_error: true, errors: [msg] }
+      });
+    }
   }
 
   if (!turn.endRecordAdded) {
