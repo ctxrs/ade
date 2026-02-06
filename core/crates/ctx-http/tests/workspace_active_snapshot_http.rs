@@ -794,14 +794,6 @@ async fn workspace_stream_emits_git_status_snapshot_on_change() {
         .expect("missing worktree");
     let worktree_id = worktree.id;
 
-    let store = state.store_for_session(session.id).await.unwrap();
-    let worktree = store
-        .get_worktree(session.worktree_id)
-        .await
-        .unwrap()
-        .expect("missing worktree");
-    let worktree_id = worktree.id;
-
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
     let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
