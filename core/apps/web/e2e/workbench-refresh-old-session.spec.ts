@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execFileSync, execSync } from "child_process";
+import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 const readId = (v: any): string => (typeof v === "string" ? v : "");
 
@@ -17,15 +18,12 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
 
   const workspaceName = `ws-${Date.now()}`;
 
-  await page.goto("/");
-  await page.getByLabel("Root path").fill(repo);
-  await page.getByLabel("Name (optional)").fill(workspaceName);
-  await page.getByRole("button", { name: "Add workspace" }).click();
-  await page
-    .getByRole("listitem")
-    .filter({ hasText: repo })
-    .getByRole("link", { name: workspaceName })
-    .click();
+  const workspaceId = await createWorkspaceAndOpenWorkbench({
+    page,
+    request: page.request,
+    repo,
+    workspaceName,
+  });
 
   // Choose Fake harness so the test doesn't depend on external agents.
   await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
@@ -50,10 +48,6 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
     page.locator(".wb-session .wb-assistant-entry").filter({ hasText: "done: hello refresh" }).first(),
   ).toBeVisible({ timeout: 20000 });
 
-  const url = new URL(page.url());
-  const workspaceId = url.pathname.split("/").filter(Boolean).pop();
-  expect(workspaceId).toBeTruthy();
-
   const snapshotResp = await page.request.get(`/api/workspaces/${workspaceId}/active_snapshot`);
   expect(snapshotResp.ok()).toBeTruthy();
   const snapshot = (await snapshotResp.json()) as any;
@@ -63,14 +57,24 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   expect(taskSummary).toBeTruthy();
   const taskId = readId(taskSummary?.task?.id);
   const sessionSummary = taskSummary?.sessions?.[0];
-  const sessionId = readId(sessionSummary?.session?.id) || readId(taskSummary?.task?.primary_session_id);
+  const primarySessionId = readId(taskSummary?.primary_session?.session?.id);
+  let sessionId =
+    readId(sessionSummary?.session?.id) || primarySessionId || readId(taskSummary?.task?.primary_session_id);
+  if (!sessionId) {
+    const sessionsResp = await page.request.get(`/api/tasks/${taskId}/sessions`);
+    if (sessionsResp.ok()) {
+      const sessions = (await sessionsResp.json()) as any[];
+      sessionId = readId(sessions?.[0]?.id);
+    }
+  }
+  expect(sessionId).toBeTruthy();
 
   await expect
     .poll(async () => {
-      const resp = await page.request.get(`/api/sessions/${sessionId}/snapshot`);
+      const resp = await page.request.get(`/api/sessions/${sessionId}/head?limit=50`);
       if (!resp.ok()) return 0;
-      const snapshot = (await resp.json()) as any;
-      const msgs = snapshot?.head?.messages ?? [];
+      const head = (await resp.json()) as any;
+      const msgs = head?.messages ?? [];
       return msgs.filter((m: any) => m.role === "assistant").length;
     })
     .toBeGreaterThan(0);
@@ -81,7 +85,7 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   const dataRoot = String(health.data_root ?? "");
   expect(dataRoot).toBeTruthy();
 
-  const dbPath = path.join(dataRoot, "db", "db.sqlite");
+  const dbPath = path.join(dataRoot, "db", "workspaces", workspaceId!, "db.sqlite");
   const sqliteJson = (sql: string) => {
     const out = execFileSync("sqlite3", ["-json", dbPath, sql], { encoding: "utf8" }).trim();
     return out ? (JSON.parse(out) as any[]) : [];
@@ -133,10 +137,10 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   await sendButton.click();
   await expect
     .poll(async () => {
-      const resp = await page.request.get(`/api/sessions/${sessionId}/snapshot?limit=50`);
+      const resp = await page.request.get(`/api/sessions/${sessionId}/head?limit=50`);
       if (!resp.ok()) return 0;
-      const snapshot = (await resp.json()) as any;
-      const msgs = snapshot?.head?.messages ?? [];
+      const head = (await resp.json()) as any;
+      const msgs = head?.messages ?? [];
       return msgs.filter((m: any) => m.role === "assistant").length;
     })
     .toBeGreaterThanOrEqual(2);

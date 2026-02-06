@@ -3,7 +3,14 @@ import { expect, test } from "./fixtures";
 test("diff editor expands to full height (no inner vertical scroll)", async ({ page }) => {
   await page.goto("/__cursor_diff_demo?state=big&lines=220");
 
-  const scrollable = page.locator(".cursor-diff-editor-shell .monaco-scrollable-element").first();
+  const toggle = page.getByRole("button", { name: /file diff/i }).first();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+  const editorShell = page.locator(".cursor-diff-editor-shell").first();
+  await expect(editorShell).toBeVisible();
+
+  const scrollable = editorShell.locator(".monaco-scrollable-element").first();
   await expect(scrollable).toBeVisible();
 
   const initial = await scrollable.evaluate((el) => ({
