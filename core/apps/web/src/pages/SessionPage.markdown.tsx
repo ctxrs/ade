@@ -11,6 +11,7 @@ import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
 import { copyTextToClipboard } from "../utils/clipboard";
+import { stripCitationMarkers } from "../utils/citationMarkers";
 import {
   type FileRef,
   isAbsolutePath,
@@ -343,6 +344,9 @@ export function Markdown({
   onFileOpenError?: (message: string | null) => void;
 }) {
   const remarkPlugins: any[] = [remarkGfm, remarkNormalizeCursorMarkdown];
+  // Models/providers sometimes emit citations using private-use unicode wrappers. Those IDs are not
+  // resolvable links in ctx today (we don't store the underlying sources table), so hide them.
+  const normalized = stripCitationMarkers(content);
 
   return (
     <div>
@@ -448,7 +452,7 @@ export function Markdown({
           },
         }}
       >
-        {content}
+        {normalized}
       </ReactMarkdown>
     </div>
   );

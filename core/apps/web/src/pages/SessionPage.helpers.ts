@@ -1,4 +1,5 @@
 import { blobUrl, type MessageAttachment, type SessionTurn, type SubagentInvocationChild } from "../api/client";
+import { stripCitationMarkers } from "../utils/citationMarkers";
 
 const PLAIN_TEXT_CACHE_LIMIT = 500;
 const plainTextCache = new Map<string, string>();
@@ -35,7 +36,7 @@ export function markdownToPlainText(input: string): string {
   if (!input) return "";
   const cached = plainTextCache.get(input);
   if (cached != null) return cached;
-  let text = input.replace(/\r/g, "");
+  let text = stripCitationMarkers(input).replace(/\r/g, "");
   text = text.replace(/```[a-zA-Z0-9_-]*\n/g, "");
   text = text.replace(/```/g, "");
   text = text.replace(/`([^`]*)`/g, "$1");
