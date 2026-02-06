@@ -205,6 +205,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
     let publisher = tokio::spawn(async move {
         let mut seq: i64 = 1;
         let mut idx: usize = 0;
+        let mut throttle: u32 = 0;
         while !stop_pub.load(Ordering::Relaxed) {
             let session = &sessions_pub[idx % sessions_pub.len()];
             idx += 1;
@@ -235,8 +236,13 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
                 .await;
             seq += 1;
 
-            // Intentionally yield so the sender task can make progress on the snapshot.
-            tokio::task::yield_now().await;
+            // Throttle just enough for the sender task to progress on small snapshots.
+            // On baselines with large active_heads, hydration should still take long enough to
+            // overflow the head batch buffer.
+            throttle = throttle.wrapping_add(1);
+            if throttle % 8 == 0 {
+                tokio::task::yield_now().await;
+            }
         }
     });
 
