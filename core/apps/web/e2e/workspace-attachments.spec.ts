@@ -76,7 +76,7 @@ test("workspace attachments show pending then ready", async ({ page, request }) 
     const workspace = (await workspaceRes.json()) as { id: string };
 
     await page.goto(`/settings?ws=${workspace.id}#workspace_attachments`);
-    await page.getByText("Reference Repos").waitFor();
+    await page.getByRole("main").getByText("Reference Repos", { exact: true }).waitFor();
 
     await page.locator("#attachments-source").fill(refRepoRoot);
     await page.locator("#attachments-name").fill("ref-fixture");

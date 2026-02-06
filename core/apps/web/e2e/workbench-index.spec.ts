@@ -29,12 +29,13 @@ test("workbench active snapshot stream keeps network lean", async ({ page }) => 
     .getByRole("listitem")
     .filter({ hasText: repo })
     .getByRole("link", { name: workspaceName });
-  const snapshotPromise = page.waitForResponse((resp) =>
-    /\/api\/workspaces\/[^/]+\/active_snapshot/.test(resp.url()),
+  const snapshotStreamPromise = page.waitForEvent("websocket", (ws) =>
+    /\/api\/workspaces\/[^/]+\/active_snapshot\/stream/.test(ws.url()),
   );
   await workspaceLink.click();
   await page.waitForURL(/\/workspaces\/[^/]+$/);
-  await snapshotPromise;
+  const snapshotStream = await snapshotStreamPromise;
+  await snapshotStream.waitForEvent("framereceived");
 
   const url = new URL(page.url());
   const workspaceId = url.pathname.split("/").pop() ?? "";
@@ -43,10 +44,13 @@ test("workbench active snapshot stream keeps network lean", async ({ page }) => 
   const apiRequests = requests.filter((r) => r.url.includes("/api/"));
   expect(apiRequests.length).toBeLessThanOrEqual(30);
 
-  const snapshotRequests = apiRequests.filter((r) =>
-    r.method === "GET" && r.url.includes(`/api/workspaces/${workspaceId}/active_snapshot`),
-  );
-  expect(snapshotRequests.length).toBeGreaterThanOrEqual(1);
+  const snapshotRequests = apiRequests.filter((r) => {
+    if (r.method !== "GET") return false;
+    const pathname = new URL(r.url).pathname;
+    return pathname === `/api/workspaces/${workspaceId}/active_snapshot`;
+  });
+  expect(snapshotRequests.length).toBe(0);
+  expect(snapshotStream.url()).toContain(`/api/workspaces/${workspaceId}/active_snapshot/stream`);
   const trackRequests = apiRequests.filter(
     (r) => /\/api\/tasks\/[^/]+\/tracks/.test(r.url) || /\/api\/tracks\/[^/]+/.test(r.url),
   );

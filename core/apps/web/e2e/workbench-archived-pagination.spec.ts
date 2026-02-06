@@ -14,24 +14,33 @@ test("workbench: archived pagination uses workspace task listing", async ({ page
     expect(resp.ok()).toBeTruthy();
   }
 
+  const archivedEndpoint = `/api/workspaces/${seed.workspaceId}/archived_task_summaries`;
   const seenRequests: string[] = [];
   page.on("request", (req) => {
     const url = req.url();
-    if (url.includes(`/api/workspaces/${seed.workspaceId}/tasks`)) {
+    if (url.includes(archivedEndpoint)) {
       seenRequests.push(url);
     }
   });
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Archived" }).click();
+  const firstPageRequest = page.waitForRequest((req) => req.url().includes(archivedEndpoint));
+  await page.getByRole("button", { name: "Archived Tasks" }).click();
 
-  await page.waitForRequest((req) => req.url().includes(`/api/workspaces/${seed.workspaceId}/tasks`));
-  await expect(page.locator(".wb-task-row-archived").first()).toBeVisible({ timeout: 20000 });
+  await firstPageRequest;
+  await expect(page.getByRole("listitem", { name: "fixture task 52" })).toBeVisible({ timeout: 20000 });
 
-  const scroller = page.locator(".wb-task-scroll");
+  const loadMoreRequest = page.waitForRequest(
+    (req) => req.url().includes(archivedEndpoint) && req.url().includes("cursor_"),
+  );
+  const scroller = page
+    .getByRole("list", { name: "Tasks" })
+    .locator("xpath=ancestor::*[@data-virtuoso-scroller]")
+    .first();
   await scroller.evaluate((el) => {
     el.scrollTop = el.scrollHeight;
   });
+  await loadMoreRequest;
 
-  expect(seenRequests.length).toBeGreaterThan(0);
+  expect(seenRequests.length).toBeGreaterThan(1);
 });

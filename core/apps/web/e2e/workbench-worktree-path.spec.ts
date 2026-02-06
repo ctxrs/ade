@@ -44,7 +44,7 @@ test("workbench: worktree slug is visible for the active session", async ({ page
   await expect(rows).toHaveCount(1);
   await rows.first().click();
 
-  const worktreeChip = page.locator(".wb-worktree-chip").first();
+  const worktreeChip = page.getByRole("button", { name: "Copy worktree location" }).first();
   await expect(worktreeChip).toBeVisible({ timeout: 20000 });
   await expect(worktreeChip).toContainText(worktreeSlugFromPath(worktreePath));
 });
@@ -79,7 +79,7 @@ test("workbench: worktree slug stays visible in single-track view", async ({ pag
   await expect(rows).toHaveCount(1);
   await rows.first().click();
 
-  const worktreeChip = page.locator(".wb-single-track-meta-left .wb-worktree-chip");
+  const worktreeChip = page.getByRole("button", { name: "Copy worktree location" }).first();
   await expect(worktreeChip).toBeVisible({ timeout: 20000 });
   await expect(worktreeChip).toContainText(worktreeSlugFromPath(worktreePath));
 });
