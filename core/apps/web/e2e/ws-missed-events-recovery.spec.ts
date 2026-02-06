@@ -1,32 +1,19 @@
 import { test, expect } from "./fixtures";
-import { mkdtempSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import path from "path";
-import { execSync } from "child_process";
-import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
-test("workbench: recovers when workspace stream drops once", async ({ page }) => {
+test("workbench: recovers when workspace stream misses events", async ({ page }) => {
   // Enable E2E hooks for the workspace stream worker.
   await page.addInitScript(() => {
     window.sessionStorage.setItem("ctxE2E", "1");
   });
 
-  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
-  execSync("git init", { cwd: repo });
-  execSync("git config user.email test@example.com", { cwd: repo });
-  execSync("git config user.name Test", { cwd: repo });
-  writeFileSync(path.join(repo, "file.txt"), "hello\n");
-  execSync("git add .", { cwd: repo });
-  execSync("git commit -m init", { cwd: repo });
-
-  const workspaceName = `ws-${Date.now()}`;
-
-  const workspaceId = await createWorkspaceAndOpenWorkbench({
-    page,
-    request: page.request,
-    repo,
-    workspaceName,
+  const seed = await seedDummyWorkspace(page.request, {
+    tasks: 1,
+    sessionsPerTask: 1,
+    turnsPerSession: 0,
   });
+  const workspaceId = seed.workspaceId;
+  await page.goto(`/workspaces/${workspaceId}?ctxE2E=1`, { waitUntil: "domcontentloaded" });
 
   await expect
     .poll(async () =>
@@ -34,40 +21,50 @@ test("workbench: recovers when workspace stream drops once", async ({ page }) =>
     )
     .toBe(true);
 
-  // Choose Fake harness so the test doesn't depend on external agents.
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
-  await expect(
-    page.locator(".wb-new-composer-stack button[title=\"Harness\"] .wb-switcher-label"),
-  ).toHaveText(/fake/i, { timeout: 20000 });
+  const rows = page.locator(".wb-task-row");
+  const createTask = async (title: string) => {
+    const resp = await page.request.post(`/api/workspaces/${workspaceId}/tasks`, {
+      data: { title, create_default_session: true },
+    });
+    expect(resp.ok()).toBe(true);
+    const task = (await resp.json()) as { id?: string };
+    const taskId = String(task?.id ?? "");
+    expect(taskId).toBeTruthy();
+    const sessionResp = await page.request.post(`/api/tasks/${taskId}/sessions`, {
+      data: { provider_id: "fake", model_id: "fake-model" },
+    });
+    expect(sessionResp.ok()).toBe(true);
+    const session = (await sessionResp.json()) as { id?: string };
+    const sessionId = String(session?.id ?? "");
+    expect(sessionId).toBeTruthy();
+    const msgResp = await page.request.post(`/api/sessions/${sessionId}/messages`, {
+      data: { content: `fixture msg ${title}`, delivery: "immediate" },
+    });
+    expect(msgResp.ok()).toBe(true);
+  };
 
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello 1");
-  await expect(page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
   expect(workspaceId).toBeTruthy();
-
-  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(1, { timeout: 20000 });
+  await expect(rows).toHaveCount(1, { timeout: 20_000 });
 
   await expect
     .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
 
+  // Drop workspace stream messages so the client misses the "task 2" update.
   await page.evaluate(() => {
-    (window as any).__ctxE2E?.workspaceStream?.close?.();
+    (window as any).__ctxE2E?.workspaceStream?.setDropMessages?.(true);
   });
 
-  await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
-    .toBe("disconnected");
+  await createTask("fixture task 2");
 
-  await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
-    .toBe("connected");
+  // Re-enable message delivery, then create another task so the next received seq reveals a gap and
+  // triggers the client's recovery path (snapshot reload).
+  await page.evaluate(() => {
+    (window as any).__ctxE2E?.workspaceStream?.setDropMessages?.(false);
+  });
 
-  const sessionComposer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
-  await expect(sessionComposer).toBeVisible({ timeout: 20000 });
-  await sessionComposer.fill("hello 2");
-  await page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]").click();
-  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(2, { timeout: 20000 });
+  await createTask("fixture task 3");
+
+  await expect(rows).toHaveCount(3, { timeout: 60_000 });
+  await expect(rows.filter({ hasText: "fixture task 2" }).first()).toBeVisible({ timeout: 60_000 });
 });
