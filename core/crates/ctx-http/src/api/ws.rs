@@ -783,6 +783,10 @@ fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option<i64> {
         }
         WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert { .. }
         | WorkspaceActiveSnapshotEvent::ArchivedTaskDelete { .. } => None,
+        // Be forward-compatible with new event variants that still carry `snapshot_rev`.
+        _ => serde_json::to_value(event)
+            .ok()
+            .and_then(|value| value.get("snapshot_rev").and_then(Value::as_i64)),
     }
 }
 
@@ -1579,14 +1583,6 @@ where
             last_known_seq,
             reason,
         } => {
-            // If the client is not resuming (after_seq <= 0), treat gaps as a no-op.
-            // The workspace stream is expected to provide a fresh snapshot on connect,
-            // and live deltas will continue from the current head.
-            if after_seq <= 0 {
-                return Ok(ReplayOutcome::Replay {
-                    last_sent: after_seq,
-                });
-            }
             let gap = WorkspaceActiveSnapshotEvent::SessionGap {
                 workspace_id,
                 snapshot_rev,
@@ -2679,11 +2675,6 @@ where
             last_known_seq,
             reason,
         } => {
-            if after_seq <= 0 {
-                return Ok(ReplayOutcome::Replay {
-                    last_sent: after_seq,
-                });
-            }
             let gap = WorkspaceActiveSnapshotEvent::SessionGap {
                 workspace_id,
                 snapshot_rev,

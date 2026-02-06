@@ -82,11 +82,19 @@ pub(super) async fn get_session_head(
         .get_session_head(session_id)
         .await
     {
-        if !include_events {
-            head.events.clear();
-            head.head_window.event_count = 0;
+        // The in-memory head cache is a performance optimization and may be populated with a
+        // smaller turn window than callers request (e.g., refresh paths cap to 200 turns). Only
+        // serve from cache if it can satisfy the requested limit, otherwise fall back to store.
+        let requested = limit as usize;
+        if head.has_more_turns && head.turns.len() < requested {
+            // cache head is known-truncated and does not satisfy the request
+        } else {
+            if !include_events {
+                head.events.clear();
+                head.head_window.event_count = 0;
+            }
+            return Ok(Json(head));
         }
-        return Ok(Json(head));
     }
     state.emit_cache_miss("session_head").await;
     let store = state

@@ -1123,22 +1123,25 @@ fn compact_active_head_snapshot(head: &SessionHeadSnapshot) -> SessionHeadSnapsh
         }
     }
 
-    out.head_window.turn_limit = ACTIVE_HEAD_TURN_LIMIT as i64;
-    out.head_window.message_limit = ACTIVE_HEAD_MESSAGE_LIMIT as i64;
+    // Enforce byte limits defensively even though most upstream head sources
+    // already apply ACTIVE_HEAD_BYTE_LIMIT.
+    trim_head_window(&mut out);
+
+    // Workspace active snapshot surface does not need events; reflect that in the window.
+    out.events.clear();
     out.head_window.event_limit = 0;
-    out.head_window.byte_limit = ACTIVE_HEAD_BYTE_LIMIT as i64;
-    out.head_window.turn_count = out.turns.len() as i64;
-    out.head_window.message_count = out.messages.len() as i64;
     out.head_window.event_count = 0;
     out.head_window.bytes =
         head_window_bytes(&out.turns, &out.tool_summaries, &out.events, &out.messages) as i64;
-    out.head_window.truncated = head.head_window.truncated
+
+    let dropped = head.head_window.truncated
         || head.has_more_turns
         || head.turns.len() > out.turns.len()
         || head.messages.len() > out.messages.len()
         || head.tool_summaries.len() > out.tool_summaries.len()
         || head.events.len() > out.events.len();
-    out.has_more_turns = head.has_more_turns || head.turns.len() > out.turns.len();
+    out.head_window.truncated = out.head_window.truncated || dropped;
+    out.has_more_turns = out.has_more_turns || head.has_more_turns || head.turns.len() > out.turns.len();
     out
 }
 
