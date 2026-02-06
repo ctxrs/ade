@@ -1,4 +1,7 @@
-use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -178,9 +181,10 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
     let mut ws_cfg = WebSocketConfig::default();
     ws_cfg.max_message_size = Some(64 << 20);
     ws_cfg.max_frame_size = Some(64 << 20);
-    let (mut socket, _) = tokio_tungstenite::connect_async_with_config(&ws_url, Some(ws_cfg), false)
-        .await
-        .unwrap();
+    let (mut socket, _) =
+        tokio_tungstenite::connect_async_with_config(&ws_url, Some(ws_cfg), false)
+            .await
+            .unwrap();
 
     // Drain the initial server frame (ready).
     let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
@@ -250,7 +254,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
             // On baselines with large active_heads, hydration should still take long enough to
             // overflow the head batch buffer.
             throttle = throttle.wrapping_add(1);
-            if throttle % 8 == 0 {
+            if throttle.is_multiple_of(8) {
                 tokio::task::yield_now().await;
             }
         }
@@ -263,7 +267,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
         let next = tokio::time::timeout(Duration::from_millis(250), socket.next()).await;
         match next {
             Ok(Some(Ok(WsMessage::Text(txt)))) => {
-                let snapshot_bytes = txt.as_bytes().len();
+                let snapshot_bytes = txt.len();
                 let value: Value = serde_json::from_str(&txt).unwrap();
                 let msg_type = value
                     .get("type")

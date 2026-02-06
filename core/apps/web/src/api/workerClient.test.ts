@@ -3,41 +3,52 @@ import { setWorkerClientConfig, workerFetchJson } from "./workerClient";
 
 describe("workerClient", () => {
   const fetchMock = vi.fn();
-  const originalCrypto = globalThis.crypto;
-
-  const installCryptoStub = () => {
-    Object.defineProperty(globalThis, "crypto", {
-      configurable: true,
-      enumerable: true,
-      value: {
-        getRandomValues: (arr: Uint8Array) => {
-          for (let i = 0; i < arr.length; i += 1) {
-            arr[i] = (i + 1) % 255;
-          }
-          return arr;
-        },
-      },
-    });
-  };
+  const originalCryptoDesc = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  const originalFetchDesc = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+  let didStubCrypto = false;
 
   beforeEach(() => {
     fetchMock.mockReset();
-    (globalThis as any).fetch = fetchMock;
+    Object.defineProperty(globalThis, "fetch", {
+      value: fetchMock,
+      configurable: true,
+      writable: true,
+    });
+
+    didStubCrypto = false;
     if (!globalThis.crypto?.getRandomValues) {
-      installCryptoStub();
+      didStubCrypto = true;
+      Object.defineProperty(globalThis, "crypto", {
+        value: {
+          getRandomValues: (arr: Uint8Array) => {
+            for (let i = 0; i < arr.length; i += 1) {
+              arr[i] = (i + 1) % 255;
+            }
+            return arr;
+          },
+        },
+        configurable: true,
+      });
     }
   });
 
   afterEach(() => {
     fetchMock.mockReset();
-    if (originalCrypto) {
-      Object.defineProperty(globalThis, "crypto", {
-        configurable: true,
-        enumerable: true,
-        value: originalCrypto,
-      });
+    if (originalFetchDesc) {
+      Object.defineProperty(globalThis, "fetch", originalFetchDesc);
     } else {
-      delete (globalThis as any).crypto;
+      // Best-effort cleanup for environments where fetch isn't a real global.
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+      delete (globalThis as any).fetch;
+    }
+
+    if (didStubCrypto) {
+      if (originalCryptoDesc) {
+        Object.defineProperty(globalThis, "crypto", originalCryptoDesc);
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete (globalThis as any).crypto;
+      }
     }
   });
 
