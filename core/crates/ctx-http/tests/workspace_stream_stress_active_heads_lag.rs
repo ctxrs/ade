@@ -75,8 +75,11 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
         .unwrap();
 
     // Create many sessions to inflate active_heads total payload.
-    let session_count: usize = 16;
-    let turns_per_session: i64 = 120;
+    // Keep the snapshot under tungstenite's default max message size (16 MiB) so
+    // baselines fail (if they fail) due to stream backpressure/reset behavior,
+    // not client-side frame limits.
+    let session_count: usize = 12;
+    let turns_per_session: i64 = 70;
     let message_bytes: usize = 16 * 1024;
 
     let mut sessions: Vec<ctx_core::models::Session> = Vec::with_capacity(session_count);
