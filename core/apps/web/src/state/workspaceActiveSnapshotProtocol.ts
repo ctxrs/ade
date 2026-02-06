@@ -14,6 +14,7 @@ export type WorkspaceActiveSnapshotCommand =
       baseUrl?: string | null;
       wsBaseUrl?: string | null;
       runId?: string | null;
+      e2eEnabled?: boolean;
     }
   | {
       type: "update_auth";
@@ -30,7 +31,11 @@ export type WorkspaceActiveSnapshotCommand =
   | { type: "set_foreground_task_id"; taskId: string | null }
   | { type: "ensure_archived_loaded" }
   | { type: "load_more_archived" }
-  | { type: "apply_task_update"; task: Task };
+  | { type: "apply_task_update"; task: Task }
+  | { type: "e2e_set_enabled"; enabled: boolean }
+  | { type: "e2e_close_stream" }
+  | { type: "e2e_set_drop_messages"; drop: boolean }
+  | { type: "e2e_dispatch_stream_message"; payload: string };
 
 export type WorkspaceActiveSnapshotPatch = {
   snapshot: WorkspaceActiveSnapshotState;

@@ -4,8 +4,6 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import WebSocket from "ws";
-import pixelmatch from "pixelmatch";
-import { PNG } from "pngjs";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
@@ -22,7 +20,7 @@ test("terminal links underline on modifier hover", async ({ page }) => {
   execSync("git commit -m init", { cwd: repo });
 
   const workspaceName = `ws-terminal-${Date.now()}`;
-  const workspaceId = await createWorkspaceAndOpenWorkbench({
+  await createWorkspaceAndOpenWorkbench({
     page,
     request: page.request,
     repo,
@@ -43,34 +41,22 @@ test("terminal links underline on modifier hover", async ({ page }) => {
 
   await openTerminalPanel(page);
   await ensureTerminalVisible(page);
-  const terminalId = await waitForWorkspaceTerminal(page, AUTH_TOKEN, workspaceId);
+  const terminalId = await waitForVisibleTerminalId(page);
 
   const baseURL = new URL(page.url()).origin;
   await seedTerminalOutput(baseURL, AUTH_TOKEN, terminalId, LINK_TEXT);
 
-  const metrics = await getTerminalMetrics(page);
-  const hoverX = metrics.left + metrics.cellWidth * 2.5;
-  const hoverY = metrics.top + metrics.cellHeight * 0.5;
-  const clip = {
-    x: Math.max(0, Math.floor(metrics.left)),
-    y: Math.max(0, Math.floor(metrics.top)),
-    width: Math.ceil(metrics.cellWidth * (LINK_TEXT.length + 2)),
-    height: Math.ceil(metrics.cellHeight),
-  };
-
-  await page.mouse.move(hoverX, hoverY);
-
-  const baseShot = await page.screenshot({ clip });
   const modifierKey = process.platform === "darwin" ? "Meta" : "Control";
+
+  await hoverLinkAndConfirm(page, terminalId, LINK_TEXT);
+
   await page.keyboard.down(modifierKey);
-  await page.waitForTimeout(100);
 
-  const modifiedShot = await page.screenshot({ clip });
+  await expect
+    .poll(() => getHoveredLinkState(page, terminalId))
+    .toMatchObject({ underline: true });
+
   await page.keyboard.up(modifierKey);
-
-  const diffCount = diffPngPixels(baseShot, modifiedShot);
-  const minDiff = Math.max(8, Math.floor((clip.width * clip.height) / 200));
-  expect(diffCount).toBeGreaterThan(minDiff);
 });
 
 async function openTerminalPanel(page: any) {
@@ -106,25 +92,32 @@ async function ensureTerminalVisible(page: any) {
   await expect(xterm.first()).toBeVisible({ timeout: 30_000 });
 }
 
-async function waitForWorkspaceTerminal(
-  page: any,
-  token: string,
-  workspaceId: string,
-): Promise<string> {
-  const listTerminals = async () => {
-    const res = await page.request.get(`/api/workspaces/${workspaceId}/terminals`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    if (!res.ok()) {
-      throw new Error(`list terminals failed: HTTP ${res.status()} ${res.statusText()}`);
-    }
-    const data = (await res.json().catch(() => [])) as any[];
-    return data.map((entry) => readId(entry?.id)).filter(Boolean);
-  };
-
-  await expect.poll(listTerminals, { timeout: 20_000 }).not.toHaveLength(0);
-  const ids = await listTerminals();
-  return ids[ids.length - 1];
+async function waitForVisibleTerminalId(page: any): Promise<string> {
+  let terminalId = "";
+  await expect
+    .poll(
+      async () => {
+        terminalId = await page.evaluate(() => {
+          const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+          if (!reg) return "";
+          for (const [id, term] of reg.entries()) {
+            const el = term?.element as HTMLElement | undefined;
+            if (!el || !el.isConnected) continue;
+            if (el.closest(".wb-terminal-group-hidden")) continue;
+            const rect = el.getBoundingClientRect();
+            if (rect.width <= 5 || rect.height <= 5) continue;
+            const style = window.getComputedStyle(el);
+            if (style.visibility === "hidden" || style.display === "none") continue;
+            return typeof id === "string" ? id : "";
+          }
+          return "";
+        });
+        return terminalId;
+      },
+      { timeout: 20_000 },
+    )
+    .not.toBe("");
+  return terminalId;
 }
 
 function terminalWsUrl(baseURL: string, token: string, terminalId: string): string {
@@ -180,41 +173,44 @@ async function seedTerminalOutput(baseURL: string, token: string, terminalId: st
   });
 }
 
-async function getTerminalMetrics(page: any): Promise<{
+async function getTerminalMetrics(
+  page: any,
+  terminalId: string,
+): Promise<{
   left: number;
   top: number;
   cellWidth: number;
   cellHeight: number;
 }> {
-  await page.waitForFunction(() => {
-    const term = document.querySelector(".wb-terminal-panel-inner .xterm");
-    const screen = term?.querySelector(".xterm-screen");
-    const measure = term?.querySelector(".xterm-char-measure-element");
-    if (!term || !screen || !measure) return false;
-    const screenRect = screen.getBoundingClientRect();
-    const measureRect = measure.getBoundingClientRect();
-    return (
-      screenRect.width > 0 &&
-      screenRect.height > 0 &&
-      measureRect.width > 0 &&
-      measureRect.height > 0
-    );
-  });
+  await page.waitForFunction((id: string) => {
+    const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+    if (!reg) return false;
+    const term = reg.get(id);
+    const screen = term?._core?.screenElement ?? term?.element?.querySelector?.(".xterm-screen");
+    const dims = term?._core?._renderService?.dimensions?.css?.cell;
+    if (!screen || !dims) return false;
+    const rect = screen.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && dims.width > 0 && dims.height > 0;
+  }, terminalId);
 
-  const metrics = await page.evaluate(() => {
-    const term = document.querySelector(".wb-terminal-panel-inner .xterm");
-    const screen = term?.querySelector(".xterm-screen");
-    const measure = term?.querySelector(".xterm-char-measure-element");
-    if (!term || !screen || !measure) return null;
-    const screenRect = screen.getBoundingClientRect();
-    const measureRect = measure.getBoundingClientRect();
+  const metrics = await page.evaluate((id: string) => {
+    const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+    if (!reg) return null;
+    const term = reg.get(id);
+    const screen = term?._core?.screenElement ?? term?.element?.querySelector?.(".xterm-screen");
+    const dims = term?._core?._renderService?.dimensions?.css?.cell;
+    if (!screen || !dims) return null;
+    const rect = screen.getBoundingClientRect();
+    const style = window.getComputedStyle(screen);
+    const padLeft = parseFloat(style.paddingLeft || "0") || 0;
+    const padTop = parseFloat(style.paddingTop || "0") || 0;
     return {
-      left: screenRect.left,
-      top: screenRect.top,
-      cellWidth: measureRect.width,
-      cellHeight: measureRect.height,
+      left: rect.left + padLeft,
+      top: rect.top + padTop,
+      cellWidth: dims.width,
+      cellHeight: dims.height,
     };
-  });
+  }, terminalId);
 
   if (!metrics) {
     throw new Error("Failed to read terminal metrics");
@@ -222,24 +218,99 @@ async function getTerminalMetrics(page: any): Promise<{
   return metrics;
 }
 
-function readId(value: any): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value !== "string") {
-    throw new Error("Expected id to be a string");
+async function hoverLinkAndConfirm(page: any, terminalId: string, linkText: string) {
+  const metrics = await getTerminalMetrics(page, terminalId);
+  const modifierKey = process.platform === "darwin" ? "Meta" : "Control";
+  await page.keyboard.up(modifierKey).catch(() => {});
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const linkCell = await waitForLinkCell(page, terminalId, linkText);
+    const hoverX = metrics.left + metrics.cellWidth * (linkCell.col + 0.5);
+    const hoverY = metrics.top + metrics.cellHeight * (linkCell.row + 0.5);
+    await page.mouse.move(hoverX, hoverY);
+    const hovered = await getHoveredLinkState(page, terminalId);
+    if (hovered.hasCurrent && hovered.text === linkText) {
+      return;
+    }
+    await page.waitForTimeout(100);
   }
-  return value;
+
+  await expect
+    .poll(() => getHoveredLinkState(page, terminalId), { timeout: 5_000 })
+    .toMatchObject({
+      present: true,
+      hasCurrent: true,
+      text: linkText,
+    });
 }
 
-function diffPngPixels(baseShot: Buffer, modifiedShot: Buffer): number {
-  const basePng = PNG.sync.read(baseShot);
-  const modifiedPng = PNG.sync.read(modifiedShot);
-  if (basePng.width !== modifiedPng.width || basePng.height !== modifiedPng.height) {
-    throw new Error(
-      `Screenshot mismatch (${basePng.width}x${basePng.height}) vs (${modifiedPng.width}x${modifiedPng.height})`,
-    );
+async function getHoveredLinkState(
+  page: any,
+  terminalId: string,
+): Promise<{
+  present: boolean;
+  hasCurrent: boolean;
+  text: string;
+  underline: boolean | null;
+}> {
+  return await page.evaluate((id: string) => {
+    const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+    const term = reg?.get(id);
+    const linkifier = term?._core?.linkifier;
+    const current = linkifier?.currentLink;
+    const state = current?.state;
+    return {
+      present: !!term,
+      hasCurrent: !!current,
+      text: typeof current?.link?.text === "string" ? current.link.text : "",
+      underline:
+        typeof state?.decorations?.underline === "boolean"
+          ? state.decorations.underline
+          : null,
+    };
+  }, terminalId);
+}
+
+async function getLinkCellPosition(
+  page: any,
+  terminalId: string,
+  text: string,
+): Promise<{ row: number; col: number } | null> {
+  return await page.evaluate(
+    ({ id, needle }: { id: string; needle: string }) => {
+      const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+      const term = reg?.get(id);
+      const buf = term?.buffer?.active;
+      if (!term || !buf || typeof buf.length !== "number") return null;
+      const ydisp = typeof buf.ydisp === "number" ? buf.ydisp : 0;
+      const start = Math.max(0, ydisp);
+      const end = Math.min(buf.length - 1, ydisp + term.rows + 5);
+      for (let i = start; i <= end; i += 1) {
+        const line = buf.getLine?.(i);
+        const lineText = line?.translateToString?.(true) ?? "";
+        const col = lineText.indexOf(needle);
+        if (col === -1) continue;
+        const row = i - ydisp;
+        if (row < 0 || row >= term.rows) continue;
+        return { row, col };
+      }
+      return null;
+    },
+    { id: terminalId, needle: text },
+  );
+}
+
+async function waitForLinkCell(
+  page: any,
+  terminalId: string,
+  text: string,
+): Promise<{ row: number; col: number }> {
+  await expect
+    .poll(() => getLinkCellPosition(page, terminalId, text), { timeout: 20_000 })
+    .not.toBeNull();
+  const cell = await getLinkCellPosition(page, terminalId, text);
+  if (!cell) {
+    throw new Error("Failed to locate link in terminal buffer");
   }
-  const diff = new PNG({ width: basePng.width, height: basePng.height });
-  return pixelmatch(basePng.data, modifiedPng.data, diff.data, basePng.width, basePng.height, {
-    threshold: 0.1,
-  });
+  return cell;
 }

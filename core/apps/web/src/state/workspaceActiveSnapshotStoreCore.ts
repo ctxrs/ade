@@ -85,6 +85,7 @@ export type WorkspaceActiveSnapshotEventSource = {
 type WorkspaceActiveSnapshotStoreOptions = {
   disableCache?: boolean;
   disableWorker?: boolean;
+  e2eEnabled?: boolean;
   onPersistRequested?: () => void;
   onPatch?: (patch: WorkspaceActiveSnapshotPatch) => void;
   patchFlushMs?: number;
@@ -377,6 +378,8 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private useWorker = false;
   private disableCache = false;
   private disableWorker = false;
+  private e2eEnabled = false;
+  private e2eDropStreamMessages = false;
   private persistNotifier: (() => void) | null = null;
   private workerPatchEmitter: ((patch: WorkspaceActiveSnapshotPatch) => void) | null = null;
   private workerPatchTimer: number | null = null;
@@ -419,6 +422,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   constructor(private workspaceId: string, opts?: WorkspaceActiveSnapshotStoreOptions) {
     this.disableCache = opts?.disableCache ?? false;
     this.disableWorker = opts?.disableWorker ?? false;
+    this.e2eEnabled = opts?.e2eEnabled ?? false;
     this.persistNotifier = opts?.onPersistRequested ?? null;
     this.workerPatchEmitter = opts?.onPatch ?? null;
     this.workerPatchFlushMs = opts?.patchFlushMs ?? WORKSPACE_PATCH_FLUSH_MS;
@@ -503,6 +507,49 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   getSnapshotRev = (): number => this.snapshotRev;
 
+  setE2EEnabled = (enabled: boolean) => {
+    this.e2eEnabled = enabled;
+    if (!enabled) {
+      this.e2eDropStreamMessages = false;
+    }
+    if (this.worker) {
+      this.postWorkerCommand({ type: "e2e_set_enabled", enabled });
+    }
+  };
+
+  e2eCloseActiveSnapshotStream = () => {
+    if (!this.e2eEnabled) return;
+    if (this.worker) {
+      this.postWorkerCommand({ type: "e2e_close_stream" });
+      return;
+    }
+    try {
+      this.ws?.close();
+    } catch {
+      // ignore
+    }
+  };
+
+  e2eSetDropActiveSnapshotMessages = (drop: boolean) => {
+    if (!this.e2eEnabled) return;
+    if (this.worker) {
+      this.postWorkerCommand({ type: "e2e_set_drop_messages", drop });
+      return;
+    }
+    this.e2eDropStreamMessages = drop;
+  };
+
+  e2eDispatchActiveSnapshotStreamMessage = (payload: unknown) => {
+    if (!this.e2eEnabled) return;
+    const normalized = this.normalizeE2EStreamPayload(payload);
+    if (!normalized) return;
+    if (this.worker) {
+      this.postWorkerCommand({ type: "e2e_dispatch_stream_message", payload: normalized });
+      return;
+    }
+    this.enqueueStreamMessage(normalized);
+  };
+
   setSubscribedSessionIds = (sessionIds: string[]) => {
     const activeSet = new Set(this.activeSessionIds);
     const next = sessionIds
@@ -577,6 +624,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       baseUrl,
       wsBaseUrl: wsBaseUrl || null,
       runId: daemonConfig.runId ?? null,
+      e2eEnabled: this.e2eEnabled,
     });
     if (this.subscribedSessionIds.length > 0) {
       this.postWorkerCommand({ type: "set_subscribed_session_ids", sessionIds: this.subscribedSessionIds.slice() });
@@ -1262,6 +1310,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   }
 
   private async handleStreamMessage(data: unknown) {
+    if (this.e2eDropStreamMessages) return;
     const parsed = await parseWsJson(data);
     if (!parsed || typeof parsed !== "object") return;
     const streamRev = readWorkspaceStreamRev(parsed);
@@ -1424,6 +1473,15 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     }
 
     this.notifyEventListeners(evt);
+  }
+
+  private normalizeE2EStreamPayload(payload: unknown): string | null {
+    if (typeof payload === "string") return payload;
+    try {
+      return JSON.stringify(payload);
+    } catch {
+      return null;
+    }
   }
 
   private unwrapEvent(value: unknown): unknown {

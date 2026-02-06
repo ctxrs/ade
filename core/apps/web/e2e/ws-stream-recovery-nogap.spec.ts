@@ -3,34 +3,7 @@ import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 test("ws: recovery keeps all streamed messages across tasks", async ({ page, request }) => {
   await page.addInitScript(() => {
-    const OriginalWebSocket = window.WebSocket as any;
-    (window as any).__ctxStreamClosedOnce ??= false;
-    (window as any).__ctxStreamClosedAt ??= 0;
-
-    class FlakyStreamWebSocket extends OriginalWebSocket {
-      constructor(url: string | URL, protocols?: string | string[]) {
-        // @ts-expect-error runtime shim
-        super(url, protocols);
-        const target = String(url ?? "");
-        if ((window as any).__ctxStreamClosedOnce) return;
-        if (!target.includes("/api/workspaces/") || !target.includes("/active_snapshot/stream")) return;
-
-        this.addEventListener("open", () => {
-          setTimeout(() => {
-            try {
-              (window as any).__ctxStreamClosedOnce = true;
-              (window as any).__ctxStreamClosedAt = Date.now();
-              this.close();
-            } catch {
-              // ignore
-            }
-          }, 50);
-        });
-      }
-    }
-
-    // @ts-expect-error runtime shim
-    window.WebSocket = FlakyStreamWebSocket;
+    window.sessionStorage.setItem("ctxE2E", "1");
   });
 
   const seed = await seedDummyWorkspace(request, {
@@ -46,14 +19,22 @@ test("ws: recovery keeps all streamed messages across tasks", async ({ page, req
   await expect(search).toBeVisible({ timeout: 30_000 });
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxStreamClosedAt ?? 0))
-    .toBeGreaterThan(0);
-
-  await expect
     .poll(async () =>
       page.evaluate(() => typeof (window as any).__ctxE2E?.getSessionHeadMessages === "function"),
     )
     .toBe(true);
+
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .toBe("connected");
+
+  await page.evaluate(() => {
+    (window as any).__ctxE2E?.workspaceStream?.close?.();
+  });
+
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .toBe("disconnected");
 
   const taskIds = seed.taskIds.slice(0, 3);
   const sessionIds = taskIds.map((taskId) => seed.sessionIdsByTask[taskId][0]);

@@ -49,6 +49,7 @@ const ensureStore = (cmd: Extract<WorkspaceActiveSnapshotCommand, { type: "init"
     disableWorker: true,
     authToken: cmd.authToken ?? null,
     wsBaseUrl: cmd.wsBaseUrl ?? null,
+    e2eEnabled: cmd.e2eEnabled ?? false,
     listWorkspaceArchivedTaskSummaries,
     onPatch: (patch) => {
       const message: WorkspaceActiveSnapshotWorkerMessage = { type: "patch", patch };
@@ -113,6 +114,18 @@ self.onmessage = (event: MessageEvent<WorkspaceActiveSnapshotCommand>) => {
       return;
     case "apply_task_update":
       store?.applyTaskUpdate(cmd.task);
+      return;
+    case "e2e_set_enabled":
+      store?.setE2EEnabled(cmd.enabled);
+      return;
+    case "e2e_close_stream":
+      store?.e2eCloseActiveSnapshotStream();
+      return;
+    case "e2e_set_drop_messages":
+      store?.e2eSetDropActiveSnapshotMessages(cmd.drop);
+      return;
+    case "e2e_dispatch_stream_message":
+      store?.e2eDispatchActiveSnapshotStreamMessage(cmd.payload);
       return;
     default:
       return;

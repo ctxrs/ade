@@ -13,8 +13,17 @@ const WorkspaceActiveSnapshotContext = createContext<WorkspaceActiveSnapshotStor
 
 const shouldExposeE2E = (): boolean => {
   if (typeof window === "undefined") return false;
+  if (window.sessionStorage.getItem("ctxE2E") === "1") return true;
   const params = new URLSearchParams(window.location.search);
-  return params.get("ctxE2E") === "1";
+  if (params.get("ctxE2E") === "1") {
+    try {
+      window.sessionStorage.setItem("ctxE2E", "1");
+    } catch {
+      // ignore
+    }
+    return true;
+  }
+  return false;
 };
 
 export function WorkspaceActiveSnapshotProvider({
@@ -26,9 +35,10 @@ export function WorkspaceActiveSnapshotProvider({
 }) {
   const storeRef = useRef<WorkspaceActiveSnapshotStoreImpl | null>(null);
   const lastWorkspaceRef = useRef<string | null>(null);
+  const exposeE2E = shouldExposeE2E();
   if (!storeRef.current || lastWorkspaceRef.current !== workspaceId) {
     storeRef.current?.destroy();
-    storeRef.current = new WorkspaceActiveSnapshotStoreImpl(workspaceId);
+    storeRef.current = new WorkspaceActiveSnapshotStoreImpl(workspaceId, { e2eEnabled: exposeE2E });
     lastWorkspaceRef.current = workspaceId;
   }
 
@@ -38,9 +48,9 @@ export function WorkspaceActiveSnapshotProvider({
   }, [workspaceId]);
 
   useEffect(() => {
-    if (!shouldExposeE2E()) return;
-    const store = storeRef.current;
-    if (!store) return;
+    storeRef.current?.setE2EEnabled(exposeE2E);
+    if (!exposeE2E) return;
+    if (!storeRef.current) return;
     const win = window as any;
     win.__ctxE2E ??= {};
     win.__ctxE2E.getSessionHeadMessages = (sessionId: string) => {
@@ -51,12 +61,25 @@ export function WorkspaceActiveSnapshotProvider({
       const head = storeRef.current?.getSessionHeadSnapshot(sessionId);
       return head?.last_event_seq ?? null;
     };
+    win.__ctxE2E.workspaceStream ??= {};
+    win.__ctxE2E.workspaceStream.getConnectionState = () => storeRef.current?.getSnapshot().connection ?? "idle";
+    win.__ctxE2E.workspaceStream.close = () => storeRef.current?.e2eCloseActiveSnapshotStream();
+    win.__ctxE2E.workspaceStream.setDropMessages = (drop: boolean) =>
+      storeRef.current?.e2eSetDropActiveSnapshotMessages(Boolean(drop));
+    win.__ctxE2E.workspaceStream.dispatchMessage = (payload: unknown) =>
+      storeRef.current?.e2eDispatchActiveSnapshotStreamMessage(payload);
     return () => {
       if (!win.__ctxE2E) return;
       delete win.__ctxE2E.getSessionHeadMessages;
       delete win.__ctxE2E.getSessionLastEventSeq;
+      if (win.__ctxE2E.workspaceStream) {
+        delete win.__ctxE2E.workspaceStream.getConnectionState;
+        delete win.__ctxE2E.workspaceStream.close;
+        delete win.__ctxE2E.workspaceStream.setDropMessages;
+        delete win.__ctxE2E.workspaceStream.dispatchMessage;
+      }
     };
-  }, [workspaceId]);
+  }, [workspaceId, exposeE2E]);
 
   return (
     <WorkspaceActiveSnapshotContext.Provider value={storeRef.current}>
