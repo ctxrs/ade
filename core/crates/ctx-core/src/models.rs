@@ -1083,9 +1083,8 @@ pub enum SessionEventType {
     Error,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SessionEvent {
-    #[serde(deserialize_with = "deserialize_seq_i64_or_null")]
     pub seq: i64,
     pub id: SessionEventId,
     pub session_id: SessionId,
@@ -1093,16 +1092,44 @@ pub struct SessionEvent {
     pub turn_id: Option<TurnId>,
     pub event_type: SessionEventType,
     pub payload_json: serde_json::Value,
-    #[serde(default)]
     pub transient: bool,
     pub created_at: DateTime<Utc>,
 }
 
-fn deserialize_seq_i64_or_null<'de, D>(deserializer: D) -> Result<i64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<i64>::deserialize(deserializer).map(|value| value.unwrap_or(-1))
+impl<'de> Deserialize<'de> for SessionEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            seq: Option<i64>,
+            id: SessionEventId,
+            session_id: SessionId,
+            #[serde(default)]
+            run_id: Option<RunId>,
+            #[serde(default)]
+            turn_id: Option<TurnId>,
+            event_type: SessionEventType,
+            payload_json: serde_json::Value,
+            #[serde(default)]
+            transient: bool,
+            created_at: DateTime<Utc>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(SessionEvent {
+            seq: wire.seq.unwrap_or(0),
+            id: wire.id,
+            session_id: wire.session_id,
+            run_id: wire.run_id,
+            turn_id: wire.turn_id,
+            event_type: wire.event_type,
+            payload_json: wire.payload_json,
+            transient: wire.transient || wire.seq.is_none(),
+            created_at: wire.created_at,
+        })
+    }
 }
 
 impl Serialize for SessionEvent {
