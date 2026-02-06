@@ -4,7 +4,7 @@ use std::time::Duration;
 use chrono::Utc;
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use ctx_core::ids::{MessageId, SessionEventId, TurnId};
@@ -75,12 +75,17 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
         .unwrap();
 
     // Create many sessions to inflate active_heads total payload.
-    // Keep the snapshot under tungstenite's default max message size (16 MiB) so
-    // baselines fail (if they fail) due to stream backpressure/reset behavior,
-    // not client-side frame limits.
-    let session_count: usize = 12;
-    let turns_per_session: i64 = 70;
-    let message_bytes: usize = 16 * 1024;
+    // This test is a regression guard against huge `active_heads` payloads:
+    // we want the initial workspace snapshot to remain bounded even with many
+    // active sessions that each have large head windows.
+    //
+    // We explicitly raise the WS client max message size so older baselines can
+    // still be observed (and fail due to payload size / backpressure), rather
+    // than failing client-side with `MessageTooLong`.
+    let session_count: usize = 16;
+    let turns_per_session: i64 = 60;
+    let message_bytes: usize = 32 * 1024;
+    let max_snapshot_bytes: usize = 8_000_000;
 
     let mut sessions: Vec<ctx_core::models::Session> = Vec::with_capacity(session_count);
     for i in 0..session_count {
@@ -170,7 +175,12 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
     }
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
-    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let mut ws_cfg = WebSocketConfig::default();
+    ws_cfg.max_message_size = Some(64 << 20);
+    ws_cfg.max_frame_size = Some(64 << 20);
+    let (mut socket, _) = tokio_tungstenite::connect_async_with_config(&ws_url, Some(ws_cfg), false)
+        .await
+        .unwrap();
 
     // Drain the initial server frame (ready).
     let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
@@ -253,6 +263,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
         let next = tokio::time::timeout(Duration::from_millis(250), socket.next()).await;
         match next {
             Ok(Some(Ok(WsMessage::Text(txt)))) => {
+                let snapshot_bytes = txt.as_bytes().len();
                 let value: Value = serde_json::from_str(&txt).unwrap();
                 let msg_type = value
                     .get("type")
@@ -263,6 +274,11 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
                         panic!("unexpected reset_required while hydrating with active_heads");
                     }
                     "snapshot" => {
+                        if snapshot_bytes > max_snapshot_bytes {
+                            panic!(
+                                "snapshot too large: {snapshot_bytes} bytes (max {max_snapshot_bytes})"
+                            );
+                        }
                         saw_snapshot = true;
                         break;
                     }
