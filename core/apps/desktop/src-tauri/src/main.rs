@@ -61,6 +61,10 @@ fn main() {
             desktop_disconnect,
             desktop_connect_local,
             desktop_connect_ssh,
+            desktop_list_ssh_hosts,
+            desktop_test_ssh,
+            desktop_list_ssh_paths,
+            desktop_get_git_branch,
             desktop_pick_folder,
             desktop_git_clone,
             desktop_save_text_file,
@@ -323,6 +327,44 @@ struct SshConnectReq {
     start_remote: bool,
     #[serde(default)]
     remote_data_dir: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DesktopSshTestReq {
+    host: String,
+    #[serde(default)]
+    user: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DesktopSshPathReq {
+    host: String,
+    #[serde(default)]
+    user: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DesktopSshPathEntry {
+    name: String,
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DesktopGitBranchReq {
+    path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DesktopSshHost {
+    host: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -748,6 +790,162 @@ fn desktop_read_file(
         path: resolved.to_string_lossy().to_string(),
         text,
     })
+}
+
+#[tauri::command]
+fn desktop_list_ssh_hosts() -> Result<Vec<DesktopSshHost>, String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for path in ssh_config_paths() {
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(_) => continue,
+        };
+        for entry in parse_ssh_config(&text) {
+            if seen.insert(entry.host.clone()) {
+                out.push(entry);
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn desktop_list_ssh_paths(req: DesktopSshPathReq) -> Result<Vec<DesktopSshPathEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let host = req.host.trim().to_string();
+        if host.is_empty() {
+            return Err("host is required".to_string());
+        }
+        let target = match req.user.as_deref() {
+            Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
+            _ => host,
+        };
+        let raw = req.path.unwrap_or_default();
+        let (parent, prefix) = split_remote_path(&raw);
+        let cmd = format!("ls -a1 -p -- {}", remote_path_expr(&parent));
+        let output = Command::new("ssh")
+            .arg("-o")
+            .arg("BatchMode=yes")
+            .arg("-o")
+            .arg("ConnectTimeout=8")
+            .arg(target)
+            .arg("sh")
+            .arg("-lc")
+            .arg(cmd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("failed to spawn ssh: {e}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                return Err("ssh failed to list paths".to_string());
+            }
+            return Err(format!("ssh failed: {stderr}"));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut entries = Vec::new();
+        for line in stdout.lines() {
+            let name = line.trim();
+            if name.is_empty() {
+                continue;
+            }
+            if !name.ends_with('/') {
+                continue;
+            }
+            let name = name.trim_end_matches('/');
+            if name == "." {
+                continue;
+            }
+            if !prefix.is_empty() && !name.starts_with(&prefix) {
+                continue;
+            }
+            let full_path = join_remote_path(&parent, name);
+            entries.push(DesktopSshPathEntry {
+                name: name.to_string(),
+                path: full_path,
+            });
+        }
+        Ok(entries)
+    })
+    .await
+    .map_err(|e| format!("ssh list failed: {e}"))?
+}
+
+#[tauri::command]
+async fn desktop_test_ssh(req: DesktopSshTestReq) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let host = req.host.trim().to_string();
+        if host.is_empty() {
+            return Err("host is required".to_string());
+        }
+        let target = match req.user.as_deref() {
+            Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
+            _ => host,
+        };
+        let output = Command::new("ssh")
+            .arg("-o")
+            .arg("BatchMode=yes")
+            .arg("-o")
+            .arg("ConnectTimeout=8")
+            .arg(target)
+            .arg("true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("failed to spawn ssh: {e}"))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Err("ssh failed to connect".to_string());
+        }
+        Err(format!("ssh failed: {stderr}"))
+    })
+    .await
+    .map_err(|e| format!("ssh check failed: {e}"))?
+}
+
+#[tauri::command]
+async fn desktop_get_git_branch(req: DesktopGitBranchReq) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let raw = req.path.trim();
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        let mut path = expand_tilde(raw).unwrap_or_else(|| PathBuf::from(raw));
+        if !path.is_absolute() {
+            return Ok(None);
+        }
+        path = normalize_path(&path);
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&path)
+            .arg("rev-parse")
+            .arg("--abbrev-ref")
+            .arg("HEAD")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output();
+        let Ok(output) = output else {
+            return Ok(None);
+        };
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if value.is_empty() || value == "HEAD" {
+            return Ok(None);
+        }
+        Ok(Some(value))
+    })
+    .await
+    .map_err(|e| format!("git branch lookup failed: {e}"))?
 }
 
 #[tauri::command]
@@ -2295,6 +2493,95 @@ fn expand_tilde(raw: &str) -> Option<PathBuf> {
     }
 }
 
+fn ssh_config_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(path) = expand_tilde("~/.ssh/config") {
+        paths.push(path);
+    }
+    let system_config = PathBuf::from("/etc/ssh/ssh_config");
+    paths.push(system_config.clone());
+    let system_dir = PathBuf::from("/etc/ssh/ssh_config.d");
+    if let Ok(entries) = std::fs::read_dir(system_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+
+fn parse_ssh_config(text: &str) -> Vec<DesktopSshHost> {
+    let mut out = Vec::new();
+    let mut current_hosts: Vec<String> = Vec::new();
+    let mut current_user: Option<String> = None;
+    let mut current_host_name: Option<String> = None;
+    let mut current_port: Option<u16> = None;
+
+    let mut flush = |hosts: &Vec<String>,
+                     user: &Option<String>,
+                     host_name: &Option<String>,
+                     port: &Option<u16>,
+                     out: &mut Vec<DesktopSshHost>| {
+        if hosts.is_empty() {
+            return;
+        }
+        for host in hosts {
+            if is_ssh_pattern(host) {
+                continue;
+            }
+            out.push(DesktopSshHost {
+                host: host.to_string(),
+                user: user.clone(),
+                host_name: host_name.clone(),
+                port: *port,
+            });
+        }
+    };
+
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let key = parts.next().unwrap_or("");
+        let rest: Vec<&str> = parts.collect();
+        if key.eq_ignore_ascii_case("host") {
+            flush(&current_hosts, &current_user, &current_host_name, &current_port, &mut out);
+            current_hosts = rest.iter().map(|v| v.to_string()).collect();
+            current_user = None;
+            current_host_name = None;
+            current_port = None;
+            continue;
+        }
+        if current_hosts.is_empty() {
+            continue;
+        }
+        if key.eq_ignore_ascii_case("user") {
+            current_user = rest.first().map(|v| v.to_string());
+        } else if key.eq_ignore_ascii_case("hostname") {
+            current_host_name = rest.first().map(|v| v.to_string());
+        } else if key.eq_ignore_ascii_case("port") {
+            current_port = rest.first().and_then(|v| v.parse::<u16>().ok());
+        }
+    }
+
+    flush(&current_hosts, &current_user, &current_host_name, &current_port, &mut out);
+    out
+}
+
+fn is_ssh_pattern(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.is_empty()
+        || trimmed.starts_with('!')
+        || trimmed.contains('*')
+        || trimmed.contains('?')
+        || trimmed.contains('[')
+        || trimmed.contains(']')
+}
+
 fn resolve_worktree_path(worktree_root: &Path, raw_path: &str) -> Result<PathBuf> {
     let root = std::fs::canonicalize(worktree_root)
         .with_context(|| format!("canonicalizing {}", worktree_root.display()))?;
@@ -2699,6 +2986,33 @@ fn remote_path_expr(path: &str) -> String {
         return format!("\"$HOME/{}\"", escaped);
     }
     shell_escape(trimmed)
+}
+
+fn split_remote_path(raw: &str) -> (String, String) {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return ("~".to_string(), String::new());
+    }
+    if trimmed == "~" || trimmed.ends_with('/') {
+        return (trimmed.to_string(), String::new());
+    }
+    if let Some((parent, suffix)) = trimmed.rsplit_once('/') {
+        if parent.is_empty() {
+            return ("/".to_string(), suffix.to_string());
+        }
+        return (parent.to_string(), suffix.to_string());
+    }
+    ("~".to_string(), trimmed.to_string())
+}
+
+fn join_remote_path(parent: &str, name: &str) -> String {
+    if parent == "~" || parent == "~/" {
+        return format!("~/{name}");
+    }
+    if parent == "/" {
+        return format!("/{name}");
+    }
+    format!("{}/{}", parent.trim_end_matches('/'), name)
 }
 
 fn parse_daemon_auth(bytes: &[u8], path: &Path) -> Result<DaemonAuthFile> {

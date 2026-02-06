@@ -21,9 +21,15 @@
   display: block;
   --launcher-panel-width: min(700px, 92vw);
   --launcher-stack-padding-x: 24px;
-  --launcher-stack-padding-top: 250px;
+  --launcher-stack-padding-top: 100px;
   --launcher-stack-padding-bottom: 40px;
   --launcher-stack-gap: 18px;
+  /* Launcher/wizard CRT is designed as a dark surface regardless of global theme. */
+  --launcher-text: #e7e7e7;
+  --launcher-muted: #9a9a9a;
+  --launcher-border: #343434;
+  --launcher-button: #2a2a2a;
+  --launcher-button-hover: #303030;
 }
 
 
@@ -54,6 +60,17 @@
   --launcher-border: #d7d7d7;
   --launcher-button: #ffffff;
   --launcher-button-hover: #f6f6f6;
+}
+
+:root[data-theme="dark"] .launcher-shell--crt,
+:root[data-theme="light"] .launcher-shell--crt {
+  /* Force CRT surfaces to use the dark palette even in light mode. */
+  --launcher-bg: #0a0a0a;
+  --launcher-text: #e7e7e7;
+  --launcher-muted: #9a9a9a;
+  --launcher-border: #343434;
+  --launcher-button: #2a2a2a;
+  --launcher-button-hover: #303030;
 }
 
 .launcher-panel,
@@ -409,11 +426,14 @@
 .wizard-step {
   display: grid;
   gap: 10px;
+  min-height: 400px;
+  align-content: start;
 }
 
 .wizard-step-body {
   display: grid;
   gap: 10px;
+  align-content: start;
 }
 
 .wizard-step-summary {
@@ -421,9 +441,187 @@
   font-size: 12px;
 }
 
+.wizard-summary {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(231, 231, 231, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.wizard-summary-row {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.wizard-summary-k {
+  color: rgba(231, 231, 231, 0.66);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.wizard-summary-v {
+  color: rgba(231, 231, 231, 0.90);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.wizard-note--tight {
+  margin-top: 10px;
+}
+
 .wizard-step-title {
   font-weight: 600;
   font-size: 13px;
+}
+
+.wizard-step-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wizard-info-toggle {
+  appearance: none;
+  border: 1px solid var(--launcher-border);
+  border-radius: 10px;
+  width: 32px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  color: var(--launcher-text);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-grid;
+  place-items: center;
+}
+
+.wizard-info-toggle:hover {
+  background: var(--launcher-button-hover);
+}
+
+.wizard-info-content {
+  display: grid;
+  gap: 8px;
+}
+
+.wizard-info-content p {
+  margin: 0;
+}
+
+.wizard-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  z-index: 2000;
+}
+
+.wizard-modal {
+  width: min(760px, 94vw);
+  max-height: min(720px, 86vh);
+  overflow: auto;
+  border: 1px solid var(--launcher-border);
+  border-radius: 16px;
+  background: rgba(15, 15, 15, 0.94);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.wizard-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--launcher-border);
+}
+
+.wizard-modal-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--launcher-text);
+}
+
+.wizard-modal-close {
+  appearance: none;
+  border: 1px solid var(--launcher-border);
+  border-radius: 999px;
+  width: 32px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  color: var(--launcher-text);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-grid;
+  place-items: center;
+}
+
+.wizard-modal-close:hover {
+  background: var(--launcher-button-hover);
+}
+
+.wizard-modal-body {
+  padding: 14px 16px 18px;
+  color: var(--launcher-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.wizard-markdown {
+  color: rgba(231, 231, 231, 0.88);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.wizard-markdown :where(p, ul, ol, pre, blockquote, hr) {
+  margin: 0 0 10px;
+}
+
+.wizard-markdown :where(p, ul, ol, pre, blockquote, hr):last-child {
+  margin-bottom: 0;
+}
+
+.wizard-markdown a {
+  color: var(--phosphor-green);
+  text-decoration: none;
+}
+
+.wizard-markdown a:hover {
+  text-decoration: underline;
+}
+
+.wizard-markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  border: 1px solid rgba(231, 231, 231, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.wizard-markdown pre {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(231, 231, 231, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  overflow: auto;
+}
+
+.wizard-markdown pre code {
+  border: none;
+  background: transparent;
+  padding: 0;
 }
 
 .wizard-step-note {
@@ -431,44 +629,249 @@
   font-size: 12px;
 }
 
+.wizard-note {
+  color: var(--launcher-muted);
+  font-size: 12px;
+}
+
+.wizard-error {
+  color: #ff7777;
+  font-size: 12px;
+}
+
 .wizard-option-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 8px;
+  align-content: start;
+  align-items: stretch;
+  grid-auto-rows: 1fr;
+}
+
+.wizard-remote {
+  display: grid;
+  gap: 10px;
+}
+
+.wizard-remote-list {
+  display: grid;
+  gap: 6px;
+}
+
+.wizard-remote-suggestion {
+  appearance: none;
+  border: 1px solid var(--launcher-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--launcher-text);
+  padding: 6px 10px;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wizard-remote-suggestion:hover {
+  background: var(--launcher-button-hover);
 }
 
 .wizard-option {
   appearance: none;
   cursor: pointer;
-  border: 1px solid var(--launcher-border);
+  border: 1px solid rgba(231, 231, 231, 0.14);
   border-radius: 8px;
   padding: 8px 10px;
-  background: var(--launcher-button);
+  background: rgba(255, 255, 255, 0.07);
   display: grid;
   gap: 4px;
+  /* Keep content pinned to the top even when cards are equal-height. */
+  align-content: start;
   font-size: 12px;
   text-align: left;
+  height: 100%;
+}
+
+.wizard-option:hover {
+  border-color: rgba(231, 231, 231, 0.28);
+  background: rgba(255, 255, 255, 0.10);
 }
 
 .wizard-option.is-selected {
-  border-color: var(--launcher-text);
-  box-shadow: 0 0 0 1px var(--launcher-text);
+  border-color: rgba(51, 255, 51, 0.70);
+  box-shadow: 0 0 0 1px rgba(51, 255, 51, 0.55);
+  background: rgba(51, 255, 51, 0.08);
 }
 
 .wizard-option-title {
   font-weight: 600;
   font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  color: var(--launcher-text);
+}
+
+.wizard-option-title-text {
+  min-width: 0;
 }
 
 .wizard-option-desc {
-  color: var(--launcher-muted);
+  color: rgba(231, 231, 231, 0.70);
   font-size: 11px;
+}
+
+.wizard-option-badge {
+  border-radius: 999px;
+  padding: 2px 6px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  background: rgba(51, 255, 51, 0.12);
+  color: var(--phosphor-green);
+  margin-left: auto;
+}
+
+.wizard-skip {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--launcher-muted);
+  padding: 0;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: right;
+  justify-self: end;
+}
+
+.wizard-skip--left {
+  text-align: left;
+  justify-self: start;
+}
+
+.wizard-skip--below {
+  margin-top: 10px;
+}
+
+.wizard-cloud-inputs {
+  margin-top: 8px;
+}
+
+.wizard-skip:hover {
+  color: var(--launcher-text);
 }
 
 .wizard-input {
   display: grid;
   gap: 6px;
   font-size: 12px;
+}
+
+.wizard-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.wizard-input-button {
+  border: 1px solid var(--launcher-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--launcher-button);
+  color: var(--launcher-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.wizard-input-button:hover {
+  background: var(--launcher-button-hover);
+}
+
+.wizard-advanced-toggle {
+  border: 1px solid var(--launcher-border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--launcher-text);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+  width: fit-content;
+  justify-self: start;
+}
+
+.wizard-advanced-toggle:hover {
+  background: var(--launcher-button-hover);
+}
+
+.wizard-advanced-link {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: rgba(231, 231, 231, 0.70);
+  padding: 0;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  justify-self: start;
+}
+
+.wizard-advanced-link:hover {
+  color: var(--launcher-text);
+}
+
+.wizard-advanced-link svg {
+  transition: transform 140ms ease, color 140ms ease;
+}
+
+.wizard-advanced-link svg.is-open {
+  transform: rotate(90deg);
+  color: var(--launcher-text);
+}
+
+.wizard-advanced-options {
+  display: grid;
+  gap: 8px;
+}
+
+.wizard-advanced-panel {
+  display: grid;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--launcher-border);
+  border-radius: 10px;
+  background: var(--launcher-button);
+}
+
+.wizard-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--launcher-text);
+}
+
+.wizard-path-list {
+  display: grid;
+  gap: 6px;
+}
+
+.wizard-path-suggestion {
+  appearance: none;
+  border: 1px solid var(--launcher-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--launcher-text);
+  padding: 6px 10px;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wizard-path-suggestion:hover {
+  background: var(--launcher-button-hover);
 }
 
 .wizard-input input,
@@ -478,6 +881,17 @@
   border-radius: 8px;
   padding: 8px 10px;
   color: var(--launcher-text);
+}
+
+.wizard-input input:focus,
+.wizard-input textarea:focus {
+  outline: none;
+}
+
+.wizard-input input:focus-visible,
+.wizard-input textarea:focus-visible {
+  border-color: rgba(51, 255, 51, 0.75);
+  box-shadow: 0 0 0 2px rgba(51, 255, 51, 0.22);
 }
 
 .wizard-actions {
@@ -502,6 +916,11 @@
   border: 1px solid var(--launcher-border);
   background: transparent;
   padding: 0;
+}
+
+.wizard-dot:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .wizard-dot.is-active {

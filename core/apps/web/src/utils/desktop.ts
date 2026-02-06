@@ -38,6 +38,18 @@ export type DesktopDeepLinkToken = {
   expires_at_ms: number;
 };
 
+export type DesktopSshHost = {
+  host: string;
+  user?: string | null;
+  host_name?: string | null;
+  port?: number | null;
+};
+
+export type DesktopSshPathEntry = {
+  name: string;
+  path: string;
+};
+
 export type DesktopOpenFileReq = {
   worktree_id: string;
   path: string;
@@ -145,6 +157,18 @@ export const desktopConnectLocal = async (): Promise<DesktopConnectionInfo> =>
 
 export const desktopConnectSsh = async (req: SshConnectReq): Promise<DesktopConnectionInfo> =>
   invoke<DesktopConnectionInfo>("desktop_connect_ssh", { req });
+
+export const desktopListSshHosts = async (): Promise<DesktopSshHost[]> =>
+  invoke<DesktopSshHost[]>("desktop_list_ssh_hosts");
+
+export const desktopTestSsh = async (req: { host: string; user?: string | null }): Promise<void> =>
+  invoke<void>("desktop_test_ssh", { req });
+
+export const desktopListSshPaths = async (req: { host: string; user?: string | null; path?: string | null }): Promise<DesktopSshPathEntry[]> =>
+  invoke<DesktopSshPathEntry[]>("desktop_list_ssh_paths", { req });
+
+export const desktopGetGitBranch = async (req: { path: string }): Promise<string | null> =>
+  invoke<string | null>("desktop_get_git_branch", { req });
 
 export const desktopPickFolder = async (): Promise<string | null> =>
   invoke<string | null>("desktop_pick_folder");
