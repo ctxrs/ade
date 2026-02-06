@@ -157,18 +157,18 @@ struct ResponseCompletedOutputTokensDetails {
 #[derive(Deserialize, Debug)]
 pub struct ResponsesStreamEvent {
     #[serde(rename = "type")]
-    kind: String,
+    pub(crate) kind: String,
     response: Option<Value>,
     item: Option<Value>,
     delta: Option<String>,
-    /// Some events (notably `*.done`) carry the full text in a `text` field.
-    #[serde(default)]
-    text: Option<String>,
-    /// `response.reasoning_summary_part.*` events carry a `part` object with a `text` field.
-    #[serde(default)]
-    part: Option<Value>,
     summary_index: Option<i64>,
     content_index: Option<i64>,
+}
+
+impl ResponsesStreamEvent {
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
 }
 
 #[derive(Debug)]
@@ -209,41 +209,10 @@ pub fn process_responses_event(
                 }));
             }
         }
-        "response.reasoning_summary_text.done" => {
-            if let (Some(text), Some(summary_index)) = (event.text, event.summary_index) {
-                return Ok(Some(ResponseEvent::ReasoningSummaryDelta {
-                    delta: text,
-                    summary_index,
-                }));
-            }
-        }
-        "response.reasoning_summary_part.done" => {
-            let text = event
-                .part
-                .as_ref()
-                .and_then(|v| v.get("text"))
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string)
-                .or(event.text);
-            if let (Some(text), Some(summary_index)) = (text, event.summary_index) {
-                return Ok(Some(ResponseEvent::ReasoningSummaryDelta {
-                    delta: text,
-                    summary_index,
-                }));
-            }
-        }
         "response.reasoning_text.delta" => {
             if let (Some(delta), Some(content_index)) = (event.delta, event.content_index) {
                 return Ok(Some(ResponseEvent::ReasoningContentDelta {
                     delta,
-                    content_index,
-                }));
-            }
-        }
-        "response.reasoning_text.done" => {
-            if let (Some(text), Some(content_index)) = (event.text, event.content_index) {
-                return Ok(Some(ResponseEvent::ReasoningContentDelta {
-                    delta: text,
                     content_index,
                 }));
             }
@@ -437,75 +406,6 @@ fn try_parse_retry_after(err: &Error) -> Option<Duration> {
     None
 }
 
-#[cfg(test)]
-mod done_event_tests {
-    use super::*;
-
-    fn parse(kind: &str, payload: serde_json::Value) -> Option<ResponseEvent> {
-        let mut obj = payload.as_object().cloned().unwrap_or_default();
-        obj.insert("type".to_string(), Value::String(kind.to_string()));
-        let event: ResponsesStreamEvent = serde_json::from_value(Value::Object(obj)).unwrap();
-        process_responses_event(event).ok().flatten()
-    }
-
-    #[test]
-    fn parses_reasoning_text_done_as_delta() {
-        let ev = parse(
-            "response.reasoning_text.done",
-            serde_json::json!({"text":"raw full","content_index": 0}),
-        );
-        match ev {
-            Some(ResponseEvent::ReasoningContentDelta {
-                delta,
-                content_index,
-            }) => {
-                assert_eq!(delta, "raw full");
-                assert_eq!(content_index, 0);
-            }
-            other => panic!("expected ReasoningContentDelta, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_reasoning_summary_text_done_as_delta() {
-        let ev = parse(
-            "response.reasoning_summary_text.done",
-            serde_json::json!({"text":"**Title**\n\nBody","summary_index": 2}),
-        );
-        match ev {
-            Some(ResponseEvent::ReasoningSummaryDelta {
-                delta,
-                summary_index,
-            }) => {
-                assert_eq!(delta, "**Title**\n\nBody");
-                assert_eq!(summary_index, 2);
-            }
-            other => panic!("expected ReasoningSummaryDelta, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_reasoning_summary_part_done_as_delta() {
-        let ev = parse(
-            "response.reasoning_summary_part.done",
-            serde_json::json!({
-                "part": {"type":"reasoning_summary_part","text":"**Title**\n\nBody"},
-                "summary_index": 1
-            }),
-        );
-        match ev {
-            Some(ResponseEvent::ReasoningSummaryDelta {
-                delta,
-                summary_index,
-            }) => {
-                assert_eq!(delta, "**Title**\n\nBody");
-                assert_eq!(summary_index, 1);
-            }
-            other => panic!("expected ReasoningSummaryDelta, got {other:?}"),
-        }
-    }
-}
-
 fn is_context_window_error(error: &Error) -> bool {
     error.code.as_deref() == Some("context_length_exceeded")
 }
@@ -535,6 +435,7 @@ mod tests {
     use super::*;
     use assert_matches::assert_matches;
     use bytes::Bytes;
+    use codex_protocol::models::MessagePhase;
     use codex_protocol::models::ResponseItem;
     use futures::stream;
     use pretty_assertions::assert_eq;
@@ -598,7 +499,8 @@ mod tests {
             "item": {
                 "type": "message",
                 "role": "assistant",
-                "content": [{"type": "output_text", "text": "Hello"}]
+                "content": [{"type": "output_text", "text": "Hello"}],
+                "phase": "commentary"
             }
         })
         .to_string();
@@ -629,8 +531,11 @@ mod tests {
 
         assert_matches!(
             &events[0],
-            Ok(ResponseEvent::OutputItemDone(ResponseItem::Message { role, .. }))
-                if role == "assistant"
+            Ok(ResponseEvent::OutputItemDone(ResponseItem::Message {
+                role,
+                phase: Some(MessagePhase::Commentary),
+                ..
+            })) if role == "assistant"
         );
 
         assert_matches!(

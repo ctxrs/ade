@@ -52,15 +52,13 @@ use codex_protocol::ThreadId;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::TurnItem;
+use codex_protocol::mcp::CallToolResult;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::user_input::UserInput;
-use mcp_types::CallToolResult;
-use mcp_types::ContentBlock;
-use mcp_types::TextContent;
 use serde_json::json;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -1152,7 +1150,10 @@ async fn handle_command(
                 .entry(sub_id.clone())
                 .or_insert_with(|| TurnState::new(sub_id));
         }
-        CrpCommand::SessionCompact { session_id, turn_id } => {
+        CrpCommand::SessionCompact {
+            session_id,
+            turn_id,
+        } => {
             let Some(session_state) = session.as_mut() else {
                 warn!("session.compact ignored: no active session");
                 return Ok(());
@@ -1184,7 +1185,10 @@ async fn handle_command(
                 .entry(sub_id.clone())
                 .or_insert_with(|| TurnState::new(sub_id));
         }
-        CrpCommand::SessionUndo { session_id, turn_id } => {
+        CrpCommand::SessionUndo {
+            session_id,
+            turn_id,
+        } => {
             let Some(session_state) = session.as_mut() else {
                 warn!("session.undo ignored: no active session");
                 return Ok(());
@@ -1360,7 +1364,7 @@ async fn load_config_from_crp(
         codex_linux_sandbox_exe,
         base_instructions: None,
         developer_instructions: None,
-        model_personality: None,
+        personality: None,
         compact_prompt: None,
         include_apply_patch_tool: None,
         show_raw_agent_reasoning: session_config.reasoning_trace_enabled,
@@ -1774,7 +1778,9 @@ fn handle_tool_request(
 
     let mcp_label = mcp_label_from_input(&tool_name, &input);
     let tool_labels = tool_label_pair_for_name(&tool_name);
-    let active_label = mcp_label.clone().unwrap_or_else(|| tool_labels.active.to_string());
+    let active_label = mcp_label
+        .clone()
+        .unwrap_or_else(|| tool_labels.active.to_string());
     let input_preview = mcp_input_preview(&tool_name, &input);
     let _ = router.send_control(CrpEvent::ToolRequest {
         session_id: session_id.clone(),
@@ -1867,9 +1873,11 @@ fn handle_tool_result(
         }
     }
 
-    let label = pending_request
-        .tool_label
-        .unwrap_or_else(|| tool_label_pair_for_name(&pending_request.tool_name).completed.to_string());
+    let label = pending_request.tool_label.unwrap_or_else(|| {
+        tool_label_pair_for_name(&pending_request.tool_name)
+            .completed
+            .to_string()
+    });
     dispatch_event(
         router,
         CrpChannel::Control,
@@ -1959,8 +1967,7 @@ fn tool_output_from_result(
         _ => {
             let content = output_text.or_else(|| error.clone()).unwrap_or_default();
             Ok(ToolOutput::Function {
-                content,
-                content_items: None,
+                body: codex_protocol::models::FunctionCallOutputBody::Text(content),
                 success: Some(success),
             })
         }
@@ -1978,20 +1985,18 @@ fn call_tool_result_from_value(value: Option<serde_json::Value>) -> CallToolResu
             _ => value.to_string(),
         };
         return CallToolResult {
-            content: vec![ContentBlock::TextContent(TextContent {
-                annotations: None,
-                text,
-                r#type: "text".to_string(),
-            })],
-            is_error: None,
+            content: vec![json!({"type":"text","text": text})],
             structured_content: None,
+            is_error: None,
+            meta: None,
         };
     }
 
     CallToolResult {
         content: Vec::new(),
-        is_error: None,
         structured_content: None,
+        is_error: None,
+        meta: None,
     }
 }
 
@@ -2040,15 +2045,12 @@ struct ToolLabelPair {
 
 fn tool_label_pair_for_name(tool_name: &str) -> ToolLabelPair {
     match tool_name {
-        "exec"
-        | "exec_command"
-        | "shell"
-        | "shell_command"
-        | "local_shell"
-        | "container.exec" => ToolLabelPair {
-            active: "Running",
-            completed: "Ran",
-        },
+        "exec" | "exec_command" | "shell" | "shell_command" | "local_shell" | "container.exec" => {
+            ToolLabelPair {
+                active: "Running",
+                completed: "Ran",
+            }
+        }
         "write_stdin" => ToolLabelPair {
             active: "Sending input",
             completed: "Input sent",
@@ -2128,10 +2130,7 @@ fn tool_label_pair_for_name(tool_name: &str) -> ToolLabelPair {
     }
 }
 
-fn mcp_label_from_input(
-    tool_name: &str,
-    input: &Option<serde_json::Value>,
-) -> Option<String> {
+fn mcp_label_from_input(tool_name: &str, input: &Option<serde_json::Value>) -> Option<String> {
     if !tool_name.eq_ignore_ascii_case("mcp") {
         return None;
     }
@@ -2407,8 +2406,9 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                         .or_default();
                     let prior_title = state.title.clone();
                     let prior_emitted = state.title_emitted;
+                    let summary_text = summary_text.replace("\\n", "\n");
                     let (title_opt, body_offset) =
-                        match extract_summary_title_and_body_offset(summary_text) {
+                        match extract_summary_title_and_body_offset(&summary_text) {
                             Some((title, offset)) => (Some(title), offset),
                             None => {
                                 let trimmed = summary_text.trim_start();
@@ -2847,12 +2847,8 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
         EventMsg::Error(ev) => {
             let turn = ensure_turn(tracker, &event.id);
             if mark_completed(turn) {
-                let error = build_crp_turn_error(
-                    "error",
-                    ev.message,
-                    ev.codex_error_info.as_ref(),
-                    None,
-                );
+                let error =
+                    build_crp_turn_error("error", ev.message, ev.codex_error_info.as_ref(), None);
                 vec![(
                     CrpChannel::Control,
                     CrpEvent::TurnCompleted {
@@ -2907,10 +2903,7 @@ fn map_codex_event(tracker: &mut TurnTracker, event: Event) -> Vec<(CrpChannel, 
                 session_id,
                 reason: Some("context_compacted".to_string()),
             };
-            vec![
-                (CrpChannel::Control, notice),
-                (CrpChannel::Control, gap),
-            ]
+            vec![(CrpChannel::Control, notice), (CrpChannel::Control, gap)]
         }
         _ => Vec::new(),
     }
@@ -3017,6 +3010,7 @@ mod tests {
                 id: turn_id.clone(),
                 msg: EventMsg::TurnStarted(TurnStartedEvent {
                     model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
                 }),
             },
             Event {
@@ -3154,6 +3148,7 @@ mod tests {
                 id: turn_id.clone(),
                 msg: EventMsg::TurnStarted(TurnStartedEvent {
                     model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
                 }),
             },
             Event {
@@ -3203,9 +3198,7 @@ mod tests {
                     turn_id: "turn-1".to_string(),
                     item: TurnItem::Reasoning(ReasoningItem {
                         id: "reasoning-1".to_string(),
-                        summary_text: vec![
-                            "**Reading foo**\n\nThinking about bar".to_string(),
-                        ],
+                        summary_text: vec!["**Reading foo**\n\nThinking about bar".to_string()],
                         raw_content: vec![],
                     }),
                 }),

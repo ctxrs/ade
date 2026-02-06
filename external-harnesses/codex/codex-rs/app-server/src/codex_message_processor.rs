@@ -13,7 +13,6 @@ use codex_app_server_protocol::AccountLoginCompletedNotification;
 use codex_app_server_protocol::AccountUpdatedNotification;
 use codex_app_server_protocol::AddConversationListenerParams;
 use codex_app_server_protocol::AddConversationSubscriptionResponse;
-use codex_app_server_protocol::AppInfo as ApiAppInfo;
 use codex_app_server_protocol::AppsListParams;
 use codex_app_server_protocol::AppsListResponse;
 use codex_app_server_protocol::ArchiveConversationParams;
@@ -58,6 +57,7 @@ use codex_app_server_protocol::ListConversationsResponse;
 use codex_app_server_protocol::ListMcpServerStatusParams;
 use codex_app_server_protocol::ListMcpServerStatusResponse;
 use codex_app_server_protocol::LoginAccountParams;
+use codex_app_server_protocol::LoginAccountResponse;
 use codex_app_server_protocol::LoginApiKeyParams;
 use codex_app_server_protocol::LoginApiKeyResponse;
 use codex_app_server_protocol::LoginChatGptCompleteNotification;
@@ -69,6 +69,8 @@ use codex_app_server_protocol::McpServerOauthLoginParams;
 use codex_app_server_protocol::McpServerOauthLoginResponse;
 use codex_app_server_protocol::McpServerRefreshResponse;
 use codex_app_server_protocol::McpServerStatus;
+use codex_app_server_protocol::MockExperimentalMethodParams;
+use codex_app_server_protocol::MockExperimentalMethodResponse;
 use codex_app_server_protocol::ModelListParams;
 use codex_app_server_protocol::ModelListResponse;
 use codex_app_server_protocol::NewConversationParams;
@@ -95,9 +97,15 @@ use codex_app_server_protocol::SkillsConfigWriteParams;
 use codex_app_server_protocol::SkillsConfigWriteResponse;
 use codex_app_server_protocol::SkillsListParams;
 use codex_app_server_protocol::SkillsListResponse;
+use codex_app_server_protocol::SkillsRemoteReadParams;
+use codex_app_server_protocol::SkillsRemoteReadResponse;
+use codex_app_server_protocol::SkillsRemoteWriteParams;
+use codex_app_server_protocol::SkillsRemoteWriteResponse;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadArchiveParams;
 use codex_app_server_protocol::ThreadArchiveResponse;
+use codex_app_server_protocol::ThreadCompactStartParams;
+use codex_app_server_protocol::ThreadCompactStartResponse;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
 use codex_app_server_protocol::ThreadItem;
@@ -110,6 +118,8 @@ use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadResumeParams;
 use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadRollbackParams;
+use codex_app_server_protocol::ThreadSetNameParams;
+use codex_app_server_protocol::ThreadSetNameResponse;
 use codex_app_server_protocol::ThreadSortKey;
 use codex_app_server_protocol::ThreadSourceKind;
 use codex_app_server_protocol::ThreadStartParams;
@@ -130,7 +140,9 @@ use codex_app_server_protocol::UserSavedConfig;
 use codex_app_server_protocol::build_turns_from_event_msgs;
 use codex_backend_client::Client as BackendClient;
 use codex_chatgpt::connectors;
+use codex_cloud_requirements::cloud_requirements_loader;
 use codex_core::AuthManager;
+use codex_core::CodexAuth;
 use codex_core::CodexThread;
 use codex_core::Cursor as RolloutCursor;
 use codex_core::InitialHistory;
@@ -142,13 +154,16 @@ use codex_core::ThreadManager;
 use codex_core::ThreadSortKey as CoreThreadSortKey;
 use codex_core::auth::CLIENT_ID;
 use codex_core::auth::login_with_api_key;
+use codex_core::auth::login_with_chatgpt_auth_tokens;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::ConfigService;
 use codex_core::config::edit::ConfigEdit;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::types::McpServerTransportConfig;
+use codex_core::config_loader::CloudRequirementsLoader;
 use codex_core::default_client::get_codex_user_agent;
+use codex_core::default_client::set_default_client_residency_requirement;
 use codex_core::error::CodexErr;
 use codex_core::exec::ExecParams;
 use codex_core::exec_env::create_env;
@@ -169,6 +184,11 @@ use codex_core::read_head_for_summary;
 use codex_core::read_session_meta_line;
 use codex_core::rollout_date_parts;
 use codex_core::sandboxing::SandboxPermissions;
+use codex_core::skills::remote::download_remote_skill;
+use codex_core::skills::remote::list_remote_skills;
+use codex_core::state_db::get_state_db;
+use codex_core::token_data::parse_id_token;
+use codex_core::windows_sandbox::WindowsSandboxLevelExt;
 use codex_feedback::CodexFeedback;
 use codex_login::ServerOptions as LoginServerOptions;
 use codex_login::ShutdownHandle;
@@ -176,6 +196,7 @@ use codex_login::run_login_server;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::dynamic_tools::DynamicToolSpec as CoreDynamicToolSpec;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
@@ -193,13 +214,17 @@ use codex_utils_json_to_toml::json_to_toml;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsStr;
+use std::fs::FileTimes;
+use std::fs::OpenOptions;
 use std::io::Error as IoError;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+use std::time::SystemTime;
 use tokio::sync::Mutex;
 use tokio::sync::broadcast;
 use tokio::sync::oneshot;
@@ -255,6 +280,7 @@ pub(crate) struct CodexMessageProcessor {
     codex_linux_sandbox_exe: Option<PathBuf>,
     config: Arc<Config>,
     cli_overrides: Vec<(String, TomlValue)>,
+    cloud_requirements: Arc<RwLock<CloudRequirementsLoader>>,
     conversation_listeners: HashMap<Uuid, oneshot::Sender<()>>,
     listener_thread_ids_by_subscription: HashMap<Uuid, ThreadId>,
     active_login: Arc<Mutex<Option<ActiveLogin>>>,
@@ -271,6 +297,17 @@ pub(crate) struct CodexMessageProcessor {
 pub(crate) enum ApiVersion {
     V1,
     V2,
+}
+
+pub(crate) struct CodexMessageProcessorArgs {
+    pub(crate) auth_manager: Arc<AuthManager>,
+    pub(crate) thread_manager: Arc<ThreadManager>,
+    pub(crate) outgoing: Arc<OutgoingMessageSender>,
+    pub(crate) codex_linux_sandbox_exe: Option<PathBuf>,
+    pub(crate) config: Arc<Config>,
+    pub(crate) cli_overrides: Vec<(String, TomlValue)>,
+    pub(crate) cloud_requirements: CloudRequirementsLoader,
+    pub(crate) feedback: CodexFeedback,
 }
 
 impl CodexMessageProcessor {
@@ -297,15 +334,17 @@ impl CodexMessageProcessor {
 
         Ok((thread_id, thread))
     }
-    pub fn new(
-        auth_manager: Arc<AuthManager>,
-        thread_manager: Arc<ThreadManager>,
-        outgoing: Arc<OutgoingMessageSender>,
-        codex_linux_sandbox_exe: Option<PathBuf>,
-        config: Arc<Config>,
-        cli_overrides: Vec<(String, TomlValue)>,
-        feedback: CodexFeedback,
-    ) -> Self {
+    pub fn new(args: CodexMessageProcessorArgs) -> Self {
+        let CodexMessageProcessorArgs {
+            auth_manager,
+            thread_manager,
+            outgoing,
+            codex_linux_sandbox_exe,
+            config,
+            cli_overrides,
+            cloud_requirements,
+            feedback,
+        } = args;
         Self {
             auth_manager,
             thread_manager,
@@ -313,6 +352,7 @@ impl CodexMessageProcessor {
             codex_linux_sandbox_exe,
             config,
             cli_overrides,
+            cloud_requirements: Arc::new(RwLock::new(cloud_requirements)),
             conversation_listeners: HashMap::new(),
             listener_thread_ids_by_subscription: HashMap::new(),
             active_login: Arc::new(Mutex::new(None)),
@@ -325,13 +365,24 @@ impl CodexMessageProcessor {
     }
 
     async fn load_latest_config(&self) -> Result<Config, JSONRPCErrorError> {
-        Config::load_with_cli_overrides(self.cli_overrides.clone())
+        let cloud_requirements = self.current_cloud_requirements();
+        codex_core::config::ConfigBuilder::default()
+            .cli_overrides(self.cli_overrides.clone())
+            .cloud_requirements(cloud_requirements)
+            .build()
             .await
             .map_err(|err| JSONRPCErrorError {
                 code: INTERNAL_ERROR_CODE,
                 message: format!("failed to reload config: {err}"),
                 data: None,
             })
+    }
+
+    fn current_cloud_requirements(&self) -> CloudRequirementsLoader {
+        self.cloud_requirements
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
     }
 
     fn review_request_from_target(
@@ -411,8 +462,14 @@ impl CodexMessageProcessor {
             ClientRequest::ThreadArchive { request_id, params } => {
                 self.thread_archive(request_id, params).await;
             }
+            ClientRequest::ThreadSetName { request_id, params } => {
+                self.thread_set_name(request_id, params).await;
+            }
             ClientRequest::ThreadUnarchive { request_id, params } => {
                 self.thread_unarchive(request_id, params).await;
+            }
+            ClientRequest::ThreadCompactStart { request_id, params } => {
+                self.thread_compact_start(request_id, params).await;
             }
             ClientRequest::ThreadRollback { request_id, params } => {
                 self.thread_rollback(request_id, params).await;
@@ -428,6 +485,12 @@ impl CodexMessageProcessor {
             }
             ClientRequest::SkillsList { request_id, params } => {
                 self.skills_list(request_id, params).await;
+            }
+            ClientRequest::SkillsRemoteRead { request_id, params } => {
+                self.skills_remote_read(request_id, params).await;
+            }
+            ClientRequest::SkillsRemoteWrite { request_id, params } => {
+                self.skills_remote_write(request_id, params).await;
             }
             ClientRequest::AppsList { request_id, params } => {
                 self.apps_list(request_id, params).await;
@@ -473,6 +536,9 @@ impl CodexMessageProcessor {
                     Self::list_collaboration_modes(outgoing, thread_manager, request_id, params)
                         .await;
                 });
+            }
+            ClientRequest::MockExperimentalMethod { request_id, params } => {
+                self.mock_experimental_method(request_id, params).await;
             }
             ClientRequest::McpServerOauthLogin { request_id, params } => {
                 self.mcp_server_oauth_login(request_id, params).await;
@@ -605,6 +671,22 @@ impl CodexMessageProcessor {
             LoginAccountParams::Chatgpt => {
                 self.login_chatgpt_v2(request_id).await;
             }
+            LoginAccountParams::ChatgptAuthTokens {
+                id_token,
+                access_token,
+            } => {
+                self.login_chatgpt_auth_tokens(request_id, id_token, access_token)
+                    .await;
+            }
+        }
+    }
+
+    fn external_auth_active_error(&self) -> JSONRPCErrorError {
+        JSONRPCErrorError {
+            code: INVALID_REQUEST_ERROR_CODE,
+            message: "External auth is active. Use account/login/start (chatgptAuthTokens) to update it or account/logout to clear it."
+                .to_string(),
+            data: None,
         }
     }
 
@@ -612,6 +694,10 @@ impl CodexMessageProcessor {
         &mut self,
         params: &LoginApiKeyParams,
     ) -> std::result::Result<(), JSONRPCErrorError> {
+        if self.auth_manager.is_external_auth_active() {
+            return Err(self.external_auth_active_error());
+        }
+
         if matches!(
             self.config.forced_login_method,
             Some(ForcedLoginMethod::Chatgpt)
@@ -656,7 +742,11 @@ impl CodexMessageProcessor {
                     .await;
 
                 let payload = AuthStatusChangeNotification {
-                    auth_method: self.auth_manager.auth_cached().map(|auth| auth.mode),
+                    auth_method: self
+                        .auth_manager
+                        .auth_cached()
+                        .as_ref()
+                        .map(CodexAuth::api_auth_mode),
                 };
                 self.outgoing
                     .send_server_notification(ServerNotification::AuthStatusChange(payload))
@@ -686,7 +776,11 @@ impl CodexMessageProcessor {
                     .await;
 
                 let payload_v2 = AccountUpdatedNotification {
-                    auth_mode: self.auth_manager.auth_cached().map(|auth| auth.mode),
+                    auth_mode: self
+                        .auth_manager
+                        .auth_cached()
+                        .as_ref()
+                        .map(CodexAuth::api_auth_mode),
                 };
                 self.outgoing
                     .send_server_notification(ServerNotification::AccountUpdated(payload_v2))
@@ -703,6 +797,10 @@ impl CodexMessageProcessor {
         &self,
     ) -> std::result::Result<LoginServerOptions, JSONRPCErrorError> {
         let config = self.config.as_ref();
+
+        if self.auth_manager.is_external_auth_active() {
+            return Err(self.external_auth_active_error());
+        }
 
         if matches!(config.forced_login_method, Some(ForcedLoginMethod::Api)) {
             return Err(JSONRPCErrorError {
@@ -747,6 +845,9 @@ impl CodexMessageProcessor {
                     let outgoing_clone = self.outgoing.clone();
                     let active_login = self.active_login.clone();
                     let auth_manager = self.auth_manager.clone();
+                    let cloud_requirements = self.cloud_requirements.clone();
+                    let chatgpt_base_url = self.config.chatgpt_base_url.clone();
+                    let cli_overrides = self.cli_overrides.clone();
                     let auth_url = server.auth_url.clone();
                     tokio::spawn(async move {
                         let (success, error_msg) = match tokio::time::timeout(
@@ -776,9 +877,22 @@ impl CodexMessageProcessor {
 
                         if success {
                             auth_manager.reload();
+                            replace_cloud_requirements_loader(
+                                cloud_requirements.as_ref(),
+                                auth_manager.clone(),
+                                chatgpt_base_url,
+                            );
+                            sync_default_client_residency_requirement(
+                                &cli_overrides,
+                                cloud_requirements.as_ref(),
+                            )
+                            .await;
 
                             // Notify clients with the actual current auth mode.
-                            let current_auth_method = auth_manager.auth_cached().map(|a| a.mode);
+                            let current_auth_method = auth_manager
+                                .auth_cached()
+                                .as_ref()
+                                .map(CodexAuth::api_auth_mode);
                             let payload = AuthStatusChangeNotification {
                                 auth_method: current_auth_method,
                             };
@@ -837,6 +951,9 @@ impl CodexMessageProcessor {
                     let outgoing_clone = self.outgoing.clone();
                     let active_login = self.active_login.clone();
                     let auth_manager = self.auth_manager.clone();
+                    let cloud_requirements = self.cloud_requirements.clone();
+                    let chatgpt_base_url = self.config.chatgpt_base_url.clone();
+                    let cli_overrides = self.cli_overrides.clone();
                     let auth_url = server.auth_url.clone();
                     tokio::spawn(async move {
                         let (success, error_msg) = match tokio::time::timeout(
@@ -866,9 +983,22 @@ impl CodexMessageProcessor {
 
                         if success {
                             auth_manager.reload();
+                            replace_cloud_requirements_loader(
+                                cloud_requirements.as_ref(),
+                                auth_manager.clone(),
+                                chatgpt_base_url,
+                            );
+                            sync_default_client_residency_requirement(
+                                &cli_overrides,
+                                cloud_requirements.as_ref(),
+                            )
+                            .await;
 
                             // Notify clients with the actual current auth mode.
-                            let current_auth_method = auth_manager.auth_cached().map(|a| a.mode);
+                            let current_auth_method = auth_manager
+                                .auth_cached()
+                                .as_ref()
+                                .map(CodexAuth::api_auth_mode);
                             let payload_v2 = AccountUpdatedNotification {
                                 auth_mode: current_auth_method,
                             };
@@ -962,6 +1092,108 @@ impl CodexMessageProcessor {
         }
     }
 
+    async fn login_chatgpt_auth_tokens(
+        &mut self,
+        request_id: RequestId,
+        id_token: String,
+        access_token: String,
+    ) {
+        if matches!(
+            self.config.forced_login_method,
+            Some(ForcedLoginMethod::Api)
+        ) {
+            let error = JSONRPCErrorError {
+                code: INVALID_REQUEST_ERROR_CODE,
+                message: "External ChatGPT auth is disabled. Use API key login instead."
+                    .to_string(),
+                data: None,
+            };
+            self.outgoing.send_error(request_id, error).await;
+            return;
+        }
+
+        // Cancel any active login attempt to avoid persisting managed auth state.
+        {
+            let mut guard = self.active_login.lock().await;
+            if let Some(active) = guard.take() {
+                drop(active);
+            }
+        }
+
+        let id_token_info = match parse_id_token(&id_token) {
+            Ok(info) => info,
+            Err(err) => {
+                let error = JSONRPCErrorError {
+                    code: INVALID_REQUEST_ERROR_CODE,
+                    message: format!("invalid id token: {err}"),
+                    data: None,
+                };
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+
+        if let Some(expected_workspace) = self.config.forced_chatgpt_workspace_id.as_deref()
+            && id_token_info.chatgpt_account_id.as_deref() != Some(expected_workspace)
+        {
+            let account_id = id_token_info.chatgpt_account_id;
+            let error = JSONRPCErrorError {
+                code: INVALID_REQUEST_ERROR_CODE,
+                message: format!(
+                    "External auth must use workspace {expected_workspace}, but received {account_id:?}."
+                ),
+                data: None,
+            };
+            self.outgoing.send_error(request_id, error).await;
+            return;
+        }
+
+        if let Err(err) =
+            login_with_chatgpt_auth_tokens(&self.config.codex_home, &id_token, &access_token)
+        {
+            let error = JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: format!("failed to set external auth: {err}"),
+                data: None,
+            };
+            self.outgoing.send_error(request_id, error).await;
+            return;
+        }
+        self.auth_manager.reload();
+        replace_cloud_requirements_loader(
+            self.cloud_requirements.as_ref(),
+            self.auth_manager.clone(),
+            self.config.chatgpt_base_url.clone(),
+        );
+        sync_default_client_residency_requirement(
+            &self.cli_overrides,
+            self.cloud_requirements.as_ref(),
+        )
+        .await;
+
+        self.outgoing
+            .send_response(request_id, LoginAccountResponse::ChatgptAuthTokens {})
+            .await;
+
+        let payload_login_completed = AccountLoginCompletedNotification {
+            login_id: None,
+            success: true,
+            error: None,
+        };
+        self.outgoing
+            .send_server_notification(ServerNotification::AccountLoginCompleted(
+                payload_login_completed,
+            ))
+            .await;
+
+        let payload_v2 = AccountUpdatedNotification {
+            auth_mode: self.auth_manager.get_auth_mode(),
+        };
+        self.outgoing
+            .send_server_notification(ServerNotification::AccountUpdated(payload_v2))
+            .await;
+    }
+
     async fn logout_common(&mut self) -> std::result::Result<Option<AuthMode>, JSONRPCErrorError> {
         // Cancel any active login attempt.
         {
@@ -980,7 +1212,11 @@ impl CodexMessageProcessor {
         }
 
         // Reflect the current auth method after logout (likely None).
-        Ok(self.auth_manager.auth_cached().map(|auth| auth.mode))
+        Ok(self
+            .auth_manager
+            .auth_cached()
+            .as_ref()
+            .map(CodexAuth::api_auth_mode))
     }
 
     async fn logout_v1(&mut self, request_id: RequestId) {
@@ -1024,6 +1260,9 @@ impl CodexMessageProcessor {
     }
 
     async fn refresh_token_if_requested(&self, do_refresh: bool) {
+        if self.auth_manager.is_external_auth_active() {
+            return;
+        }
         if do_refresh && let Err(err) = self.auth_manager.refresh_token().await {
             tracing::warn!("failed to refresh token while getting account: {err}");
         }
@@ -1049,7 +1288,7 @@ impl CodexMessageProcessor {
         } else {
             match self.auth_manager.auth().await {
                 Some(auth) => {
-                    let auth_mode = auth.mode;
+                    let auth_mode = auth.api_auth_mode();
                     let (reported_auth_method, token_opt) = match auth.get_token() {
                         Ok(token) if !token.is_empty() => {
                             let tok = if include_token { Some(token) } else { None };
@@ -1096,9 +1335,9 @@ impl CodexMessageProcessor {
         }
 
         let account = match self.auth_manager.auth_cached() {
-            Some(auth) => Some(match auth.mode {
-                AuthMode::ApiKey => Account::ApiKey {},
-                AuthMode::ChatGPT => {
+            Some(auth) => Some(match auth {
+                CodexAuth::ApiKey(_) => Account::ApiKey {},
+                CodexAuth::Chatgpt(_) | CodexAuth::ChatgptAuthTokens(_) => {
                     let email = auth.get_account_email();
                     let plan_type = auth.account_plan_type();
 
@@ -1157,7 +1396,7 @@ impl CodexMessageProcessor {
             });
         };
 
-        if auth.mode != AuthMode::ChatGPT {
+        if !auth.is_chatgpt_auth() {
             return Err(JSONRPCErrorError {
                 code: INVALID_REQUEST_ERROR_CODE,
                 message: "chatgpt authentication required to read rate limits".to_string(),
@@ -1255,16 +1494,18 @@ impl CodexMessageProcessor {
         }
 
         let cwd = params.cwd.unwrap_or_else(|| self.config.cwd.clone());
-        let env = create_env(&self.config.shell_environment_policy);
+        let env = create_env(&self.config.shell_environment_policy, None);
         let timeout_ms = params
             .timeout_ms
             .and_then(|timeout_ms| u64::try_from(timeout_ms).ok());
+        let windows_sandbox_level = WindowsSandboxLevel::from_config(&self.config);
         let exec_params = ExecParams {
             command: params.command,
             cwd,
             expiration: timeout_ms.into(),
             env,
             sandbox_permissions: SandboxPermissions::UseDefault,
+            windows_sandbox_level,
             justification: None,
             arg0: None,
         };
@@ -1290,6 +1531,7 @@ impl CodexMessageProcessor {
         let outgoing = self.outgoing.clone();
         let req_id = request_id;
         let sandbox_cwd = self.config.cwd.clone();
+        let use_linux_sandbox_bwrap = self.config.features.enabled(Feature::UseLinuxSandboxBwrap);
 
         tokio::spawn(async move {
             match codex_core::exec::process_exec_tool_call(
@@ -1297,6 +1539,7 @@ impl CodexMessageProcessor {
                 &effective_policy,
                 sandbox_cwd.as_path(),
                 &codex_linux_sandbox_exe,
+                use_linux_sandbox_bwrap,
                 None,
             )
             .await
@@ -1365,10 +1608,12 @@ impl CodexMessageProcessor {
             );
         }
 
+        let cloud_requirements = self.current_cloud_requirements();
         let config = match derive_config_from_params(
             &self.cli_overrides,
             Some(request_overrides),
             typesafe_overrides,
+            &cloud_requirements,
         )
         .await
         {
@@ -1433,6 +1678,7 @@ impl CodexMessageProcessor {
             base_instructions,
             developer_instructions,
             dynamic_tools,
+            mock_experimental_field: _mock_experimental_field,
             experimental_raw_events,
             personality,
             ephemeral,
@@ -1449,10 +1695,12 @@ impl CodexMessageProcessor {
         );
         typesafe_overrides.ephemeral = ephemeral;
 
+        let cloud_requirements = self.current_cloud_requirements();
         let config = match derive_config_from_params(
             &self.cli_overrides,
             config,
             typesafe_overrides,
+            &cloud_requirements,
         )
         .await
         {
@@ -1599,12 +1847,13 @@ impl CodexMessageProcessor {
             codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.clone(),
             base_instructions,
             developer_instructions,
-            model_personality: personality,
+            personality,
             ..Default::default()
         }
     }
 
     async fn thread_archive(&mut self, request_id: RequestId, params: ThreadArchiveParams) {
+        // TODO(jif) mostly rewrite this using sqlite after phase 1
         let thread_id = match ThreadId::from_string(&params.thread_id) {
             Ok(id) => id,
             Err(err) => {
@@ -1653,7 +1902,38 @@ impl CodexMessageProcessor {
         }
     }
 
+    async fn thread_set_name(&self, request_id: RequestId, params: ThreadSetNameParams) {
+        let ThreadSetNameParams { thread_id, name } = params;
+        let Some(name) = codex_core::util::normalize_thread_name(&name) else {
+            self.send_invalid_request_error(
+                request_id,
+                "thread name must not be empty".to_string(),
+            )
+            .await;
+            return;
+        };
+
+        let (_, thread) = match self.load_thread(&thread_id).await {
+            Ok(v) => v,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+
+        if let Err(err) = thread.submit(Op::SetThreadName { name }).await {
+            self.send_internal_error(request_id, format!("failed to set thread name: {err}"))
+                .await;
+            return;
+        }
+
+        self.outgoing
+            .send_response(request_id, ThreadSetNameResponse {})
+            .await;
+    }
+
     async fn thread_unarchive(&mut self, request_id: RequestId, params: ThreadUnarchiveParams) {
+        // TODO(jif) mostly rewrite this using sqlite after phase 1
         let thread_id = match ThreadId::from_string(&params.thread_id) {
             Ok(id) => id,
             Err(err) => {
@@ -1696,6 +1976,7 @@ impl CodexMessageProcessor {
 
         let rollout_path_display = archived_path.display().to_string();
         let fallback_provider = self.config.model_provider_id.clone();
+        let state_db_ctx = get_state_db(&self.config, None).await;
         let archived_folder = self
             .config
             .codex_home
@@ -1774,6 +2055,33 @@ impl CodexMessageProcessor {
                     message: format!("failed to unarchive thread: {err}"),
                     data: None,
                 })?;
+            tokio::task::spawn_blocking({
+                let restored_path = restored_path.clone();
+                move || -> std::io::Result<()> {
+                    let times = FileTimes::new().set_modified(SystemTime::now());
+                    OpenOptions::new()
+                        .append(true)
+                        .open(&restored_path)?
+                        .set_times(times)?;
+                    Ok(())
+                }
+            })
+            .await
+            .map_err(|err| JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: format!("failed to update unarchived thread timestamp: {err}"),
+                data: None,
+            })?
+            .map_err(|err| JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: format!("failed to update unarchived thread timestamp: {err}"),
+                data: None,
+            })?;
+            if let Some(ctx) = state_db_ctx {
+                let _ = ctx
+                    .mark_unarchived(thread_id, restored_path.as_path())
+                    .await;
+            }
             let summary =
                 read_summary_from_rollout(restored_path.as_path(), fallback_provider.as_str())
                     .await
@@ -1839,6 +2147,30 @@ impl CodexMessageProcessor {
 
             self.send_internal_error(request_id, format!("failed to start rollback: {err}"))
                 .await;
+        }
+    }
+
+    async fn thread_compact_start(&self, request_id: RequestId, params: ThreadCompactStartParams) {
+        let ThreadCompactStartParams { thread_id } = params;
+
+        let (_, thread) = match self.load_thread(&thread_id).await {
+            Ok(v) => v,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+
+        match thread.submit(Op::Compact).await {
+            Ok(_) => {
+                self.outgoing
+                    .send_response(request_id, ThreadCompactStartResponse {})
+                    .await;
+            }
+            Err(err) => {
+                self.send_internal_error(request_id, format!("failed to start compaction: {err}"))
+                    .await;
+            }
         }
     }
 
@@ -2157,11 +2489,13 @@ impl CodexMessageProcessor {
         );
 
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
+        let cloud_requirements = self.current_cloud_requirements();
         let config = match derive_config_for_cwd(
             &self.cli_overrides,
             request_overrides,
             typesafe_overrides,
             history_cwd,
+            &cloud_requirements,
         )
         .await
         {
@@ -2349,11 +2683,13 @@ impl CodexMessageProcessor {
             None,
         );
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
+        let cloud_requirements = self.current_cloud_requirements();
         let config = match derive_config_for_cwd(
             &self.cli_overrides,
             request_overrides,
             typesafe_overrides,
             history_cwd,
+            &cloud_requirements,
         )
         .await
         {
@@ -2503,7 +2839,6 @@ impl CodexMessageProcessor {
         };
 
         let fallback_provider = self.config.model_provider_id.as_str();
-
         match read_summary_from_rollout(&path, fallback_provider).await {
             Ok(summary) => {
                 let response = GetConversationSummaryResponse { summary };
@@ -2764,6 +3099,16 @@ impl CodexMessageProcessor {
         let items = thread_manager.list_collaboration_modes();
         let response = CollaborationModeListResponse { data: items };
         outgoing.send_response(request_id, response).await;
+    }
+
+    async fn mock_experimental_method(
+        &self,
+        request_id: RequestId,
+        params: MockExperimentalMethodParams,
+    ) {
+        let MockExperimentalMethodParams { value } = params;
+        let response = MockExperimentalMethodResponse { echoed: value };
+        self.outgoing.send_response(request_id, response).await;
     }
 
     async fn mcp_server_refresh(&self, request_id: RequestId, _params: Option<()>) {
@@ -3144,11 +3489,13 @@ impl CodexMessageProcessor {
             ),
         };
 
+        let cloud_requirements = self.current_cloud_requirements();
         let config = match derive_config_for_cwd(
             &self.cli_overrides,
             request_overrides,
             typesafe_overrides,
             history_cwd,
+            &cloud_requirements,
         )
         .await
         {
@@ -3332,11 +3679,13 @@ impl CodexMessageProcessor {
             ),
         };
 
+        let cloud_requirements = self.current_cloud_requirements();
         let config = match derive_config_for_cwd(
             &self.cli_overrides,
             request_overrides,
             typesafe_overrides,
             history_cwd,
+            &cloud_requirements,
         )
         .await
         {
@@ -3526,8 +3875,13 @@ impl CodexMessageProcessor {
             });
         }
 
+        let mut state_db_ctx = None;
+
         // If the thread is active, request shutdown and wait briefly.
         if let Some(conversation) = self.thread_manager.remove_thread(&thread_id).await {
+            if let Some(ctx) = conversation.state_db() {
+                state_db_ctx = Some(ctx);
+            }
             info!("thread {thread_id} was active; shutting down");
             // Request shutdown.
             match conversation.submit(Op::Shutdown).await {
@@ -3554,14 +3908,24 @@ impl CodexMessageProcessor {
             }
         }
 
+        if state_db_ctx.is_none() {
+            state_db_ctx = get_state_db(&self.config, None).await;
+        }
+
         // Move the rollout file to archived.
-        let result: std::io::Result<()> = async {
+        let result: std::io::Result<()> = async move {
             let archive_folder = self
                 .config
                 .codex_home
                 .join(codex_core::ARCHIVED_SESSIONS_SUBDIR);
             tokio::fs::create_dir_all(&archive_folder).await?;
-            tokio::fs::rename(&canonical_rollout_path, &archive_folder.join(&file_name)).await?;
+            let archived_path = archive_folder.join(&file_name);
+            tokio::fs::rename(&canonical_rollout_path, &archived_path).await?;
+            if let Some(ctx) = state_db_ctx {
+                let _ = ctx
+                    .mark_archived(thread_id, archived_path.as_path(), Utc::now())
+                    .await;
+            }
             Ok(())
         }
         .await;
@@ -3685,7 +4049,7 @@ impl CodexMessageProcessor {
             }
         };
 
-        if !config.features.enabled(Feature::Connectors) {
+        if !config.features.enabled(Feature::Apps) {
             self.outgoing
                 .send_response(
                     request_id,
@@ -3748,18 +4112,7 @@ impl CodexMessageProcessor {
         }
 
         let end = start.saturating_add(effective_limit).min(total);
-        let data = connectors[start..end]
-            .iter()
-            .cloned()
-            .map(|connector| ApiAppInfo {
-                id: connector.connector_id,
-                name: connector.connector_name,
-                description: connector.connector_description,
-                logo_url: connector.logo_url,
-                install_url: connector.install_url,
-                is_accessible: connector.is_accessible,
-            })
-            .collect();
+        let data = connectors[start..end].to_vec();
 
         let next_cursor = if end < total {
             Some(end.to_string())
@@ -3794,6 +4147,61 @@ impl CodexMessageProcessor {
         self.outgoing
             .send_response(request_id, SkillsListResponse { data })
             .await;
+    }
+
+    async fn skills_remote_read(&self, request_id: RequestId, _params: SkillsRemoteReadParams) {
+        match list_remote_skills(&self.config).await {
+            Ok(skills) => {
+                let data = skills
+                    .into_iter()
+                    .map(|skill| codex_app_server_protocol::RemoteSkillSummary {
+                        id: skill.id,
+                        name: skill.name,
+                        description: skill.description,
+                    })
+                    .collect();
+                self.outgoing
+                    .send_response(request_id, SkillsRemoteReadResponse { data })
+                    .await;
+            }
+            Err(err) => {
+                self.send_internal_error(
+                    request_id,
+                    format!("failed to read remote skills: {err}"),
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn skills_remote_write(&self, request_id: RequestId, params: SkillsRemoteWriteParams) {
+        let SkillsRemoteWriteParams {
+            hazelnut_id,
+            is_preload,
+        } = params;
+        let response = download_remote_skill(&self.config, hazelnut_id.as_str(), is_preload).await;
+
+        match response {
+            Ok(downloaded) => {
+                self.outgoing
+                    .send_response(
+                        request_id,
+                        SkillsRemoteWriteResponse {
+                            id: downloaded.id,
+                            name: downloaded.name,
+                            path: downloaded.path,
+                        },
+                    )
+                    .await;
+            }
+            Err(err) => {
+                self.send_internal_error(
+                    request_id,
+                    format!("failed to download remote skill: {err}"),
+                )
+                .await;
+            }
+        }
     }
 
     async fn skills_config_write(&self, request_id: RequestId, params: SkillsConfigWriteParams) {
@@ -3887,6 +4295,7 @@ impl CodexMessageProcessor {
                     cwd: params.cwd,
                     approval_policy: params.approval_policy.map(AskForApproval::to_core),
                     sandbox_policy: params.sandbox_policy.map(|p| p.to_core()),
+                    windows_sandbox_level: None,
                     model: params.model,
                     effort: params.effort.map(Some),
                     summary: params.summary,
@@ -4517,6 +4926,22 @@ fn skills_to_info(
                         default_prompt: interface.default_prompt,
                     }
                 }),
+                dependencies: skill.dependencies.clone().map(|dependencies| {
+                    codex_app_server_protocol::SkillDependencies {
+                        tools: dependencies
+                            .tools
+                            .into_iter()
+                            .map(|tool| codex_app_server_protocol::SkillToolDependency {
+                                r#type: tool.r#type,
+                                value: tool.value,
+                                description: tool.description,
+                                transport: tool.transport,
+                                command: tool.command,
+                                url: tool.url,
+                            })
+                            .collect(),
+                    }
+                }),
                 path: skill.path.clone(),
                 scope: skill.scope.into(),
                 enabled,
@@ -4572,6 +4997,41 @@ fn validate_dynamic_tools(
     Ok(())
 }
 
+fn replace_cloud_requirements_loader(
+    cloud_requirements: &RwLock<CloudRequirementsLoader>,
+    auth_manager: Arc<AuthManager>,
+    chatgpt_base_url: String,
+) {
+    let loader = cloud_requirements_loader(auth_manager, chatgpt_base_url);
+    if let Ok(mut guard) = cloud_requirements.write() {
+        *guard = loader;
+    } else {
+        warn!("failed to update cloud requirements loader");
+    }
+}
+
+async fn sync_default_client_residency_requirement(
+    cli_overrides: &[(String, TomlValue)],
+    cloud_requirements: &RwLock<CloudRequirementsLoader>,
+) {
+    let loader = cloud_requirements
+        .read()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
+    match codex_core::config::ConfigBuilder::default()
+        .cli_overrides(cli_overrides.to_vec())
+        .cloud_requirements(loader)
+        .build()
+        .await
+    {
+        Ok(config) => set_default_client_residency_requirement(config.enforce_residency.value()),
+        Err(err) => warn!(
+            error = %err,
+            "failed to sync default client residency requirement after auth refresh"
+        ),
+    }
+}
+
 /// Derive the effective [`Config`] by layering three override sources.
 ///
 /// Precedence (lowest to highest):
@@ -4586,6 +5046,7 @@ async fn derive_config_from_params(
     cli_overrides: &[(String, TomlValue)],
     request_overrides: Option<HashMap<String, serde_json::Value>>,
     typesafe_overrides: ConfigOverrides,
+    cloud_requirements: &CloudRequirementsLoader,
 ) -> std::io::Result<Config> {
     let merged_cli_overrides = cli_overrides
         .iter()
@@ -4598,7 +5059,11 @@ async fn derive_config_from_params(
         )
         .collect::<Vec<_>>();
 
-    Config::load_with_cli_overrides_and_harness_overrides(merged_cli_overrides, typesafe_overrides)
+    codex_core::config::ConfigBuilder::default()
+        .cli_overrides(merged_cli_overrides)
+        .harness_overrides(typesafe_overrides)
+        .cloud_requirements(cloud_requirements.clone())
+        .build()
         .await
 }
 
@@ -4607,6 +5072,7 @@ async fn derive_config_for_cwd(
     request_overrides: Option<HashMap<String, serde_json::Value>>,
     typesafe_overrides: ConfigOverrides,
     cwd: Option<PathBuf>,
+    cloud_requirements: &CloudRequirementsLoader,
 ) -> std::io::Result<Config> {
     let merged_cli_overrides = cli_overrides
         .iter()
@@ -4623,6 +5089,7 @@ async fn derive_config_for_cwd(
         .cli_overrides(merged_cli_overrides)
         .harness_overrides(typesafe_overrides)
         .fallback_cwd(cwd)
+        .cloud_requirements(cloud_requirements.clone())
         .build()
         .await
 }

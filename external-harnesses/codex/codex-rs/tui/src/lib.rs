@@ -8,9 +8,9 @@ use app::App;
 pub use app::AppExitInfo;
 pub use app::ExitReason;
 use codex_app_server_protocol::AuthMode;
+use codex_cloud_requirements::cloud_requirements_loader;
 use codex_common::oss::ensure_oss_provider_ready;
 use codex_common::oss::get_default_model_for_oss_provider;
-use codex_common::oss::ollama_chat_deprecation_notice;
 use codex_core::AuthManager;
 use codex_core::CodexAuth;
 use codex_core::INTERACTIVE_SESSION_SOURCES;
@@ -23,18 +23,23 @@ use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_config_as_toml_with_cli_overrides;
 use codex_core::config::resolve_oss_provider;
+use codex_core::config_loader::CloudRequirementsLoader;
 use codex_core::config_loader::ConfigLoadError;
 use codex_core::config_loader::format_config_error_with_source;
+use codex_core::default_client::set_default_client_residency_requirement;
 use codex_core::find_thread_path_by_id_str;
-use codex_core::get_platform_sandbox;
+use codex_core::find_thread_path_by_name_str;
 use codex_core::path_utils;
 use codex_core::protocol::AskForApproval;
 use codex_core::read_session_meta_line;
 use codex_core::terminal::Multiplexer;
+use codex_core::windows_sandbox::WindowsSandboxLevelExt;
 use codex_protocol::config_types::AltScreenMode;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::RolloutLine;
+use codex_state::log_db;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use cwd_prompt::CwdPromptAction;
 use cwd_prompt::CwdSelection;
@@ -45,6 +50,7 @@ use tracing::error;
 use tracing_appender::non_blocking;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
+use uuid::Uuid;
 
 mod additional_dirs;
 mod app;
@@ -61,6 +67,7 @@ mod collaboration_modes;
 mod color;
 pub mod custom_terminal;
 mod cwd_prompt;
+mod debug_config;
 mod diff_render;
 mod exec_cell;
 mod exec_command;
@@ -107,7 +114,6 @@ mod wrapping;
 #[cfg(test)]
 pub mod test_backend;
 
-use crate::onboarding::TrustDirectorySelection;
 use crate::onboarding::onboarding_screen::OnboardingScreenArgs;
 use crate::onboarding::onboarding_screen::run_onboarding_app;
 use crate::tui::Tui;
@@ -202,6 +208,24 @@ pub async fn run_main(
         }
     };
 
+    if let Err(err) =
+        codex_core::personality_migration::maybe_migrate_personality(&codex_home, &config_toml)
+            .await
+    {
+        tracing::warn!(error = %err, "failed to run personality migration");
+    }
+
+    let cloud_auth_manager = AuthManager::shared(
+        codex_home.to_path_buf(),
+        false,
+        config_toml.cli_auth_credentials_store.unwrap_or_default(),
+    );
+    let chatgpt_base_url = config_toml
+        .chatgpt_base_url
+        .clone()
+        .unwrap_or_else(|| "https://chatgpt.com/backend-api/".to_string());
+    let cloud_requirements = cloud_requirements_loader(cloud_auth_manager, chatgpt_base_url);
+
     let model_provider_override = if cli.oss {
         let resolved = resolve_oss_provider(
             cli.oss_provider.as_deref(),
@@ -253,7 +277,13 @@ pub async fn run_main(
         ..Default::default()
     };
 
-    let config = load_config_or_exit(cli_kv_overrides.clone(), overrides.clone()).await;
+    let config = load_config_or_exit(
+        cli_kv_overrides.clone(),
+        overrides.clone(),
+        cloud_requirements.clone(),
+    )
+    .await;
+    set_default_client_residency_requirement(config.enforce_residency.value());
 
     if let Some(warning) = add_dir_warning_message(&cli.add_dir, config.sandbox_policy.get()) {
         #[allow(clippy::print_stderr)]
@@ -304,7 +334,10 @@ pub async fn run_main(
         // grep for a specific module/target while troubleshooting.
         .with_target(true)
         .with_ansi(false)
-        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::FULL)
+        .with_span_events(
+            tracing_subscriber::fmt::format::FmtSpan::NEW
+                | tracing_subscriber::fmt::format::FmtSpan::CLOSE,
+        )
         .with_filter(env_filter());
 
     let feedback = codex_feedback::CodexFeedback::new();
@@ -350,17 +383,29 @@ pub async fn run_main(
 
     let otel_tracing_layer = otel.as_ref().and_then(|o| o.tracing_layer());
 
+    let log_db_layer = codex_core::state_db::get_state_db(&config, None)
+        .await
+        .map(|db| log_db::start(db).with_filter(env_filter()));
+
     let _ = tracing_subscriber::registry()
         .with(file_layer)
         .with(feedback_layer)
         .with(feedback_metadata_layer)
+        .with(log_db_layer)
         .with(otel_logger_layer)
         .with(otel_tracing_layer)
         .try_init();
 
-    run_ratatui_app(cli, config, overrides, cli_kv_overrides, feedback)
-        .await
-        .map_err(|err| std::io::Error::other(err.to_string()))
+    run_ratatui_app(
+        cli,
+        config,
+        overrides,
+        cli_kv_overrides,
+        cloud_requirements,
+        feedback,
+    )
+    .await
+    .map_err(|err| std::io::Error::other(err.to_string()))
 }
 
 async fn run_ratatui_app(
@@ -368,6 +413,7 @@ async fn run_ratatui_app(
     initial_config: Config,
     overrides: ConfigOverrides,
     cli_kv_overrides: Vec<(String, toml::Value)>,
+    mut cloud_requirements: CloudRequirementsLoader,
     feedback: codex_feedback::CodexFeedback,
 ) -> color_eyre::Result<AppExitInfo> {
     color_eyre::install()?;
@@ -401,6 +447,7 @@ async fn run_ratatui_app(
                     return Ok(AppExitInfo {
                         token_usage: codex_core::protocol::TokenUsage::default(),
                         thread_id: None,
+                        thread_name: None,
                         update_action: Some(action),
                         exit_reason: ExitReason::UserRequested,
                     });
@@ -423,9 +470,10 @@ async fn run_ratatui_app(
         should_show_onboarding(login_status, &initial_config, should_show_trust_screen_flag);
 
     let config = if should_show_onboarding {
+        let show_login_screen = should_show_login_screen(login_status, &initial_config);
         let onboarding_result = run_onboarding_app(
             OnboardingScreenArgs {
-                show_login_screen: should_show_login_screen(login_status, &initial_config),
+                show_login_screen,
                 show_trust_screen: should_show_trust_screen_flag,
                 login_status,
                 auth_manager: auth_manager.clone(),
@@ -441,30 +489,35 @@ async fn run_ratatui_app(
             return Ok(AppExitInfo {
                 token_usage: codex_core::protocol::TokenUsage::default(),
                 thread_id: None,
+                thread_name: None,
                 update_action: None,
                 exit_reason: ExitReason::UserRequested,
             });
         }
-        // if the user acknowledged windows or made an explicit decision ato trust the directory, reload the config accordingly
-        if onboarding_result
-            .directory_trust_decision
-            .map(|d| d == TrustDirectorySelection::Trust)
-            .unwrap_or(false)
-        {
-            load_config_or_exit(cli_kv_overrides.clone(), overrides.clone()).await
+        // If this onboarding run included the login step, always refresh cloud requirements and
+        // rebuild config. This avoids missing newly available cloud requirements due to login
+        // status detection edge cases.
+        if show_login_screen {
+            cloud_requirements = cloud_requirements_loader(
+                auth_manager.clone(),
+                initial_config.chatgpt_base_url.clone(),
+            );
+        }
+
+        // If the user made an explicit trust decision, or we showed the login flow, reload config
+        // so current process state reflects persisted trust/auth changes.
+        if onboarding_result.directory_trust_decision.is_some() || show_login_screen {
+            load_config_or_exit(
+                cli_kv_overrides.clone(),
+                overrides.clone(),
+                cloud_requirements.clone(),
+            )
+            .await
         } else {
             initial_config
         }
     } else {
         initial_config
-    };
-
-    let ollama_chat_support_notice = match ollama_chat_deprecation_notice(&config).await {
-        Ok(notice) => notice,
-        Err(err) => {
-            tracing::warn!(?err, "Failed to detect Ollama wire API");
-            None
-        }
     };
     let mut missing_session_exit = |id_str: &str, action: &str| {
         error!("Error finding conversation path: {id_str}");
@@ -474,6 +527,7 @@ async fn run_ratatui_app(
         Ok(AppExitInfo {
             token_usage: codex_core::protocol::TokenUsage::default(),
             thread_id: None,
+            thread_name: None,
             update_action: None,
             exit_reason: ExitReason::Fatal(format!(
                 "No saved session found with ID {id_str}. Run `codex {action}` without an ID to choose from existing sessions."
@@ -484,7 +538,13 @@ async fn run_ratatui_app(
     let use_fork = cli.fork_picker || cli.fork_last || cli.fork_session_id.is_some();
     let session_selection = if use_fork {
         if let Some(id_str) = cli.fork_session_id.as_deref() {
-            match find_thread_path_by_id_str(&config.codex_home, id_str).await? {
+            let is_uuid = Uuid::parse_str(id_str).is_ok();
+            let path = if is_uuid {
+                find_thread_path_by_id_str(&config.codex_home, id_str).await?
+            } else {
+                find_thread_path_by_name_str(&config.codex_home, id_str).await?
+            };
+            match path {
                 Some(path) => resume_picker::SessionSelection::Fork(path),
                 None => return missing_session_exit(id_str, "fork"),
             }
@@ -523,6 +583,7 @@ async fn run_ratatui_app(
                     return Ok(AppExitInfo {
                         token_usage: codex_core::protocol::TokenUsage::default(),
                         thread_id: None,
+                        thread_name: None,
                         update_action: None,
                         exit_reason: ExitReason::UserRequested,
                     });
@@ -533,7 +594,13 @@ async fn run_ratatui_app(
             resume_picker::SessionSelection::StartFresh
         }
     } else if let Some(id_str) = cli.resume_session_id.as_deref() {
-        match find_thread_path_by_id_str(&config.codex_home, id_str).await? {
+        let is_uuid = Uuid::parse_str(id_str).is_ok();
+        let path = if is_uuid {
+            find_thread_path_by_id_str(&config.codex_home, id_str).await?
+        } else {
+            find_thread_path_by_name_str(&config.codex_home, id_str).await?
+        };
+        match path {
             Some(path) => resume_picker::SessionSelection::Resume(path),
             None => return missing_session_exit(id_str, "resume"),
         }
@@ -574,6 +641,7 @@ async fn run_ratatui_app(
                 return Ok(AppExitInfo {
                     token_usage: codex_core::protocol::TokenUsage::default(),
                     thread_id: None,
+                    thread_name: None,
                     update_action: None,
                     exit_reason: ExitReason::UserRequested,
                 });
@@ -604,12 +672,14 @@ async fn run_ratatui_app(
             load_config_or_exit_with_fallback_cwd(
                 cli_kv_overrides.clone(),
                 overrides.clone(),
+                cloud_requirements.clone(),
                 fallback_cwd,
             )
             .await
         }
         _ => config,
     };
+    set_default_client_residency_requirement(config.enforce_residency.value());
     let active_profile = config.active_profile.clone();
     let should_show_trust_screen = should_show_trust_screen(&config);
 
@@ -635,7 +705,6 @@ async fn run_ratatui_app(
         session_selection,
         feedback,
         should_show_trust_screen, // Proxy to: is it a first run in this directory?
-        ollama_chat_support_notice,
     )
     .await;
 
@@ -772,7 +841,7 @@ fn get_login_status(config: &Config) -> LoginStatus {
         // to refresh the token. Block on it.
         let codex_home = config.codex_home.clone();
         match CodexAuth::from_auth_storage(&codex_home, config.cli_auth_credentials_store_mode) {
-            Ok(Some(auth)) => LoginStatus::AuthMode(auth.mode),
+            Ok(Some(auth)) => LoginStatus::AuthMode(auth.api_auth_mode()),
             Ok(None) => LoginStatus::NotAuthenticated,
             Err(err) => {
                 error!("Failed to read auth.json: {err}");
@@ -787,19 +856,23 @@ fn get_login_status(config: &Config) -> LoginStatus {
 async fn load_config_or_exit(
     cli_kv_overrides: Vec<(String, toml::Value)>,
     overrides: ConfigOverrides,
+    cloud_requirements: CloudRequirementsLoader,
 ) -> Config {
-    load_config_or_exit_with_fallback_cwd(cli_kv_overrides, overrides, None).await
+    load_config_or_exit_with_fallback_cwd(cli_kv_overrides, overrides, cloud_requirements, None)
+        .await
 }
 
 async fn load_config_or_exit_with_fallback_cwd(
     cli_kv_overrides: Vec<(String, toml::Value)>,
     overrides: ConfigOverrides,
+    cloud_requirements: CloudRequirementsLoader,
     fallback_cwd: Option<PathBuf>,
 ) -> Config {
     #[allow(clippy::print_stderr)]
     match ConfigBuilder::default()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
+        .cloud_requirements(cloud_requirements)
         .fallback_cwd(fallback_cwd)
         .build()
         .await
@@ -816,7 +889,9 @@ async fn load_config_or_exit_with_fallback_cwd(
 /// or if the current cwd project is already trusted. If not, we need to
 /// show the trust screen.
 fn should_show_trust_screen(config: &Config) -> bool {
-    if cfg!(target_os = "windows") && get_platform_sandbox().is_none() {
+    if cfg!(target_os = "windows")
+        && WindowsSandboxLevel::from_config(config) == WindowsSandboxLevel::Disabled
+    {
         // If the experimental sandbox is not enabled, Native Windows cannot enforce sandboxed write access; skip the trust prompt entirely.
         return false;
     }
@@ -879,7 +954,7 @@ mod tests {
         let mut config = build_config(&temp_dir).await?;
         config.did_user_set_custom_approval_policy_or_sandbox_mode = false;
         config.active_project = ProjectConfig { trust_level: None };
-        config.set_windows_sandbox_globally(false);
+        config.set_windows_sandbox_enabled(false);
 
         let should_show = should_show_trust_screen(&config);
         if cfg!(target_os = "windows") {
@@ -902,7 +977,7 @@ mod tests {
         let mut config = build_config(&temp_dir).await?;
         config.did_user_set_custom_approval_policy_or_sandbox_mode = false;
         config.active_project = ProjectConfig { trust_level: None };
-        config.set_windows_sandbox_globally(true);
+        config.set_windows_sandbox_enabled(true);
 
         let should_show = should_show_trust_screen(&config);
         if cfg!(target_os = "windows") {

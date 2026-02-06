@@ -111,6 +111,13 @@
             "auto"
           ],
           "type": "string"
+        },
+        {
+          "description": "Store credentials in memory only for the current process.",
+          "enum": [
+            "ephemeral"
+          ],
+          "type": "string"
         }
       ]
     },
@@ -142,6 +149,9 @@
           "description": "Optional feature toggles scoped to this profile.",
           "properties": {
             "apply_patch_freeform": {
+              "type": "boolean"
+            },
+            "apps": {
               "type": "boolean"
             },
             "child_agents_md": {
@@ -180,6 +190,9 @@
             "include_apply_patch_tool": {
               "type": "boolean"
             },
+            "personality": {
+              "type": "boolean"
+            },
             "powershell_utf8": {
               "type": "boolean"
             },
@@ -189,13 +202,28 @@
             "remote_models": {
               "type": "boolean"
             },
+            "request_rule": {
+              "type": "boolean"
+            },
             "responses_websockets": {
+              "type": "boolean"
+            },
+            "runtime_metrics": {
               "type": "boolean"
             },
             "shell_snapshot": {
               "type": "boolean"
             },
             "shell_tool": {
+              "type": "boolean"
+            },
+            "skill_env_var_dependency_prompt": {
+              "type": "boolean"
+            },
+            "skill_mcp_dependency_install": {
+              "type": "boolean"
+            },
+            "sqlite": {
               "type": "boolean"
             },
             "steer": {
@@ -205,6 +233,9 @@
               "type": "boolean"
             },
             "unified_exec": {
+              "type": "boolean"
+            },
+            "use_linux_sandbox_bwrap": {
               "type": "boolean"
             },
             "web_search": {
@@ -233,9 +264,6 @@
           ],
           "description": "Optional path to a file containing model instructions."
         },
-        "model_personality": {
-          "$ref": "#/definitions/Personality"
-        },
         "model_provider": {
           "description": "The key in the `model_providers` map identifying the [`ModelProviderInfo`] to use.",
           "type": "string"
@@ -251,6 +279,9 @@
         },
         "oss_provider": {
           "type": "string"
+        },
+        "personality": {
+          "$ref": "#/definitions/Personality"
         },
         "sandbox_mode": {
           "$ref": "#/definitions/SandboxMode"
@@ -350,10 +381,7 @@
       "description": "Initial collaboration mode to use when the TUI starts.",
       "enum": [
         "plan",
-        "code",
-        "pair_programming",
-        "execute",
-        "custom"
+        "default"
       ],
       "type": "string"
     },
@@ -425,13 +453,18 @@
           "minimum": 0.0,
           "type": "integer"
         },
+        "supports_websockets": {
+          "default": false,
+          "description": "Whether this provider supports the Responses API WebSocket transport.",
+          "type": "boolean"
+        },
         "wire_api": {
           "allOf": [
             {
               "$ref": "#/definitions/WireApi"
             }
           ],
-          "default": "chat",
+          "default": "responses",
           "description": "Which wire protocol this provider expects."
         }
       },
@@ -441,7 +474,6 @@
       "type": "object"
     },
     "Notice": {
-      "additionalProperties": false,
       "description": "Settings for notices we display to users via the tui and app-server clients (primarily the Codex IDE extension). NOTE: these are different from notifications - notices are warnings, NUX screens, acknowledgements, etc.",
       "properties": {
         "hide_full_access_warning": {
@@ -474,6 +506,14 @@
         }
       },
       "type": "object"
+    },
+    "NotificationMethod": {
+      "enum": [
+        "auto",
+        "osc9",
+        "bel"
+      ],
+      "type": "string"
     },
     "Notifications": {
       "anyOf": [
@@ -668,6 +708,7 @@
     },
     "Personality": {
       "enum": [
+        "none",
         "friendly",
         "pragmatic"
       ],
@@ -981,7 +1022,16 @@
             }
           ],
           "default": null,
-          "description": "Start the TUI in the specified collaboration mode (plan/execute/etc.). Defaults to unset."
+          "description": "Start the TUI in the specified collaboration mode (plan/default). Defaults to unset."
+        },
+        "notification_method": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/NotificationMethod"
+            }
+          ],
+          "default": "auto",
+          "description": "Notification method to use for unfocused terminal notifications. Defaults to `auto`."
         },
         "notifications": {
           "allOf": [
@@ -1038,26 +1088,12 @@
       "type": "string"
     },
     "WireApi": {
-      "description": "Wire protocol that the provider speaks. Most third-party services only implement the classic OpenAI Chat Completions JSON schema, whereas OpenAI itself (and a handful of others) additionally expose the more modern *Responses* API. The two protocols use different request/response shapes and *cannot* be auto-detected at runtime, therefore each provider entry must declare which one it expects.",
+      "description": "Wire protocol that the provider speaks.",
       "oneOf": [
         {
           "description": "The Responses API exposed by OpenAI at `/v1/responses`.",
           "enum": [
             "responses"
-          ],
-          "type": "string"
-        },
-        {
-          "description": "Experimental: Responses API over WebSocket transport.",
-          "enum": [
-            "responses_websocket"
-          ],
-          "type": "string"
-        },
-        {
-          "description": "Regular Chat Completions compatible with `/v1/chat/completions`.",
-          "enum": [
-            "chat"
           ],
           "type": "string"
         }
@@ -1137,6 +1173,9 @@
         "apply_patch_freeform": {
           "type": "boolean"
         },
+        "apps": {
+          "type": "boolean"
+        },
         "child_agents_md": {
           "type": "boolean"
         },
@@ -1173,6 +1212,9 @@
         "include_apply_patch_tool": {
           "type": "boolean"
         },
+        "personality": {
+          "type": "boolean"
+        },
         "powershell_utf8": {
           "type": "boolean"
         },
@@ -1182,13 +1224,28 @@
         "remote_models": {
           "type": "boolean"
         },
+        "request_rule": {
+          "type": "boolean"
+        },
         "responses_websockets": {
+          "type": "boolean"
+        },
+        "runtime_metrics": {
           "type": "boolean"
         },
         "shell_snapshot": {
           "type": "boolean"
         },
         "shell_tool": {
+          "type": "boolean"
+        },
+        "skill_env_var_dependency_prompt": {
+          "type": "boolean"
+        },
+        "skill_mcp_dependency_install": {
+          "type": "boolean"
+        },
+        "sqlite": {
           "type": "boolean"
         },
         "steer": {
@@ -1198,6 +1255,9 @@
           "type": "boolean"
         },
         "unified_exec": {
+          "type": "boolean"
+        },
+        "use_linux_sandbox_bwrap": {
           "type": "boolean"
         },
         "web_search": {
@@ -1268,6 +1328,14 @@
       "description": "System instructions.",
       "type": "string"
     },
+    "log_dir": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/AbsolutePathBuf"
+        }
+      ],
+      "description": "Directory where Codex writes log files, for example `codex-tui.log`. Defaults to `$CODEX_HOME/log`."
+    },
     "mcp_oauth_callback_port": {
       "description": "Optional fixed port for the local HTTP callback server used during MCP OAuth login. When unset, Codex will bind to an ephemeral port chosen by the OS.",
       "format": "uint16",
@@ -1312,14 +1380,6 @@
         }
       ],
       "description": "Optional path to a file containing model instructions that will override the built-in instructions for the selected model. Users are STRONGLY DISCOURAGED from using this field, as deviating from the instructions sanctioned by Codex will likely degrade model performance."
-    },
-    "model_personality": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/Personality"
-        }
-      ],
-      "description": "EXPERIMENTAL Optionally specify a personality for the model"
     },
     "model_provider": {
       "description": "Provider to use from the model_providers map.",
@@ -1368,7 +1428,7 @@
       "type": "array"
     },
     "oss_provider": {
-      "description": "Preferred OSS provider for local models, e.g. \"lmstudio\", \"ollama\", or \"ollama-chat\".",
+      "description": "Preferred OSS provider for local models, e.g. \"lmstudio\" or \"ollama\".",
       "type": "string"
     },
     "otel": {
@@ -1378,6 +1438,14 @@
         }
       ],
       "description": "OTEL configuration."
+    },
+    "personality": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Personality"
+        }
+      ],
+      "description": "Optionally specify a personality for the model"
     },
     "profile": {
       "description": "Profile to use from the `profiles` map.",

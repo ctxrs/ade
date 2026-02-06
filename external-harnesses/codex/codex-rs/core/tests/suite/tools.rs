@@ -189,63 +189,6 @@ async fn shell_escalated_permissions_rejected_then_ok() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shell_failure_still_allows_follow_up() -> Result<()> {
-    skip_if_no_network!(Ok(()));
-
-    let server = start_mock_server().await;
-    let mut builder = test_codex();
-    let test = builder.build(&server).await?;
-
-    let call_id = "shell-fail";
-    let args = json!({
-        "command": ["/bin/bash", "-lc", "exit 2"],
-        "timeout_ms": 1_000,
-    });
-
-    mount_sse_once(
-        &server,
-        sse(vec![
-            ev_response_created("resp-1"),
-            ev_function_call(call_id, "shell", &serde_json::to_string(&args)?),
-            ev_completed("resp-1"),
-        ]),
-    )
-    .await;
-    let follow_up = mount_sse_once(
-        &server,
-        sse(vec![ev_assistant_message("msg-1", "done"), ev_completed("resp-2")]),
-    )
-    .await;
-
-    test.submit_turn_with_policies(
-        "run failing shell",
-        AskForApproval::Never,
-        SandboxPolicy::DangerFullAccess,
-    )
-    .await?;
-
-    let output = follow_up
-        .single_request()
-        .function_call_output_text(call_id)
-        .expect("missing tool output");
-    if output.trim_start().starts_with('{') {
-        let output_json: Value = serde_json::from_str(&output)?;
-        assert_eq!(
-            output_json["metadata"]["exit_code"].as_i64(),
-            Some(2),
-            "expected exit code 2 for failing shell command",
-        );
-    } else {
-        assert!(
-            output.contains("Exit code: 2"),
-            "expected freeform output to include exit code",
-        );
-    }
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sandbox_denied_shell_returns_original_output() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
