@@ -13,6 +13,7 @@ const primeAuthSession = () => {
   if (typeof window === "undefined") return;
   const params = new URLSearchParams(window.location.search);
   const token = params.get("token");
+  const hadTokenParam = Boolean(token);
   if (token) {
     setDaemonAuthToken(token);
     params.delete("token");
@@ -25,9 +26,7 @@ const primeAuthSession = () => {
   if (import.meta.env.DEV) {
     const envToken = import.meta.env.VITE_CTX_AUTH_TOKEN;
     const envDaemonUrl = import.meta.env.VITE_CTX_DAEMON_URL;
-    if (envToken && !authToken()) {
-      setDaemonAuthToken(envToken);
-    }
+    if (envToken && !hadTokenParam && authToken() !== envToken) setDaemonAuthToken(envToken);
     if (envDaemonUrl && !getDaemonBaseUrl()) {
       setDaemonBaseUrl(envDaemonUrl, true);
     }
