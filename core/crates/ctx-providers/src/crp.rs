@@ -822,8 +822,8 @@ impl CrpProcess {
 
     fn signal_shutdown(&self, reason: &str) {
         let next = reason.to_string();
-        let prefer_over_stdout_close = next.starts_with("crp_runtime_exited:")
-            || next.starts_with("crp_runtime_wait_failed:");
+        let prefer_over_stdout_close =
+            next.starts_with("crp_runtime_exited:") || next.starts_with("crp_runtime_wait_failed:");
 
         // Avoid clobbering an existing shutdown reason (e.g. drain/restart), which is
         // user-visible via TurnInterrupted. The only exception is upgrading a generic
