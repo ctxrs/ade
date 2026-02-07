@@ -26,6 +26,7 @@ use url::Url;
 mod artifacts;
 mod auth;
 mod errors;
+mod execution;
 mod extractors;
 mod providers;
 mod repo;
@@ -37,6 +38,7 @@ mod terminals;
 mod workspaces;
 mod ws;
 use artifacts::*;
+use execution::*;
 use providers::*;
 use repo::*;
 use sessions::*;
@@ -176,6 +178,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
     let api = axum::Router::new()
         .route("/api/health", get(health))
         .route("/api/settings", get(get_settings).post(update_settings))
+        .route(
+            "/api/execution/container_image/prefetch",
+            post(prefetch_container_image),
+        )
+        .route(
+            "/api/execution/container_image/status",
+            get(container_image_status),
+        )
         .route(
             "/api/title_generation/local/status",
             get(get_title_generation_local_status),

@@ -435,7 +435,7 @@ fn resolve_execution_mode(settings: &ExecutionSettings) -> ExecutionMode {
     }
 }
 
-fn resolve_container_image(settings: &ContainerExecutionSettings) -> String {
+pub(crate) fn resolve_container_image(settings: &ContainerExecutionSettings) -> String {
     if let Ok(value) = std::env::var("CTX_HARNESS_CONTAINER_IMAGE") {
         if !value.trim().is_empty() {
             return value;
@@ -446,6 +446,103 @@ fn resolve_container_image(settings: &ContainerExecutionSettings) -> String {
         .clone()
         .filter(|v| !v.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_CONTAINER_IMAGE.to_string())
+}
+
+pub async fn prefetch_container_image(image: &str) -> Result<()> {
+    let image = image.trim();
+    if image.is_empty() {
+        anyhow::bail!("image is required");
+    }
+    let status = podman_command()?
+        .arg("pull")
+        .arg("--")
+        .arg(image)
+        .status()
+        .await?;
+    if !status.success() {
+        anyhow::bail!("podman pull failed for '{image}'");
+    }
+    Ok(())
+}
+
+pub async fn container_image_present(image: &str) -> Result<bool> {
+    let image = image.trim();
+    if image.is_empty() {
+        anyhow::bail!("image is required");
+    }
+    let output = podman_command()?
+        .arg("image")
+        .arg("exists")
+        .arg("--")
+        .arg(image)
+        .output()
+        .await?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    match output.status.code() {
+        Some(1) => Ok(false),
+        _ => anyhow::bail!(
+            "podman image exists failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ContainerImageStatus {
+    pub present: bool,
+    pub available: bool,
+    pub error: Option<String>,
+}
+
+pub async fn container_image_status(image: &str) -> Result<ContainerImageStatus> {
+    let image = image.trim();
+    if image.is_empty() {
+        anyhow::bail!("image is required");
+    }
+    let output = match podman_command() {
+        Ok(mut cmd) => {
+            cmd.arg("image").arg("exists").arg("--").arg(image);
+            cmd.output().await
+        }
+        Err(err) => {
+            return Ok(ContainerImageStatus {
+                present: false,
+                available: false,
+                error: Some(err.to_string()),
+            })
+        }
+    };
+    let output = match output {
+        Ok(out) => out,
+        Err(err) => {
+            return Ok(ContainerImageStatus {
+                present: false,
+                available: false,
+                error: Some(err.to_string()),
+            })
+        }
+    };
+    if output.status.success() {
+        return Ok(ContainerImageStatus {
+            present: true,
+            available: true,
+            error: None,
+        });
+    }
+    match output.status.code() {
+        Some(1) => Ok(ContainerImageStatus {
+            present: false,
+            available: true,
+            error: None,
+        }),
+        _ => Ok(ContainerImageStatus {
+            present: false,
+            available: false,
+            error: Some(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+        }),
+    }
 }
 
 fn container_data_root(data_root: &Path, workspace_id: WorkspaceId) -> PathBuf {
