@@ -8,10 +8,10 @@ use tokio::sync::{broadcast, Mutex};
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Message, Session, SessionActivityState, SessionEvent, SessionEventType, SessionHeadDelta,
-    SessionHeadSnapshot, SessionMetadata, SessionSnapshotSummary, SessionTurn,
-    SessionTurnToolSummary, WorkspaceActiveHeadBatch, WorkspaceActivePage, WorkspaceActiveSnapshot,
-    WorkspaceActiveSnapshotEvent, WorkspaceActiveTaskSummary, WorkspaceTaskSummary,
-    WorktreeBootstrapNotice, WorktreeVcsSnapshot,
+    SessionHeadSnapshot, SessionMetadata, SessionSnapshotSummary, SessionSummaryDelta, SessionTurn,
+    SessionTurnToolSummary, Task, TaskDelta, TaskDeltaKind, WorkspaceActiveHeadBatch,
+    WorkspaceActivePage, WorkspaceActiveSnapshot, WorkspaceActiveSnapshotEvent,
+    WorkspaceActiveTaskSummary, WorkspaceTaskSummary, WorktreeBootstrapNotice, WorktreeVcsSnapshot,
 };
 use ctx_store::ActiveSnapshotObserver;
 
@@ -648,6 +648,99 @@ impl WorkspaceActiveSnapshotHub {
             snapshot_rev,
             task_id,
         });
+    }
+
+    pub async fn publish_task_delta(
+        &self,
+        workspace_id: WorkspaceId,
+        task: Task,
+        kind: TaskDeltaKind,
+    ) -> bool {
+        let task_id = task.id;
+        let delta_task = task.clone();
+        let delta_kind = kind.clone();
+        let (tx, snapshot_rev, changed) = {
+            let mut guard = self.inner.lock().await;
+            let entry = guard
+                .entry(workspace_id)
+                .or_insert_with(WorkspaceActiveSnapshotEntry::new);
+            let mut changed = false;
+            match kind {
+                TaskDeltaKind::Archived => {
+                    if entry.active_tasks.remove(&task_id).is_some() {
+                        changed = true;
+                    }
+                }
+                TaskDeltaKind::Updated | TaskDeltaKind::Unarchived => {
+                    if let Some(active_task) = entry.active_tasks.get_mut(&task_id) {
+                        active_task.task = task.clone();
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                entry.snapshot_rev += 1;
+            }
+            (entry.tx.clone(), entry.snapshot_rev, changed)
+        };
+        if !changed {
+            return false;
+        }
+        let _ = tx.send(WorkspaceActiveSnapshotEvent::TaskDelta {
+            workspace_id,
+            snapshot_rev,
+            delta: Box::new(TaskDelta {
+                task: delta_task,
+                kind: delta_kind,
+            }),
+        });
+        true
+    }
+
+    pub async fn publish_session_summary_delta(
+        &self,
+        workspace_id: WorkspaceId,
+        delta: SessionSummaryDelta,
+    ) -> bool {
+        let session_id = delta.session_id;
+        let task_id = delta.task_id;
+        let delta_for_event = delta.clone();
+        let (tx, snapshot_rev, changed) = {
+            let mut guard = self.inner.lock().await;
+            let entry = guard
+                .entry(workspace_id)
+                .or_insert_with(WorkspaceActiveSnapshotEntry::new);
+            let mut changed = false;
+            if let Some(active_task) = entry.active_tasks.get_mut(&task_id) {
+                if active_task.primary_session.session.id == session_id
+                    && apply_session_summary_delta(&mut active_task.primary_session, &delta)
+                {
+                    changed = true;
+                }
+                if let Some(idx) = active_task
+                    .sessions
+                    .iter()
+                    .position(|session| session.session.id == session_id)
+                {
+                    if apply_session_summary_delta(&mut active_task.sessions[idx], &delta) {
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                entry.snapshot_rev += 1;
+            }
+            (entry.tx.clone(), entry.snapshot_rev, changed)
+        };
+        if !changed {
+            return false;
+        }
+        let _ = tx.send(WorkspaceActiveSnapshotEvent::SessionSummaryDelta {
+            workspace_id,
+            snapshot_rev,
+            delta: Box::new(delta_for_event),
+        });
+        true
     }
 
     pub async fn publish_session_summary(
@@ -1356,6 +1449,57 @@ fn trim_head_window(head: &mut SessionHeadSnapshot) {
         bytes: bytes as i64,
         truncated,
     };
+}
+
+fn apply_session_summary_delta(
+    summary: &mut SessionSnapshotSummary,
+    delta: &SessionSummaryDelta,
+) -> bool {
+    let mut changed = false;
+    if let Some(activity) = delta.activity.clone() {
+        if summary.activity != activity {
+            summary.activity = activity;
+            changed = true;
+        }
+    }
+    if let Some(last_message_at) = delta.last_message_at {
+        let should_update = match summary.last_message_at {
+            Some(current) => last_message_at > current,
+            None => true,
+        };
+        if should_update {
+            summary.last_message_at = Some(last_message_at);
+            changed = true;
+        }
+    }
+    if let Some(preview) = delta.last_message_preview.clone() {
+        let next_preview = if preview.is_empty() {
+            None
+        } else {
+            Some(preview)
+        };
+        if summary.last_message_preview != next_preview {
+            summary.last_message_preview = next_preview;
+            changed = true;
+        }
+    }
+    if let Some(last_event_seq) = delta.last_event_seq {
+        let next = summary
+            .last_event_seq
+            .map(|current| current.max(last_event_seq))
+            .unwrap_or(last_event_seq);
+        if summary.last_event_seq != Some(next) {
+            summary.last_event_seq = Some(next);
+            changed = true;
+        }
+    }
+    if let Some(state_rev) = delta.state_rev {
+        if state_rev > summary.state_rev {
+            summary.state_rev = state_rev;
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn apply_head_delta(head: &mut SessionHeadSnapshot, delta: &SessionHeadDelta) {

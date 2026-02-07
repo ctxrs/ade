@@ -247,4 +247,252 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(ws.send).toHaveBeenCalled();
     store.destroy();
   });
+
+  it("applies task_delta to remove archived tasks from the active list", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const later = "2024-01-01T01:00:00.000Z";
+    const archivedAt = "2024-01-02T00:00:00.000Z";
+
+    const taskA = mkTask("task-1", "ws-1", now);
+    const taskB = mkTask("task-2", "ws-1", later);
+    const sessionA = mkSession("session-1", "task-1", "ws-1", now);
+    const sessionB = mkSession("session-2", "task-2", "ws-1", later);
+    const summaryA = mkSummary(sessionA, now);
+    const summaryB = mkSummary(sessionB, later);
+    const headA = mkHead(sessionA);
+    const headB = mkHead(sessionB);
+
+    const activeSnapshot: WorkspaceActiveSnapshot = {
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: {
+        total_count: 2,
+        tasks: [mkActiveSummary(taskA, summaryA, headA, now), mkActiveSummary(taskB, summaryB, headB, later)],
+      },
+    };
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await (store as any).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: activeSnapshot,
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    await (store as any).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 2,
+        event: {
+          type: "task_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 2,
+          delta: {
+            kind: "archived",
+            task: {
+              ...taskA,
+              archived_at: archivedAt,
+              updated_at: archivedAt,
+            },
+          },
+        },
+      }),
+    );
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.activeIds).toEqual(["task-2"]);
+    expect(snapshot.archivedIds).toEqual([]);
+    expect(snapshot.totalActive).toBe(1);
+    expect(snapshot.totalArchived).toBe(0);
+  });
+
+  it("applies session_summary_delta to update activity and previews", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const later = "2024-01-01T02:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary = mkSummary(session, now);
+    const head = mkHead(session);
+
+    const activeSnapshot: WorkspaceActiveSnapshot = {
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: {
+        total_count: 1,
+        tasks: [mkActiveSummary(task, summary, head, now)],
+      },
+    };
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await (store as any).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: activeSnapshot,
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    await (store as any).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 2,
+        event: {
+          type: "session_summary_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 2,
+          delta: {
+            session_id: "session-1",
+            task_id: "task-1",
+            activity: { is_working: true, last_turn_status: "running" },
+            last_message_at: later,
+            last_message_preview: "updated preview",
+            last_event_seq: 5,
+            state_rev: 2,
+          },
+        },
+      }),
+    );
+
+    const snapshot = store.getSnapshot();
+    const updated = snapshot.tasksById["task-1"].sessions[0];
+    expect(updated.activity?.is_working).toBe(true);
+    expect(updated.activity?.last_turn_status).toBe("running");
+    expect(updated.last_message_at).toBe(later);
+    expect(updated.last_message_preview).toBe("updated preview");
+    expect(updated.last_event_seq).toBe(5);
+    expect(updated.state_rev).toBe(2);
+  });
+
+  it("does not regress monotonic session summary fields when applying session_summary_delta", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const later = "2024-01-01T02:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const head = mkHead(session);
+    const seededSummary = { ...mkSummary(session, now), last_message_at: later, last_event_seq: 10, state_rev: 5 };
+
+    const activeSnapshot: WorkspaceActiveSnapshot = {
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: {
+        total_count: 1,
+        tasks: [mkActiveSummary(task, seededSummary, head, now)],
+      },
+    };
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await (store as any).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: activeSnapshot,
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    await (store as any).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 2,
+        event: {
+          type: "session_summary_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 2,
+          delta: {
+            session_id: "session-1",
+            task_id: "task-1",
+            activity: { is_working: false, last_turn_status: "completed" },
+            last_message_at: now,
+            last_event_seq: 3,
+            state_rev: 2,
+          },
+        },
+      }),
+    );
+
+    const updated = store.getSnapshot().tasksById["task-1"].sessions[0];
+    expect(updated.activity?.is_working).toBe(false);
+    expect(updated.last_message_at).toBe(later);
+    expect(updated.last_event_seq).toBe(10);
+    expect(updated.state_rev).toBe(5);
+  });
+
+  it("treats no-op session_summary_delta as no change", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const later = "2024-01-01T02:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const head = mkHead(session);
+    const seededSummary = {
+      ...mkSummary(session, now),
+      last_message_at: later,
+      last_message_preview: "hello",
+      last_event_seq: 10,
+      state_rev: 5,
+      activity: { is_working: false, last_turn_status: "completed" },
+    };
+
+    const activeSnapshot: WorkspaceActiveSnapshot = {
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: {
+        total_count: 1,
+        tasks: [mkActiveSummary(task, seededSummary, head, now)],
+      },
+    };
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await (store as any).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: activeSnapshot,
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    const changed = (store as any).applySessionSummaryDelta({
+      type: "session_summary_delta",
+      workspace_id: "ws-1",
+      snapshot_rev: 2,
+      delta: {
+        session_id: "session-1",
+        task_id: "task-1",
+        // older / identical fields that should not cause any update
+        last_message_at: now,
+        last_message_preview: "hello",
+        last_event_seq: 1,
+        state_rev: 2,
+        activity: { is_working: false, last_turn_status: "completed" },
+      },
+    });
+    expect(changed).toBe(false);
+
+    const updated = store.getSnapshot().tasksById["task-1"].sessions[0];
+    expect(updated.last_message_at).toBe(later);
+    expect(updated.last_message_preview).toBe("hello");
+    expect(updated.last_event_seq).toBe(10);
+    expect(updated.state_rev).toBe(5);
+    expect(updated.activity?.is_working).toBe(false);
+    expect(updated.activity?.last_turn_status).toBe("completed");
+  });
 });

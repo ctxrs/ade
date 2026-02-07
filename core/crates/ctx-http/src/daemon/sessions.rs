@@ -6,9 +6,9 @@ use tokio::sync::{broadcast, mpsc, watch, Mutex};
 
 use ctx_core::ids::{SessionId, TaskId};
 use ctx_core::models::{
-    Message, MessageAttachment, MessageDelivery, MessageRole, Session, SessionEvent,
-    SessionEventType, SessionHeadDelta, SessionHeadSnapshot, SessionTurn, SessionTurnStatus,
-    SessionTurnToolSummary,
+    Message, MessageAttachment, MessageDelivery, MessageRole, Session, SessionActivityState,
+    SessionEvent, SessionEventType, SessionHeadDelta, SessionHeadSnapshot, SessionSummaryDelta,
+    SessionTurn, SessionTurnStatus, SessionTurnToolSummary,
 };
 use ctx_store::Store;
 
@@ -100,6 +100,20 @@ fn message_from_event(event: &SessionEvent, session: &Session) -> Option<Message
         delivered_at,
         created_at: event.created_at,
     })
+}
+
+fn derive_message_preview(content: &str) -> String {
+    let trimmed = content.trim();
+    let line = trimmed.lines().next().unwrap_or("").trim();
+    if line.is_empty() {
+        return String::new();
+    }
+    const MAX_CHARS: usize = 160;
+    let mut out: String = line.chars().take(MAX_CHARS).collect();
+    if line.chars().count() > MAX_CHARS {
+        out.push_str("...");
+    }
+    out
 }
 
 fn turn_from_event(event: &SessionEvent, message: Option<&Message>) -> Option<SessionTurn> {
@@ -358,6 +372,57 @@ impl SessionRuntime {
             event.seq
         };
 
+        let activity = match event.event_type {
+            SessionEventType::TurnQueued => Some(SessionActivityState {
+                is_working: true,
+                last_turn_status: Some(SessionTurnStatus::Queued),
+            }),
+            SessionEventType::TurnStarted => Some(SessionActivityState {
+                is_working: true,
+                last_turn_status: Some(SessionTurnStatus::Running),
+            }),
+            SessionEventType::TurnFinished | SessionEventType::Done => Some(SessionActivityState {
+                is_working: false,
+                last_turn_status: Some(SessionTurnStatus::Completed),
+            }),
+            SessionEventType::TurnInterrupted => Some(SessionActivityState {
+                is_working: false,
+                last_turn_status: Some(SessionTurnStatus::Interrupted),
+            }),
+            SessionEventType::Error => Some(SessionActivityState {
+                is_working: false,
+                last_turn_status: Some(SessionTurnStatus::Failed),
+            }),
+            _ => None,
+        };
+
+        let mut last_message_at = None;
+        let mut last_message_preview = None;
+        if let Some(message) = message.as_ref() {
+            last_message_at = Some(message.created_at);
+            last_message_preview = Some(derive_message_preview(&message.content));
+        }
+
+        let summary_delta =
+            if activity.is_some() || last_message_at.is_some() || last_message_preview.is_some() {
+                let mut summary_delta = SessionSummaryDelta {
+                    session_id: session.id,
+                    task_id: session.task_id,
+                    activity,
+                    last_message_at,
+                    last_message_preview,
+                    last_event_seq: None,
+                    state_rev: None,
+                };
+                if !stream_only {
+                    summary_delta.last_event_seq = Some(event.seq);
+                    summary_delta.state_rev = Some(event.seq);
+                }
+                Some(summary_delta)
+            } else {
+                None
+            };
+
         let delta = SessionHeadDelta {
             session_id: event.session_id,
             last_event_seq,
@@ -372,6 +437,14 @@ impl SessionRuntime {
             .workspace_active_snapshot
             .publish_session_head_delta(session.workspace_id, &session, delta, !stream_only)
             .await;
+
+        if let Some(summary_delta) = summary_delta {
+            state
+                .workspaces
+                .workspace_active_snapshot
+                .publish_session_summary_delta(session.workspace_id, summary_delta)
+                .await;
+        }
     }
 
     async fn queue_active_head_projection(

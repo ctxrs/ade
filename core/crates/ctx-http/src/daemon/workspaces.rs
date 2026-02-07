@@ -7,7 +7,8 @@ use tokio::sync::watch;
 
 use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    Task, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, Worktree, WorktreeVcsSnapshot,
+    Task, TaskDeltaKind, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, Worktree,
+    WorktreeVcsSnapshot,
 };
 use ctx_lsp::Language as LspLanguage;
 
@@ -510,6 +511,13 @@ impl AppState {
     pub async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> Result<()> {
         self.workspaces
             .emit_workspace_task_upsert(self, task_id)
+            .await
+    }
+
+    pub async fn emit_workspace_task_delta(&self, task: Task, kind: TaskDeltaKind) -> bool {
+        self.workspaces
+            .workspace_active_snapshot
+            .publish_task_delta(task.workspace_id, task, kind)
             .await
     }
 

@@ -470,6 +470,37 @@ export type WorktreeBootstrapNotice = {
   error?: string | null;
 };
 
+export type WorkspaceActiveSnapshotTaskDeltaKind = "updated" | "archived" | "unarchived";
+
+export type WorkspaceActiveSnapshotTaskDelta = {
+  kind: WorkspaceActiveSnapshotTaskDeltaKind;
+  task: Task;
+};
+
+export type WorkspaceActiveSnapshotTaskDeltaEvent = {
+  type: "task_delta";
+  workspace_id: string;
+  snapshot_rev: number;
+  delta: WorkspaceActiveSnapshotTaskDelta;
+};
+
+export type WorkspaceActiveSnapshotSessionSummaryDelta = {
+  session_id: string;
+  task_id: string;
+  activity?: SessionActivityState | null;
+  last_message_at?: string | null;
+  last_message_preview?: string | null;
+  last_event_seq?: number | null;
+  state_rev?: number | null;
+};
+
+export type WorkspaceActiveSnapshotSessionSummaryDeltaEvent = {
+  type: "session_summary_delta";
+  workspace_id: string;
+  snapshot_rev: number;
+  delta: WorkspaceActiveSnapshotSessionSummaryDelta;
+};
+
 export type WorkspaceActiveSnapshotEvent =
   | {
       type: "ready";
@@ -477,6 +508,7 @@ export type WorkspaceActiveSnapshotEvent =
       snapshot_rev: number;
       archived_rev?: number;
     }
+  | WorkspaceActiveSnapshotTaskDeltaEvent
   | {
       type: "active_task_upsert";
       workspace_id: string;
@@ -489,6 +521,7 @@ export type WorkspaceActiveSnapshotEvent =
       snapshot_rev: number;
       task_id: string;
     }
+  | WorkspaceActiveSnapshotSessionSummaryDeltaEvent
   | {
       type: "session_summary";
       workspace_id: string;

@@ -26,8 +26,8 @@ use crate::worktree_bootstrap;
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Message, MessageDelivery, MessageRole, Session, SessionEventType, SessionTurn,
-    SessionTurnStatus, Task, VcsKind, Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor,
-    Worktree,
+    SessionTurnStatus, Task, TaskDeltaKind, VcsKind, Workspace, WorkspaceArchivedPage,
+    WorkspaceIndexCursor, Worktree,
 };
 use ctx_fs::git::delete_branch;
 use ctx_fs::vcs;
@@ -125,6 +125,9 @@ pub(super) async fn update_task_title(
         }
     };
 
+    let _ = state
+        .emit_workspace_task_delta(task.clone(), TaskDeltaKind::Updated)
+        .await;
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
         tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
     }
@@ -624,6 +627,9 @@ pub(super) async fn archive_task(
         Some(task) => task,
         None => return Err(StatusCode::NOT_FOUND),
     };
+    let _ = state
+        .emit_workspace_task_delta(task.clone(), TaskDeltaKind::Archived)
+        .await;
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
         tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
     }
@@ -747,6 +753,9 @@ pub(super) async fn unarchive_task(
         Some(task) => task,
         None => return Err(StatusCode::NOT_FOUND),
     };
+    let _ = state
+        .emit_workspace_task_delta(task.clone(), TaskDeltaKind::Unarchived)
+        .await;
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
         tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
     }
@@ -780,6 +789,9 @@ pub(super) async fn mark_task_read(
         Some(task) => task,
         None => return Err(StatusCode::NOT_FOUND),
     };
+    let _ = state
+        .emit_workspace_task_delta(task.clone(), TaskDeltaKind::Updated)
+        .await;
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
         tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
     }
@@ -810,6 +822,9 @@ pub(super) async fn mark_task_unread(
         Some(task) => task,
         None => return Err(StatusCode::NOT_FOUND),
     };
+    let _ = state
+        .emit_workspace_task_delta(task.clone(), TaskDeltaKind::Updated)
+        .await;
     if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
         tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
     }

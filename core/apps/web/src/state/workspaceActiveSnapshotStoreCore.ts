@@ -12,6 +12,8 @@ import type {
   WorktreeVcsSnapshot,
   WorkspaceActiveSnapshot,
   WorkspaceActiveSnapshotEvent,
+  WorkspaceActiveSnapshotSessionSummaryDeltaEvent,
+  WorkspaceActiveSnapshotTaskDeltaEvent,
   WorkspaceActiveTaskSummary,
   WorkspaceIndexCursor,
   WorkspaceTaskSummary,
@@ -1404,6 +1406,12 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         this.snapshot.connection = "connected";
         this.publish();
         break;
+      case "task_delta":
+        if (this.applyTaskDelta(evt)) {
+          this.activeSessionIds = this.collectActiveSessionIds();
+          this.publish();
+        }
+        break;
       case "active_task_upsert":
         this.upsertActiveSummary(evt.task);
         this.activeSessionIds = this.collectActiveSessionIds();
@@ -1429,6 +1437,11 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       case "session_summary":
         this.applySessionSummary(evt.summary);
         this.publish();
+        break;
+      case "session_summary_delta":
+        if (this.applySessionSummaryDelta(evt)) {
+          this.publish();
+        }
         break;
       case "session_head_delta":
         if (this.applySessionHeadDelta(evt.delta)) {
@@ -1617,6 +1630,143 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.totalActive = Math.max(0, this.totalActive - 1);
       this.totalArchived += 1;
     }
+  }
+
+  private applyTaskDelta(evt: WorkspaceActiveSnapshotTaskDeltaEvent): boolean {
+    const delta = evt.delta;
+    const taskId = idToString(delta?.task?.id ?? "");
+    if (!taskId) return false;
+
+    const existing = this.tasks.get(taskId);
+    if (!existing) return false;
+
+    if (delta.kind === "archived") {
+      this.removeTask(taskId, { adjustCounts: true });
+      return true;
+    }
+
+    // The server-side projection only emits `task_delta` for tasks it already has
+    // in its active snapshot. Mirror that behavior here to avoid "creating" tasks
+    // from partial context.
+    const nextTask = { ...existing.task, ...delta.task, id: existing.task.id, workspace_id: existing.task.workspace_id };
+    const sortAt = this.taskSortAt(nextTask, existing.sort_at ?? null);
+    const sortAtMs = Date.parse(sortAt) || existing.sortAtMs || Date.now();
+    const nextPrimarySessionId = idToString(nextTask.primary_session_id ?? "") || null;
+    if (existing.primarySessionId && existing.primarySessionId !== nextPrimarySessionId) {
+      this.sessionHeadsById.delete(existing.primarySessionId);
+    }
+    const primarySessionHead = nextPrimarySessionId ? (this.sessionHeadsById.get(nextPrimarySessionId) ?? null) : null;
+    const nextItem: WorkspaceActiveSnapshotItem = {
+      ...existing,
+      task: nextTask,
+      primarySessionId: nextPrimarySessionId,
+      primarySessionHead,
+      sortAtMs,
+      sort_at: sortAt || null,
+    };
+    this.tasks.set(taskId, nextItem);
+    this.placeInOrders(nextItem);
+    this.schedulePersistCache();
+    return true;
+  }
+
+  private applySessionSummaryDelta(evt: WorkspaceActiveSnapshotSessionSummaryDeltaEvent): boolean {
+    const delta = evt.delta;
+    const sessionId = idToString(delta.session_id ?? "");
+    if (!sessionId) return false;
+    const taskIdHint = idToString(delta.task_id ?? "");
+
+    const tryUpdate = (taskId: string): boolean => {
+      const task = this.tasks.get(taskId);
+      if (!task) return false;
+      const nextSessions = task.sessions.slice();
+      const sessionIdx = nextSessions.findIndex((s) => idToString(s.session.id) === sessionId);
+      if (sessionIdx < 0) return false;
+      const current = nextSessions[sessionIdx];
+      const nextSummary: SessionSnapshotSummary = { ...current };
+      let changed = false;
+
+      if (hasOwnProperty(delta, "last_message_at")) {
+        const incoming = delta.last_message_at;
+        if (typeof incoming === "string" && incoming) {
+          const current = nextSummary.last_message_at;
+          const incMs = Date.parse(incoming);
+          const curMs = current ? Date.parse(current) : NaN;
+          const shouldUpdate =
+            !current ||
+            (Number.isFinite(incMs) && Number.isFinite(curMs) ? incMs > curMs : incoming > current);
+          if (shouldUpdate && nextSummary.last_message_at !== incoming) {
+            nextSummary.last_message_at = incoming;
+            changed = true;
+          }
+        }
+      }
+      if (hasOwnProperty(delta, "last_message_preview")) {
+        const incoming = delta.last_message_preview;
+        if (typeof incoming === "string") {
+          const next = incoming.length ? incoming : null;
+          if (nextSummary.last_message_preview !== next) {
+            nextSummary.last_message_preview = next;
+            changed = true;
+          }
+        } else if (incoming === null) {
+          if (nextSummary.last_message_preview !== null) {
+            nextSummary.last_message_preview = null;
+            changed = true;
+          }
+        }
+      }
+      if (hasOwnProperty(delta, "last_event_seq")) {
+        const incoming = delta.last_event_seq;
+        if (typeof incoming === "number") {
+          const next = Math.max(nextSummary.last_event_seq ?? incoming, incoming);
+          if (nextSummary.last_event_seq !== next) {
+            nextSummary.last_event_seq = next;
+            changed = true;
+          }
+        }
+      }
+      if (typeof delta.state_rev === "number") {
+        const current = nextSummary.state_rev ?? 0;
+        if (delta.state_rev > current) {
+          nextSummary.state_rev = delta.state_rev;
+          changed = true;
+        }
+      }
+      if (hasOwnProperty(delta, "activity")) {
+        if (delta.activity) {
+          const prevActivity = nextSummary.activity ?? { is_working: false, last_turn_status: null };
+          const nextActivity = { ...prevActivity };
+          if (typeof delta.activity.is_working === "boolean") {
+            nextActivity.is_working = delta.activity.is_working;
+          }
+          if (hasOwnProperty(delta.activity, "last_turn_status")) {
+            nextActivity.last_turn_status = delta.activity.last_turn_status ?? null;
+          }
+          if (
+            nextSummary.activity?.is_working !== nextActivity.is_working ||
+            (nextSummary.activity?.last_turn_status ?? null) !== (nextActivity.last_turn_status ?? null)
+          ) {
+            nextSummary.activity = nextActivity;
+            changed = true;
+          }
+        }
+      }
+
+      if (!changed) return false;
+      nextSessions[sessionIdx] = nextSummary;
+      this.tasks.set(taskId, { ...task, sessions: sortSessionSummaries(nextSessions) });
+      this.schedulePersistCache();
+      return true;
+    };
+
+    if (taskIdHint && tryUpdate(taskIdHint)) return true;
+
+    for (const taskId of this.tasks.keys()) {
+      if (taskIdHint && taskId === taskIdHint) continue;
+      if (tryUpdate(taskId)) return true;
+    }
+    return false;
   }
 
   private applySessionSummary(summary: SessionSnapshotSummary) {

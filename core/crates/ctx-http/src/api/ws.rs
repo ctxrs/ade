@@ -521,6 +521,26 @@ async fn handle_mobile_secure_ws(
                                     }
                                 }
                             }
+                            WorkspaceActiveSnapshotEvent::TaskDelta { delta, .. }
+                                if matches!(delta.kind, TaskDeltaKind::Archived) =>
+                            {
+                                if let Some(session_id) =
+                                    subscription_state.active_task_sessions.remove(&delta.task.id)
+                                {
+                                    refresh_active_worktrees = true;
+                                    let still_active = subscription_state
+                                        .active_task_sessions
+                                        .values()
+                                        .any(|id| *id == session_id);
+                                    if !still_active
+                                        && !subscription_state
+                                            .explicit_sessions
+                                            .contains(&session_id)
+                                    {
+                                        subscriptions.remove(&session_id);
+                                    }
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -561,6 +581,15 @@ async fn handle_mobile_secure_ws(
                                     subscription_state.foreground_session_ids.as_mut()
                                 {
                                     ids.insert(summary.session.id);
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. }
+                                if delta.task_id == foreground_task_id =>
+                            {
+                                if let Some(ids) =
+                                    subscription_state.foreground_session_ids.as_mut()
+                                {
+                                    ids.insert(delta.session_id);
                                 }
                             }
                             WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. }
@@ -615,6 +644,9 @@ async fn handle_mobile_secure_ws(
                         }
                         WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => {
                             Some(*session_id)
+                        }
+                        WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. } => {
+                            Some(delta.session_id)
                         }
                         _ => None,
                     };
@@ -773,7 +805,9 @@ fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option<i64> {
         WorkspaceActiveSnapshotEvent::Ready { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::ActiveTaskDelete { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::TaskDelta { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionSummary { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::SessionSummaryDelta { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionHeadDelta { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionHeadReset { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionGap { snapshot_rev, .. }
@@ -2455,6 +2489,26 @@ async fn handle_workspace_active_snapshot_ws(
                                     }
                                 }
                             }
+                            WorkspaceActiveSnapshotEvent::TaskDelta { delta, .. }
+                                if matches!(delta.kind, TaskDeltaKind::Archived) =>
+                            {
+                                if let Some(session_id) =
+                                    subscription_state.active_task_sessions.remove(&delta.task.id)
+                                {
+                                    refresh_active_worktrees = true;
+                                    let still_active = subscription_state
+                                        .active_task_sessions
+                                        .values()
+                                        .any(|id| *id == session_id);
+                                    if !still_active
+                                        && !subscription_state
+                                            .explicit_sessions
+                                            .contains(&session_id)
+                                    {
+                                        subscriptions.remove(&session_id);
+                                    }
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -2495,6 +2549,15 @@ async fn handle_workspace_active_snapshot_ws(
                                     subscription_state.foreground_session_ids.as_mut()
                                 {
                                     ids.insert(summary.session.id);
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. }
+                                if delta.task_id == foreground_task_id =>
+                            {
+                                if let Some(ids) =
+                                    subscription_state.foreground_session_ids.as_mut()
+                                {
+                                    ids.insert(delta.session_id);
                                 }
                             }
                             WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. }
@@ -2549,6 +2612,9 @@ async fn handle_workspace_active_snapshot_ws(
                         }
                         WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => {
                             Some(*session_id)
+                        }
+                        WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. } => {
+                            Some(delta.session_id)
                         }
                         _ => None,
                     };

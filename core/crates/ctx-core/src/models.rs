@@ -552,7 +552,7 @@ pub struct Artifact {
     pub missing: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionTurnStatus {
     Queued,
@@ -562,7 +562,7 @@ pub enum SessionTurnStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct SessionActivityState {
     pub is_working: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -764,6 +764,36 @@ pub struct SessionSnapshotSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskDeltaKind {
+    Updated,
+    Archived,
+    Unarchived,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskDelta {
+    pub task: Task,
+    pub kind: TaskDeltaKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummaryDelta {
+    pub session_id: SessionId,
+    pub task_id: TaskId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<SessionActivityState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_event_seq: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_rev: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSummaryCheckpoint {
     pub session_id: SessionId,
     pub checkpoint_id: String,
@@ -952,10 +982,20 @@ pub enum WorkspaceActiveSnapshotEvent {
         snapshot_rev: i64,
         task_id: TaskId,
     },
+    TaskDelta {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        delta: Box<TaskDelta>,
+    },
     SessionSummary {
         workspace_id: WorkspaceId,
         snapshot_rev: i64,
         summary: Box<SessionSnapshotSummary>,
+    },
+    SessionSummaryDelta {
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        delta: Box<SessionSummaryDelta>,
     },
     SessionHeadDelta {
         workspace_id: WorkspaceId,
