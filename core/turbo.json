@@ -53,12 +53,6 @@
       ],
       "outputs": []
     },
-    "ios-native:build": {
-      "inputs": [
-        "apps/ios-native/**"
-      ],
-      "outputs": []
-    },
     "supabase:migrations:check": {
       "inputs": [
         "../supabase/config.toml",
