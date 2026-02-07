@@ -668,18 +668,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             aria-label="Search agents"
             autoFocus
           />
-          <label className="wb-menu-toggle">
-            <span>Use Multiple Agents</span>
-            <input
-              type="checkbox"
-              checked={(props as NewSessionProps).useMultipleAgents}
-              onChange={(e) => {
-                setExpandedHarnessId(null);
-                (props as NewSessionProps).setUseMultipleAgents(e.target.checked);
-              }}
-            />
-            <span className="wb-toggle" aria-hidden="true" />
-          </label>
 
           {installControlsEnabled
             ? (() => {
