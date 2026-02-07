@@ -94,7 +94,3 @@ daemon-heap-prof = ["dep:tikv-jemalloc-ctl", "dep:tikv-jemallocator"]
 [[bin]]
 name = "ctx"
 path = "src/main.rs"
-
-[[bin]]
-name = "ctx-egress-proxy"
-path = "src/transparent_proxy.rs"

@@ -10,6 +10,7 @@ members = [
   "crates/ctx-lsp",
   "crates/ctx-mcp",
   "crates/ctx-http",
+  "crates/ctx-egress-proxy",
   "crates/ctx-worker-protocol",
   "crates/ctx-worker-gateway",
   "crates/ctx-worker-shim",

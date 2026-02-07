@@ -676,12 +676,13 @@ async fn ensure_egress_proxy_binary(data_root: &Path) -> Result<PathBuf> {
     let runtime_root = proxy_runtime_root(data_root);
     fs::create_dir_all(&runtime_root).await?;
     let dest = proxy_runtime_path(data_root);
-    let src = if let Ok(path) = std::env::var("CTX_EGRESS_PROXY_PATH") {
-        PathBuf::from(path)
-    } else {
-        let mut path = std::env::current_exe()?;
-        path.set_file_name(EGRESS_PROXY_BINARY);
-        path
+    let src = match std::env::var("CTX_EGRESS_PROXY_PATH") {
+        Ok(path) => PathBuf::from(path),
+        Err(_) => {
+            anyhow::bail!(
+                "missing CTX_EGRESS_PROXY_PATH; host-injected egress proxy requires an explicit Linux binary path"
+            )
+        }
     };
     if !src.exists() {
         anyhow::bail!("missing {EGRESS_PROXY_BINARY} binary at {}", src.display());

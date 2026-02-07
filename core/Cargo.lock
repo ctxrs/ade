@@ -1494,6 +1494,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctx-egress-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "httparse",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "ctx-events"
 version = "0.1.0"
 dependencies = [

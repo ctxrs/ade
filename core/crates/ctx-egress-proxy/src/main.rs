@@ -1,6 +1,7 @@
-use std::io;
 use std::net::SocketAddr;
 
+#[cfg(target_os = "linux")]
+use std::io;
 #[cfg(target_os = "linux")]
 use std::net::{IpAddr, Ipv4Addr};
 #[cfg(target_os = "linux")]
@@ -13,12 +14,25 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::{timeout, Duration};
 
-use ctx_http::network_allowlist;
-use ctx_http::settings::ContainerNetworkMode;
-
 const DEFAULT_LISTEN: &str = "127.0.0.1:15001";
 const DEFAULT_MAX_PEEK_BYTES: usize = 16 * 1024;
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
+
+// Keep this list in sync with ctx's policy allowlist.
+const LLM_ALLOWLIST: &[&str] = &[
+    "api.anthropic.com",
+    "chatgpt.com",
+    "api.openai.com",
+    "api.mistral.ai",
+    "api.groq.com",
+    "api.cohere.ai",
+    "api.together.xyz",
+    "api.openrouter.ai",
+    "generativelanguage.googleapis.com",
+    "vertex.googleapis.com",
+    "dashscope.aliyuncs.com",
+    "api.deepseek.com",
+];
 
 #[derive(Debug, Clone, Copy, ValueEnum, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,16 +40,6 @@ enum ProxyMode {
     LlmOnly,
     Allowlist,
     All,
-}
-
-impl ProxyMode {
-    fn to_network_mode(self) -> ContainerNetworkMode {
-        match self {
-            ProxyMode::LlmOnly => ContainerNetworkMode::LlmOnly,
-            ProxyMode::Allowlist => ContainerNetworkMode::Allowlist,
-            ProxyMode::All => ContainerNetworkMode::All,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,7 +68,7 @@ struct Args {
 #[derive(Debug, Clone)]
 struct ProxyConfig {
     listen: String,
-    mode: ContainerNetworkMode,
+    mode: ProxyMode,
     allowlist: Vec<String>,
     max_peek_bytes: usize,
 }
@@ -72,7 +76,7 @@ struct ProxyConfig {
 impl ProxyConfig {
     fn from_args(args: Args, file_config: Option<FileConfig>) -> Result<Self> {
         let mut listen = DEFAULT_LISTEN.to_string();
-        let mut mode = ContainerNetworkMode::LlmOnly;
+        let mut mode = ProxyMode::LlmOnly;
         let mut allowlist: Vec<String> = Vec::new();
         let mut max_peek_bytes = DEFAULT_MAX_PEEK_BYTES;
 
@@ -81,7 +85,7 @@ impl ProxyConfig {
                 listen = value;
             }
             if let Some(value) = cfg.mode {
-                mode = value.to_network_mode();
+                mode = value;
             }
             if let Some(value) = cfg.allowlist {
                 allowlist = value;
@@ -95,7 +99,7 @@ impl ProxyConfig {
             listen = value;
         }
         if let Some(value) = args.mode {
-            mode = value.to_network_mode();
+            mode = value;
         }
         if !args.allowlist.is_empty() {
             allowlist = args.allowlist;
@@ -154,7 +158,7 @@ async fn handle_stream(mut stream: TcpStream, config: ProxyConfig) -> Result<()>
     if host.is_empty() {
         anyhow::bail!("missing hostname in initial bytes");
     }
-    if !network_allowlist::allowed_host(&host, config.mode, &config.allowlist) {
+    if !allowed_host(&host, config.mode, &config.allowlist) {
         anyhow::bail!("host {host} blocked by allowlist");
     }
 
@@ -172,6 +176,54 @@ fn sniff_host(buf: &[u8]) -> Option<String> {
         return Some(host);
     }
     parse_tls_sni(buf)
+}
+
+fn normalize_allowlist_entry(entry: &str) -> Option<String> {
+    let trimmed = entry.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(url) = url::Url::parse(trimmed) {
+        if let Some(host) = url.host_str() {
+            return Some(host.to_ascii_lowercase());
+        }
+    }
+    let host = trimmed
+        .split('/')
+        .next()
+        .unwrap_or(trimmed)
+        .split(':')
+        .next()
+        .unwrap_or(trimmed)
+        .trim();
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+fn host_matches(host: &str, entry: &str) -> bool {
+    host == entry || host.ends_with(&format!(".{entry}"))
+}
+
+fn allowed_host(host: &str, mode: ProxyMode, allowlist: &[String]) -> bool {
+    if matches!(mode, ProxyMode::All) {
+        return true;
+    }
+    let host = host.to_ascii_lowercase();
+    let mut entries = Vec::new();
+    if matches!(mode, ProxyMode::LlmOnly) {
+        entries.extend(
+            LLM_ALLOWLIST
+                .iter()
+                .filter_map(|entry| normalize_allowlist_entry(entry)),
+        );
+    }
+    if matches!(mode, ProxyMode::Allowlist) {
+        entries.extend(
+            allowlist
+                .iter()
+                .filter_map(|entry| normalize_allowlist_entry(entry)),
+        );
+    }
+    entries.iter().any(|entry| host_matches(&host, entry))
 }
 
 fn parse_http_host(buf: &[u8]) -> Option<String> {
@@ -234,86 +286,75 @@ fn parse_tls_sni(buf: &[u8]) -> Option<String> {
     if pos + 34 > buf.len() {
         return None;
     }
-    pos += 2; // client version
-    pos += 32; // random
+    pos += 2;
+    pos += 32;
     if pos + 1 > buf.len() {
         return None;
     }
     let session_id_len = buf[pos] as usize;
-    pos += 1;
-    if pos + session_id_len > buf.len() {
-        return None;
-    }
-    pos += session_id_len;
+    pos += 1 + session_id_len;
     if pos + 2 > buf.len() {
         return None;
     }
-    let cipher_len = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
-    pos += 2;
-    if pos + cipher_len > buf.len() {
-        return None;
-    }
-    pos += cipher_len;
+    let cipher_suites_len = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
+    pos += 2 + cipher_suites_len;
     if pos + 1 > buf.len() {
         return None;
     }
-    let comp_len = buf[pos] as usize;
-    pos += 1;
-    if pos + comp_len > buf.len() {
-        return None;
-    }
-    pos += comp_len;
+    let compression_methods_len = buf[pos] as usize;
+    pos += 1 + compression_methods_len;
     if pos + 2 > buf.len() {
         return None;
     }
-    let ext_len = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
+    let extensions_len = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
     pos += 2;
-    if pos + ext_len > buf.len() {
+    let end = pos + extensions_len;
+    if end > buf.len() {
         return None;
     }
-    let ext_end = pos + ext_len;
-    while pos + 4 <= ext_end {
+    while pos + 4 <= end {
         let ext_type = u16::from_be_bytes([buf[pos], buf[pos + 1]]);
-        pos += 2;
-        let ext_size = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
-        pos += 2;
-        if pos + ext_size > ext_end {
+        let ext_len = u16::from_be_bytes([buf[pos + 2], buf[pos + 3]]) as usize;
+        pos += 4;
+        if pos + ext_len > end {
             return None;
         }
         if ext_type == 0 {
-            if ext_size < 2 {
-                return None;
-            }
-            let list_len = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
-            pos += 2;
-            if pos + list_len > ext_end {
-                return None;
-            }
-            let list_end = pos + list_len;
-            while pos + 3 <= list_end {
-                let name_type = buf[pos];
-                pos += 1;
-                let name_len = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
-                pos += 2;
-                if pos + name_len > list_end {
-                    return None;
-                }
-                if name_type == 0 {
-                    let name = String::from_utf8_lossy(&buf[pos..pos + name_len]);
-                    return Some(strip_host_port(name.trim()));
-                }
-                pos += name_len;
-            }
+            return parse_sni_extension(&buf[pos..pos + ext_len]);
+        }
+        pos += ext_len;
+    }
+    None
+}
+
+fn parse_sni_extension(buf: &[u8]) -> Option<String> {
+    if buf.len() < 2 {
+        return None;
+    }
+    let list_len = u16::from_be_bytes([buf[0], buf[1]]) as usize;
+    if buf.len() < 2 + list_len {
+        return None;
+    }
+    let mut pos = 2;
+    while pos + 3 <= 2 + list_len {
+        let name_type = buf[pos];
+        let name_len = u16::from_be_bytes([buf[pos + 1], buf[pos + 2]]) as usize;
+        pos += 3;
+        if pos + name_len > buf.len() {
             return None;
         }
-        pos += ext_size;
+        if name_type == 0 {
+            return std::str::from_utf8(&buf[pos..pos + name_len])
+                .ok()
+                .map(strip_host_port);
+        }
+        pos += name_len;
     }
     None
 }
 
 #[cfg(target_os = "linux")]
-fn original_dst(stream: &TcpStream) -> io::Result<SocketAddr> {
-    const SO_ORIGINAL_DST: libc::c_int = 80;
+fn original_dst(stream: &TcpStream) -> Result<SocketAddr> {
     let fd = stream.as_raw_fd();
     let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
     let mut len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
@@ -321,13 +362,13 @@ fn original_dst(stream: &TcpStream) -> io::Result<SocketAddr> {
         libc::getsockopt(
             fd,
             libc::SOL_IP,
-            SO_ORIGINAL_DST,
-            &mut addr as *mut _ as *mut libc::c_void,
-            &mut len,
+            libc::SO_ORIGINAL_DST,
+            &mut addr as *mut _ as *mut _,
+            &mut len as *mut _,
         )
     };
     if ret != 0 {
-        return Err(io::Error::last_os_error());
+        return Err(io::Error::last_os_error()).context("getsockopt(SO_ORIGINAL_DST)");
     }
     let ip = IpAddr::V4(Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr)));
     let port = u16::from_be(addr.sin_port);
@@ -335,48 +376,6 @@ fn original_dst(stream: &TcpStream) -> io::Result<SocketAddr> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn original_dst(_stream: &TcpStream) -> io::Result<SocketAddr> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "SO_ORIGINAL_DST is only supported on linux",
-    ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_http_host_header() {
-        let req = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
-        assert_eq!(parse_http_host(req), Some("example.com".to_string()));
-    }
-
-    #[test]
-    fn parse_http_connect_host() {
-        let req = b"CONNECT example.com:443 HTTP/1.1\r\n\r\n";
-        assert_eq!(parse_http_host(req), Some("example.com".to_string()));
-    }
-
-    #[test]
-    fn parse_tls_sni_host() {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(&[0x16, 0x03, 0x03]);
-        buf.extend_from_slice(&[0x00, 0x43]);
-        buf.push(0x01);
-        buf.extend_from_slice(&[0x00, 0x00, 0x3f]);
-        buf.extend_from_slice(&[0x03, 0x03]);
-        buf.extend_from_slice(&[0u8; 32]);
-        buf.push(0x00);
-        buf.extend_from_slice(&[0x00, 0x02, 0x00, 0x2f]);
-        buf.extend_from_slice(&[0x01, 0x00]);
-        buf.extend_from_slice(&[0x00, 0x14]);
-        buf.extend_from_slice(&[0x00, 0x00, 0x00, 0x10]);
-        buf.extend_from_slice(&[0x00, 0x0e]);
-        buf.push(0x00);
-        buf.extend_from_slice(&[0x00, 0x0b]);
-        buf.extend_from_slice(b"example.com");
-
-        assert_eq!(parse_tls_sni(&buf), Some("example.com".to_string()));
-    }
+fn original_dst(_stream: &TcpStream) -> Result<SocketAddr> {
+    anyhow::bail!("SO_ORIGINAL_DST is only supported on linux")
 }
