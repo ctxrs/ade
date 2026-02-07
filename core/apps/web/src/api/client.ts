@@ -17,3 +17,4 @@ export * from "./clientSessions";
 export * from "./clientProviders";
 export * from "./clientSystem";
 export * from "./clientMobile";
+export * from "./clientRepo";

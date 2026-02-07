@@ -302,6 +302,269 @@ pub async fn load_merge_queue_target_branch_override(root: &Path) -> Result<Opti
     Ok(Some(trimmed))
 }
 
+#[derive(Debug, Clone)]
+pub struct MergeQueueConfigUpdate {
+    pub enabled: bool,
+    pub target_branch: Option<String>,
+    pub verify_commands: Vec<String>,
+    pub push_on_success: Option<bool>,
+    pub push_remote: Option<String>,
+    pub push_branch: Option<String>,
+    pub canonical_sync: Option<MergeQueueCanonicalSync>,
+}
+
+impl MergeQueueConfigUpdate {
+    pub fn normalized(mut self) -> Self {
+        self.target_branch = self
+            .target_branch
+            .as_ref()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+
+        self.verify_commands = self
+            .verify_commands
+            .into_iter()
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+            .collect();
+
+        self.push_remote = self
+            .push_remote
+            .as_ref()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+
+        self.push_branch = self
+            .push_branch
+            .as_ref()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+
+        self
+    }
+}
+
+pub async fn update_merge_queue_config(
+    root: &Path,
+    update: MergeQueueConfigUpdate,
+) -> Result<PathBuf> {
+    let config_path = root.join(WORKSPACE_CONFIG_REL_PATH);
+    let update = update.normalized();
+
+    let mut root_table = if config_path.exists() {
+        let text = tokio::fs::read_to_string(&config_path)
+            .await
+            .context("reading .ctx/config.toml")?;
+        match toml::from_str::<TomlValue>(&text).context("parsing .ctx/config.toml")? {
+            TomlValue::Table(table) => table,
+            _ => {
+                return Err(anyhow!(
+                    ".ctx/config.toml must contain a TOML table at the root"
+                ))
+            }
+        }
+    } else {
+        toml::value::Table::new()
+    };
+
+    if !update.enabled {
+        root_table.remove("merge_queue");
+    } else {
+        let mq_value = root_table
+            .entry("merge_queue".to_string())
+            .or_insert_with(|| TomlValue::Table(toml::value::Table::new()));
+        let mq_table = mq_value
+            .as_table_mut()
+            .ok_or_else(|| anyhow!(".ctx/config.toml [merge_queue] must be a TOML table"))?;
+
+        mq_table.insert("enabled".to_string(), TomlValue::Boolean(true));
+        match update.target_branch {
+            Some(target_branch) => {
+                mq_table.insert(
+                    "target_branch".to_string(),
+                    TomlValue::String(target_branch),
+                );
+            }
+            None => {
+                mq_table.remove("target_branch");
+            }
+        }
+        if !update.verify_commands.is_empty() {
+            mq_table.insert(
+                "verify_commands".to_string(),
+                TomlValue::Array(
+                    update
+                        .verify_commands
+                        .into_iter()
+                        .map(TomlValue::String)
+                        .collect(),
+                ),
+            );
+        } else {
+            mq_table.remove("verify_commands");
+        }
+        match update.push_on_success {
+            Some(value) => {
+                mq_table.insert("push_on_success".to_string(), TomlValue::Boolean(value));
+            }
+            None => {
+                mq_table.remove("push_on_success");
+            }
+        }
+        match update.push_remote {
+            Some(value) => {
+                mq_table.insert("push_remote".to_string(), TomlValue::String(value));
+            }
+            None => {
+                mq_table.remove("push_remote");
+            }
+        }
+        match update.push_branch {
+            Some(value) => {
+                mq_table.insert("push_branch".to_string(), TomlValue::String(value));
+            }
+            None => {
+                mq_table.remove("push_branch");
+            }
+        }
+        match update.canonical_sync {
+            Some(value) => {
+                mq_table.insert(
+                    "canonical_sync".to_string(),
+                    TomlValue::String(
+                        match value {
+                            MergeQueueCanonicalSync::Never => "never",
+                            MergeQueueCanonicalSync::CleanOnly => "clean_only",
+                            MergeQueueCanonicalSync::Force => "force",
+                        }
+                        .to_string(),
+                    ),
+                );
+            }
+            None => {
+                mq_table.remove("canonical_sync");
+            }
+        }
+    }
+
+    if root_table.is_empty() {
+        if config_path.exists() {
+            tokio::fs::remove_file(&config_path)
+                .await
+                .context("removing empty .ctx/config.toml")?;
+        }
+        return Ok(config_path);
+    }
+
+    if let Some(parent) = config_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .context("creating .ctx directory")?;
+    }
+    let serialized = toml::to_string_pretty(&TomlValue::Table(root_table))
+        .context("serializing .ctx/config.toml")?;
+    tokio::fs::write(&config_path, serialized)
+        .await
+        .context("writing .ctx/config.toml")?;
+    Ok(config_path)
+}
+
+pub async fn update_worktree_bootstrap_setup_command(
+    root: &Path,
+    setup_command: Option<String>,
+) -> Result<PathBuf> {
+    let config_path = root.join(WORKSPACE_CONFIG_REL_PATH);
+    let setup_command = setup_command
+        .as_ref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let mut root_table = if config_path.exists() {
+        let text = tokio::fs::read_to_string(&config_path)
+            .await
+            .context("reading .ctx/config.toml")?;
+        match toml::from_str::<TomlValue>(&text).context("parsing .ctx/config.toml")? {
+            TomlValue::Table(table) => table,
+            _ => {
+                return Err(anyhow!(
+                    ".ctx/config.toml must contain a TOML table at the root"
+                ))
+            }
+        }
+    } else {
+        toml::value::Table::new()
+    };
+
+    if let Some(cmd) = setup_command {
+        let worktree_value = root_table
+            .entry("worktree".to_string())
+            .or_insert_with(|| TomlValue::Table(toml::value::Table::new()));
+        let worktree_table = worktree_value
+            .as_table_mut()
+            .ok_or_else(|| anyhow!(".ctx/config.toml [worktree] must be a TOML table"))?;
+        let bootstrap_value = worktree_table
+            .entry("bootstrap".to_string())
+            .or_insert_with(|| TomlValue::Table(toml::value::Table::new()));
+        let bootstrap_table = bootstrap_value
+            .as_table_mut()
+            .ok_or_else(|| anyhow!(".ctx/config.toml [worktree.bootstrap] must be a TOML table"))?;
+
+        // `worktree_bootstrap` treats a scalar string as a script path. For a shell command, we
+        // must store an array (even for a single command).
+        bootstrap_table.insert(
+            "setup_worktree".to_string(),
+            TomlValue::Array(vec![TomlValue::String(cmd)]),
+        );
+        // Ensure we don't leave behind OS-specific overrides that would surprise the user.
+        bootstrap_table.remove("setup_worktree_unix");
+        bootstrap_table.remove("setup_worktree_windows");
+    } else {
+        // Remove setup key (and prune empty tables).
+        if let Some(worktree_value) = root_table.get_mut("worktree") {
+            let Some(worktree_table) = worktree_value.as_table_mut() else {
+                return Err(anyhow!(".ctx/config.toml [worktree] must be a TOML table"));
+            };
+            if let Some(bootstrap_value) = worktree_table.get_mut("bootstrap") {
+                let Some(bootstrap_table) = bootstrap_value.as_table_mut() else {
+                    return Err(anyhow!(
+                        ".ctx/config.toml [worktree.bootstrap] must be a TOML table"
+                    ));
+                };
+                bootstrap_table.remove("setup_worktree");
+                bootstrap_table.remove("setup_worktree_unix");
+                bootstrap_table.remove("setup_worktree_windows");
+                if bootstrap_table.is_empty() {
+                    worktree_table.remove("bootstrap");
+                }
+            }
+            if worktree_table.is_empty() {
+                root_table.remove("worktree");
+            }
+        }
+    }
+
+    if root_table.is_empty() {
+        if config_path.exists() {
+            tokio::fs::remove_file(&config_path)
+                .await
+                .context("removing empty .ctx/config.toml")?;
+        }
+        return Ok(config_path);
+    }
+
+    if let Some(parent) = config_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .context("creating .ctx directory")?;
+    }
+    let serialized = toml::to_string_pretty(&TomlValue::Table(root_table))
+        .context("serializing .ctx/config.toml")?;
+    tokio::fs::write(&config_path, serialized)
+        .await
+        .context("writing .ctx/config.toml")?;
+    Ok(config_path)
+}
+
 pub async fn update_agent_system_prompt_append(
     root: &Path,
     system_prompt_append: Option<String>,

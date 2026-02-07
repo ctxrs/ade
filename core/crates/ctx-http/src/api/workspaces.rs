@@ -27,6 +27,26 @@ use ctx_core::models::{
 use ctx_fs::git::assert_git_repo;
 use ctx_fs::vcs;
 
+#[derive(Debug, Deserialize)]
+pub(super) struct UpdateMergeQueueConfigReq {
+    enabled: bool,
+    #[serde(default)]
+    target_branch: Option<String>,
+    #[serde(default)]
+    verify_command: Option<String>,
+    #[serde(default)]
+    push_on_success: Option<bool>,
+    #[serde(default)]
+    push_remote: Option<String>,
+    #[serde(default)]
+    push_branch: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct UpdateWorkspaceConfigResp {
+    config_path: String,
+}
+
 pub(super) async fn get_worktree(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -748,6 +768,130 @@ pub(super) async fn update_subagent_system_prompt(
     };
 
     Ok(Json(response))
+}
+
+pub(super) async fn update_merge_queue_config(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateMergeQueueConfigReq>,
+) -> Result<Json<UpdateWorkspaceConfigResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let verify_commands = req
+        .verify_command
+        .as_ref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(|v| vec![v])
+        .unwrap_or_default();
+
+    let cfg_path = workspace_config::update_merge_queue_config(
+        StdPath::new(&workspace.root_path),
+        workspace_config::MergeQueueConfigUpdate {
+            enabled: req.enabled,
+            target_branch: req.target_branch,
+            verify_commands,
+            push_on_success: req.push_on_success,
+            push_remote: req.push_remote,
+            push_branch: req.push_branch,
+            canonical_sync: Some(workspace_config::MergeQueueCanonicalSync::CleanOnly),
+        },
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    Ok(Json(UpdateWorkspaceConfigResp {
+        config_path: cfg_path.to_string_lossy().to_string(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct UpdateWorktreeBootstrapReq {
+    #[serde(default)]
+    setup_command: Option<String>,
+}
+
+pub(super) async fn update_worktree_bootstrap_config(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateWorktreeBootstrapReq>,
+) -> Result<Json<UpdateWorkspaceConfigResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let cfg_path = workspace_config::update_worktree_bootstrap_setup_command(
+        StdPath::new(&workspace.root_path),
+        req.setup_command,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    Ok(Json(UpdateWorkspaceConfigResp {
+        config_path: cfg_path.to_string_lossy().to_string(),
+    }))
 }
 
 #[derive(Debug, Deserialize)]

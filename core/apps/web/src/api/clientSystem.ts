@@ -168,6 +168,38 @@ export type Settings = {
   provider_guard?: ProviderGuardSettings | null;
   subagents?: SubagentSettings | null;
   sandboxing?: SandboxingSettings | null;
+  execution?: ExecutionSettings | null;
+  network_profiles?: NetworkProfilesSettings | null;
+};
+
+export type ExecutionMode = "auto" | "host" | "container";
+export type ContainerRuntimeKind = "podman";
+export type ContainerMountMode = "host_mounted" | "sealed";
+export type ContainerNetworkMode = "llm_only" | "allowlist" | "all";
+
+export type ContainerExecutionSettings = {
+  runtime: ContainerRuntimeKind;
+  mount_mode: ContainerMountMode;
+  network_mode: ContainerNetworkMode;
+  allowlist: string[];
+  image?: string | null;
+};
+
+export type ExecutionSettings = {
+  mode: ExecutionMode;
+  container: ContainerExecutionSettings;
+};
+
+export type NetworkProfile = {
+  mode: ContainerNetworkMode;
+  allowlist: string[];
+};
+
+export type NetworkProfilesSettings = {
+  agent_default: NetworkProfile;
+  merge_queue: NetworkProfile;
+  worktree_setup: NetworkProfile;
+  user_shell: NetworkProfile;
 };
 
 export const getSettings = () =>
@@ -201,6 +233,27 @@ export const getResourceUtilization = (workspaceId: string) =>
   apiAny<ResourceUtilization>(`/api/resource_utilization?workspace_id=${encodeURIComponent(workspaceId)}`);
 
 export const getHealth = () => apiAny<Health>(`/api/health`);
+
+export type PrefetchContainerImageResponse = {
+  started: boolean;
+  image: string;
+  present: boolean;
+  available: boolean;
+  error?: string | null;
+};
+
+export const prefetchContainerImage = () =>
+  apiAny<PrefetchContainerImageResponse>(`/api/execution/container_image/prefetch`, { method: "POST" });
+
+export type ContainerImageStatusResponse = {
+  image: string;
+  present: boolean;
+  available: boolean;
+  error?: string | null;
+};
+
+export const getContainerImageStatus = () =>
+  apiAny<ContainerImageStatusResponse>(`/api/execution/container_image/status`);
 
 export const getLspStatus = () => apiAny<LspStatus>(`/api/lsp/status`);
 

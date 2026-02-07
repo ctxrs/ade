@@ -44,6 +44,35 @@ export const createWorkspace = (root_path: string, name?: string) =>
 export const getWorkspace = (id: string) =>
   apiAny<Workspace>(`/api/workspaces/${id}`);
 
+export type UpdateMergeQueueConfigRequest = {
+  enabled: boolean;
+  target_branch?: string | null;
+  verify_command?: string | null;
+  push_on_success?: boolean | null;
+  push_remote?: string | null;
+  push_branch?: string | null;
+};
+
+export type UpdateWorkspaceConfigResponse = {
+  config_path: string;
+};
+
+export const updateWorkspaceMergeQueueConfig = (workspaceId: string, req: UpdateMergeQueueConfigRequest) =>
+  apiAny<UpdateWorkspaceConfigResponse>(`/api/workspaces/${workspaceId}/merge_queue_config`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+
+export type UpdateWorktreeBootstrapConfigRequest = {
+  setup_command?: string | null;
+};
+
+export const updateWorkspaceWorktreeBootstrapConfig = (workspaceId: string, req: UpdateWorktreeBootstrapConfigRequest) =>
+  apiAny<UpdateWorkspaceConfigResponse>(`/api/workspaces/${workspaceId}/worktree_bootstrap_config`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+
 export type CreateWorkspaceAttachmentRequest = {
   kind: WorkspaceAttachmentKind;
   name: string;

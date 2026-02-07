@@ -1,16 +1,32 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ChevronRight, Info, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import LauncherBrand from "../components/LauncherBrand";
 import {
+  createWorkspace,
+  getHealth,
+  idToString,
+  listWorkspaces,
+  repoClone,
+  repoInit,
+  repoStatus,
+  setDaemonAuthToken,
+  setDaemonBaseUrl,
+  updateWorkspaceMergeQueueConfig,
+  updateWorkspaceWorktreeBootstrapConfig,
+} from "../api/client";
+import {
+  desktopConnectLocal,
+  desktopConnectSsh,
   desktopListSshHosts,
   desktopListSshPaths,
   desktopGetGitBranch,
   desktopPickFolder,
   desktopTestSsh,
   isDesktopApp,
+  type DesktopConnectionInfo,
   type DesktopSshPathEntry,
   type DesktopSshHost,
 } from "../utils/desktop";
@@ -39,7 +55,6 @@ type SshRecent = {
 };
 
 const SSH_RECENTS_KEY = "contextDesktopSshRecentsV1";
-const LOCAL_TITLE_MODEL_SIZE = "1.3 GB";
 
 const loadSshRecents = (): SshRecent[] => {
   try {
@@ -84,6 +99,7 @@ const parseUserHost = (raw: string): { host: string; user?: string | null } | nu
 };
 
 export default function WorkspaceSetupPage() {
+  const navigate = useNavigate();
   const [stepIndex, setStepIndex] = useState(0);
   const [selections, setSelections] = useState<Record<string, string>>({});
   const [sshHosts, setSshHosts] = useState<DesktopSshHost[]>([]);
@@ -91,6 +107,10 @@ export default function WorkspaceSetupPage() {
   const [remoteHostInput, setRemoteHostInput] = useState("");
   const [remoteStatus, setRemoteStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
   const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [importRepoStatus, setImportRepoStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
+  const [importRepoNote, setImportRepoNote] = useState<string | null>(null);
   const [sourcePath, setSourcePath] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
   const [repoBranch, setRepoBranch] = useState("");
@@ -104,15 +124,10 @@ export default function WorkspaceSetupPage() {
   const [pushRemote, setPushRemote] = useState("origin");
   const [pushBranch, setPushBranch] = useState("main");
   const [pushBranchTouched, setPushBranchTouched] = useState(false);
-  const [cloudEndpoint, setCloudEndpoint] = useState("");
-  const [cloudApiKey, setCloudApiKey] = useState("");
-  const [networkAllowlist, setNetworkAllowlist] = useState("");
-  const [containerAdvancedOpen, setContainerAdvancedOpen] = useState(false);
   const [openInfoKey, setOpenInfoKey] = useState<string | null>(null);
   const [remotePathSuggestions, setRemotePathSuggestions] = useState<DesktopSshPathEntry[]>([]);
   const [remotePathStatus, setRemotePathStatus] = useState<"idle" | "loading" | "error">("idle");
   const [remotePathError, setRemotePathError] = useState<string | null>(null);
-  const containerMode = selections.container;
 
   const steps = useMemo<WizardStep[]>(() => ([
       {
@@ -125,59 +140,13 @@ export default function WorkspaceSetupPage() {
         ],
       },
       {
-        key: "container",
-        title: "Agent Sandbox Isolation",
-        note: "Choose the containerization strategy for your agents.",
-        options: [
-          {
-            id: "sealed",
-            title: "Fully sealed container",
-            desc: "Managed volume, no host mounts. Useful for running agents without additional restrictions in a safe and controlled environment.",
-            badge: "Recommended",
-          },
-          {
-            id: "no-container",
-            title: "No container",
-            desc: "Run directly on the host. Useful if you already have isolation set up (e.g. a dev box or mini PC that is already agent-safe).",
-          },
-          {
-            id: "host-mounted",
-            title: "Host-mounted container",
-            desc: "Use a host folder as the workspace. Agents are containerized but they write back directly to your project directory on your machine.",
-            advanced: true,
-          },
-        ],
-      },
-      {
         key: "source",
         title: "Source",
         note: "How should we create the workspace?",
         options: [
           { id: "clone", title: "Clone repo", desc: "Git URL + optional branch." },
-          { id: "import", title: "Import folder", desc: "Select a folder (host-mounted/no-container) or copy into a managed volume." },
+          { id: "import", title: "Import folder", desc: "Use an existing git repo folder path." },
           { id: "new", title: "New empty", desc: "Initialize a new git repo." },
-        ],
-      },
-      {
-        key: "network",
-        title: "Network Policy",
-        note: "Restrict or permit agent network access.",
-        options: [
-          {
-            id: "providers",
-            title: "LLM providers only",
-            desc: "Only allow validated LLM provider traffic. This restricts the agent from using any other network access.",
-          },
-          {
-            id: "allowlist",
-            title: "Allowlist",
-            desc: "Specific hosts you approve. Useful for known-safe sources such as internal sites or other trusted sources.",
-          },
-          {
-            id: "full",
-            title: "Full access",
-            desc: "Unrestricted outbound. Useful if you are not working with private data and understand the risks of prompt injection attacks.",
-          },
         ],
       },
       {
@@ -210,20 +179,6 @@ export default function WorkspaceSetupPage() {
         ].join("\n"),
       },
       {
-        key: "session-titling",
-        title: "Generate Task Titles",
-        note: "Use a small local or cloud model to generate helpful titles for your tasks.",
-        options: [
-          {
-            id: "local-model",
-            title: "Local model",
-            desc: `Run Qwen3-1.7B locally (requires ~${LOCAL_TITLE_MODEL_SIZE} disk space).`,
-            badge: "Recommended",
-          },
-          { id: "cloud-api", title: "Cloud API", desc: "Use your provider key and endpoint." },
-        ],
-      },
-      {
         key: "confirm",
         title: "Confirm and create",
         note: "Review your choices before provisioning.",
@@ -237,56 +192,81 @@ export default function WorkspaceSetupPage() {
   const hasSelection = Boolean(selections[step.key]);
   const mergeQueueSkipped = selections["merge-queue"] === "skip";
   const isRemoteStep = step.key === "location" && selections.location === "remote";
-  const needsHostPath =
-    step.key === "source" &&
-    (selections.source === "import" || containerMode === "host-mounted" || containerMode === "no-container");
-  const hasSourcePath = !needsHostPath || sourcePath.trim() !== "";
-  const needsRepoUrl = step.key === "source" && selections.source === "clone";
+  const isSourceStep = step.key === "source";
+  const needsSourcePath = isSourceStep && Boolean(selections.source);
+  const hasSourcePath = !needsSourcePath || sourcePath.trim() !== "";
+  const needsRepoUrl = isSourceStep && selections.source === "clone";
   const hasRepoUrl = !needsRepoUrl || repoUrl.trim() !== "";
-  const needsWorkspaceName = step.key === "source" && containerMode === "sealed" && selections.source === "new";
-  const hasWorkspaceName = !needsWorkspaceName || workspaceName.trim() !== "";
   const needsTargetBranch = step.key === "merge-queue" && !mergeQueueSkipped;
   const hasTargetBranch = !needsTargetBranch || targetBranch.trim() !== "";
-  const needsCloudCreds = step.key === "session-titling" && selections[step.key] === "cloud-api";
-  const hasCloudCreds = !needsCloudCreds
-    || (cloudEndpoint.trim() !== "" && cloudApiKey.trim() !== "");
-  const needsAllowlist = step.key === "network" && selections.network === "allowlist";
-  const hasAllowlist = !needsAllowlist
-    || networkAllowlist.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length > 0;
   const parsedRemote = parseUserHost(remoteHostInput);
   const hasRemoteHost = Boolean(parsedRemote?.host);
   const canAdvance = (!requiresSelection || hasSelection)
     && (!isRemoteStep || (hasRemoteHost && remoteStatus !== "connecting"))
     && hasSourcePath
     && hasRepoUrl
-    && hasWorkspaceName
     && hasTargetBranch
-    && hasCloudCreds
-    && hasAllowlist;
+    ;
+
+  function applyConnection(info: DesktopConnectionInfo) {
+    const baseUrl = String(info.base_url ?? "").trim();
+    const token = String(info.token ?? "").trim();
+    if (baseUrl) setDaemonBaseUrl(baseUrl, true);
+    else setDaemonBaseUrl(null, false);
+    setDaemonAuthToken(token || null);
+  }
+
+  const sleepMs = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+  const waitForDaemonReady = async (timeoutMs: number) => {
+    const started = Date.now();
+    let lastErr: any = null;
+    while (Date.now() - started < timeoutMs) {
+      try {
+        await getHealth();
+        return;
+      } catch (e) {
+        lastErr = e;
+      }
+      await sleepMs(200);
+    }
+    throw lastErr ?? new Error("Timed out waiting for daemon health.");
+  };
+
+  const parseCloneDestPath = (raw: string): { dest_parent: string; dest_name?: string | null } | null => {
+    const input = String(raw || "").trim();
+    if (!input) return null;
+    const hasTrailingSlash = /\/+$/.test(input);
+    const normalized = input.replace(/\/+$/, "");
+    if (!normalized) return null;
+    // Basic POSIX parsing (desktop app is our primary target here).
+    if (hasTrailingSlash) {
+      return { dest_parent: normalized, dest_name: null };
+    }
+    const idx = normalized.lastIndexOf("/");
+    if (idx < 0) return null;
+    const dest_parent = normalized.slice(0, idx) || "/";
+    const dest_name = normalized.slice(idx + 1).trim();
+    if (!dest_name) return null;
+    return { dest_parent, dest_name };
+  };
 
   const shouldAutoAdvance = (stepKey: string, optionId: string): boolean => {
     if (stepKey === "location") return optionId === "local";
-    if (stepKey === "container") return true;
-    if (stepKey === "network") return optionId !== "allowlist";
-    if (stepKey === "session-titling") return optionId === "local-model";
     return false;
   };
 
   const onSelect = (stepKey: string, optionId: string) => {
+    setCreateError(null);
     setSelections((prev) => {
       const next = { ...prev, [stepKey]: optionId };
-      if (stepKey === "container") {
-        delete next.source;
-      }
       return next;
     });
     if (stepKey === "location" && optionId === "local") {
       setRemoteStatus("idle");
       setRemoteError(null);
-    }
-    if (stepKey === "container") {
-      setSourcePath("");
-      setWorkspaceName("");
+      setImportRepoStatus("idle");
+      setImportRepoNote(null);
     }
     if (stepKey === "source") {
       if (optionId !== "clone") {
@@ -296,13 +276,10 @@ export default function WorkspaceSetupPage() {
       if (optionId !== "new") {
         setWorkspaceName("");
       }
-    }
-    if (stepKey === "session-titling" && optionId !== "cloud-api") {
-      setCloudEndpoint("");
-      setCloudApiKey("");
-    }
-    if (stepKey === "network" && optionId !== "allowlist") {
-      setNetworkAllowlist("");
+      if (optionId !== "import") {
+        setImportRepoStatus("idle");
+        setImportRepoNote(null);
+      }
     }
   };
 
@@ -322,12 +299,6 @@ export default function WorkspaceSetupPage() {
       return next;
     });
   };
-
-  useEffect(() => {
-    if (selections.container === "host-mounted") {
-      setContainerAdvancedOpen(true);
-    }
-  }, [selections.container]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -354,7 +325,7 @@ export default function WorkspaceSetupPage() {
   }, []);
 
   useEffect(() => {
-    const shouldSuggest = needsHostPath
+    const shouldSuggest = needsSourcePath
       && selections.location === "remote"
       && remoteStatus === "connected"
       && Boolean(parsedRemote?.host)
@@ -383,33 +354,102 @@ export default function WorkspaceSetupPage() {
         });
     }, 250);
     return () => window.clearTimeout(handle);
-  }, [needsHostPath, selections.location, remoteStatus, parsedRemote?.host, parsedRemote?.user, sourcePath]);
+  }, [needsSourcePath, selections.location, remoteStatus, parsedRemote?.host, parsedRemote?.user, sourcePath]);
 
   useEffect(() => {
     if (!isDesktopApp()) return;
     if (selections.location !== "local") return;
-    if (!sourcePath.trim()) return;
-    if (targetBranchTouched) return;
+    if (selections.source !== "import") {
+      setImportRepoStatus("idle");
+      setImportRepoNote(null);
+      return;
+    }
+    if (!sourcePath.trim()) {
+      setImportRepoStatus("idle");
+      setImportRepoNote(null);
+      return;
+    }
     let cancelled = false;
+    setImportRepoStatus("checking");
+    setImportRepoNote("Checking git repo…");
     desktopGetGitBranch({ path: sourcePath })
       .then((branch) => {
-        if (cancelled || !branch || targetBranchTouched) return;
+        if (cancelled) return;
+        setImportRepoStatus("ok");
+        setImportRepoNote(branch ? `Git repo detected (branch: ${branch})` : "Git repo detected.");
+        if (!branch || targetBranchTouched) return;
         setTargetBranch(branch);
-        if (!pushBranchTouched) {
-          setPushBranch(branch);
-        }
+        if (!pushBranchTouched) setPushBranch(branch);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (cancelled) return;
+        setImportRepoStatus("error");
+        setImportRepoNote("Selected folder does not look like a git repo.");
+      });
     return () => {
       cancelled = true;
     };
-  }, [selections.location, sourcePath, targetBranchTouched, pushBranchTouched]);
+  }, [selections.location, selections.source, sourcePath, targetBranchTouched, pushBranchTouched]);
 
   useEffect(() => {
     if (pushBranchTouched) return;
     if (!targetBranch.trim()) return;
     setPushBranch(targetBranch);
   }, [targetBranch, pushBranchTouched]);
+
+  // Remote import validation: once SSH is verified, check the selected remote folder is a repo.
+  useEffect(() => {
+    const shouldCheck =
+      isDesktopApp()
+      && step.key === "source"
+      && selections.location === "remote"
+      && remoteStatus === "connected"
+      && selections.source === "import"
+      && Boolean(parseUserHost(remoteHostInput)?.host)
+      && Boolean(sourcePath.trim());
+    if (!shouldCheck) return;
+    const parsed = parseUserHost(remoteHostInput);
+    if (!parsed?.host) return;
+
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      setImportRepoStatus("checking");
+      setImportRepoNote("Checking remote git repo…");
+      desktopConnectSsh({
+        host: parsed.host,
+        user: parsed.user ?? null,
+        remote_port: null,
+        start_remote: true,
+        remote_data_dir: null,
+      })
+        .then((info) => {
+          if (cancelled) return null;
+          applyConnection(info);
+          return repoStatus({ path: sourcePath.trim().replace(/\/+$/, "") });
+        })
+        .then((st) => {
+          if (cancelled) return;
+          if (!st) return;
+          if (st.is_repo) {
+            setImportRepoStatus("ok");
+            setImportRepoNote(st.canonical_path ? `Remote git repo detected: ${st.canonical_path}` : "Remote git repo detected.");
+          } else {
+            setImportRepoStatus("error");
+            const detail = String((st as any).error ?? "").trim();
+            setImportRepoNote(detail ? `Not a git repo: ${detail}` : "Not a git repo.");
+          }
+        })
+        .catch((e: any) => {
+          if (cancelled) return;
+          setImportRepoStatus("error");
+          setImportRepoNote(e?.message ? `Remote repo check failed: ${e.message}` : "Remote repo check failed.");
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [step.key, selections.location, remoteStatus, selections.source, remoteHostInput, sourcePath]);
 
   const sshSuggestions = useMemo(() => {
     const query = remoteHostInput.trim().toLowerCase();
@@ -435,6 +475,7 @@ export default function WorkspaceSetupPage() {
   }, [remoteHostInput, sshHosts, sshRecents]);
 
   const onRemoteInputChange = (value: string) => {
+    setCreateError(null);
     setRemoteHostInput(value);
     if (remoteStatus !== "idle") {
       setRemoteStatus("idle");
@@ -447,6 +488,7 @@ export default function WorkspaceSetupPage() {
     try {
       const picked = await desktopPickFolder();
       if (picked) {
+        setCreateError(null);
         setSourcePath(picked);
       }
     } catch {
@@ -486,10 +528,132 @@ export default function WorkspaceSetupPage() {
     setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
   };
 
+  const onCreate = async () => {
+    setCreateError(null);
+    setCreating(true);
+    try {
+      if (!isDesktopApp()) {
+        throw new Error("Workspace creation from the wizard requires the desktop app.");
+      }
+
+      const parsed = selections.location === "remote" ? parseUserHost(remoteHostInput) : null;
+      if (selections.location === "remote" && !parsed?.host) {
+        throw new Error("Remote host is required (user@host).");
+      }
+
+      // 1. Connect to the intended daemon (reuse existing if already running).
+      const info = selections.location === "remote"
+        ? await desktopConnectSsh({
+          host: parsed!.host,
+          user: parsed!.user ?? null,
+          remote_port: null,
+          start_remote: true,
+          remote_data_dir: null,
+        })
+        : await desktopConnectLocal();
+      applyConnection(info);
+
+      // Ensure the daemon is reachable before we navigate away from the wizard.
+      // This avoids landing on the workbench too early on cold start.
+      await waitForDaemonReady(15000);
+
+      // 2. Ensure we have a VCS repo root_path (workspace creation requires this).
+      let rootPath = "";
+      let name: string | undefined;
+      if (selections.source === "import") {
+        rootPath = sourcePath.trim().replace(/\/+$/, "");
+        if (!rootPath) throw new Error("Folder is required.");
+        const st = await repoStatus({ path: rootPath }).catch(() => null);
+        if (st && !st.is_repo) {
+          const detail = String((st as any).error ?? "").trim();
+          throw new Error(detail ? `Selected folder is not a repo: ${detail}` : "Selected folder is not a repo.");
+        }
+        if (st?.canonical_path) {
+          rootPath = String(st.canonical_path).trim() || rootPath;
+        }
+        // Prefer existing workspace if already registered.
+        const all = await listWorkspaces();
+        const hit = all.find((w) => String((w as any).root_path) === rootPath);
+        if (hit) {
+          navigate(`/workspaces/${idToString((hit as any).id)}`, { replace: true });
+          return;
+        }
+        name = workspaceName.trim() || undefined;
+      } else if (selections.source === "clone") {
+        const dest = parseCloneDestPath(sourcePath);
+        if (!dest) throw new Error("Destination must be an absolute path (e.g. /Users/example-user/projects/ or /Users/example-user/projects/repo-name).");
+        const resp = await repoClone({
+          repo_url: repoUrl.trim(),
+          branch: repoBranch.trim() || null,
+          dest_parent: dest.dest_parent,
+          dest_name: dest.dest_name ?? null,
+        });
+        rootPath = resp.path;
+        name = (dest.dest_name ?? "").trim() || undefined;
+      } else if (selections.source === "new") {
+        const destPath = sourcePath.trim().replace(/\/+$/, "");
+        if (!destPath) throw new Error("Destination folder is required.");
+        // Allow existing empty directories (daemon still refuses non-empty dirs).
+        await repoInit({ path: destPath, allow_existing: true });
+        rootPath = destPath;
+        name = workspaceName.trim() || parseCloneDestPath(destPath)?.dest_name || undefined;
+      } else {
+        throw new Error("Choose a source option.");
+      }
+
+      // 3. Register the workspace.
+      const created = await createWorkspace(rootPath, name);
+      const wsId = idToString((created as any).id);
+
+      // 4. Persist repo-scoped config only if the user opted in / provided values.
+      if (!mergeQueueSkipped) {
+        await updateWorkspaceMergeQueueConfig(wsId, {
+          enabled: true,
+          target_branch: targetBranch.trim() || null,
+          verify_command: verifyCommand.trim() || null,
+          push_on_success: pushOnSuccess ? true : null,
+          push_remote: pushOnSuccess ? (pushRemote.trim() || "origin") : null,
+          push_branch: pushOnSuccess ? (pushBranch.trim() || targetBranch.trim() || "main") : null,
+        });
+      }
+
+      if (setupHook.trim()) {
+        await updateWorkspaceWorktreeBootstrapConfig(wsId, { setup_command: setupHook.trim() });
+      }
+
+      // Final guard: ensure daemon is still reachable before navigating to the workbench.
+      await waitForDaemonReady(15000);
+      navigate(`/workspaces/${wsId}`, { replace: true });
+    } catch (e: any) {
+      const msg = e?.message ?? String(e);
+      setCreateError(msg);
+
+      const stepKeyForError = (m: string): WizardStep["key"] | null => {
+        const s = String(m || "");
+        if (s.includes("Remote host is required")) return "location";
+        if (s.includes("repo_url") || s.includes("Destination") || s.includes("Folder") || s.includes("git clone") || s.includes("git init") || s.includes("root_path")) {
+          return "source";
+        }
+        return null;
+      };
+      const key = stepKeyForError(msg);
+      if (key) {
+        const idx = steps.findIndex((st) => st.key === key);
+        if (idx >= 0) setStepIndex(idx);
+      }
+    } finally {
+      setCreating(false);
+    }
+  };
+
 	  return (
 	    <div className="launcher-shell launcher-shell--crt">
 	      <LauncherBrand fullScreen>
-	        <div className="wizard-panel">
+		        <div
+		          className="wizard-panel"
+		          data-testid="workspace-setup"
+		          data-step-key={step.key}
+		        >
 	          {infoStep?.info && (
 	            <div
 	              className="wizard-modal-backdrop"
@@ -520,8 +684,8 @@ export default function WorkspaceSetupPage() {
 	              </div>
 	            </div>
 	          )}
-	          <div className="wizard-steps">
-	            <div className="wizard-step">
+		          <div className="wizard-steps">
+		            <div className="wizard-step" data-testid="wizard-step" data-step-key={step.key}>
 	              <div className="wizard-step-header">
 	                <div className="wizard-step-title-row">
 	                  <div className="wizard-step-title">{step.title}</div>
@@ -539,21 +703,25 @@ export default function WorkspaceSetupPage() {
 	                <div className="wizard-step-note">{step.note}</div>
 	              </div>
 	              <div className="wizard-step-body">
+                  {createError && (
+                    <div className="wizard-error">{createError}</div>
+                  )}
                 {step.options && (
                   <>
-                    <div className="wizard-option-grid">
-                      {step.options
-                        .filter((option) => step.key !== "container" || !option.advanced)
-                        .map((option) => {
-                          const selected = selections[step.key] === option.id;
-                          return (
-                            <button
-                              key={option.id}
-                              type="button"
-                              className={`wizard-option${selected ? " is-selected" : ""}`}
-                              onClick={() => onSelectOption(step.key, option.id)}
-                              aria-pressed={selected}
-                            >
+	                    <div className="wizard-option-grid">
+	                      {step.options
+	                        .filter((option) => step.key !== "container" || !option.advanced)
+	                        .map((option) => {
+	                          const selected = selections[step.key] === option.id;
+	                          return (
+	                            <button
+	                              key={option.id}
+	                              type="button"
+	                              className={`wizard-option${selected ? " is-selected" : ""}`}
+	                              data-testid={`wizard-option-${step.key}-${option.id}`}
+	                              onClick={() => onSelectOption(step.key, option.id)}
+	                              aria-pressed={selected}
+	                            >
                               <div className="wizard-option-title">
                                 <span className="wizard-option-title-text">{option.title}</span>
                                 {option.badge && <span className="wizard-option-badge">{option.badge}</span>}
@@ -563,81 +731,20 @@ export default function WorkspaceSetupPage() {
                           );
                         })}
                     </div>
-	                    {step.key === "container" && (
-	                      <>
-	                        <button
-	                          type="button"
-	                          className="wizard-advanced-link"
-	                          onClick={() => setContainerAdvancedOpen((open) => !open)}
-	                          aria-expanded={containerAdvancedOpen}
-	                        >
-	                          <ChevronRight
-	                            size={14}
-	                            className={containerAdvancedOpen ? "is-open" : undefined}
-	                            aria-hidden="true"
-	                          />
-	                          Advanced
-	                        </button>
-	                        {containerAdvancedOpen && (
-	                          <div className="wizard-advanced-options">
-	                            {step.options
-	                              .filter((option) => Boolean(option.advanced))
-	                              .map((option) => {
-	                                const selected = selections[step.key] === option.id;
-	                                return (
-	                                  <button
-                                    key={option.id}
-                                    type="button"
-                                    className={`wizard-option${selected ? " is-selected" : ""}`}
-                                    onClick={() => onSelectOption(step.key, option.id)}
-                                    aria-pressed={selected}
-                                  >
-                                    <div className="wizard-option-title">
-                                      <span className="wizard-option-title-text">{option.title}</span>
-                                      {option.badge && <span className="wizard-option-badge">{option.badge}</span>}
-                                    </div>
-                                    <div className="wizard-option-desc">{option.desc}</div>
-                                  </button>
-	                                );
-	                              })}
-	                          </div>
-	                        )}
-	                      </>
-	                    )}
 	                  </>
 	                )}
-	                {step.key === "session-titling" && selections[step.key] === "cloud-api" && (
-	                  <div className="wizard-input wizard-cloud-inputs">
-	                    <label>
-	                      API endpoint
-	                      <input
-                        placeholder="https://api.openai.com/v1"
-                        value={cloudEndpoint}
-                        onChange={(e) => setCloudEndpoint(e.target.value)}
-                      />
-                    </label>
-                    <label>
-                      API key
-                      <input
-                        type="password"
-                        placeholder="sk-..."
-                        value={cloudApiKey}
-                        onChange={(e) => setCloudApiKey(e.target.value)}
-                      />
-	                    </label>
-	                  </div>
-	                )}
-	                {step.key === "location" && selections.location === "remote" && (
-	                  <div className="wizard-remote">
-	                    <div className="wizard-input">
+                {step.key === "location" && selections.location === "remote" && (
+                  <div className="wizard-remote">
+                    <div className="wizard-input">
 	                      <label>
-                        Remote host
-                        <input
-                          placeholder="user@host"
-                          value={remoteHostInput}
-                          onChange={(e) => onRemoteInputChange(e.target.value)}
-                        />
-                      </label>
+	                        Remote host
+	                        <input
+	                          data-testid="wizard-remote-host"
+	                          placeholder="user@host"
+	                          value={remoteHostInput}
+	                          onChange={(e) => onRemoteInputChange(e.target.value)}
+	                        />
+	                      </label>
                     </div>
                     {sshSuggestions.length > 0 && (
                       <div className="wizard-remote-list">
@@ -667,17 +774,25 @@ export default function WorkspaceSetupPage() {
                     )}
                   </div>
                 )}
-                {step.key === "source" && needsHostPath && (
+                {step.key === "source" && needsSourcePath && (
                   <div className="wizard-input">
                     <label>
                       {selections.source === "import"
-                        ? (containerMode === "sealed" ? "Folder to import" : "Existing folder")
+                        ? "Existing folder"
                         : "Destination folder"}
-                      <div className="wizard-input-row">
-                        <input
-                          placeholder="/Users/example-user/project"
+	                      <div className="wizard-input-row">
+	                        <input
+	                          data-testid="wizard-source-path"
+	                          placeholder={
+	                            selections.source === "import"
+	                              ? "/Users/example-user/project"
+                              : "/Users/example-user/projects/"
+                          }
                           value={sourcePath}
-                          onChange={(e) => setSourcePath(e.target.value)}
+                          onChange={(e) => {
+                            setCreateError(null);
+                            setSourcePath(e.target.value);
+                          }}
                         />
                         {selections.location === "local" && (
                           <button
@@ -689,7 +804,17 @@ export default function WorkspaceSetupPage() {
                           </button>
                         )}
                       </div>
-                    </label>
+	                    </label>
+	                    {selections.source === "import" && importRepoStatus !== "idle" && importRepoNote && (
+	                      <div className={importRepoStatus === "error" ? "wizard-error" : "wizard-note"}>
+	                        {importRepoNote}
+	                      </div>
+	                    )}
+	                    {selections.source === "clone" && (
+	                      <div className="wizard-note">
+	                        Tip: If you enter a folder ending in <code>/</code>, ctx will derive the repo name from the URL.
+	                      </div>
+	                    )}
                     {selections.location === "remote" && remotePathSuggestions.length > 0 && (
                       <div className="wizard-path-list">
                         {remotePathSuggestions.map((entry) => (
@@ -712,92 +837,101 @@ export default function WorkspaceSetupPage() {
                     )}
                   </div>
                 )}
-	                {step.key === "network" && selections.network === "allowlist" && (
-	                  <div className="wizard-input">
+                {step.key === "source" && selections.source === "clone" && (
+                  <div className="wizard-input">
+                    <label>
+	                      Repo URL
+		                      <input
+		                        data-testid="wizard-repo-url"
+		                        placeholder="https://github.com/org/repo.git"
+		                        value={repoUrl}
+		                        onChange={(e) => {
+                            setCreateError(null);
+                            setRepoUrl(e.target.value);
+                          }}
+	                      />
+	                    </label>
 	                    <label>
-	                      Allowlist (one host per line)
-	                      <textarea
-	                        placeholder={"registry.npmjs.org\napi.github.com"}
-	                        value={networkAllowlist}
-	                        onChange={(e) => setNetworkAllowlist(e.target.value)}
+		                      Branch (optional)
+		                      <input
+		                        data-testid="wizard-repo-branch"
+		                        placeholder="main"
+		                        value={repoBranch}
+		                        onChange={(e) => {
+                            setCreateError(null);
+                            setRepoBranch(e.target.value);
+                          }}
 	                      />
 	                    </label>
 	                  </div>
 	                )}
-                {step.key === "source" && selections.source === "clone" && (
-                  <div className="wizard-input">
-                    <label>
-                      Repo URL
-                      <input
-                        placeholder="https://github.com/org/repo.git"
-                        value={repoUrl}
-                        onChange={(e) => setRepoUrl(e.target.value)}
-                      />
-                    </label>
-                    <label>
-                      Branch (optional)
-                      <input
-                        placeholder="main"
-                        value={repoBranch}
-                        onChange={(e) => setRepoBranch(e.target.value)}
-                      />
-                    </label>
-                  </div>
-                )}
                 {step.key === "setup" && (
+		                  <div className="wizard-input">
+		                    <input
+		                      data-testid="wizard-setup-hook"
+		                      placeholder="pnpm install"
+		                      value={setupHook}
+		                      onChange={(e) => {
+                          setCreateError(null);
+                          setSetupHook(e.target.value);
+                        }}
+	                    />
+	                  </div>
+	                )}
+                {step.key === "source" && (selections.source === "new" || selections.source === "import") && (
                   <div className="wizard-input">
-                    <input
-                      placeholder="pnpm install"
-                      value={setupHook}
-                      onChange={(e) => setSetupHook(e.target.value)}
-                    />
-                  </div>
-                )}
-                {step.key === "source" && containerMode === "sealed" && selections.source === "new" && (
-                  <div className="wizard-input">
-                    <label>
-                      Workspace name
-                      <input
-                        placeholder="workspace"
-                        value={workspaceName}
-                        onChange={(e) => setWorkspaceName(e.target.value)}
-                      />
-	                    </label>
-                  </div>
-                )}
+	                    <label>
+	                      Workspace name (optional)
+		                      <input
+		                        data-testid="wizard-workspace-name"
+		                        placeholder="workspace"
+		                        value={workspaceName}
+		                        onChange={(e) => {
+                            setCreateError(null);
+                            setWorkspaceName(e.target.value);
+                          }}
+	                      />
+		                    </label>
+	                  </div>
+	                )}
                 {step.key === "merge-queue" && (
 	                  <div className="wizard-input">
                     <label>
-                      Target branch
-                      <input
-                        placeholder="main"
-                        value={targetBranch}
-                        onChange={(e) => {
-                          enableMergeQueueIfSkipped();
-                          setTargetBranch(e.target.value);
-                          setTargetBranchTouched(true);
-                        }}
+	                      Target branch
+	                      <input
+	                        data-testid="wizard-merge-target-branch"
+	                        placeholder="main"
+		                        value={targetBranch}
+		                        onChange={(e) => {
+                            setCreateError(null);
+	                          enableMergeQueueIfSkipped();
+	                          setTargetBranch(e.target.value);
+	                          setTargetBranchTouched(true);
+	                        }}
                         disabled={mergeQueueSkipped}
                       />
                     </label>
                     <label>
-                      Verification command (optional)
-                  <input
-                        placeholder="pnpm test"
-                        value={verifyCommand}
-                        onChange={(e) => {
-                          enableMergeQueueIfSkipped();
-                          setVerifyCommand(e.target.value);
-                        }}
+	                      Verification command (optional)
+	                  <input
+	                        data-testid="wizard-merge-verify-command"
+	                        placeholder="pnpm test"
+		                        value={verifyCommand}
+		                        onChange={(e) => {
+                            setCreateError(null);
+	                          enableMergeQueueIfSkipped();
+	                          setVerifyCommand(e.target.value);
+	                        }}
                         disabled={mergeQueueSkipped}
                       />
                     </label>
-                    <button
-                      type="button"
-                      className="wizard-advanced-link"
-                      onClick={() => setMergeAdvancedOpen((open) => !open)}
-                      aria-expanded={mergeAdvancedOpen}
-                      disabled={mergeQueueSkipped}
+	                    <button
+	                      type="button"
+	                      className="wizard-advanced-link"
+	                      data-testid="wizard-merge-advanced-toggle"
+	                      onClick={() => setMergeAdvancedOpen((open) => !open)}
+	                      aria-expanded={mergeAdvancedOpen}
+	                      disabled={mergeQueueSkipped}
                     >
                       <ChevronRight
                         size={14}
@@ -808,46 +942,57 @@ export default function WorkspaceSetupPage() {
                     </button>
                     {mergeAdvancedOpen && (
                       <div className="wizard-advanced-panel">
-                        <label className="wizard-checkbox">
-                          <input
-                            type="checkbox"
-                            checked={pushOnSuccess}
-                            onChange={(e) => setPushOnSuccess(e.target.checked)}
-                            disabled={mergeQueueSkipped}
-                          />
+	                        <label className="wizard-checkbox">
+	                          <input
+		                            data-testid="wizard-merge-push-on-success"
+		                            type="checkbox"
+		                            checked={pushOnSuccess}
+		                            onChange={(e) => {
+                                setCreateError(null);
+                                setPushOnSuccess(e.target.checked);
+                              }}
+	                            disabled={mergeQueueSkipped}
+	                          />
                           Push to remote on success
                         </label>
                         {pushOnSuccess && (
                           <div className="wizard-input">
                             <label>
-                              Push remote
-                              <input
-                                placeholder="origin"
-                                value={pushRemote}
-                                onChange={(e) => setPushRemote(e.target.value)}
-                                disabled={mergeQueueSkipped}
-                              />
+	                              Push remote
+	                              <input
+		                                data-testid="wizard-merge-push-remote"
+		                                placeholder="origin"
+		                                value={pushRemote}
+		                                onChange={(e) => {
+                                    setCreateError(null);
+                                    setPushRemote(e.target.value);
+                                  }}
+	                                disabled={mergeQueueSkipped}
+	                              />
                             </label>
                             <label>
-                              Push branch
-                              <input
-                                placeholder={targetBranch || "main"}
-                                value={pushBranch}
-                                onChange={(e) => {
-                                  setPushBranch(e.target.value);
-                                  setPushBranchTouched(true);
-                                }}
-                                disabled={mergeQueueSkipped}
-                              />
+	                              Push branch
+	                              <input
+		                                data-testid="wizard-merge-push-branch"
+	                                placeholder={targetBranch || "main"}
+		                                value={pushBranch}
+		                                onChange={(e) => {
+	                                  setCreateError(null);
+	                                  setPushBranch(e.target.value);
+	                                  setPushBranchTouched(true);
+	                                }}
+	                                disabled={mergeQueueSkipped}
+	                              />
                             </label>
                           </div>
                         )}
                       </div>
                     )}
-                    <button
-                      type="button"
-                      className="wizard-skip wizard-skip--left wizard-skip--below"
-                      onClick={() => {
+	                    <button
+	                      type="button"
+	                      className="wizard-skip wizard-skip--left wizard-skip--below"
+	                      data-testid="wizard-merge-skip"
+	                      onClick={() => {
                         onSelect("merge-queue", "skip");
                         setMergeAdvancedOpen(false);
                         setPushOnSuccess(false);
@@ -871,16 +1016,6 @@ export default function WorkspaceSetupPage() {
                         </div>
                       </div>
                       <div className="wizard-summary-row">
-                        <div className="wizard-summary-k">Sandbox</div>
-                        <div className="wizard-summary-v">
-                          {selections.container === "sealed"
-                            ? "Fully sealed container"
-                            : selections.container === "host-mounted"
-                              ? "Host-mounted container"
-                              : "No container"}
-                        </div>
-                      </div>
-                      <div className="wizard-summary-row">
                         <div className="wizard-summary-k">Source</div>
                         <div className="wizard-summary-v">
                           {selections.source === "clone"
@@ -896,38 +1031,28 @@ export default function WorkspaceSetupPage() {
                           <div className="wizard-summary-v">{repoUrl.trim()}</div>
                         </div>
                       )}
+                      {selections.source === "clone" && sourcePath.trim() && (
+                        <div className="wizard-summary-row">
+                          <div className="wizard-summary-k">Destination</div>
+                          <div className="wizard-summary-v">{sourcePath.trim()}</div>
+                        </div>
+                      )}
                       {selections.source === "import" && sourcePath.trim() && (
                         <div className="wizard-summary-row">
                           <div className="wizard-summary-k">Folder</div>
                           <div className="wizard-summary-v">{sourcePath.trim()}</div>
                         </div>
                       )}
-                      {selections.source === "new" && containerMode === "sealed" && workspaceName.trim() && (
+                      {selections.source === "new" && sourcePath.trim() && (
+                        <div className="wizard-summary-row">
+                          <div className="wizard-summary-k">Destination</div>
+                          <div className="wizard-summary-v">{sourcePath.trim()}</div>
+                        </div>
+                      )}
+                      {(selections.source === "new" || selections.source === "import") && workspaceName.trim() && (
                         <div className="wizard-summary-row">
                           <div className="wizard-summary-k">Name</div>
                           <div className="wizard-summary-v">{workspaceName.trim()}</div>
-                        </div>
-                      )}
-                      <div className="wizard-summary-row">
-                        <div className="wizard-summary-k">Network</div>
-                        <div className="wizard-summary-v">
-                          {selections.network === "providers"
-                            ? "LLM providers only"
-                            : selections.network === "allowlist"
-                              ? "Allowlist"
-                              : "Full access"}
-                        </div>
-                      </div>
-                      {selections.network === "allowlist" && (
-                        <div className="wizard-summary-row">
-                          <div className="wizard-summary-k">Allowlist</div>
-                          <div className="wizard-summary-v">
-                            {networkAllowlist
-                              .split(/\r?\n/)
-                              .map((l) => l.trim())
-                              .filter(Boolean)
-                              .join(", ") || "(empty)"}
-                          </div>
                         </div>
                       )}
                       <div className="wizard-summary-row">
@@ -939,19 +1064,17 @@ export default function WorkspaceSetupPage() {
                         <div className="wizard-summary-v">
                           {mergeQueueSkipped
                             ? "Disabled"
-                            : `Target \`${targetBranch.trim() || "main"}\`${verifyCommand.trim() ? `, verify: ${verifyCommand.trim()}` : ""}`}
+                            : `Target ${targetBranch.trim() || "main"}${verifyCommand.trim() ? `, verify: ${verifyCommand.trim()}` : ""}`}
                         </div>
                       </div>
-                      <div className="wizard-summary-row">
-                        <div className="wizard-summary-k">Task titles</div>
-                        <div className="wizard-summary-v">
-                          {selections["session-titling"] === "local-model"
-                            ? "Local model"
-                            : selections["session-titling"] === "cloud-api"
-                              ? `Cloud API (${cloudEndpoint.trim() || "endpoint not set"})`
-                              : "Skip for now"}
+                      {!mergeQueueSkipped && pushOnSuccess && (
+                        <div className="wizard-summary-row">
+                          <div className="wizard-summary-k">Merge push</div>
+                          <div className="wizard-summary-v">
+                            {`${(pushRemote.trim() || "origin")}:${pushBranch.trim() || targetBranch.trim() || "main"}`}
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -964,18 +1087,6 @@ export default function WorkspaceSetupPage() {
 	                    Skip for now
 	                  </button>
 	                )}
-                {step.key === "session-titling" && (
-                  <button
-                    type="button"
-                    className="wizard-skip wizard-skip--below"
-                    onClick={() => {
-                      onSelect(step.key, "skip");
-                      setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
-                    }}
-                  >
-                    Skip for now
-                  </button>
-                )}
               </div>
             </div>
           </div>
@@ -988,33 +1099,14 @@ export default function WorkspaceSetupPage() {
                   if (selections.location !== "remote") return false;
                   return remoteStatus === "connected" && Boolean(parseUserHost(remoteHostInput)?.host);
                 }
-                if (key === "container") return Boolean(selections.container);
                 if (key === "source") {
                   if (!selections.source) return false;
                   if (selections.source === "clone" && !repoUrl.trim()) return false;
-                  if (selections.source === "import" && !sourcePath.trim()) return false;
-                  if (containerMode === "sealed" && selections.source === "new" && !workspaceName.trim()) return false;
-                  if ((containerMode === "host-mounted" || containerMode === "no-container") && !sourcePath.trim()) {
-                    return false;
-                  }
+                  if (!sourcePath.trim()) return false;
+                  if (selections.source === "clone" && !parseCloneDestPath(sourcePath)) return false;
                   return true;
                 }
-                if (key === "network") {
-                  if (!selections.network) return false;
-                  if (selections.network !== "allowlist") return true;
-                  return (
-                    networkAllowlist
-                      .split(/\r?\n/)
-                      .map((l) => l.trim())
-                      .filter(Boolean).length > 0
-                  );
-                }
                 if (key === "merge-queue") return mergeQueueSkipped || Boolean(targetBranch.trim());
-                if (key === "session-titling") {
-                  if (!selections["session-titling"]) return false;
-                  if (selections["session-titling"] !== "cloud-api") return true;
-                  return Boolean(cloudEndpoint.trim() && cloudApiKey.trim());
-                }
                 if (key === "setup") return true;
                 if (key === "confirm") return true;
                 return true;
@@ -1049,24 +1141,40 @@ export default function WorkspaceSetupPage() {
             })()}
           </div>
 
-          <div className="wizard-actions">
-            {isFirst ? (
-              <Link to="/" className="wizard-secondary">Back</Link>
-            ) : (
-              <button type="button" className="wizard-secondary" onClick={() => setStepIndex((idx) => Math.max(0, idx - 1))}>
-                Back
-              </button>
-            )}
-            {isLast ? (
-              <button type="button" className="wizard-primary" disabled={!canAdvance}>Create workspace</button>
-            ) : (
-              <button
-                type="button"
-                className="wizard-primary"
-                disabled={!canAdvance}
-                onClick={onNext}
-              >
-                Next
+	          <div className="wizard-actions">
+	            {isFirst ? (
+	              <Link to="/" className="wizard-secondary" data-testid="wizard-back-link">
+	                Back
+	              </Link>
+	            ) : (
+	              <button
+	                type="button"
+	                className="wizard-secondary"
+	                data-testid="wizard-back"
+	                onClick={() => setStepIndex((idx) => Math.max(0, idx - 1))}
+	              >
+	                Back
+	              </button>
+	            )}
+	            {isLast ? (
+	              <button
+	                type="button"
+	                className="wizard-primary"
+	                data-testid="wizard-create"
+	                disabled={!canAdvance || creating}
+	                onClick={onCreate}
+	              >
+	                {creating ? "Creating…" : "Create workspace"}
+	              </button>
+	            ) : (
+	              <button
+	                type="button"
+	                className="wizard-primary"
+	                data-testid="wizard-next"
+	                disabled={!canAdvance || creating}
+	                onClick={onNext}
+	              >
+	                Next
               </button>
             )}
           </div>

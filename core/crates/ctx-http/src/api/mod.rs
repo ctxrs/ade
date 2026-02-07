@@ -455,6 +455,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(get_subagent_system_prompt).post(update_subagent_system_prompt),
         )
         .route(
+            "/api/workspaces/:id/merge_queue_config",
+            post(update_merge_queue_config),
+        )
+        .route(
+            "/api/workspaces/:id/worktree_bootstrap_config",
+            post(update_worktree_bootstrap_config),
+        )
+        .route(
             "/api/workspaces/:id/tasks",
             get(list_workspace_tasks).post(create_task),
         )

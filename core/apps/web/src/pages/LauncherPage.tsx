@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { createWorkspace, getDaemonBaseUrl, idToString, listWorkspaces, setDaemonAuthToken, setDaemonBaseUrl } from "../api/client";
+import {
+  createWorkspace,
+  getDaemonBaseUrl,
+  getHealth,
+  idToString,
+  listWorkspaces,
+  setDaemonAuthToken,
+  setDaemonBaseUrl,
+} from "../api/client";
 import {
   desktopConnectLocal,
   desktopConnectSsh,
@@ -69,6 +77,23 @@ function applyConnection(info: DesktopConnectionInfo) {
   setDaemonAuthToken(token || null);
 }
 
+const sleepMs = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const waitForDaemonReady = async (timeoutMs: number) => {
+  const started = Date.now();
+  let lastErr: any = null;
+  while (Date.now() - started < timeoutMs) {
+    try {
+      await getHealth();
+      return;
+    } catch (e) {
+      lastErr = e;
+    }
+    await sleepMs(200);
+  }
+  throw lastErr ?? new Error("Timed out waiting for daemon health.");
+};
+
 async function createOrOpenWorkspaceByPath(rootPath: string): Promise<string> {
   const all = await listWorkspaces();
   const hit = all.find((w) => String(w.root_path) === rootPath);
@@ -116,6 +141,8 @@ export default function LauncherPage() {
       const info = await desktopConnectLocal();
       setConnection(info);
       applyConnection(info);
+      // Avoid landing on workspaces while the daemon is still booting.
+      await waitForDaemonReady(15000);
       if (rootPath) {
         const wsId = await createOrOpenWorkspaceByPath(rootPath);
         upsertRecent({ kind: "local", label: lastSegment(rootPath), root_path: rootPath, updated_at_ms: Date.now() });
@@ -147,6 +174,8 @@ export default function LauncherPage() {
       });
       setConnection(info);
       applyConnection(info);
+      // Avoid landing on workspaces while the daemon is still booting / tunnel is coming up.
+      await waitForDaemonReady(15000);
       upsertRecent({ ...r, updated_at_ms: Date.now() });
       navigate("/workspaces", { replace: true });
     } catch (e: any) {
