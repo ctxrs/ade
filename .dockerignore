@@ -1,0 +1,19 @@
+# Keep docker build contexts small by default.
+#
+# This repo's primary container build is `containers/ctx-harness/Dockerfile`, which only needs a
+# subset of the tree.
+
+*
+
+!.dockerignore
+
+!containers/
+!containers/ctx-harness/
+
+!core/
+!core/Cargo.toml
+!core/Cargo.lock
+!core/crates/
+!core/tools/
+!core/packages/
+

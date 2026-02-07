@@ -22,10 +22,11 @@ COPY core/tools core/tools
 # ctx-http embeds the web session worker bundle at build time via include_str!().
 COPY core/packages core/packages
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/core/target \
+# NOTE: Multi-platform buildx runs platforms concurrently; lock cache mounts to avoid corruption.
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/src/core/target,sharing=locked \
     cd core && \
-    cargo build -p ctx-http --bin ctx-egress-proxy --release && \
+    cargo build -p ctx-http --bin ctx-egress-proxy --release -j 2 && \
     install -Dm0755 /src/core/target/release/ctx-egress-proxy /out/ctx-egress-proxy
 
 FROM ubuntu:${UBUNTU_VERSION}
