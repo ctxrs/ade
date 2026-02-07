@@ -1,5 +1,9 @@
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
+
+#[cfg(target_os = "linux")]
+use std::net::{IpAddr, Ipv4Addr};
+#[cfg(target_os = "linux")]
 use std::os::unix::io::AsRawFd;
 
 use anyhow::{Context, Result};
@@ -307,6 +311,7 @@ fn parse_tls_sni(buf: &[u8]) -> Option<String> {
     None
 }
 
+#[cfg(target_os = "linux")]
 fn original_dst(stream: &TcpStream) -> io::Result<SocketAddr> {
     const SO_ORIGINAL_DST: libc::c_int = 80;
     let fd = stream.as_raw_fd();
@@ -327,6 +332,14 @@ fn original_dst(stream: &TcpStream) -> io::Result<SocketAddr> {
     let ip = IpAddr::V4(Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr)));
     let port = u16::from_be(addr.sin_port);
     Ok(SocketAddr::new(ip, port))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn original_dst(_stream: &TcpStream) -> io::Result<SocketAddr> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "SO_ORIGINAL_DST is only supported on linux",
+    ))
 }
 
 #[cfg(test)]
