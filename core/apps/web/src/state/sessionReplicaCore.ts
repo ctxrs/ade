@@ -515,9 +515,9 @@ export class SessionReplicaCore {
           this.emitPatch("append", sessionId, { lastEventSeq: afterSeq });
         }
       }
-      if (entry.refCount > 0) {
-        void this.ensureLoaded(sessionId, { force: true, silent: true });
-      }
+      // If we still have an entry for this session, it is currently "open" in the supervisor.
+      // Refetch the head to recover from missed events.
+      void this.openSession(sessionId, { force: true, silent: true, minEventSeq: afterSeq });
       return;
     }
   }
