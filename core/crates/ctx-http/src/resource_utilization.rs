@@ -120,6 +120,7 @@ pub struct WorkspaceDiskCache {
     pub snapshot: WorkspaceDiskSnapshot,
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone)]
 struct ProcCpuSample {
     total_ticks: u64,
@@ -131,7 +132,9 @@ pub struct ResourceSampler {
     disks: Disks,
     last_refresh: Option<Instant>,
     disk_cache: HashMap<WorkspaceId, WorkspaceDiskCache>,
+    #[cfg(target_os = "linux")]
     proc_cpu: HashMap<u32, ProcCpuSample>,
+    #[cfg(target_os = "linux")]
     clock_ticks: u64,
 }
 
@@ -146,6 +149,7 @@ struct ProcMemoryRollup {
 }
 
 impl ProcMemoryRollup {
+    #[cfg(target_os = "linux")]
     fn is_empty(&self) -> bool {
         self.rss_bytes.is_none()
             && self.rss_anon_bytes.is_none()
@@ -161,13 +165,16 @@ impl ResourceSampler {
         let system = System::new();
         let mut disks = Disks::new_with_refreshed_list();
         disks.refresh();
+        #[cfg(target_os = "linux")]
         let clock_ticks = clock_ticks_per_second();
         Self {
             system,
             disks,
             last_refresh: None,
             disk_cache: HashMap::new(),
+            #[cfg(target_os = "linux")]
             proc_cpu: HashMap::new(),
+            #[cfg(target_os = "linux")]
             clock_ticks,
         }
     }
@@ -565,6 +572,7 @@ fn read_proc_memory_rollup(_pid: u32) -> Option<ProcMemoryRollup> {
     None
 }
 
+#[cfg(target_os = "linux")]
 fn parse_kb_line(line: &str, key: &str) -> Option<u64> {
     let mut parts = line.split_whitespace();
     if parts.next()? != key {
@@ -616,8 +624,8 @@ fn read_proc_cpu_ticks(pid: u32) -> Option<u64> {
     Some(utime.saturating_add(stime))
 }
 
+#[cfg(target_os = "linux")]
 fn clock_ticks_per_second() -> u64 {
-    #[cfg(target_os = "linux")]
     unsafe {
         let ticks = libc::sysconf(libc::_SC_CLK_TCK);
         if ticks > 0 {

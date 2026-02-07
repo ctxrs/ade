@@ -390,6 +390,10 @@ async fn capture_guard_snapshot(
             );
         }
     }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (state, proc, event, memory_bytes);
+    }
 }
 
 async fn notify_sessions(

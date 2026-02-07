@@ -1,4 +1,6 @@
-use anyhow::{Context, Result};
+#[cfg(target_os = "linux")]
+use anyhow::Context;
+use anyhow::Result;
 
 use crate::daemon::AppState;
 use crate::resource_utilization::SystemSnapshot;
@@ -104,8 +106,9 @@ pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()>
 
     #[cfg(not(target_os = "linux"))]
     {
+        let _ = state;
         tracing::warn!("tool cgroup limits are not supported on this OS");
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -122,8 +125,8 @@ pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()>
             return Ok(());
         };
         ensure_tool_slice(&limits).await?;
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(target_os = "linux")]
