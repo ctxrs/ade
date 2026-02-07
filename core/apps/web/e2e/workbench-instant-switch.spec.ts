@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
+import type { Locator } from "playwright/test";
 
 test("workbench: switching between active tasks is instant (no jank, no loading)", async ({ page, request }) => {
   const seed = await seedDummyWorkspace(request, {
@@ -11,6 +12,8 @@ test("workbench: switching between active tasks is instant (no jank, no loading)
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   const rows = page.locator(".wb-task-row");
+  const taskOne = rows.filter({ hasText: "fixture task 1" }).first();
+  const taskTwo = rows.filter({ hasText: "fixture task 2" }).first();
   const sessionView = page.locator(".wb-session");
   const firstMarker = "fixture msg 1.1.1";
   const secondMarker = "fixture msg 2.1.1";
@@ -27,25 +30,25 @@ test("workbench: switching between active tasks is instant (no jank, no loading)
     }).observe({ type: "layout-shift", buffered: true });
   });
 
-  await rows.nth(0).click();
+  await taskOne.click();
   await expect(sessionView).toContainText(firstMarker, { timeout: 20000 });
-  await rows.nth(1).click();
+  await taskTwo.click();
   await expect(sessionView).toContainText(secondMarker, { timeout: 20000 });
 
   await page.evaluate(() => {
     (window as any).__cls = 0;
   });
 
-  const measureSwitch = async (rowIndex: number, marker: string) => {
+  const measureSwitch = async (row: Locator, marker: string) => {
     const start = await page.evaluate(() => performance.now());
-    await rows.nth(rowIndex).click();
+    await row.click();
     await expect(sessionView).toContainText(marker, { timeout: 20000 });
     const end = await page.evaluate(() => performance.now());
     return end - start;
   };
 
-  const latencyA = await measureSwitch(0, firstMarker);
-  const latencyB = await measureSwitch(1, secondMarker);
+  const latencyA = await measureSwitch(taskOne, firstMarker);
+  const latencyB = await measureSwitch(taskTwo, secondMarker);
   const maxLatencyMs = 120;
   expect(Math.max(latencyA, latencyB)).toBeLessThanOrEqual(maxLatencyMs);
 

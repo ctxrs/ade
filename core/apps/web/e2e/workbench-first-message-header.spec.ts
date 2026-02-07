@@ -5,26 +5,6 @@ test("workbench: first user message renders from stream when head is stale", asy
   test.setTimeout(120000);
   await page.setViewportSize({ width: 1400, height: 900 });
 
-  await page.addInitScript(() => {
-    const OriginalWebSocket = window.WebSocket as any;
-    (window as any).__contextStreamOpenCount = 0;
-
-    class TrackWebSocket extends OriginalWebSocket {
-      constructor(url: string | URL, protocols?: string | string[]) {
-        // @ts-expect-error runtime shim
-        super(url, protocols);
-        const u = String(url ?? "");
-        if (!u.includes("/api/workspaces/") || !u.includes("/active_snapshot/stream")) return;
-        this.addEventListener("open", () => {
-          (window as any).__contextStreamOpenCount += 1;
-        });
-      }
-    }
-
-    // @ts-expect-error runtime shim
-    window.WebSocket = TrackWebSocket;
-  });
-
   const seed = await seedDummyWorkspace(request, {
     tasks: 1,
     sessionsPerTask: 1,
@@ -72,9 +52,15 @@ test("workbench: first user message renders from stream when head is stale", asy
   const composer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await expect(composer).toBeVisible({ timeout: 20000 });
 
-  await page.waitForFunction(() => (window as any).__contextStreamOpenCount > 0, null, {
-    timeout: 10000,
-  });
+  await expect
+    .poll(async () =>
+      page.evaluate(() => typeof (window as any).__ctxE2E?.workspaceStream?.getConnectionState === "function"),
+    )
+    .toBe(true);
+
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .toBe("connected");
 
   await composer.fill(prompt);
   await page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]").click();
