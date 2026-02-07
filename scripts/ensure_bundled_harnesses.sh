@@ -211,28 +211,36 @@ PY
 
 BRIDGE_DIR="${CTX_BUNDLE_BRIDGE_DIR:-$ROOT/external-harnesses/acp-crp-bridge}"
 BRIDGE_BIN="acp-crp-bridge"
+CODEX_CRP_WORKSPACE="${CTX_BUNDLE_CODEX_CRP_WORKSPACE:-$ROOT/external-harnesses/codex/codex-rs}"
+CODEX_CRP_BUILD_MODE="${CTX_BUNDLE_BUILD_CODEX_CRP:-auto}"
 LOCAL_ADAPTERS_DIR="${CTX_BUNDLE_ADAPTERS_DIR:-$ROOT/harness-adapters}"
 LOCAL_ADAPTER_MODE="${CTX_BUNDLE_LOCAL_ADAPTERS:-auto}"
 BUILD_LOCAL_ADAPTERS="${CTX_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
 # The bridge is required for bundles; build it when missing unless explicitly disabled.
 BUILD_LOCAL_BRIDGE="${CTX_BUNDLE_BUILD_LOCAL_BRIDGE:-1}"
 
-declare -A LOCAL_ADAPTER_DIR=(
-  ["amp"]="amp-acp"
-  ["droid"]="droid-acp"
-  ["copilot"]="copilot-cli-acp"
-  ["kiro"]="kiro-acp"
-  ["rovo"]="rovo-dev-acp"
-  ["cody"]="cody-acp"
-)
+local_adapter_dir() {
+  case "${1:-}" in
+    amp) printf '%s' "amp-acp" ;;
+    droid) printf '%s' "droid-acp" ;;
+    copilot) printf '%s' "copilot-cli-acp" ;;
+    kiro) printf '%s' "kiro-acp" ;;
+    rovo) printf '%s' "rovo-dev-acp" ;;
+    cody) printf '%s' "cody-acp" ;;
+    *) printf '%s' "" ;;
+  esac
+}
 
-declare -A LOCAL_ADAPTER_BIN=(
-  ["droid"]="droid-acp"
-  ["copilot"]="copilot-cli-acp"
-  ["kiro"]="kiro-acp"
-  ["rovo"]="rovo-dev-acp"
-  ["cody"]="cody-acp"
-)
+local_adapter_bin() {
+  case "${1:-}" in
+    droid) printf '%s' "droid-acp" ;;
+    copilot) printf '%s' "copilot-cli-acp" ;;
+    kiro) printf '%s' "kiro-acp" ;;
+    rovo) printf '%s' "rovo-dev-acp" ;;
+    cody) printf '%s' "cody-acp" ;;
+    *) printf '%s' "" ;;
+  esac
+}
 
 get_matrix_version() {
   local provider_id="$1"
@@ -254,8 +262,10 @@ PY
 
 local_adapter_binary_path() {
   local provider_id="$1"
-  local dir="${LOCAL_ADAPTER_DIR[$provider_id]}"
-  local bin="${LOCAL_ADAPTER_BIN[$provider_id]}"
+  local dir
+  dir="$(local_adapter_dir "$provider_id")"
+  local bin
+  bin="$(local_adapter_bin "$provider_id")"
   if [[ -z "$dir" || -z "$bin" ]]; then
     return 1
   fi
@@ -302,7 +312,9 @@ require_bridge_binary() {
 }
 
 local_adapter_amp_entrypoint() {
-  printf '%s' "$LOCAL_ADAPTERS_DIR/${LOCAL_ADAPTER_DIR[amp]}/dist/bin/amp-acp.js"
+  local dir
+  dir="$(local_adapter_dir "amp")"
+  printf '%s' "$LOCAL_ADAPTERS_DIR/$dir/dist/bin/amp-acp.js"
 }
 
 build_local_adapters() {
@@ -314,17 +326,21 @@ build_local_adapters() {
   local amp_js
   amp_js="$(local_adapter_amp_entrypoint)"
   if [[ ! -f "$amp_js" ]]; then
-    if [[ -d "$LOCAL_ADAPTERS_DIR/${LOCAL_ADAPTER_DIR[amp]}" ]]; then
+    local amp_dir
+    amp_dir="$(local_adapter_dir "amp")"
+    if [[ -d "$LOCAL_ADAPTERS_DIR/$amp_dir" ]]; then
       require_cmd npm
-      (cd "$LOCAL_ADAPTERS_DIR/${LOCAL_ADAPTER_DIR[amp]}" && npm install)
-      (cd "$LOCAL_ADAPTERS_DIR/${LOCAL_ADAPTER_DIR[amp]}" && npm run build)
+      (cd "$LOCAL_ADAPTERS_DIR/$amp_dir" && npm install)
+      (cd "$LOCAL_ADAPTERS_DIR/$amp_dir" && npm run build)
     fi
   fi
 
   local id
   for id in droid copilot kiro rovo cody; do
-    local dir="${LOCAL_ADAPTER_DIR[$id]}"
-    local bin="${LOCAL_ADAPTER_BIN[$id]}"
+    local dir
+    dir="$(local_adapter_dir "$id")"
+    local bin
+    bin="$(local_adapter_bin "$id")"
     if [[ -z "$dir" || -z "$bin" ]]; then
       continue
     fi
@@ -808,6 +824,60 @@ add_local_provider() {
 
 bridge_src="$(local_bridge_binary_path)"
 add_local_provider "acp-crp-bridge" "local-bin" "local" "$bridge_src" "$(basename "$bridge_src")" "[]"
+
+should_build_codex_crp() {
+  if is_truthy "$CODEX_CRP_BUILD_MODE"; then
+    return 0
+  fi
+  if is_falsy "$CODEX_CRP_BUILD_MODE"; then
+    return 1
+  fi
+  # auto: build codex-crp for platforms where managed archive targets are not currently shipped.
+  [[ "$os" == "macos" ]]
+}
+
+local_codex_crp_binary_path() {
+  if [[ ! -d "$CODEX_CRP_WORKSPACE" ]]; then
+    return 1
+  fi
+  require_cmd cargo
+  local profile="${CTX_BUNDLE_CODEX_CRP_PROFILE:-release}"
+  local target_dir="${CTX_BUNDLE_CODEX_CRP_TARGET_DIR:-$bundle_dir/.build/codex-crp/${os}/${arch}}"
+
+	local profile_args=()
+	if [[ "$profile" == "release" ]]; then
+	  profile_args+=(--release)
+	elif [[ "$profile" != "debug" ]]; then
+	  log "error: invalid CTX_BUNDLE_CODEX_CRP_PROFILE: $profile (expected debug|release)"
+	  exit 5
+	fi
+
+	(
+	  cd "$CODEX_CRP_WORKSPACE"
+	  CARGO_TARGET_DIR="$target_dir" cargo build -p codex-crp --target "$rust_target" "${profile_args[@]}"
+	)
+
+	local bin="$target_dir/$rust_target/$profile/codex-crp$BIN_EXT"
+	if [[ ! -f "$bin" ]]; then
+	  log "error: codex-crp binary not found at $bin"
+	  exit 5
+	fi
+	printf '%s' "$bin"
+}
+
+if should_build_codex_crp; then
+  codex_crp_version="$(get_matrix_version "codex-crp")"
+  if [[ -z "$codex_crp_version" ]]; then
+    codex_crp_version="local"
+  fi
+  codex_crp_bin="$(local_codex_crp_binary_path || true)"
+  if [[ -n "$codex_crp_bin" && -f "$codex_crp_bin" ]]; then
+    add_local_provider "codex-crp" "local-bin" "$codex_crp_version" "$codex_crp_bin" "codex-crp$BIN_EXT" "[]"
+  else
+    log "error: codex-crp build requested but source not available at $CODEX_CRP_WORKSPACE"
+    exit 5
+  fi
+fi
 
 if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   local_adapter_required=0

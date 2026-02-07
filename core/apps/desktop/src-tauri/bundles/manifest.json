@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-02-03T20:28:55Z",
+  "generated_at": "2026-02-07T14:55:42Z",
   "providers": [
     {
       "id": "acp-crp-bridge",
@@ -10,6 +10,16 @@
       "arch": "aarch64",
       "sha256": "084baf6d82df276c8bac9c2d704cfe5b2aeefdd1e70a6f011b6fdff802a925b4",
       "command": "providers/acp-crp-bridge/macos/aarch64/acp-crp-bridge",
+      "args": []
+    },
+    {
+      "id": "codex-crp",
+      "protocol": "crp",
+      "version": "0.0.0-ctx.3",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "4d318f4423fa22790181bc294e285f61a575302d654f0517adb544ac1c1548ae",
+      "command": "providers/codex-crp/macos/aarch64/codex-crp",
       "args": []
     }
   ],
@@ -32,15 +42,6 @@
       "sha256": "20868a80a9c843db02b445b8e347bff4971fc2133b9260b3c36954f22a5d0a40",
       "root": "runtimes/python/macos/aarch64/cpython-3.13.11+20251217-aarch64-apple-darwin",
       "bin": "bin/python3"
-    },
-    {
-      "id": "podman",
-      "version": "5.3.2",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "7d500dc208dd9f8008013669624c7d575fcfed81aeb8df7ffb3a906a05e1717b",
-      "root": "runtimes/podman/macos/aarch64/podman-5.3.2",
-      "bin": "bin/podman"
     }
   ]
 }

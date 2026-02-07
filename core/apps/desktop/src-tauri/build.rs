@@ -29,7 +29,10 @@ fn ensure_vosk_runtime() {
     };
 
     // Linker: make Vosk discoverable at build time.
-    println!("cargo:rustc-link-search=native={}", runtime.link_dir.display());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        runtime.link_dir.display()
+    );
 
     match target_os.as_str() {
         "linux" => {
@@ -85,12 +88,8 @@ Set CTX_VOSK_LIBVOSK_PATH to a compatible Vosk runtime to override."
             panic!("missing Vosk runtime file at {}", src.display());
         }
         let dst = bundle_bin_dir.join(runtime_file);
-        copy_if_different(&src, &dst).unwrap_or_else(|e| {
-            panic!(
-                "failed to copy {} into src-tauri/bin: {e}",
-                src.display()
-            )
-        });
+        copy_if_different(&src, &dst)
+            .unwrap_or_else(|e| panic!("failed to copy {} into src-tauri/bin: {e}", src.display()));
     }
 
     // Local dev runs (e.g. tauri-driver pointing at target/debug/ctx) expect the runtime library
@@ -101,7 +100,10 @@ Set CTX_VOSK_LIBVOSK_PATH to a compatible Vosk runtime to override."
         let src = runtime.link_dir.join(runtime_file);
         let dst = local_target_dir.join(runtime_file);
         copy_if_different(&src, &dst).unwrap_or_else(|e| {
-            panic!("failed to copy {} next to target binary: {e}", src.display())
+            panic!(
+                "failed to copy {} next to target binary: {e}",
+                src.display()
+            )
         });
     }
 }
@@ -231,9 +233,7 @@ fn fetch_vosk_runtime(
     let actual_sha256 = sha256_file_hex(&zip_path).expect("sha256 zip");
     if actual_sha256 != expected_sha256 {
         let _ = fs::remove_file(&zip_path);
-        panic!(
-            "unexpected sha256 for {zip_name}: expected {expected_sha256}, got {actual_sha256}"
-        );
+        panic!("unexpected sha256 for {zip_name}: expected {expected_sha256}, got {actual_sha256}");
     }
 
     for file in &extract_files {
@@ -266,10 +266,7 @@ fn fetch_vosk_runtime(
 
     VoskRuntime {
         link_dir: cache_dir,
-        runtime_files: runtime_files
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect(),
+        runtime_files: runtime_files.into_iter().map(|s| s.to_string()).collect(),
     }
 }
 
@@ -281,9 +278,8 @@ fn download_to_file(url: &str, path: &Path) {
         .unwrap_or_else(|e| panic!("failed to download {url}: {e}"));
 
     let mut reader = response.into_reader();
-    let mut out = fs::File::create(path).unwrap_or_else(|e| {
-        panic!("failed to create {} for download: {e}", path.display())
-    });
+    let mut out = fs::File::create(path)
+        .unwrap_or_else(|e| panic!("failed to create {} for download: {e}", path.display()));
 
     let mut buf = [0u8; 64 * 1024];
     loop {
@@ -298,7 +294,11 @@ fn download_to_file(url: &str, path: &Path) {
     }
 }
 
-fn extract_zip_member_ending_with(zip_path: &Path, suffix: &str, out_path: &Path) -> zip::result::ZipResult<()> {
+fn extract_zip_member_ending_with(
+    zip_path: &Path,
+    suffix: &str,
+    out_path: &Path,
+) -> zip::result::ZipResult<()> {
     let f = fs::File::open(zip_path)?;
     let mut archive = zip::ZipArchive::new(f)?;
 

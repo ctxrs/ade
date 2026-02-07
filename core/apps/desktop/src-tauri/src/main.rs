@@ -11,15 +11,10 @@ use std::sync::{Once, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
-use serde::{Deserialize, Serialize};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use sqlx::{Row, SqlitePool};
-use tauri::Emitter;
-use tauri::Manager;
 #[cfg(target_os = "macos")]
 use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
-use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, Sel, NSObject};
+use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, NSObject, Sel};
 #[cfg(target_os = "macos")]
 use objc2::{msg_send, sel, AnyThread, ClassType, MainThreadMarker};
 #[cfg(target_os = "macos")]
@@ -30,6 +25,11 @@ use objc2_app_kit::{
 #[cfg(target_os = "macos")]
 use objc2_core_foundation::CGFloat;
 use objc2_foundation::NSString;
+use serde::{Deserialize, Serialize};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::{Row, SqlitePool};
+use tauri::Emitter;
+use tauri::Manager;
 #[cfg(feature = "automation")]
 use tauri_plugin_automation::init as automation_init;
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -388,8 +388,13 @@ struct DesktopHttpResponse {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum DesktopStorageBatchOp {
-    Set { key: String, value: serde_json::Value },
-    Delete { key: String },
+    Set {
+        key: String,
+        value: serde_json::Value,
+    },
+    Delete {
+        key: String,
+    },
 }
 
 #[derive(Default)]
@@ -586,14 +591,20 @@ impl DeepLinkTokenStore {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        DesktopDeepLinkToken { token, expires_at_ms }
+        DesktopDeepLinkToken {
+            token,
+            expires_at_ms,
+        }
     }
 
     fn is_valid(&self, token: &str) -> bool {
         let mut tokens = self.tokens.lock().expect("deep link token lock");
         let now = Instant::now();
         tokens.retain(|_, expiry| *expiry > now);
-        tokens.get(token).map(|expiry| *expiry > now).unwrap_or(false)
+        tokens
+            .get(token)
+            .map(|expiry| *expiry > now)
+            .unwrap_or(false)
     }
 }
 
@@ -749,10 +760,7 @@ fn desktop_open_file(
 }
 
 #[tauri::command]
-fn desktop_open_path(
-    app: tauri::AppHandle,
-    req: DesktopOpenPathReq,
-) -> Result<(), String> {
+fn desktop_open_path(app: tauri::AppHandle, req: DesktopOpenPathReq) -> Result<(), String> {
     let raw = req.path.trim();
     if raw.is_empty() {
         return Err("path is required".to_string());
@@ -770,9 +778,7 @@ fn desktop_open_path(
 }
 
 #[tauri::command]
-fn desktop_read_file(
-    req: DesktopOpenPathReq,
-) -> Result<DesktopReadFileResp, String> {
+fn desktop_read_file(req: DesktopOpenPathReq) -> Result<DesktopReadFileResp, String> {
     let path = req.path.trim();
     if path.is_empty() {
         return Err("path is required".to_string());
@@ -785,7 +791,8 @@ fn desktop_read_file(
     if !resolved.exists() {
         return Err("path does not exist".to_string());
     }
-    let text = std::fs::read_to_string(&resolved).map_err(|e| format!("failed to read file: {e}"))?;
+    let text =
+        std::fs::read_to_string(&resolved).map_err(|e| format!("failed to read file: {e}"))?;
     Ok(DesktopReadFileResp {
         path: resolved.to_string_lossy().to_string(),
         text,
@@ -811,7 +818,9 @@ fn desktop_list_ssh_hosts() -> Result<Vec<DesktopSshHost>, String> {
 }
 
 #[tauri::command]
-async fn desktop_list_ssh_paths(req: DesktopSshPathReq) -> Result<Vec<DesktopSshPathEntry>, String> {
+async fn desktop_list_ssh_paths(
+    req: DesktopSshPathReq,
+) -> Result<Vec<DesktopSshPathEntry>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let host = req.host.trim().to_string();
         if host.is_empty() {
@@ -824,15 +833,15 @@ async fn desktop_list_ssh_paths(req: DesktopSshPathReq) -> Result<Vec<DesktopSsh
         let raw = req.path.unwrap_or_default();
         let (parent, prefix) = split_remote_path(&raw);
         let cmd = format!("ls -a1 -p -- {}", remote_path_expr(&parent));
+        let remote_cmd = format!("sh -lc {}", shell_escape(&cmd));
         let output = Command::new("ssh")
             .arg("-o")
             .arg("BatchMode=yes")
             .arg("-o")
             .arg("ConnectTimeout=8")
             .arg(target)
-            .arg("sh")
-            .arg("-lc")
-            .arg(cmd)
+            // NOTE: sshd does not preserve argv boundaries for the remote command; pass as one string.
+            .arg(remote_cmd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -978,9 +987,10 @@ fn desktop_open_workspace_in_new_window(
 
     let label = format!("workbench:{}", uuid::Uuid::new_v4());
     let url = format!("/workspaces/{workspace_id}");
-    let builder = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
-        .title("ctx")
-        .inner_size(1200.0, 900.0);
+    let builder =
+        tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
+            .title("ctx")
+            .inner_size(1200.0, 900.0);
     let window = apply_workbench_titlebar(builder)
         .build()
         .map_err(|e| format!("creating window failed: {e}"))?;
@@ -1106,6 +1116,17 @@ async fn desktop_git_clone(repo_url: String, dest_parent: String) -> Result<Stri
 async fn desktop_connect_local(app: tauri::AppHandle) -> Result<DesktopConnectionInfo, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<ConnectionManager>();
+        // Idempotent: if we're already connected to a healthy local daemon, keep the connection.
+        // The workspace wizard calls connect_local as part of its flow; disconnecting here can
+        // kill a just-started daemon and introduce flakiness on cold start.
+        let info = state.info();
+        if matches!(info.kind, DesktopConnectionKind::Local) {
+            if let Some(url) = info.base_url.as_deref() {
+                if probe_daemon_health(url).is_ok() {
+                    return Ok(info);
+                }
+            }
+        }
         state.disconnect();
         if let Some((url, token)) = resolve_env_local_daemon(&app).map_err(to_err)? {
             probe_daemon_health(&url).map_err(to_err)?;
@@ -1152,33 +1173,55 @@ async fn desktop_connect_ssh(
     let user = req.user.clone();
     let remote_data_dir = req.remote_data_dir.clone();
     let start_remote = req.start_remote;
-    let (base_url, token, tunnel) =
-        tauri::async_runtime::spawn_blocking(move || -> Result<(String, String, Child)> {
-        if start_remote {
+    let (base_url, token, tunnel) = tauri::async_runtime::spawn_blocking(move || {
+        let no_start_remote = std::env::var(DESKTOP_SSH_NO_START_REMOTE_ENV)
+            .ok()
+            .map(|v| {
+                let v = v.trim().to_ascii_lowercase();
+                matches!(v.as_str(), "1" | "true" | "yes" | "y")
+            })
+            .unwrap_or(false);
+
+        // Prefer connecting to an already-running daemon. This avoids restarting/touching
+        // the remote daemon when users (or tests) already have it running on the target port.
+        let mut local_port = pick_unused_local_port()?;
+        let (mut tunnel, tunnel_stderr) =
+            start_ssh_tunnel(&host, user.as_deref(), local_port, remote_port)?;
+        let mut base_url = format!("http://127.0.0.1:{local_port}");
+
+        let mut health =
+            probe_daemon_health_with_retry(&base_url, local_port, &mut tunnel, &tunnel_stderr);
+        if health.is_err() && start_remote && !no_start_remote {
+            let _ = try_kill_child(tunnel);
             start_remote_daemon_over_ssh(
                 &host,
                 user.as_deref(),
                 remote_port,
                 remote_data_dir.as_deref(),
             )?;
-        }
 
-        let local_port = pick_unused_local_port()?;
-        let (mut tunnel, tunnel_stderr) =
-            start_ssh_tunnel(&host, user.as_deref(), local_port, remote_port)?;
-        let base_url = format!("http://127.0.0.1:{local_port}");
-
-        let health =
-            probe_daemon_health_with_retry(&base_url, local_port, &mut tunnel, &tunnel_stderr);
-        if let Err(e) = health {
+            local_port = pick_unused_local_port()?;
+            let (mut tunnel2, tunnel_stderr2) =
+                start_ssh_tunnel(&host, user.as_deref(), local_port, remote_port)?;
+            base_url = format!("http://127.0.0.1:{local_port}");
+            health = probe_daemon_health_with_retry(
+                &base_url,
+                local_port,
+                &mut tunnel2,
+                &tunnel_stderr2,
+            );
+            if let Err(e) = health {
+                let _ = try_kill_child(tunnel2);
+                return Err(e);
+            }
+            tunnel = tunnel2;
+        } else if let Err(e) = health {
             let _ = try_kill_child(tunnel);
             return Err(e);
         }
-        let auth = read_remote_daemon_auth_with_retry(
-            &host,
-            user.as_deref(),
-            remote_data_dir.as_deref(),
-        )?;
+
+        let auth =
+            read_remote_daemon_auth_with_retry(&host, user.as_deref(), remote_data_dir.as_deref())?;
         Ok((base_url, auth.token, tunnel))
     })
     .await
@@ -1417,8 +1460,10 @@ fn parse_deep_link(url: &Url) -> Result<DeepLinkAction> {
         anyhow::bail!("unsupported scheme: {scheme}");
     }
     let action = url.host_str().unwrap_or_default();
-    let params: HashMap<String, String> =
-        url.query_pairs().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let params: HashMap<String, String> = url
+        .query_pairs()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
     let version = params
         .get("v")
         .map(|v| v.parse::<u32>())
@@ -1517,9 +1562,7 @@ fn parse_editor_target(value: &str) -> Result<DesktopEditorTarget> {
 }
 
 fn parse_optional_positive(value: Option<&String>) -> Option<u32> {
-    value
-        .and_then(|v| v.parse::<u32>().ok())
-        .filter(|v| *v > 0)
+    value.and_then(|v| v.parse::<u32>().ok()).filter(|v| *v > 0)
 }
 
 fn validate_relative_file(path: &str) -> Result<String> {
@@ -1533,7 +1576,10 @@ fn validate_relative_file(path: &str) -> Result<String> {
     if path.contains(':') {
         anyhow::bail!("file must be a relative path");
     }
-    if candidate.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    if candidate
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
         anyhow::bail!("file must not contain ..");
     }
     Ok(path.to_string())
@@ -1575,7 +1621,8 @@ fn handle_open(
         .as_deref()
         .map(|t| tokens.is_valid(t))
         .unwrap_or(false);
-    let in_open_workspace = is_target_in_open_workspace(state, registry, &req.target).unwrap_or(false);
+    let in_open_workspace =
+        is_target_in_open_workspace(state, registry, &req.target).unwrap_or(false);
     let needs_prompt = if req.open_with == DeepLinkOpenWith::System {
         true
     } else if token_ok {
@@ -1634,7 +1681,8 @@ fn handle_reveal(
         .as_deref()
         .map(|t| tokens.is_valid(t))
         .unwrap_or(false);
-    let in_open_workspace = is_target_in_open_workspace(state, registry, &req.target).unwrap_or(false);
+    let in_open_workspace =
+        is_target_in_open_workspace(state, registry, &req.target).unwrap_or(false);
     let needs_prompt = !token_ok && !in_open_workspace;
     if needs_prompt && !confirm_action(app, "Reveal this path from an external link?") {
         return Ok(());
@@ -1664,7 +1712,12 @@ fn handle_workspace(
     open_workspace_window(app, registry, &workspace_id)
 }
 
-fn open_in_ctx(app: &tauri::AppHandle, target: &DeepLinkTarget, line: Option<u32>, col: Option<u32>) -> Result<()> {
+fn open_in_ctx(
+    app: &tauri::AppHandle,
+    target: &DeepLinkTarget,
+    line: Option<u32>,
+    col: Option<u32>,
+) -> Result<()> {
     let url = build_file_preview_url(target, line, col);
     let label = format!("file:{}", uuid::Uuid::new_v4());
     tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(url.into()))
@@ -1699,7 +1752,9 @@ fn resolve_editor_target(
     settings: &DesktopEditorSettings,
     override_target: Option<&DesktopEditorTarget>,
 ) -> Result<Option<DesktopEditorTarget>> {
-    let target = override_target.cloned().unwrap_or_else(|| settings.target.clone());
+    let target = override_target
+        .cloned()
+        .unwrap_or_else(|| settings.target.clone());
     let has_custom = settings
         .custom_command
         .as_ref()
@@ -1820,14 +1875,21 @@ fn resolve_or_create_workspace_id(state: &ConnectionManager, root_path: &str) ->
         headers: vec![("content-type".to_string(), "application/json".to_string())],
     })?;
     if resp.status != 200 && resp.status != 201 {
-        anyhow::bail!("failed to create workspace ({status}): {body}", status = resp.status, body = resp.body);
+        anyhow::bail!(
+            "failed to create workspace ({status}): {body}",
+            status = resp.status,
+            body = resp.body
+        );
     }
     let value: serde_json::Value =
         serde_json::from_str(&resp.body).context("parsing workspace response")?;
     parse_id_value(&value["id"]).ok_or_else(|| anyhow!("workspace id missing"))
 }
 
-fn resolve_workspace_id_by_path(state: &ConnectionManager, root_path: &str) -> Result<Option<String>> {
+fn resolve_workspace_id_by_path(
+    state: &ConnectionManager,
+    root_path: &str,
+) -> Result<Option<String>> {
     let resp = state.daemon_request(DesktopDaemonRequest {
         method: "GET".to_string(),
         path: "/api/workspaces".to_string(),
@@ -1835,13 +1897,22 @@ fn resolve_workspace_id_by_path(state: &ConnectionManager, root_path: &str) -> R
         headers: vec![],
     })?;
     if resp.status != 200 {
-        anyhow::bail!("failed to list workspaces ({status}): {body}", status = resp.status, body = resp.body);
+        anyhow::bail!(
+            "failed to list workspaces ({status}): {body}",
+            status = resp.status,
+            body = resp.body
+        );
     }
     let value: serde_json::Value =
         serde_json::from_str(&resp.body).context("parsing workspaces response")?;
-    let arr = value.as_array().ok_or_else(|| anyhow!("workspaces response is not a list"))?;
+    let arr = value
+        .as_array()
+        .ok_or_else(|| anyhow!("workspaces response is not a list"))?;
     for entry in arr {
-        let ws_root = entry.get("root_path").and_then(|v| v.as_str()).unwrap_or_default();
+        let ws_root = entry
+            .get("root_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
         if ws_root == root_path {
             if let Some(id) = entry.get("id").and_then(parse_id_value) {
                 return Ok(Some(id));
@@ -1859,7 +1930,11 @@ fn resolve_workspace_root(state: &ConnectionManager, workspace_id: &str) -> Resu
         headers: vec![],
     })?;
     if resp.status != 200 {
-        anyhow::bail!("failed to load workspace ({status}): {body}", status = resp.status, body = resp.body);
+        anyhow::bail!(
+            "failed to load workspace ({status}): {body}",
+            status = resp.status,
+            body = resp.body
+        );
     }
     let value: serde_json::Value =
         serde_json::from_str(&resp.body).context("parsing workspace response")?;
@@ -1878,7 +1953,11 @@ fn resolve_worktree_info(state: &ConnectionManager, worktree_id: &str) -> Result
         headers: vec![],
     })?;
     if resp.status != 200 {
-        anyhow::bail!("failed to load worktree ({status}): {body}", status = resp.status, body = resp.body);
+        anyhow::bail!(
+            "failed to load worktree ({status}): {body}",
+            status = resp.status,
+            body = resp.body
+        );
     }
     let value: serde_json::Value =
         serde_json::from_str(&resp.body).context("parsing worktree response")?;
@@ -1900,7 +1979,12 @@ fn parse_id_value(value: &serde_json::Value) -> Option<String> {
     value
         .as_str()
         .map(|s| s.to_string())
-        .or_else(|| value.get("0").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .or_else(|| {
+            value
+                .get("0")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
         .or_else(|| value.get(0).and_then(|v| v.as_str()).map(|s| s.to_string()))
 }
 
@@ -1960,7 +2044,10 @@ fn confirm_action(app: &tauri::AppHandle, message: &str) -> bool {
     app.dialog()
         .message(message)
         .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancelCustom("Open".into(), "Cancel".into()))
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Open".into(),
+            "Cancel".into(),
+        ))
         .blocking_show()
 }
 
@@ -2012,11 +2099,7 @@ static SETTINGS_BUTTON_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 static SETTINGS_BUTTON_CLASS: Once = Once::new();
 
 #[cfg(target_os = "macos")]
-extern "C" fn settings_button_clicked(
-    _this: &AnyObject,
-    _cmd: Sel,
-    _sender: *mut AnyObject,
-) {
+extern "C" fn settings_button_clicked(_this: &AnyObject, _cmd: Sel, _sender: *mut AnyObject) {
     if let Some(app) = SETTINGS_BUTTON_APP.get() {
         emit_settings_inplace(app, _this);
     }
@@ -2030,7 +2113,9 @@ fn emit_settings_inplace(app: &tauri::AppHandle, target: &AnyObject) {
     if let Some(ivar) = ivar {
         let label_ptr = unsafe { *ivar.load::<*const std::ffi::c_char>(target) };
         if !label_ptr.is_null() {
-            let label = unsafe { CStr::from_ptr(label_ptr) }.to_string_lossy().into_owned();
+            let label = unsafe { CStr::from_ptr(label_ptr) }
+                .to_string_lossy()
+                .into_owned();
             if let Some(window) = app.get_webview_window(&label) {
                 let _ = window.eval(
                     "(() => { let t = '/settings'; const p = window.location.pathname || ''; \
@@ -2063,15 +2148,12 @@ fn settings_button_target_class() -> &'static AnyClass {
         unsafe {
             let open_settings: extern "C" fn(&'static AnyObject, Sel, *mut AnyObject) =
                 settings_button_clicked;
-            builder.add_method(
-                sel!(openSettings:),
-                open_settings,
-            );
+            builder.add_method(sel!(openSettings:), open_settings);
         }
         builder.register();
     });
-    let class_name = CStr::from_bytes_with_nul(CLASS_NAME)
-        .expect("settings button class name should be valid");
+    let class_name =
+        CStr::from_bytes_with_nul(CLASS_NAME).expect("settings button class name should be valid");
     AnyClass::get(class_name).expect("settings button class should be registered")
 }
 
@@ -2082,11 +2164,11 @@ fn install_macos_settings_button(
 ) -> Result<()> {
     SETTINGS_BUTTON_APP.get_or_init(|| app.clone());
     let window_label = window.label().to_string();
-    let icon_path = app
-        .path()
-        .resource_dir()
-        .ok()
-        .and_then(|dir| dir.join("bundles/lucide-settings.svg").to_str().map(str::to_string));
+    let icon_path = app.path().resource_dir().ok().and_then(|dir| {
+        dir.join("bundles/lucide-settings.svg")
+            .to_str()
+            .map(str::to_string)
+    });
     window.with_webview(move |webview| unsafe {
         let mtm = MainThreadMarker::new().expect("titlebar button should be on main thread");
         let ns_window: &NSWindow = &*webview.ns_window().cast();
@@ -2156,8 +2238,7 @@ fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
         Ok(v) if v.trim().starts_with('/') => tauri::WebviewUrl::App(v.trim().into()),
         _ => tauri::WebviewUrl::App("index.html".into()),
     };
-    let mut builder = tauri::WebviewWindowBuilder::new(app, "main", start_url)
-        .title("ctx");
+    let mut builder = tauri::WebviewWindowBuilder::new(app, "main", start_url).title("ctx");
     if let Ok(Some(monitor)) = app.primary_monitor() {
         let size = monitor.size();
         let width = (size.width as f64 * 0.9).round().max(1200.0);
@@ -2167,9 +2248,7 @@ fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
         builder = builder.inner_size(1200.0, 900.0);
     }
     let builder = apply_workbench_titlebar(builder);
-    let window = builder
-        .build()
-        .context("creating window")?;
+    let window = builder.build().context("creating window")?;
     #[cfg(target_os = "macos")]
     {
         let _ = install_macos_settings_button(app, &window);
@@ -2215,10 +2294,18 @@ impl ConnectionManager {
     fn info(&self) -> DesktopConnectionInfo {
         let guard = self.0.lock().ok();
         let Some(guard) = guard.as_ref() else {
-            return DesktopConnectionInfo { kind: DesktopConnectionKind::None, base_url: None, token: None };
+            return DesktopConnectionInfo {
+                kind: DesktopConnectionKind::None,
+                base_url: None,
+                token: None,
+            };
         };
         match &guard.active {
-            None => DesktopConnectionInfo { kind: DesktopConnectionKind::None, base_url: None, token: None },
+            None => DesktopConnectionInfo {
+                kind: DesktopConnectionKind::None,
+                base_url: None,
+                token: None,
+            },
             Some(ActiveConnection::Local(c)) => DesktopConnectionInfo {
                 kind: DesktopConnectionKind::Local,
                 base_url: Some(c.base_url.clone()),
@@ -2239,7 +2326,10 @@ impl ConnectionManager {
 
     fn is_remote(&self) -> bool {
         let guard = self.0.lock().ok();
-        matches!(guard.as_ref().and_then(|g| g.active.as_ref()), Some(ActiveConnection::Ssh(_)))
+        matches!(
+            guard.as_ref().and_then(|g| g.active.as_ref()),
+            Some(ActiveConnection::Ssh(_))
+        )
     }
 
     fn disconnect(&self) {
@@ -2275,12 +2365,19 @@ impl ConnectionManager {
 
     fn set_local_external(&self, base_url: String, token: String) {
         let mut guard = self.0.lock().expect("connection manager lock");
-        guard.active = Some(ActiveConnection::LocalExternal(LocalExternalConnection { base_url, token }));
+        guard.active = Some(ActiveConnection::LocalExternal(LocalExternalConnection {
+            base_url,
+            token,
+        }));
     }
 
     fn set_ssh(&self, base_url: String, token: Option<String>, tunnel: Child) {
         let mut guard = self.0.lock().expect("connection manager lock");
-        guard.active = Some(ActiveConnection::Ssh(SshConnection { base_url, token, tunnel }));
+        guard.active = Some(ActiveConnection::Ssh(SshConnection {
+            base_url,
+            token,
+            tunnel,
+        }));
     }
 
     fn daemon_request(&self, req: DesktopDaemonRequest) -> Result<DesktopHttpResponse> {
@@ -2339,7 +2436,11 @@ impl ConnectionManager {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
         let body = res.text().unwrap_or_default();
-        Ok(DesktopHttpResponse { status, body, content_type })
+        Ok(DesktopHttpResponse {
+            status,
+            body,
+            content_type,
+        })
     }
 
     fn upload_blob(
@@ -2462,7 +2563,6 @@ fn resolve_worktree_root(state: &ConnectionManager, worktree_id: &str) -> Result
     Ok(PathBuf::from(root))
 }
 
-
 fn normalize_path(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for c in path.components() {
@@ -2549,7 +2649,13 @@ fn parse_ssh_config(text: &str) -> Vec<DesktopSshHost> {
         let key = parts.next().unwrap_or("");
         let rest: Vec<&str> = parts.collect();
         if key.eq_ignore_ascii_case("host") {
-            flush(&current_hosts, &current_user, &current_host_name, &current_port, &mut out);
+            flush(
+                &current_hosts,
+                &current_user,
+                &current_host_name,
+                &current_port,
+                &mut out,
+            );
             current_hosts = rest.iter().map(|v| v.to_string()).collect();
             current_user = None;
             current_host_name = None;
@@ -2568,7 +2674,13 @@ fn parse_ssh_config(text: &str) -> Vec<DesktopSshHost> {
         }
     }
 
-    flush(&current_hosts, &current_user, &current_host_name, &current_port, &mut out);
+    flush(
+        &current_hosts,
+        &current_user,
+        &current_host_name,
+        &current_port,
+        &mut out,
+    );
     out
 }
 
@@ -2612,24 +2724,41 @@ fn open_in_editor(
     if remote {
         match settings.target {
             DesktopEditorTarget::VsCode => {
-                let authority = remote_authority.ok_or_else(|| anyhow!("remote authority is not configured"))?;
+                let authority = remote_authority
+                    .ok_or_else(|| anyhow!("remote authority is not configured"))?;
                 open_with_system(&vscode_remote_uri("vscode", authority, path, line, col))
             }
             DesktopEditorTarget::VsCodeInsiders => {
-                let authority = remote_authority.ok_or_else(|| anyhow!("remote authority is not configured"))?;
-                open_with_system(&vscode_remote_uri("vscode-insiders", authority, path, line, col))
+                let authority = remote_authority
+                    .ok_or_else(|| anyhow!("remote authority is not configured"))?;
+                open_with_system(&vscode_remote_uri(
+                    "vscode-insiders",
+                    authority,
+                    path,
+                    line,
+                    col,
+                ))
             }
             DesktopEditorTarget::Cursor => {
-                let authority = remote_authority.ok_or_else(|| anyhow!("remote authority is not configured"))?;
+                let authority = remote_authority
+                    .ok_or_else(|| anyhow!("remote authority is not configured"))?;
                 open_with_system(&vscode_remote_uri("cursor", authority, path, line, col))
             }
             DesktopEditorTarget::Windsurf => {
-                let authority = remote_authority.ok_or_else(|| anyhow!("remote authority is not configured"))?;
+                let authority = remote_authority
+                    .ok_or_else(|| anyhow!("remote authority is not configured"))?;
                 open_with_system(&vscode_remote_uri("windsurf", authority, path, line, col))
             }
             DesktopEditorTarget::Antigravity => {
-                let authority = remote_authority.ok_or_else(|| anyhow!("remote authority is not configured"))?;
-                open_with_system(&vscode_remote_uri("antigravity", authority, path, line, col))
+                let authority = remote_authority
+                    .ok_or_else(|| anyhow!("remote authority is not configured"))?;
+                open_with_system(&vscode_remote_uri(
+                    "antigravity",
+                    authority,
+                    path,
+                    line,
+                    col,
+                ))
             }
             DesktopEditorTarget::Custom => {
                 let cmd = settings
@@ -2650,7 +2779,9 @@ fn open_in_editor(
                 open_with_system(&vscode_uri("vscode-insiders", path, line, col))
             }
             DesktopEditorTarget::Cursor => open_with_system(&vscode_uri("cursor", path, line, col)),
-            DesktopEditorTarget::Windsurf => open_with_system(&vscode_uri("windsurf", path, line, col)),
+            DesktopEditorTarget::Windsurf => {
+                open_with_system(&vscode_uri("windsurf", path, line, col))
+            }
             DesktopEditorTarget::Antigravity => {
                 open_with_system(&vscode_uri("antigravity", path, line, col))
             }
@@ -2756,7 +2887,6 @@ fn open_custom_command(
     Ok(())
 }
 
-
 fn vscode_remote_uri(
     scheme: &str,
     authority: &str,
@@ -2764,7 +2894,10 @@ fn vscode_remote_uri(
     line: Option<u32>,
     col: Option<u32>,
 ) -> String {
-    let mut uri = format!("{scheme}://vscode-remote/{authority}{}", encode_uri_path(path));
+    let mut uri = format!(
+        "{scheme}://vscode-remote/{authority}{}",
+        encode_uri_path(path)
+    );
     if let Some(line) = line {
         uri.push(':');
         uri.push_str(&line.to_string());
@@ -2845,6 +2978,8 @@ const SSH_TUNNEL_HEALTH_RETRIES: usize = 12;
 const SSH_TUNNEL_HEALTH_BASE_DELAY_MS: u64 = 150;
 const LOCAL_DAEMON_HEALTH_RETRIES: usize = 20;
 const LOCAL_DAEMON_HEALTH_BASE_DELAY_MS: u64 = 100;
+const DESKTOP_DAEMON_DATA_DIR_ENV: &str = "CTX_DESKTOP_DAEMON_DATA_DIR";
+const DESKTOP_SSH_NO_START_REMOTE_ENV: &str = "CTX_DESKTOP_SSH_NO_START_REMOTE";
 
 fn start_ssh_tunnel(
     host: &str,
@@ -2934,17 +3069,21 @@ fn start_remote_daemon_over_ssh(
         "systemd-run --user --scope --unit ctx-daemon --no-block /bin/sh -lc {}",
         shell_escape(&log_cmd)
     );
-    let nohup_cmd = format!("nohup /bin/sh -lc {} >/dev/null 2>&1 &", shell_escape(&log_cmd));
+    let nohup_cmd = format!(
+        "nohup /bin/sh -lc {} >/dev/null 2>&1 &",
+        shell_escape(&log_cmd)
+    );
     let remote_cmd = format!(
         "if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then {}; else {}; fi",
         systemd_cmd, nohup_cmd
     );
 
     let output = Command::new("ssh")
+        .arg("-o")
+        .arg("BatchMode=yes")
         .arg(target)
-        .arg("sh")
-        .arg("-lc")
-        .arg(remote_cmd)
+        // NOTE: sshd does not preserve argv boundaries for the remote command; pass as one string.
+        .arg(format!("sh -lc {}", shell_escape(&remote_cmd)))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -3035,16 +3174,15 @@ fn read_daemon_auth_with_retry(data_dir: &Path) -> Result<DaemonAuthFile> {
                 last_err = Some(anyhow!("daemon auth file not found at {}", path.display()));
             }
             Err(err) => {
-                last_err = Some(anyhow::Error::new(err).context(format!(
-                    "reading daemon auth file {}",
-                    path.display()
-                )));
+                last_err = Some(
+                    anyhow::Error::new(err)
+                        .context(format!("reading daemon auth file {}", path.display())),
+                );
             }
         }
         if Instant::now() > deadline {
-            return Err(last_err.unwrap_or_else(|| {
-                anyhow!("daemon auth file not found at {}", path.display())
-            }));
+            return Err(last_err
+                .unwrap_or_else(|| anyhow!("daemon auth file not found at {}", path.display())));
         }
         std::thread::sleep(DAEMON_AUTH_RETRY_DELAY);
     }
@@ -3055,10 +3193,10 @@ fn read_daemon_auth_if_present(data_dir: &Path) -> Result<Option<DaemonAuthFile>
     match std::fs::read(&path) {
         Ok(bytes) => Ok(Some(parse_daemon_auth(&bytes, &path)?)),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(anyhow::Error::new(err).context(format!(
-            "reading daemon auth file {}",
-            path.display()
-        ))),
+        Err(err) => {
+            Err(anyhow::Error::new(err)
+                .context(format!("reading daemon auth file {}", path.display())))
+        }
     }
 }
 
@@ -3112,14 +3250,20 @@ fn read_remote_daemon_auth(
     let data_dir = remote_data_dir
         .filter(|d| !d.trim().is_empty())
         .unwrap_or("~/.ctx");
-    let auth_path = format!("{}/{}", data_dir.trim_end_matches('/'), DAEMON_AUTH_FILENAME);
+    let auth_path = format!(
+        "{}/{}",
+        data_dir.trim_end_matches('/'),
+        DAEMON_AUTH_FILENAME
+    );
     let cmd = format!("cat -- {}", remote_path_expr(&auth_path));
+    let remote_cmd = format!("sh -lc {}", shell_escape(&cmd));
 
     let output = Command::new("ssh")
+        .arg("-o")
+        .arg("BatchMode=yes")
         .arg(target)
-        .arg("sh")
-        .arg("-lc")
-        .arg(cmd)
+        // NOTE: sshd does not preserve argv boundaries for the remote command; pass as one string.
+        .arg(remote_cmd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -3149,9 +3293,9 @@ fn read_remote_daemon_auth_with_retry(
             Err(err) => last_err = Some(err),
         }
         if Instant::now() > deadline {
-            return Err(last_err.unwrap_or_else(|| {
-                anyhow!("timed out reading daemon auth file over ssh")
-            }));
+            return Err(
+                last_err.unwrap_or_else(|| anyhow!("timed out reading daemon auth file over ssh"))
+            );
         }
         std::thread::sleep(DAEMON_AUTH_RETRY_DELAY);
     }
@@ -3267,6 +3411,16 @@ fn daemon_stderr_snippet(path: Option<&Path>) -> String {
 }
 
 fn daemon_data_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
+    if let Ok(raw) = std::env::var(DESKTOP_DAEMON_DATA_DIR_ENV) {
+        let raw = raw.trim();
+        if !raw.is_empty() {
+            let p = PathBuf::from(raw);
+            if !p.is_absolute() {
+                anyhow::bail!("{DESKTOP_DAEMON_DATA_DIR_ENV} must be an absolute path");
+            }
+            return Ok(p);
+        }
+    }
     let root = app
         .path()
         .app_data_dir()
@@ -3287,14 +3441,19 @@ fn current_arch_token() -> &'static str {
 fn resource_bin(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(res) = app.path().resource_dir().ok() {
-        let bin_ext = if cfg!(target_os = "windows") { ".exe" } else { "" };
+        let bin_ext = if cfg!(target_os = "windows") {
+            ".exe"
+        } else {
+            ""
+        };
         let arch = current_arch_token();
         let prefix = format!("{name}-{arch}");
         for base in [res.join("bin"), res.clone()] {
             let Ok(entries) = std::fs::read_dir(&base) else {
                 continue;
             };
-            let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+            let mut paths: Vec<PathBuf> =
+                entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
             paths.sort();
             for p in paths {
                 if !p.is_file() {
@@ -3327,7 +3486,11 @@ fn resource_bin(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
 }
 
 fn dev_bin(name: &str) -> Option<PathBuf> {
-    let bin_ext = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    let bin_ext = if cfg!(target_os = "windows") {
+        ".exe"
+    } else {
+        ""
+    };
     if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
         let candidate = PathBuf::from(target_dir)
             .join("debug")
@@ -3342,7 +3505,10 @@ fn dev_bin(name: &str) -> Option<PathBuf> {
         .and_then(|p| p.parent())
         .and_then(|p| p.parent())?
         .to_path_buf(); // core/
-    let candidate = root.join("target").join("debug").join(format!("{name}{bin_ext}"));
+    let candidate = root
+        .join("target")
+        .join("debug")
+        .join(format!("{name}{bin_ext}"));
     if candidate.exists() && path_matches_current_platform_binary(&candidate) {
         return Some(candidate);
     }
@@ -3350,10 +3516,17 @@ fn dev_bin(name: &str) -> Option<PathBuf> {
 }
 
 fn manifest_bin(name: &str) -> Option<PathBuf> {
-    let bin_ext = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    let bin_ext = if cfg!(target_os = "windows") {
+        ".exe"
+    } else {
+        ""
+    };
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin");
     for candidate in [
-        base.join(format!("{name}-{arch}{bin_ext}", arch = current_arch_token())),
+        base.join(format!(
+            "{name}-{arch}{bin_ext}",
+            arch = current_arch_token()
+        )),
         base.join(format!("{name}{bin_ext}")),
     ] {
         if candidate.exists() && path_matches_current_platform_binary(&candidate) {
@@ -3496,7 +3669,11 @@ fn spawn_daemon_with_mode(
         .resource_dir()
         .ok()
         .and_then(|p| {
-            let candidates = [p.join("web").join("dist"), p.join("web-dist"), p.join("dist")];
+            let candidates = [
+                p.join("web").join("dist"),
+                p.join("web-dist"),
+                p.join("dist"),
+            ];
             candidates.into_iter().find(|c| c.exists())
         })
         .or_else(dev_web_dist);
@@ -3570,7 +3747,10 @@ fn spawn_daemon_with_mode(
     } else {
         let log_dir = data_dir.join("logs");
         if let Err(err) = std::fs::create_dir_all(&log_dir) {
-            eprintln!("failed to create daemon log dir {}: {err}", log_dir.display());
+            eprintln!(
+                "failed to create daemon log dir {}: {err}",
+                log_dir.display()
+            );
             cmd.stderr(Stdio::inherit());
         } else {
             let path = log_dir.join("desktop-daemon-stderr.log");
@@ -3613,7 +3793,9 @@ fn spawn_daemon_with_mode(
                 if stderr.is_empty() {
                     eprintln!("ctx daemon health check failed after spawn: {err:#}");
                 } else {
-                    eprintln!("ctx daemon health check failed after spawn: {err:#}; stderr: {stderr}");
+                    eprintln!(
+                        "ctx daemon health check failed after spawn: {err:#}; stderr: {stderr}"
+                    );
                 }
             }
         });

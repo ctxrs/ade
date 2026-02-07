@@ -1,2 +1,6 @@
-providers/
-runtimes/
+# Bundles are generated during `desktop:prep:release` and can be large.
+# Keep the repo clean by ignoring generated providers/runtimes and build scratch.
+/.build/
+/providers/
+/runtimes/
+

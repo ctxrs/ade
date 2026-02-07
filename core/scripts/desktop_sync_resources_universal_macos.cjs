@@ -11,7 +11,7 @@ const desktopTauriRoot = path.join(coreRoot, "apps", "desktop", "src-tauri");
 const destBinDir = path.join(desktopTauriRoot, "bin");
 const destWebDistDir = path.join(desktopTauriRoot, "web", "dist");
 const destBundleDir = path.join(desktopTauriRoot, "bundles");
-const bundleScript = path.join(coreRoot, "scripts", "ensure_bundled_harnesses.sh");
+const bundleScript = path.join(coreRoot, "..", "scripts", "ensure_bundled_harnesses.sh");
 
 const targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
 
@@ -44,7 +44,8 @@ const ensureExecutable = (filePath) => {
 
 const resetBundleDir = () => {
   fs.mkdirSync(destBundleDir, { recursive: true });
-  const keep = new Set(["README.md", ".gitkeep"]);
+  // Keep lightweight repo-tracked resources that are used at runtime (and ignore rules).
+  const keep = new Set(["README.md", ".gitkeep", ".gitignore", "lucide-settings.svg"]);
   for (const entry of fs.readdirSync(destBundleDir)) {
     if (keep.has(entry)) continue;
     fs.rmSync(path.join(destBundleDir, entry), { recursive: true, force: true });
@@ -54,7 +55,8 @@ const resetBundleDir = () => {
 const shouldSyncBundles = () => {
   const flag = String(process.env.CTX_DESKTOP_SYNC_BUNDLES || "").trim();
   if (flag) return flag === "1" || flag.toLowerCase() === "true";
-  return false;
+  // Universal macOS bundles are release artifacts; include bundles by default.
+  return true;
 };
 
 const resolveArchEnv = (baseKey, arch) => {
