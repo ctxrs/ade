@@ -7,6 +7,7 @@ import { execSync } from "child_process";
 test("workbench: spinner clears after replayed completion", async ({ page }) => {
   test.setTimeout(120000);
   await page.setViewportSize({ width: 1400, height: 900 });
+
   let blockHead = false;
   let blockedHeadCount = 0;
   await page.route("**/api/sessions/*/snapshot**", async (route) => {
@@ -15,54 +16,6 @@ test("workbench: spinner clears after replayed completion", async ({ page }) => 
       await new Promise((resolve) => setTimeout(resolve, 20000));
     }
     await route.continue();
-  });
-
-  await page.addInitScript(() => {
-    const OriginalWebSocket = window.WebSocket as any;
-    (window as any).__contextSawToolResult = false;
-    (window as any).__contextDropUntil = 0;
-
-    class DropAfterToolResultWebSocket extends OriginalWebSocket {
-      constructor(url: string | URL, protocols?: string | string[]) {
-        // @ts-expect-error - runtime shim
-        super(url, protocols);
-        const u = String(url ?? "");
-        if (!u.includes("/api/workspaces/") || !u.includes("/active_snapshot/stream")) return;
-        this.addEventListener("open", () => {
-          if (Date.now() >= (window as any).__contextDropUntil) return;
-          setTimeout(() => {
-            try {
-              this.close();
-            } catch {
-              // ignore
-            }
-          }, 10);
-        });
-        this.addEventListener("message", (event) => {
-          if ((window as any).__contextSawToolResult) return;
-          try {
-            const parsed = JSON.parse(String(event.data ?? ""));
-            if (parsed?.type !== "session_head_delta") return;
-            const eventType = parsed?.delta?.event?.event_type;
-            if (eventType !== "tool_result") return;
-            (window as any).__contextSawToolResult = true;
-            (window as any).__contextDropUntil = Date.now() + 3000;
-            setTimeout(() => {
-              try {
-                this.close();
-              } catch {
-                // ignore
-              }
-            }, 10);
-          } catch {
-            // ignore
-          }
-        });
-      }
-    }
-
-    // @ts-expect-error - runtime shim
-    window.WebSocket = DropAfterToolResultWebSocket;
   });
 
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
@@ -90,20 +43,52 @@ test("workbench: spinner clears after replayed completion", async ({ page }) => 
   await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
   await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
   await expect(
-    page.locator(".wb-new-composer-stack button[title=\"Harness\"] .wb-switcher-label"),
+    page.locator('.wb-new-composer-stack button[title="Harness"] .wb-switcher-label'),
   ).toHaveText(/fake/i, { timeout: 20000 });
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => typeof (window as any).__ctxE2E?.workspaceStream?.getConnectionState === "function"),
+    )
+    .toBe(true);
+
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .toBe("connected");
 
   const prompt = "slow-diff-test spinner replay";
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(prompt);
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await page.locator('.wb-new-composer-stack button[aria-label="Send"]').click();
 
-  const activeSpinners = page.locator('.wb-task-spinner[data-active="true"]');
+  const activeSpinners = page.locator(
+    ".wb-task-row-active .wb-task-spinner:not(.wb-task-spinner-archive)",
+  );
   await expect(activeSpinners.first()).toBeVisible({ timeout: 20000 });
   blockHead = true;
 
-  await page.waitForFunction(() => (window as any).__contextSawToolResult === true, undefined, {
-    timeout: 20000,
+  const sessionSlot = page.locator('.wb-session-slot[aria-hidden="false"]');
+  await expect(sessionSlot).toBeVisible({ timeout: 20000 });
+
+  const toolSummary = sessionSlot.getByRole("button", { name: "tool" }).first();
+  await expect(toolSummary).toBeVisible({ timeout: 20000 });
+
+  await page.evaluate(() => {
+    const stream = (window as any).__ctxE2E?.workspaceStream;
+    stream?.setDropMessages?.(true);
+    stream?.close?.();
   });
+
+  await page.waitForTimeout(3000);
+
+  await page.evaluate(() => {
+    const stream = (window as any).__ctxE2E?.workspaceStream;
+    stream?.setDropMessages?.(false);
+    stream?.close?.();
+  });
+
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .toBe("connected");
 
   await expect(activeSpinners).toHaveCount(0, { timeout: 12000 });
 });

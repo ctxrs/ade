@@ -6,26 +6,6 @@ import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 test("terminal reconnects after websocket drop", async ({ page }) => {
-  await page.addInitScript(() => {
-    const global = window as any;
-    global.__terminalSockets = [];
-    const OriginalWebSocket = window.WebSocket;
-    const WrappedWebSocket = function (this: WebSocket, ...args: any[]) {
-      const ws = new OriginalWebSocket(...(args as [string]));
-      const url = typeof args[0] === "string" ? args[0] : "";
-      if (url.includes("/api/terminals/")) {
-        global.__terminalSockets.push(ws);
-      }
-      return ws;
-    };
-    WrappedWebSocket.prototype = OriginalWebSocket.prototype;
-    WrappedWebSocket.CONNECTING = OriginalWebSocket.CONNECTING;
-    WrappedWebSocket.OPEN = OriginalWebSocket.OPEN;
-    WrappedWebSocket.CLOSING = OriginalWebSocket.CLOSING;
-    WrappedWebSocket.CLOSED = OriginalWebSocket.CLOSED;
-    window.WebSocket = WrappedWebSocket as any;
-  });
-
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
@@ -60,11 +40,18 @@ test("terminal reconnects after websocket drop", async ({ page }) => {
   }
   await expect.poll(() => terminalTabs.count()).toBeGreaterThan(0);
 
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__ctxE2ETerminalClients?.size ?? 0))
+    .toBeGreaterThan(0);
+
   await page.evaluate(() => {
-    const sockets = (window as any).__terminalSockets || [];
-    for (const ws of sockets) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
+    const reg = (window as any).__ctxE2ETerminalClients as Map<string, any> | undefined;
+    if (!reg) return;
+    for (const handle of reg.values()) {
+      try {
+        handle.close?.();
+      } catch {
+        // ignore
       }
     }
   });

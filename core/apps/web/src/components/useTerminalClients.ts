@@ -9,6 +9,25 @@ import { readCssVar, useThemeVariant, withAlpha, type ThemeVariant } from "../ut
 
 export type TerminalConnectionStatus = "connected" | "reconnecting" | "disconnected";
 
+type E2ETerminalClientHandle = {
+  close: () => void;
+  getConnectionStatus: () => TerminalConnectionStatus;
+};
+
+function getE2ETerminalClientRegistry(): Map<string, E2ETerminalClientHandle> | null {
+  if (typeof window === "undefined") return null;
+  try {
+    if (window.sessionStorage.getItem("ctxE2E") !== "1") return null;
+  } catch {
+    return null;
+  }
+  const w = window as any;
+  if (!w.__ctxE2ETerminalClients) {
+    w.__ctxE2ETerminalClients = new Map<string, E2ETerminalClientHandle>();
+  }
+  return w.__ctxE2ETerminalClients as Map<string, E2ETerminalClientHandle>;
+}
+
 function getE2ETerminalRegistry(): Map<string, Terminal> | null {
   // E2E-only hook: allow Playwright tests to introspect xterm state (buffer ydisp/baseY)
   // without relying on renderer-specific DOM text.
@@ -255,6 +274,17 @@ function createClient(
   let reconnectAttempts = 0;
   let disposed = false;
   let connectionStatus: TerminalConnectionStatus = "disconnected";
+  const e2eClientRegistry = getE2ETerminalClientRegistry();
+  e2eClientRegistry?.set(id, {
+    close: () => {
+      try {
+        socket?.close();
+      } catch {
+        // ignore
+      }
+    },
+    getConnectionStatus: () => connectionStatus,
+  });
   let status: TerminalSession["status"] = terminal.status;
   let exitCode: number | null = terminal.exit_code ?? null;
   let lastServerMessageAt = Date.now();
@@ -512,6 +542,7 @@ function createClient(
       cleanupLinks();
       socket?.close();
       socket = null;
+      e2eClientRegistry?.delete(id);
       getE2ETerminalRegistry()?.delete(id);
       term.dispose();
     },

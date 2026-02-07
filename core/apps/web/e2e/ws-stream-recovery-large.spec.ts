@@ -6,37 +6,6 @@ const isLargeScale = process.env.CTX_E2E_SCALE === "large";
 test("ws: recovers from a single stream drop in a large workspace", async ({ page, request }) => {
   test.skip(!isLargeScale, "CTX_E2E_SCALE=large only");
 
-  await page.addInitScript(() => {
-    const OriginalWebSocket = window.WebSocket as any;
-    (window as any).__ctxStreamClosedOnce ??= false;
-    (window as any).__ctxStreamClosedAt ??= 0;
-
-    class FlakyStreamWebSocket extends OriginalWebSocket {
-      constructor(url: string | URL, protocols?: string | string[]) {
-        // @ts-expect-error runtime shim
-        super(url, protocols);
-        const target = String(url ?? "");
-        if ((window as any).__ctxStreamClosedOnce) return;
-        if (!target.includes("/api/workspaces/") || !target.includes("/active_snapshot/stream")) return;
-
-        this.addEventListener("open", () => {
-          setTimeout(() => {
-            try {
-              (window as any).__ctxStreamClosedOnce = true;
-              (window as any).__ctxStreamClosedAt = Date.now();
-              this.close();
-            } catch {
-              // ignore
-            }
-          }, 50);
-        });
-      }
-    }
-
-    // @ts-expect-error runtime shim
-    window.WebSocket = FlakyStreamWebSocket;
-  });
-
   const seed = await seedDummyWorkspace(request, {
     tasks: 30,
     sessionsPerTask: 1,
@@ -73,10 +42,27 @@ test("ws: recovers from a single stream drop in a large workspace", async ({ pag
   ).toBeVisible({ timeout: 30_000 });
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxStreamClosedAt ?? 0))
-    .toBeGreaterThan(0);
+    .poll(async () =>
+      page.evaluate(() => typeof (window as any).__ctxE2E?.workspaceStream?.getConnectionState === "function"),
+    )
+    .toBe(true);
 
-  const dropTime = await page.evaluate(() => (window as any).__ctxStreamClosedAt as number);
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .toBe("connected");
+
+  const dropTime = Date.now();
+  await page.evaluate(() => {
+    (window as any).__ctxE2E?.workspaceStream?.close?.();
+  });
+
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .toBe("disconnected");
+
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .toBe("connected");
 
   const sessionView = page.getByTestId("session-view");
 
