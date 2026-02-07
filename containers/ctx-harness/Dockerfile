@@ -7,8 +7,8 @@
 
 ARG UBUNTU_VERSION=24.04
 
-# Keep this reasonably current so Cargo can parse crates that opt into the latest stable editions.
-FROM --platform=$BUILDPLATFORM rust:1.88-bookworm AS builder
+# Build per-target-platform under buildx/qemu so the embedded proxy binary matches the image arch.
+FROM --platform=$TARGETPLATFORM rust:1.88-bookworm AS builder
 
 WORKDIR /src
 
@@ -33,6 +33,7 @@ FROM ubuntu:${UBUNTU_VERSION}
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates \
+      curl \
       gawk \
       iptables \
       libc-bin \
