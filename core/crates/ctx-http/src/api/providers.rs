@@ -60,9 +60,10 @@ pub(super) async fn list_providers(
         if status.provider_id == "claude" && has_claude_crp {
             status.details.insert("ui_hidden".into(), "true".into());
         }
+        let canonical_id = installer::canonical_managed_provider_id(&status.provider_id);
         status.details.insert(
             "install_supported".into(),
-            if installer::is_supported_managed_provider(&matrix, &status.provider_id) {
+            if installer::is_supported_managed_provider(&matrix, canonical_id) {
                 "true".into()
             } else {
                 "false".into()
@@ -97,9 +98,10 @@ pub(super) async fn get_provider(
     )
     .await;
     installer::apply_managed_install_details(&mut status, &managed);
+    let canonical_id = installer::canonical_managed_provider_id(&status.provider_id);
     status.details.insert(
         "install_supported".into(),
-        if installer::is_supported_managed_provider(&matrix, &status.provider_id) {
+        if installer::is_supported_managed_provider(&matrix, canonical_id) {
             "true".into()
         } else {
             "false".into()
@@ -849,10 +851,10 @@ pub(super) async fn get_provider_options(
             &state.providers.matrix_cache,
         )
         .await;
-        let (command, args) = cfg
-            .providers
-            .get(&provider_id)
-            .map(|c| (c.command.clone(), c.args.clone()))
+        // Prefer bundled assets (desktop) or user-configured overrides, then fall back to the matrix.
+        // This keeps CRP probing aligned with how sessions will actually spawn providers.
+        let (command, args) = installer::resolve_provider_command(&cfg, &provider_id)
+            .map(|c| (c.command, c.args))
             .or_else(|| default_agent_server_command(&matrix, &state.core.data_root, &provider_id))
             .ok_or((
                 StatusCode::BAD_REQUEST,
@@ -954,19 +956,22 @@ pub(super) async fn install_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<InstallStartResponse>, StatusCode> {
+    // User-facing provider ids sometimes alias to the underlying managed runtime id.
+    // This keeps the UI stable ("codex"/"claude") while still using the managed-install matrix.
+    let canonical_id = installer::canonical_managed_provider_id(&id).to_string();
     let matrix = crate::provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
     )
     .await;
-    if !installer::is_supported_managed_provider(&matrix, &id) {
+    if !installer::is_supported_managed_provider(&matrix, &canonical_id) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let (install_id, started_new) = state.start_install(id.clone()).await;
+    let (install_id, started_new) = state.start_install(canonical_id.clone()).await;
     if started_new {
         let state2 = state.clone();
-        let provider_id = id.clone();
+        let provider_id = canonical_id.clone();
         tokio::spawn(async move {
             if let Err(e) = installer::install_provider_with_progress(
                 state2.clone(),
@@ -981,6 +986,7 @@ pub(super) async fn install_provider(
     }
 
     Ok(Json(InstallStartResponse {
+        // Preserve the requested id so the client can attach progress to the provider it asked for.
         provider_id: id,
         install_id,
     }))

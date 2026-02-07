@@ -38,6 +38,25 @@ pub struct Tier1CrpAdapter {
     pool: Arc<CrpSessionPool>,
 }
 
+fn resolve_explicit_command_path(command: &str) -> Option<PathBuf> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Intentionally do not consult PATH for determinism. Providers should be configured
+    // with a known absolute path (e.g. managed install path or bundled asset path).
+    let p = Path::new(trimmed);
+    // On Windows, paths may be expressed with either '\\' or '/' separators.
+    if p.is_absolute() || trimmed.contains('/') || trimmed.contains('\\') {
+        return if p.exists() {
+            Some(p.to_path_buf())
+        } else {
+            None
+        };
+    }
+    None
+}
+
 impl Tier1CrpAdapter {
     fn new(id: &str, command: &str, args: Vec<String>) -> Self {
         let agent = CrpAgentConfig {
@@ -68,18 +87,7 @@ impl Tier1CrpAdapter {
 #[async_trait]
 impl ProviderAdapter for Tier1CrpAdapter {
     async fn inspect(&self) -> Result<ProviderStatus> {
-        let detected_path = {
-            let p = std::path::Path::new(&self.command);
-            if p.is_absolute() || self.command.contains(std::path::MAIN_SEPARATOR) {
-                if p.exists() {
-                    Some(p.to_path_buf())
-                } else {
-                    None
-                }
-            } else {
-                which::which(&self.command).ok()
-            }
-        };
+        let detected_path = resolve_explicit_command_path(&self.command);
         let installed = detected_path.is_some();
         let mut diagnostics = Vec::new();
         if !installed {
@@ -116,6 +124,11 @@ impl ProviderAdapter for Tier1CrpAdapter {
         env: HashMap<String, String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<RunHandle> {
+        // Fail fast with a clear error if the runtime isn't available.
+        // `inspect()` already checks this, but some call paths can attempt runs even after a stale status.
+        if resolve_explicit_command_path(&self.command).is_none() {
+            anyhow::bail!("CRP runtime executable not found: {}", self.command);
+        }
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         let (done_tx, done_rx) = oneshot::channel::<()>();
         let pool = Arc::clone(&self.pool);

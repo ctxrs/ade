@@ -2366,10 +2366,10 @@ async fn load_provider_model_catalog(
         &state.providers.matrix_cache,
     )
     .await;
-    let (command, args) = cfg
-        .providers
-        .get(provider_id)
-        .map(|c| (c.command.clone(), c.args.clone()))
+    // Prefer bundled assets (desktop) or user-configured overrides, then fall back to the matrix.
+    // This keeps CRP probing aligned with how sessions will actually spawn providers.
+    let (command, args) = installer::resolve_provider_command(&cfg, provider_id)
+        .map(|c| (c.command, c.args))
         .or_else(|| default_agent_server_command(&matrix, &state.core.data_root, provider_id))
         .ok_or_else(|| "unknown provider id".to_string())?;
 

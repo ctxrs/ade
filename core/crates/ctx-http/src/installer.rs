@@ -66,6 +66,18 @@ pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()>
     install_provider_impl(state, provider_id, None).await
 }
 
+/// Some user-facing provider ids are aliases for the underlying managed install id.
+///
+/// This is used to keep the UI stable (`codex`/`claude`) while still using the managed-install
+/// matrix/runtime ids (`codex-crp`/`claude-crp`).
+pub fn canonical_managed_provider_id(provider_id: &str) -> &str {
+    match provider_id {
+        "codex" => "codex-crp",
+        "claude" => "claude-crp",
+        _ => provider_id,
+    }
+}
+
 pub fn is_supported_managed_provider(
     matrix: &provider_matrix::ProviderMatrix,
     provider_id: &str,
@@ -1428,6 +1440,29 @@ async fn install_provider_impl(
         {
             let mut map = state.providers.adapters.lock().await;
             map.insert(provider_id.clone(), adapter.clone());
+
+            // Aliases: user-facing provider ids that share the same managed CRP runtime binary.
+            // The daemon registers both ids, so update both in-memory adapters after install.
+            if provider_id == "codex-crp" {
+                map.insert(
+                    "codex".to_string(),
+                    std::sync::Arc::new(Tier1CrpAdapter::from_raw(
+                        "codex",
+                        managed.command.clone(),
+                        managed.args.clone(),
+                    )),
+                );
+            }
+            if provider_id == "claude-crp" {
+                map.insert(
+                    "claude".to_string(),
+                    std::sync::Arc::new(Tier1CrpAdapter::from_raw(
+                        "claude",
+                        managed.command.clone(),
+                        managed.args.clone(),
+                    )),
+                );
+            }
         }
 
         stage = "refresh";

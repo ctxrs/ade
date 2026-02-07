@@ -841,9 +841,12 @@ impl AppState {
     }
 
     pub async fn find_running_install(&self, provider_id: &str) -> Option<InstallId> {
+        let canonical = crate::installer::canonical_managed_provider_id(provider_id);
         let map = self.providers.installs.lock().await;
         map.iter().find_map(|(id, st)| {
-            if st.provider_id == provider_id && matches!(st.state, InstallStateKind::Running) {
+            if (st.provider_id == provider_id || st.provider_id == canonical)
+                && matches!(st.state, InstallStateKind::Running)
+            {
                 Some(*id)
             } else {
                 None
