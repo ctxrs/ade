@@ -1495,13 +1495,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const taskListItems = useMemo<TaskListItem[]>(() => {
     const items: TaskListItem[] = [];
-    if (
-      activeTaskSummaries.length === 0 &&
-      workspaceSnapshot.initialized &&
-      workspaceSnapshot.fetchState.active !== "loading"
-    ) {
-      items.push({ kind: "active-empty" });
-    }
     activeTaskSummaries.forEach((summary) => items.push({ kind: "active-task", summary }));
     items.push({ kind: "archived-header" });
     if (!archivedCollapsed) {
@@ -1544,8 +1537,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const renderTaskListItem = useCallback(
     (item: TaskListItem) => {
       switch (item.kind) {
-        case "active-empty":
-          return <div className="wb-muted">No active tasks.</div>;
         case "active-task":
           return renderTaskRow(item.summary);
         case "archived-header":
@@ -1595,8 +1586,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         return `active-${item.summary.id}`;
       case "archived-task":
         return `archived-${item.summary.id}`;
-      case "active-empty":
-        return "active-empty";
       case "archived-header":
         return "archived-header";
       case "archived-loading":

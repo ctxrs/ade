@@ -25,7 +25,6 @@ export type TaskListContext = {
 };
 
 export type TaskListItem =
-  | { kind: "active-empty" }
   | { kind: "active-task"; summary: WorkspaceActiveSnapshotItem }
   | { kind: "archived-header" }
   | { kind: "archived-loading" }
