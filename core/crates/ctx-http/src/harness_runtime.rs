@@ -3,7 +3,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::{fs, io::AsyncWriteExt};
@@ -20,13 +20,19 @@ use crate::settings::{
 };
 use url::Url;
 
-const DEFAULT_CONTAINER_IMAGE: &str = "ubuntu:24.04";
+// Default container image for ctx-managed execution.
+//
+// This must include:
+// - iptables (for restricted egress enforcement)
+// - /usr/local/bin/ctx-egress-proxy (Linux binary executed inside the container)
+const DEFAULT_CONTAINER_IMAGE: &str = "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04";
 const PODMAN_PATH_ENV: &str = "CTX_PODMAN_PATH";
 const PODMAN_ALLOW_SYSTEM_ENV: &str = "CTX_ALLOW_SYSTEM_PODMAN";
 const EGRESS_PROXY_BINARY: &str = "ctx-egress-proxy";
 const EGRESS_PROXY_RUNTIME_ID: &str = "ctx-egress-proxy";
 const EGRESS_PROXY_CONFIG_NAME: &str = "egress-proxy.json";
 const TRANSPARENT_PROXY_PORT: u16 = 15001;
+const EGRESS_PROXY_CONTAINER_PATH: &str = "/usr/local/bin/ctx-egress-proxy";
 
 #[derive(Debug, Clone)]
 pub enum HarnessRuntimeKind {
@@ -394,7 +400,24 @@ impl HarnessRuntimeManager {
             }
             false
         } else {
-            let proxy_bin = ensure_egress_proxy_binary(&self.data_root).await?;
+            // Prefer the in-image proxy binary (required for out-of-the-box behavior on macOS/Windows).
+            // If the image doesn't have it, we also allow an explicit override via CTX_EGRESS_PROXY_PATH,
+            // but restricted modes must not silently fall back to full network access.
+            let proxy_bin = match ensure_egress_proxy_available(&name).await {
+                Ok(()) => EGRESS_PROXY_CONTAINER_PATH.to_string(),
+                Err(img_err) => {
+                    // Optional escape hatch: allow a Linux proxy binary to be provided via the host
+                    // (it is bind-mounted into the container under ~/.ctx/runtimes/...).
+                    if std::env::var("CTX_EGRESS_PROXY_PATH").ok().is_some() {
+                        let host_bin = ensure_egress_proxy_binary(&self.data_root).await?;
+                        host_bin.to_string_lossy().to_string()
+                    } else {
+                        return Err(img_err).context(
+                            "restricted container networking requires ctx-egress-proxy in the container image",
+                        );
+                    }
+                }
+            };
             let proxy_config = TransparentProxyConfig {
                 listen: format!("127.0.0.1:{TRANSPARENT_PROXY_PORT}"),
                 mode: settings.network_mode.clone(),
@@ -406,7 +429,7 @@ impl HarnessRuntimeManager {
                 proxy_config,
             )
             .await?;
-            start_transparent_proxy(&name, &proxy_bin, &config_path).await?;
+            start_transparent_proxy(&name, &PathBuf::from(proxy_bin), &config_path).await?;
             configure_transparent_egress_guard(
                 &name,
                 TRANSPARENT_PROXY_PORT,
@@ -670,6 +693,31 @@ async fn ensure_egress_proxy_binary(data_root: &Path) -> Result<PathBuf> {
     perms.set_mode(0o755);
     fs::set_permissions(&dest, perms).await?;
     Ok(dest)
+}
+
+async fn ensure_egress_proxy_available(container_name: &str) -> Result<()> {
+    // Validate required tooling inside the container for restricted network modes.
+    //
+    // This is a hard requirement: without these, we cannot enforce allowlist/llm-only safely.
+    let script = format!(
+        "set -e; command -v iptables >/dev/null 2>&1; test -x '{EGRESS_PROXY_CONTAINER_PATH}'"
+    );
+    let status = podman_command()?
+        .arg("exec")
+        .arg("--user")
+        .arg("0")
+        .arg(container_name)
+        .arg("sh")
+        .arg("-c")
+        .arg(script)
+        .status()
+        .await?;
+    if status.success() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "container missing required egress tooling (iptables and/or {EGRESS_PROXY_CONTAINER_PATH}); status {status}"
+    );
 }
 
 async fn write_transparent_proxy_config(
