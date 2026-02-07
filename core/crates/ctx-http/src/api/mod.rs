@@ -28,6 +28,7 @@ mod auth;
 mod errors;
 mod extractors;
 mod providers;
+mod repo;
 pub(crate) mod sessions;
 mod settings;
 mod shared;
@@ -37,6 +38,7 @@ mod workspaces;
 mod ws;
 use artifacts::*;
 use providers::*;
+use repo::*;
 use sessions::*;
 use settings::*;
 use tasks::*;
@@ -182,6 +184,9 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/title_generation/local/install",
             post(install_title_generation_local),
         )
+        .route("/api/repo/clone", post(repo_clone))
+        .route("/api/repo/init", post(repo_init))
+        .route("/api/repo/status", post(repo_status))
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/resource_utilization", get(resource_utilization))
         .route("/api/telemetry/summary", get(get_telemetry_summary))
