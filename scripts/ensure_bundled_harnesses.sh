@@ -214,6 +214,8 @@ BRIDGE_BIN="acp-crp-bridge"
 LOCAL_ADAPTERS_DIR="${CTX_BUNDLE_ADAPTERS_DIR:-$ROOT/harness-adapters}"
 LOCAL_ADAPTER_MODE="${CTX_BUNDLE_LOCAL_ADAPTERS:-auto}"
 BUILD_LOCAL_ADAPTERS="${CTX_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
+# The bridge is required for bundles; build it when missing unless explicitly disabled.
+BUILD_LOCAL_BRIDGE="${CTX_BUNDLE_BUILD_LOCAL_BRIDGE:-1}"
 
 declare -A LOCAL_ADAPTER_DIR=(
   ["amp"]="amp-acp"
@@ -288,7 +290,7 @@ require_bridge_binary() {
   local bridge_out
   bridge_out="$(local_bridge_binary_path)"
   if [[ ! -f "$bridge_out" ]]; then
-    if is_truthy "$BUILD_LOCAL_ADAPTERS"; then
+    if is_truthy "$BUILD_LOCAL_BRIDGE" || is_truthy "$BUILD_LOCAL_ADAPTERS"; then
       require_cmd cargo
       (cd "$BRIDGE_DIR" && cargo build --release --target "$rust_target")
     fi
@@ -721,6 +723,14 @@ for provider in data.get("providers", []):
     kind = mi.get("kind")
     if not kind:
         continue
+    # If a provider declares releases, respect them: skip managed installs that
+    # are not marked supported for this ctx version (e.g. pending/blocked).
+    releases = provider.get("releases", [])
+    if releases:
+        supported = [r for r in releases if r.get("status") == "supported"]
+        supported = [r for r in supported if release_matches_context(r, ctx_version)]
+        if not supported:
+            continue
     args = mi.get("args") or []
     if kind == "archive":
         target_entry = mi.get("targets", {}).get(target)

@@ -18,8 +18,11 @@ pub type SharedTurnDiffTracker = Arc<Mutex<TurnDiffTracker>>;
 
 #[derive(Clone)]
 pub struct ToolInvocation {
-    pub session: Arc<Session>,
-    pub turn: Arc<TurnContext>,
+    // These are intentionally crate-private: the public ToolInvocation type is
+    // used by external tool handler APIs, but the internal session/turn context
+    // types are not part of the public surface.
+    pub(crate) session: Arc<Session>,
+    pub(crate) turn: Arc<TurnContext>,
     pub tracker: SharedTurnDiffTracker,
     pub call_id: String,
     pub tool_name: String,
