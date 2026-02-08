@@ -14,6 +14,7 @@ import {
   repoStatus,
   setDaemonAuthToken,
   setDaemonBaseUrl,
+  updateWorkspaceExecutionConfig,
   updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig,
 } from "../api/client";
@@ -115,6 +116,8 @@ export default function WorkspaceSetupPage() {
   const [repoUrl, setRepoUrl] = useState("");
   const [repoBranch, setRepoBranch] = useState("");
   const [workspaceName, setWorkspaceName] = useState("");
+  const [networkAllowlist, setNetworkAllowlist] = useState("");
+  const [containerAdvancedOpen, setContainerAdvancedOpen] = useState(false);
   const [setupHook, setSetupHook] = useState("");
   const [targetBranch, setTargetBranch] = useState("main");
   const [targetBranchTouched, setTargetBranchTouched] = useState(false);
@@ -129,7 +132,10 @@ export default function WorkspaceSetupPage() {
   const [remotePathStatus, setRemotePathStatus] = useState<"idle" | "loading" | "error">("idle");
   const [remotePathError, setRemotePathError] = useState<string | null>(null);
 
-  const steps = useMemo<WizardStep[]>(() => ([
+  const containerMode = selections.container;
+
+  const steps = useMemo<WizardStep[]>(() => {
+    const out: WizardStep[] = [
       {
         key: "location",
         title: "Location",
@@ -137,6 +143,30 @@ export default function WorkspaceSetupPage() {
         options: [
           { id: "local", title: "Local", desc: "Agents run on this machine." },
           { id: "remote", title: "Remote", desc: "Agents run on your existing dev box (remote IDE experience)." },
+        ],
+      },
+      {
+        key: "container",
+        title: "Agent Sandbox Isolation",
+        note: "Choose the containerization strategy for your agents in this workspace.",
+        options: [
+          {
+            id: "sealed",
+            title: "Fully sealed container",
+            desc: "No host mounts. The worktree is synced into a container-managed filesystem for agent execution.",
+            badge: "Recommended",
+          },
+          {
+            id: "no-container",
+            title: "No container",
+            desc: "Run directly on the host. Useful if this machine is already agent-safe (e.g. a dedicated dev box).",
+          },
+          {
+            id: "host-mounted",
+            title: "Host-mounted container",
+            desc: "Agents run in a container but write directly to your project folder on the host.",
+            advanced: true,
+          },
         ],
       },
       {
@@ -149,6 +179,34 @@ export default function WorkspaceSetupPage() {
           { id: "new", title: "New empty", desc: "Initialize a new git repo." },
         ],
       },
+    ];
+
+    if (containerMode !== "no-container") {
+      out.push({
+        key: "network",
+        title: "Network Policy",
+        note: "Restrict or permit agent network access (container mode only).",
+        options: [
+          {
+            id: "providers",
+            title: "LLM providers only",
+            desc: "Only allow validated LLM provider traffic. This blocks other outbound access.",
+          },
+          {
+            id: "allowlist",
+            title: "Allowlist",
+            desc: "Allow only hosts you approve (one per line). Useful for known-safe sources.",
+          },
+          {
+            id: "full",
+            title: "Full access",
+            desc: "Unrestricted outbound. Only use if you understand prompt-injection / data exfil risks.",
+          },
+        ],
+      });
+    }
+
+    out.push(
       {
         key: "setup",
         title: "Worktree Setup Hook",
@@ -183,7 +241,14 @@ export default function WorkspaceSetupPage() {
         title: "Confirm and create",
         note: "Review your choices before provisioning.",
       },
-    ]), []);
+    );
+
+    return out;
+  }, [containerMode]);
+
+  useEffect(() => {
+    setStepIndex((idx) => Math.min(idx, Math.max(0, steps.length - 1)));
+  }, [steps.length]);
   const step = steps[stepIndex];
   const infoStep = openInfoKey ? steps.find((s) => s.key === openInfoKey) : null;
   const isFirst = stepIndex === 0;
@@ -199,6 +264,9 @@ export default function WorkspaceSetupPage() {
   const hasRepoUrl = !needsRepoUrl || repoUrl.trim() !== "";
   const needsTargetBranch = step.key === "merge-queue" && !mergeQueueSkipped;
   const hasTargetBranch = !needsTargetBranch || targetBranch.trim() !== "";
+  const needsAllowlist = step.key === "network" && selections.network === "allowlist";
+  const hasAllowlist = !needsAllowlist
+    || networkAllowlist.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length > 0;
   const parsedRemote = parseUserHost(remoteHostInput);
   const hasRemoteHost = Boolean(parsedRemote?.host);
   const canAdvance = (!requiresSelection || hasSelection)
@@ -206,6 +274,7 @@ export default function WorkspaceSetupPage() {
     && hasSourcePath
     && hasRepoUrl
     && hasTargetBranch
+    && hasAllowlist
     ;
 
   function applyConnection(info: DesktopConnectionInfo) {
@@ -253,6 +322,8 @@ export default function WorkspaceSetupPage() {
 
   const shouldAutoAdvance = (stepKey: string, optionId: string): boolean => {
     if (stepKey === "location") return optionId === "local";
+    if (stepKey === "container") return true;
+    if (stepKey === "network") return optionId !== "allowlist";
     return false;
   };
 
@@ -260,6 +331,9 @@ export default function WorkspaceSetupPage() {
     setCreateError(null);
     setSelections((prev) => {
       const next = { ...prev, [stepKey]: optionId };
+      if (stepKey === "container" && optionId === "no-container") {
+        delete next.network;
+      }
       return next;
     });
     if (stepKey === "location" && optionId === "local") {
@@ -267,6 +341,12 @@ export default function WorkspaceSetupPage() {
       setRemoteError(null);
       setImportRepoStatus("idle");
       setImportRepoNote(null);
+    }
+    if (stepKey === "container" && optionId === "no-container") {
+      setNetworkAllowlist("");
+    }
+    if (stepKey === "network" && optionId !== "allowlist") {
+      setNetworkAllowlist("");
     }
     if (stepKey === "source") {
       if (optionId !== "clone") {
@@ -299,6 +379,12 @@ export default function WorkspaceSetupPage() {
       return next;
     });
   };
+
+  useEffect(() => {
+    if (selections.container === "host-mounted") {
+      setContainerAdvancedOpen(true);
+    }
+  }, [selections.container]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -560,6 +646,7 @@ export default function WorkspaceSetupPage() {
       // 2. Ensure we have a VCS repo root_path (workspace creation requires this).
       let rootPath = "";
       let name: string | undefined;
+      let wsId = "";
       if (selections.source === "import") {
         rootPath = sourcePath.trim().replace(/\/+$/, "");
         if (!rootPath) throw new Error("Folder is required.");
@@ -575,10 +662,10 @@ export default function WorkspaceSetupPage() {
         const all = await listWorkspaces();
         const hit = all.find((w) => String((w as any).root_path) === rootPath);
         if (hit) {
-          navigate(`/workspaces/${idToString((hit as any).id)}`, { replace: true });
-          return;
+          wsId = idToString((hit as any).id);
+        } else {
+          name = workspaceName.trim() || undefined;
         }
-        name = workspaceName.trim() || undefined;
       } else if (selections.source === "clone") {
         const dest = parseCloneDestPath(sourcePath);
         if (!dest) throw new Error("Destination must be an absolute path (e.g. /Users/example-user/projects/ or /Users/example-user/projects/repo-name).");
@@ -602,10 +689,31 @@ export default function WorkspaceSetupPage() {
       }
 
       // 3. Register the workspace.
-      const created = await createWorkspace(rootPath, name);
-      const wsId = idToString((created as any).id);
+      if (!wsId) {
+        const created = await createWorkspace(rootPath, name);
+        wsId = idToString((created as any).id);
+      }
 
-      // 4. Persist repo-scoped config only if the user opted in / provided values.
+      // 4. Persist per-workspace execution settings.
+      const execMode = selections.container === "no-container" ? "host" : "container";
+      const mountMode = selections.container === "host-mounted" ? "host_mounted" : "sealed";
+      const allowlist = networkAllowlist
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const netMode = selections.network === "allowlist"
+        ? "allowlist"
+        : selections.network === "full"
+          ? "all"
+          : "llm_only";
+      await updateWorkspaceExecutionConfig(wsId, {
+        mode: execMode,
+        mount_mode: execMode === "container" ? mountMode : null,
+        network_mode: execMode === "container" ? netMode : null,
+        allowlist: execMode === "container" && netMode === "allowlist" ? allowlist : null,
+      });
+
+      // 5. Persist repo-scoped config only if the user opted in / provided values.
       if (!mergeQueueSkipped) {
         await updateWorkspaceMergeQueueConfig(wsId, {
           enabled: true,
@@ -710,7 +818,7 @@ export default function WorkspaceSetupPage() {
                   <>
 	                    <div className="wizard-option-grid">
 	                      {step.options
-	                        .filter((option) => step.key !== "container" || !option.advanced)
+	                        .filter((option) => step.key !== "container" || containerAdvancedOpen || !option.advanced)
 	                        .map((option) => {
 	                          const selected = selections[step.key] === option.id;
 	                          return (
@@ -731,8 +839,41 @@ export default function WorkspaceSetupPage() {
                           );
                         })}
                     </div>
+                    {step.key === "container" && (
+                      <button
+                        type="button"
+                        className="wizard-advanced-link"
+                        data-testid="wizard-container-advanced-toggle"
+                        onClick={() => setContainerAdvancedOpen((open) => !open)}
+                        aria-expanded={containerAdvancedOpen}
+                      >
+                        <ChevronRight
+                          size={14}
+                          className={containerAdvancedOpen ? "is-open" : undefined}
+                          aria-hidden="true"
+                        />
+                        Advanced
+                      </button>
+                    )}
 	                  </>
 	                )}
+                {step.key === "network" && selections.network === "allowlist" && (
+                  <div className="wizard-input">
+                    <label>
+                      Allowed hosts (one per line)
+                      <textarea
+                        data-testid="wizard-network-allowlist"
+                        placeholder={"github.com\nregistry.npmjs.org\npypi.org"}
+                        value={networkAllowlist}
+                        onChange={(e) => {
+                          setCreateError(null);
+                          setNetworkAllowlist(e.target.value);
+                        }}
+                        rows={6}
+                      />
+                    </label>
+                  </div>
+                )}
                 {step.key === "location" && selections.location === "remote" && (
                   <div className="wizard-remote">
                     <div className="wizard-input">
@@ -1053,6 +1194,28 @@ export default function WorkspaceSetupPage() {
                         <div className="wizard-summary-row">
                           <div className="wizard-summary-k">Name</div>
                           <div className="wizard-summary-v">{workspaceName.trim()}</div>
+                        </div>
+                      )}
+                      <div className="wizard-summary-row">
+                        <div className="wizard-summary-k">Sandbox</div>
+                        <div className="wizard-summary-v">
+                          {selections.container === "no-container"
+                            ? "Host (no container)"
+                            : selections.container === "host-mounted"
+                              ? "Container (host-mounted)"
+                              : "Container (sealed)"}
+                        </div>
+                      </div>
+                      {selections.container !== "no-container" && (
+                        <div className="wizard-summary-row">
+                          <div className="wizard-summary-k">Network</div>
+                          <div className="wizard-summary-v">
+                            {selections.network === "allowlist"
+                              ? "Allowlist"
+                              : selections.network === "full"
+                                ? "Full access"
+                                : "LLM providers only"}
+                          </div>
                         </div>
                       )}
                       <div className="wizard-summary-row">

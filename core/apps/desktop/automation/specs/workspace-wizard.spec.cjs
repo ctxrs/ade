@@ -252,6 +252,41 @@ const assertLocalWorkspaceConfig = (rootPath, expectations) => {
     throw new Error(`missing workspace config: ${cfg}`);
   }
   const text = fs.readFileSync(cfg, "utf8");
+  const tableBody = (tableName) => {
+    const lines = String(text || "").split(/\r?\n/);
+    const header = `[${tableName}]`;
+    const start = lines.findIndex((l) => String(l || "").trim() === header);
+    if (start < 0) return null;
+    let end = start + 1;
+    for (; end < lines.length; end += 1) {
+      if (/^\s*\[/.test(lines[end])) break;
+    }
+    return lines.slice(start + 1, end).join("\n");
+  };
+  if (expectations.executionMode) {
+    const body = tableBody("execution");
+    if (!body) throw new Error(`expected [execution] in ${cfg}`);
+    if (!new RegExp(`\\bmode\\s*=\\s*\"${expectations.executionMode}\"\\b`).test(body)) {
+      throw new Error(`expected execution.mode=${expectations.executionMode} in ${cfg}`);
+    }
+  }
+  if (expectations.mountMode || expectations.networkMode || expectations.allowlist) {
+    const body = tableBody("execution.container");
+    if (!body) throw new Error(`expected [execution.container] in ${cfg}`);
+    if (expectations.mountMode && !new RegExp(`\\bmount_mode\\s*=\\s*\"${expectations.mountMode}\"\\b`).test(body)) {
+      throw new Error(`expected execution.container.mount_mode=${expectations.mountMode} in ${cfg}`);
+    }
+    if (expectations.networkMode && !new RegExp(`\\bnetwork_mode\\s*=\\s*\"${expectations.networkMode}\"\\b`).test(body)) {
+      throw new Error(`expected execution.container.network_mode=${expectations.networkMode} in ${cfg}`);
+    }
+    if (expectations.allowlist) {
+      for (const entry of expectations.allowlist) {
+        if (!text.includes(entry)) {
+          throw new Error(`expected allowlist entry '${entry}' in ${cfg}`);
+        }
+      }
+    }
+  }
   if (expectations.mergeQueueEnabled === false) {
     // When the user skips merge queue setup, the wizard intentionally does not write any
     // merge_queue config (the daemon defaults still apply).
@@ -331,6 +366,12 @@ const runWizardScenario = async (scenario) => {
     await clickNext(); // verifies SSH and advances
   }
 
+  await waitForStep("container");
+  if (scenario.container === "host-mounted") {
+    await clickTestId("wizard-container-advanced-toggle");
+  }
+  await clickOption("container", scenario.container);
+
   await waitForStep("source");
   await clickOption("source", scenario.source.kind);
 
@@ -351,6 +392,15 @@ const runWizardScenario = async (scenario) => {
     }
   }
   await clickNext();
+
+  const afterSource = await currentStepKey();
+  if (afterSource === "network") {
+    await clickOption("network", scenario.network);
+    if (scenario.network === "allowlist") {
+      await setInput("wizard-network-allowlist", scenario.networkAllowlist || "github.com");
+      await clickNext();
+    }
+  }
 
   await waitForStep("setup");
   if (scenario.setupHook) {
@@ -446,6 +496,7 @@ describe("launcher workspace wizard (e2e)", () => {
   it("local import works end-to-end", async () => {
     const id = await runWizardScenario({
       location: "local",
+      container: "no-container",
       source: { kind: "import", path: localImportRepo },
       setupHook: "pnpm install",
       mergeQueue: { kind: "skip" },
@@ -453,7 +504,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
-    assertLocalWorkspaceConfig(ws.root_path, { mergeQueueEnabled: false, setupHook: "pnpm install" });
+    assertLocalWorkspaceConfig(ws.root_path, { executionMode: "host", mergeQueueEnabled: false, setupHook: "pnpm install" });
   });
 
   it("local clone works end-to-end (merge queue enabled)", async () => {
@@ -463,6 +514,8 @@ describe("launcher workspace wizard (e2e)", () => {
 
     const id = await runWizardScenario({
       location: "local",
+      container: "sealed",
+      network: "providers",
       source: { kind: "clone", repoUrl: localCloneSrc, branch: "", destPath },
       setupHook: "pnpm install",
       mergeQueue: { kind: "enabled", targetBranch: "main", verifyCommand: "pnpm -v" },
@@ -470,13 +523,23 @@ describe("launcher workspace wizard (e2e)", () => {
 
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
-    assertLocalWorkspaceConfig(ws.root_path, { mergeQueueEnabled: true, targetBranch: "main", setupHook: "pnpm install" });
+    assertLocalWorkspaceConfig(ws.root_path, {
+      executionMode: "container",
+      mountMode: "sealed",
+      networkMode: "llm_only",
+      mergeQueueEnabled: true,
+      targetBranch: "main",
+      setupHook: "pnpm install",
+    });
   });
 
   it("local new empty works end-to-end", async () => {
     const dest = path.join(localBase, "new-sealed");
     const id = await runWizardScenario({
       location: "local",
+      container: "host-mounted",
+      network: "allowlist",
+      networkAllowlist: "github.com\nregistry.npmjs.org",
       source: { kind: "new", destPath: dest, workspaceName: "sealed-ws" },
       setupHook: "",
       mergeQueue: { kind: "enabled", targetBranch: "main", verifyCommand: "" },
@@ -484,7 +547,14 @@ describe("launcher workspace wizard (e2e)", () => {
 
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
-    assertLocalWorkspaceConfig(ws.root_path, { mergeQueueEnabled: true, targetBranch: "main" });
+    assertLocalWorkspaceConfig(ws.root_path, {
+      executionMode: "container",
+      mountMode: "host_mounted",
+      networkMode: "allowlist",
+      allowlist: ["github.com", "registry.npmjs.org"],
+      mergeQueueEnabled: true,
+      targetBranch: "main",
+    });
   });
 
   it("remote import works end-to-end", async function () {
@@ -494,6 +564,7 @@ describe("launcher workspace wizard (e2e)", () => {
     const id = await runWizardScenario({
       location: "remote",
       remoteHost: remoteTarget,
+      container: "no-container",
       source: { kind: "import", path: importPath },
       setupHook: "pnpm install",
       mergeQueue: { kind: "skip" },
@@ -513,6 +584,9 @@ describe("launcher workspace wizard (e2e)", () => {
     const id = await runWizardScenario({
       location: "remote",
       remoteHost: remoteTarget,
+      container: "host-mounted",
+      network: "allowlist",
+      networkAllowlist: "github.com",
       source: { kind: "clone", repoUrl: src, branch: "", destPath },
       setupHook: "pnpm install",
       mergeQueue: { kind: "enabled", targetBranch: "main", verifyCommand: "echo ok" },
@@ -530,6 +604,8 @@ describe("launcher workspace wizard (e2e)", () => {
     const id = await runWizardScenario({
       location: "remote",
       remoteHost: remoteTarget,
+      container: "sealed",
+      network: "full",
       source: { kind: "new", destPath: dest, workspaceName: "sealed-remote" },
       setupHook: "",
       mergeQueue: { kind: "skip" },
