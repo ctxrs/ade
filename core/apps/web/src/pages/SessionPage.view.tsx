@@ -52,7 +52,7 @@ import {
   WorkbenchToolRow,
   WorkbenchTurnHeaderView,
   WorkbenchTurnStatusRow,
-} from "./SessionPage.thread";
+} from "./sessionThread/SessionThreadItemViews";
 import type {
   AskUserQuestionAnswerState,
   ThreadItem,
