@@ -44,6 +44,7 @@ export const SECTIONS: Array<{
   { id: "harness_subscriptions", label: "Harness Subscriptions", group: "main" },
   { id: "models_routing", label: "Models & Routing", group: "main", navHidden: true },
   { id: "sandboxing", label: "Sandboxing", group: "main", navHidden: true },
+  { id: "execution", label: "Execution", group: "main" },
   { id: "worktree_bootstrap", label: "Worktree Bootstrap", group: "main" },
   { id: "agent_system_prompt", label: "Agent System Prompt", group: "main" },
   { id: "workspace_attachments", label: "Workspace Attachments", group: "main" },

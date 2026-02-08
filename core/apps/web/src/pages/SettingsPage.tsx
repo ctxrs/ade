@@ -40,8 +40,10 @@ import {
   getCodexAccountUsage,
   getTitleGenerationLocalStatus,
   Workspace,
+  WorkspaceExecutionConfig,
   authenticateProviderForWorkspace,
   getInstall,
+  getWorkspaceExecutionConfig,
   getProviderOptions,
   getResourceUtilization,
   getSettings,
@@ -63,6 +65,7 @@ import {
   updateSettings,
   updateAgentSystemPrompt,
   updateSubagentSystemPrompt,
+  updateWorkspaceExecutionConfig,
   verifyProviderForWorkspace,
 } from "../api/client";
 import {
@@ -305,6 +308,13 @@ export default function SettingsPage() {
   const [mergeQueueError, setMergeQueueError] = useState<string | null>(null);
   const [mergeQueueActionBusy, setMergeQueueActionBusy] = useState<Record<string, boolean>>({});
   const [mergeQueueLogBusy, setMergeQueueLogBusy] = useState<Record<string, boolean>>({});
+
+  const [workspaceExecution, setWorkspaceExecution] = useState<WorkspaceExecutionConfig | null>(null);
+  const [workspaceExecutionLoading, setWorkspaceExecutionLoading] = useState(false);
+  const [workspaceExecutionError, setWorkspaceExecutionError] = useState<string | null>(null);
+  const [workspaceAllowlistText, setWorkspaceAllowlistText] = useState("");
+  const [workspaceAllowlistDirty, setWorkspaceAllowlistDirty] = useState(false);
+  const [workspaceAllowlistSaving, setWorkspaceAllowlistSaving] = useState(false);
   const [codexAccounts, setCodexAccounts] = useState<CodexAccountsResponse | null>(null);
   const [codexAccountsBusy, setCodexAccountsBusy] = useState(false);
   const [codexAccountsError, setCodexAccountsError] = useState<string | null>(null);
@@ -914,6 +924,24 @@ export default function SettingsPage() {
     }
   }, [workspaceId]);
 
+  const refreshWorkspaceExecutionConfig = useCallback(async () => {
+    if (!workspaceId) return;
+    setWorkspaceExecutionLoading(true);
+    setWorkspaceExecutionError(null);
+    try {
+      const next = await getWorkspaceExecutionConfig(workspaceId);
+      setWorkspaceExecution(next);
+      const initialAllowlist = Array.isArray(next.allowlist) ? next.allowlist : [];
+      setWorkspaceAllowlistText(initialAllowlist.join("\n"));
+      setWorkspaceAllowlistDirty(false);
+    } catch (e: any) {
+      setWorkspaceExecutionError(e?.message ?? String(e));
+      setWorkspaceExecution(null);
+    } finally {
+      setWorkspaceExecutionLoading(false);
+    }
+  }, [workspaceId]);
+
   const handleMergeQueueCancel = useCallback(
     async (entryId: string) => {
       setMergeQueueActionBusy((prev) => ({ ...prev, [entryId]: true }));
@@ -958,6 +986,53 @@ export default function SettingsPage() {
       setMergeQueueLogBusy((prev) => ({ ...prev, [entryId]: false }));
     }
   }, []);
+
+  const handleSaveWorkspaceAllowlist = useCallback(async () => {
+    if (!workspaceId) return;
+    if (!workspaceExecution) return;
+    if (workspaceAllowlistSaving) return;
+
+    const allowlist = workspaceAllowlistText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (workspaceExecution.mode !== "container") {
+      setWorkspaceExecutionError("Allowlist only applies in container mode.");
+      return;
+    }
+    if (workspaceExecution.network_mode !== "allowlist") {
+      setWorkspaceExecutionError("Allowlist is only active when the network policy is set to Allowlist.");
+      return;
+    }
+    if (allowlist.length === 0) {
+      setWorkspaceExecutionError("Allowlist must include at least one host.");
+      return;
+    }
+
+    setWorkspaceAllowlistSaving(true);
+    setWorkspaceExecutionError(null);
+    try {
+      await updateWorkspaceExecutionConfig(workspaceId, {
+        mode: workspaceExecution.mode,
+        mount_mode: workspaceExecution.mount_mode ?? null,
+        network_mode: workspaceExecution.network_mode ?? null,
+        allowlist,
+      });
+      await refreshWorkspaceExecutionConfig();
+    } catch (e: any) {
+      setWorkspaceExecutionError(e?.message ?? String(e));
+    } finally {
+      setWorkspaceAllowlistSaving(false);
+    }
+  }, [
+    refreshWorkspaceExecutionConfig,
+    updateWorkspaceExecutionConfig,
+    workspaceAllowlistSaving,
+    workspaceAllowlistText,
+    workspaceExecution,
+    workspaceId,
+  ]);
 
   const refreshAgentSystemPrompt = useCallback(async () => {
     if (!workspaceId) return;
@@ -1248,6 +1323,12 @@ export default function SettingsPage() {
     if (!workspaceId) return;
     refreshMergeQueueEntries().catch(() => {});
   }, [active, workspaceId, refreshMergeQueueEntries]);
+
+  useEffect(() => {
+    if (active !== "execution") return;
+    if (!workspaceId) return;
+    refreshWorkspaceExecutionConfig().catch(() => {});
+  }, [active, workspaceId, refreshWorkspaceExecutionConfig]);
 
   useEffect(() => {
     return () => {
@@ -2227,6 +2308,105 @@ export default function SettingsPage() {
             </div>
           </Card>
           {attachmentsError ? <div className="settings-banner settings-banner-error">{attachmentsError}</div> : null}
+        </>
+      );
+    }
+
+    if (active === "execution") {
+      const anyWorkspace = workspaces.length > 0;
+      const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
+      const configPath = selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/config.toml` : ".ctx/config.toml";
+      const exec = workspaceExecution;
+      const modeLabel = exec?.mode === "container" ? "Container" : exec?.mode === "host" ? "Host" : "Auto";
+      const mountLabel = exec?.mount_mode === "host_mounted" ? "Host-mounted" : "Sealed";
+      const netLabel =
+        exec?.network_mode === "all"
+          ? "Full access"
+          : exec?.network_mode === "allowlist"
+            ? "Allowlist"
+            : "LLM providers only";
+      const allowlistActive = exec?.mode === "container" && exec?.network_mode === "allowlist";
+
+      return (
+        <>
+          <Card title="Execution">
+            <Row
+              title="Workspace"
+              description="Choose the repo to inspect."
+              control={
+                <select
+                  className="settings-control settings-select"
+                  value={workspaceId ?? ""}
+                  onChange={(e) => setWorkspaceId(e.target.value || null)}
+                  disabled={!anyWorkspace}
+                >
+                  {workspaces.map((ws) => {
+                    const id = idToString((ws as any).id);
+                    return (
+                      <option key={id} value={id}>
+                        {ws.name}
+                      </option>
+                    );
+                  })}
+                </select>
+              }
+            />
+            <Row
+              title="Config file"
+              description="Repo-scoped execution configuration."
+              control={<span className="settings-pill wb-mono">{configPath}</span>}
+            />
+            <Row
+              title="Environment"
+              description="This is set during workspace creation. Editing it in the UI is not supported yet."
+              control={
+                <span className="settings-pill">
+                  {workspaceExecutionLoading ? "Loading…" : exec ? modeLabel : "—"}
+                  {exec?.mode === "container" ? ` (${mountLabel})` : ""}
+                </span>
+              }
+            />
+            <Row
+              title="Network policy"
+              description="Enforced only for container-mode execution. Editing the policy in the UI is not supported yet."
+              control={<span className="settings-pill">{workspaceExecutionLoading ? "Loading…" : exec ? netLabel : "—"}</span>}
+            />
+          </Card>
+
+          <Card title="Network Allowlist">
+            <div className="settings-card-block">
+              <div className="settings-subtle">
+                Edit the allowlist entries (one per line). Changes apply to future container runs for this workspace.
+              </div>
+              <textarea
+                className="settings-control wb-mono"
+                style={{ width: "100%", minHeight: 160, marginTop: 12 }}
+                value={workspaceAllowlistText}
+                onChange={(e) => {
+                  setWorkspaceAllowlistText(e.target.value);
+                  setWorkspaceAllowlistDirty(true);
+                }}
+                disabled={!allowlistActive || workspaceExecutionLoading}
+                placeholder="github.com"
+              />
+              {!allowlistActive ? (
+                <div className="settings-subtle" style={{ marginTop: 8 }}>
+                  The allowlist is only active when Network policy is set to Allowlist for this workspace.
+                </div>
+              ) : null}
+              <div className="settings-row-right" style={{ marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => handleSaveWorkspaceAllowlist().catch(() => {})}
+                  disabled={!allowlistActive || !workspaceAllowlistDirty || workspaceAllowlistSaving || workspaceExecutionLoading}
+                >
+                  {workspaceAllowlistSaving ? "Saving…" : "Save allowlist"}
+                </button>
+              </div>
+            </div>
+          </Card>
+          {workspaceExecutionError ? <div className="settings-banner settings-banner-error">{workspaceExecutionError}</div> : null}
         </>
       );
     }

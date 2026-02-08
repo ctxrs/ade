@@ -70,6 +70,18 @@ export type UpdateExecutionConfigRequest = {
   allowlist?: string[] | null;
 };
 
+export type WorkspaceExecutionConfig = {
+  config_path: string;
+  source: "workspace" | "daemon_default";
+  mode: "host" | "container" | "auto";
+  mount_mode?: "sealed" | "host_mounted" | null;
+  network_mode?: "llm_only" | "allowlist" | "all" | null;
+  allowlist?: string[] | null;
+};
+
+export const getWorkspaceExecutionConfig = (workspaceId: string) =>
+  apiAny<WorkspaceExecutionConfig>(`/api/workspaces/${workspaceId}/execution_config`);
+
 export const updateWorkspaceExecutionConfig = (workspaceId: string, req: UpdateExecutionConfigRequest) =>
   apiAny<UpdateWorkspaceConfigResponse>(`/api/workspaces/${workspaceId}/execution_config`, {
     method: "POST",

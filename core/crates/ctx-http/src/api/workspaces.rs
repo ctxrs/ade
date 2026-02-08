@@ -905,6 +905,97 @@ pub(super) struct UpdateExecutionConfigReq {
     allowlist: Option<Vec<String>>,
 }
 
+#[derive(Debug, Serialize)]
+pub(super) struct WorkspaceExecutionConfigResp {
+    // Always points at the workspace root config path (may not exist if unset).
+    config_path: String,
+    source: String,               // "workspace" | "daemon_default"
+    mode: String,                 // "host" | "container" | "auto"
+    mount_mode: Option<String>,   // "sealed" | "host_mounted"
+    network_mode: Option<String>, // "llm_only" | "allowlist" | "all"
+    allowlist: Option<Vec<String>>,
+}
+
+pub(super) async fn get_execution_config(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkspaceExecutionConfigResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let settings = crate::settings::load_settings(&state.core.data_root).await;
+    let mut effective = settings.execution.clone().unwrap_or_default();
+    let mut source = "daemon_default".to_string();
+    match workspace_config::load_execution_settings_override(StdPath::new(&workspace.root_path))
+        .await
+    {
+        Ok(Some(ov)) => {
+            workspace_config::apply_execution_settings_override(&mut effective, &ov);
+            source = "workspace".to_string();
+        }
+        Ok(None) => {}
+        Err(err) => {
+            tracing::warn!("failed to load workspace execution config: {err:#}");
+        }
+    }
+
+    let mode = match effective.mode {
+        crate::settings::ExecutionMode::Host => "host",
+        crate::settings::ExecutionMode::Container => "container",
+        crate::settings::ExecutionMode::Auto => "auto",
+    }
+    .to_string();
+    let mount_mode = match effective.container.mount_mode {
+        crate::settings::ContainerMountMode::Sealed => "sealed",
+        crate::settings::ContainerMountMode::HostMounted => "host_mounted",
+    }
+    .to_string();
+    let network_mode = match effective.container.network_mode {
+        crate::settings::ContainerNetworkMode::LlmOnly => "llm_only",
+        crate::settings::ContainerNetworkMode::Allowlist => "allowlist",
+        crate::settings::ContainerNetworkMode::All => "all",
+    }
+    .to_string();
+
+    let config_path = StdPath::new(&workspace.root_path)
+        .join(workspace_config::WORKSPACE_CONFIG_REL_PATH)
+        .to_string_lossy()
+        .to_string();
+
+    Ok(Json(WorkspaceExecutionConfigResp {
+        config_path,
+        source,
+        mode,
+        mount_mode: Some(mount_mode),
+        network_mode: Some(network_mode),
+        allowlist: Some(effective.container.allowlist.clone()),
+    }))
+}
+
 pub(super) async fn update_execution_config(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
