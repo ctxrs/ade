@@ -2775,10 +2775,18 @@
 
 .wb-thread-scroller--message-list [data-testid="virtuoso-list"] {
   width: 100%;
-  max-width: calc(var(--wb-thread-max-width) + (var(--wb-session-padding-inline) * 2));
+  /* `VirtuosoMessageList` sets `boxSizing: content-box` inline on this element.
+     Apply horizontal padding/centering on the row wrappers instead to avoid width overhang. */
+  padding-bottom: 8px;
+}
+
+.wb-thread-scroller--message-list [data-testid="virtuoso-list"] [role="listitem"] {
+  width: 100%;
+  max-width: var(--wb-thread-max-width);
   margin-left: auto;
   margin-right: auto;
-  padding: 0 var(--wb-session-padding-inline) 8px;
+  padding-left: var(--wb-session-padding-inline);
+  padding-right: var(--wb-session-padding-inline);
   box-sizing: border-box;
 }
 
