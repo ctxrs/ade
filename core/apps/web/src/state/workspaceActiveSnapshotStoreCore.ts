@@ -1824,6 +1824,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     }
     let changed = false;
     let turns = existing.turns ?? [];
+    let toolSummaries = Array.isArray((existing as any).tool_summaries) ? (existing as any).tool_summaries : [];
     let messages = existing.messages ?? [];
     let events = existing.events ?? [];
     if (delta.turn) {
@@ -1838,9 +1839,26 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       events = mergeEvents(events, [delta.event]);
       changed = true;
     }
+    const incomingToolSummaries = Array.isArray(delta.tool_summaries) ? delta.tool_summaries : [];
+    if (incomingToolSummaries.length > 0) {
+      const byId = new Map(toolSummaries.map((s: any) => [String(s?.tool_call_id ?? ""), s]));
+      for (const s of incomingToolSummaries) {
+        const id = String(s?.tool_call_id ?? "").trim();
+        if (!id) continue;
+        byId.set(id, s);
+      }
+      toolSummaries = Array.from(byId.values()).filter((s: any) => String(s?.tool_call_id ?? "").trim());
+      changed = true;
+    }
+    if (toolSummaries.length > 0 && turns.length > 0) {
+      // Keep summaries bounded to the head window turns, matching server-side behavior.
+      const allowed = new Set(turns.map((t) => idToString((t as any)?.turn_id ?? "")));
+      toolSummaries = toolSummaries.filter((s: any) => allowed.has(idToString(s?.turn_id ?? "")));
+    }
     const next: SessionHeadSnapshot = sanitizeHeadSnapshot({
       ...existing,
       turns,
+      tool_summaries: toolSummaries,
       messages,
       events,
       ...(typeof delta.last_event_seq === "number" ? { last_event_seq: delta.last_event_seq } : {}),

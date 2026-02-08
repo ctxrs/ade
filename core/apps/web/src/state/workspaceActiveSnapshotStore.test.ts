@@ -312,6 +312,100 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(snapshot.totalArchived).toBe(0);
   });
 
+  it("merges tool_summaries from session_head_delta events", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = "2024-01-01T00:00:00.000Z";
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary = mkSummary(session, now);
+
+    const turn = {
+      turn_id: "turn-1",
+      session_id: session.id,
+      run_id: null,
+      user_message_id: null,
+      status: "completed",
+      start_seq: 1,
+      end_seq: 2,
+      started_at: now,
+      updated_at: now,
+      assistant_partial: null,
+      thought_partial: null,
+      metrics_json: null,
+      tool_total: 1,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 1,
+      tool_failed: 0,
+    };
+
+    const head: SessionHeadSnapshot = {
+      ...mkHead(session),
+      turns: [turn as any],
+      tool_summaries: [],
+    };
+
+    const activeSummary = mkActiveSummary(task, summary, head, now);
+    const activeSnapshot: WorkspaceActiveSnapshot = {
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: { total_count: 1, tasks: [activeSummary] },
+    };
+    const activeHeads: WorkspaceActiveHeadBatch = {
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      heads: [head],
+    };
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await (store as any).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: activeSnapshot,
+        active_heads: activeHeads,
+      }),
+    );
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    await (store as any).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 2,
+        event: {
+          type: "session_head_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 2,
+          delta: {
+            session_id: session.id,
+            last_event_seq: 2,
+            state_rev: 0,
+            tool_summaries: [
+              {
+                session_id: session.id,
+                tool_call_id: "call-1",
+                turn_id: "turn-1",
+                tool_kind: "tool",
+                title: "Tool",
+                status: "completed",
+                input_preview: null,
+                output_preview: null,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    const updated = store.getSessionHeadSnapshot(session.id);
+    expect(updated?.tool_summaries?.length ?? 0).toBe(1);
+    expect(updated?.tool_summaries?.[0]?.tool_call_id).toBe("call-1");
+  });
+
   it("applies session_summary_delta to update activity and previews", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 

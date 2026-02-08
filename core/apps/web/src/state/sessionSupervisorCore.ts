@@ -333,31 +333,16 @@ export class SessionSupervisor {
     entry.refCount += 1;
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
     const seededHead = this.getActiveSnapshotHead(sessionId);
-    const seededHasContent = seededHead
-      ? (seededHead.turns?.length ?? 0) > 0 ||
-        (seededHead.messages?.length ?? 0) > 0 ||
-        (seededHead.tool_summaries?.length ?? 0) > 0
-      : false;
-    const seededEventsStripped = seededHead
-      ? (seededHead.events?.length ?? 0) === 0 && seededHasContent
-      : false;
-    const seededToolsMissing = seededHead
-      ? (seededHead.tool_summaries?.length ?? 0) === 0 &&
-        (seededHead.turns ?? []).some((turn) => (turn.tool_total ?? 0) > 0)
-      : false;
-    const seededEmpty = seededHead
-      ? (seededHead.turns?.length ?? 0) === 0 &&
-        (seededHead.messages?.length ?? 0) === 0 &&
-        (seededHead.events?.length ?? 0) === 0
-      : false;
     if (seededHead) {
       this.replica.dispatch({ type: "seed_head", sessionId, head: seededHead });
     }
-    if (!seededHead || opts?.force || seededEventsStripped || seededToolsMissing || seededEmpty) {
+    // For active sessions, rely on the snapshot+stream model for hydration and only refetch on explicit force
+    // or on stream gap recovery (handled separately via `session_gap`).
+    if (!seededHead || opts?.force) {
       this.replica.dispatch({
         type: "open_session",
         sessionId,
-        force: opts?.force || seededEventsStripped || seededToolsMissing || seededEmpty,
+        force: opts?.force,
         silent: opts?.silent,
       });
     }
