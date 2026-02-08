@@ -106,6 +106,7 @@ export function useSessionMessageListController(params: Params): Result {
   const historyRequestedAtTopRef = useRef(false);
   const historyRequestedAnchorIdRef = useRef<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const suppressIdDiffLogsRef = useRef<{ sessionId: string; remainingTicks: number } | null>(null);
 
   // Coalesce for steady-state updates, but never let it affect session transitions.
   const listItemsCoalesced = useRafCoalesced(listItems);
@@ -212,6 +213,16 @@ export function useSessionMessageListController(params: Params): Result {
     const current = methods.data.get();
     const sessionChanged = lastSessionIdRef.current !== sessionId;
 
+    // Suppress noisy "ids missing" diagnostics during session transitions / initial hydration.
+    // The list is expected to change dramatically in these windows and the logs are not actionable.
+    if (!sessionChanged) {
+      const suppress = suppressIdDiffLogsRef.current;
+      if (suppress && suppress.sessionId === sessionId && suppress.remainingTicks > 0) {
+        suppress.remainingTicks -= 1;
+        if (suppress.remainingTicks <= 0) suppressIdDiffLogsRef.current = null;
+      }
+    }
+
     if (import.meta.env.DEV && showDebug) {
       const seen = new Set<string>();
       const dupes: string[] = [];
@@ -303,6 +314,7 @@ export function useSessionMessageListController(params: Params): Result {
       renderedTopIdRef.current = null;
       firstListItemIdRef.current = null;
       methods.cancelSmoothScroll();
+      suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 3 };
       methods.data.replace(nextRaw, { initialLocation: INITIAL_LOCATION_BOTTOM, purgeItemSizes: true });
       if (import.meta.env.DEV && showDebug) {
         // eslint-disable-next-line no-console
@@ -320,6 +332,7 @@ export function useSessionMessageListController(params: Params): Result {
       if (nextRaw.length === 0) return;
       historyExpectedRef.current = false;
       methods.cancelSmoothScroll();
+      suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 2 };
       methods.data.replace(nextRaw, { initialLocation: INITIAL_LOCATION_BOTTOM, purgeItemSizes: true });
       if (import.meta.env.DEV && showDebug) {
         // eslint-disable-next-line no-console
@@ -542,6 +555,8 @@ export function useSessionMessageListController(params: Params): Result {
     const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
 
     if (import.meta.env.DEV && showDebug) {
+      const suppress = suppressIdDiffLogsRef.current;
+      const suppressIdDiffLogs = Boolean(suppress && suppress.sessionId === sessionId && suppress.remainingTicks > 0);
       const nextIdSet = new Set(nextIds);
       const currentIdSet = new Set(currentIds);
       const missingFromNext: string[] = [];
@@ -549,7 +564,7 @@ export function useSessionMessageListController(params: Params): Result {
       const addedInNext: string[] = [];
       for (const id of nextIds) if (!currentIdSet.has(id)) addedInNext.push(id);
 
-      if (missingFromNext.length > 0) {
+      if (!suppressIdDiffLogs && missingFromNext.length > 0) {
         const currentById = new Map(current.map((it) => [it.id, it] as const));
         // eslint-disable-next-line no-console
         console.warn("[MessageList][ids:missing-from-next]", {
@@ -558,7 +573,7 @@ export function useSessionMessageListController(params: Params): Result {
           sample: missingFromNext.slice(0, 12).map((id) => debugItemSummary(currentById.get(id) ?? ({ id } as any))),
         });
       }
-      if (addedInNext.length > 0) {
+      if (!suppressIdDiffLogs && addedInNext.length > 0) {
         const nextByIdLocal = new Map(next.map((it) => [it.id, it] as const));
         // eslint-disable-next-line no-console
         console.debug("[MessageList][ids:added-in-next]", {
@@ -568,7 +583,7 @@ export function useSessionMessageListController(params: Params): Result {
         });
       }
 
-      if (missingFromNext.length === 0 && addedInNext.length === 0) {
+      if (!suppressIdDiffLogs && missingFromNext.length === 0 && addedInNext.length === 0) {
         // eslint-disable-next-line no-console
         console.warn("[MessageList][ids:reorder-only]", { sessionId, currentLen, nextLen, prefixLen, suffixLen });
       }
