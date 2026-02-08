@@ -459,6 +459,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             post(update_merge_queue_config),
         )
         .route(
+            "/api/workspaces/:id/execution_config",
+            post(update_execution_config),
+        )
+        .route(
             "/api/workspaces/:id/worktree_bootstrap_config",
             post(update_worktree_bootstrap_config),
         )

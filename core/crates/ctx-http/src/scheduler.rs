@@ -521,7 +521,21 @@ async fn start_turn(
             return Err(err);
         }
     };
-    let execution_settings = settings.execution.clone().unwrap_or_default();
+    let mut execution_settings = settings.execution.clone().unwrap_or_default();
+    match workspace_config::load_execution_settings_override(std::path::Path::new(
+        &workspace.root_path,
+    ))
+    .await
+    {
+        Ok(Some(ov)) => {
+            workspace_config::apply_execution_settings_override(&mut execution_settings, &ov)
+        }
+        Ok(None) => {}
+        Err(err) => {
+            // Don't fail the whole turn on config parse issues; surface via logs and continue with defaults.
+            tracing::warn!("failed to load workspace execution config: {err:#}");
+        }
+    }
     let runtime_plan = match state
         .execution
         .harness

@@ -5,6 +5,11 @@ use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use toml::Value as TomlValue;
 
+use crate::settings::{
+    ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind, ExecutionMode,
+    ExecutionSettings,
+};
+
 pub const WORKSPACE_CONFIG_REL_PATH: &str = ".ctx/config.toml";
 pub const DEFAULT_SYSTEM_PROMPT_APPEND: &str = "You are working inside ctx, an agent development environment. Use ctx MCP tools to attach photos/videos as artifacts, start persistent web sessions (Playwright REPL/scripts), and run sub-agents for research or well-scoped implementations. Check `.ctx/attachments/refs/` and `.ctx/attachments/docs/` for extra reference repos and docs.";
 pub const DEFAULT_SUBAGENT_SYSTEM_PROMPT_APPEND: &str =
@@ -111,6 +116,8 @@ struct WorkspaceConfigFile {
     subagents: Option<WorkspaceSubagentsConfig>,
     #[serde(default)]
     merge_queue: Option<WorkspaceMergeQueueConfig>,
+    #[serde(default)]
+    execution: Option<WorkspaceExecutionConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -141,6 +148,102 @@ struct WorkspaceMergeQueueConfig {
     push_branch: Option<String>,
     #[serde(default)]
     canonical_sync: Option<MergeQueueCanonicalSync>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct WorkspaceExecutionConfig {
+    #[serde(default)]
+    mode: Option<ExecutionMode>,
+    #[serde(default)]
+    container: Option<WorkspaceContainerExecutionConfig>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct WorkspaceContainerExecutionConfig {
+    #[serde(default)]
+    runtime: Option<ContainerRuntimeKind>,
+    #[serde(default)]
+    mount_mode: Option<ContainerMountMode>,
+    #[serde(default)]
+    network_mode: Option<ContainerNetworkMode>,
+    #[serde(default)]
+    allowlist: Option<Vec<String>>,
+    #[serde(default)]
+    image: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ExecutionSettingsOverride {
+    pub mode: Option<ExecutionMode>,
+    pub container: ContainerExecutionSettingsOverride,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ContainerExecutionSettingsOverride {
+    pub runtime: Option<ContainerRuntimeKind>,
+    pub mount_mode: Option<ContainerMountMode>,
+    pub network_mode: Option<ContainerNetworkMode>,
+    pub allowlist: Option<Vec<String>>,
+    pub image: Option<String>,
+}
+
+pub async fn load_execution_settings_override(
+    root: &Path,
+) -> Result<Option<ExecutionSettingsOverride>> {
+    let config_path = root.join(WORKSPACE_CONFIG_REL_PATH);
+    let txt = match tokio::fs::read_to_string(&config_path).await {
+        Ok(v) => v,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).context("reading .ctx/config.toml"),
+    };
+    let cfg: WorkspaceConfigFile = toml::from_str(&txt).context("parsing .ctx/config.toml")?;
+    let Some(exec) = cfg.execution else {
+        return Ok(None);
+    };
+    let mut ov = ExecutionSettingsOverride {
+        mode: exec.mode,
+        ..Default::default()
+    };
+    if let Some(c) = exec.container {
+        ov.container.runtime = c.runtime;
+        ov.container.mount_mode = c.mount_mode;
+        ov.container.network_mode = c.network_mode;
+        ov.container.allowlist = c.allowlist.map(|v| {
+            v.into_iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        });
+        ov.container.image = c
+            .image
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+    }
+    Ok(Some(ov))
+}
+
+pub fn apply_execution_settings_override(
+    settings: &mut ExecutionSettings,
+    ov: &ExecutionSettingsOverride,
+) {
+    if let Some(mode) = ov.mode.clone() {
+        settings.mode = mode;
+    }
+    if let Some(runtime) = ov.container.runtime.clone() {
+        settings.container.runtime = runtime;
+    }
+    if let Some(mount_mode) = ov.container.mount_mode.clone() {
+        settings.container.mount_mode = mount_mode;
+    }
+    if let Some(network_mode) = ov.container.network_mode.clone() {
+        settings.container.network_mode = network_mode;
+    }
+    if let Some(allowlist) = ov.container.allowlist.clone() {
+        settings.container.allowlist = allowlist;
+    }
+    if let Some(image) = ov.container.image.clone() {
+        settings.container.image = Some(image);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -550,6 +653,153 @@ pub async fn update_worktree_bootstrap_setup_command(
                 .context("removing empty .ctx/config.toml")?;
         }
         return Ok(config_path);
+    }
+
+    if let Some(parent) = config_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .context("creating .ctx directory")?;
+    }
+    let serialized = toml::to_string_pretty(&TomlValue::Table(root_table))
+        .context("serializing .ctx/config.toml")?;
+    tokio::fs::write(&config_path, serialized)
+        .await
+        .context("writing .ctx/config.toml")?;
+    Ok(config_path)
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecutionConfigUpdate {
+    pub mode: ExecutionMode,
+    pub runtime: Option<ContainerRuntimeKind>,
+    pub mount_mode: Option<ContainerMountMode>,
+    pub network_mode: Option<ContainerNetworkMode>,
+    pub allowlist: Option<Vec<String>>,
+    pub image: Option<String>,
+}
+
+pub async fn update_execution_config(
+    root: &Path,
+    update: ExecutionConfigUpdate,
+) -> Result<PathBuf> {
+    let config_path = root.join(WORKSPACE_CONFIG_REL_PATH);
+
+    let mut root_table = if config_path.exists() {
+        let text = tokio::fs::read_to_string(&config_path)
+            .await
+            .context("reading .ctx/config.toml")?;
+        match toml::from_str::<TomlValue>(&text).context("parsing .ctx/config.toml")? {
+            TomlValue::Table(table) => table,
+            _ => {
+                return Err(anyhow!(
+                    ".ctx/config.toml must contain a TOML table at the root"
+                ))
+            }
+        }
+    } else {
+        toml::value::Table::new()
+    };
+
+    let exec_value = root_table
+        .entry("execution".to_string())
+        .or_insert_with(|| TomlValue::Table(toml::value::Table::new()));
+    let exec_table = exec_value
+        .as_table_mut()
+        .ok_or_else(|| anyhow!(".ctx/config.toml [execution] must be a TOML table"))?;
+
+    exec_table.insert(
+        "mode".to_string(),
+        TomlValue::String(
+            match update.mode {
+                ExecutionMode::Host => "host",
+                ExecutionMode::Auto => "auto",
+                ExecutionMode::Container => "container",
+            }
+            .to_string(),
+        ),
+    );
+
+    if matches!(update.mode, ExecutionMode::Container) {
+        let container_value = exec_table
+            .entry("container".to_string())
+            .or_insert_with(|| TomlValue::Table(toml::value::Table::new()));
+        let container_table = container_value.as_table_mut().ok_or_else(|| {
+            anyhow!(".ctx/config.toml [execution.container] must be a TOML table")
+        })?;
+
+        if let Some(runtime) = update.runtime {
+            container_table.insert(
+                "runtime".to_string(),
+                TomlValue::String(
+                    match runtime {
+                        ContainerRuntimeKind::Podman => "podman",
+                    }
+                    .to_string(),
+                ),
+            );
+        } else {
+            container_table.remove("runtime");
+        }
+        if let Some(mount_mode) = update.mount_mode {
+            container_table.insert(
+                "mount_mode".to_string(),
+                TomlValue::String(
+                    match mount_mode {
+                        ContainerMountMode::HostMounted => "host_mounted",
+                        ContainerMountMode::Sealed => "sealed",
+                    }
+                    .to_string(),
+                ),
+            );
+        } else {
+            container_table.remove("mount_mode");
+        }
+        if let Some(network_mode) = update.network_mode {
+            container_table.insert(
+                "network_mode".to_string(),
+                TomlValue::String(
+                    match network_mode {
+                        ContainerNetworkMode::LlmOnly => "llm_only",
+                        ContainerNetworkMode::Allowlist => "allowlist",
+                        ContainerNetworkMode::All => "all",
+                    }
+                    .to_string(),
+                ),
+            );
+        } else {
+            container_table.remove("network_mode");
+        }
+        if let Some(allowlist) = update.allowlist {
+            let values: Vec<TomlValue> = allowlist
+                .into_iter()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .map(TomlValue::String)
+                .collect();
+            if values.is_empty() {
+                container_table.remove("allowlist");
+            } else {
+                container_table.insert("allowlist".to_string(), TomlValue::Array(values));
+            }
+        } else {
+            container_table.remove("allowlist");
+        }
+        if let Some(image) = update.image {
+            let image = image.trim().to_string();
+            if image.is_empty() {
+                container_table.remove("image");
+            } else {
+                container_table.insert("image".to_string(), TomlValue::String(image));
+            }
+        } else {
+            container_table.remove("image");
+        }
+
+        if container_table.is_empty() {
+            exec_table.remove("container");
+        }
+    } else {
+        exec_table.remove("container");
     }
 
     if let Some(parent) = config_path.parent() {

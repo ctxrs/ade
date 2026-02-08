@@ -63,6 +63,19 @@ export const updateWorkspaceMergeQueueConfig = (workspaceId: string, req: Update
     body: JSON.stringify(req),
   });
 
+export type UpdateExecutionConfigRequest = {
+  mode: "host" | "container" | "auto";
+  mount_mode?: "sealed" | "host_mounted" | null;
+  network_mode?: "llm_only" | "allowlist" | "all" | null;
+  allowlist?: string[] | null;
+};
+
+export const updateWorkspaceExecutionConfig = (workspaceId: string, req: UpdateExecutionConfigRequest) =>
+  apiAny<UpdateWorkspaceConfigResponse>(`/api/workspaces/${workspaceId}/execution_config`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+
 export type UpdateWorktreeBootstrapConfigRequest = {
   setup_command?: string | null;
 };

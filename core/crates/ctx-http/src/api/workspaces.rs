@@ -895,6 +895,126 @@ pub(super) async fn update_worktree_bootstrap_config(
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct UpdateExecutionConfigReq {
+    mode: String,
+    #[serde(default)]
+    mount_mode: Option<String>,
+    #[serde(default)]
+    network_mode: Option<String>,
+    #[serde(default)]
+    allowlist: Option<Vec<String>>,
+}
+
+pub(super) async fn update_execution_config(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateExecutionConfigReq>,
+) -> Result<Json<UpdateWorkspaceConfigResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let mode = match req.mode.trim() {
+        "host" => crate::settings::ExecutionMode::Host,
+        "container" => crate::settings::ExecutionMode::Container,
+        "auto" => crate::settings::ExecutionMode::Auto,
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "invalid mode (expected host|container|auto)".to_string(),
+                }),
+            ));
+        }
+    };
+
+    let mount_mode = match req.mount_mode.as_deref().map(|v| v.trim()) {
+        None | Some("") => None,
+        Some("sealed") => Some(crate::settings::ContainerMountMode::Sealed),
+        Some("host_mounted") => Some(crate::settings::ContainerMountMode::HostMounted),
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "invalid mount_mode (expected sealed|host_mounted)".to_string(),
+                }),
+            ));
+        }
+    };
+
+    let network_mode = match req.network_mode.as_deref().map(|v| v.trim()) {
+        None | Some("") => None,
+        Some("llm_only") => Some(crate::settings::ContainerNetworkMode::LlmOnly),
+        Some("allowlist") => Some(crate::settings::ContainerNetworkMode::Allowlist),
+        Some("all") => Some(crate::settings::ContainerNetworkMode::All),
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "invalid network_mode (expected llm_only|allowlist|all)".to_string(),
+                }),
+            ));
+        }
+    };
+
+    let allowlist = req.allowlist.map(|values| {
+        values
+            .into_iter()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .collect::<Vec<String>>()
+    });
+
+    let cfg_path = workspace_config::update_execution_config(
+        StdPath::new(&workspace.root_path),
+        workspace_config::ExecutionConfigUpdate {
+            mode,
+            runtime: Some(crate::settings::ContainerRuntimeKind::Podman),
+            mount_mode,
+            network_mode,
+            allowlist,
+            image: None,
+        },
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+
+    Ok(Json(UpdateWorkspaceConfigResp {
+        config_path: cfg_path.to_string_lossy().to_string(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct CreateWorkspaceAttachmentReq {
     kind: WorkspaceAttachmentKind,
     name: String,
