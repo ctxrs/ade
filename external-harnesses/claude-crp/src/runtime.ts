@@ -73,6 +73,20 @@ function warn(message: string): void {
   process.stderr.write(`[claude-crp] ${message}\n`);
 }
 
+function resolveCwd(cwd: string): string {
+  if (!cwd) return cwd;
+  try {
+    return fs.realpathSync(cwd);
+  } catch {
+    return cwd;
+  }
+}
+
+function projectKeyForCwd(cwd: string): string {
+  const resolved = resolveCwd(cwd);
+  return resolved.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
 function extractPrompt(command: CrpCommand): string | null {
   const prompt = command.prompt;
   if (typeof prompt === "string") return prompt;
@@ -142,7 +156,8 @@ function buildQueryOptions(turn: TurnState) {
     typeof process.env.CLAUDE_CONFIG_DIR === "string" && process.env.CLAUDE_CONFIG_DIR.trim()
       ? process.env.CLAUDE_CONFIG_DIR.trim()
       : path.join(os.homedir(), ".claude");
-  const projectKey = turn.cwd.replace(/[^a-zA-Z0-9]/g, "-");
+  const resolvedCwd = resolveCwd(turn.cwd);
+  const projectKey = projectKeyForCwd(turn.cwd);
   const sessionFilePath = path.join(
     claudeConfigDir,
     "projects",
@@ -152,7 +167,7 @@ function buildQueryOptions(turn: TurnState) {
   const shouldResume = fs.existsSync(sessionFilePath);
 
   const options: Record<string, unknown> = {
-    cwd: turn.cwd,
+    cwd: resolvedCwd,
     includePartialMessages: true,
     settingSources: ["user", "project", "local"],
     tools: { type: "preset", preset: "claude_code" },
@@ -195,7 +210,8 @@ function buildModelsListOptions(params: {
     typeof process.env.CLAUDE_CONFIG_DIR === "string" && process.env.CLAUDE_CONFIG_DIR.trim()
       ? process.env.CLAUDE_CONFIG_DIR.trim()
       : path.join(os.homedir(), ".claude");
-  const projectKey = params.cwd.replace(/[^a-zA-Z0-9]/g, "-");
+  const resolvedCwd = resolveCwd(params.cwd);
+  const projectKey = projectKeyForCwd(params.cwd);
   const sessionFilePath = path.join(
     claudeConfigDir,
     "projects",
@@ -205,7 +221,7 @@ function buildModelsListOptions(params: {
   const shouldResume = fs.existsSync(sessionFilePath);
 
   const options: Record<string, unknown> = {
-    cwd: params.cwd,
+    cwd: resolvedCwd,
     includePartialMessages: false,
     settingSources: ["user", "project", "local"],
     tools: { type: "preset", preset: "claude_code" },
@@ -331,36 +347,80 @@ async function runTurn(turn: TurnState, prompt: string): Promise<void> {
   const options = buildQueryOptions(turn);
   const q = query({ prompt, options });
   turn.query = q;
+  let failureMessage: string | null = null;
+
+  const ensureResultRecord = () => {
+    let existingResult: Record<string, unknown> | null = null;
+    for (let idx = turn.records.length - 1; idx >= 0; idx -= 1) {
+      const record = turn.records[idx];
+      if (!record || typeof record !== "object") continue;
+      if ((record as { record?: unknown }).record !== "event") continue;
+      const ev = (record as { event?: unknown }).event;
+      if (!ev || typeof ev !== "object") continue;
+      if ((ev as { type?: unknown }).type !== "result") continue;
+      existingResult = ev as Record<string, unknown>;
+      break;
+    }
+
+    if (existingResult) {
+      if (!turn.interrupted && failureMessage) {
+        const errors = (existingResult as { errors?: unknown }).errors;
+        const error = (existingResult as { error?: unknown }).error;
+        const hasMessage =
+          (Array.isArray(errors) && errors.length > 0) ||
+          (typeof error === "string" && error.trim());
+        if (!hasMessage) {
+          (existingResult as { errors?: unknown }).errors = [failureMessage];
+        }
+      }
+      return;
+    }
+
+    if (turn.interrupted) {
+      turn.records.push({
+        record: "event",
+        event: { type: "result", subtype: "success", is_error: false }
+      });
+      return;
+    }
+
+    turn.records.push({
+      record: "event",
+      event: {
+        type: "result",
+        subtype: "error",
+        is_error: true,
+        errors: [failureMessage ?? "claude_code_missing_result"]
+      }
+    });
+  };
 
   try {
     while (true) {
       const { value, done } = await q.next();
-      if (done || !value) break;
-      turn.records.push({ record: "event", event: value });
-      await emitTranslated(turn);
+      if (value != null) {
+        const isResultEvent =
+          typeof value === "object" && (value as { type?: unknown }).type === "result";
+        turn.records.push({ record: "event", event: value });
+        if (!isResultEvent) {
+          await emitTranslated(turn);
+        }
+      }
+      if (done) break;
     }
   } catch (err) {
     const msg =
       err instanceof Error ? err.message : err == null ? "unknown_error" : String(err);
     warn(`turn ${turn.turnId} error: ${msg}`);
+    failureMessage = msg;
 
     // If Claude Code bails before producing a terminal "result" event, the translator won't emit
     // `turn.completed`, and ctx can keep the turn stuck in "Working". Emit a synthetic result
     // so downstream sees a terminal event, and preserve the failure reason.
-    const hasResult = turn.records.some((r) => {
-      if (!r || typeof r !== "object") return false;
-      const record = (r as { record?: unknown }).record;
-      if (record !== "event") return false;
-      const ev = (r as { event?: unknown }).event as { type?: unknown } | undefined;
-      return ev?.type === "result";
-    });
-    if (!hasResult) {
-      turn.records.push({
-        record: "event",
-        event: { type: "result", subtype: "error", is_error: true, errors: [msg] }
-      });
-    }
+    ensureResultRecord();
   }
+
+  ensureResultRecord();
 
   if (!turn.endRecordAdded) {
     turn.records.push({ record: "end", interrupted: turn.interrupted });

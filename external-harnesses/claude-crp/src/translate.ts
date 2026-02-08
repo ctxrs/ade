@@ -50,6 +50,7 @@ export function translateClaudeEventsToCrp(records, opts = {}) {
   let turnStarted = false;
   let modelNoticeEmitted = false;
   let interrupted = false;
+  let endSeen = false;
 
   const maxToolInputBytes =
     typeof opts.maxToolInputBytes === "number" && opts.maxToolInputBytes > 0
@@ -211,6 +212,7 @@ export function translateClaudeEventsToCrp(records, opts = {}) {
     }
 
     if (record.record === "end") {
+      endSeen = true;
       if (record.interrupted) interrupted = true;
       continue;
     }
@@ -406,7 +408,7 @@ export function translateClaudeEventsToCrp(records, opts = {}) {
   // If the turn started but we never observed a result record, emit an error completion so ctx can
   // finalize the turn (prevents "Working" hangs on early failures).
   const hasTurnCompleted = events.some((e) => e && e.type === "turn.completed");
-  if (turnStarted && !hasTurnCompleted && ensureIds()) {
+  if (endSeen && turnStarted && !hasTurnCompleted && ensureIds()) {
     const payload = {
       type: "turn.completed",
       session_id: sessionId,
