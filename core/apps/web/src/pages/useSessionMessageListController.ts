@@ -25,9 +25,11 @@ function debugStableKey(item: WorkbenchListItem): string {
     case "thought":
       return `thought:${(item as any)?.turn_id ?? ""}:${(item as any)?.created_at ?? ""}`;
     case "assistant":
+      // Prefer turn_id + created_at, but also include the item id prefix if it encodes a domain id (e.g. assistant-msg-<messageId>).
+      // This is intentionally "best effort"; we also log direct missing/added ids during reconcile.
       return `assistant:${(item as any)?.turn_id ?? ""}:${(item as any)?.created_at ?? ""}:${String(
         (item as any)?.is_complete ?? "",
-      )}`;
+      )}:${String((item as any)?.id ?? "").slice(0, 40)}`;
     case "message":
       return `message:${(item as any)?.role ?? ""}:${(item as any)?.created_at ?? ""}`;
     case "spacer":
@@ -35,6 +37,29 @@ function debugStableKey(item: WorkbenchListItem): string {
     default:
       return `${kind}:${(item as any)?.created_at ?? ""}`;
   }
+}
+
+function debugItemSummary(item: WorkbenchListItem): Record<string, any> {
+  const anyItem: any = item as any;
+  const kind = anyItem?.kind ?? "unknown";
+  const base: Record<string, any> = {
+    id: String(anyItem?.id ?? ""),
+    kind,
+    created_at: anyItem?.created_at ?? anyItem?.header?.created_at ?? null,
+  };
+
+  if (kind === "turn_header") {
+    base.turn_id = anyItem?.header?.id ?? null;
+    return base;
+  }
+  if (typeof anyItem?.turn_id === "string") base.turn_id = anyItem.turn_id;
+  if (typeof anyItem?.tool_call_id === "string") base.tool_call_id = anyItem.tool_call_id;
+  if (typeof anyItem?.event_id === "string") base.event_id = anyItem.event_id;
+  if (typeof anyItem?.status === "string") base.status = anyItem.status;
+  if (typeof anyItem?.role === "string") base.role = anyItem.role;
+  if (typeof anyItem?.is_complete === "boolean") base.is_complete = anyItem.is_complete;
+  if (typeof anyItem?.content === "string") base.content_len = anyItem.content.length;
+  return base;
 }
 
 type Params = {
@@ -185,11 +210,18 @@ export function useSessionMessageListController(params: Params): Result {
         }
       }
       if (stableIdChanges.length > 0) {
+        const currentById = new Map(current.map((it) => [it.id, it] as const));
+        const nextById = new Map(next.map((it) => [it.id, it] as const));
+        const sample = stableIdChanges.slice(0, 10).map((c) => ({
+          ...c,
+          fromItem: debugItemSummary(currentById.get(c.from) ?? ({ id: c.from } as any)),
+          toItem: debugItemSummary(nextById.get(c.to) ?? ({ id: c.to } as any)),
+        }));
         // eslint-disable-next-line no-console
         console.warn("[MessageList] possible unstable WorkbenchListItem.id detected (stableKey id changed)", {
           sessionId,
           count: stableIdChanges.length,
-          sample: stableIdChanges.slice(0, 10),
+          sample,
         });
       }
       if (stableKeyCollisions.length > 0) {
@@ -256,6 +288,24 @@ export function useSessionMessageListController(params: Params): Result {
         const prefix = next.slice(0, firstIndex).filter((it) => !currentIdSet.has(it.id));
         const suffix = next.slice(lastIndex + 1).filter((it) => !currentIdSet.has(it.id));
         const nextById = new Map(next.map((it) => [it.id, it] as const));
+
+        if (import.meta.env.DEV && showDebug) {
+          const nextIdSet = new Set(next.map((it) => it.id));
+          const missingFromNext: string[] = [];
+          for (const it of current) if (!nextIdSet.has(it.id)) missingFromNext.push(it.id);
+          if (missingFromNext.length > 0) {
+            const currentById = new Map(current.map((it) => [it.id, it] as const));
+            // eslint-disable-next-line no-console
+            console.warn("[MessageList][history:extend][ids:missing-from-next]", {
+              sessionId,
+              count: missingFromNext.length,
+              sample: missingFromNext.slice(0, 12).map((id) =>
+                debugItemSummary(currentById.get(id) ?? ({ id } as any)),
+              ),
+            });
+          }
+        }
+
         methods.data.batch(() => {
           if (prefix.length > 0) methods.data.prepend(prefix);
           if (suffix.length > 0) methods.data.append(suffix, appendBehavior);
@@ -382,6 +432,39 @@ export function useSessionMessageListController(params: Params): Result {
     const nextById = new Map(next.map((it) => [it.id, it] as const));
     const anchorId = renderedAnchorIdRef.current;
     const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
+
+    if (import.meta.env.DEV && showDebug) {
+      const nextIdSet = new Set(nextIds);
+      const currentIdSet = new Set(currentIds);
+      const missingFromNext: string[] = [];
+      for (const id of currentIds) if (!nextIdSet.has(id)) missingFromNext.push(id);
+      const addedInNext: string[] = [];
+      for (const id of nextIds) if (!currentIdSet.has(id)) addedInNext.push(id);
+
+      if (missingFromNext.length > 0) {
+        const currentById = new Map(current.map((it) => [it.id, it] as const));
+        // eslint-disable-next-line no-console
+        console.warn("[MessageList][ids:missing-from-next]", {
+          sessionId,
+          count: missingFromNext.length,
+          sample: missingFromNext.slice(0, 12).map((id) => debugItemSummary(currentById.get(id) ?? ({ id } as any))),
+        });
+      }
+      if (addedInNext.length > 0) {
+        const nextByIdLocal = new Map(next.map((it) => [it.id, it] as const));
+        // eslint-disable-next-line no-console
+        console.debug("[MessageList][ids:added-in-next]", {
+          sessionId,
+          count: addedInNext.length,
+          sample: addedInNext.slice(0, 8).map((id) => debugItemSummary(nextByIdLocal.get(id) ?? ({ id } as any))),
+        });
+      }
+
+      if (missingFromNext.length === 0 && addedInNext.length === 0) {
+        // eslint-disable-next-line no-console
+        console.warn("[MessageList][ids:reorder-only]", { sessionId, currentLen, nextLen, prefixLen, suffixLen });
+      }
+    }
 
     if (historyExpectedRef.current) {
       historyExpectedRef.current = false;
