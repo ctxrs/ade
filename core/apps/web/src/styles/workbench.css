@@ -2782,6 +2782,11 @@
   box-sizing: border-box;
 }
 
+.wb-thread-stack [data-testid="virtuoso-scroller"] {
+  /* Disable browser scroll anchoring; MessageList must be the only anchor owner. */
+  overflow-anchor: none;
+}
+
 .wb-scrollbar {
   position: absolute;
   top: 0;

@@ -89,26 +89,34 @@ export function useSessionMessageListController(params: Params): Result {
   const methodsRef = useRef<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>(null);
   const lastSessionIdRef = useRef(sessionId);
 
-  const didSeeScrollRef = useRef(false);
   const lastScrollLocationRef = useRef<ListScrollLocation | null>(null);
   const stickToBottomRef = useRef(true);
   const lastAtBottomRef = useRef<boolean | null>(null);
+  const lastListOffsetRef = useRef<number | null>(null);
 
   // Best-effort anchoring based on rendered data (no DOM reads).
+  // NOTE: `onRenderedDataChange` can include overscan. Anchoring to `range[0]` can anchor an offscreen
+  // row and cause visible jumps, especially with large `increaseViewportBy`. Prefer a mid-range anchor.
   const renderedAnchorIdRef = useRef<string | null>(null);
+  const renderedTopIdRef = useRef<string | null>(null);
+  const firstListItemIdRef = useRef<string | null>(null);
 
   const pendingHistoryRef = useRef(false);
   const historyExpectedRef = useRef(false);
+  const historyRequestedAtTopRef = useRef(false);
+  const historyRequestedAnchorIdRef = useRef<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
 
   const listItemsCoalesced = useRafCoalesced(listItems);
 
   const context = useMemo(() => ({ loaded, loadingOlder }), [loaded, loadingOlder]);
 
+  // Keep an up-to-date reference without introducing additional hook ordering churn under HMR.
+  firstListItemIdRef.current = listItemsCoalesced?.[0]?.id ?? null;
+
   const onScroll = useCallback(
     (location: ListScrollLocation) => {
       lastScrollLocationRef.current = location;
-      didSeeScrollRef.current = true;
 
       const atBottom = Boolean(location.isAtBottom);
       stickToBottomRef.current = atBottom;
@@ -116,31 +124,63 @@ export function useSessionMessageListController(params: Params): Result {
         lastAtBottomRef.current = atBottom;
         onAtBottomChange(atBottom);
       }
-    },
-    [onAtBottomChange],
-  );
 
-  const onRenderedDataChange = useCallback(
-    (range: WorkbenchListItem[]) => {
-      renderedAnchorIdRef.current = range?.[0]?.id ?? null;
-      if (!isActive) return;
-      if (!loaded) return;
+      // History pagination trigger: use the library-provided scroll location only.
+      // Prefetch when approaching top to avoid a hard stop + later prepend “resume”.
+      const atTop = location.listOffset === 0;
+      const prevOffset = lastListOffsetRef.current;
+      lastListOffsetRef.current = location.listOffset;
+      // Scrolling up means listOffset moves toward 0 (increases, since it's negative when scrolled down).
+      const scrollingUp = prevOffset == null ? false : location.listOffset > prevOffset;
+      const prefetchThreshold = -Math.max(250, location.visibleListHeight); // ~1 viewport, min 250px
+      const nearTop = location.listOffset > prefetchThreshold;
+
+      if (import.meta.env.DEV && showDebug && nearTop) {
+        // eslint-disable-next-line no-console
+        console.debug("[MessageList][history:gate]", {
+          sessionId,
+          loaded,
+          canLoadOlder,
+          stickToBottom: stickToBottomRef.current,
+          pendingHistory: pendingHistoryRef.current,
+          loadingOlder,
+          atTop,
+          nearTop,
+          scrollingUp,
+          prefetchThreshold,
+          firstRenderedId: renderedTopIdRef.current,
+          firstListId: firstListItemIdRef.current,
+          listOffset: location.listOffset,
+          visibleListHeight: location.visibleListHeight,
+          renderedTopId: renderedTopIdRef.current,
+          renderedAnchorId: renderedAnchorIdRef.current,
+        });
+      }
+
       if (!canLoadOlder) return;
-      if (!didSeeScrollRef.current) return;
       if (stickToBottomRef.current) return;
       if (pendingHistoryRef.current || loadingOlder) return;
-
-      const loc = lastScrollLocationRef.current;
-      // `listOffset` is 0 at top and negative when scrolled down.
-      const nearTop = loc?.listOffset != null ? loc.listOffset > -250 : false;
       if (!nearTop) return;
+      if (!scrollingUp) return;
 
       pendingHistoryRef.current = true;
       historyExpectedRef.current = true;
+      historyRequestedAtTopRef.current = atTop;
+      historyRequestedAnchorIdRef.current = renderedAnchorIdRef.current;
       setLoadingOlder(true);
       if (import.meta.env.DEV && showDebug) {
         // eslint-disable-next-line no-console
-        console.debug("[MessageList][history:request]", { sessionId, listOffset: loc?.listOffset ?? null });
+        console.debug("[MessageList][history:request]", {
+          sessionId,
+          atTop,
+          nearTop,
+          scrollingUp,
+          anchorId: renderedAnchorIdRef.current,
+          firstRenderedId: renderedTopIdRef.current,
+          firstListId: firstListItemIdRef.current,
+          listOffset: location.listOffset,
+          visibleListHeight: location.visibleListHeight,
+        });
       }
       loadOlder()
         .catch(() => {})
@@ -149,15 +189,23 @@ export function useSessionMessageListController(params: Params): Result {
           setLoadingOlder(false);
         });
     },
-    [canLoadOlder, isActive, loaded, loadOlder, loadingOlder, sessionId, showDebug],
+    [canLoadOlder, loaded, loadOlder, loadingOlder, onAtBottomChange, sessionId, showDebug],
   );
+
+  const onRenderedDataChange = useCallback((range: WorkbenchListItem[]) => {
+      const topId = range?.[0]?.id ?? null;
+      renderedTopIdRef.current = topId;
+      const midIdx = range.length > 0 ? Math.floor(range.length / 2) : -1;
+      const midId = midIdx >= 0 ? range[midIdx]?.id ?? null : null;
+      renderedAnchorIdRef.current = midId ?? topId;
+    }, []);
 
   useLayoutEffect(() => {
     if (!isActive) return;
     const methods = methodsRef.current;
     if (!methods) return;
 
-    const next = listItemsCoalesced;
+    let next = listItemsCoalesced;
     const current = methods.data.get();
     const sessionChanged = lastSessionIdRef.current !== sessionId;
 
@@ -241,7 +289,11 @@ export function useSessionMessageListController(params: Params): Result {
       lastSessionIdRef.current = sessionId;
       pendingHistoryRef.current = false;
       historyExpectedRef.current = false;
+      historyRequestedAtTopRef.current = false;
+      historyRequestedAnchorIdRef.current = null;
       setLoadingOlder(false);
+      lastScrollLocationRef.current = null;
+      lastListOffsetRef.current = null;
       methods.data.replace(next, { initialLocation: INITIAL_LOCATION_BOTTOM, purgeItemSizes: true });
       if (import.meta.env.DEV && showDebug) {
         // eslint-disable-next-line no-console
@@ -279,6 +331,8 @@ export function useSessionMessageListController(params: Params): Result {
     // If we just requested history and the next update is not a pure prepend (e.g. streaming appended too),
     // apply it as an extension update instead of falling back to `replace()`.
     if (historyExpectedRef.current && currentLen > 0 && nextLen >= currentLen) {
+      const wasAtTop = historyRequestedAtTopRef.current;
+      const requestedAnchorId = historyRequestedAnchorIdRef.current;
       const firstId = current[0]?.id ?? null;
       const lastId = current[currentLen - 1]?.id ?? null;
       const firstIndex = firstId ? next.findIndex((it) => it.id === firstId) : -1;
@@ -306,21 +360,29 @@ export function useSessionMessageListController(params: Params): Result {
           }
         }
 
-        methods.data.batch(() => {
-          if (prefix.length > 0) methods.data.prepend(prefix);
-          if (suffix.length > 0) methods.data.append(suffix, appendBehavior);
-          const anchorId = renderedAnchorIdRef.current;
+        // Avoid batching `prepend()` with other ops; let MessageList manage scroll stabilization.
+        if (prefix.length > 0) methods.data.prepend(prefix);
+        if (suffix.length > 0) methods.data.append(suffix, appendBehavior);
+
+        // For non-bottom, keep a rendered item anchored as size estimates settle.
+        if (!stickToBottomRef.current) {
+          const anchorId = requestedAnchorId ?? renderedAnchorIdRef.current;
           const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
-          if (!stickToBottomRef.current && anchorIndex >= 0) {
-            methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, anchorIndex);
-          } else {
-            methods.data.map(
-              (item) => nextById.get(item.id) ?? item,
-              stickToBottomRef.current ? ("auto" as const) : undefined,
-            );
-          }
-        });
+          if (anchorIndex >= 0) methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, anchorIndex);
+          else methods.data.map((item) => nextById.get(item.id) ?? item);
+        } else {
+          methods.data.map((item) => nextById.get(item.id) ?? item, "auto");
+        }
+
+        // If the user actually hit the top, force the pre-history first item back to the top.
+        // This uses the library's own scroll API (no DOM reads/offset math).
+        if (wasAtTop && !stickToBottomRef.current && firstIndex >= 0) {
+          // `prepend()` schedules internal rAF scroll stabilization; schedule our pin after it (pre-paint).
+          requestAnimationFrame(() => methods.scrollToItem({ index: firstIndex, align: "start", behavior: "instant" }));
+        }
         historyExpectedRef.current = false;
+        historyRequestedAtTopRef.current = false;
+        historyRequestedAnchorIdRef.current = null;
         if (import.meta.env.DEV && showDebug) {
           // eslint-disable-next-line no-console
           console.debug("[MessageList][history:extend]", {
@@ -347,14 +409,45 @@ export function useSessionMessageListController(params: Params): Result {
         }
       }
       if (isPurePrepend) {
+        const wasAtTop = historyRequestedAtTopRef.current;
+        const requestedAnchorId = historyRequestedAnchorIdRef.current;
         const prefix = next.slice(0, nextLen - currentLen);
+        const nextById = new Map(next.map((it) => [it.id, it] as const));
+        const anchorId = renderedAnchorIdRef.current;
+        const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
+
+        // Avoid batching `prepend()` with other ops; rely on MessageList prepend stabilization.
         if (prefix.length > 0) methods.data.prepend(prefix);
+
+        if (!stickToBottomRef.current) {
+          const reqAnchorId = requestedAnchorId ?? renderedAnchorIdRef.current;
+          const reqAnchorIndex = reqAnchorId ? next.findIndex((it) => it.id === reqAnchorId) : -1;
+          if (reqAnchorIndex >= 0) methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, reqAnchorIndex);
+          else methods.data.map((item) => nextById.get(item.id) ?? item);
+        } else {
+          methods.data.map((item) => nextById.get(item.id) ?? item, "auto");
+        }
+
+        // If we were at the very top, pin the previous first item back to the top.
+        if (wasAtTop && !stickToBottomRef.current) {
+          const targetIndex = prefix.length;
+          requestAnimationFrame(() => methods.scrollToItem({ index: targetIndex, align: "start", behavior: "instant" }));
+        }
         if (import.meta.env.DEV && showDebug) {
           // eslint-disable-next-line no-console
-          console.debug("[MessageList][data:prepend]", { sessionId, prefixLen: prefix.length, nextLen, currentLen });
+          console.debug("[MessageList][data:prepend]", {
+            sessionId,
+            prefixLen: prefix.length,
+            nextLen,
+            currentLen,
+            anchorId,
+            anchorIndex,
+          });
         }
         if (historyExpectedRef.current) {
           historyExpectedRef.current = false;
+          historyRequestedAtTopRef.current = false;
+          historyRequestedAnchorIdRef.current = null;
           if (import.meta.env.DEV && showDebug) {
             // eslint-disable-next-line no-console
             console.debug("[MessageList][history:applied]", { sessionId, prefixLen: prefix.length });

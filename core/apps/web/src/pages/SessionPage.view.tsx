@@ -1162,7 +1162,8 @@ export function SessionView({
   const slashCommands = fallbackSlashCommands;
 
   const virtuosoStyle = useMemo(() => ({ flex: 1, minHeight: 0 } as const), []);
-  const workbenchViewportBy = useMemo(() => ({ top: 1000, bottom: 1000 }), []);
+  // Note: we intentionally do not overscan (`increaseViewportBy`) for the session thread.
+  // Large overscan amplifies prepend stabilization error for unknown-height items.
 
   const wrapperClass = "wb-session-view";
   const leftClass = "wb-session-left";
@@ -1634,9 +1635,12 @@ export function SessionView({
           context={messageListContext}
           onScroll={handleMessageListScroll}
           onRenderedDataChange={handleRenderedDataChange}
-          increaseViewportBy={workbenchViewportBy.top}
           methodsRef={messageListMethodsRef}
           licenseKey={messageListLicenseKey}
+          // When the list is short, bottom-align only while we're actually at bottom.
+          // Otherwise, bottom alignment + history prepend can cause an apparent "jump"
+          // as the list transitions from short->tall.
+          shortSizeAlign={atBottom ? "bottom" : "top"}
         />
         <div className="wb-session-bottom">
           {showQueuePanel && (

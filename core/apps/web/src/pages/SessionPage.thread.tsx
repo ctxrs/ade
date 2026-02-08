@@ -20,6 +20,7 @@ import {
   type ItemLocation,
   type ItemContent as MessageItemContent,
   type ListScrollLocation,
+  type ShortSizeAlign,
   type VirtuosoMessageListMethods,
   type VirtuosoMessageListProps,
   useVirtuosoLocation,
@@ -53,9 +54,9 @@ type WorkbenchMessageListStackProps = {
   context: WorkbenchMessageListContext;
   onScroll: (location: ListScrollLocation) => void;
   onRenderedDataChange: (range: WorkbenchListItem[]) => void;
-  increaseViewportBy: number;
   listRef: MutableRefObject<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>;
   licenseKey: string;
+  shortSizeAlign: ShortSizeAlign;
 };
 
 export type WorkbenchMessageListContext = {
@@ -106,9 +107,9 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
   context,
   onScroll,
   onRenderedDataChange,
-  increaseViewportBy,
   listRef,
   licenseKey,
+  shortSizeAlign,
 }: WorkbenchMessageListStackProps) {
   const ItemContent = useCallback<MessageItemContent<WorkbenchListItem, WorkbenchMessageListContext>>(
     ({ index, data }) => {
@@ -123,7 +124,7 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
   );
 
   return (
-    <div className="thread-stack wb-thread-stack">
+    <div className="thread-stack wb-thread-stack wb-thread-scroller--message-list">
       <VirtuosoMessageListLicense licenseKey={licenseKey}>
         <VirtuosoMessageList<WorkbenchListItem, WorkbenchMessageListContext>
           ref={listRef}
@@ -138,8 +139,7 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
           onRenderedDataChange={onRenderedDataChange}
           EmptyPlaceholder={WorkbenchMessageListEmptyPlaceholder}
           StickyFooter={WorkbenchMessageListStickyFooter}
-          shortSizeAlign="bottom"
-          increaseViewportBy={increaseViewportBy}
+          shortSizeAlign={shortSizeAlign}
         />
       </VirtuosoMessageListLicense>
 
