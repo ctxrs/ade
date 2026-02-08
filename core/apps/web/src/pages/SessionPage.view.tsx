@@ -81,7 +81,7 @@ import {
   mergeQueuedMessagesForPanel,
   normalizeContextWindowMetrics,
 } from "./SessionPage.workbenchViewModel";
-import { SessionThreadMessageList } from "./SessionThreadMessageList";
+import { SessionThreadPane } from "./sessionThread/SessionThreadPane";
 import { useSessionMessageListController } from "./useSessionMessageListController";
 import { useWorkbenchThreadViewModelController } from "./useWorkbenchThreadViewModelController";
 
@@ -1627,7 +1627,7 @@ export function SessionView({
           <DebugPanel events={debugEvents} />
         )}
 
-        <SessionThreadMessageList
+        <SessionThreadPane
           style={virtuosoStyle}
           itemContent={workbenchItemContent}
           itemIdentity={messageListItemIdentity}
@@ -1641,8 +1641,7 @@ export function SessionView({
           // Otherwise, bottom alignment + history prepend can cause an apparent "jump"
           // as the list transitions from short->tall.
           shortSizeAlign={atBottom ? "bottom" : "top"}
-        />
-        <div className="wb-session-bottom">
+        >
           {showQueuePanel && (
             <div className="queue-panel card" aria-label="Queued messages">
               <div className="queue-header">
@@ -1762,7 +1761,7 @@ export function SessionView({
           {fileOpenError && <div className="wb-banner">{fileOpenError}</div>}
           {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
           {dictationError && <div className="wb-banner">{dictationError}</div>}
-        </div>
+        </SessionThreadPane>
 
         <div className="sr-only" aria-live="polite">
           {session && (atBottom ? "Agent output updating." : "New agent activity.")}
