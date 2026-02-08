@@ -818,7 +818,7 @@ export default function WorkspaceSetupPage() {
                   <>
 	                    <div className="wizard-option-grid">
 	                      {step.options
-	                        .filter((option) => step.key !== "container" || containerAdvancedOpen || !option.advanced)
+	                        .filter((option) => step.key !== "container" || !option.advanced)
 	                        .map((option) => {
 	                          const selected = selections[step.key] === option.id;
 	                          return (
@@ -854,6 +854,33 @@ export default function WorkspaceSetupPage() {
                         />
                         Advanced
                       </button>
+                    )}
+                    {step.key === "container" && containerAdvancedOpen && (
+                      <div className="wizard-advanced-panel">
+                        <div className="wizard-option-grid">
+                          {step.options
+                            .filter((option) => Boolean(option.advanced))
+                            .map((option) => {
+                              const selected = selections[step.key] === option.id;
+                              return (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  className={`wizard-option${selected ? " is-selected" : ""}`}
+                                  data-testid={`wizard-option-${step.key}-${option.id}`}
+                                  onClick={() => onSelectOption(step.key, option.id)}
+                                  aria-pressed={selected}
+                                >
+                                  <div className="wizard-option-title">
+                                    <span className="wizard-option-title-text">{option.title}</span>
+                                    {option.badge && <span className="wizard-option-badge">{option.badge}</span>}
+                                  </div>
+                                  <div className="wizard-option-desc">{option.desc}</div>
+                                </button>
+                              );
+                            })}
+                        </div>
+                      </div>
                     )}
 	                  </>
 	                )}
