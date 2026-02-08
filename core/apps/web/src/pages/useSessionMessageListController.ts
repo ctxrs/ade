@@ -107,6 +107,7 @@ export function useSessionMessageListController(params: Params): Result {
   const historyRequestedAnchorIdRef = useRef<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
 
+  // Coalesce for steady-state updates, but never let it affect session transitions.
   const listItemsCoalesced = useRafCoalesced(listItems);
 
   const context = useMemo(() => ({ loaded, loadingOlder }), [loaded, loadingOlder]);
@@ -205,6 +206,8 @@ export function useSessionMessageListController(params: Params): Result {
     const methods = methodsRef.current;
     if (!methods) return;
 
+    // Use raw data for session boundaries; coalescing can lag a frame across session switches.
+    const nextRaw = listItems;
     let next = listItemsCoalesced;
     const current = methods.data.get();
     const sessionChanged = lastSessionIdRef.current !== sessionId;
@@ -294,10 +297,16 @@ export function useSessionMessageListController(params: Params): Result {
       setLoadingOlder(false);
       lastScrollLocationRef.current = null;
       lastListOffsetRef.current = null;
-      methods.data.replace(next, { initialLocation: INITIAL_LOCATION_BOTTOM, purgeItemSizes: true });
+      stickToBottomRef.current = true;
+      lastAtBottomRef.current = null;
+      renderedAnchorIdRef.current = null;
+      renderedTopIdRef.current = null;
+      firstListItemIdRef.current = null;
+      methods.cancelSmoothScroll();
+      methods.data.replace(nextRaw, { initialLocation: INITIAL_LOCATION_BOTTOM, purgeItemSizes: true });
       if (import.meta.env.DEV && showDebug) {
         // eslint-disable-next-line no-console
-        console.debug("[MessageList][data:replace]", { sessionId, nextLen: next.length, reason: "sessionChanged" });
+        console.debug("[MessageList][data:replace]", { sessionId, nextLen: nextRaw.length, reason: "sessionChanged" });
       }
       return;
     }
@@ -308,12 +317,18 @@ export function useSessionMessageListController(params: Params): Result {
     // Initial population: never treat empty->non-empty as prepend/append.
     // Use `replace(..., initialLocation: LAST)` so opening a session lands at bottom deterministically.
     if (currentLen === 0) {
-      if (nextLen === 0) return;
+      if (nextRaw.length === 0) return;
       historyExpectedRef.current = false;
-      methods.data.replace(next, { initialLocation: INITIAL_LOCATION_BOTTOM, purgeItemSizes: true });
+      methods.cancelSmoothScroll();
+      methods.data.replace(nextRaw, { initialLocation: INITIAL_LOCATION_BOTTOM, purgeItemSizes: true });
       if (import.meta.env.DEV && showDebug) {
         // eslint-disable-next-line no-console
-        console.debug("[MessageList][data:replace]", { sessionId, nextLen, currentLen, reason: "initialPopulation" });
+        console.debug("[MessageList][data:replace]", {
+          sessionId,
+          nextLen: nextRaw.length,
+          currentLen,
+          reason: "initialPopulation",
+        });
       }
       return;
     }
