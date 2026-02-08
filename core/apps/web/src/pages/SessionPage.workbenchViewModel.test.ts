@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("react-virtuoso", () => ({}));
 vi.mock("react-syntax-highlighter", () => ({ Prism: () => null }));
 vi.mock("react-syntax-highlighter/dist/esm/styles/prism", () => ({ oneDark: {} }));
 

@@ -10,7 +10,6 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type MutableRefObject,
-  type PointerEvent,
   type ReactNode,
 } from "react";
 import { Check, Copy } from "lucide-react";
@@ -18,11 +17,13 @@ import {
   VirtuosoMessageList,
   VirtuosoMessageListLicense,
   type ContextAwareComponent,
-  type DataWithScrollModifier,
-  type FooterWrapperComponent,
   type ItemLocation,
   type ItemContent as MessageItemContent,
-  type ScrollElementComponent,
+  type ListScrollLocation,
+  type VirtuosoMessageListMethods,
+  type VirtuosoMessageListProps,
+  useVirtuosoLocation,
+  useVirtuosoMethods,
 } from "@virtuoso.dev/message-list";
 import { blobUrl, type MessageAttachment } from "../api/client";
 import { type SessionViewVerbosity } from "../state/uiStateStore";
@@ -46,56 +47,70 @@ import type { ThreadItem, WorkbenchListItem, WorkbenchTurnHeader } from "./Sessi
 
 type WorkbenchMessageListStackProps = {
   virtuosoStyle: CSSProperties;
-  data: DataWithScrollModifier<WorkbenchListItem> | null | undefined;
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
   itemIdentity: (item: WorkbenchListItem) => unknown;
   initialLocation?: ItemLocation;
-  scrollElement: ScrollElementComponent;
-  footer: ContextAwareComponent;
-  footerWrapper: FooterWrapperComponent;
+  context: WorkbenchMessageListContext;
+  onScroll: (location: ListScrollLocation) => void;
+  onRenderedDataChange: (range: WorkbenchListItem[]) => void;
   increaseViewportBy: number;
-  showJumpToLatest: boolean;
-  onJumpToLatest: () => void;
+  listRef: MutableRefObject<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>;
   licenseKey: string;
-  scrollbarActive: boolean;
-  scrollbarDragging: boolean;
-  scrollbarNeeded: boolean;
-  scrollbarTrackRef: MutableRefObject<HTMLDivElement | null>;
-  scrollbarThumbRef: MutableRefObject<HTMLDivElement | null>;
-  onScrollbarMouseLeave: () => void;
-  onScrollbarTrackPointerDown: (event: PointerEvent<HTMLDivElement>) => void;
-  onScrollbarThumbPointerDown: (event: PointerEvent<HTMLDivElement>) => void;
-  onScrollbarThumbPointerMove: (event: PointerEvent<HTMLDivElement>) => void;
-  onScrollbarThumbPointerUp: (event: PointerEvent<HTMLDivElement>) => void;
-  scheduleScrollbarUpdate: () => void;
+};
+
+export type WorkbenchMessageListContext = {
+  loaded: boolean;
+  loadingOlder: boolean;
+};
+
+type WorkbenchMessageListProps = VirtuosoMessageListProps<WorkbenchListItem, WorkbenchMessageListContext>;
+
+export const WorkbenchMessageListEmptyPlaceholder: WorkbenchMessageListProps["EmptyPlaceholder"] = ({ context }) => {
+  // Avoid visible "Loading..." placeholders; the thread should feel continuous.
+  return context.loaded ? <div className="wb-muted">Empty</div> : null;
+};
+
+export const WorkbenchMessageListHeader: WorkbenchMessageListProps["Header"] = ({ context }) => {
+  // No visible loading header; preserve layout by rendering nothing.
+  // (Adding/removing header height can also introduce scroll jitter.)
+  void context;
+  return null;
+};
+
+export const WorkbenchMessageListStickyFooter: WorkbenchMessageListProps["StickyFooter"] = () => {
+  const location = useVirtuosoLocation();
+  const methods = useVirtuosoMethods<WorkbenchListItem, WorkbenchMessageListContext>();
+  return (
+    <div style={{ position: "relative", width: "100%", height: 0 }}>
+      {location.bottomOffset > 200 ? (
+        <button
+          type="button"
+          className="new-activity-overlay"
+          aria-label="Jump to latest"
+          title="Jump to latest"
+          style={{ position: "absolute", right: 16, bottom: 16 }}
+          onClick={() => methods.scrollToItem({ index: "LAST" as const, align: "end", behavior: "auto" })}
+        >
+          ↓
+        </button>
+      ) : null}
+    </div>
+  );
 };
 
 export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack({
   virtuosoStyle,
-  data,
   itemContent,
   itemIdentity,
   initialLocation,
-  scrollElement,
-  footer,
-  footerWrapper,
+  context,
+  onScroll,
+  onRenderedDataChange,
   increaseViewportBy,
-  showJumpToLatest,
-  onJumpToLatest,
+  listRef,
   licenseKey,
-  scrollbarActive,
-  scrollbarDragging,
-  scrollbarNeeded,
-  scrollbarTrackRef,
-  scrollbarThumbRef,
-  onScrollbarMouseLeave,
-  onScrollbarTrackPointerDown,
-  onScrollbarThumbPointerDown,
-  onScrollbarThumbPointerMove,
-  onScrollbarThumbPointerUp,
-  scheduleScrollbarUpdate,
 }: WorkbenchMessageListStackProps) {
-  const ItemContent = useCallback<MessageItemContent<WorkbenchListItem, unknown>>(
+  const ItemContent = useCallback<MessageItemContent<WorkbenchListItem, WorkbenchMessageListContext>>(
     ({ index, data }) => {
       if (!data) return <div style={{ height: 1 }} />;
       return (
@@ -108,60 +123,26 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
   );
 
   return (
-    <div className="thread-stack wb-thread-stack" onMouseLeave={onScrollbarMouseLeave}>
+    <div className="thread-stack wb-thread-stack">
       <VirtuosoMessageListLicense licenseKey={licenseKey}>
-        <VirtuosoMessageList<WorkbenchListItem, unknown>
+        <VirtuosoMessageList<WorkbenchListItem, WorkbenchMessageListContext>
+          ref={listRef}
           style={virtuosoStyle}
-          data={data}
+          role="list"
+          context={context}
           itemIdentity={itemIdentity}
           computeItemKey={({ data }) => data.id}
           ItemContent={ItemContent}
           initialLocation={initialLocation}
-          ScrollElement={scrollElement}
-          Footer={footer}
-          FooterWrapper={footerWrapper}
+          onScroll={onScroll}
+          onRenderedDataChange={onRenderedDataChange}
+          EmptyPlaceholder={WorkbenchMessageListEmptyPlaceholder}
+          StickyFooter={WorkbenchMessageListStickyFooter}
           shortSizeAlign="bottom"
           increaseViewportBy={increaseViewportBy}
         />
       </VirtuosoMessageListLicense>
 
-      <div
-        className={`wb-scrollbar${scrollbarActive ? " is-active" : ""}${scrollbarDragging ? " is-dragging" : ""}${scrollbarNeeded ? "" : " is-hidden"}`}
-        aria-hidden="true"
-      >
-        <div
-          className="wb-scrollbar-track"
-          ref={(node) => {
-            scrollbarTrackRef.current = node;
-            if (node) scheduleScrollbarUpdate();
-          }}
-          onPointerDown={onScrollbarTrackPointerDown}
-        >
-          <div
-            className="wb-scrollbar-thumb"
-            ref={(node) => {
-              scrollbarThumbRef.current = node;
-              if (node) scheduleScrollbarUpdate();
-            }}
-            onPointerDown={onScrollbarThumbPointerDown}
-            onPointerMove={onScrollbarThumbPointerMove}
-            onPointerUp={onScrollbarThumbPointerUp}
-            onPointerCancel={onScrollbarThumbPointerUp}
-          />
-        </div>
-      </div>
-
-      {showJumpToLatest && (
-        <button
-          type="button"
-          className="new-activity-overlay"
-          aria-label="Jump to latest"
-          title="Jump to latest"
-          onClick={onJumpToLatest}
-        >
-          ↓
-        </button>
-      )}
     </div>
   );
 });

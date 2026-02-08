@@ -198,6 +198,7 @@ function collectThoughtStream(events: SessionEvent[]): {
 }
 
 type ThoughtBlock = {
+  idKey: string;
   text: string;
   orderSeq?: number;
   createdAt?: string;
@@ -226,7 +227,7 @@ function collectThoughtBlocks(events: SessionEvent[]): ThoughtBlock[] {
       list.push(ev);
       groups.set(key, list);
     }
-    for (const list of groups.values()) {
+    for (const [key, list] of groups.entries()) {
       const sorted = list.slice().sort((a, b) => {
         const sa = readEventOrderSeq(a) as number;
         const sb = readEventOrderSeq(b) as number;
@@ -253,7 +254,7 @@ function collectThoughtBlocks(events: SessionEvent[]): ThoughtBlock[] {
         if (orderSeq === undefined) orderSeq = readEventOrderSeq(ev) as number;
       }
       if (text.trim() && Number.isFinite(orderSeq)) {
-        blocks.push({ text, orderSeq, createdAt, isCrp: true });
+        blocks.push({ idKey: `crp:${key}`, text, orderSeq, createdAt, isCrp: true });
       }
     }
   }
@@ -261,7 +262,13 @@ function collectThoughtBlocks(events: SessionEvent[]): ThoughtBlock[] {
   if (nonCrpThoughtEvents.length > 0) {
     const stream = collectThoughtStream(nonCrpThoughtEvents);
     if (stream) {
+      const suffix = Number.isFinite(stream.orderSeq)
+        ? `seq:${stream.orderSeq}`
+        : stream.createdAt
+          ? `ts:${stream.createdAt}`
+          : "unknown";
       blocks.push({
+        idKey: `stream:${suffix}`,
         text: stream.text,
         orderSeq: stream.orderSeq,
         createdAt: stream.createdAt,
@@ -763,16 +770,23 @@ function buildSystemMessageGroups(messages: Message[]): SortableThreadGroup[] {
       if (a.orderSeq !== b.orderSeq) return (a.orderSeq as number) - (b.orderSeq as number);
       return a.idx - b.idx;
     });
-  return systemMessages.map((entry, idx) => {
+  return systemMessages.flatMap((entry) => {
     const m = entry.message;
-    const orderSeq = Number(entry.orderSeq);
-    const createdAt = String(m.created_at ?? "");
-    const stableSuffix = Number.isFinite(orderSeq) ? `${orderSeq}` : createdAt || `${idx}`;
-    const id = idToString(m.id) || `system-${stableSuffix}`;
+    const id = idToString(m.id);
+    if (!id) {
+      if (import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.error("[WorkbenchThreadViewModel] system message missing id", {
+          created_at: m.created_at ?? null,
+          order_seq: m.order_seq ?? null,
+        });
+      }
+      return [];
+    }
     const attachments = Array.isArray((m as any).attachments)
       ? ((m as any).attachments as MessageAttachment[])
       : [];
-    return {
+    return [{
       sort_seq: entry.orderSeq as number,
       group: {
         key: `system-${id}`,
@@ -788,7 +802,7 @@ function buildSystemMessageGroups(messages: Message[]): SortableThreadGroup[] {
           },
         ],
       },
-    };
+    }];
   });
 }
 
@@ -954,7 +968,18 @@ function buildNoticeMessageItem(
   const message =
     pickFirstString(payload?.message, payload?.text, payload?.summary, payload?.content) ??
     "Context compacted. Earlier turns were summarized.";
-  const eventId = idToString(ev.id) || `${ev.created_at}`;
+  const eventId = idToString(ev.id);
+  if (!eventId) {
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
+      console.error("[WorkbenchThreadViewModel] notice event missing id", {
+        turnId,
+        created_at: ev.created_at,
+        kind: payload?.kind ?? payload?.code ?? null,
+      });
+    }
+    return null;
+  }
   return {
     kind: "message",
     id: `notice-${turnId}-${eventId}`,
@@ -1036,9 +1061,12 @@ function buildTurnActivityTimeline(opts: {
       if (!Number.isFinite(block.orderSeq)) return;
       const thoughtText = block.text ?? "";
       if (!thoughtText.trim()) return;
+      const stableSuffix =
+        block.idKey || (Number.isFinite(block.orderSeq) ? `seq:${block.orderSeq}` : `idx:${index}`);
       const thoughtItem: Extract<ThreadItem, { kind: "thought" }> = {
         kind: "thought",
-        id: `thought-${opts.turnId}-${index}`,
+        // Avoid index/text-based IDs; those break MessageList prepend invariants and streaming updates.
+        id: `thought-${opts.turnId}-${stableSuffix}`,
         turn_id: opts.turnId,
         created_at: block.createdAt ?? opts.turn.updated_at ?? opts.turn.started_at,
         content: thoughtText,
@@ -1107,14 +1135,24 @@ export function buildWorkbenchThreadViewModelFromTurns(
   }
 
   for (const turn of sortedTurns) {
-    const turnId = idToString(turn.turn_id) || `turn-${turn.started_at}`;
+    const turnId = idToString(turn.turn_id);
+    if (!turnId) {
+      if (import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.error("[WorkbenchThreadViewModel] turn missing turn_id", {
+          started_at: turn.started_at ?? null,
+          created_at: turn.created_at ?? null,
+        });
+      }
+      continue;
+    }
     const userMessageId = turn.user_message_id ? idToString(turn.user_message_id) : "";
 
     const turnMessages = messagesByTurnId.get(turnId) ?? [];
     const fallbackUserMessage =
       !userMessageId ? turnMessages.find((m) => m.role === "user") : undefined;
     const userMessage = userMessageId ? messageById.get(userMessageId) : fallbackUserMessage;
-    const headerId = userMessageId || idToString(userMessage?.id) || turnId;
+    const headerId = turnId;
 
     const header: WorkbenchTurnHeader | null = userMessage
       ? {
@@ -1186,10 +1224,25 @@ export function buildWorkbenchThreadViewModelFromTurns(
     for (const m of assistantMessages) {
       const orderSeq = Number(m.order_seq ?? Number.NaN);
       if (!Number.isFinite(orderSeq)) continue;
+      const messageId = idToString(m.id);
+      if (!messageId) {
+        // Missing message ids break MessageList identity invariants; treat this as a bug.
+        if (import.meta.env.DEV) {
+          // eslint-disable-next-line no-console
+          console.error("[WorkbenchThreadViewModel] assistant message missing id", {
+            turnId,
+            created_at: m.created_at,
+            order_seq: m.order_seq ?? null,
+            turn_sequence: m.turn_sequence ?? null,
+          });
+        }
+        continue;
+      }
       timeline.push({
         item: {
           kind: "assistant",
-          id: `assistant-${turnId}-${m.turn_sequence ?? m.created_at}`,
+          // Use the message id so item identity is stable even if sequencing metadata is backfilled later.
+          id: `assistant-msg-${messageId}`,
           turn_id: turnId,
           created_at: m.created_at,
           content: m.content ?? "",
@@ -1600,9 +1653,26 @@ function buildWorkbenchThreadViewModelFromEvents(
       const u = userEvents[i];
       const nextUser = userEvents[i + 1] ?? null;
       const userOrderSeq = readEventOrderSeq(u);
-      const mid =
-        String(u.payload_json?.message_id ?? "").trim() ||
-        (idToString(u.id) || `msg-${u.created_at}`);
+      const mid = String(u.payload_json?.message_id ?? "").trim();
+      if (!mid) {
+        if (import.meta.env.DEV) {
+          // eslint-disable-next-line no-console
+          console.error("[WorkbenchThreadViewModel] user_message event missing payload.message_id", {
+            created_at: u.created_at,
+            event_id: idToString(u.id) ?? null,
+          });
+        }
+        continue;
+      }
+      if (!mid) {
+        if (import.meta.env.DEV) {
+          // eslint-disable-next-line no-console
+          console.error("[WorkbenchThreadViewModel] user event missing message_id and id", {
+            created_at: u.created_at,
+          });
+        }
+        continue;
+      }
 
       const header: WorkbenchTurnHeader = {
         id: mid,
@@ -1634,7 +1704,17 @@ function buildWorkbenchThreadViewModelFromEvents(
       const noticeInserted = new Set<string>();
 
       for (const ev of evs) {
-        const eventId = idToString(ev.id) || `${ev.created_at}`;
+        const eventId = idToString(ev.id);
+        if (!eventId) {
+          if (import.meta.env.DEV) {
+            // eslint-disable-next-line no-console
+            console.error("[WorkbenchThreadViewModel] event missing id (events-only view)", {
+              created_at: ev.created_at,
+              event_type: ev.event_type,
+            });
+          }
+          continue;
+        }
         if (ev.created_at < g.first_at) g.first_at = ev.created_at;
 
         switch (ev.event_type) {
@@ -1832,7 +1912,17 @@ function buildWorkbenchThreadViewModelFromEvents(
     const nextUser = userMessages[i + 1] ?? null;
     const userOrderSeq = Number(u.order_seq ?? Number.NaN);
 
-    const mid = idToString(u.id) || `msg-${u.created_at}`;
+    const mid = idToString(u.id);
+    if (!mid) {
+      if (import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.error("[WorkbenchThreadViewModel] user message missing id (events-only view)", {
+          created_at: u.created_at ?? null,
+          order_seq: u.order_seq ?? null,
+        });
+      }
+      continue;
+    }
     const g: TurnGroup = {
       key: `m-${mid}`,
       header: {
@@ -1870,7 +1960,17 @@ function buildWorkbenchThreadViewModelFromEvents(
     const noticeInserted = new Set<string>();
 
     for (const ev of evs) {
-      const eventId = idToString(ev.id) || `${ev.created_at}`;
+      const eventId = idToString(ev.id);
+      if (!eventId) {
+        if (import.meta.env.DEV) {
+          // eslint-disable-next-line no-console
+          console.error("[WorkbenchThreadViewModel] event missing id (events-only view)", {
+            created_at: ev.created_at,
+            event_type: ev.event_type,
+          });
+        }
+        continue;
+      }
       if (ev.created_at < g.first_at) g.first_at = ev.created_at;
 
       switch (ev.event_type) {
@@ -2229,12 +2329,32 @@ function normalizeToolStatus(status: string, eventType: string): string {
 function mergeEvents(prev: SessionEvent[], incoming: SessionEvent[]): SessionEvent[] {
   const map = new Map<string, SessionEvent>();
   for (const ev of prev) {
-    const key = idToString(ev.id) || `${ev.created_at}-${ev.event_type}`;
-    map.set(key, ev);
+    const id = idToString(ev.id);
+    if (!id) {
+      if (import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.error("[WorkbenchThreadViewModel] event missing id (mergeEvents)", {
+          created_at: ev.created_at,
+          event_type: ev.event_type,
+        });
+      }
+      continue;
+    }
+    map.set(id, ev);
   }
   for (const ev of incoming) {
-    const key = idToString(ev.id) || `${ev.created_at}-${ev.event_type}`;
-    map.set(key, ev);
+    const id = idToString(ev.id);
+    if (!id) {
+      if (import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.error("[WorkbenchThreadViewModel] event missing id (mergeEvents)", {
+          created_at: ev.created_at,
+          event_type: ev.event_type,
+        });
+      }
+      continue;
+    }
+    map.set(id, ev);
   }
   return [...map.values()].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
 }

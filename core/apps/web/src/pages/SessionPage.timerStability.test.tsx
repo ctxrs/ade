@@ -1,21 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { act, render } from "@testing-library/react";
-import { VirtuosoMockContext } from "react-virtuoso";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionView } from "./SessionPage";
-
-vi.mock("react-virtuoso", () => ({
-  Virtuoso: ({ data = [], itemContent }: { data?: any[]; itemContent: (index: number, item: any) => React.ReactNode }) => (
-    <div data-testid="virtuoso">
-      {data.map((item, index) => (
-        <div key={item?.id ?? index}>{itemContent(index, item)}</div>
-      ))}
-    </div>
-  ),
-  VirtuosoMockContext: {
-    Provider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  },
-}));
 
 const sessionEntries = vi.hoisted(() => ({ map: {} as Record<string, any> }));
 const focusTaskSpy = vi.hoisted(() => vi.fn());
@@ -227,15 +213,11 @@ describe("SessionPage timer stability", () => {
       return (
         <>
           <div data-testid="session-a">
-            <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
-              <SessionView sessionId={firstId} isActive autoOpenSession={false} />
-            </VirtuosoMockContext.Provider>
+            <SessionView sessionId={firstId} isActive autoOpenSession={false} />
           </div>
           {showSecond && (
             <div data-testid="session-b">
-              <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
-                <SessionView sessionId={secondId} isActive autoOpenSession={false} />
-              </VirtuosoMockContext.Provider>
+              <SessionView sessionId={secondId} isActive autoOpenSession={false} />
             </div>
           )}
         </>

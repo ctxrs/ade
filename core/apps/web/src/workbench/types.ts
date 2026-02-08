@@ -41,7 +41,6 @@ export type WorkbenchScrollState = {
   anchorItemId: string | null;
   anchorOffset: number | null;
   scrollTop: number | null;
-  virtuosoState?: unknown | null;
   updatedAtMs: number;
 };
 

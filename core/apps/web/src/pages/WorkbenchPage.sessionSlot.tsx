@@ -27,7 +27,6 @@ export function WorkbenchSessionSlot({
       anchorItemId: string | null;
       anchorOffset: number | null;
       scrollTop: number | null;
-      virtuosoState?: unknown | null;
     }) => {
       workbenchStore.setScrollState(scrollKey(sessionId), next);
     },
@@ -77,7 +76,6 @@ export function WorkbenchSessionSlot({
                 anchorItemId: scrollState.anchorItemId,
                 anchorOffset: scrollState.anchorOffset ?? null,
                 scrollTop: scrollState.scrollTop ?? null,
-                virtuosoState: scrollState.virtuosoState ?? null,
               }
             : null
         }
