@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import type {
   AutoscrollToBottom,
   ItemLocation,
@@ -88,6 +88,7 @@ export function useSessionMessageListController(params: Params): Result {
 
   const methodsRef = useRef<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>(null);
   const lastSessionIdRef = useRef(sessionId);
+  const debugLoggedSessionRef = useRef<string | null>(null);
 
   const lastScrollLocationRef = useRef<ListScrollLocation | null>(null);
   const stickToBottomRef = useRef(true);
@@ -112,6 +113,14 @@ export function useSessionMessageListController(params: Params): Result {
   const listItemsCoalesced = useRafCoalesced(listItems);
 
   const context = useMemo(() => ({ loaded, loadingOlder }), [loaded, loadingOlder]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || !showDebug) return;
+    if (debugLoggedSessionRef.current === sessionId) return;
+    debugLoggedSessionRef.current = sessionId;
+    // eslint-disable-next-line no-console
+    console.debug("[MessageList][debug]", { sessionId, isActive, loaded });
+  }, [isActive, loaded, sessionId, showDebug]);
 
   // Keep an up-to-date reference without introducing additional hook ordering churn under HMR.
   firstListItemIdRef.current = listItemsCoalesced?.[0]?.id ?? null;
@@ -518,6 +527,36 @@ export function useSessionMessageListController(params: Params): Result {
         const nextById = new Map(next.map((it) => [it.id, it] as const));
         const anchorId = renderedAnchorIdRef.current;
         const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
+        if (import.meta.env.DEV && showDebug) {
+          // Count by reference to detect “content changes” even when IDs/order are stable.
+          let changedByRef = 0;
+          const sampleChangedIds: string[] = [];
+          for (let i = 0; i < currentLen; i += 1) {
+            if (current[i] !== next[i]) {
+              changedByRef += 1;
+              if (sampleChangedIds.length < 8) sampleChangedIds.push(String(next[i]?.id ?? current[i]?.id ?? ""));
+            }
+          }
+          const mapMode =
+            !stickToBottomRef.current && anchorIndex >= 0
+              ? "mapWithAnchor"
+              : stickToBottomRef.current
+                ? "map:auto"
+                : "map";
+          // eslint-disable-next-line no-console
+          console.debug("[MessageList][data:map]", {
+            sessionId,
+            nextLen,
+            currentLen,
+            stickToBottom: stickToBottomRef.current,
+            anchorId,
+            anchorIndex,
+            mapMode,
+            changedByRef,
+            sampleChangedIds,
+            renderedTopId: renderedTopIdRef.current,
+          });
+        }
         if (!stickToBottomRef.current && anchorIndex >= 0) {
           methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, anchorIndex);
         } else {
@@ -603,6 +642,12 @@ export function useSessionMessageListController(params: Params): Result {
           insertLen: insertData.length,
           anchorId,
           anchorIndex,
+          mapMode:
+            !stickToBottomRef.current && anchorIndex >= 0
+              ? "mapWithAnchor"
+              : stickToBottomRef.current
+                ? "map:auto"
+                : "map",
         });
       }
     } else if (import.meta.env.DEV && showDebug) {
@@ -618,6 +663,12 @@ export function useSessionMessageListController(params: Params): Result {
         anchorId,
         anchorIndex,
         stickToBottom: stickToBottomRef.current,
+        mapMode:
+          !stickToBottomRef.current && anchorIndex >= 0
+            ? "mapWithAnchor"
+            : stickToBottomRef.current
+              ? "map:auto"
+              : "map",
       });
     }
 

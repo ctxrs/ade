@@ -312,6 +312,23 @@ function isSameContextWindow(a: ContextWindowInfo | null, b: ContextWindowInfo |
   );
 }
 
+function ProviderGuardCountdownLine({
+  notice,
+}: {
+  notice: NonNullable<ReturnType<typeof deriveProviderGuardNotice>>;
+}) {
+  const enabled = notice.kind === "provider_guard_warning" && notice.stage === "max" && notice.killAtMs != null;
+  const nowMs = useRelativeNowMs(1000, enabled);
+  if (!enabled || notice.killAtMs == null) return null;
+
+  const remainingMs = notice.killAtMs - nowMs;
+  const text =
+    remainingMs > 0
+      ? `Kill in ${formatElapsedMs(remainingMs)} unless memory drops.`
+      : "Kill imminent unless memory drops.";
+  return <div className="muted">{text}</div>;
+}
+
 export function SessionView({
   sessionId,
   isActive = true,
@@ -687,11 +704,6 @@ export function SessionView({
     () => deriveProviderGuardNotice(events),
     [eventsKey],
   );
-  const providerGuardCountdownTarget = providerGuardNotice?.killAtMs ?? null;
-  const needsNowMs =
-    hasActiveTurn || (providerGuardCountdownTarget != null && providerGuardCountdownTarget > Date.now());
-  const nowMs = useRelativeNowMs(1000, needsNowMs);
-  const displayNowMs = nowMs;
 
   const providerGuardNoticeKey = providerGuardNotice
     ? `${providerGuardNotice.kind}:${providerGuardNotice.stage}:${providerGuardNotice.pid ?? ""}:${providerGuardNotice.killAtMs ?? ""}`
@@ -838,16 +850,6 @@ export function SessionView({
   const authUi = useMemo(() => deriveAuthUi(events), [eventsKey]);
   const providerGuardMemoryLimitMb =
     providerGuardNotice?.stage === "high" ? providerGuardNotice?.limitHighMb : providerGuardNotice?.limitMaxMb;
-  const providerGuardCountdownMs =
-    providerGuardNotice?.killAtMs != null ? providerGuardNotice.killAtMs - displayNowMs : null;
-  const providerGuardCountdownText =
-    providerGuardNotice?.kind === "provider_guard_warning" &&
-    providerGuardNotice?.stage === "max" &&
-    providerGuardNotice?.killAtMs != null
-      ? providerGuardCountdownMs != null && providerGuardCountdownMs > 0
-        ? `Kill in ${formatElapsedMs(providerGuardCountdownMs)} unless memory drops.`
-        : "Kill imminent unless memory drops."
-      : null;
   const providerGuardHeading =
     providerGuardNotice?.kind === "provider_guard_kill"
       ? "Provider guard kill"
@@ -1288,7 +1290,7 @@ export function SessionView({
       return <WorkbenchThoughtRow item={item} />;
     }
     if (item.kind === "turn_status") {
-      return <WorkbenchTurnStatusRow item={item} nowMs={displayNowMs} />;
+      return <WorkbenchTurnStatusRow item={item} />;
     }
     if (item.kind === "assistant") {
       if (!item.is_complete && item.content.trim().length === 0) {
@@ -1387,7 +1389,6 @@ export function SessionView({
     handleFileOpenError,
     modifierDown,
     id,
-    displayNowMs,
     supervisor,
     turnToolsLoading,
     worktreeId,
@@ -1485,7 +1486,7 @@ export function SessionView({
               ) : null}
               {providerGuardPidLabel ? <span className="muted">{providerGuardPidLabel}</span> : null}
             </div>
-            {providerGuardCountdownText && <div className="muted">{providerGuardCountdownText}</div>}
+            <ProviderGuardCountdownLine notice={providerGuardNotice} />
             <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
               <button
                 type="button"

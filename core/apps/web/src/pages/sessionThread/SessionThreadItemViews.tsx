@@ -13,6 +13,7 @@ import { Check, Copy } from "lucide-react";
 import { blobUrl, type MessageAttachment } from "../../api/client";
 import { type SessionViewVerbosity } from "../../state/uiStateStore";
 import { copyTextToClipboard } from "../../utils/clipboard";
+import { useRelativeNowMs } from "../../utils/useRelativeNowMs";
 import { MemoMarkdown } from "../SessionPage.markdown";
 import {
   attachmentDisplayName,
@@ -478,12 +479,11 @@ export function WorkbenchThoughtRow({ item }: { item: Extract<ThreadItem, { kind
 
 export function WorkbenchTurnStatusRow({
   item,
-  nowMs,
 }: {
   item: Extract<ThreadItem, { kind: "turn_status" }>;
-  nowMs: number;
 }) {
   const isRunning = item.status === "running" || item.status === "queued";
+  const nowMs = useRelativeNowMs(1000, isRunning);
   const isCompleted = item.status === "completed";
   const customStatus = item.custom_status?.trim();
   const statusLabel = isRunning && customStatus ? customStatus : humanTurnStatus(item.status);
