@@ -77,6 +77,11 @@ const runBundleForArch = (arch, append) => {
     CTX_BUNDLE_ARCH: arch,
   };
   if (append) env.CTX_BUNDLE_APPEND = "1";
+  // The harness image tars are Linux artifacts and are not arch-specific to the macOS bundle pass.
+  // Build them once (on the first invocation) to avoid doing the expensive build twice.
+  if (!("CTX_BUNDLE_HARNESS_IMAGE" in env)) {
+    env.CTX_BUNDLE_HARNESS_IMAGE = append ? "0" : "both";
+  }
 
   if (env.CTX_BUNDLE_PODMAN === "1") {
     const archiveUrl = resolveArchEnv("PODMAN_ARCHIVE_URL", arch);

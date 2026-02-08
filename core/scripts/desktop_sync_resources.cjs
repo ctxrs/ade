@@ -74,6 +74,11 @@ const syncBundles = () => {
   }
   resetBundleDir();
   const env = { ...process.env, CTX_BUNDLE_DIR: destBundleDir };
+  // For release builds, bundle the default harness image tar so restricted networking works
+  // without relying on registry pulls.
+  if (profile === "release") {
+    env.CTX_BUNDLE_HARNESS_IMAGE = env.CTX_BUNDLE_HARNESS_IMAGE || "both";
+  }
   const res = childProcess.spawnSync(bundleScript, {
     env,
     stdio: "inherit",

@@ -1158,7 +1158,7 @@ async fn desktop_connect_local(app: tauri::AppHandle) -> Result<DesktopConnectio
 
 #[tauri::command]
 async fn desktop_connect_ssh(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     state: tauri::State<'_, ConnectionManager>,
     req: SshConnectReq,
 ) -> Result<DesktopConnectionInfo, String> {
@@ -1173,6 +1173,9 @@ async fn desktop_connect_ssh(
     let user = req.user.clone();
     let remote_data_dir = req.remote_data_dir.clone();
     let start_remote = req.start_remote;
+    let host_for_provision = host.clone();
+    let user_for_provision = user.clone();
+    let app_for_provision = app.clone();
     let (base_url, token, tunnel) = tauri::async_runtime::spawn_blocking(move || {
         let no_start_remote = std::env::var(DESKTOP_SSH_NO_START_REMOTE_ENV)
             .ok()
@@ -1229,6 +1232,18 @@ async fn desktop_connect_ssh(
     .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?;
 
     state.set_ssh(base_url, Some(token), tunnel);
+
+    // Best-effort provisioning: ensure the default harness image is present on remote Linux hosts
+    // so restricted networking works without relying on registry pulls.
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(err) = ensure_remote_ctx_harness_image(
+            &app_for_provision,
+            &host_for_provision,
+            user_for_provision.as_deref(),
+        ) {
+            eprintln!("remote harness image provisioning skipped/failed: {err:#}");
+        }
+    });
     Ok(state.info())
 }
 
@@ -3301,6 +3316,174 @@ fn read_remote_daemon_auth_with_retry(
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct DesktopBundledAssetsManifest {
+    #[allow(dead_code)]
+    pub version: u32,
+    #[serde(default)]
+    pub images: Vec<DesktopBundledImage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DesktopBundledImage {
+    pub id: String,
+    pub os: String,
+    pub arch: String,
+    pub tar: String,
+    pub image: String,
+}
+
+fn normalize_arch_token(raw: &str) -> Option<&'static str> {
+    match raw.trim() {
+        "x86_64" | "amd64" => Some("x86_64"),
+        "aarch64" | "arm64" => Some("aarch64"),
+        _ => None,
+    }
+}
+
+fn read_bundled_ctx_harness_image(app: &tauri::AppHandle, arch: &str) -> Result<(PathBuf, String)> {
+    let bundle_dir = desktop_bundle_dir(app).ok_or_else(|| anyhow!("bundle dir not found"))?;
+    let manifest_path = bundle_dir.join("manifest.json");
+    let raw = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("reading {}", manifest_path.display()))?;
+    let manifest: DesktopBundledAssetsManifest =
+        serde_json::from_str(&raw).with_context(|| format!("parsing {}", manifest_path.display()))?;
+    let entry = manifest
+        .images
+        .iter()
+        .find(|img| img.id == "ctx-harness" && img.os == "linux" && img.arch == arch)
+        .ok_or_else(|| anyhow!("bundled ctx-harness image tar not found for linux/{arch}"))?;
+    let tar = bundle_dir.join(&entry.tar);
+    if !tar.exists() {
+        anyhow::bail!(
+            "bundled ctx-harness image tar missing at {}",
+            tar.display()
+        );
+    }
+    Ok((tar, entry.image.clone()))
+}
+
+fn ssh_target(host: &str, user: Option<&str>) -> String {
+    match user {
+        Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
+        _ => host.to_string(),
+    }
+}
+
+fn ssh_output(target: &str, cmd: &str) -> Result<std::process::Output> {
+    let remote_cmd = format!("sh -lc {}", shell_escape(cmd));
+    let output = Command::new("ssh")
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=8")
+        .arg("-o")
+        .arg("ConnectionAttempts=1")
+        .arg("-o")
+        .arg("ServerAliveInterval=5")
+        .arg("-o")
+        .arg("ServerAliveCountMax=1")
+        .arg(target)
+        .arg(remote_cmd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| format!("ssh: {cmd}"))?;
+    Ok(output)
+}
+
+fn ensure_remote_ctx_harness_image(
+    app: &tauri::AppHandle,
+    host: &str,
+    user: Option<&str>,
+) -> Result<()> {
+    let target = ssh_target(host, user);
+
+    // Only provision the Linux container image on Linux hosts.
+    let os_out = ssh_output(&target, "uname -s")?;
+    if !os_out.status.success() {
+        anyhow::bail!(
+            "ssh uname failed: {}",
+            String::from_utf8_lossy(&os_out.stderr).trim()
+        );
+    }
+    let os = String::from_utf8_lossy(&os_out.stdout).trim().to_string();
+    if os != "Linux" {
+        return Ok(());
+    }
+
+    let arch_out = ssh_output(&target, "uname -m")?;
+    if !arch_out.status.success() {
+        anyhow::bail!(
+            "ssh uname -m failed: {}",
+            String::from_utf8_lossy(&arch_out.stderr).trim()
+        );
+    }
+    let arch_raw = String::from_utf8_lossy(&arch_out.stdout).trim().to_string();
+    let Some(arch) = normalize_arch_token(&arch_raw) else {
+        anyhow::bail!("unsupported remote architecture: {arch_raw}");
+    };
+
+    // If the remote doesn't have podman, don't block ssh connection (container mode just won't work).
+    let podman_out = ssh_output(&target, "command -v podman >/dev/null 2>&1")?;
+    if !podman_out.status.success() {
+        return Ok(());
+    }
+
+    let (tar, image) = read_bundled_ctx_harness_image(app, arch)?;
+
+    // Check if the image is already present.
+    let exists_out = ssh_output(&target, &format!("podman image exists -- {}", shell_escape(&image)))?;
+    if exists_out.status.success() {
+        return Ok(());
+    }
+    if exists_out.status.code() != Some(1) {
+        anyhow::bail!(
+            "remote podman image exists failed: {}",
+            String::from_utf8_lossy(&exists_out.stderr).trim()
+        );
+    }
+
+    // Stream tar to podman load over SSH.
+    let remote_cmd = format!("sh -lc {}", shell_escape("podman load"));
+    let mut child = Command::new("ssh")
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=8")
+        .arg("-o")
+        .arg("ConnectionAttempts=1")
+        .arg("-o")
+        .arg("ServerAliveInterval=5")
+        .arg("-o")
+        .arg("ServerAliveCountMax=1")
+        .arg(&target)
+        .arg(remote_cmd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("spawning ssh for podman load")?;
+
+    {
+        let mut file = std::fs::File::open(&tar)
+            .with_context(|| format!("opening {}", tar.display()))?;
+        let mut stdin = child.stdin.take().ok_or_else(|| anyhow!("ssh stdin unavailable"))?;
+        std::io::copy(&mut file, &mut stdin).context("streaming image tar to ssh")?;
+    }
+
+    let output = child.wait_with_output().context("waiting for ssh podman load")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "remote podman load failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    Ok(())
+}
+
 fn probe_daemon_health(base_url: &str) -> Result<()> {
     let url = format!("{}/api/health", base_url.trim_end_matches('/'));
     let client = reqwest::blocking::Client::builder()
@@ -3586,6 +3769,15 @@ fn dev_bundle_dir() -> Option<PathBuf> {
     } else {
         None
     }
+}
+
+fn desktop_bundle_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path()
+        .resource_dir()
+        .ok()
+        .map(|p| p.join("bundles"))
+        .filter(|p| p.exists())
+        .or_else(dev_bundle_dir)
 }
 
 #[cfg(target_os = "linux")]

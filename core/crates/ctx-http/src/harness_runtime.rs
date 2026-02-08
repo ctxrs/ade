@@ -330,6 +330,7 @@ impl HarnessRuntimeManager {
         daemon_port: u16,
     ) -> Result<HarnessContainer> {
         let name = format!("ctx-harness-{}", workspace.id.0);
+        let image = resolve_container_image(settings);
         let mount_plan = build_mounts(&self.data_root, workspace, worktree, settings);
         let mut containers = self.containers.lock().await;
         let mut recreate = false;
@@ -367,6 +368,7 @@ impl HarnessRuntimeManager {
                 }
             }
         } else {
+            ensure_container_image_available(&image).await?;
             let mut cmd = podman_command()?;
             cmd.arg("run").arg("-d").arg("--name").arg(&name);
             cmd.arg("--userns=keep-id");
@@ -381,7 +383,7 @@ impl HarnessRuntimeManager {
             for mount in &mount_plan.mounts {
                 cmd.arg("--mount").arg(mount);
             }
-            cmd.arg(resolve_container_image(settings));
+            cmd.arg(&image);
             cmd.arg("/bin/sh")
                 .arg("-c")
                 .arg("while true; do sleep 100000; done");
@@ -471,21 +473,24 @@ pub(crate) fn resolve_container_image(settings: &ContainerExecutionSettings) -> 
         .unwrap_or_else(|| DEFAULT_CONTAINER_IMAGE.to_string())
 }
 
+pub fn default_container_image() -> &'static str {
+    DEFAULT_CONTAINER_IMAGE
+}
+
+pub fn is_default_container_image(image: &str) -> bool {
+    image.trim() == DEFAULT_CONTAINER_IMAGE
+}
+
+pub fn bundled_default_container_image_tar() -> Option<PathBuf> {
+    bundled_assets::bundled_ctx_harness_image_tar(DEFAULT_CONTAINER_IMAGE)
+}
+
 pub async fn prefetch_container_image(image: &str) -> Result<()> {
     let image = image.trim();
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
-    let status = podman_command()?
-        .arg("pull")
-        .arg("--")
-        .arg(image)
-        .status()
-        .await?;
-    if !status.success() {
-        anyhow::bail!("podman pull failed for '{image}'");
-    }
-    Ok(())
+    ensure_container_image_available(image).await
 }
 
 pub async fn container_image_present(image: &str) -> Result<bool> {
@@ -510,6 +515,55 @@ pub async fn container_image_present(image: &str) -> Result<bool> {
             String::from_utf8_lossy(&output.stderr).trim()
         ),
     }
+}
+
+async fn ensure_container_image_available(image: &str) -> Result<()> {
+    let image = image.trim();
+    if image.is_empty() {
+        anyhow::bail!("image is required");
+    }
+
+    if container_image_present(image).await? {
+        return Ok(());
+    }
+
+    // Restricted networking is security-relevant; ctx must not silently fall back to pulling from
+    // a registry. For the default harness image, we only support deterministic loading from a
+    // bundled tarball.
+    if image == DEFAULT_CONTAINER_IMAGE {
+        let tar = bundled_assets::bundled_ctx_harness_image_tar(image).ok_or_else(|| {
+            anyhow::anyhow!(
+                "default harness image '{}' is not present and no bundled image tar was found (set CTX_BUNDLE_DIR or pre-load the image into podman)",
+                image
+            )
+        })?;
+        let output = podman_command()?
+            .arg("load")
+            .arg("-i")
+            .arg(&tar)
+            .output()
+            .await
+            .with_context(|| format!("podman load failed for {}", tar.display()))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                anyhow::bail!("podman load failed (status: {})", output.status);
+            }
+            anyhow::bail!("podman load failed: {stderr}");
+        }
+        if container_image_present(image).await? {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "podman load reported success but image '{}' is still missing",
+            image
+        );
+    }
+
+    anyhow::bail!(
+        "container image '{}' is not present; registry pulls are disabled, so the image must already exist in podman",
+        image
+    );
 }
 
 #[derive(Debug, Clone)]

@@ -16,6 +16,10 @@ pub struct BundledAssetsManifest {
     pub providers: Vec<BundledProvider>,
     #[serde(default)]
     pub runtimes: Vec<BundledRuntime>,
+    // Container images are Linux artifacts even when bundled on macOS/Windows.
+    // They are keyed by the Linux arch token matching the host arch (e.g. aarch64, x86_64).
+    #[serde(default)]
+    pub images: Vec<BundledImage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +46,19 @@ pub struct BundledRuntime {
     pub bin: String,
     #[serde(default)]
     pub npm_cli: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BundledImage {
+    pub id: String,
+    pub version: String,
+    pub os: String,
+    pub arch: String,
+    pub sha256: String,
+    // Path to the image tar, relative to CTX_BUNDLE_DIR.
+    pub tar: String,
+    // The image reference/tag the tar loads as (e.g. ghcr.io/ctxrs/ctx-harness:ubuntu-24.04).
+    pub image: String,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +91,10 @@ fn manifest_path(root: &Path) -> PathBuf {
 
 fn current_platform() -> (&'static str, &'static str) {
     (std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn current_arch() -> &'static str {
+    std::env::consts::ARCH
 }
 
 fn resolve_bundle_path(root: &Path, value: &str) -> Option<PathBuf> {
@@ -213,4 +234,33 @@ pub fn bundled_python_runtime() -> Option<BundledRuntimePaths> {
 
 pub fn bundled_podman_runtime() -> Option<BundledRuntimePaths> {
     bundled_runtime("podman")
+}
+
+pub fn bundled_image_tar(id: &str, os: &str, arch: &str) -> Option<PathBuf> {
+    let root = bundle_dir()?;
+    let manifest = load_manifest()?;
+    let entry = manifest
+        .images
+        .iter()
+        .find(|img| img.id == id && img.os == os && img.arch == arch)?;
+    resolve_bundle_path(&root, &entry.tar).or_else(|| {
+        let direct = root.join(&entry.tar);
+        direct.exists().then_some(direct)
+    })
+}
+
+pub fn bundled_ctx_harness_image_tar(expected_image: &str) -> Option<PathBuf> {
+    let manifest = load_manifest()?;
+    let arch = current_arch();
+    let entry = manifest.images.iter().find(|img| {
+        img.id == "ctx-harness"
+            && img.os == "linux"
+            && img.arch == arch
+            && img.image == expected_image
+    })?;
+    let root = bundle_dir()?;
+    resolve_bundle_path(&root, &entry.tar).or_else(|| {
+        let direct = root.join(&entry.tar);
+        direct.exists().then_some(direct)
+    })
 }

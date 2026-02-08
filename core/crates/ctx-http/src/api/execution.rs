@@ -52,6 +52,30 @@ pub(super) async fn prefetch_container_image(
         }));
     }
 
+    if !harness_runtime::is_default_container_image(&image) {
+        return Ok(Json(PrefetchContainerImageResp {
+            started: false,
+            image,
+            present: false,
+            available: true,
+            error: Some(
+                "container image prefetch is only supported for the default ctx-harness image; custom images must already exist in podman".to_string(),
+            ),
+        }));
+    }
+
+    if harness_runtime::bundled_default_container_image_tar().is_none() {
+        return Ok(Json(PrefetchContainerImageResp {
+            started: false,
+            image,
+            present: false,
+            available: true,
+            error: Some(
+                "default ctx-harness image is missing and no bundled image tar was found (CTX_BUNDLE_DIR not set?)".to_string(),
+            ),
+        }));
+    }
+
     // Fire-and-forget: prefetch is opportunistic and should not block UI flows.
     let image_clone = image.clone();
     tokio::spawn(async move {
