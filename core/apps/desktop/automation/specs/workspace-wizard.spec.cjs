@@ -199,6 +199,24 @@ const getWorkspace = async (id) => {
   return resp.payload;
 };
 
+const daemonOverlayText = async () => {
+  return await browser.execute(() => {
+    const el = document.querySelector(".daemon-overlay");
+    if (!el) return "";
+    const text = String(el.textContent || "").trim();
+    return text || "daemon overlay visible";
+  });
+};
+
+const assertNoDaemonOverlayFor = async (durationMs = 2000) => {
+  const started = Date.now();
+  while (Date.now() - started < durationMs) {
+    const text = await daemonOverlayText();
+    if (text) throw new Error(`daemon unavailable overlay rendered: ${text}`);
+    await browser.pause(100);
+  }
+};
+
 const waitForWorkspaceRoute = async () => {
   const timeoutMs = 120000;
   const started = Date.now();
@@ -207,10 +225,15 @@ const waitForWorkspaceRoute = async () => {
       const pathname = window.location.pathname;
       const errEl = document.querySelector(".wizard-error");
       const err = errEl ? String(errEl.textContent || "").trim() : "";
-      return { pathname, err };
+      const overlayEl = document.querySelector(".daemon-overlay");
+      const overlay = overlayEl ? String(overlayEl.textContent || "").trim() : "";
+      return { pathname, err, overlay };
     });
     if (state?.err) {
       throw new Error(`wizard create error: ${state.err}`);
+    }
+    if (state?.overlay) {
+      throw new Error(`daemon unavailable overlay rendered: ${state.overlay}`);
     }
     const p = String(state?.pathname || "");
     if (p.startsWith("/workspaces/")) {
@@ -360,6 +383,9 @@ const runWizardScenario = async (scenario) => {
   await clickCreate();
 
   const id = await waitForWorkspaceRoute();
+  // The workbench must never render the "daemon unavailable" overlay on first navigation.
+  // If connect_local returns before the daemon is reachable, this can flash briefly.
+  await assertNoDaemonOverlayFor(2000);
   return id;
 };
 

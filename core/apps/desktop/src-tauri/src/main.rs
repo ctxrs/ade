@@ -1138,7 +1138,10 @@ async fn desktop_connect_local(app: tauri::AppHandle) -> Result<DesktopConnectio
             state.set_local_external(url, token);
             return Ok(state.info());
         }
-        let (url, child, systemd_scope) = match spawn_daemon(&app, &data_dir, false) {
+        // Block until the daemon is actually reachable before returning. The workspace wizard
+        // applies the connection and navigates immediately after `desktop_connect_local` resolves;
+        // returning early causes the workbench to briefly render a "daemon unavailable" overlay.
+        let (url, child, systemd_scope) = match spawn_daemon(&app, &data_dir, true) {
             Ok(value) => value,
             Err(err) => {
                 if let Ok(Some((url, token))) = resolve_existing_local_daemon(&data_dir) {
@@ -1251,6 +1254,15 @@ fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) ->
     if !matches!(state.info().kind, DesktopConnectionKind::None) {
         return Ok(());
     }
+    // Multiple webview requests can race on cold start (overlay pollers, initial data loads, etc.).
+    // Serialize the "connect local" path so we don't concurrently spawn the daemon and trip the
+    // daemon's lockfile, which can surface as spurious "daemon unavailable" errors in the UI.
+    static LOCAL_CONNECT_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let mutex = LOCAL_CONNECT_MUTEX.get_or_init(|| std::sync::Mutex::new(()));
+    let _guard = mutex.lock().expect("local connect mutex poisoned");
+    if !matches!(state.info().kind, DesktopConnectionKind::None) {
+        return Ok(());
+    }
     let data_dir = daemon_data_dir(app)?;
     if let Some((url, token)) = resolve_env_local_daemon(app)? {
         probe_daemon_health(&url)?;
@@ -1264,11 +1276,17 @@ fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) ->
     let (url, child, systemd_scope) = match spawn_daemon(app, &data_dir, true) {
         Ok(value) => value,
         Err(err) => {
-            if let Some((url, token)) = resolve_existing_local_daemon(&data_dir)? {
-                state.set_local_external(url, token);
-                return Ok(());
-            }
-            return Err(err);
+            // This can happen if another thread already started the daemon but we raced before
+            // the auth file became visible or health was reachable. Retry by waiting for the auth
+            // file + health and then attaching as an external local connection.
+            let auth = read_daemon_auth_with_retry(&data_dir)
+                .with_context(|| format!("spawning local daemon failed: {err:#}"))?;
+            let Some(url) = auth.daemon_url.as_deref() else {
+                return Err(err).context("spawning local daemon failed (auth file missing daemon_url)");
+            };
+            probe_local_daemon_health_with_retry(url)?;
+            state.set_local_external(url.to_string(), auth.token);
+            return Ok(());
         }
     };
     let auth = read_daemon_auth_with_retry(&data_dir)?;
@@ -1283,7 +1301,12 @@ async fn desktop_daemon_request(
 ) -> Result<DesktopHttpResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<ConnectionManager>();
-        state.daemon_request(req).map_err(to_err)
+        let manager: &ConnectionManager = state.inner();
+        // Many UI paths (including initial app load to a workbench route) can issue daemon requests
+        // before explicitly calling `desktop_connect_local`. Auto-connect here to avoid spurious
+        // "daemon unavailable" overlays on cold start.
+        ensure_local_connection(&app, manager).map_err(to_err)?;
+        manager.daemon_request(req).map_err(to_err)
     })
     .await
     .map_err(|e| format!("daemon request failed: {e}"))?
