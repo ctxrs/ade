@@ -11,7 +11,7 @@ test("workbench: background updates land for non-visible active sessions", async
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   const rows = page.locator(".wb-task-row");
-  const activeSessionView = page.locator(".wb-session-slot[aria-hidden=\"false\"] .wb-session");
+  const activeSessionView = page.locator(".wb-session-slot[aria-hidden=\"false\"]");
   await expect(rows).toHaveCount(2);
 
   await rows.nth(0).click();
