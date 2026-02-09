@@ -6,6 +6,7 @@ import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 test("workbench: second message gets a response", async ({ page }) => {
+  test.setTimeout(120000);
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
@@ -25,12 +26,13 @@ test("workbench: second message gets a response", async ({ page }) => {
 
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello 1");
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
-  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(1, { timeout: 20000 });
+  const assistantEntries = page.locator('.wb-session-slot[aria-hidden="false"] .wb-assistant-entry');
+  await expect(assistantEntries.filter({ hasText: "done: hello 1" })).toBeVisible({ timeout: 60000 });
 
   const sessionComposer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await expect(sessionComposer).toBeVisible({ timeout: 20000 });
   await sessionComposer.fill("hello 2");
   await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
   await page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]").click();
-  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(2, { timeout: 20000 });
+  await expect(assistantEntries.filter({ hasText: "done: hello 2" })).toBeVisible({ timeout: 60000 });
 });

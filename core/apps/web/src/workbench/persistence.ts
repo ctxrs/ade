@@ -1,5 +1,5 @@
 import { getDaemonBaseUrl } from "../api/client";
-import { clearWorkbenchSelectionV1, loadWorkbenchSelectionV1, uiStateDelete, uiStateGet, uiStateSet } from "../state/uiStateStore";
+import { clearWorkbenchSelectionV1, loadWorkbenchSelectionV1, uiStateBatch, uiStateDelete, uiStateGet, uiStateSet } from "../state/uiStateStore";
 import { randomUuid } from "../utils/randomUuid";
 import type {
   LayoutNode,
@@ -312,6 +312,14 @@ export async function loadWorkbenchWindowV1(workspaceId: string, windowId: strin
 
 export async function saveWorkbenchWindowV1(workspaceId: string, windowId: string, win: PersistedWorkbenchWindowV1): Promise<void> {
   await uiStateSet(workbenchWindowKeyV1(workspaceId, windowId), win);
+}
+
+export async function saveWorkbenchWindowV1Immediate(
+  workspaceId: string,
+  windowId: string,
+  win: PersistedWorkbenchWindowV1,
+): Promise<void> {
+  await uiStateBatch([{ kind: "set", key: workbenchWindowKeyV1(workspaceId, windowId), value: win }]);
 }
 
 export async function deleteWorkbenchWindowV1(workspaceId: string, windowId: string): Promise<void> {

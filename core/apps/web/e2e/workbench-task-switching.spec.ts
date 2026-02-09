@@ -26,10 +26,12 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
     timeout: 20000,
   });
 
+  const activeThread = page.locator('.wb-session-slot[aria-hidden="false"] .wb-thread-scroller');
+
   const msg1 = `task one marker ${Date.now()}`;
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(msg1);
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
-  await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: `done: ${msg1}` })).toBeVisible({ timeout: 20000 });
+  await expect(activeThread).toContainText(msg1, { timeout: 20000 });
   const url1 = new URL(page.url());
   expect(url1.searchParams.get("task")).toBeNull();
   expect(url1.searchParams.get("track")).toBeNull();
@@ -47,7 +49,7 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
   const msg2 = `task two marker ${Date.now()}`;
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(msg2);
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
-  await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: `done: ${msg2}` })).toBeVisible({ timeout: 20000 });
+  await expect(activeThread).toContainText(msg2, { timeout: 20000 });
   const url2 = new URL(page.url());
   expect(url2.searchParams.get("task")).toBeNull();
   expect(url2.searchParams.get("track")).toBeNull();
@@ -60,14 +62,14 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
   const olderTaskRow = taskRows.nth(1);
 
   await olderTaskRow.click();
-  await expect(page.locator(".wb-session")).toContainText(`done: ${msg1}`, { timeout: 20000 });
+  await expect(activeThread).toContainText(msg1, { timeout: 20000 });
 
   await newestTaskRow.click();
-  await expect(page.locator(".wb-session")).toContainText(`done: ${msg2}`, { timeout: 20000 });
+  await expect(activeThread).toContainText(msg2, { timeout: 20000 });
 
   // Refresh should restore the same selection from IndexedDB (window-scoped).
   await page.reload();
-  await expect(page.locator(".wb-session")).toContainText(`done: ${msg2}`, { timeout: 20000 });
+  await expect(activeThread).toContainText(msg2, { timeout: 20000 });
   const urlAfterReload = new URL(page.url());
   expect(urlAfterReload.searchParams.get("task")).toBeNull();
   expect(urlAfterReload.searchParams.get("track")).toBeNull();

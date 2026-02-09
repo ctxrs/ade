@@ -1,8 +1,9 @@
 import { test, expect } from "./fixtures";
-import { mkdtempSync, realpathSync, writeFileSync } from "fs";
+import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
+import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 async function createWorkspaceAndStartRun(opts: {
   page: any;
@@ -12,24 +13,12 @@ async function createWorkspaceAndStartRun(opts: {
   prompt: string;
 }) {
   const { page, repo, workspaceName, prompt, request } = opts;
-  const resolvePath = (value: string) => {
-    try {
-      return typeof realpathSync.native === "function" ? realpathSync.native(value) : realpathSync(value);
-    } catch {
-      return path.resolve(value);
-    }
-  };
-  const repoPath = resolvePath(repo);
-
-  await page.goto("/");
-  await page.getByLabel("Root path").fill(repo);
-  await page.getByLabel("Name (optional)").fill(workspaceName);
-  await page.getByRole("button", { name: "Add workspace" }).click();
-  await page
-    .getByRole("listitem")
-    .filter({ hasText: repo })
-    .getByRole("link", { name: workspaceName })
-    .click();
+  const workspaceId = await createWorkspaceAndOpenWorkbench({
+    page,
+    request,
+    repo,
+    workspaceName,
+  });
 
   // Choose Fake harness so the test doesn't depend on external agents.
   await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
@@ -43,21 +32,6 @@ async function createWorkspaceAndStartRun(opts: {
   await expect(sessionComposer).toBeVisible({ timeout: 20_000 });
 
   const readId = (v: any): string => (typeof v === "string" ? v : "");
-
-  let workspaceId = "";
-  await expect
-    .poll(
-      async () => {
-        const workspacesResp = await request.get("/api/workspaces");
-        if (!workspacesResp.ok()) return "";
-        const workspaces = (await workspacesResp.json()) as any[];
-        const ws = workspaces.find((w) => resolvePath(String(w?.root_path ?? "")) === repoPath);
-        workspaceId = readId(ws?.id);
-        return workspaceId;
-      },
-      { timeout: 20_000 }
-    )
-    .not.toBe("");
 
   let taskId = "";
   let sessionId = "";
@@ -92,6 +66,30 @@ async function createWorkspaceAndStartRun(opts: {
   expect(worktreeRoot).toBeTruthy();
 
   return { sessionId, worktreeRoot };
+}
+
+async function waitForSessionCompletion(opts: { request: any; sessionId: string; timeoutMs?: number }) {
+  const { request, sessionId, timeoutMs = 30_000 } = opts;
+  await expect
+    .poll(
+      async () => {
+        const resp = await request.get(`/api/sessions/${sessionId}/snapshot?include_events=1&limit=60`);
+        if (!resp.ok()) return "";
+        const data = (await resp.json()) as any;
+        const summaryStatus = data?.summary?.activity?.last_turn_status ?? null;
+        if (summaryStatus && !["running", "queued"].includes(String(summaryStatus))) return "done";
+        const head = data?.head ?? {};
+        const headStatus = head?.activity?.last_turn_status ?? null;
+        if (headStatus && !["running", "queued"].includes(String(headStatus))) return "done";
+        const turns = Array.isArray(head.turns) ? head.turns : [];
+        const lastTurn = turns[turns.length - 1];
+        const lastStatus = lastTurn?.status ?? null;
+        if (lastStatus && !["running", "queued"].includes(String(lastStatus))) return "done";
+        return "";
+      },
+      { timeout: timeoutMs },
+    )
+    .not.toBe("");
 }
 
 test("workbench: diff updates mid-turn", async ({ page, request }) => {
@@ -141,9 +139,7 @@ test("workbench: diff updates for manual edits while idle", async ({ page, reque
     prompt: taskTitle,
   });
 
-  await expect(page.locator(".wb-session .wb-assistant-entry").filter({ hasText: `done: ${taskTitle}` })).toBeVisible({
-    timeout: 20_000,
-  });
+  await waitForSessionCompletion({ request, sessionId });
 
   // Simulate user editing the worktree outside the agent.
   writeFileSync(path.join(worktreeRoot, "file.txt"), "hello\nchanged while idle\n");

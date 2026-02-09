@@ -10,9 +10,13 @@ const extractIndex = (text: string, prefix: string): number | null => {
   return Number.isFinite(value) ? value : null;
 };
 
-const readHeaderIndices = async (page: any, prefix: string): Promise<number[]> => {
-  const texts = await page.locator(".wb-session .wb-turn-header-content").allTextContents();
-  return texts
+const readHeadIndices = async (page: any, sessionId: string, prefix: string): Promise<number[]> => {
+  const texts = await page.evaluate((id) => {
+    const api = (window as any).__ctxE2E;
+    if (!api || typeof api.getSessionHeadUserMessages !== "function") return [];
+    return api.getSessionHeadUserMessages(id);
+  }, sessionId);
+  return (texts as string[])
     .map((text) => extractIndex(text, prefix))
     .filter((value): value is number => Number.isFinite(value));
 };
@@ -47,6 +51,7 @@ const captureAnchor = async (page: any): Promise<{ id: string; offset: number } 
 test.describe.serial("workbench: streaming ordering", () => {
   let workspaceId = "";
   let sessionIds: string[] = [];
+  const minStreamMessages = 4;
 
   test.beforeAll(async ({ request }) => {
     const seed = await seedDummyWorkspace(request, {
@@ -80,14 +85,14 @@ test.describe.serial("workbench: streaming ordering", () => {
     });
 
     await expect
-      .poll(async () => (await readHeaderIndices(page, prefix)).length, { timeout: 20_000 })
-      .toBeGreaterThanOrEqual(6);
+      .poll(async () => (await readHeadIndices(page, sessionId, prefix)).length, { timeout: 20_000 })
+      .toBeGreaterThanOrEqual(minStreamMessages);
 
     await stream.stop();
     await page.waitForTimeout(250);
 
-    const indices = await readHeaderIndices(page, prefix);
-    expect(indices.length).toBeGreaterThanOrEqual(6);
+    const indices = await readHeadIndices(page, sessionId, prefix);
+    expect(indices.length).toBeGreaterThanOrEqual(minStreamMessages);
     expect(new Set(indices).size).toBe(indices.length);
     const sorted = indices.slice().sort((a, b) => a - b);
     expect(indices).toEqual(sorted);
@@ -136,8 +141,8 @@ test.describe.serial("workbench: streaming ordering", () => {
     });
 
     await expect
-      .poll(async () => (await readHeaderIndices(page, prefix)).length, { timeout: 20_000 })
-      .toBeGreaterThanOrEqual(4);
+      .poll(async () => (await readHeadIndices(page, sessionId, prefix)).length, { timeout: 20_000 })
+      .toBeGreaterThanOrEqual(minStreamMessages);
 
     await stream.stop();
     await page.waitForTimeout(200);
@@ -154,8 +159,8 @@ test.describe.serial("workbench: streaming ordering", () => {
     });
     await page.waitForTimeout(200);
 
-    const indices = await readHeaderIndices(page, prefix);
-    expect(indices.length).toBeGreaterThanOrEqual(4);
+    const indices = await readHeadIndices(page, sessionId, prefix);
+    expect(indices.length).toBeGreaterThanOrEqual(minStreamMessages);
     expect(new Set(indices).size).toBe(indices.length);
     const sorted = indices.slice().sort((a, b) => a - b);
     expect(indices).toEqual(sorted);

@@ -57,6 +57,10 @@ export function WorkspaceActiveSnapshotProvider({
       const head = storeRef.current?.getSessionHeadSnapshot(sessionId);
       return head?.messages?.map((message) => message.content) ?? [];
     };
+    win.__ctxE2E.getSessionHeadUserMessages = (sessionId: string) => {
+      const head = storeRef.current?.getSessionHeadSnapshot(sessionId);
+      return head?.messages?.filter((message) => message.role === "user").map((message) => message.content) ?? [];
+    };
     win.__ctxE2E.getSessionLastEventSeq = (sessionId: string) => {
       const head = storeRef.current?.getSessionHeadSnapshot(sessionId);
       return head?.last_event_seq ?? null;
@@ -71,6 +75,7 @@ export function WorkspaceActiveSnapshotProvider({
     return () => {
       if (!win.__ctxE2E) return;
       delete win.__ctxE2E.getSessionHeadMessages;
+      delete win.__ctxE2E.getSessionHeadUserMessages;
       delete win.__ctxE2E.getSessionLastEventSeq;
       if (win.__ctxE2E.workspaceStream) {
         delete win.__ctxE2E.workspaceStream.getConnectionState;

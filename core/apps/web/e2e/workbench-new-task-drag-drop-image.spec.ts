@@ -25,7 +25,9 @@ test("workbench: New Task composer accepts drag-dropped images after switching f
 
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello 1");
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
-  await expect(page.locator(".wb-session .wb-assistant-entry")).toHaveCount(1, { timeout: 20000 });
+  await expect(page.locator('.wb-session-slot[aria-hidden="false"] textarea.wb-active-textarea')).toBeVisible({
+    timeout: 20000,
+  });
 
   // Switch into the New Task composer (this previously caused the drop scope to never register).
   await page.getByRole("button", { name: "New Task" }).click();

@@ -33,7 +33,7 @@ export function WorkbenchSessionSlot({
     [sessionId, workbenchStore],
   );
 
-  const onScrollStateChange = active || preserveScrollOnFocus ? handleScrollStateChange : null;
+  const onScrollStateChange = active ? handleScrollStateChange : null;
 
   return (
     <div

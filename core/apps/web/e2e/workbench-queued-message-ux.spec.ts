@@ -79,7 +79,8 @@ test("workbench: queued sends do not flash optimistic turn and queue panel clear
   await queueMessage(page, queuedText);
 
   // Queued sends should not appear as an optimistic/pending turn before the server acknowledges them.
-  await expect(page.locator(".wb-session")).not.toContainText(queuedText, { timeout: 1200 });
+  const threadScroller = page.locator('.wb-session-slot[aria-hidden="false"] .wb-thread-scroller');
+  await expect(threadScroller).not.toContainText(queuedText, { timeout: 1200 });
 
   const queuePanel = page.locator(".wb-session .queue-panel");
   await expect(queuePanel).toBeVisible({ timeout: 20_000 });

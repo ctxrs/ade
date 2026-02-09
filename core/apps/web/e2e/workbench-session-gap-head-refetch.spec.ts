@@ -30,14 +30,14 @@ test("workbench: session_gap only refetches the affected session head", async ({
   const rowB = rows.filter({ hasText: "fixture task 2" });
   await expect(rowA).toHaveCount(1);
   await expect(rowB).toHaveCount(1);
-  await Promise.all([
-    page.waitForResponse((resp) => resp.url().includes(`/api/sessions/${sessionIdA}/head`)),
-    rowA.click(),
-  ]);
-  await Promise.all([
-    page.waitForResponse((resp) => resp.url().includes(`/api/sessions/${sessionIdB}/head`)),
-    rowB.click(),
-  ]);
+  await rowA.click();
+  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
+    timeout: 20000,
+  });
+  await rowB.click();
+  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
+    timeout: 20000,
+  });
 
   await expect
     .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))

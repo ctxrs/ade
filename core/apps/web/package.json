@@ -16,6 +16,7 @@
     "test:quiet": "vitest run --silent --reporter=dot",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:list": "playwright test --list",
     "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile .turbo/tsbuildinfo/apps-web.tsbuildinfo"
   },
   "dependencies": {

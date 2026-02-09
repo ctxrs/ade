@@ -772,13 +772,62 @@ export function SessionView({
     isActive,
     loaded: Boolean(entry?.stateLoaded),
     listItems,
+    scrollState,
     canLoadOlder: Boolean(id && hasMoreTurns),
-    loadOlder: () => (id ? supervisor.loadMoreTurns(id).then(() => {}) : Promise.resolve()),
+    loadOlder: async () => {
+      if (!id) return;
+      await supervisor.loadMoreTurns(id);
+    },
     showDebug,
     onAtBottomChange: setAtBottom,
+    onScrollStateChange: onScrollStateChange ?? undefined,
   });
 
   // MessageList integration is now handled by `useSessionMessageListController`.
+
+  const listItemsRef = useRef(listItems);
+  listItemsRef.current = listItems;
+  const restoreTokenRef = useRef(0);
+  const wasActiveRef = useRef(false);
+  useLayoutEffect(() => {
+    if (!isActive) {
+      wasActiveRef.current = false;
+      restoreTokenRef.current += 1;
+      return;
+    }
+    if (wasActiveRef.current) return;
+    wasActiveRef.current = true;
+    const token = (restoreTokenRef.current += 1);
+    if (!scrollState || scrollState.stickToBottom) return;
+    const applyScroll = (attempts: number) => {
+      if (restoreTokenRef.current !== token) return;
+      const methods = messageListMethodsRef.current;
+      if (!methods) {
+        if (attempts < 6) requestAnimationFrame(() => applyScroll(attempts + 1));
+        return;
+      }
+      const scroller = methods.scrollerElement?.() ?? null;
+      if (scroller && scrollState.scrollTop != null) {
+        const delta = Math.abs(scroller.scrollTop - scrollState.scrollTop);
+        if (delta <= 2) return;
+      }
+      const anchorId = scrollState.anchorItemId;
+      const anchorOffset = scrollState.anchorOffset;
+      if (anchorId && anchorOffset != null) {
+        const index = listItemsRef.current.findIndex((item) => item.id === anchorId);
+        if (index >= 0) {
+          methods.scrollToItem({ index, align: "start", behavior: "instant", offset: anchorOffset });
+          return;
+        }
+      }
+      if (scroller && scrollState.scrollTop != null) {
+        scroller.scrollTop = scrollState.scrollTop;
+        return;
+      }
+      if (attempts < 6) requestAnimationFrame(() => applyScroll(attempts + 1));
+    };
+    applyScroll(0);
+  }, [isActive, scrollState, messageListMethodsRef]);
 
   const authUi = useMemo(() => deriveAuthUi(events), [eventsKey]);
   const providerGuardMemoryLimitMb =

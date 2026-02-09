@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -58,6 +58,7 @@ struct RunningTurn {
     run_id: RunId,
     turn_id: TurnId,
     event_tx: mpsc::Sender<NormalizedEvent>,
+    events_done: Option<oneshot::Receiver<()>>,
 }
 
 fn provider_mode_id_for(
@@ -300,17 +301,60 @@ pub async fn session_worker(
                     let _ = (&mut turn.handle.done).await;
                 }
             }, if running.is_some() => {
-                if let Some(turn) = running.take() {
-                    // If the provider process exits without emitting a terminal event, the turn
-                    // would otherwise stay stuck in `Running` forever (UI shows "Working").
-                    let _ = reconcile_turn_failed_on_provider_exit(
-                        &state,
-                        session.id,
-                        Some(turn.run_id),
-                        turn.turn_id,
-                        "provider_exit",
-                    )
-                    .await;
+                if let Some(mut turn) = running.take() {
+                    drop(turn.event_tx);
+                    if let Some(mut events_done) = turn.events_done.take() {
+                        let session_id = session.id;
+                        let run_id = turn.run_id;
+                        let turn_id = turn.turn_id;
+                        let state_for_reconcile = Arc::clone(&state);
+                        let events_flushed = tokio::select! {
+                            _ = &mut events_done => true,
+                            _ = tokio::time::sleep(Duration::from_secs(2)) => false,
+                        };
+                        if events_flushed {
+                            let _ = reconcile_turn_failed_on_provider_exit(
+                                &state_for_reconcile,
+                                session_id,
+                                Some(run_id),
+                                turn_id,
+                                "provider_exit",
+                            )
+                            .await;
+                        } else {
+                            tracing::debug!(
+                                session_id = %session_id.0,
+                                run_id = %run_id.0,
+                                turn_id = %turn_id.0,
+                                "event loop still draining after provider exit; deferring reconciliation"
+                            );
+                            tokio::spawn(async move {
+                                tokio::select! {
+                                    _ = &mut events_done => (),
+                                    _ = tokio::time::sleep(Duration::from_secs(15)) => (),
+                                };
+                                let _ = reconcile_turn_failed_on_provider_exit(
+                                    &state_for_reconcile,
+                                    session_id,
+                                    Some(run_id),
+                                    turn_id,
+                                    "provider_exit",
+                                )
+                                .await;
+                            });
+                        }
+                    } else {
+                        // If the provider process exits without emitting a terminal event, the
+                        // turn would otherwise stay stuck in `Running` forever (UI shows "Working").
+                        let _ = reconcile_turn_failed_on_provider_exit(
+                            &state,
+                            session.id,
+                            Some(turn.run_id),
+                            turn.turn_id,
+                            "provider_exit",
+                        )
+                        .await;
+                    }
                 }
                 state.set_running(session.id, false).await;
             }
@@ -459,6 +503,7 @@ async fn start_turn(
         compute_context_window_metrics(&session.provider_id, &session.model_id, &prompt);
 
     let (ev_tx, mut ev_rx) = mpsc::channel::<NormalizedEvent>(128);
+    let (events_done_tx, events_done_rx) = oneshot::channel();
     let event_tx = ev_tx.clone();
 
     let mut provider_env = std::collections::HashMap::new();
@@ -1475,6 +1520,7 @@ async fn start_turn(
                 }
             }
         }
+        let _ = events_done_tx.send(());
     });
 
     Ok(RunningTurn {
@@ -1483,6 +1529,7 @@ async fn start_turn(
         run_id,
         turn_id,
         event_tx,
+        events_done: Some(events_done_rx),
     })
 }
 

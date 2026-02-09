@@ -96,28 +96,38 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
     })
     .toBeLessThanOrEqual(16);
 
-  const maxTop = await scroller.evaluate((el) => el.scrollHeight - el.clientHeight);
   await scroller.hover();
-  let scrollBefore: number | null = null;
-  for (let i = 0; i < 12; i++) {
-    await page.mouse.wheel(0, -120);
-    await page.waitForTimeout(120);
-    const top = await scroller.evaluate((el) => el.scrollTop);
-    if (top < maxTop - 4) {
-      scrollBefore = top;
-      break;
-    }
-  }
-  expect(scrollBefore).not.toBeNull();
+  await scroller.evaluate((el) => {
+    const target = Math.max(0, el.scrollHeight - el.clientHeight - 400);
+    el.scrollTop = target;
+  });
+  await expect
+    .poll(async () => scroller.evaluate((el) => el.scrollHeight - (el.scrollTop + el.clientHeight)), {
+      timeout: 10000,
+    })
+    .toBeGreaterThan(200);
+  const scrollBefore = await scroller.evaluate((el) => el.scrollTop);
+  const jumpToLatest = page.getByRole("button", { name: "Jump to latest" });
+  await expect(jumpToLatest).toBeVisible({ timeout: 20000 });
 
   const incoming = `incoming-${Date.now()}`;
   await request.post(`/api/sessions/${sessionId}/messages`, {
     data: { content: incoming, delivery: "immediate" },
   });
-
-  const incomingHeader = page.locator(".wb-turn-header-content").filter({ hasText: incoming });
-  await expect(incomingHeader).toBeVisible({ timeout: 20000 });
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(({ id, text }) => {
+          const api = (window as any).__ctxE2E;
+          return api?.getSessionHeadUserMessages?.(id)?.includes(text) ?? false;
+        }, { id: sessionId, text: incoming }),
+      { timeout: 20000 },
+    )
+    .toBe(true);
 
   const scrollAfter = await scroller.evaluate((el) => el.scrollTop);
-  expect(Math.abs(scrollAfter - (scrollBefore as number))).toBeLessThanOrEqual(32);
+  expect(Math.abs(scrollAfter - scrollBefore)).toBeLessThanOrEqual(32);
+
+  await jumpToLatest.click();
+  await expect(page.locator(".wb-session")).toContainText(incoming, { timeout: 20000 });
 });

@@ -66,6 +66,7 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
         <VirtuosoMessageList<WorkbenchListItem, WorkbenchMessageListContext>
           ref={listRef}
           style={virtuosoStyle}
+          className="wb-thread-scroller"
           role="list"
           context={context}
           itemIdentity={itemIdentity}

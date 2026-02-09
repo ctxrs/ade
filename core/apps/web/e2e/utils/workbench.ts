@@ -27,6 +27,14 @@ export async function createWorkspaceAndOpenWorkbench(opts: CreateWorkspaceArgs)
 
   const url = token ? `/workspaces?token=${encodeURIComponent(token)}&desktop_ui=1` : "/workspaces";
   await page.goto(url);
+  const rootPathField = page.getByLabel("Root path");
+  if (!(await rootPathField.isVisible().catch(() => false))) {
+    const newWorkspaceButton = page.getByRole("button", { name: "New Workspace" });
+    if (await newWorkspaceButton.isVisible().catch(() => false)) {
+      await newWorkspaceButton.click();
+    }
+  }
+  await expect(rootPathField).toBeVisible({ timeout: 20_000 });
   await page.getByLabel("Root path").fill(repo);
   await page.getByLabel("Name (optional)").fill(workspaceName);
   await page.getByRole("button", { name: "Add workspace" }).click();

@@ -5,13 +5,39 @@ import type { LayoutNode, PersistedWorkbenchWindowV1, WorkbenchDraft, WorkbenchS
 import {
   loadWorkbenchDraftV1,
   loadWorkbenchWindowV1,
+  decodePersistedWorkbenchWindowV1,
   migrateLegacySelectionToWindowV1,
   saveWorkbenchDraftV1,
   saveWorkbenchWindowV1,
+  saveWorkbenchWindowV1Immediate,
   workbenchDaemonKey,
 } from "./persistence";
 
 const WINDOW_ID_STORAGE_KEY = "contextUiWindowId.v1";
+const WINDOW_SESSION_STORAGE_PREFIX = "wb.window.session.v1";
+
+function sessionWindowKeyV1(workspaceId: string, windowId: string): string {
+  return `${WINDOW_SESSION_STORAGE_PREFIX}.${workspaceId}.${windowId}`;
+}
+
+function readSessionWindowV1(workspaceId: string, windowId: string): PersistedWorkbenchWindowV1 | null {
+  try {
+    const raw = sessionStorage.getItem(sessionWindowKeyV1(workspaceId, windowId));
+    if (!raw) return null;
+    return decodePersistedWorkbenchWindowV1(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionWindowV1(workspaceId: string, windowId: string, win: PersistedWorkbenchWindowV1) {
+  try {
+    sessionStorage.setItem(sessionWindowKeyV1(workspaceId, windowId), JSON.stringify(win));
+  } catch {
+    // ignore
+  }
+}
+
 const SCROLL_CACHE_LIMIT = 2;
 export const NEW_TASK_DRAFT_KEY = "new_task";
 
@@ -24,14 +50,46 @@ export function scrollKey(sessionId: string): string {
 }
 
 function getOrCreateWindowId(): string {
+  const windowNamePrefix = "ctx-ui-window-id:";
+  const readWindowName = (): string | null => {
+    try {
+      if (typeof window === "undefined") return null;
+      const name = String(window.name ?? "");
+      if (!name.startsWith(windowNamePrefix)) return null;
+      const id = name.slice(windowNamePrefix.length).trim();
+      return id || null;
+    } catch {
+      return null;
+    }
+  };
+  const writeWindowName = (id: string) => {
+    try {
+      if (typeof window === "undefined") return;
+      const name = String(window.name ?? "");
+      if (name && !name.startsWith(windowNamePrefix)) return;
+      window.name = `${windowNamePrefix}${id}`;
+    } catch {
+      // ignore
+    }
+  };
   try {
     const existing = sessionStorage.getItem(WINDOW_ID_STORAGE_KEY);
     if (existing && existing.trim()) return existing;
+    const fromName = readWindowName();
+    if (fromName) {
+      sessionStorage.setItem(WINDOW_ID_STORAGE_KEY, fromName);
+      return fromName;
+    }
     const created = randomUuid();
     sessionStorage.setItem(WINDOW_ID_STORAGE_KEY, created);
+    writeWindowName(created);
     return created;
   } catch {
-    return randomUuid();
+    const fromName = readWindowName();
+    if (fromName) return fromName;
+    const created = randomUuid();
+    writeWindowName(created);
+    return created;
   }
 }
 
@@ -140,6 +198,9 @@ export class WorkbenchStore {
   private draftLoadsInFlight = new Map<string, Promise<void>>();
   private channel: BroadcastChannel | null = null;
   private layoutDirtyBeforeHydrate = false;
+  // If we successfully seeded from sessionStorage, that value is typically newer than IndexedDB due to
+  // debounced persistence. Avoid a post-reload "snap back" when hydrate completes.
+  private seededFromSessionStorage = false;
   private shellSnapshotCache: {
     window: PersistedWorkbenchWindowV1;
     warnings: string[];
@@ -159,6 +220,12 @@ export class WorkbenchStore {
       window: defaultWindowState(),
       drafts: { byKey: {}, loadedKeys: {} },
     };
+
+    const sessionWindow = readSessionWindowV1(workspaceId, windowId);
+    if (sessionWindow) {
+      this.snapshot = { ...this.snapshot, window: sessionWindow };
+      this.seededFromSessionStorage = true;
+    }
   }
 
   subscribe = (listener: WorkbenchStoreListener): (() => void) => {
@@ -234,6 +301,7 @@ export class WorkbenchStore {
     opts?: { skipPersist?: boolean; persistDelayMs?: number },
   ) {
     this.snapshot = { ...this.snapshot, window: next };
+    writeSessionWindowV1(this.snapshot.workspaceId, this.snapshot.windowId, next);
     this.publish();
     if (!opts?.skipPersist) this.schedulePersistWindow(opts?.persistDelayMs);
   }
@@ -242,10 +310,19 @@ export class WorkbenchStore {
     if (!this.persistEnabled) return;
     if (this.persistTimer) window.clearTimeout(this.persistTimer);
     const waitMs = Math.max(0, Math.min(5_000, typeof delayMs === "number" ? delayMs : 250));
+    if (waitMs === 0) {
+      const { workspaceId, windowId, window } = this.snapshot;
+      saveWorkbenchWindowV1Immediate(workspaceId, windowId, window).catch((e: any) => {
+        this.persistEnabled = false;
+        this.snapshot = { ...this.snapshot, persistEnabled: false };
+        this.addWarning(`Workbench persistence disabled: ${e?.message ?? String(e)}`);
+      });
+      return;
+    }
     this.persistTimer = window.setTimeout(() => {
       this.persistTimer = null;
       const { workspaceId, windowId, window } = this.snapshot;
-      saveWorkbenchWindowV1(workspaceId, windowId, window).catch((e: any) => {
+      saveWorkbenchWindowV1Immediate(workspaceId, windowId, window).catch((e: any) => {
         this.persistEnabled = false;
         this.snapshot = { ...this.snapshot, persistEnabled: false };
         this.addWarning(`Workbench persistence disabled: ${e?.message ?? String(e)}`);
@@ -257,7 +334,7 @@ export class WorkbenchStore {
     const { workspaceId, windowId } = this.snapshot;
     try {
       const loaded = await loadWorkbenchWindowV1(workspaceId, windowId);
-      if (loaded && !this.layoutDirtyBeforeHydrate) {
+      if (loaded && !this.layoutDirtyBeforeHydrate && !this.seededFromSessionStorage) {
         this.snapshot = { ...this.snapshot, window: loaded };
       }
       if (!this.layoutDirtyBeforeHydrate) {

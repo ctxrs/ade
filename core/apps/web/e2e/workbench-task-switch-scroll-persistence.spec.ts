@@ -9,7 +9,9 @@ async function addLongMessages(request: any, sessionId: string) {
     await request.post(`/api/sessions/${sessionId}/messages`, {
       data: { content: `${longText}\nblock ${i + 1}`, delivery: "immediate" },
     });
+    await new Promise((r) => setTimeout(r, 25));
   }
+  await new Promise((r) => setTimeout(r, 400));
 }
 
 test("workbench: keeps session slots mounted across task switches", async ({ page, request }) => {
@@ -71,9 +73,9 @@ test("workbench: keeps session slots mounted across task switches", async ({ pag
 
   await scroller.hover();
   let scrollBefore: { top: number; height: number; client: number; remaining: number } | null = null;
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 40; i++) {
     await page.mouse.wheel(0, -120);
-    await page.waitForTimeout(150);
+    await page.waitForTimeout(100);
     const snapshot = await scroller.evaluate((el) => {
       const top = el.scrollTop;
       const height = el.scrollHeight;

@@ -6,9 +6,10 @@
     "test": "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} cargo test -q && pnpm -C apps/web test",
     "test:agent": "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} cargo test -q -p ctx-core -p ctx-providers -p ctx-http -p ctx-mcp -p ctx-lsp && pnpm -C apps/web test:quiet",
     "test:e2e": "pnpm -C apps/web test:e2e",
-    "test:providers:e2e": "cargo test -p ctx-providers --test real_acp_e2e -- --ignored --nocapture --test-threads=1",
-    "test:providers:e2e:runner": "cargo test -p ctx-http --test provider_runner_acp_e2e -- --ignored --nocapture --test-threads=1",
-    "test:providers:tokens": "CTX_E2E_TIER=tokens cargo test -p ctx-http --test acp_crp_bridge_tokens_e2e -- --ignored --nocapture --test-threads=1",
+    "test:e2e:list": "pnpm -C apps/web test:e2e:list",
+    "test:providers:e2e": "bash -lc 'scripts/providers_e2e.sh e2e'",
+    "test:providers:e2e:runner": "bash -lc 'scripts/providers_e2e.sh runner'",
+    "test:providers:tokens": "bash -lc 'scripts/providers_e2e.sh tokens'",
     "coverage:daemon": "mkdir -p coverage && CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=${CARGO_TARGET_DIR_COVERAGE:-$PWD/target/llvm-cov} cargo llvm-cov --workspace --lcov --output-path coverage/daemon.lcov",
     "coverage:web": "pnpm -C apps/web test:coverage",
     "coverage": "pnpm coverage:daemon && pnpm coverage:web",
@@ -25,7 +26,9 @@
     "crp:codex": "bash -lc '../scripts/build_codex_crp.sh'",
     "crp:codex:test": "bash -lc 'cd ../external-harnesses/codex/codex-rs && cargo test -q -p codex-crp replay_golden_tests && cargo test -q -p codex-crp reasoning_summary_state_tests'",
     "crp:claude": "bash -lc '../scripts/build_claude_crp.sh'",
-    "verify:quick": "turbo run rust:fmt rust:clippy rust:test crp:codex:test supabase:migrations:check supabase:functions:check --filter=ctx-monorepo --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only --log-order=grouped --concurrency=4 --ui=stream --cache=local:rw"
+    "verify:quick": "turbo run rust:fmt rust:clippy rust:test crp:codex:test supabase:migrations:check supabase:functions:check --filter=ctx-monorepo --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only --log-order=grouped --concurrency=4 --ui=stream --cache=local:rw",
+    "verify:e2e": "pnpm test:e2e",
+    "verify:nightly": "pnpm verify:e2e && pnpm test:providers:e2e && pnpm test:providers:e2e:runner"
   },
   "devDependencies": {
     "@supabase/supabase-js": "2.49.1",

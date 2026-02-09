@@ -39,6 +39,7 @@ export function useSessionEntry(sessionId: string): SessionCacheEntry | null {
 
 export function useOpenSession(sessionId: string, opts?: OpenOptions) {
   const sup = useSessionSupervisor();
+  const isOptimisticSessionId = useMemo(() => String(sessionId || "").startsWith("optimistic-session-"), [sessionId]);
   const stableOpts = useMemo(
     () => ({
       watchDiff: opts?.watchDiff ?? false,
@@ -49,6 +50,7 @@ export function useOpenSession(sessionId: string, opts?: OpenOptions) {
   );
   useEffect(() => {
     if (!sessionId) return;
+    if (isOptimisticSessionId) return;
     return sup.openSession(String(sessionId), stableOpts);
-  }, [sup, sessionId, stableOpts]);
+  }, [sup, sessionId, stableOpts, isOptimisticSessionId]);
 }

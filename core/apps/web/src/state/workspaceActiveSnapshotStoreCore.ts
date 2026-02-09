@@ -396,7 +396,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private subscribedSessionIds: string[] = [];
   private activeSessionIds: string[] = [];
   private foregroundTaskId: string | null = null;
-  private foregroundTaskTimer: number | null = null;
+  private foregroundTaskTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private activeOrder: string[] = [];
   private archivedOrder: string[] = [];
   private totalActive = 0;
@@ -523,12 +523,20 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (!this.e2eEnabled) return;
     if (this.worker) {
       this.postWorkerCommand({ type: "e2e_close_stream" });
+      if (this.snapshot.connection !== "disconnected") {
+        this.snapshot.connection = "disconnected";
+        this.publish();
+      }
       return;
     }
     try {
       this.ws?.close();
     } catch {
       // ignore
+    }
+    if (this.snapshot.connection !== "disconnected") {
+      this.snapshot.connection = "disconnected";
+      this.publish();
     }
   };
 

@@ -3,11 +3,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
-
-const getWorkspaceIdFromUrl = (url: string): string => {
-  const parts = new URL(url).pathname.split("/").filter(Boolean);
-  return parts[parts.length - 1] ?? "";
-};
+import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 const readId = (v: any): string => (typeof v === "string" ? v : "");
 
@@ -25,15 +21,12 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
 
   const workspaceName = `ws-${Date.now()}`;
 
-  await page.goto("/");
-  await page.getByLabel("Root path").fill(repo);
-  await page.getByLabel("Name (optional)").fill(workspaceName);
-  await page.getByRole("button", { name: "Add workspace" }).click();
-  await page
-    .getByRole("listitem")
-    .filter({ hasText: repo })
-    .getByRole("link", { name: workspaceName })
-    .click();
+  const workspaceId = await createWorkspaceAndOpenWorkbench({
+    page,
+    request: page.request,
+    repo,
+    workspaceName,
+  });
 
   // Choose Fake harness so the test doesn't depend on external agents.
   await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
@@ -47,7 +40,6 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(prompt);
   await page.locator('.wb-new-composer-stack button[aria-label="Send"]').click();
 
-  const workspaceId = getWorkspaceIdFromUrl(page.url());
   expect(workspaceId).not.toBe("");
 
   let sessionIdValue = "";

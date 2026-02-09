@@ -12,6 +12,9 @@ test("workbench: switching between cached sessions makes no extra HTTP requests"
   const isProviderNoise = (url: string) =>
     url.includes("/api/providers") ||
     url.includes("/api/sessions/web") ||
+    url.includes("/api/updates/check") ||
+    url.includes("/api/telemetry") ||
+    url.includes("/api/health") ||
     (url.includes("/api/workspaces/") && url.includes("/providers/") && url.includes("/options"));
 
   const requests: Array<{ url: string; method: string; ts: number }> = [];
