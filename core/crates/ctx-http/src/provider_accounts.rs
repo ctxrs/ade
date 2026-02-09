@@ -177,10 +177,10 @@ pub fn normalize_label(label: Option<String>, account_id: &str) -> String {
 mod tests {
     use super::*;
 
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner())
+    async fn lock_env() -> tokio::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().await
     }
 
     struct EnvGuard {
@@ -208,7 +208,7 @@ mod tests {
 
     #[tokio::test]
     async fn codex_env_uses_active_account_dir() {
-        let _env_lock = lock_env();
+        let _env_lock = lock_env().await;
         let _guard = EnvGuard::without("CTX_CODEX_HOME");
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -226,7 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn codex_env_falls_back_to_ctx_home() {
-        let _env_lock = lock_env();
+        let _env_lock = lock_env().await;
         let _guard = EnvGuard::without("CTX_CODEX_HOME");
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
