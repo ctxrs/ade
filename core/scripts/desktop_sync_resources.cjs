@@ -58,6 +58,8 @@ const resetBundleDir = () => {
     if (keep.has(entry)) continue;
     fs.rmSync(path.join(destBundleDir, entry), { recursive: true, force: true });
   }
+  // Tauri resource globs include bundles/images/**/*; ensure directory exists even when empty.
+  fs.mkdirSync(path.join(destBundleDir, "images"), { recursive: true });
 };
 
 const shouldSyncBundles = () => {
