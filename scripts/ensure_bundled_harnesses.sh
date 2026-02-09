@@ -840,8 +840,22 @@ should_build_codex_crp() {
   if is_falsy "$CODEX_CRP_BUILD_MODE"; then
     return 1
   fi
-  # auto: build codex-crp for platforms where managed archive targets are not currently shipped.
-  [[ "$os" == "macos" ]]
+  # auto: prefer building codex-crp from local source when available.
+  #
+  # Rationale:
+  # - ctx daemons resolve provider commands from the bundle first.
+  # - If bundled codex-crp lags behind repo source, CRP semantics can regress
+  #   (e.g. streaming `reasoning.summary` fragments instead of emitting
+  #   `reasoning.trace`/`.final`, which removes thought rows and pollutes status).
+  #
+  # Guardrail:
+  # - If the caller is explicitly cross-bundling (CTX_BUNDLE_OS/ARCH), avoid auto
+  #   building to prevent surprising cross-compilation requirements.
+  if [[ -n "${bundle_os:-}" || -n "${bundle_arch:-}" ]]; then
+    return 1
+  fi
+
+  [[ -d "$CODEX_CRP_WORKSPACE" ]]
 }
 
 local_codex_crp_binary_path() {
