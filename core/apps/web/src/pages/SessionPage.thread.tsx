@@ -1,4 +1,4 @@
-import { memo, useCallback, type CSSProperties, type MutableRefObject, type ReactNode } from "react";
+import { memo, useCallback, useRef, type CSSProperties, type MutableRefObject, type ReactNode } from "react";
 import {
   VirtuosoMessageList,
   VirtuosoMessageListLicense,
@@ -44,16 +44,20 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
   licenseKey,
   shortSizeAlign,
 }: WorkbenchMessageListStackProps) {
+  // Keep ItemContent component identity stable so React doesn't remount visible rows
+  // (which clears text selection / hover state) when SessionView rerenders.
+  const itemContentRef = useRef(itemContent);
+  itemContentRef.current = itemContent;
   const ItemContent = useCallback<MessageItemContent<WorkbenchListItem, WorkbenchMessageListContext>>(
     ({ index, data }) => {
       if (!data) return <div style={{ height: 1 }} />;
       return (
         <div role="listitem" data-thread-item-id={data.id}>
-          {itemContent(index, data)}
+          {itemContentRef.current(index, data)}
         </div>
       );
     },
-    [itemContent],
+    [],
   );
 
   return (
