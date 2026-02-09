@@ -9,6 +9,13 @@ import { useRafCoalesced } from "../components/hooks/useRafCoalesced";
 import type { WorkbenchListItem } from "./SessionPage.types";
 import type { WorkbenchMessageListContext } from "./SessionPage.thread";
 
+type RenderedItemContractViolation = {
+  kind: string;
+  reason: string;
+  id: string;
+  details?: Record<string, any>;
+};
+
 function debugStableKey(item: WorkbenchListItem): string {
   // Best-effort "identity" key independent of `item.id` to detect id churn.
   // This is DEV-only diagnostics; collisions are possible but still useful.
@@ -62,6 +69,41 @@ function debugItemSummary(item: WorkbenchListItem): Record<string, any> {
   return base;
 }
 
+function findFirstRenderedItemContractViolation(items: WorkbenchListItem[]): RenderedItemContractViolation | null {
+  // The whole point is to avoid "fallback ids" like `ts:` and `idx:` which cause identity churn.
+  // These invariants are intentionally strict; if they fire, it's a bug we should fix upstream.
+  for (const it of items) {
+    const anyIt: any = it as any;
+    const kind = String(anyIt?.kind ?? "unknown");
+    const id = String(anyIt?.id ?? "");
+    if (!id) return { kind, reason: "missing id", id: "" };
+
+    if (kind === "thought") {
+      if (id.includes("ts:") || id.includes("idx:") || id.includes("unknown-")) {
+        return { kind, reason: "fallback thought id (ts/idx/unknown)", id };
+      }
+    }
+    if (kind === "turn_header") {
+      const turnId = String(anyIt?.header?.id ?? "");
+      if (!turnId) return { kind, reason: "turn_header missing header.id", id };
+    }
+    if (kind === "tool" || kind === "ask_user_question") {
+      const toolCallId = String(anyIt?.tool_call_id ?? "");
+      if (!toolCallId) return { kind, reason: "missing tool_call_id", id };
+    }
+    if (kind === "assistant") {
+      const turnId = String(anyIt?.turn_id ?? "");
+      if (!turnId) return { kind, reason: "assistant missing turn_id", id };
+      // We currently allow a deliberate streaming placeholder id.
+      const isPending = id.endsWith("-pending");
+      if (!isPending && !id.startsWith("assistant-msg-")) {
+        return { kind, reason: "assistant id does not encode message id", id, details: { turn_id: turnId } };
+      }
+    }
+  }
+  return null;
+}
+
 type Params = {
   sessionId: string;
   isActive: boolean;
@@ -112,6 +154,7 @@ export function useSessionMessageListController(params: Params): Result {
   const methodsRef = useRef<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>(null);
   const lastSessionIdRef = useRef(sessionId);
   const debugLoggedSessionRef = useRef<string | null>(null);
+  const contractViolationLoggedRef = useRef<{ sessionId: string; violationKey: string } | null>(null);
 
   const lastScrollLocationRef = useRef<ListScrollLocation | null>(null);
   const stickToBottomRef = useRef(scrollState?.stickToBottom ?? true);
@@ -437,6 +480,22 @@ export function useSessionMessageListController(params: Params): Result {
     }
 
     if (import.meta.env.DEV && showDebug) {
+      // Validate the derived list item contract. This makes missing identity fields obvious
+      // before we start chasing down reconcile/replace artifacts in MessageList.
+      const violation = findFirstRenderedItemContractViolation(nextRaw);
+      if (violation) {
+        const violationKey = `${violation.kind}:${violation.reason}:${violation.id}`;
+        const prev = contractViolationLoggedRef.current;
+        if (!prev || prev.sessionId !== sessionId || prev.violationKey !== violationKey) {
+          contractViolationLoggedRef.current = { sessionId, violationKey };
+          // eslint-disable-next-line no-console
+          console.error("[MessageList][contract-violation]", {
+            sessionId,
+            ...violation,
+          });
+        }
+      }
+
       const seen = new Set<string>();
       const dupes: string[] = [];
       for (const it of next) {

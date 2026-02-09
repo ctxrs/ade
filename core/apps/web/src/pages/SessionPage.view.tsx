@@ -1794,7 +1794,17 @@ function DebugPanel({ events }: { events: SessionEvent[] }) {
       {open && (
         <div className="debug-body">
           {events.map((e) => {
-            const key = idToString(e.id) || `${e.created_at}-${e.event_type}`;
+            const key = idToString(e.id);
+            if (!key) {
+              if (import.meta.env.DEV) {
+                // eslint-disable-next-line no-console
+                console.error("[DebugPanel] event missing id", {
+                  event_type: e.event_type,
+                  created_at: e.created_at,
+                });
+              }
+              return null;
+            }
             return (
               <details key={key} className="debug-event">
                 <summary>

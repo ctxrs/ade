@@ -21,6 +21,18 @@ type PendingMessageEntry = {
   message: Message;
 };
 
+const devInvariantLogKeys = new Set<string>();
+
+function logViewModelInvariant(reason: string, details: Record<string, unknown>): void {
+  if (!import.meta.env.DEV) return;
+  const key = `${reason}:${JSON.stringify(details)}`;
+  if (devInvariantLogKeys.has(key)) return;
+  if (devInvariantLogKeys.size > 500) devInvariantLogKeys.clear();
+  devInvariantLogKeys.add(key);
+  // eslint-disable-next-line no-console
+  console.error("[WorkbenchThreadViewModel][contract-violation]", { reason, ...details });
+}
+
 function readEventOrderSeq(ev: SessionEvent): number | null {
   const parse = (value: unknown): number | null => {
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -126,20 +138,39 @@ function isCrpThoughtEvent(ev: SessionEvent): boolean {
 
 function readThoughtBlockKey(ev: SessionEvent): string | null {
   const turnId = idToString(ev.turn_id);
-  if (!turnId) return null;
+  if (!turnId) {
+    logViewModelInvariant("thought_chunk missing turn_id", {
+      event_type: ev.event_type,
+      event_id: idToString(ev.id),
+      created_at: ev.created_at,
+    });
+    return null;
+  }
   const payload = ev.payload_json ?? {};
   const rawItemId = String(payload?.item_id ?? payload?.itemId ?? "").trim();
+  if (!rawItemId) {
+    logViewModelInvariant("CRP thought_chunk missing payload.item_id", {
+      turn_id: turnId,
+      event_id: idToString(ev.id),
+      created_at: ev.created_at,
+      crp_seq: payload?.crp_seq ?? payload?.crpSeq ?? null,
+    });
+    return null;
+  }
   const rawSummary = payload?.summary_index ?? payload?.summaryIndex;
   const parsedSummary = typeof rawSummary === "number" ? rawSummary : Number(rawSummary);
-  const summaryIndex = Number.isFinite(parsedSummary) ? parsedSummary : 0;
-  if (rawItemId) return `${turnId}|${rawItemId}|${summaryIndex}`;
-  const fallbackSeq = readEventOrderSeq(ev);
-  if (Number.isFinite(fallbackSeq)) {
-    return `${turnId}|unknown-${fallbackSeq}|${summaryIndex}`;
+  if (!Number.isFinite(parsedSummary)) {
+    logViewModelInvariant("CRP thought_chunk missing/invalid payload.summary_index", {
+      turn_id: turnId,
+      event_id: idToString(ev.id),
+      created_at: ev.created_at,
+      item_id: rawItemId,
+      summary_index: rawSummary ?? null,
+    });
+    return null;
   }
-  const fallbackId = idToString(ev.id);
-  if (!fallbackId) return null;
-  return `${turnId}|unknown-${fallbackId}|${summaryIndex}`;
+  const summaryIndex = parsedSummary as number;
+  return `${turnId}|${rawItemId}|${summaryIndex}`;
 }
 
 function readThoughtItemId(ev: SessionEvent): string | null {
@@ -262,18 +293,19 @@ function collectThoughtBlocks(events: SessionEvent[]): ThoughtBlock[] {
   if (nonCrpThoughtEvents.length > 0) {
     const stream = collectThoughtStream(nonCrpThoughtEvents);
     if (stream) {
-      const suffix = Number.isFinite(stream.orderSeq)
-        ? `seq:${stream.orderSeq}`
-        : stream.createdAt
-          ? `ts:${stream.createdAt}`
-          : "unknown";
-      blocks.push({
-        idKey: `stream:${suffix}`,
-        text: stream.text,
-        orderSeq: stream.orderSeq,
-        createdAt: stream.createdAt,
-        isCrp: stream.isCrp,
-      });
+      if (!Number.isFinite(stream.orderSeq)) {
+        logViewModelInvariant("non-CRP thought stream missing order_seq", {
+          count: nonCrpThoughtEvents.length,
+        });
+      } else {
+        blocks.push({
+          idKey: `stream:seq:${stream.orderSeq as number}`,
+          text: stream.text,
+          orderSeq: stream.orderSeq,
+          createdAt: stream.createdAt,
+          isCrp: stream.isCrp,
+        });
+      }
     }
   }
 
@@ -1057,16 +1089,21 @@ function buildTurnActivityTimeline(opts: {
   }
 
   if (thoughtBlocks.length > 0) {
-    thoughtBlocks.forEach((block, index) => {
+    thoughtBlocks.forEach((block) => {
       if (!Number.isFinite(block.orderSeq)) return;
       const thoughtText = block.text ?? "";
       if (!thoughtText.trim()) return;
-      const stableSuffix =
-        block.idKey || (Number.isFinite(block.orderSeq) ? `seq:${block.orderSeq}` : `idx:${index}`);
+      if (!block.idKey) {
+        logViewModelInvariant("thought block missing idKey", {
+          turn_id: opts.turnId,
+          order_seq: block.orderSeq ?? null,
+        });
+        return;
+      }
       const thoughtItem: Extract<ThreadItem, { kind: "thought" }> = {
         kind: "thought",
         // Avoid index/text-based IDs; those break MessageList prepend invariants and streaming updates.
-        id: `thought-${opts.turnId}-${stableSuffix}`,
+        id: `thought-${opts.turnId}-${block.idKey}`,
         turn_id: opts.turnId,
         created_at: block.createdAt ?? opts.turn.updated_at ?? opts.turn.started_at,
         content: thoughtText,
