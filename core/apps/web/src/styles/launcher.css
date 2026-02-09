@@ -648,6 +648,28 @@
   grid-auto-rows: 1fr;
 }
 
+.wizard-option-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 520px) {
+  .wizard-option-grid--two {
+    grid-template-columns: 1fr;
+  }
+}
+
+.wizard-container-advanced {
+  padding-top: 2px;
+}
+
+.wizard-container-advanced .wizard-option-grid {
+  grid-auto-rows: auto;
+}
+
+.wizard-container-advanced .wizard-option {
+  height: auto;
+}
+
 .wizard-remote {
   display: grid;
   gap: 10px;

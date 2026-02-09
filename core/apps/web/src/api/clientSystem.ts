@@ -174,7 +174,7 @@ export type Settings = {
 
 export type ExecutionMode = "auto" | "host" | "container";
 export type ContainerRuntimeKind = "podman";
-export type ContainerMountMode = "host_mounted" | "sealed";
+export type ContainerMountMode = "host_mounted" | "sealed" | "disk_isolated";
 export type ContainerNetworkMode = "llm_only" | "allowlist" | "all";
 
 export type ContainerExecutionSettings = {

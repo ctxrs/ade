@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import LauncherBrand from "../components/LauncherBrand";
 import {
   createWorkspace,
+  ensureWorkspaceHarnessContainer,
   getHealth,
   idToString,
   listWorkspaces,
@@ -151,9 +152,9 @@ export default function WorkspaceSetupPage() {
         note: "Choose the containerization strategy for your agents in this workspace.",
         options: [
           {
-            id: "sealed",
-            title: "Fully sealed container",
-            desc: "No host mounts. The worktree is synced into a container-managed filesystem for agent execution.",
+            id: "disk-isolated",
+            title: "Disk-isolated container",
+            desc: "Worktrees live on the container/VM disk. The daemon mediates shells, files, and git for a fully isolated workspace.",
             badge: "Recommended",
           },
           {
@@ -696,7 +697,11 @@ export default function WorkspaceSetupPage() {
 
       // 4. Persist per-workspace execution settings.
       const execMode = selections.container === "no-container" ? "host" : "container";
-      const mountMode = selections.container === "host-mounted" ? "host_mounted" : "sealed";
+      const mountMode = selections.container === "host-mounted"
+        ? "host_mounted"
+        : selections.container === "disk-isolated"
+          ? "disk_isolated"
+          : "sealed";
       const allowlist = networkAllowlist
         .split(/\r?\n/)
         .map((line) => line.trim())
@@ -712,6 +717,12 @@ export default function WorkspaceSetupPage() {
         network_mode: execMode === "container" ? netMode : null,
         allowlist: execMode === "container" && netMode === "allowlist" ? allowlist : null,
       });
+
+      // If container execution is enabled, eagerly provision the workspace harness container so
+      // we don't land in the workbench before the sandbox is actually ready.
+      if (execMode === "container") {
+        await ensureWorkspaceHarnessContainer(wsId);
+      }
 
       // 5. Persist repo-scoped config only if the user opted in / provided values.
       if (!mergeQueueSkipped) {
@@ -856,8 +867,8 @@ export default function WorkspaceSetupPage() {
                       </button>
                     )}
                     {step.key === "container" && containerAdvancedOpen && (
-                      <div className="wizard-advanced-panel">
-                        <div className="wizard-option-grid">
+                      <div className="wizard-container-advanced">
+                        <div className="wizard-option-grid wizard-option-grid--two">
                           {step.options
                             .filter((option) => Boolean(option.advanced))
                             .map((option) => {
@@ -947,7 +958,7 @@ export default function WorkspaceSetupPage() {
                     <label>
                       {selections.source === "import"
                         ? "Existing folder"
-                        : "Destination folder"}
+                        : "Destination folder (host)"}
 	                      <div className="wizard-input-row">
 	                        <input
 	                          data-testid="wizard-source-path"
@@ -973,6 +984,11 @@ export default function WorkspaceSetupPage() {
                         )}
                       </div>
 	                    </label>
+                    {selections.container !== "no-container" && (
+                      <div className="wizard-note">
+                        This is the project folder on the host. In disk-isolated mode, ctx will copy the workspace into a container-managed filesystem for execution.
+                      </div>
+                    )}
 	                    {selections.source === "import" && importRepoStatus !== "idle" && importRepoNote && (
 	                      <div className={importRepoStatus === "error" ? "wizard-error" : "wizard-note"}>
 	                        {importRepoNote}
@@ -1230,7 +1246,7 @@ export default function WorkspaceSetupPage() {
                             ? "Host (no container)"
                             : selections.container === "host-mounted"
                               ? "Container (host-mounted)"
-                              : "Container (sealed)"}
+                              : "Container (disk-isolated)"}
                         </div>
                       </div>
                       {selections.container !== "no-container" && (

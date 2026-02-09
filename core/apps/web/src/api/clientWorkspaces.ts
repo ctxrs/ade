@@ -65,7 +65,7 @@ export const updateWorkspaceMergeQueueConfig = (workspaceId: string, req: Update
 
 export type UpdateExecutionConfigRequest = {
   mode: "host" | "container" | "auto";
-  mount_mode?: "sealed" | "host_mounted" | null;
+  mount_mode?: "sealed" | "host_mounted" | "disk_isolated" | null;
   network_mode?: "llm_only" | "allowlist" | "all" | null;
   allowlist?: string[] | null;
 };
@@ -74,7 +74,7 @@ export type WorkspaceExecutionConfig = {
   config_path: string;
   source: "workspace" | "daemon_default";
   mode: "host" | "container" | "auto";
-  mount_mode?: "sealed" | "host_mounted" | null;
+  mount_mode?: "sealed" | "host_mounted" | "disk_isolated" | null;
   network_mode?: "llm_only" | "allowlist" | "all" | null;
   allowlist?: string[] | null;
 };
@@ -86,6 +86,11 @@ export const updateWorkspaceExecutionConfig = (workspaceId: string, req: UpdateE
   apiAny<UpdateWorkspaceConfigResponse>(`/api/workspaces/${workspaceId}/execution_config`, {
     method: "POST",
     body: JSON.stringify(req),
+  });
+
+export const ensureWorkspaceHarnessContainer = (workspaceId: string) =>
+  apiAny<void>(`/api/workspaces/${workspaceId}/harness_container/ensure`, {
+    method: "POST",
   });
 
 export type UpdateWorktreeBootstrapConfigRequest = {
