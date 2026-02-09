@@ -175,18 +175,21 @@ exports.config = {
     // without the automation plugin enabled).
     killExistingAppProcesses();
 
-    // Ensure the desktop resources (ctx binary, web dist) are up to date for the test build.
-    const prep = spawnSync("pnpm", ["-C", CORE_ROOT, "desktop:prep"], {
+    // Container-mode provider smoke needs a fully-bundled release-style resource set
+    // (Linux provider binaries + harness image tars). Keep the app build in debug mode
+    // for the automation plugin, but sync release resources.
+    const prepRelease = spawnSync("pnpm", ["-C", CORE_ROOT, "desktop:prep:release"], {
       stdio: "inherit",
       cwd: ROOT,
       shell: true,
     });
-    if (prep.status !== 0) {
-      throw new Error("pnpm -C core desktop:prep failed");
+    if (prepRelease.status !== 0) {
+      throw new Error("pnpm -C core desktop:prep:release failed");
     }
 
     // Launch the app directly into the wizard route to reduce test flakiness.
     process.env.CTX_DESKTOP_START_PATH = "/workspace-setup";
+    process.env.CTX_SEED_CODEX_AUTH_FROM_HOST = process.env.CTX_SEED_CODEX_AUTH_FROM_HOST || "1";
     // For the shared Ashburn host, never attempt to start/restart the remote daemon from tests.
     process.env.CTX_DESKTOP_SSH_NO_START_REMOTE = "1";
     if (USE_EXTERNAL_DAEMON) {

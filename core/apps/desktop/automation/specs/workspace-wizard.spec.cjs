@@ -68,6 +68,41 @@ const clickTestId = async (id) => {
   if (!ok) throw new Error(`failed to click: ${sel}`);
 };
 
+const waitForSelector = async (selector, timeoutMs = 30000) => {
+  await browser.waitUntil(
+    async () => await browser.execute((s) => Boolean(document.querySelector(s)), selector),
+    { timeout: timeoutMs, timeoutMsg: `element not found: ${selector}` },
+  );
+};
+
+const clickSelector = async (selector) => {
+  await waitForSelector(selector);
+  const ok = await browser.execute((s) => {
+    const el = document.querySelector(s);
+    if (!el) return false;
+    (el).click();
+    return true;
+  }, selector);
+  if (!ok) throw new Error(`failed to click selector: ${selector}`);
+};
+
+const setTextareaSelector = async (selector, value) => {
+  await waitForSelector(selector);
+  const ok = await browser.execute((s, v) => {
+    const el = document.querySelector(s);
+    if (!el) return false;
+    if (!(el instanceof HTMLTextAreaElement)) return false;
+    const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
+    const setter = desc && desc.set;
+    if (!setter) return false;
+    setter.call(el, v);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, selector, String(value));
+  if (!ok) throw new Error(`failed to set textarea for: ${selector}`);
+};
+
 const setInputTestId = async (id, value) => {
   await waitForTestId(id);
   const sel = selectorForTestId(id);
@@ -555,6 +590,58 @@ describe("launcher workspace wizard (e2e)", () => {
       mergeQueueEnabled: true,
       targetBranch: "main",
     });
+  });
+
+  it("local container can start Codex and respond", async function () {
+    // Container start + provider spin-up can take a while on a fresh machine (Podman VM, image load, etc).
+    this.timeout(300000);
+
+    const dest = path.join(localBase, "codex-host-mounted");
+    const id = await runWizardScenario({
+      location: "local",
+      container: "host-mounted",
+      network: "providers",
+      source: { kind: "new", destPath: dest, workspaceName: "codex-smoke" },
+      setupHook: "",
+      mergeQueue: { kind: "skip" },
+    });
+
+    await assertConnectedLocalAndListening();
+    // Wait for the workbench to render the new-task composer, then send a simple prompt.
+    await waitForSelector("textarea.wb-new-composer-textarea", 60000);
+    await setTextareaSelector("textarea.wb-new-composer-textarea", "hello");
+    await clickSelector("button.wb-send");
+
+    // Confirm the turn did not hard-fail to start.
+    await browser.waitUntil(
+      async () => {
+        const banner = await browser.execute(() => {
+          const el = document.querySelector(".wb-banner");
+          return el ? String(el.textContent || "").trim() : "";
+        });
+        if (banner && /failed to start/i.test(banner)) return false;
+        return true;
+      },
+      { timeout: 60000, timeoutMsg: "task start failed (wb-banner shows error)" },
+    );
+
+    // Wait for any assistant message to arrive.
+    await browser.waitUntil(
+      async () => {
+        const ok = await browser.execute(() => {
+          const el = document.querySelector(".msg.assistant");
+          if (!el) return false;
+          const txt = String(el.textContent || "").trim();
+          return txt.length > 0;
+        });
+        return Boolean(ok);
+      },
+      { timeout: 180000, timeoutMsg: "no assistant response received in time" },
+    );
+
+    // Sanity: ensure we stayed in the same workspace route.
+    const ws = await getWorkspace(id);
+    assertLocalWorkspaceConfig(ws.root_path, { executionMode: "container", mountMode: "host_mounted" });
   });
 
   it("remote import works end-to-end", async function () {

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-02-07T14:55:42Z",
+  "generated_at": "2026-02-09T04:13:29Z",
   "providers": [
     {
       "id": "acp-crp-bridge",
@@ -8,8 +8,28 @@
       "version": "local",
       "os": "macos",
       "arch": "aarch64",
-      "sha256": "084baf6d82df276c8bac9c2d704cfe5b2aeefdd1e70a6f011b6fdff802a925b4",
+      "sha256": "8ef18e735e3211ce4191277475b972f0719ea40fd84dc916bc860cb5f282b315",
       "command": "providers/acp-crp-bridge/macos/aarch64/acp-crp-bridge",
+      "args": []
+    },
+    {
+      "id": "codex-crp",
+      "protocol": "crp",
+      "version": "0.0.0-ctx.3",
+      "os": "linux",
+      "arch": "aarch64",
+      "sha256": "85e2fae569e1cf181f63568d37072ba1223895fe9a4f072eae56b4f64bf40fed",
+      "command": "providers/codex-crp/linux/aarch64/codex-crp",
+      "args": []
+    },
+    {
+      "id": "codex-crp",
+      "protocol": "crp",
+      "version": "0.0.0-ctx.3",
+      "os": "linux",
+      "arch": "x86_64",
+      "sha256": "8432c363cd6b876f0bef3984f104e98737a0e0e6c0ed64363148b9d70c0fed06",
+      "command": "providers/codex-crp/linux/x86_64/codex-crp",
       "args": []
     },
     {
@@ -18,7 +38,7 @@
       "version": "0.0.0-ctx.3",
       "os": "macos",
       "arch": "aarch64",
-      "sha256": "4d318f4423fa22790181bc294e285f61a575302d654f0517adb544ac1c1548ae",
+      "sha256": "a21b7af528a08c91c57a81d1f21f19a6517e9ea4fb5aca1b133dbd4b3ebdab63",
       "command": "providers/codex-crp/macos/aarch64/codex-crp",
       "args": []
     }
@@ -35,6 +55,15 @@
       "npm_cli": "lib/node_modules/npm/bin/npm-cli.js"
     },
     {
+      "id": "podman",
+      "version": "5.7.1",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "78acb3c9db26c2f640046716b6d52a2837acc751b87a22d520f3024f1587714c",
+      "root": "runtimes/podman/macos/aarch64/podman-5.7.1",
+      "bin": "usr/bin/podman"
+    },
+    {
       "id": "python",
       "version": "3.13.11",
       "os": "macos",
@@ -42,6 +71,26 @@
       "sha256": "20868a80a9c843db02b445b8e347bff4971fc2133b9260b3c36954f22a5d0a40",
       "root": "runtimes/python/macos/aarch64/cpython-3.13.11+20251217-aarch64-apple-darwin",
       "bin": "bin/python3"
+    }
+  ],
+  "images": [
+    {
+      "id": "ctx-harness",
+      "version": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04",
+      "os": "linux",
+      "arch": "aarch64",
+      "sha256": "a0bb1848e7baf0dca91090e4d91d9800577fc7f9a06a50e6012d990ec5dcbb27",
+      "tar": "images/ctx-harness-linux-aarch64.tar",
+      "image": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04"
+    },
+    {
+      "id": "ctx-harness",
+      "version": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04",
+      "os": "linux",
+      "arch": "x86_64",
+      "sha256": "e705dceef23aebbfde1928cbdf4349b2c523c8605801227f9edfcf67fea881c2",
+      "tar": "images/ctx-harness-linux-x86_64.tar",
+      "image": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04"
     }
   ]
 }

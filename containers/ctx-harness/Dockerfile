@@ -34,9 +34,11 @@ RUN apt-get update && \
       ca-certificates \
       curl \
       gawk \
+      git \
       iptables \
       libc-bin \
       netbase \
+      tar \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/ctx-egress-proxy /usr/local/bin/ctx-egress-proxy

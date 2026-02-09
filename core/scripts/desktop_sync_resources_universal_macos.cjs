@@ -83,14 +83,21 @@ const runBundleForArch = (arch, append) => {
     env.CTX_BUNDLE_HARNESS_IMAGE = append ? "0" : "both";
   }
 
+  // Universal macOS builds are release artifacts; ensure Podman is bundled by default so
+  // container mode works out-of-box.
+  env.CTX_BUNDLE_PODMAN = env.CTX_BUNDLE_PODMAN || "1";
   if (env.CTX_BUNDLE_PODMAN === "1") {
+    env.PODMAN_VERSION = env.PODMAN_VERSION || "5.7.1";
     const archiveUrl = resolveArchEnv("PODMAN_ARCHIVE_URL", arch);
     const archivePath = resolveArchEnv("PODMAN_ARCHIVE_PATH", arch);
     const binRel = resolveArchEnv("PODMAN_BIN_REL", arch);
     const extractSubdir = resolveArchEnv("PODMAN_EXTRACT_SUBDIR", arch);
     if (archiveUrl) env.PODMAN_ARCHIVE_URL = archiveUrl;
+    if (!env.PODMAN_ARCHIVE_URL && !archivePath) {
+      env.PODMAN_ARCHIVE_URL = `https://github.com/containers/podman/releases/download/v${env.PODMAN_VERSION}/podman-remote-release-darwin_${arch}.zip`;
+    }
     if (archivePath) env.PODMAN_ARCHIVE_PATH = archivePath;
-    if (binRel) env.PODMAN_BIN_REL = binRel;
+    env.PODMAN_BIN_REL = binRel || env.PODMAN_BIN_REL || "usr/bin/podman";
     if (extractSubdir) env.PODMAN_EXTRACT_SUBDIR = extractSubdir;
   }
 
@@ -103,6 +110,31 @@ const runBundleForArch = (arch, append) => {
   }
 };
 
+const runBundleForLinuxArch = (arch) => {
+  const env = {
+    ...process.env,
+    CTX_BUNDLE_DIR: destBundleDir,
+    CTX_BUNDLE_APPEND: "1",
+    CTX_BUNDLE_OS: "linux",
+    CTX_BUNDLE_ARCH: arch,
+    CTX_BUNDLE_ONLY_PROVIDERS: "codex-crp",
+    CTX_BUNDLE_SKIP_RUNTIMES: "1",
+    CTX_BUNDLE_SKIP_IMAGES: "1",
+    CTX_BUNDLE_INCLUDE_BRIDGE: "0",
+    CTX_BUNDLE_LOCAL_ADAPTERS: "off",
+    CTX_BUNDLE_BUILD_LOCAL_ADAPTERS: "0",
+    CTX_BUNDLE_HARNESS_IMAGE: "0",
+    CTX_BUNDLE_PODMAN: "0",
+  };
+  const res = childProcess.spawnSync(bundleScript, {
+    env,
+    stdio: "inherit",
+  });
+  if (res.status !== 0) {
+    throw new Error(`bundle script failed for linux/${arch} (${res.status ?? "unknown"})`);
+  }
+};
+
 const syncBundles = () => {
   if (!shouldSyncBundles()) return null;
   if (!fs.existsSync(bundleScript)) {
@@ -111,6 +143,8 @@ const syncBundles = () => {
   resetBundleDir();
   runBundleForArch("aarch64", false);
   runBundleForArch("x86_64", true);
+  runBundleForLinuxArch("aarch64");
+  runBundleForLinuxArch("x86_64");
   return destBundleDir;
 };
 

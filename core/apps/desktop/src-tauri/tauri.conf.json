@@ -26,7 +26,15 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.icns", "icons/icon.png"],
-    "resources": ["bin/*", "web/dist/**/*", "bundles/**/*"],
+    "resources": [
+      "bin/*",
+      "web/dist/**/*",
+      "bundles/manifest.json",
+      "bundles/providers/**/*",
+      "bundles/runtimes/**/*",
+      "bundles/images/**/*",
+      "bundles/lucide-settings.svg"
+    ],
     "externalBin": ["bin/ctx", "bin/ctx-mcp"],
     "macOS": {
       "infoPlist": "Info.plist"

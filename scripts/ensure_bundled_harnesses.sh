@@ -31,6 +31,14 @@ is_falsy() {
 
 require_cmd curl
 
+host_os_raw="$(uname -s 2>/dev/null || true)"
+host_os="unknown"
+case "$host_os_raw" in
+  Linux) host_os="linux";;
+  Darwin) host_os="macos";;
+  MINGW*|MSYS*|CYGWIN*|Windows_NT) host_os="windows";;
+esac
+
 host_arch_raw="$(uname -m 2>/dev/null || true)"
 host_arch="unknown"
 case "$host_arch_raw" in
@@ -136,6 +144,12 @@ bundle_dir="${CTX_BUNDLE_DIR:-$cache_base/dev}"
 mkdir -p "$bundle_dir"
 bundle_dir="$(cd "$bundle_dir" && pwd)"
 
+# Keep build artifacts out of the desktop app bundle resources by default.
+# (The app packages `bundles/`, so anything under it is at risk of shipping.)
+bundle_build_dir="${CTX_BUNDLE_BUILD_DIR:-$cache_base/.build}"
+mkdir -p "$bundle_build_dir"
+bundle_build_dir="$(cd "$bundle_build_dir" && pwd)"
+
 sha256_file() {
   local path="$1"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -226,6 +240,7 @@ LOCAL_ADAPTER_MODE="${CTX_BUNDLE_LOCAL_ADAPTERS:-auto}"
 BUILD_LOCAL_ADAPTERS="${CTX_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
 # The bridge is required for bundles; build it when missing unless explicitly disabled.
 BUILD_LOCAL_BRIDGE="${CTX_BUNDLE_BUILD_LOCAL_BRIDGE:-1}"
+INCLUDE_BRIDGE="${CTX_BUNDLE_INCLUDE_BRIDGE:-1}"
 
 local_adapter_dir() {
   case "${1:-}" in
@@ -486,6 +501,38 @@ resolve_podman_root() {
   printf '%s' "$extract_dir"
 }
 
+ensure_podman_macos_helpers() {
+  local podman_root_abs="$1"
+  if [[ "$os" != "macos" ]]; then
+    return
+  fi
+  # Podman machine on macOS requires helper binaries (gvproxy, vfkit) that must be colocated
+  # under $BINDIR/../libexec/podman for out-of-the-box behavior.
+  local helpers_dir="$podman_root_abs/usr/libexec/podman"
+  mkdir -p "$helpers_dir"
+
+  local gvproxy_path="$helpers_dir/gvproxy"
+  local vfkit_path="$helpers_dir/vfkit"
+
+  local gvproxy_url="${PODMAN_GVPROXY_URL:-https://github.com/containers/gvisor-tap-vsock/releases/download/v0.8.8/gvproxy-darwin}"
+  local vfkit_url="${PODMAN_VFKIT_URL:-https://github.com/crc-org/vfkit/releases/download/v0.6.3/vfkit-unsigned}"
+
+  if [[ ! -f "$gvproxy_path" ]]; then
+    local tmp
+    tmp="$(mktemp -p "$helpers_dir" "gvproxy.XXXXXX")"
+    fetch_file "$gvproxy_url" "$tmp"
+    mv "$tmp" "$gvproxy_path"
+  fi
+  if [[ ! -f "$vfkit_path" ]]; then
+    local tmp
+    tmp="$(mktemp -p "$helpers_dir" "vfkit.XXXXXX")"
+    fetch_file "$vfkit_url" "$tmp"
+    mv "$tmp" "$vfkit_path"
+  fi
+
+  chmod +x "$gvproxy_path" "$vfkit_path" || true
+}
+
 ensure_podman_runtime() {
   if [[ "${CTX_BUNDLE_PODMAN:-0}" != "1" ]]; then
     return
@@ -508,6 +555,7 @@ ensure_podman_runtime() {
   local podman_bin_abs="$podman_root_abs/$podman_bin_rel"
 
   if [[ -f "$podman_bin_abs" ]]; then
+    ensure_podman_macos_helpers "$podman_root_abs"
     return
   fi
 
@@ -572,6 +620,8 @@ ensure_podman_runtime() {
     log "error: podman runtime incomplete after extract (missing $podman_bin_rel)"
     exit 4
   fi
+
+  ensure_podman_macos_helpers "$podman_root_abs"
 }
 
 venv_bin_dir() {
@@ -625,10 +675,17 @@ npm_install_bundle() {
   "$node_bin" "$npm_cli" install --prefix "$install_dir" --no-audit --no-fund --silent "$package_spec"
 }
 
-ensure_node_runtime
-ensure_python_runtime
-ensure_podman_runtime
-require_bridge_binary
+skip_runtimes_raw="${CTX_BUNDLE_SKIP_RUNTIMES:-}"
+skip_images_raw="${CTX_BUNDLE_SKIP_IMAGES:-}"
+
+if ! is_truthy "$skip_runtimes_raw"; then
+  ensure_node_runtime
+  ensure_python_runtime
+  ensure_podman_runtime
+fi
+if ! is_falsy "$INCLUDE_BRIDGE"; then
+  require_bridge_binary
+fi
 
 if is_truthy "$BUILD_LOCAL_ADAPTERS"; then
   if is_falsy "$LOCAL_ADAPTER_MODE"; then
@@ -637,29 +694,43 @@ if is_truthy "$BUILD_LOCAL_ADAPTERS"; then
   build_local_adapters
 fi
 
-node_root_rel="runtimes/node/${os}/${arch}/node-v${NODE_VERSION}-${node_target}"
-if [[ "$os" == "windows" ]]; then
-  node_bin_rel="node.exe"
-  npm_cli_rel="node_modules/npm/bin/npm-cli.js"
-else
-  node_bin_rel="bin/node"
-  npm_cli_rel="lib/node_modules/npm/bin/npm-cli.js"
-fi
-node_root="$bundle_dir/$node_root_rel"
-node_bin="$node_root/$node_bin_rel"
-npm_cli="$node_root/$npm_cli_rel"
+node_root_rel=""
+node_bin_rel=""
+npm_cli_rel=""
+node_root=""
+node_bin=""
+npm_cli=""
 
-python_root_rel="runtimes/python/${os}/${arch}/cpython-${PYTHON_VERSION}+${PYTHON_BUILD_TAG}-${python_target}"
-if [[ "$os" == "windows" ]]; then
-  python_bin_rel="python.exe"
-else
-  python_bin_rel="bin/python3"
-  if [[ ! -f "$bundle_dir/$python_root_rel/$python_bin_rel" ]]; then
-    python_bin_rel="bin/python"
+python_root_rel=""
+python_bin_rel=""
+python_root=""
+python_bin=""
+
+if ! is_truthy "$skip_runtimes_raw"; then
+  node_root_rel="runtimes/node/${os}/${arch}/node-v${NODE_VERSION}-${node_target}"
+  if [[ "$os" == "windows" ]]; then
+    node_bin_rel="node.exe"
+    npm_cli_rel="node_modules/npm/bin/npm-cli.js"
+  else
+    node_bin_rel="bin/node"
+    npm_cli_rel="lib/node_modules/npm/bin/npm-cli.js"
   fi
+  node_root="$bundle_dir/$node_root_rel"
+  node_bin="$node_root/$node_bin_rel"
+  npm_cli="$node_root/$npm_cli_rel"
+
+  python_root_rel="runtimes/python/${os}/${arch}/cpython-${PYTHON_VERSION}+${PYTHON_BUILD_TAG}-${python_target}"
+  if [[ "$os" == "windows" ]]; then
+    python_bin_rel="python.exe"
+  else
+    python_bin_rel="bin/python3"
+    if [[ ! -f "$bundle_dir/$python_root_rel/$python_bin_rel" ]]; then
+      python_bin_rel="bin/python"
+    fi
+  fi
+  python_root="$bundle_dir/$python_root_rel"
+  python_bin="$python_root/$python_bin_rel"
 fi
-python_root="$bundle_dir/$python_root_rel"
-python_bin="$python_root/$python_bin_rel"
 
 podman_root_rel=""
 podman_bin_rel=""
@@ -830,8 +901,10 @@ add_local_provider() {
   local_ids+=("$provider_id")
 }
 
-bridge_src="$(local_bridge_binary_path)"
-add_local_provider "acp-crp-bridge" "local-bin" "local" "$bridge_src" "$(basename "$bridge_src")" "[]"
+if ! is_falsy "$INCLUDE_BRIDGE"; then
+  bridge_src="$(local_bridge_binary_path)"
+  add_local_provider "acp-crp-bridge" "local-bin" "local" "$bridge_src" "$(basename "$bridge_src")" "[]"
+fi
 
 should_build_codex_crp() {
   if is_truthy "$CODEX_CRP_BUILD_MODE"; then
@@ -840,31 +913,30 @@ should_build_codex_crp() {
   if is_falsy "$CODEX_CRP_BUILD_MODE"; then
     return 1
   fi
-  # auto: prefer building codex-crp from local source when available.
+  # auto: build codex-crp from local source when available, but only for platforms where we
+  # don't currently ship a managed archive.
   #
-  # Rationale:
-  # - ctx daemons resolve provider commands from the bundle first.
-  # - If bundled codex-crp lags behind repo source, CRP semantics can regress
-  #   (e.g. streaming `reasoning.summary` fragments instead of emitting
-  #   `reasoning.trace`/`.final`, which removes thought rows and pollutes status).
-  #
-  # Guardrail:
-  # - If the caller is explicitly cross-bundling (CTX_BUNDLE_OS/ARCH), avoid auto
-  #   building to prevent surprising cross-compilation requirements.
+  # Guardrail: if the caller is explicitly cross-bundling (CTX_BUNDLE_OS/ARCH), avoid auto
+  # building to prevent surprising cross-compilation requirements / wrong-arch binaries.
   if [[ -n "${bundle_os:-}" || -n "${bundle_arch:-}" ]]; then
     return 1
   fi
-
-  [[ -d "$CODEX_CRP_WORKSPACE" ]]
+  # Today we ship a managed archive for linux/x86_64 only (see provider_matrix.json), so:
+  # - build on macOS for local-host execution
+  # - build on linux/aarch64 so container-mode works offline on Apple Silicon
+  if [[ "$os" == "macos" || ("$os" == "linux" && "$arch" == "aarch64") ]]; then
+    [[ -d "$CODEX_CRP_WORKSPACE" ]]
+  else
+    return 1
+  fi
 }
 
 local_codex_crp_binary_path() {
   if [[ ! -d "$CODEX_CRP_WORKSPACE" ]]; then
     return 1
   fi
-  require_cmd cargo
   local profile="${CTX_BUNDLE_CODEX_CRP_PROFILE:-release}"
-  local target_dir="${CTX_BUNDLE_CODEX_CRP_TARGET_DIR:-$bundle_dir/.build/codex-crp/${os}/${arch}}"
+  local target_dir="${CTX_BUNDLE_CODEX_CRP_TARGET_DIR:-$bundle_build_dir/codex-crp/${os}/${arch}}"
 
 	local profile_args=()
 	if [[ "$profile" == "release" ]]; then
@@ -874,10 +946,64 @@ local_codex_crp_binary_path() {
 	  exit 5
 	fi
 
-	(
-	  cd "$CODEX_CRP_WORKSPACE"
-	  CARGO_TARGET_DIR="$target_dir" cargo build -p codex-crp --target "$rust_target" "${profile_args[@]}"
-	)
+	build_codex_crp_in_container() {
+	  local engine=""
+	  if command -v podman >/dev/null 2>&1; then
+	    engine="podman"
+	  elif command -v docker >/dev/null 2>&1; then
+	    engine="docker"
+	  else
+	    log "error: building codex-crp for ${os}/${arch} requires podman or docker on PATH"
+	    log "       Alternative: build bundles on a linux/${arch} host and use CTX_BUNDLE_APPEND=1 to combine manifests."
+	    exit 5
+	  fi
+
+	  if [[ "$engine" == "podman" && "$host_arch" != "$arch" ]]; then
+	    log "error: refusing to build codex-crp for ${os}/${arch} on host arch ${host_arch} using podman (would likely produce wrong-arch binary)"
+	    log "       Use docker with --platform emulation, or build on a ${arch} host."
+	    exit 5
+	  fi
+
+	  mkdir -p "$target_dir"
+
+	  local platform="linux/arm64"
+	  if [[ "$arch" == "x86_64" ]]; then
+	    platform="linux/amd64"
+	  fi
+
+	  local image="${CTX_BUNDLE_RUST_IMAGE:-rust:1}"
+
+	  local -a run_args
+	  run_args=(run --rm -v "$CODEX_CRP_WORKSPACE:/work:rw" -v "$target_dir:/target:rw" -w /work -e CARGO_TARGET_DIR=/target)
+	  if [[ "$engine" == "docker" ]]; then
+	    run_args+=(--platform "$platform")
+	  fi
+
+	  # Avoid `bash -l` here: login shells can reset PATH and drop Cargo.
+	  #
+	  # Also: `codex-crp` upstream ships with a very heavy release profile (fat LTO, 1 codegen unit),
+	  # which can OOM on typical Docker Desktop configs. Override to a lighter release build: still
+	  # optimized, but much less memory hungry.
+	  local -a cargo_profile_env=()
+	  if [[ "$profile" == "release" ]]; then
+	    cargo_profile_env+=(
+	      "CARGO_PROFILE_RELEASE_LTO=false"
+	      "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16"
+	      "CARGO_PROFILE_RELEASE_OPT_LEVEL=2"
+	    )
+	  fi
+	  "$engine" "${run_args[@]}" "$image" bash -c "set -euo pipefail; export PATH=\"/usr/local/cargo/bin:\$PATH\"; rustup target add '$rust_target' >/dev/null 2>&1 || true; ${cargo_profile_env[*]} cargo build -p codex-crp --target '$rust_target' ${profile_args[*]}"
+	}
+
+	if [[ "$os" == "linux" && "$host_os" != "linux" ]]; then
+	  build_codex_crp_in_container
+	else
+	  require_cmd cargo
+	  (
+	    cd "$CODEX_CRP_WORKSPACE"
+	    CARGO_TARGET_DIR="$target_dir" cargo build -p codex-crp --target "$rust_target" "${profile_args[@]}"
+	  )
+	fi
 
 	local bin="$target_dir/$rust_target/$profile/codex-crp$BIN_EXT"
 	if [[ ! -f "$bin" ]]; then
@@ -964,12 +1090,19 @@ PY
 fi
 
 providers_out="$(mktemp /tmp/ctx-bundle-providers-out.XXXXXX)"
+only_providers_raw="${CTX_BUNDLE_ONLY_PROVIDERS:-}"
+only_providers_raw="${only_providers_raw// /}"
 skip_providers_raw="${CTX_BUNDLE_SKIP_PROVIDERS:-}"
 skip_providers_raw="${skip_providers_raw// /}"
 
 while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package entrypoint args_json; do
   if [[ -z "$provider_id" || -z "$kind" ]]; then
     continue
+  fi
+  if [[ -n "$only_providers_raw" ]]; then
+    if [[ ",$only_providers_raw," != *",$provider_id,"* ]]; then
+      continue
+    fi
   fi
   if [[ -n "$skip_providers_raw" ]]; then
     if [[ ",$skip_providers_raw," == *",$provider_id,"* ]]; then
@@ -1000,6 +1133,10 @@ while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package 
       command_path="$dest"
       ;;
     local-node)
+      if is_truthy "$skip_runtimes_raw"; then
+        log "error: cannot bundle local-node provider $provider_id when CTX_BUNDLE_SKIP_RUNTIMES=1"
+        exit 5
+      fi
       if [[ -z "$url" ]]; then
         log "error: missing local adapter entrypoint for $provider_id"
         exit 5
@@ -1077,6 +1214,10 @@ PY
       fi
       ;;
     npm)
+      if is_truthy "$skip_runtimes_raw"; then
+        log "error: cannot bundle npm provider $provider_id when CTX_BUNDLE_SKIP_RUNTIMES=1"
+        exit 5
+      fi
       if [[ -z "$version" || -z "$package" || -z "$entrypoint" ]]; then
         log "error: missing npm metadata for $provider_id"
         exit 5
@@ -1124,6 +1265,10 @@ PY
 )"
       ;;
     python)
+      if is_truthy "$skip_runtimes_raw"; then
+        log "error: cannot bundle python provider $provider_id when CTX_BUNDLE_SKIP_RUNTIMES=1"
+        exit 5
+      fi
       if [[ -z "$version" || -z "$package" || -z "$entrypoint" ]]; then
         log "error: missing python metadata for $provider_id"
         exit 5
@@ -1211,15 +1356,16 @@ done < "$providers_src"
 runtimes_out="$(mktemp /tmp/ctx-bundle-runtimes-out.XXXXXX)"
 images_out="$(mktemp /tmp/ctx-bundle-images-out.XXXXXX)"
 
-node_sha="$(sha256_file "$node_bin")"
-NODE_VERSION_ENV="$NODE_VERSION" \
-NODE_OS_ENV="$os" \
-NODE_ARCH_ENV="$arch" \
-NODE_SHA_ENV="$node_sha" \
-NODE_ROOT_REL_ENV="$node_root_rel" \
-NODE_BIN_REL_ENV="$node_bin_rel" \
-NODE_NPM_REL_ENV="$npm_cli_rel" \
-run_python - <<'PY' >> "$runtimes_out"
+if ! is_truthy "$skip_runtimes_raw"; then
+  node_sha="$(sha256_file "$node_bin")"
+  NODE_VERSION_ENV="$NODE_VERSION" \
+  NODE_OS_ENV="$os" \
+  NODE_ARCH_ENV="$arch" \
+  NODE_SHA_ENV="$node_sha" \
+  NODE_ROOT_REL_ENV="$node_root_rel" \
+  NODE_BIN_REL_ENV="$node_bin_rel" \
+  NODE_NPM_REL_ENV="$npm_cli_rel" \
+  run_python - <<'PY' >> "$runtimes_out"
 import json
 import os
 
@@ -1236,14 +1382,14 @@ entry = {
 print(json.dumps(entry, separators=(",", ":")))
 PY
 
-python_sha="$(sha256_file "$python_bin")"
-PYTHON_VERSION_ENV="$PYTHON_VERSION" \
-PYTHON_OS_ENV="$os" \
-PYTHON_ARCH_ENV="$arch" \
-PYTHON_SHA_ENV="$python_sha" \
-PYTHON_ROOT_REL_ENV="$python_root_rel" \
-PYTHON_BIN_REL_ENV="$python_bin_rel" \
-run_python - <<'PY' >> "$runtimes_out"
+  python_sha="$(sha256_file "$python_bin")"
+  PYTHON_VERSION_ENV="$PYTHON_VERSION" \
+  PYTHON_OS_ENV="$os" \
+  PYTHON_ARCH_ENV="$arch" \
+  PYTHON_SHA_ENV="$python_sha" \
+  PYTHON_ROOT_REL_ENV="$python_root_rel" \
+  PYTHON_BIN_REL_ENV="$python_bin_rel" \
+  run_python - <<'PY' >> "$runtimes_out"
 import json
 import os
 
@@ -1259,19 +1405,19 @@ entry = {
 print(json.dumps(entry, separators=(",", ":")))
 PY
 
-if [[ "${CTX_BUNDLE_PODMAN:-0}" == "1" ]]; then
-  if [[ ! -f "$podman_bin" ]]; then
-    log "error: podman binary missing at $podman_bin"
-    exit 4
-  fi
-  podman_sha="$(sha256_file "$podman_bin")"
-  PODMAN_VERSION_ENV="$PODMAN_VERSION" \
-  PODMAN_OS_ENV="$os" \
-  PODMAN_ARCH_ENV="$arch" \
-  PODMAN_SHA_ENV="$podman_sha" \
-  PODMAN_ROOT_REL_ENV="$podman_root_rel" \
-  PODMAN_BIN_REL_ENV="$podman_bin_rel" \
-  run_python - <<'PY' >> "$runtimes_out"
+  if [[ "${CTX_BUNDLE_PODMAN:-0}" == "1" ]]; then
+    if [[ ! -f "$podman_bin" ]]; then
+      log "error: podman binary missing at $podman_bin"
+      exit 4
+    fi
+    podman_sha="$(sha256_file "$podman_bin")"
+    PODMAN_VERSION_ENV="$PODMAN_VERSION" \
+    PODMAN_OS_ENV="$os" \
+    PODMAN_ARCH_ENV="$arch" \
+    PODMAN_SHA_ENV="$podman_sha" \
+    PODMAN_ROOT_REL_ENV="$podman_root_rel" \
+    PODMAN_BIN_REL_ENV="$podman_bin_rel" \
+    run_python - <<'PY' >> "$runtimes_out"
 import json
 import os
 
@@ -1286,6 +1432,7 @@ entry = {
 }
 print(json.dumps(entry, separators=(",", ":")))
 PY
+  fi
 fi
 
 bundle_harness_image() {
@@ -1369,6 +1516,9 @@ PY
 
 bundle_harness_mode="${CTX_BUNDLE_HARNESS_IMAGE:-}"
 bundle_harness_mode="${bundle_harness_mode// /}"
+if is_truthy "$skip_images_raw"; then
+  bundle_harness_mode=""
+fi
 if is_truthy "${bundle_harness_mode:-}"; then
   HARNESS_IMAGE_REF="$(read_const DEFAULT_CONTAINER_IMAGE "$ROOT/core/crates/ctx-http/src/harness_runtime.rs")"
   harness_tar_rel="images/ctx-harness-linux-${arch}.tar"

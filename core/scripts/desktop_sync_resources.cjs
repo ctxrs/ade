@@ -79,6 +79,19 @@ const syncBundles = () => {
   if (profile === "release") {
     env.CTX_BUNDLE_HARNESS_IMAGE = env.CTX_BUNDLE_HARNESS_IMAGE || "both";
   }
+  // For desktop releases we want container mode to work out-of-box without relying on system
+  // Podman installs (PATH). Bundle Podman (plus its macOS helper binaries) deterministically.
+  if (profile === "release" && process.platform === "darwin") {
+    env.CTX_BUNDLE_PODMAN = env.CTX_BUNDLE_PODMAN || "1";
+    if (env.CTX_BUNDLE_PODMAN === "1") {
+      env.PODMAN_VERSION = env.PODMAN_VERSION || "5.7.1";
+      if (!env.PODMAN_ARCHIVE_URL) {
+        const arch = process.arch === "arm64" ? "arm64" : "amd64";
+        env.PODMAN_ARCHIVE_URL = `https://github.com/containers/podman/releases/download/v${env.PODMAN_VERSION}/podman-remote-release-darwin_${arch}.zip`;
+      }
+      env.PODMAN_BIN_REL = env.PODMAN_BIN_REL || "usr/bin/podman";
+    }
+  }
   const res = childProcess.spawnSync(bundleScript, {
     env,
     stdio: "inherit",
@@ -86,6 +99,37 @@ const syncBundles = () => {
   if (res.status !== 0) {
     throw new Error(`bundle script failed (${res.status ?? "unknown"})`);
   }
+
+  // Container mode runs Linux containers even on macOS/Windows. Bundle Linux provider
+  // binaries too so "disk-isolated container" can work offline/out-of-box.
+  if (profile === "release" && process.platform === "darwin") {
+    for (const arch of ["aarch64", "x86_64"]) {
+      const linuxEnv = {
+        ...env,
+        CTX_BUNDLE_APPEND: "1",
+        CTX_BUNDLE_OS: "linux",
+        CTX_BUNDLE_ARCH: arch,
+        CTX_BUNDLE_ONLY_PROVIDERS: "codex-crp",
+        CTX_BUNDLE_SKIP_RUNTIMES: "1",
+        CTX_BUNDLE_SKIP_IMAGES: "1",
+        CTX_BUNDLE_INCLUDE_BRIDGE: "0",
+        CTX_BUNDLE_LOCAL_ADAPTERS: "off",
+        CTX_BUNDLE_BUILD_LOCAL_ADAPTERS: "0",
+        CTX_BUNDLE_HARNESS_IMAGE: "0",
+        CTX_BUNDLE_PODMAN: "0",
+      };
+      const linuxRes = childProcess.spawnSync(bundleScript, {
+        env: linuxEnv,
+        stdio: "inherit",
+      });
+      if (linuxRes.status !== 0) {
+        throw new Error(
+          `bundle script failed for linux/${arch} (${linuxRes.status ?? "unknown"})`
+        );
+      }
+    }
+  }
+
   return destBundleDir;
 };
 

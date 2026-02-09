@@ -2440,8 +2440,12 @@ impl ConnectionManager {
         };
 
         let url = format!("{}{}", base_url.trim_end_matches('/'), req.path);
+        // Some daemon operations (notably container provisioning on first run) can legitimately
+        // take minutes. Keep a short connect timeout so a dead daemon fails fast, but allow
+        // long-running requests to complete.
         let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(10 * 60))
             .build()
             .context("building http client")?;
 
@@ -3900,6 +3904,14 @@ fn spawn_daemon_with_mode(
         .filter(|p| p.exists())
         .or_else(dev_bundle_dir);
 
+    // Container-mode Codex sessions need a CODEX_HOME available inside the Linux harness.
+    // The daemon can seed `~/.codex/auth.json` into a daemon-managed location, but only if the
+    // host auth file actually exists (otherwise enabling seeding would create hard errors).
+    let seed_codex_auth = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".codex").join("auth.json").exists())
+        .unwrap_or(false);
+
     let local_port = pick_unused_local_port()?;
     let base_url = format!("http://127.0.0.1:{local_port}");
 
@@ -3925,6 +3937,9 @@ fn spawn_daemon_with_mode(
             cmd.arg("--setenv")
                 .arg(format!("CTX_BUNDLE_DIR={}", bundle.to_string_lossy()));
         }
+        if seed_codex_auth {
+            cmd.arg("--setenv").arg("CTX_SEED_CODEX_AUTH_FROM_HOST=1");
+        }
         if let Ok(appimage) = std::env::var("APPIMAGE") {
             cmd.arg("--setenv")
                 .arg(format!("CTX_APPIMAGE_PATH={appimage}"));
@@ -3941,6 +3956,9 @@ fn spawn_daemon_with_mode(
         }
         if let Some(bundle) = bundle_dir.as_ref() {
             cmd.env("CTX_BUNDLE_DIR", bundle.to_string_lossy().to_string());
+        }
+        if seed_codex_auth {
+            cmd.env("CTX_SEED_CODEX_AUTH_FROM_HOST", "1");
         }
         if let Ok(appimage) = std::env::var("APPIMAGE") {
             cmd.env("CTX_APPIMAGE_PATH", appimage.clone());
