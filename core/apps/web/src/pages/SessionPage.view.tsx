@@ -798,6 +798,7 @@ export function SessionView({
     if (wasActiveRef.current) return;
     wasActiveRef.current = true;
     const token = (restoreTokenRef.current += 1);
+    if (preserveScrollOnFocus) return;
     if (!scrollState || scrollState.stickToBottom) return;
     const applyScroll = (attempts: number) => {
       if (restoreTokenRef.current !== token) return;

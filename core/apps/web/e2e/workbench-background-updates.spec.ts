@@ -11,6 +11,7 @@ test("workbench: background updates land for non-visible active sessions", async
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   const rows = page.locator(".wb-task-row");
+  const activeSessionView = page.locator(".wb-session-slot[aria-hidden=\"false\"] .wb-session");
   await expect(rows).toHaveCount(2);
 
   await rows.nth(0).click();
@@ -26,5 +27,5 @@ test("workbench: background updates land for non-visible active sessions", async
   await page.waitForTimeout(300);
   await rows.nth(1).click();
 
-  await expect(page.locator(".wb-session")).toContainText(`done: ${msg}`, { timeout: 20000 });
+  await expect(activeSessionView).toContainText(`done: ${msg}`, { timeout: 20000 });
 });

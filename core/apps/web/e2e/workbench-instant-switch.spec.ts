@@ -14,7 +14,7 @@ test("workbench: switching between active tasks is instant (no jank, no loading)
   const rows = page.locator(".wb-task-row");
   const taskOne = rows.filter({ hasText: "fixture task 1" }).first();
   const taskTwo = rows.filter({ hasText: "fixture task 2" }).first();
-  const sessionView = page.locator(".wb-session");
+  const sessionView = page.locator(".wb-session-slot[aria-hidden=\"false\"] .wb-session");
   const firstMarker = "fixture msg 1.1.1";
   const secondMarker = "fixture msg 2.1.1";
   await expect(rows).toHaveCount(2);
