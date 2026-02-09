@@ -567,14 +567,41 @@ async fn codex_crp_resume_survives_ctx_default_codex_home() {
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let task = common::create_task(&app, ws.id.0, "t1").await;
     let session = common::create_session(&app, task.id.0, "codex-crp", "fake-model").await;
-    let codex_home = ctx_http::provider_accounts::codex_runtime_home(data_dir.path());
-    tokio::fs::create_dir_all(&codex_home).await.unwrap();
+    let account_id = "acct-default";
+    let registry = ctx_http::provider_accounts::CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![ctx_http::provider_accounts::CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "Default".to_string(),
+            kind: ctx_http::provider_accounts::CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+            email: None,
+            plan_type: None,
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: ctx_http::provider_accounts::CodexEndpointProfile::default(),
+        }],
+    };
+    ctx_http::provider_accounts::save_codex_registry(data_dir.path(), &registry)
+        .await
+        .unwrap();
+    let account_dir =
+        ctx_http::provider_accounts::ensure_codex_account_dir(data_dir.path(), account_id)
+            .await
+            .unwrap();
     tokio::fs::write(
-        codex_home.join("auth.json"),
+        account_dir.join("auth.json"),
         br#"{"OPENAI_API_KEY":"test-key"}"#,
     )
     .await
     .unwrap();
+    ctx_http::provider_accounts::ingest_codex_account_auth_to_secret_store(
+        data_dir.path(),
+        account_id,
+    )
+    .await
+    .unwrap();
+    let codex_home = ctx_http::provider_accounts::codex_runtime_home(data_dir.path());
 
     post_message(&app, session.id.0, "first").await;
     wait_for_terminal_turn_count(&state, session.id, 1).await;

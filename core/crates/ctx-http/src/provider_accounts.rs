@@ -187,6 +187,7 @@ pub async fn remove_codex_account(
     account_id: &str,
 ) -> Result<CodexAccountRegistry> {
     let mut registry = load_codex_registry(data_root).await;
+    let was_active = registry.active_account_id.as_deref() == Some(account_id);
     let removed: Vec<CodexAccountEntry> = registry
         .accounts
         .iter()
@@ -194,10 +195,13 @@ pub async fn remove_codex_account(
         .cloned()
         .collect();
     registry.accounts.retain(|a| a.id != account_id);
-    if registry.active_account_id.as_deref() == Some(account_id) {
+    if was_active {
         registry.active_account_id = None;
     }
     save_codex_registry(data_root, &registry).await?;
+    if was_active {
+        clear_runtime_auth_projection(data_root).await?;
+    }
     for entry in removed {
         if let Some(secret_ref) = entry.secret_ref {
             let secret_path = codex_secret_path(data_root, &secret_ref);
@@ -232,6 +236,9 @@ pub async fn set_active_codex_account(
         }
     }
     save_codex_registry(data_root, &registry).await?;
+    if registry.active_account_id.is_none() {
+        clear_runtime_auth_projection(data_root).await?;
+    }
     Ok(registry)
 }
 
@@ -566,6 +573,22 @@ async fn read_runtime_owner_marker(data_root: &Path) -> Result<Option<String>> {
     Ok(Some(value.to_string()))
 }
 
+async fn clear_runtime_auth_projection(data_root: &Path) -> Result<()> {
+    let auth_path = codex_runtime_home(data_root).join("auth.json");
+    match tokio::fs::remove_file(&auth_path).await {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    let owner_path = codex_runtime_owner_path(data_root);
+    match tokio::fs::remove_file(&owner_path).await {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    Ok(())
+}
+
 pub async fn import_host_codex_auth_to_secret_store(
     data_root: &Path,
     label: Option<String>,
@@ -764,10 +787,18 @@ pub async fn codex_env_for_active_account(data_root: &Path) -> Result<HashMap<St
                     return codex_env_for_runtime_home(data_root).await;
                 }
             }
+        } else {
+            clear_runtime_auth_projection(data_root).await?;
+            return codex_env_for_runtime_home(data_root).await;
         }
-        let _ = mirror_account_auth_to_runtime_home(data_root, active).await?;
+        let mirrored = mirror_account_auth_to_runtime_home(data_root, active).await?;
+        if !mirrored {
+            clear_runtime_auth_projection(data_root).await?;
+        }
+        return codex_env_for_runtime_home(data_root).await;
     }
 
+    clear_runtime_auth_projection(data_root).await?;
     codex_env_for_runtime_home(data_root).await
 }
 
@@ -825,7 +856,17 @@ mod tests {
         let root = dir.path();
         let registry = CodexAccountRegistry {
             active_account_id: Some("acct-123".to_string()),
-            accounts: Vec::new(),
+            accounts: vec![CodexAccountEntry {
+                id: "acct-123".to_string(),
+                label: "Account".to_string(),
+                kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+                email: None,
+                plan_type: None,
+                created_at: Utc::now(),
+                last_used_at: None,
+                secret_ref: None,
+                endpoint_profile: CodexEndpointProfile::default(),
+            }],
         };
         save_codex_registry(root, &registry).await.unwrap();
         let account_dir = ensure_codex_account_dir(root, "acct-123").await.unwrap();
@@ -857,6 +898,32 @@ mod tests {
         let home = env.get("CODEX_HOME").unwrap();
         assert_eq!(home, &codex_runtime_home(root).to_string_lossy());
         assert!(codex_runtime_home(root).exists());
+    }
+
+    #[tokio::test]
+    async fn codex_env_clears_stale_runtime_auth_when_no_active_account() {
+        let _env_lock = lock_env().await;
+        let _guard = EnvGuard::without("CTX_CODEX_HOME");
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        tokio::fs::create_dir_all(codex_runtime_home(root))
+            .await
+            .unwrap();
+        tokio::fs::write(
+            codex_runtime_home(root).join("auth.json"),
+            br#"{"OPENAI_API_KEY":"stale-key"}"#,
+        )
+        .await
+        .unwrap();
+        write_runtime_owner_marker(root, "acct-stale")
+            .await
+            .unwrap();
+
+        let env = codex_env_for_active_account(root).await.unwrap();
+        let home = env.get("CODEX_HOME").unwrap();
+        assert_eq!(home, &codex_runtime_home(root).to_string_lossy());
+        assert!(!codex_runtime_home(root).join("auth.json").exists());
+        assert!(!codex_runtime_owner_path(root).exists());
     }
 
     #[tokio::test]
@@ -1132,5 +1199,77 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("auth_type=bearer"));
+    }
+
+    #[tokio::test]
+    async fn clearing_active_account_clears_runtime_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = CodexAccountRegistry {
+            active_account_id: Some("acct-1".to_string()),
+            accounts: vec![CodexAccountEntry {
+                id: "acct-1".to_string(),
+                label: "Account".to_string(),
+                kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+                email: None,
+                plan_type: None,
+                created_at: Utc::now(),
+                last_used_at: None,
+                secret_ref: None,
+                endpoint_profile: CodexEndpointProfile::default(),
+            }],
+        };
+        save_codex_registry(root, &registry).await.unwrap();
+        tokio::fs::create_dir_all(codex_runtime_home(root))
+            .await
+            .unwrap();
+        tokio::fs::write(
+            codex_runtime_home(root).join("auth.json"),
+            br#"{"OPENAI_API_KEY":"stale"}"#,
+        )
+        .await
+        .unwrap();
+        write_runtime_owner_marker(root, "acct-1").await.unwrap();
+
+        let _ = set_active_codex_account(root, None).await.unwrap();
+        assert!(!codex_runtime_home(root).join("auth.json").exists());
+        assert!(!codex_runtime_owner_path(root).exists());
+    }
+
+    #[tokio::test]
+    async fn removing_active_account_clears_runtime_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = CodexAccountRegistry {
+            active_account_id: Some("acct-remove".to_string()),
+            accounts: vec![CodexAccountEntry {
+                id: "acct-remove".to_string(),
+                label: "Account".to_string(),
+                kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+                email: None,
+                plan_type: None,
+                created_at: Utc::now(),
+                last_used_at: None,
+                secret_ref: None,
+                endpoint_profile: CodexEndpointProfile::default(),
+            }],
+        };
+        save_codex_registry(root, &registry).await.unwrap();
+        tokio::fs::create_dir_all(codex_runtime_home(root))
+            .await
+            .unwrap();
+        tokio::fs::write(
+            codex_runtime_home(root).join("auth.json"),
+            br#"{"OPENAI_API_KEY":"stale"}"#,
+        )
+        .await
+        .unwrap();
+        write_runtime_owner_marker(root, "acct-remove")
+            .await
+            .unwrap();
+
+        let _ = remove_codex_account(root, "acct-remove").await.unwrap();
+        assert!(!codex_runtime_home(root).join("auth.json").exists());
+        assert!(!codex_runtime_owner_path(root).exists());
     }
 }
