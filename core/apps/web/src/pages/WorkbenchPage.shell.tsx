@@ -3610,6 +3610,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               <div className="wb-session">
                 {activeSessionId ? (
                   <WorkbenchSessionSlot
+                    key={activeSessionId}
                     sessionId={activeSessionId}
                     active={true}
                     scrollState={workbenchSnap.window.scrollByKey[scrollKey(activeSessionId)] ?? null}
