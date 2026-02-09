@@ -73,6 +73,15 @@ pub struct TerminalCreateRequest {
     pub cols: Option<u16>,
     pub rows: Option<u16>,
     pub env: HashMap<String, String>,
+    pub podman: Option<PodmanTerminalSpec>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PodmanTerminalSpec {
+    pub podman_bin: PathBuf,
+    pub podman_env: HashMap<String, String>,
+    pub container_name: String,
+    pub workdir: String,
 }
 
 #[derive(Debug, Clone)]
@@ -326,12 +335,36 @@ impl TerminalManager {
             })
             .context("open pty")?;
 
-        let mut cmd = CommandBuilder::new(req.shell.clone());
-        cmd.cwd(req.cwd.clone());
-        cmd.env("TERM", "xterm-256color");
-        for (key, value) in &req.env {
-            cmd.env(key, value);
-        }
+        let cmd = if let Some(podman) = &req.podman {
+            let mut cmd = CommandBuilder::new(podman.podman_bin.clone());
+            for (key, value) in &podman.podman_env {
+                cmd.env(key, value);
+            }
+
+            // Container env.
+            cmd.arg("exec");
+            cmd.arg("-i");
+            cmd.arg("-t");
+            cmd.arg("--workdir");
+            cmd.arg(podman.workdir.clone());
+            cmd.arg("--env");
+            cmd.arg("TERM=xterm-256color");
+            for (key, value) in &req.env {
+                cmd.arg("--env");
+                cmd.arg(format!("{key}={value}"));
+            }
+            cmd.arg(podman.container_name.clone());
+            cmd.arg(req.shell.clone());
+            cmd
+        } else {
+            let mut cmd = CommandBuilder::new(req.shell.clone());
+            cmd.cwd(req.cwd.clone());
+            cmd.env("TERM", "xterm-256color");
+            for (key, value) in &req.env {
+                cmd.env(key, value);
+            }
+            cmd
+        };
 
         let child = pair.slave.spawn_command(cmd).context("spawn terminal")?;
         drop(pair.slave);

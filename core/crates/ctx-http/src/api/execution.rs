@@ -26,7 +26,7 @@ pub(super) async fn prefetch_container_image(
     let exec = settings.execution.unwrap_or_default();
     let image = harness_runtime::resolve_container_image(&exec.container);
 
-    let st = harness_runtime::container_image_status(&image)
+    let st = harness_runtime::container_image_status(&state.core.data_root, &image)
         .await
         .unwrap_or(harness_runtime::ContainerImageStatus {
             present: false,
@@ -78,8 +78,10 @@ pub(super) async fn prefetch_container_image(
 
     // Fire-and-forget: prefetch is opportunistic and should not block UI flows.
     let image_clone = image.clone();
+    let data_root = state.core.data_root.clone();
     tokio::spawn(async move {
-        if let Err(err) = harness_runtime::prefetch_container_image(&image_clone).await {
+        if let Err(err) = harness_runtime::prefetch_container_image(&data_root, &image_clone).await
+        {
             tracing::warn!(
                 "container image prefetch failed for '{}': {err:#}",
                 image_clone
@@ -112,7 +114,7 @@ pub(super) async fn container_image_status(
     let exec = settings.execution.unwrap_or_default();
     let image = harness_runtime::resolve_container_image(&exec.container);
 
-    let st = harness_runtime::container_image_status(&image)
+    let st = harness_runtime::container_image_status(&state.core.data_root, &image)
         .await
         .unwrap_or(harness_runtime::ContainerImageStatus {
             present: false,

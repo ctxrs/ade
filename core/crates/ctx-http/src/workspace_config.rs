@@ -747,6 +747,7 @@ pub async fn update_execution_config(
                     match mount_mode {
                         ContainerMountMode::HostMounted => "host_mounted",
                         ContainerMountMode::Sealed => "sealed",
+                        ContainerMountMode::DiskIsolated => "disk_isolated",
                     }
                     .to_string(),
                 ),

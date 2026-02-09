@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -18,7 +18,10 @@ use ctx_fs::patch::should_ignore_path;
 use ctx_fs::vcs::{self, VcsDriver};
 
 use crate::api::sessions::{resolve_diff_base_with_meta, SessionDiffQuery};
+use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
+use crate::execution_effective;
+use crate::harness_runtime::{podman_command, workspace_container_name};
 
 const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
 const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
@@ -65,6 +68,248 @@ struct GitStatusBranchInfo {
 
 fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
     vcs::driver_for_kind(worktree.vcs_kind.clone())
+}
+
+async fn ensure_container_for_worktree(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+) -> Result<String> {
+    let workspace = state
+        .global_store()
+        .get_workspace(worktree.workspace_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
+    let ws_root = Path::new(&workspace.root_path);
+    let effective =
+        execution_effective::effective_execution_settings(&state.core.data_root, ws_root).await;
+    state
+        .execution
+        .harness
+        .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
+        .await?;
+    Ok(workspace_container_name(worktree.workspace_id))
+}
+
+async fn container_git_output(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    args: &[&str],
+) -> Result<std::process::Output> {
+    const PODMAN_GIT_TIMEOUT: Duration = Duration::from_secs(30);
+    let container = ensure_container_for_worktree(state, worktree).await?;
+    let mut cmd = podman_command(&state.core.data_root)?;
+    cmd.arg("exec")
+        .arg("--workdir")
+        .arg(&worktree.root_path)
+        .arg(&container)
+        .arg("git")
+        .args(args);
+    crate::harness_runtime::command_output_with_timeout(cmd, PODMAN_GIT_TIMEOUT)
+        .await
+        .context("podman exec git timed out")
+}
+
+async fn container_git_stdout(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    args: &[&str],
+) -> Result<Vec<u8>> {
+    let out = container_git_output(state, worktree, args).await?;
+    if out.status.success() {
+        Ok(out.stdout)
+    } else {
+        anyhow::bail!(
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+}
+
+async fn container_git_status_short(state: &Arc<AppState>, worktree: &Worktree) -> Result<String> {
+    let bytes =
+        container_git_stdout(state, worktree, &["status", "-sb", "--untracked-files=all"]).await?;
+    Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
+async fn container_git_status_porcelain(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+) -> Result<Vec<String>> {
+    let bytes = container_git_stdout(state, worktree, &["status", "--porcelain", "-z"]).await?;
+    let mut out = Vec::new();
+    for entry in bytes.split(|b| *b == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        out.push(String::from_utf8_lossy(entry).to_string());
+    }
+    Ok(out)
+}
+
+async fn container_git_list_untracked(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+) -> Result<Vec<String>> {
+    let bytes = container_git_stdout(
+        state,
+        worktree,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )
+    .await?;
+    let mut out = Vec::new();
+    for part in bytes.split(|b| *b == 0) {
+        if part.is_empty() {
+            continue;
+        }
+        out.push(String::from_utf8_lossy(part).to_string());
+    }
+    Ok(out)
+}
+
+async fn container_git_diff_name_status(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    base_commit_sha: &str,
+) -> Result<Vec<(String, String, Option<String>)>> {
+    let bytes = container_git_stdout(
+        state,
+        worktree,
+        &["diff", "--name-status", "-z", base_commit_sha],
+    )
+    .await?;
+    let mut out = Vec::new();
+    let mut parts = bytes
+        .split(|b| *b == 0)
+        .filter(|part| !part.is_empty())
+        .peekable();
+    while let Some(part) = parts.next() {
+        let Some(tab_idx) = part.iter().position(|b| *b == b'\t') else {
+            continue;
+        };
+        let status = String::from_utf8_lossy(&part[..tab_idx]).to_string();
+        let path = String::from_utf8_lossy(&part[tab_idx + 1..]).to_string();
+        if status.is_empty() || path.trim().is_empty() {
+            continue;
+        }
+        let status_char = status.chars().next().unwrap_or('M');
+        if status_char == 'R' || status_char == 'C' {
+            let Some(next_path) = parts.next() else {
+                continue;
+            };
+            let new_path = String::from_utf8_lossy(next_path).to_string();
+            if new_path.trim().is_empty() {
+                continue;
+            }
+            out.push((status, new_path, Some(path)));
+        } else {
+            out.push((status, path, None));
+        }
+    }
+    Ok(out)
+}
+
+async fn container_git_rev_parse(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    reference: &str,
+) -> Result<String> {
+    let bytes = container_git_stdout(state, worktree, &["rev-parse", reference]).await?;
+    Ok(String::from_utf8_lossy(&bytes).trim().to_string())
+}
+
+async fn container_untracked_summary(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+) -> Result<(i64, i64)> {
+    // Match host semantics in `ctx_fs::worktrees::diff_worktree_summary`:
+    // - count untracked files as changed files
+    // - include a best-effort line count for "small" untracked files
+    let container = ensure_container_for_worktree(state, worktree).await?;
+    let script = r#"
+set -e
+max_bytes=$((512 * 1024))
+count=0
+adds=0
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  count=$((count+1))
+  # Skip huge files.
+  size="$(stat -c %s -- "$f" 2>/dev/null || echo 0)"
+  case "$size" in
+    ''|*[!0-9]*) size=0 ;;
+  esac
+  if [ "$size" -gt "$max_bytes" ]; then
+    continue
+  fi
+  # awk counts a final non-newline-terminated line as 1.
+  lines="$(awk 'END{print NR}' -- "$f" 2>/dev/null || echo 0)"
+  case "$lines" in
+    ''|*[!0-9]*) lines=0 ;;
+  esac
+  adds=$((adds+lines))
+done < <(git ls-files --others --exclude-standard)
+printf '%s %s\n' "$count" "$adds"
+"#;
+    let mut cmd = podman_command(&state.core.data_root)?;
+    cmd.arg("exec")
+        .arg("--interactive")
+        .arg("--workdir")
+        .arg(&worktree.root_path)
+        .arg(&container)
+        .arg("bash")
+        .arg("-lc")
+        .arg(script);
+    let out = tokio::time::timeout(Duration::from_secs(30), cmd.output())
+        .await
+        .context("podman exec timed out")??;
+    if !out.status.success() {
+        anyhow::bail!(
+            "untracked summary failed (status {}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    let txt = String::from_utf8_lossy(&out.stdout);
+    let mut parts = txt.split_whitespace();
+    let count = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
+    let adds = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
+    Ok((count, adds))
+}
+
+async fn container_diff_worktree_summary(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    base_commit_sha: &str,
+) -> Result<(i64, i64, i64)> {
+    let bytes =
+        container_git_stdout(state, worktree, &["diff", "--numstat", base_commit_sha]).await?;
+    let stdout = String::from_utf8_lossy(&bytes);
+    let mut file_count = 0i64;
+    let mut additions = 0i64;
+    let mut deletions = 0i64;
+    for line in stdout.lines() {
+        let mut parts = line.split('\t');
+        let add = parts.next().unwrap_or("0");
+        let del = parts.next().unwrap_or("0");
+        let path = parts.next().unwrap_or("").trim();
+        if path.is_empty() {
+            continue;
+        }
+        file_count += 1;
+        if add != "-" {
+            additions += add.parse::<i64>().unwrap_or(0);
+        }
+        if del != "-" {
+            deletions += del.parse::<i64>().unwrap_or(0);
+        }
+    }
+    let (untracked_count, untracked_additions) = container_untracked_summary(state, worktree)
+        .await
+        .unwrap_or((0, 0));
+    file_count += untracked_count;
+    additions += untracked_additions;
+    Ok((file_count, additions, deletions))
 }
 
 fn now_epoch_ms() -> i64 {
@@ -137,31 +382,48 @@ fn build_git_status_summary(
 }
 
 async fn load_diff_touched_entries(
-    driver: &Arc<dyn VcsDriver>,
+    state: &Arc<AppState>,
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> Result<Vec<WorktreeVcsTouchedFile>> {
     let root = Path::new(&worktree.root_path);
-    let entries = driver.diff_name_status(root, base_commit_sha).await?;
+    let entries: Vec<(String, String, Option<String>)> = if is_container_path(root) {
+        container_git_diff_name_status(state, worktree, base_commit_sha).await?
+    } else {
+        let driver = vcs_driver_for_worktree(worktree);
+        driver
+            .diff_name_status(root, base_commit_sha)
+            .await?
+            .into_iter()
+            .map(|entry| (entry.status, entry.path, entry.orig_path))
+            .collect()
+    };
     let mut items = Vec::new();
     let mut seen = HashSet::new();
-    for entry in entries {
-        let path = entry.path.trim().to_string();
+    for (status, path, orig_path) in entries {
+        let path = path.trim().to_string();
         if path.is_empty() {
             continue;
         }
         if !seen.insert(path.clone()) {
             continue;
         }
-        let status = entry.status.chars().next().unwrap_or('M').to_string();
+        let status = status.chars().next().unwrap_or('M').to_string();
         items.push(WorktreeVcsTouchedFile {
             path,
-            orig_path: entry.orig_path,
+            orig_path,
             index_status: Some(status),
             worktree_status: None,
         });
     }
-    let untracked = driver.list_untracked(root).await.unwrap_or_default();
+    let untracked = if is_container_path(root) {
+        container_git_list_untracked(state, worktree)
+            .await
+            .unwrap_or_default()
+    } else {
+        let driver = vcs_driver_for_worktree(worktree);
+        driver.list_untracked(root).await.unwrap_or_default()
+    };
     for path in untracked {
         let path = path.trim().to_string();
         if path.is_empty() {
@@ -202,17 +464,33 @@ async fn build_worktree_vcs_snapshot_from_parts(
     };
     let base_commit_sha = resolution.base_commit_sha.clone();
     let root = Path::new(&worktree.root_path);
-    let driver = vcs::driver_for_path(root).await.ok();
-    let head_commit_sha = match driver.as_ref() {
-        Some(driver) => driver
-            .rev_parse_head(root)
+    let (head_commit_sha, target_branch_commit_sha) = if is_container_path(root) {
+        let head = container_git_rev_parse(state, worktree, "HEAD")
             .await
-            .unwrap_or_else(|_| base_commit_sha.clone()),
-        None => base_commit_sha.clone(),
-    };
-    let target_branch_commit_sha = match (driver.as_ref(), resolution.target_branch.as_ref()) {
-        (Some(driver), Some(target_branch)) => driver.rev_parse_ref(root, target_branch).await.ok(),
-        _ => None,
+            .unwrap_or_else(|_| base_commit_sha.clone());
+        let target = match resolution.target_branch.as_ref() {
+            Some(target_branch) => container_git_rev_parse(state, worktree, target_branch)
+                .await
+                .ok(),
+            None => None,
+        };
+        (head, target)
+    } else {
+        let driver = vcs::driver_for_path(root).await.ok();
+        let head = match driver.as_ref() {
+            Some(driver) => driver
+                .rev_parse_head(root)
+                .await
+                .unwrap_or_else(|_| base_commit_sha.clone()),
+            None => base_commit_sha.clone(),
+        };
+        let target = match (driver.as_ref(), resolution.target_branch.as_ref()) {
+            (Some(driver), Some(target_branch)) => {
+                driver.rev_parse_ref(root, target_branch).await.ok()
+            }
+            _ => None,
+        };
+        (head, target)
     };
     let base_resolution = WorktreeVcsBaseResolution {
         kind: resolution.kind,
@@ -250,12 +528,24 @@ fn summary_from_counts(
     }
 }
 
-pub async fn load_git_status_snapshot(worktree: &Worktree) -> Result<GitStatusSnapshot> {
-    let vcs = vcs_driver_for_worktree(worktree);
+pub async fn load_git_status_snapshot(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+) -> Result<GitStatusSnapshot> {
     let root = Path::new(&worktree.root_path);
-    let status_text = vcs.status_short(root).await?;
+    let status_text = if is_container_path(root) {
+        container_git_status_short(state, worktree).await?
+    } else {
+        let vcs = vcs_driver_for_worktree(worktree);
+        vcs.status_short(root).await?
+    };
     let branch_info = parse_git_status_short(&status_text);
-    let entries = vcs.status_porcelain(root).await?;
+    let entries = if is_container_path(root) {
+        container_git_status_porcelain(state, worktree).await?
+    } else {
+        let vcs = vcs_driver_for_worktree(worktree);
+        vcs.status_porcelain(root).await?
+    };
     let parsed_entries = parse_git_status_entries(&entries);
     Ok(GitStatusSnapshot {
         raw: status_text,
@@ -344,18 +634,20 @@ async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) 
     let (git_status, touched_files) = if let Some(snapshot) = cached_snapshot {
         (snapshot.git_status, snapshot.touched_files)
     } else {
-        let snapshot = load_git_status_snapshot(&worktree).await?;
+        let snapshot = load_git_status_snapshot(&state, &worktree).await?;
         let git_status_entries = build_git_status_entries(&snapshot.entries);
         let git_status = build_git_status_summary(&snapshot, git_status_entries);
-        let driver = vcs_driver_for_worktree(&worktree);
         let diff_entries =
-            load_diff_touched_entries(&driver, &worktree, &resolution.base_commit_sha).await?;
+            load_diff_touched_entries(&state, &worktree, &resolution.base_commit_sha).await?;
         let touched = build_touched_files(&diff_entries);
         (git_status, touched)
     };
-    let summary_result =
+    let summary_result = if is_container_path(Path::new(&worktree.root_path)) {
+        container_diff_worktree_summary(&state, &worktree, &resolution.base_commit_sha).await
+    } else {
         ctx_fs::worktrees::diff_worktree_summary(&worktree.root_path, &resolution.base_commit_sha)
-            .await;
+            .await
+    };
     let (summary, compute_state, summary_at) = match summary_result {
         Ok((file_count, line_additions, line_deletions)) => (
             summary_from_counts(file_count, line_additions, line_deletions),
@@ -445,12 +737,11 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
         .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
     let resolution =
         resolve_diff_base_with_meta(&workspace, worktree, &SessionDiffQuery::default()).await;
-    let git_snapshot = load_git_status_snapshot(worktree).await?;
+    let git_snapshot = load_git_status_snapshot(state, worktree).await?;
     let git_status_entries = build_git_status_entries(&git_snapshot.entries);
     let git_status = build_git_status_summary(&git_snapshot, git_status_entries);
-    let driver = vcs_driver_for_worktree(worktree);
     let diff_entries =
-        load_diff_touched_entries(&driver, worktree, &resolution.base_commit_sha).await?;
+        load_diff_touched_entries(state, worktree, &resolution.base_commit_sha).await?;
     let touched_files = build_touched_files(&diff_entries);
     let cached_summary = {
         let cache = state.workspaces.worktree_vcs_snapshots.lock().await;
@@ -500,6 +791,13 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
 
 pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
     let root = Path::new(&worktree.root_path);
+    if is_container_path(root) {
+        // Disk-isolated worktrees live inside the harness container; host filesystem watchers
+        // cannot observe changes. Polling keeps VCS snapshots up to date.
+        let _ = container_git_stdout(&state, &worktree, &["rev-parse", "--is-inside-work-tree"])
+            .await?;
+        return run_git_status_poller(state, worktree).await;
+    }
     let vcs = vcs_driver_for_worktree(&worktree);
     vcs.assert_repo(root).await?;
 

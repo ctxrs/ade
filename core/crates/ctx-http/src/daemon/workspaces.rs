@@ -505,6 +505,14 @@ impl AppState {
     }
 
     pub async fn cleanup_workspace(&self, workspace_id: WorkspaceId) {
+        // Best-effort: workspace deletion should attempt to clean up its harness container + volume,
+        // but must not fail deletion if podman is unavailable.
+        let _ = self.execution.harness.stop_container(workspace_id).await;
+        let _ = self
+            .execution
+            .harness
+            .remove_workspace_volume(workspace_id)
+            .await;
         self.workspaces.cleanup_workspace(self, workspace_id).await;
     }
 

@@ -439,14 +439,16 @@ pub(super) async fn get_session_git_status(
                 }),
             )
         })?;
-    let snapshot = load_git_status_snapshot(&worktree).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    let snapshot = load_git_status_snapshot(&state, &worktree)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
     let resp = SessionGitStatusResponse {
         raw: snapshot.raw,
         summary_line: snapshot.summary_line,

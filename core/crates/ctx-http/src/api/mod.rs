@@ -383,6 +383,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(get_workspace_harness_container),
         )
         .route(
+            "/api/workspaces/:id/harness_container/ensure",
+            post(ensure_workspace_harness_container),
+        )
+        .route(
             "/api/workspaces/:id/harness_container/stop",
             post(stop_workspace_harness_container),
         )
@@ -1461,7 +1465,7 @@ async fn resolve_session_root_and_file(
     state: &Arc<AppState>,
     session_id: &str,
     path: &str,
-) -> Result<(SessionId, WorktreeId, PathBuf, PathBuf), StatusCode> {
+) -> Result<(SessionId, WorkspaceId, WorktreeId, PathBuf, PathBuf), StatusCode> {
     let sid = SessionId(uuid::Uuid::parse_str(session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
     let store = state
@@ -1479,24 +1483,62 @@ async fn resolve_session_root_and_file(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let root = PathBuf::from(wt.root_path)
-        .canonicalize()
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let file = crate::buffers::BufferStore::resolve_path(&root, path)
+    let root = PathBuf::from(&wt.root_path);
+    if crate::container_fs::is_container_path(&root) {
+        let file = crate::buffers::BufferStore::resolve_path_lexical(&root, path)
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+        Ok((sid, session.workspace_id, session.worktree_id, root, file))
+    } else {
+        let root = root.canonicalize().map_err(|_| StatusCode::BAD_REQUEST)?;
+        let file = crate::buffers::BufferStore::resolve_path(&root, path)
+            .await
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+        Ok((sid, session.workspace_id, session.worktree_id, root, file))
+    }
+}
+
+async fn ensure_harness_container_for_workspace(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+) -> Result<(), StatusCode> {
+    let workspace = state
+        .global_store()
+        .get_workspace(workspace_id)
         .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    Ok((sid, session.worktree_id, root, file))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let settings = crate::execution_effective::effective_execution_settings(
+        &state.core.data_root,
+        std::path::Path::new(&workspace.root_path),
+    )
+    .await;
+    state
+        .execution
+        .harness
+        .ensure_workspace_container(&workspace, &settings, &state.core.daemon_url)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(())
 }
 
 async fn open_buffer(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BufferOpenReq>,
 ) -> Result<Json<BufferOpenResp>, StatusCode> {
-    let (sid, worktree_id, root, file) =
+    let (sid, workspace_id, worktree_id, root, file) =
         resolve_session_root_and_file(&state, &req.session_id, &req.path).await?;
-    let text = tokio::fs::read_to_string(&file)
-        .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let text = if crate::container_fs::is_container_path(&file) {
+        ensure_harness_container_for_workspace(&state, workspace_id).await?;
+        let container_id = format!("ctx-harness-{}", workspace_id.0);
+        let fs = crate::container_fs::ContainerFs::new(state.core.data_root.clone(), container_id);
+        fs.read_to_string(&file)
+            .await
+            .map_err(|_| StatusCode::BAD_REQUEST)?
+    } else {
+        tokio::fs::read_to_string(&file)
+            .await
+            .map_err(|_| StatusCode::BAD_REQUEST)?
+    };
     let disk_sha = sha256_hex(&text);
     let st = state
         .core
@@ -1511,16 +1553,19 @@ async fn open_buffer(
         )
         .await;
     if state.core.lsp.enabled() {
-        if let Some(lang) = ctx_lsp::Language::detect(&file, &state.core.lsp_cfg) {
-            state
-                .ensure_lsp_diagnostics_forwarder(root.clone(), lang)
+        // Container-only paths are not available on the host filesystem; skip host LSP sync.
+        if !crate::container_fs::is_container_path(&file) {
+            if let Some(lang) = ctx_lsp::Language::detect(&file, &state.core.lsp_cfg) {
+                state
+                    .ensure_lsp_diagnostics_forwarder(root.clone(), lang)
+                    .await;
+            }
+            let _ = state
+                .core
+                .lsp
+                .sync_document_text(&root, &file, st.text.clone())
                 .await;
         }
-        let _ = state
-            .core
-            .lsp
-            .sync_document_text(&root, &file, st.text.clone())
-            .await;
     }
     Ok(Json(BufferOpenResp {
         buffer_id: st.id.0.to_string(),
@@ -1555,10 +1600,60 @@ async fn update_buffer(
     ))?;
 
     let new_sha = if req.persist {
+        let is_container_file = crate::container_fs::is_container_path(&current.path);
+
         // Detect external changes on disk.
-        let disk_text = tokio::fs::read_to_string(&current.path)
-            .await
-            .map_err(|_| {
+        let disk_text = if is_container_file {
+            let store = state
+                .store_for_worktree(current.worktree_id)
+                .await
+                .map_err(|_| {
+                    (
+                        StatusCode::NOT_FOUND,
+                        Json(BufferConflictResp {
+                            error: "worktree not found".to_string(),
+                            disk_sha256: "".to_string(),
+                            disk_text: "".to_string(),
+                        }),
+                    )
+                })?;
+            let wt = store
+                .get_worktree(current.worktree_id)
+                .await
+                .map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(BufferConflictResp {
+                            error: "failed to load worktree".to_string(),
+                            disk_sha256: "".to_string(),
+                            disk_text: "".to_string(),
+                        }),
+                    )
+                })?
+                .ok_or((
+                    StatusCode::NOT_FOUND,
+                    Json(BufferConflictResp {
+                        error: "worktree not found".to_string(),
+                        disk_sha256: "".to_string(),
+                        disk_text: "".to_string(),
+                    }),
+                ))?;
+            ensure_harness_container_for_workspace(&state, wt.workspace_id)
+                .await
+                .map_err(|code| {
+                    (
+                        code,
+                        Json(BufferConflictResp {
+                            error: "failed to ensure harness container".to_string(),
+                            disk_sha256: "".to_string(),
+                            disk_text: "".to_string(),
+                        }),
+                    )
+                })?;
+            let container_id = format!("ctx-harness-{}", wt.workspace_id.0);
+            let fs =
+                crate::container_fs::ContainerFs::new(state.core.data_root.clone(), container_id);
+            fs.read_to_string(&current.path).await.map_err(|_| {
                 (
                     StatusCode::BAD_REQUEST,
                     Json(BufferConflictResp {
@@ -1567,7 +1662,21 @@ async fn update_buffer(
                         disk_text: "".to_string(),
                     }),
                 )
-            })?;
+            })?
+        } else {
+            tokio::fs::read_to_string(&current.path)
+                .await
+                .map_err(|_| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(BufferConflictResp {
+                            error: "failed to read file".to_string(),
+                            disk_sha256: "".to_string(),
+                            disk_text: "".to_string(),
+                        }),
+                    )
+                })?
+        };
         let disk_sha = sha256_hex(&disk_text);
         if !req.force && disk_sha != current.last_disk_sha256 {
             return Err((
@@ -1581,18 +1690,82 @@ async fn update_buffer(
         }
 
         // Write to disk (autosave).
-        tokio::fs::write(&current.path, req.text.as_bytes())
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::BAD_REQUEST,
+        if is_container_file {
+            let store = state
+                .store_for_worktree(current.worktree_id)
+                .await
+                .map_err(|_| {
+                    (
+                        StatusCode::NOT_FOUND,
+                        Json(BufferConflictResp {
+                            error: "worktree not found".to_string(),
+                            disk_sha256: "".to_string(),
+                            disk_text: "".to_string(),
+                        }),
+                    )
+                })?;
+            let wt = store
+                .get_worktree(current.worktree_id)
+                .await
+                .map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(BufferConflictResp {
+                            error: "failed to load worktree".to_string(),
+                            disk_sha256: "".to_string(),
+                            disk_text: "".to_string(),
+                        }),
+                    )
+                })?
+                .ok_or((
+                    StatusCode::NOT_FOUND,
                     Json(BufferConflictResp {
-                        error: "failed to write file".to_string(),
+                        error: "worktree not found".to_string(),
                         disk_sha256: "".to_string(),
                         disk_text: "".to_string(),
                     }),
-                )
-            })?;
+                ))?;
+            ensure_harness_container_for_workspace(&state, wt.workspace_id)
+                .await
+                .map_err(|code| {
+                    (
+                        code,
+                        Json(BufferConflictResp {
+                            error: "failed to ensure harness container".to_string(),
+                            disk_sha256: "".to_string(),
+                            disk_text: "".to_string(),
+                        }),
+                    )
+                })?;
+            let container_id = format!("ctx-harness-{}", wt.workspace_id.0);
+            let fs =
+                crate::container_fs::ContainerFs::new(state.core.data_root.clone(), container_id);
+            fs.write_string(&current.path, &req.text)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(BufferConflictResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                            disk_sha256: "".to_string(),
+                            disk_text: "".to_string(),
+                        }),
+                    )
+                })?;
+        } else {
+            tokio::fs::write(&current.path, req.text.as_bytes())
+                .await
+                .map_err(|_| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(BufferConflictResp {
+                            error: "failed to write file".to_string(),
+                            disk_sha256: "".to_string(),
+                            disk_text: "".to_string(),
+                        }),
+                    )
+                })?;
+        }
         Some(sha256_hex(&req.text))
     } else {
         None
@@ -1613,7 +1786,7 @@ async fn update_buffer(
             )
         })?;
 
-    if state.core.lsp.enabled() {
+    if state.core.lsp.enabled() && !crate::container_fs::is_container_path(&st.path) {
         if let Some(lang) = ctx_lsp::Language::detect(&st.path, &state.core.lsp_cfg) {
             state
                 .ensure_lsp_diagnostics_forwarder(st.root.clone(), lang)

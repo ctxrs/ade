@@ -17,9 +17,11 @@ use super::sessions::schedule_session_title_generation;
 use super::shared::{env_target_for_worktree, SessionWithEnv};
 use crate::attachments;
 use crate::daemon::AppState;
+use crate::execution_effective;
 use crate::logs;
 use crate::ops_events::OpsEvent;
 use crate::scheduler::SchedulerCommand;
+use crate::settings::{ContainerMountMode, ExecutionMode};
 use crate::telemetry::TelemetryEvent;
 use crate::vcs_hooks;
 use crate::worktree_bootstrap;
@@ -1122,19 +1124,36 @@ pub(super) async fn create_task(
     })?;
 
     let worktree_id = WorktreeId::new();
-    let wt_path = managed_worktree_path(&state.core.data_root, ws_id, worktree_id);
-    if let Some(parent) = wt_path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            (
+    let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
+    let effective =
+        execution_effective::effective_execution_settings(&state.core.data_root, ws_root).await;
+    let wt_path = if matches!(effective.mode, ExecutionMode::Container)
+        && matches!(
+            effective.container.mount_mode,
+            ContainerMountMode::DiskIsolated
+        ) {
+        // Ensure the harness container exists (disk-isolated worktrees live inside it).
+        if let Err(e) = state
+            .execution
+            .harness
+            .ensure_workspace_container(&ws, &effective, &state.core.daemon_url)
+            .await
+        {
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiErrorResp {
                     error: logs::redact_sensitive(&e.to_string()),
                 }),
-            )
-        })?;
-    }
-    let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
-    create_worktree(&ws.root_path, &wt_path, &base_commit_sha, &branch_name)
+            ));
+        }
+        crate::disk_isolated::ensure_worktree_from_host_copy(
+            &state.core.data_root,
+            ws_id,
+            worktree_id,
+            ws_root,
+            &base_commit_sha,
+            &branch_name,
+        )
         .await
         .map_err(|e| {
             (
@@ -1143,7 +1162,31 @@ pub(super) async fn create_task(
                     error: logs::redact_sensitive(&e.to_string()),
                 }),
             )
-        })?;
+        })?
+    } else {
+        let wt_path = managed_worktree_path(&state.core.data_root, ws_id, worktree_id);
+        if let Some(parent) = wt_path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+        }
+        create_worktree(&ws.root_path, &wt_path, &base_commit_sha, &branch_name)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
+        wt_path
+    };
 
     let worktree = Worktree {
         id: worktree_id,
@@ -1351,25 +1394,57 @@ pub(super) async fn create_session_for_task(
             }
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+        let effective = execution_effective::effective_execution_settings(
+            &state.core.data_root,
+            workspace_root,
+        )
+        .await;
         match env_target.as_str() {
             "worktree" | "cloud" => {
                 let worktree_id = WorktreeId::new();
-                let wt_path =
-                    managed_worktree_path(&state.core.data_root, task.workspace_id, worktree_id);
-                if let Some(parent) = wt_path.parent() {
-                    tokio::fs::create_dir_all(parent)
+                let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
+                let wt_path = if matches!(effective.mode, ExecutionMode::Container)
+                    && matches!(
+                        effective.container.mount_mode,
+                        ContainerMountMode::DiskIsolated
+                    ) {
+                    state
+                        .execution
+                        .harness
+                        .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
                         .await
                         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                }
-                let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
-                create_worktree(
-                    &workspace.root_path,
-                    &wt_path,
-                    &base_commit_sha,
-                    &branch_name,
-                )
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                    crate::disk_isolated::ensure_worktree_from_host_copy(
+                        &state.core.data_root,
+                        task.workspace_id,
+                        worktree_id,
+                        workspace_root,
+                        &base_commit_sha,
+                        &branch_name,
+                    )
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                } else {
+                    let wt_path = managed_worktree_path(
+                        &state.core.data_root,
+                        task.workspace_id,
+                        worktree_id,
+                    );
+                    if let Some(parent) = wt_path.parent() {
+                        tokio::fs::create_dir_all(parent)
+                            .await
+                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                    }
+                    create_worktree(
+                        &workspace.root_path,
+                        &wt_path,
+                        &base_commit_sha,
+                        &branch_name,
+                    )
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                    wt_path
+                };
 
                 let worktree = Worktree {
                     id: worktree_id,

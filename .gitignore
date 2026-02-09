@@ -4,6 +4,7 @@ Thumbs.db
 
 # Repo temp outputs
 tmp/
+.tmp/
 
 # Editors
 .idea/

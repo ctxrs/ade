@@ -191,6 +191,73 @@ pub(super) async fn stop_workspace_harness_container(
     }
 }
 
+pub(super) async fn ensure_workspace_harness_container(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .global_store()
+        .get_workspace(workspace_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let settings = crate::settings::load_settings(&state.core.data_root).await;
+    let mut execution_settings = settings.execution.clone().unwrap_or_default();
+    match workspace_config::load_execution_settings_override(StdPath::new(&workspace.root_path))
+        .await
+    {
+        Ok(Some(ov)) => {
+            workspace_config::apply_execution_settings_override(&mut execution_settings, &ov)
+        }
+        Ok(None) => {}
+        Err(err) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            ));
+        }
+    }
+
+    state
+        .execution
+        .harness
+        .ensure_workspace_container(&workspace, &execution_settings, &state.core.daemon_url)
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            )
+        })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub(super) async fn get_workspace_active_snapshot(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -911,7 +978,7 @@ pub(super) struct WorkspaceExecutionConfigResp {
     config_path: String,
     source: String,               // "workspace" | "daemon_default"
     mode: String,                 // "host" | "container" | "auto"
-    mount_mode: Option<String>,   // "sealed" | "host_mounted"
+    mount_mode: Option<String>,   // "sealed" | "host_mounted" | "disk_isolated"
     network_mode: Option<String>, // "llm_only" | "allowlist" | "all"
     allowlist: Option<Vec<String>>,
 }
@@ -972,6 +1039,7 @@ pub(super) async fn get_execution_config(
     let mount_mode = match effective.container.mount_mode {
         crate::settings::ContainerMountMode::Sealed => "sealed",
         crate::settings::ContainerMountMode::HostMounted => "host_mounted",
+        crate::settings::ContainerMountMode::DiskIsolated => "disk_isolated",
     }
     .to_string();
     let network_mode = match effective.container.network_mode {
@@ -1046,11 +1114,13 @@ pub(super) async fn update_execution_config(
         None | Some("") => None,
         Some("sealed") => Some(crate::settings::ContainerMountMode::Sealed),
         Some("host_mounted") => Some(crate::settings::ContainerMountMode::HostMounted),
+        Some("disk_isolated") => Some(crate::settings::ContainerMountMode::DiskIsolated),
         _ => {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
-                    error: "invalid mount_mode (expected sealed|host_mounted)".to_string(),
+                    error: "invalid mount_mode (expected sealed|host_mounted|disk_isolated)"
+                        .to_string(),
                 }),
             ));
         }

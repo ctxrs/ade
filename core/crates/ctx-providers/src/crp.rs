@@ -38,6 +38,40 @@ pub struct Tier1CrpAdapter {
     pool: Arc<CrpSessionPool>,
 }
 
+fn rewrite_bundled_provider_command_for_linux(provider_id: &str, command: &str) -> Option<String> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Only rewrite bundled-provider style paths:
+    //   .../bundles/providers/<provider_id>/<os>/<arch>/<bin>
+    // to:
+    //   .../bundles/providers/<provider_id>/linux/<arch>/<bin>
+    //
+    // This keeps host runs using host-native binaries, while container runs can use Linux
+    // binaries placed alongside in the bundle.
+    let sep = if trimmed.contains('\\') { '\\' } else { '/' };
+    let needle = format!("{sep}providers{sep}{provider_id}{sep}");
+    let idx = trimmed.find(&needle)?;
+    let prefix = &trimmed[..idx];
+    let rest = &trimmed[idx + needle.len()..];
+    let mut parts = rest.split(sep);
+    let os = parts.next()?;
+    let arch = parts.next()?;
+    if os == "linux" {
+        return None;
+    }
+    let tail: String = parts.collect::<Vec<_>>().join(&sep.to_string());
+    let candidate = format!("{prefix}{needle}linux{sep}{arch}{sep}{tail}");
+    // The caller will attempt to execute this inside the container; ensure it exists on the host
+    // so the error is deterministic and actionable.
+    if std::path::Path::new(&candidate).exists() {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
 fn resolve_explicit_command_path(command: &str) -> Option<PathBuf> {
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -735,7 +769,10 @@ impl CrpProcess {
         env: &HashMap<String, String>,
     ) -> Result<Arc<Self>> {
         let mut cmd = if let Some(spec) = container_exec_spec(env) {
-            build_container_exec_command(&spec, workdir, env, &agent.command, &agent.args)
+            let container_command =
+                rewrite_bundled_provider_command_for_linux(&agent.provider_id, &agent.command)
+                    .unwrap_or_else(|| agent.command.clone());
+            build_container_exec_command(&spec, workdir, env, &container_command, &agent.args)
         } else {
             let mut cmd = Command::new(&agent.command);
             cmd.args(&agent.args);
@@ -1953,8 +1990,11 @@ pub async fn probe_crp_models(
     workdir: PathBuf,
     env: HashMap<String, String>,
 ) -> Result<CrpModelsProbe> {
+    let command_label = command.clone();
     let mut cmd = if let Some(spec) = container_exec_spec(&env) {
-        build_container_exec_command(&spec, &workdir, &env, &command, &args)
+        let container_command = rewrite_bundled_provider_command_for_linux(provider_id, &command)
+            .unwrap_or_else(|| command.clone());
+        build_container_exec_command(&spec, &workdir, &env, &container_command, &args)
     } else {
         let mut cmd = Command::new(&command);
         cmd.args(&args);
@@ -1970,7 +2010,7 @@ pub async fn probe_crp_models(
 
     let mut child = cmd
         .spawn()
-        .with_context(|| format!("spawning CRP runtime {provider_id} ({command})"))?;
+        .with_context(|| format!("spawning CRP runtime {provider_id} ({command_label})"))?;
     let stdin = child.stdin.take().context("capturing CRP stdin")?;
     let stdout = child.stdout.take().context("capturing CRP stdout")?;
     let stderr = child.stderr.take().context("capturing CRP stderr")?;

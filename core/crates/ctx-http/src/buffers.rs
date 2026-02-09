@@ -269,6 +269,51 @@ impl BufferStore {
         }
         Ok(file)
     }
+
+    /// Resolve a path without touching the host filesystem.
+    ///
+    /// This is used for container-only worktrees (disk-isolated mode) where the daemon mediates
+    /// file IO via `podman exec` and host canonicalization is not possible.
+    pub fn resolve_path_lexical(root: &Path, path: &str) -> Result<PathBuf> {
+        let candidate = if PathBuf::from(path).is_absolute() {
+            PathBuf::from(path)
+        } else {
+            root.join(path)
+        };
+        let mut is_abs = false;
+        let mut parts: Vec<std::ffi::OsString> = Vec::new();
+        for comp in candidate.components() {
+            use std::path::Component;
+            match comp {
+                Component::Prefix(_) => anyhow::bail!("unsupported path prefix"),
+                Component::RootDir => {
+                    is_abs = true;
+                    parts.clear();
+                }
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    // Do not allow escaping the root via repeated parent traversal.
+                    if parts.is_empty() {
+                        continue;
+                    }
+                    parts.pop();
+                }
+                Component::Normal(seg) => parts.push(seg.to_os_string()),
+            }
+        }
+        // Reconstruct a normalized path.
+        let mut normalized = PathBuf::new();
+        if is_abs {
+            normalized.push(std::path::MAIN_SEPARATOR.to_string());
+        }
+        for p in &parts {
+            normalized.push(p);
+        }
+        if !normalized.starts_with(root) {
+            anyhow::bail!("path outside root");
+        }
+        Ok(normalized)
+    }
 }
 
 pub fn sha256_hex(text: &str) -> String {

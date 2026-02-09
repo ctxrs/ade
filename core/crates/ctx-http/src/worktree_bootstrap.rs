@@ -13,7 +13,11 @@ use ctx_core::ids::WorktreeId;
 use ctx_core::models::{Workspace, Worktree, WorktreeBootstrapNotice, WorktreeBootstrapStatus};
 use ctx_store::WorktreeBootstrapResultUpdate;
 
+use crate::buffers::BufferStore;
+use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
+use crate::execution_effective;
+use crate::harness_runtime;
 use crate::logs;
 
 const CONFIG_REL_PATH: &str = ".ctx/config.toml";
@@ -248,7 +252,7 @@ async fn run_worktree_bootstrap_plan(
         last_step = Some(step.clone());
         log.push_str(&format!("$ {}\n", step.label));
 
-        let result = match run_bootstrap_step(step, workspace, worktree, timeout).await {
+        let result = match run_bootstrap_step(state, step, workspace, worktree, timeout).await {
             Ok(result) => result,
             Err(err) => {
                 failure_status = Some(WorktreeBootstrapStatus::Failed);
@@ -457,11 +461,16 @@ fn build_bootstrap_steps(
 }
 
 async fn run_bootstrap_step(
+    state: &AppState,
     step: &BootstrapStep,
     workspace: &Workspace,
     worktree: &Worktree,
     timeout: Duration,
 ) -> Result<BootstrapCommandResult> {
+    if is_container_path(Path::new(&worktree.root_path)) {
+        return run_bootstrap_step_in_container(state, step, workspace, worktree, timeout).await;
+    }
+
     let mut cmd = match &step.kind {
         BootstrapStepKind::Script { path, .. } => command_for_script(path),
         BootstrapStepKind::Command { command } => command_for_shell(command),
@@ -525,6 +534,129 @@ async fn run_bootstrap_step(
                 .wait()
                 .await
                 .context("waiting on killed bootstrap command")?
+        }
+    };
+
+    let stdout = stdout_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
+    let stderr = stderr_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
+
+    Ok(BootstrapCommandResult {
+        status: status.code(),
+        stdout: String::from_utf8_lossy(&stdout).to_string(),
+        stderr: String::from_utf8_lossy(&stderr).to_string(),
+        timed_out,
+    })
+}
+
+async fn run_bootstrap_step_in_container(
+    state: &AppState,
+    step: &BootstrapStep,
+    workspace: &Workspace,
+    worktree: &Worktree,
+    timeout: Duration,
+) -> Result<BootstrapCommandResult> {
+    // Ensure the harness container is up, then execute within it.
+    let settings = execution_effective::effective_execution_settings(
+        &state.core.data_root,
+        Path::new(&workspace.root_path),
+    )
+    .await;
+    state
+        .execution
+        .harness
+        .ensure_workspace_container(workspace, &settings, &state.core.daemon_url)
+        .await?;
+
+    let container_name = harness_runtime::workspace_container_name(workspace.id);
+    let mut cmd = harness_runtime::podman_command(&state.core.data_root)?;
+    cmd.arg("exec")
+        .arg("--workdir")
+        .arg(&worktree.root_path)
+        .arg("--env")
+        // v1: treat the worktree root as the effective workspace root for container-only worktrees.
+        .arg(format!("CTX_WORKSPACE_ROOT={}", worktree.root_path.trim()))
+        .arg("--env")
+        .arg(format!("CTX_WORKTREE_ROOT={}", worktree.root_path.trim()))
+        .arg("--env")
+        .arg(format!("CTX_WORKTREE_ID={}", worktree.id.0))
+        .arg("--env")
+        .arg(format!(
+            "CTX_BRANCH_NAME={}",
+            worktree
+                .vcs_ref
+                .clone()
+                .or_else(|| worktree.git_branch.clone())
+                .unwrap_or_default()
+        ))
+        .arg("--env")
+        .arg(format!(
+            "CTX_BASE_REVISION={}",
+            worktree
+                .base_revision
+                .as_deref()
+                .unwrap_or(&worktree.base_commit_sha)
+        ))
+        .arg("--env")
+        .arg(format!(
+            "CTX_BASE_COMMIT_SHA={}",
+            worktree
+                .base_revision
+                .as_deref()
+                .unwrap_or(&worktree.base_commit_sha)
+        ))
+        .arg(container_name);
+
+    match &step.kind {
+        BootstrapStepKind::Command { command } => {
+            cmd.arg("sh").arg("-lc").arg(command);
+        }
+        BootstrapStepKind::Script { path, .. } => {
+            let script_path = BufferStore::resolve_path_lexical(
+                Path::new(&worktree.root_path),
+                &path.to_string_lossy(),
+            )?;
+            // `/bin/sh` is typically `dash` in Ubuntu images, so avoid `pipefail`.
+            let runner = "set -eu; if [ -x \"$1\" ]; then \"$1\"; else sh \"$1\"; fi";
+            cmd.arg("sh")
+                .arg("-lc")
+                .arg(runner)
+                .arg("--")
+                .arg(script_path);
+        }
+    }
+
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("spawning bootstrap command (container)")?;
+
+    let mut stdout = child.stdout.take().context("reading stdout")?;
+    let mut stderr = child.stderr.take().context("reading stderr")?;
+
+    let stdout_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).await?;
+        Ok::<Vec<u8>, std::io::Error>(buf)
+    });
+
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stderr.read_to_end(&mut buf).await?;
+        Ok::<Vec<u8>, std::io::Error>(buf)
+    });
+
+    let mut timed_out = false;
+    let status = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(status) => status.context("waiting on bootstrap command (container)")?,
+        Err(_) => {
+            timed_out = true;
+            let _ = child.kill().await;
+            child
+                .wait()
+                .await
+                .context("waiting on killed bootstrap command (container)")?
         }
     };
 

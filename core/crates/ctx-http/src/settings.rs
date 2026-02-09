@@ -261,6 +261,7 @@ pub enum ContainerMountMode {
     #[default]
     HostMounted,
     Sealed,
+    DiskIsolated,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

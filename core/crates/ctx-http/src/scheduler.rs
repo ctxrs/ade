@@ -561,21 +561,23 @@ async fn start_turn(
     if (session.provider_id == "codex" || session.provider_id == "codex-crp")
         && !provider_env.contains_key("CODEX_HOME")
     {
-        let codex_env = if is_container {
-            if let Some(root) = provider_env.get("CTX_DATA_ROOT") {
-                let root = std::path::PathBuf::from(root);
-                provider_accounts::codex_env_for_fallback_root(&root)
-                    .await
-                    .ok()
-            } else {
-                None
+        if is_container {
+            // Container runtimes must not rely on the host's ~/.codex directory being available.
+            // We use a deterministic CODEX_HOME under the container's per-workspace CTX_DATA_ROOT.
+            if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
+                let codex_home = provider_accounts::codex_fallback_home(std::path::Path::new(root));
+                tokio::fs::create_dir_all(&codex_home).await.ok();
+                // Opt-in: if enabled, seed host auth.json into the container-accessible CODEX_HOME.
+                // If enabled but it fails, fail the turn early with a clear error.
+                provider_accounts::seed_codex_auth_from_host(&codex_home).await?;
+                provider_env.insert(
+                    "CODEX_HOME".to_string(),
+                    codex_home.to_string_lossy().to_string(),
+                );
             }
-        } else {
-            provider_accounts::codex_env_for_active_account(&state.core.data_root)
-                .await
-                .ok()
-        };
-        if let Some(env) = codex_env {
+        } else if let Ok(env) =
+            provider_accounts::codex_env_for_active_account(&state.core.data_root).await
+        {
             for (key, value) in env {
                 provider_env.insert(key, value);
             }

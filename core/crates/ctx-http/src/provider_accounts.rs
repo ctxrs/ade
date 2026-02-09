@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+const CTX_SEED_CODEX_AUTH_FROM_HOST_ENV: &str = "CTX_SEED_CODEX_AUTH_FROM_HOST";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexAccountEntry {
@@ -138,6 +140,56 @@ pub async fn codex_env_for_fallback_root(state_root: &Path) -> Result<HashMap<St
         fallback.to_string_lossy().to_string(),
     );
     Ok(env)
+}
+
+pub fn host_codex_auth_path() -> Result<PathBuf> {
+    let base = directories::BaseDirs::new().ok_or_else(|| anyhow!("missing home dir"))?;
+    Ok(base.home_dir().join(".codex").join("auth.json"))
+}
+
+pub fn seeding_codex_auth_from_host_enabled() -> bool {
+    matches!(
+        std::env::var(CTX_SEED_CODEX_AUTH_FROM_HOST_ENV)
+            .ok()
+            .as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
+    )
+}
+
+pub async fn seed_codex_auth_from_host(codex_home: &Path) -> Result<bool> {
+    if !seeding_codex_auth_from_host_enabled() {
+        return Ok(false);
+    }
+    let src = host_codex_auth_path()?;
+    if !src.exists() {
+        anyhow::bail!(
+            "Codex auth seeding is enabled ({CTX_SEED_CODEX_AUTH_FROM_HOST_ENV}=1) but host auth file is missing at {}",
+            src.display()
+        );
+    }
+    let bytes = tokio::fs::read(&src).await?;
+    if bytes.is_empty() {
+        anyhow::bail!(
+            "Codex auth seeding is enabled ({CTX_SEED_CODEX_AUTH_FROM_HOST_ENV}=1) but host auth file is empty at {}",
+            src.display()
+        );
+    }
+    tokio::fs::create_dir_all(codex_home).await?;
+    let dest = codex_home.join("auth.json");
+    let write = match tokio::fs::read(&dest).await {
+        Ok(existing) => existing != bytes,
+        Err(_) => true,
+    };
+    if write {
+        tokio::fs::write(&dest, &bytes).await?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            let _ = tokio::fs::set_permissions(&dest, perms).await;
+        }
+    }
+    Ok(write)
 }
 
 pub async fn codex_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {

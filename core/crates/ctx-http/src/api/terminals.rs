@@ -7,10 +7,16 @@ use axum::Json;
 use serde::Deserialize;
 
 use super::errors::ApiErrorResp;
+use crate::buffers::BufferStore;
+use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
-use crate::terminals::TerminalCreateRequest;
+use crate::execution_effective;
+use crate::harness_runtime;
+use crate::settings::{ContainerMountMode, ExecutionMode};
+use crate::terminals::{PodmanTerminalSpec, TerminalCreateRequest};
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
+use ctx_fs::worktrees::worktrees_root;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateTerminalReq {
@@ -130,6 +136,10 @@ pub(super) async fn create_workspace_terminal(
             )
         })?;
 
+    let effective =
+        execution_effective::effective_execution_settings(&state.core.data_root, &workspace_root)
+            .await;
+
     let worktree_root = if let Some(wt_id) = worktree_id {
         let store = state.store_for_worktree(wt_id).await.map_err(|_| {
             (
@@ -156,14 +166,19 @@ pub(super) async fn create_workspace_terminal(
                     error: "worktree not found".to_string(),
                 }),
             ))?;
-        Some(tokio::fs::canonicalize(&wt.root_path).await.map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "worktree root is unavailable".to_string(),
-                }),
-            )
-        })?)
+        let root = PathBuf::from(&wt.root_path);
+        if is_container_path(&root) {
+            Some(root)
+        } else {
+            Some(tokio::fs::canonicalize(&root).await.map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: "worktree root is unavailable".to_string(),
+                    }),
+                )
+            })?)
+        }
     } else {
         None
     };
@@ -176,32 +191,77 @@ pub(super) async fn create_workspace_terminal(
             Some(PathBuf::from(trimmed))
         }
     });
-    let fallback_cwd = worktree_root
-        .clone()
-        .unwrap_or_else(|| workspace_root.clone());
-    let cwd = requested_cwd.unwrap_or(fallback_cwd);
-    let cwd = tokio::fs::canonicalize(&cwd).await.map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "cwd does not exist".to_string(),
-            }),
-        )
-    })?;
+    let container_mode = matches!(effective.mode, ExecutionMode::Container)
+        || worktree_root
+            .as_ref()
+            .map(|root| is_container_path(root))
+            .unwrap_or(false);
+    let container_workspace_root = match effective.container.mount_mode {
+        ContainerMountMode::DiskIsolated => {
+            PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT)
+        }
+        // Sealed mode mounts container-owned storage at the host worktrees root path.
+        // A workspace-scoped terminal (no worktree_id) should land in that directory.
+        ContainerMountMode::Sealed => {
+            worktrees_root(&state.core.data_root).join(workspace_id.0.to_string())
+        }
+        // Host-mounted uses host paths directly inside the container.
+        ContainerMountMode::HostMounted => workspace_root.clone(),
+    };
 
-    let allowed = worktree_root
-        .as_ref()
-        .map(|root| cwd.starts_with(root))
-        .unwrap_or(false)
-        || cwd.starts_with(&workspace_root);
-    if !allowed {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "cwd must be within the workspace or worktree".to_string(),
-            }),
-        ));
-    }
+    let cwd = if container_mode {
+        let fallback = worktree_root
+            .clone()
+            .unwrap_or_else(|| container_workspace_root.clone());
+        if let Some(requested) = requested_cwd.as_ref() {
+            let requested_str = requested.to_string_lossy().to_string();
+            // Allow cwd within either the worktree root or the container workspace root.
+            let resolved = worktree_root
+                .as_ref()
+                .and_then(|root| BufferStore::resolve_path_lexical(root, &requested_str).ok())
+                .or_else(|| {
+                    BufferStore::resolve_path_lexical(&container_workspace_root, &requested_str)
+                        .ok()
+                })
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: "cwd must be within the container worktree/workspace root"
+                            .to_string(),
+                    }),
+                ))?;
+            resolved
+        } else {
+            fallback
+        }
+    } else {
+        let fallback_cwd = worktree_root
+            .clone()
+            .unwrap_or_else(|| workspace_root.clone());
+        let cwd = requested_cwd.unwrap_or(fallback_cwd);
+        let cwd = tokio::fs::canonicalize(&cwd).await.map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "cwd does not exist".to_string(),
+                }),
+            )
+        })?;
+        let allowed = worktree_root
+            .as_ref()
+            .map(|root| cwd.starts_with(root))
+            .unwrap_or(false)
+            || cwd.starts_with(&workspace_root);
+        if !allowed {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "cwd must be within the workspace or worktree".to_string(),
+                }),
+            ));
+        }
+        cwd
+    };
 
     let requested_shell = req.shell.as_deref().and_then(|v| {
         let trimmed = v.trim();
@@ -211,9 +271,48 @@ pub(super) async fn create_workspace_terminal(
             Some(trimmed)
         }
     });
-    let shell = requested_shell
-        .map(|value| value.to_string())
-        .unwrap_or_else(default_shell);
+    let shell = if container_mode {
+        // The harness container is always Linux; use a deterministic in-container default.
+        requested_shell
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "/bin/bash".to_string())
+    } else {
+        requested_shell
+            .map(|value| value.to_string())
+            .unwrap_or_else(default_shell)
+    };
+
+    let podman = if container_mode {
+        state
+            .execution
+            .harness
+            .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: format!("failed to ensure harness container: {e}"),
+                    }),
+                )
+            })?;
+        let inv = harness_runtime::podman_invocation(&state.core.data_root).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: format!("podman unavailable: {e}"),
+                }),
+            )
+        })?;
+        Some(PodmanTerminalSpec {
+            podman_bin: inv.bin,
+            podman_env: inv.env,
+            container_name: harness_runtime::workspace_container_name(workspace_id),
+            workdir: cwd.to_string_lossy().to_string(),
+        })
+    } else {
+        None
+    };
     let session = state
         .transport
         .terminals
@@ -227,6 +326,7 @@ pub(super) async fn create_workspace_terminal(
             cols: None,
             rows: None,
             env: std::collections::HashMap::new(),
+            podman,
         })
         .await
         .map_err(|e| {

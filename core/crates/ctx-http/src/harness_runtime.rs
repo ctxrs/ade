@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::process::Command;
@@ -11,7 +13,7 @@ use tokio::{fs, io::AsyncWriteExt};
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_fs::worktrees::worktrees_root;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::bundled_assets;
 use crate::settings::{
@@ -33,6 +35,24 @@ const EGRESS_PROXY_RUNTIME_ID: &str = "ctx-egress-proxy";
 const EGRESS_PROXY_CONFIG_NAME: &str = "egress-proxy.json";
 const TRANSPARENT_PROXY_PORT: u16 = 15001;
 const EGRESS_PROXY_CONTAINER_PATH: &str = "/usr/local/bin/ctx-egress-proxy";
+// Dedicated Podman machine name for ctx-managed container execution on macOS/Windows.
+//
+// We intentionally do not use the user's default machine name to avoid collisions and to keep
+// ctx-managed behavior deterministic.
+const CTX_PODMAN_MACHINE_NAME: &str = "ctx";
+// In-container root for disk-isolated workspaces (Podman volume mounted here).
+pub(crate) const CTX_CONTAINER_WORKSPACE_ROOT: &str = "/ctx/ws";
+const PODMAN_INFO_TIMEOUT: Duration = Duration::from_secs(5);
+const PODMAN_MACHINE_START_TIMEOUT: Duration = Duration::from_secs(180);
+const PODMAN_MACHINE_INIT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+// First boot can be slow on fresh installs (image download + provisioning).
+const PODMAN_MACHINE_READY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const PODMAN_OP_TIMEOUT: Duration = Duration::from_secs(60);
+const PODMAN_LOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+pub(crate) fn workspace_container_name(workspace_id: WorkspaceId) -> String {
+    format!("ctx-harness-{}", workspace_id.0)
+}
 
 #[derive(Debug, Clone)]
 pub enum HarnessRuntimeKind {
@@ -121,6 +141,15 @@ impl HarnessRuntimeManager {
         if !podman_machine_required() {
             return;
         }
+        // Opt-in only: initializing a Podman machine is a visible side effect (disk + network).
+        // The launcher wizard should provision eagerly when the user selects container execution.
+        let enabled = std::env::var("CTX_PODMAN_MACHINE_PREFETCH")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes"))
+            .unwrap_or(false);
+        if !enabled {
+            return;
+        }
         let manager = Arc::clone(self);
         tokio::spawn(async move {
             if let Err(err) = manager.ensure_podman_machine_download().await {
@@ -136,18 +165,19 @@ impl HarnessRuntimeManager {
         if !podman_available() {
             anyhow::bail!("podman unavailable");
         }
-        if podman_machine_present().await? {
+        if podman_machine_present(&self.data_root).await? {
             return Ok(());
         }
-        let status = podman_command()?
-            .arg("machine")
-            .arg("init")
-            .status()
-            .await?;
-        if status.success() {
+        let mut cmd = podman_command(&self.data_root)?;
+        cmd.arg("machine").arg("init").arg(CTX_PODMAN_MACHINE_NAME);
+        let output = command_output_with_timeout(cmd, PODMAN_MACHINE_INIT_TIMEOUT).await?;
+        if output.status.success() {
             return Ok(());
         }
-        anyhow::bail!("podman machine init failed with status {status}");
+        anyhow::bail!(
+            "podman machine init failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
 
     pub async fn prepare(
@@ -186,7 +216,7 @@ impl HarnessRuntimeManager {
         let container = self
             .ensure_container(
                 workspace,
-                worktree,
+                Some(worktree),
                 &settings.container,
                 proxy_host,
                 daemon_port,
@@ -225,6 +255,33 @@ impl HarnessRuntimeManager {
             env_overrides,
             sealed_root,
         })
+    }
+
+    pub async fn ensure_workspace_container(
+        &self,
+        workspace: &Workspace,
+        settings: &ExecutionSettings,
+        daemon_url: &str,
+    ) -> Result<()> {
+        let mode = resolve_execution_mode(settings);
+        if matches!(mode, ExecutionMode::Host) {
+            return Ok(());
+        }
+        if !podman_available() {
+            anyhow::bail!("podman unavailable and execution mode is container");
+        }
+        let proxy_host = "host.containers.internal";
+        let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
+        let _ = self
+            .ensure_container(
+                workspace,
+                None,
+                &settings.container,
+                proxy_host,
+                daemon_port,
+            )
+            .await?;
+        Ok(())
     }
 
     pub async fn sync_worktree_to_sealed(
@@ -270,10 +327,12 @@ impl HarnessRuntimeManager {
         workspace_id: WorkspaceId,
     ) -> Result<Option<HarnessContainerStatus>> {
         let name = format!("ctx-harness-{}", workspace_id.0);
-        if !container_exists(&name).await? {
+        if !container_exists(&self.data_root, &name).await? {
             return Ok(None);
         }
-        let running = container_running(&name).await?.unwrap_or(false);
+        let running = container_running(&self.data_root, &name)
+            .await?
+            .unwrap_or(false);
         let container = {
             let containers = self.containers.lock().await;
             containers.get(&workspace_id).cloned()
@@ -303,34 +362,71 @@ impl HarnessRuntimeManager {
 
     pub async fn stop_container(&self, workspace_id: WorkspaceId) -> Result<bool> {
         let name = format!("ctx-harness-{}", workspace_id.0);
-        if !container_exists(&name).await? {
+        if !container_exists(&self.data_root, &name).await? {
             return Ok(false);
         }
         let mut containers = self.containers.lock().await;
         containers.remove(&workspace_id);
-        let status = podman_command()?
-            .arg("rm")
-            .arg("-f")
-            .arg(&name)
-            .status()
-            .await?;
-        if status.success() {
+        let mut cmd = podman_command(&self.data_root)?;
+        cmd.arg("rm").arg("-f").arg(&name);
+        let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+        if output.status.success() {
             Ok(true)
         } else {
-            anyhow::bail!("podman rm failed for {name}");
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let combined = format!("{stderr}\n{stdout}").trim().to_string();
+            if combined.is_empty() {
+                anyhow::bail!("podman rm failed for {name} (status: {})", output.status);
+            }
+            anyhow::bail!("podman rm failed for {name}: {combined}");
+        }
+    }
+
+    pub async fn remove_workspace_volume(&self, workspace_id: WorkspaceId) -> Result<bool> {
+        // Best-effort cleanup: callers (e.g. workspace deletion) may ignore failures.
+        let name = format!("ctx-ws-{}", workspace_id.0);
+        let mut inspect = podman_command(&self.data_root)?;
+        inspect.arg("volume").arg("inspect").arg(&name);
+        let out = command_output_with_timeout(inspect, PODMAN_OP_TIMEOUT).await?;
+        if !out.status.success() {
+            return Ok(false);
+        }
+
+        let mut cmd = podman_command(&self.data_root)?;
+        cmd.arg("volume").arg("rm").arg("-f").arg(&name);
+        let out = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+        if out.status.success() {
+            Ok(true)
+        } else {
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let combined = format!("{stderr}\n{stdout}").trim().to_string();
+            if combined.is_empty() {
+                anyhow::bail!(
+                    "podman volume rm failed for {name} (status: {})",
+                    out.status
+                );
+            }
+            anyhow::bail!("podman volume rm failed for {name}: {combined}");
         }
     }
 
     async fn ensure_container(
         &self,
         workspace: &Workspace,
-        worktree: &Worktree,
+        worktree: Option<&Worktree>,
         settings: &ContainerExecutionSettings,
         daemon_host: &str,
         daemon_port: u16,
     ) -> Result<HarnessContainer> {
         let name = format!("ctx-harness-{}", workspace.id.0);
         let image = resolve_container_image(settings);
+        // On macOS/Windows the engine is a VM; ensure it is running before we run any podman ops.
+        ensure_podman_machine_running(&self.data_root).await?;
+        if matches!(settings.mount_mode, ContainerMountMode::DiskIsolated) {
+            let _ = ensure_workspace_volume(&self.data_root, workspace.id).await?;
+        }
         let mount_plan = build_mounts(&self.data_root, workspace, worktree, settings);
         let mut containers = self.containers.lock().await;
         let mut recreate = false;
@@ -343,33 +439,46 @@ impl HarnessRuntimeManager {
                 return Ok(container.clone());
             }
         } else if matches!(settings.mount_mode, ContainerMountMode::Sealed)
-            && container_exists(&name).await.unwrap_or(false)
+            && container_exists(&self.data_root, &name)
+                .await
+                .unwrap_or(false)
         {
             recreate = true;
         }
 
         if recreate {
-            if let Ok(mut cmd) = podman_command() {
-                let _ = cmd.arg("rm").arg("-f").arg(&name).status().await;
+            if let Ok(mut cmd) = podman_command(&self.data_root) {
+                cmd.arg("rm").arg("-f").arg(&name);
+                let _ = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await;
             }
         }
 
         let exists = if recreate {
             false
         } else {
-            container_exists(&name).await?
+            container_exists(&self.data_root, &name).await?
         };
         if exists {
-            let running = container_running(&name).await?.unwrap_or(false);
+            let running = container_running(&self.data_root, &name)
+                .await?
+                .unwrap_or(false);
             if !running {
-                let status = podman_command()?.arg("start").arg(&name).status().await?;
-                if !status.success() {
-                    anyhow::bail!("podman start failed for {name}");
+                let mut cmd = podman_command(&self.data_root)?;
+                cmd.arg("start").arg(&name);
+                let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    let combined = format!("{stderr}\n{stdout}").trim().to_string();
+                    if combined.is_empty() {
+                        anyhow::bail!("podman start failed for {name} (status: {})", output.status);
+                    }
+                    anyhow::bail!("podman start failed for {name}: {combined}");
                 }
             }
         } else {
-            ensure_container_image_available(&image).await?;
-            let mut cmd = podman_command()?;
+            ensure_container_image_available(&self.data_root, &image).await?;
+            let mut cmd = podman_command(&self.data_root)?;
             cmd.arg("run").arg("-d").arg("--name").arg(&name);
             cmd.arg("--userns=keep-id");
             if let Some(user) = container_user() {
@@ -387,17 +496,27 @@ impl HarnessRuntimeManager {
             cmd.arg("/bin/sh")
                 .arg("-c")
                 .arg("while true; do sleep 100000; done");
-            let status = cmd.status().await?;
-            if !status.success() {
-                anyhow::bail!("podman run failed for {name}");
+            let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let combined = format!("{stderr}\n{stdout}").trim().to_string();
+                if combined.is_empty() {
+                    anyhow::bail!("podman run failed for {name} (status: {})", output.status);
+                }
+                anyhow::bail!("podman run failed for {name}: {combined}");
             }
         }
 
+        if matches!(settings.mount_mode, ContainerMountMode::DiskIsolated) {
+            verify_disk_isolated_container_mounts(&self.data_root, workspace, &name).await?;
+        }
+
         let egress_guard = if matches!(settings.network_mode, ContainerNetworkMode::All) {
-            if let Err(err) = stop_transparent_proxy(&name).await {
+            if let Err(err) = stop_transparent_proxy(&self.data_root, &name).await {
                 tracing::warn!("failed to stop transparent proxy: {err:#}");
             }
-            if let Err(err) = clear_egress_guard(&name).await {
+            if let Err(err) = clear_egress_guard(&self.data_root, &name).await {
                 tracing::warn!("failed to clear egress guard: {err:#}");
             }
             false
@@ -405,7 +524,7 @@ impl HarnessRuntimeManager {
             // Prefer the in-image proxy binary (required for out-of-the-box behavior on macOS/Windows).
             // If the image doesn't have it, we also allow an explicit override via CTX_EGRESS_PROXY_PATH,
             // but restricted modes must not silently fall back to full network access.
-            let proxy_bin = match ensure_egress_proxy_available(&name).await {
+            let proxy_bin = match ensure_egress_proxy_available(&self.data_root, &name).await {
                 Ok(()) => EGRESS_PROXY_CONTAINER_PATH.to_string(),
                 Err(img_err) => {
                     // Optional escape hatch: allow a Linux proxy binary to be provided via the host
@@ -431,8 +550,15 @@ impl HarnessRuntimeManager {
                 proxy_config,
             )
             .await?;
-            start_transparent_proxy(&name, &PathBuf::from(proxy_bin), &config_path).await?;
+            start_transparent_proxy(
+                &self.data_root,
+                &name,
+                &PathBuf::from(proxy_bin),
+                &config_path,
+            )
+            .await?;
             configure_transparent_egress_guard(
+                &self.data_root,
                 &name,
                 TRANSPARENT_PROXY_PORT,
                 daemon_host,
@@ -485,26 +611,24 @@ pub fn bundled_default_container_image_tar() -> Option<PathBuf> {
     bundled_assets::bundled_ctx_harness_image_tar(DEFAULT_CONTAINER_IMAGE)
 }
 
-pub async fn prefetch_container_image(image: &str) -> Result<()> {
+pub async fn prefetch_container_image(data_root: &Path, image: &str) -> Result<()> {
     let image = image.trim();
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
-    ensure_container_image_available(image).await
+    // On macOS/Windows `podman` is a remote client; image ops require a running machine.
+    ensure_podman_machine_running(data_root).await?;
+    ensure_container_image_available(data_root, image).await
 }
 
-pub async fn container_image_present(image: &str) -> Result<bool> {
+pub async fn container_image_present(data_root: &Path, image: &str) -> Result<bool> {
     let image = image.trim();
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
-    let output = podman_command()?
-        .arg("image")
-        .arg("exists")
-        .arg("--")
-        .arg(image)
-        .output()
-        .await?;
+    let mut cmd = podman_command(data_root)?;
+    cmd.arg("image").arg("exists").arg("--").arg(image);
+    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
     if output.status.success() {
         return Ok(true);
     }
@@ -517,13 +641,13 @@ pub async fn container_image_present(image: &str) -> Result<bool> {
     }
 }
 
-async fn ensure_container_image_available(image: &str) -> Result<()> {
+async fn ensure_container_image_available(data_root: &Path, image: &str) -> Result<()> {
     let image = image.trim();
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
 
-    if container_image_present(image).await? {
+    if container_image_present(data_root, image).await? {
         return Ok(());
     }
 
@@ -537,11 +661,9 @@ async fn ensure_container_image_available(image: &str) -> Result<()> {
                 image
             )
         })?;
-        let output = podman_command()?
-            .arg("load")
-            .arg("-i")
-            .arg(&tar)
-            .output()
+        let mut cmd = podman_command(data_root)?;
+        cmd.arg("load").arg("-i").arg(&tar);
+        let output = command_output_with_timeout(cmd, PODMAN_LOAD_TIMEOUT)
             .await
             .with_context(|| format!("podman load failed for {}", tar.display()))?;
         if !output.status.success() {
@@ -551,7 +673,7 @@ async fn ensure_container_image_available(image: &str) -> Result<()> {
             }
             anyhow::bail!("podman load failed: {stderr}");
         }
-        if container_image_present(image).await? {
+        if container_image_present(data_root, image).await? {
             return Ok(());
         }
         anyhow::bail!(
@@ -573,15 +695,15 @@ pub struct ContainerImageStatus {
     pub error: Option<String>,
 }
 
-pub async fn container_image_status(image: &str) -> Result<ContainerImageStatus> {
+pub async fn container_image_status(data_root: &Path, image: &str) -> Result<ContainerImageStatus> {
     let image = image.trim();
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
-    let output = match podman_command() {
+    let output = match podman_command(data_root) {
         Ok(mut cmd) => {
             cmd.arg("image").arg("exists").arg("--").arg(image);
-            cmd.output().await
+            command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await
         }
         Err(err) => {
             return Ok(ContainerImageStatus {
@@ -643,10 +765,16 @@ struct MountPlan {
     external_mounts: HashSet<String>,
 }
 
+fn volume_mount(name: &str, dst: &str, read_only: bool) -> String {
+    let mode = if read_only { "ro" } else { "rw" };
+    // Podman mount syntax supports type=volume for VM-native storage.
+    format!("type=volume,src={name},dst={dst},{mode}")
+}
+
 fn build_mounts(
     data_root: &Path,
     workspace: &Workspace,
-    worktree: &Worktree,
+    worktree: Option<&Worktree>,
     settings: &ContainerExecutionSettings,
 ) -> MountPlan {
     let mut mounts = Vec::new();
@@ -654,18 +782,29 @@ fn build_mounts(
     let workspace_root = PathBuf::from(&workspace.root_path);
 
     let worktrees_root = worktrees_root(data_root).join(workspace.id.0.to_string());
-    if matches!(settings.mount_mode, ContainerMountMode::Sealed) {
+    if matches!(settings.mount_mode, ContainerMountMode::DiskIsolated) {
+        // Disk-isolated mode: worktrees live in a container-managed volume on the Podman VM disk.
+        // We mount that volume at a fixed path inside the container. The daemon mediates access.
+        let vol_name = format!("ctx-ws-{}", workspace.id.0);
+        mounts.push(volume_mount(&vol_name, CTX_CONTAINER_WORKSPACE_ROOT, false));
+    } else if matches!(settings.mount_mode, ContainerMountMode::Sealed) {
         let sealed_root = sealed_worktrees_root(data_root, workspace.id);
         ensure_dir(&sealed_root);
         mounts.push(bind_mount(&sealed_root, &worktrees_root, false));
 
-        let worktree_root = PathBuf::from(&worktree.root_path);
-        if !worktree_root.starts_with(&worktrees_root) {
-            let sealed_worktree = sealed_root.join(worktree.id.0.to_string());
-            ensure_dir(&sealed_worktree);
-            let mount = bind_mount(&sealed_worktree, &worktree_root, false);
-            external_mounts.insert(mount.clone());
-            mounts.push(mount);
+        // Seal mode mounts container-owned storage at the host worktrees root path.
+        // If a worktree lives outside that root (escape hatch), we additionally bind-mount
+        // its sealed path to the external absolute path so `CWD` remains valid inside the
+        // container.
+        if let Some(worktree) = worktree {
+            let worktree_root = PathBuf::from(&worktree.root_path);
+            if !worktree_root.starts_with(&worktrees_root) {
+                let sealed_worktree = sealed_root.join(worktree.id.0.to_string());
+                ensure_dir(&sealed_worktree);
+                let mount = bind_mount(&sealed_worktree, &worktree_root, false);
+                external_mounts.insert(mount.clone());
+                mounts.push(mount);
+            }
         }
     } else {
         ensure_dir(&workspace_root);
@@ -685,6 +824,16 @@ fn build_mounts(
     let runtimes = data_root.join("runtimes");
     ensure_dir(&runtimes);
     mounts.push(bind_mount(&runtimes, &runtimes, true));
+
+    // Bundled assets (desktop) are resolved via absolute paths under `CTX_BUNDLE_DIR`.
+    // When providers are spawned via `podman exec` (container execution), those paths must be
+    // visible inside the harness container as well.
+    if let Ok(raw) = std::env::var("CTX_BUNDLE_DIR") {
+        let bundle_dir = PathBuf::from(raw.trim());
+        if bundle_dir.exists() {
+            mounts.push(bind_mount(&bundle_dir, &bundle_dir, true));
+        }
+    }
 
     MountPlan {
         mounts,
@@ -750,28 +899,28 @@ async fn ensure_egress_proxy_binary(data_root: &Path) -> Result<PathBuf> {
     Ok(dest)
 }
 
-async fn ensure_egress_proxy_available(container_name: &str) -> Result<()> {
+async fn ensure_egress_proxy_available(data_root: &Path, container_name: &str) -> Result<()> {
     // Validate required tooling inside the container for restricted network modes.
     //
     // This is a hard requirement: without these, we cannot enforce allowlist/llm-only safely.
     let script = format!(
         "set -e; command -v iptables >/dev/null 2>&1; test -x '{EGRESS_PROXY_CONTAINER_PATH}'"
     );
-    let status = podman_command()?
-        .arg("exec")
+    let mut cmd = podman_command(data_root)?;
+    cmd.arg("exec")
         .arg("--user")
         .arg("0")
         .arg(container_name)
         .arg("sh")
         .arg("-c")
-        .arg(script)
-        .status()
-        .await?;
-    if status.success() {
+        .arg(script);
+    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    if output.status.success() {
         return Ok(());
     }
     anyhow::bail!(
-        "container missing required egress tooling (iptables and/or {EGRESS_PROXY_CONTAINER_PATH}); status {status}"
+        "container missing required egress tooling (iptables and/or {EGRESS_PROXY_CONTAINER_PATH}); status {}",
+        output.status
     );
 }
 
@@ -787,7 +936,12 @@ async fn write_transparent_proxy_config(
     Ok(path)
 }
 
-async fn start_transparent_proxy(name: &str, bin_path: &Path, config_path: &Path) -> Result<()> {
+async fn start_transparent_proxy(
+    data_root: &Path,
+    name: &str,
+    bin_path: &Path,
+    config_path: &Path,
+) -> Result<()> {
     let bin = bin_path.to_string_lossy();
     let config = config_path.to_string_lossy();
     let script = format!(
@@ -812,24 +966,26 @@ echo $! > "$pid_file"
 exit 0
 "#
     );
-    let status = podman_command()?
-        .arg("exec")
+    let mut cmd = podman_command(data_root)?;
+    cmd.arg("exec")
         .arg("--user")
         .arg("0")
         .arg(name)
         .arg("sh")
         .arg("-c")
-        .arg(script)
-        .status()
-        .await?;
-    if status.success() {
+        .arg(script);
+    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    if output.status.success() {
         Ok(())
     } else {
-        anyhow::bail!("failed to start transparent proxy (status: {status})");
+        anyhow::bail!(
+            "failed to start transparent proxy (status: {})",
+            output.status
+        );
     }
 }
 
-async fn stop_transparent_proxy(name: &str) -> Result<()> {
+async fn stop_transparent_proxy(data_root: &Path, name: &str) -> Result<()> {
     let script = r#"
 pid_file="/tmp/ctx-egress-proxy.pid"
 if [ -f "$pid_file" ]; then
@@ -841,24 +997,27 @@ if [ -f "$pid_file" ]; then
 fi
 exit 0
 "#;
-    let status = podman_command()?
-        .arg("exec")
+    let mut cmd = podman_command(data_root)?;
+    cmd.arg("exec")
         .arg("--user")
         .arg("0")
         .arg(name)
         .arg("sh")
         .arg("-c")
-        .arg(script)
-        .status()
-        .await?;
-    if status.success() {
+        .arg(script);
+    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    if output.status.success() {
         Ok(())
     } else {
-        anyhow::bail!("failed to stop transparent proxy (status: {status})");
+        anyhow::bail!(
+            "failed to stop transparent proxy (status: {})",
+            output.status
+        );
     }
 }
 
 async fn configure_transparent_egress_guard(
+    data_root: &Path,
     name: &str,
     proxy_port: u16,
     daemon_host: &str,
@@ -890,20 +1049,19 @@ iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports {proxy_port}
 exit 0
 "#
     );
-    let status = podman_command()?
-        .arg("exec")
+    let mut cmd = podman_command(data_root)?;
+    cmd.arg("exec")
         .arg("--user")
         .arg("0")
         .arg(name)
         .arg("sh")
         .arg("-c")
-        .arg(script)
-        .status()
-        .await?;
-    if status.success() {
+        .arg(script);
+    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    if output.status.success() {
         return Ok(true);
     }
-    if let Some(code) = status.code() {
+    if let Some(code) = output.status.code() {
         if code == 43 {
             anyhow::bail!("iptables missing in harness container");
         }
@@ -911,10 +1069,13 @@ exit 0
             anyhow::bail!("daemon host not resolvable inside harness container");
         }
     }
-    anyhow::bail!("failed to configure egress guard (status: {status})");
+    anyhow::bail!(
+        "failed to configure egress guard (status: {})",
+        output.status
+    );
 }
 
-async fn clear_egress_guard(name: &str) -> Result<()> {
+async fn clear_egress_guard(data_root: &Path, name: &str) -> Result<()> {
     let script = r#"
 set -e
 if ! command -v iptables >/dev/null 2>&1; then
@@ -925,20 +1086,19 @@ iptables -F OUTPUT || true
 iptables -P OUTPUT ACCEPT || true
 exit 0
 "#;
-    let status = podman_command()?
-        .arg("exec")
+    let mut cmd = podman_command(data_root)?;
+    cmd.arg("exec")
         .arg("--user")
         .arg("0")
         .arg(name)
         .arg("sh")
         .arg("-c")
-        .arg(script)
-        .status()
-        .await?;
-    if status.success() {
+        .arg(script);
+    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    if output.status.success() {
         Ok(())
     } else {
-        anyhow::bail!("failed to clear egress guard (status: {status})");
+        anyhow::bail!("failed to clear egress guard (status: {})", output.status);
     }
 }
 
@@ -975,54 +1135,337 @@ fn allow_system_podman() -> bool {
         .unwrap_or(false)
 }
 
-fn podman_command() -> Result<Command> {
-    let path = podman_binary_path().ok_or_else(|| anyhow::anyhow!("podman binary unavailable"))?;
-    Ok(Command::new(path))
+#[derive(Debug, Clone)]
+pub(crate) struct PodmanInvocation {
+    pub(crate) bin: PathBuf,
+    pub(crate) env: HashMap<String, String>,
+}
+
+pub(crate) fn podman_invocation(data_root: &Path) -> Result<PodmanInvocation> {
+    let bin = podman_binary_path().ok_or_else(|| anyhow::anyhow!("podman binary unavailable"))?;
+
+    // Keep Podman state deterministic and tied to the daemon data_root so wiping ctx state fully
+    // resets container execution.
+    //
+    // Note: Podman expects XDG_RUNTIME_DIR to exist when set.
+    let xdg_root = data_root.join("podman").join("xdg");
+    let xdg_config = xdg_root.join("config");
+    let xdg_data = xdg_root.join("data");
+    let xdg_run = xdg_root.join("run");
+    std::fs::create_dir_all(&xdg_config)
+        .with_context(|| format!("create dir {}", xdg_config.display()))?;
+    std::fs::create_dir_all(&xdg_data)
+        .with_context(|| format!("create dir {}", xdg_data.display()))?;
+    std::fs::create_dir_all(&xdg_run)
+        .with_context(|| format!("create dir {}", xdg_run.display()))?;
+    // Tight permissions: runtime dirs may contain sockets and are expected to be user-private.
+    let _ = std::fs::set_permissions(&xdg_run, std::fs::Permissions::from_mode(0o700));
+
+    let mut env = HashMap::new();
+    env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        xdg_config.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "XDG_DATA_HOME".to_string(),
+        xdg_data.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "XDG_RUNTIME_DIR".to_string(),
+        xdg_run.to_string_lossy().to_string(),
+    );
+
+    Ok(PodmanInvocation { bin, env })
+}
+
+pub(crate) fn podman_command(data_root: &Path) -> Result<Command> {
+    let inv = podman_invocation(data_root)?;
+    let mut cmd = Command::new(inv.bin);
+    for (key, value) in inv.env {
+        cmd.env(key, value);
+    }
+    Ok(cmd)
+}
+
+pub(crate) async fn command_output_with_timeout(
+    mut cmd: Command,
+    timeout: Duration,
+) -> Result<std::process::Output> {
+    // Avoid hanging forever when Podman (or its VM connection) wedges.
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
+    let child = cmd.spawn().context("spawning command")?;
+    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(res) => Ok(res?),
+        Err(_) => anyhow::bail!("command timed out after {}s", timeout.as_secs()),
+    }
 }
 
 fn podman_machine_required() -> bool {
     cfg!(target_os = "macos") || cfg!(target_os = "windows")
 }
 
-async fn podman_machine_present() -> Result<bool> {
-    let output = podman_command()?
-        .arg("machine")
-        .arg("list")
-        .arg("--format")
-        .arg("json")
-        .output()
-        .await?;
-    if !output.status.success() {
-        return Ok(false);
+async fn podman_machine_present(data_root: &Path) -> Result<bool> {
+    // `inspect` is the cheapest existence check and avoids JSON schema drift.
+    let mut cmd = podman_command(data_root)?;
+    cmd.arg("machine")
+        .arg("inspect")
+        .arg(CTX_PODMAN_MACHINE_NAME);
+    let output = command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await?;
+    Ok(output.status.success())
+}
+
+async fn ensure_podman_machine_running(data_root: &Path) -> Result<()> {
+    if !podman_machine_required() {
+        return Ok(());
     }
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
-    Ok(value.as_array().map(|v| !v.is_empty()).unwrap_or(false))
+
+    // If `podman info` works, we have a running engine connection.
+    // Otherwise, capture the initial failure to reuse in error messages.
+    let mut last_err = {
+        let mut cmd = podman_command(data_root)?;
+        cmd.arg("info");
+        match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
+            Ok(out) if out.status.success() => return Ok(()),
+            Ok(out) => String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            Err(err) => err.to_string(),
+        }
+    };
+
+    // Prefer starting an existing machine; fall back to init when no machine exists.
+    let start_out = {
+        let mut start = podman_command(data_root)?;
+        start
+            .arg("machine")
+            .arg("start")
+            .arg(CTX_PODMAN_MACHINE_NAME);
+        command_output_with_timeout(start, PODMAN_MACHINE_START_TIMEOUT).await?
+    };
+    if !start_out.status.success() {
+        let start_stderr = String::from_utf8_lossy(&start_out.stderr)
+            .trim()
+            .to_string();
+        let start_stdout = String::from_utf8_lossy(&start_out.stdout)
+            .trim()
+            .to_string();
+        let combined = format!("{start_stderr}\n{start_stdout}").trim().to_string();
+        let combined_lc = combined.to_ascii_lowercase();
+
+        let looks_like_missing_machine = combined_lc.contains("no such")
+            || combined_lc.contains("not found")
+            || combined_lc.contains("does not exist")
+            || combined_lc.contains("no machine");
+
+        if looks_like_missing_machine {
+            let mut init = podman_command(data_root)?;
+            init.arg("machine")
+                .arg("init")
+                .arg("--now")
+                .arg(CTX_PODMAN_MACHINE_NAME);
+            let out = command_output_with_timeout(init, PODMAN_MACHINE_INIT_TIMEOUT).await?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                let combined = format!("{stderr}\n{stdout}").trim().to_string();
+                let init_lc = combined.to_ascii_lowercase();
+                if init_lc.contains("already exists") {
+                    // Race / stale detection: machine exists after all, retry start once.
+                    let mut start2 = podman_command(data_root)?;
+                    start2
+                        .arg("machine")
+                        .arg("start")
+                        .arg(CTX_PODMAN_MACHINE_NAME);
+                    let out = command_output_with_timeout(start2, PODMAN_MACHINE_START_TIMEOUT)
+                        .await
+                        .context("podman machine start (after init already exists)")?;
+                    if !out.status.success() {
+                        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                        let combined = format!("{stderr}\n{stdout}").trim().to_string();
+                        anyhow::bail!("podman machine start failed: {combined}");
+                    }
+                } else {
+                    anyhow::bail!("podman machine init --now failed: {combined}");
+                }
+            }
+        } else {
+            anyhow::bail!("podman machine start failed: {combined}");
+        }
+    }
+
+    // Wait for the engine connection to become healthy (bounded by PODMAN_MACHINE_READY_TIMEOUT).
+    let deadline = tokio::time::Instant::now() + PODMAN_MACHINE_READY_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
+        let mut cmd = podman_command(data_root)?;
+        cmd.arg("info");
+        match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
+            Ok(out) if out.status.success() => return Ok(()),
+            Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            Err(err) => last_err = err.to_string(),
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    // Recovery: if the machine is in a wedged "running but unreachable" state, a stop/start can
+    // re-establish the socket.
+    let _ = {
+        let mut stop = podman_command(data_root)?;
+        stop.arg("machine").arg("stop").arg(CTX_PODMAN_MACHINE_NAME);
+        command_output_with_timeout(stop, PODMAN_MACHINE_START_TIMEOUT).await
+    };
+    let _ = {
+        let mut start = podman_command(data_root)?;
+        start
+            .arg("machine")
+            .arg("start")
+            .arg(CTX_PODMAN_MACHINE_NAME);
+        command_output_with_timeout(start, PODMAN_MACHINE_START_TIMEOUT).await
+    };
+    let deadline = tokio::time::Instant::now() + PODMAN_MACHINE_READY_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
+        let mut cmd = podman_command(data_root)?;
+        cmd.arg("info");
+        match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
+            Ok(out) if out.status.success() => return Ok(()),
+            Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            Err(err) => last_err = err.to_string(),
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    if last_err.trim().is_empty() {
+        anyhow::bail!("podman machine start completed but podman is still unreachable");
+    }
+    anyhow::bail!(
+        "podman machine start completed but podman is still unreachable: {}",
+        last_err.trim()
+    );
 }
 
-async fn container_exists(name: &str) -> Result<bool> {
-    let status = podman_command()?
-        .arg("container")
-        .arg("exists")
-        .arg(name)
-        .status()
-        .await?;
-    Ok(status.success())
+async fn container_exists(data_root: &Path, name: &str) -> Result<bool> {
+    let mut cmd = podman_command(data_root)?;
+    cmd.arg("container").arg("exists").arg(name);
+    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    Ok(output.status.success())
 }
 
-async fn container_running(name: &str) -> Result<Option<bool>> {
-    let output = podman_command()?
-        .arg("container")
+async fn container_running(data_root: &Path, name: &str) -> Result<Option<bool>> {
+    let mut cmd = podman_command(data_root)?;
+    cmd.arg("container")
         .arg("inspect")
         .arg("--format")
         .arg("{{.State.Running}}")
-        .arg(name)
-        .output()
-        .await?;
+        .arg(name);
+    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
     if !output.status.success() {
         return Ok(None);
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(Some(stdout.trim() == "true"))
+}
+
+async fn ensure_workspace_volume(data_root: &Path, workspace_id: WorkspaceId) -> Result<String> {
+    let name = format!("ctx-ws-{}", workspace_id.0);
+    let mut inspect = podman_command(data_root)?;
+    inspect.arg("volume").arg("inspect").arg(&name);
+    let out = command_output_with_timeout(inspect, PODMAN_OP_TIMEOUT).await?;
+    if out.status.success() {
+        return Ok(name);
+    }
+    let mut create = podman_command(data_root)?;
+    create.arg("volume").arg("create").arg(&name);
+    let out = command_output_with_timeout(create, PODMAN_OP_TIMEOUT).await?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let combined = format!("{stderr}\n{stdout}").trim().to_string();
+        if combined.is_empty() {
+            anyhow::bail!(
+                "podman volume create failed for {name} (status: {})",
+                out.status
+            );
+        }
+        anyhow::bail!("podman volume create failed for {name}: {combined}");
+    }
+    Ok(name)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct PodmanInspectContainer {
+    #[serde(default)]
+    mounts: Vec<PodmanInspectMount>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct PodmanInspectMount {
+    #[serde(rename = "Type")]
+    mount_type: Option<String>,
+    name: Option<String>,
+    destination: Option<String>,
+}
+
+async fn verify_disk_isolated_container_mounts(
+    data_root: &Path,
+    workspace: &Workspace,
+    container_name: &str,
+) -> Result<()> {
+    let mut cmd = podman_command(data_root)?;
+    cmd.arg("inspect").arg(container_name);
+    let out = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let combined = format!("{stderr}\n{stdout}").trim().to_string();
+        if combined.is_empty() {
+            anyhow::bail!(
+                "podman inspect failed for {container_name} (status: {})",
+                out.status
+            );
+        }
+        anyhow::bail!("podman inspect failed for {container_name}: {combined}");
+    }
+
+    let inspected: Vec<PodmanInspectContainer> = serde_json::from_slice(&out.stdout)
+        .context("failed to parse podman inspect output as JSON")?;
+    let container = inspected
+        .into_iter()
+        .next()
+        .context("podman inspect returned empty output")?;
+
+    let expected_vol = format!("ctx-ws-{}", workspace.id.0);
+    let has_ws_volume = container.mounts.iter().any(|m| {
+        m.mount_type.as_deref() == Some("volume")
+            && m.destination.as_deref() == Some(CTX_CONTAINER_WORKSPACE_ROOT)
+            && m.name.as_deref() == Some(expected_vol.as_str())
+    });
+    if !has_ws_volume {
+        anyhow::bail!(
+            "disk-isolated container {container_name} is missing expected volume mount: volume {expected_vol} -> {}",
+            CTX_CONTAINER_WORKSPACE_ROOT
+        );
+    }
+
+    // Guardrail: disk-isolated must not bind-mount the host workspace/worktrees into the container.
+    let host_workspace_root = workspace.root_path.trim();
+    let host_worktrees_root = worktrees_root(data_root)
+        .join(workspace.id.0.to_string())
+        .to_string_lossy()
+        .to_string();
+    let has_host_bind = container.mounts.iter().any(|m| {
+        m.mount_type.as_deref() == Some("bind")
+            && (m.destination.as_deref() == Some(host_workspace_root)
+                || m.destination.as_deref() == Some(host_worktrees_root.as_str()))
+    });
+    if has_host_bind {
+        anyhow::bail!(
+            "disk-isolated container {container_name} unexpectedly bind-mounted host workspace/worktrees"
+        );
+    }
+
+    Ok(())
 }
 
 fn rsync_available() -> bool {
