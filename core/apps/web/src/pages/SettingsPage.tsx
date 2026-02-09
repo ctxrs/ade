@@ -26,8 +26,10 @@ import {
   WorkspaceAttachment,
   cancelMergeQueueEntry,
   CodexAccountsResponse,
+  CodexHostImportProbe,
   CodexAccountUsageResponse,
   createWorkspaceAttachment,
+  completeCodexLogin,
   deleteCodexAccount,
   deleteWorkspaceAttachment,
   devRestartProviders,
@@ -38,6 +40,7 @@ import {
   getMergeQueueEntryLogs,
   getMobileAccessStatus,
   getCodexAccountUsage,
+  importCodexHostAuth,
   getTitleGenerationLocalStatus,
   Workspace,
   WorkspaceExecutionConfig,
@@ -54,6 +57,7 @@ import {
   installStreamUrl,
   listMergeQueueEntries,
   listCodexAccounts,
+  probeCodexHostImport,
   listWorkspaceAttachments,
   listInstallEvents,
   listProviders,
@@ -73,6 +77,7 @@ import {
   desktopGetEditorSettings,
   desktopUpdateEditorSettings,
   isDesktopApp,
+  desktopStartCodexLoginRelay,
   openExternalLink,
 } from "../utils/desktop";
 import { ensureDesktopNotificationPermission } from "../utils/desktopNotifications";
@@ -322,6 +327,10 @@ export default function SettingsPage() {
   const [codexUsageBusy, setCodexUsageBusy] = useState(false);
   const [codexUsageError, setCodexUsageError] = useState<string | null>(null);
   const [codexNewLabel, setCodexNewLabel] = useState("");
+  const [codexImportProbe, setCodexImportProbe] = useState<CodexHostImportProbe | null>(null);
+  const [codexImportBusy, setCodexImportBusy] = useState(false);
+  const [codexCallbackUrls, setCodexCallbackUrls] = useState<Record<string, string>>({});
+  const [codexCallbackBusy, setCodexCallbackBusy] = useState<Record<string, boolean>>({});
 
   const [agentPromptConfig, setAgentPromptConfig] = useState<AgentSystemPromptConfig | null>(null);
   const [agentPromptLoading, setAgentPromptLoading] = useState(false);
@@ -885,6 +894,20 @@ export default function SettingsPage() {
     }
   }, []);
 
+  const refreshCodexImportProbe = useCallback(async () => {
+    try {
+      const probe = await probeCodexHostImport();
+      setCodexImportProbe(probe);
+      return probe;
+    } catch (e: any) {
+      setCodexImportProbe({
+        available: false,
+        error: e?.message ?? String(e),
+      });
+      return null;
+    }
+  }, []);
+
   const refreshWorkspaceAttachments = useCallback(
     async (opts?: { refresh?: boolean; silent?: boolean }) => {
       if (!workspaceId) return;
@@ -1180,7 +1203,8 @@ export default function SettingsPage() {
     if (active !== "harness_subscriptions") return;
     refreshCodexAccounts();
     refreshCodexUsage({ refresh: false, silent: true });
-  }, [active, refreshCodexAccounts, refreshCodexUsage]);
+    refreshCodexImportProbe();
+  }, [active, refreshCodexAccounts, refreshCodexImportProbe, refreshCodexUsage]);
 
   useEffect(() => {
     const pending = codexAccounts?.logins?.some((login) => login.status === "pending");
@@ -1580,9 +1604,38 @@ export default function SettingsPage() {
     }
   };
 
-  const openCodexAuthUrl = (url: string) => {
+  const tryStartCodexDesktopRelay = async (params: {
+    accountId: string;
+    expectedCallbackUrl?: string | null;
+    completionToken?: string | null;
+  }) => {
+    if (!isDesktopApp()) return false;
+    if (!params.expectedCallbackUrl) return false;
+    if (!params.completionToken) return false;
+    try {
+      return await desktopStartCodexLoginRelay({
+        login_id: params.accountId,
+        callback_url: params.expectedCallbackUrl,
+        completion_token: params.completionToken,
+      });
+    } catch {
+      return false;
+    }
+  };
+
+  const openCodexAuthUrl = async (
+    url: string,
+    params?: {
+      accountId: string;
+      expectedCallbackUrl?: string | null;
+      completionToken?: string | null;
+    },
+  ) => {
     if (!url) return;
-    void openExternalLink(url);
+    if (params) {
+      await tryStartCodexDesktopRelay(params);
+    }
+    await openExternalLink(url);
   };
 
   const onCodexLogin = async () => {
@@ -1591,12 +1644,35 @@ export default function SettingsPage() {
     try {
       const label = codexNewLabel.trim();
       const res = await startCodexLogin(label ? label : undefined);
-      openCodexAuthUrl(res.auth_url);
+      await openCodexAuthUrl(res.auth_url, {
+        accountId: res.account_id,
+        expectedCallbackUrl: res.expected_callback_url ?? null,
+        completionToken: res.completion_token,
+      });
       setCodexNewLabel("");
       await refreshCodexAccounts();
     } catch (e: any) {
       setCodexAccountsError(e?.message ?? String(e));
     } finally {
+      setCodexAccountsBusy(false);
+    }
+  };
+
+  const onCodexImportHost = async () => {
+    setCodexImportBusy(true);
+    setCodexAccountsBusy(true);
+    setCodexAccountsError(null);
+    try {
+      const label = codexNewLabel.trim();
+      const next = await importCodexHostAuth(label ? label : undefined);
+      setCodexAccounts(next);
+      setCodexNewLabel("");
+      await refreshCodexImportProbe();
+      refreshCodexUsage({ refresh: true, silent: true }).catch(() => {});
+    } catch (e: any) {
+      setCodexAccountsError(e?.message ?? String(e));
+    } finally {
+      setCodexImportBusy(false);
       setCodexAccountsBusy(false);
     }
   };
@@ -1626,6 +1702,31 @@ export default function SettingsPage() {
       setCodexAccountsError(e?.message ?? String(e));
     } finally {
       setCodexAccountsBusy(false);
+    }
+  };
+
+  const onCodexCompleteCallback = async (login: { account_id: string; completion_token?: string | null }) => {
+    const callbackUrl = (codexCallbackUrls[login.account_id] ?? "").trim();
+    if (!callbackUrl) {
+      setCodexAccountsError("Callback URL is required.");
+      return;
+    }
+    const token = login.completion_token?.trim();
+    if (!token) {
+      setCodexAccountsError("Completion token is missing for this pending login.");
+      return;
+    }
+    setCodexCallbackBusy((prev) => ({ ...prev, [login.account_id]: true }));
+    setCodexAccountsError(null);
+    try {
+      await completeCodexLogin(login.account_id, callbackUrl, token);
+      setCodexCallbackUrls((prev) => ({ ...prev, [login.account_id]: "" }));
+      await refreshCodexAccounts();
+      refreshCodexUsage({ refresh: true, silent: true }).catch(() => {});
+    } catch (e: any) {
+      setCodexAccountsError(e?.message ?? String(e));
+    } finally {
+      setCodexCallbackBusy((prev) => ({ ...prev, [login.account_id]: false }));
     }
   };
 
@@ -3734,6 +3835,13 @@ export default function SettingsPage() {
       const codexLogins = codexAccounts?.logins ?? [];
       const codexPendingLogins = codexLogins.filter((login) => login.status === "pending");
       const codexFailedLogins = codexLogins.filter((login) => login.status === "failed");
+      const codexImportPath = codexImportProbe?.path ?? "~/.codex/auth.json";
+      const codexImportLabel = codexImportProbe?.auth_kind === "oauth"
+        ? "Detected subscription tokens"
+        : codexImportProbe?.auth_kind === "api_key"
+          ? "Detected API key auth"
+          : "No import candidate detected";
+      const codexImportCanRun = codexImportProbe?.available === true;
       const usageEntries = codexUsage?.entries ?? [];
       const usageById = new Map<string, ProviderUsageSnapshot>();
       for (const entry of usageEntries) {
@@ -3896,29 +4004,82 @@ export default function SettingsPage() {
                   </div>
                 }
               />
+              <Row
+                title="Import existing auth"
+                description={`Reads ${codexImportPath} on the daemon host and imports it into ctx-managed Codex credentials.`}
+                control={
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <button
+                      type="button"
+                      className="settings-btn settings-btn-secondary"
+                      onClick={onCodexImportHost}
+                      disabled={codexImportBusy || codexAccountsBusy || !codexImportCanRun}
+                    >
+                      {codexImportBusy ? "Importing…" : "Import"}
+                    </button>
+                  </div>
+                }
+              />
               <div className="settings-card-block">
+                <div className="settings-table-sub">
+                  {codexImportLabel}
+                  {codexImportProbe?.error ? ` · ${codexImportProbe.error}` : ""}
+                </div>
                 {codexPendingLogins.length ? (
                   <div className="settings-table settings-table-codex-logins">
                     <div className="settings-table-head">
                       <div>Pending logins</div>
                       <div />
                     </div>
-                    {codexPendingLogins.map((login) => (
-                      <div key={login.account_id} className="settings-table-row">
-                        <div className="settings-table-sub">
-                          Login in progress for {login.account_id}
+                    {codexPendingLogins.map((login) => {
+                      const callbackBusy = codexCallbackBusy[login.account_id] === true;
+                      return (
+                        <div key={login.account_id} className="settings-table-row">
+                          <div className="settings-table-sub">
+                            <div>Login in progress for {login.account_id}</div>
+                            <div>
+                              Expected callback: {login.expected_callback_url ?? "Not provided by provider"}
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            <button
+                              type="button"
+                              className="settings-btn settings-btn-secondary settings-btn-compact"
+                              onClick={() => {
+                                void openCodexAuthUrl(login.auth_url, {
+                                  accountId: login.account_id,
+                                  expectedCallbackUrl: login.expected_callback_url ?? null,
+                                  completionToken: login.completion_token ?? null,
+                                });
+                              }}
+                            >
+                              Open login
+                            </button>
+                            <input
+                              className="settings-control"
+                              style={{ minWidth: 280 }}
+                              placeholder={login.expected_callback_url ?? "Paste callback URL"}
+                              value={codexCallbackUrls[login.account_id] ?? ""}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                setCodexCallbackUrls((prev) => ({ ...prev, [login.account_id]: value }));
+                              }}
+                              disabled={callbackBusy}
+                            />
+                            <button
+                              type="button"
+                              className="settings-btn settings-btn-secondary settings-btn-compact"
+                              onClick={() => {
+                                void onCodexCompleteCallback(login);
+                              }}
+                              disabled={callbackBusy || !login.completion_token}
+                            >
+                              {callbackBusy ? "Completing…" : "Complete callback"}
+                            </button>
+                          </div>
                         </div>
-                        <div>
-                          <button
-                            type="button"
-                            className="settings-btn settings-btn-secondary settings-btn-compact"
-                            onClick={() => openCodexAuthUrl(login.auth_url)}
-                          >
-                            Open login
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : null}
                 {codexFailedLogins.length ? (
@@ -3936,7 +4097,9 @@ export default function SettingsPage() {
                           <button
                             type="button"
                             className="settings-btn settings-btn-secondary settings-btn-compact"
-                            onClick={() => openCodexAuthUrl(login.auth_url)}
+                            onClick={() => {
+                              void openCodexAuthUrl(login.auth_url);
+                            }}
                           >
                             Retry
                           </button>
