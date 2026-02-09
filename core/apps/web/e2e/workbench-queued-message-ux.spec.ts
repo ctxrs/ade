@@ -40,7 +40,12 @@ const setupRunningSession = async (page: any) => {
 [[/tool_calls]]`;
 
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(slowMessage);
+  const createSessionResp = page.waitForResponse((resp: any) => {
+    if (resp.request().method() !== "POST") return false;
+    return /\/api\/tasks\/[^/]+\/sessions$/.test(resp.url()) && resp.status() === 200;
+  });
   await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await createSessionResp;
 
   await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator(".wb-session button[aria-label=\"Stop\"]")).toBeVisible({ timeout: 20_000 });
@@ -49,7 +54,15 @@ const setupRunningSession = async (page: any) => {
 const queueMessage = async (page: any, text: string) => {
   const sessionComposer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await sessionComposer.fill(text);
+  const sendResp = page.waitForResponse((resp: any) => {
+    if (resp.request().method() !== "POST") return false;
+    if (!/\/api\/sessions\/[^/]+\/messages$/.test(resp.url())) return false;
+    const body = resp.request().postData() ?? "";
+    return body.includes(text);
+  });
   await page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]").click();
+  const resp = await sendResp;
+  expect(resp.status(), `queue message POST failed: ${resp.url()}`).toBe(200);
 };
 
 const delayDeleteMessage = async (page: any, delayMs: number) => {

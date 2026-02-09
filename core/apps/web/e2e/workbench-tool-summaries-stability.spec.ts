@@ -20,9 +20,17 @@ test.describe.serial("workbench: tool summaries stability", () => {
     const composer = composerLocator(page);
     await expect(composer).toBeVisible({ timeout: 20_000 });
     await composer.fill(`tool seed ${seed}\n${toolMarkerFor(seed)}`);
+    const sendResp = page.waitForResponse((resp: any) => {
+      if (resp.request().method() !== "POST") return false;
+      if (!/\/api\/sessions\/[^/]+\/messages$/.test(resp.url())) return false;
+      const body = resp.request().postData() ?? "";
+      return body.includes(`tool seed ${seed}`);
+    });
     await page
       .locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]")
       .click();
+    const resp = await sendResp;
+    expect(resp.status(), `tool seed POST failed: ${resp.url()}`).toBe(200);
   };
 
   const ensureToolRows = async (page: any) => {

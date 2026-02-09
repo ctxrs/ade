@@ -992,74 +992,226 @@ async fn start_turn(
                     assistant_sequence,
                 );
             }
-            let appended = store
-                .append_session_event(
-                    session_id,
-                    Some(run_id),
-                    Some(turn_id),
-                    event_type.clone(),
-                    payload,
-                )
-                .await;
-            if let Ok(event) = appended {
-                state_for_events.publish_event(event.clone()).await;
+            let event = match append_session_event_with_retry(
+                &store,
+                session_id,
+                Some(run_id),
+                Some(turn_id),
+                event_type.clone(),
+                payload,
+            )
+            .await
+            {
+                Ok(event) => event,
+                Err(err) => {
+                    tracing::warn!(
+                        session_id = %session_id.0,
+                        run_id = %run_id.0,
+                        turn_id = %turn_id.0,
+                        event_type = ?event_type,
+                        "failed to append session event: {err:#}"
+                    );
+                    continue;
+                }
+            };
+            state_for_events.publish_event(event.clone()).await;
 
-                match event.event_type {
-                    SessionEventType::AssistantChunk => {
+            match event.event_type {
+                SessionEventType::AssistantChunk => {
+                    if let Some(fragment) =
+                        raw_payload.get("content_fragment").and_then(Value::as_str)
+                    {
+                        assistant_partial.push_str(fragment);
+                        if let Some(message_id) = raw_payload
+                            .get("message_id")
+                            .and_then(Value::as_str)
+                            .map(|value| value.to_string())
+                        {
+                            assistant_partial_message_id = Some(message_id);
+                        }
+                    }
+                }
+                SessionEventType::ThoughtChunk => {
+                    if should_track_thought_chunk(&raw_payload) {
                         if let Some(fragment) =
                             raw_payload.get("content_fragment").and_then(Value::as_str)
                         {
-                            assistant_partial.push_str(fragment);
-                            if let Some(message_id) = raw_payload
-                                .get("message_id")
-                                .and_then(Value::as_str)
-                                .map(|value| value.to_string())
-                            {
-                                assistant_partial_message_id = Some(message_id);
-                            }
+                            thought_partial.push_str(fragment);
+                            let _ = store
+                                .update_session_turn_partial(
+                                    session_id,
+                                    turn_id,
+                                    None,
+                                    Some(&thought_partial),
+                                    event.created_at,
+                                )
+                                .await;
                         }
                     }
-                    SessionEventType::ThoughtChunk => {
-                        if should_track_thought_chunk(&raw_payload) {
-                            if let Some(fragment) =
-                                raw_payload.get("content_fragment").and_then(Value::as_str)
+                }
+                SessionEventType::Notice => {
+                    if event
+                        .payload_json
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .is_some_and(|kind| kind == "session_gap")
+                    {
+                        let reason = event
+                            .payload_json
+                            .get("reason")
+                            .and_then(Value::as_str)
+                            .map(|value| value.to_string());
+                        state_for_events
+                            .workspaces
+                            .workspace_active_snapshot
+                            .publish_session_gap(workspace_id, session_id, event.seq, reason)
+                            .await;
+                    }
+                }
+                SessionEventType::ToolCall
+                | SessionEventType::ToolCallUpdate
+                | SessionEventType::ToolResult => {
+                    if !assistant_partial.is_empty() {
+                        let message_id = ctx_core::ids::MessageId::new();
+                        let order_seq = {
+                            let mut order_seq_state = order_seq_state.lock().await;
+                            order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
+                        };
+                        if let Ok(saved) = persist_assistant_message(
+                            &store,
+                            message_id,
+                            order_seq,
+                            session_id,
+                            task_id,
+                            run_id,
+                            turn_id,
+                            assistant_partial.clone(),
+                            assistant_sequence + 1,
+                            event.created_at,
+                        )
+                        .await
+                        {
+                            assistant_sequence += 1;
+                            assistant_emitted.push_str(&saved.content);
+                            assistant_partial.clear();
+                            let mut payload = json!({
+                                "message_id": saved.id.0,
+                                "content": saved.content,
+                                "delivery": saved.delivery,
+                                "attachments": saved.attachments,
+                                "turn_sequence": saved.turn_sequence,
+                                "order_seq": saved.order_seq,
+                            });
+                            if let Some(provider_message_id) = assistant_partial_message_id.take() {
+                                if let Some(obj) = payload.as_object_mut() {
+                                    obj.insert(
+                                        "provider_message_id".to_string(),
+                                        json!(provider_message_id),
+                                    );
+                                }
+                            }
                             {
-                                thought_partial.push_str(fragment);
+                                let mut order_seq_state = order_seq_state.lock().await;
+                                attach_order_seq(
+                                    &mut order_seq_state,
+                                    &SessionEventType::AssistantMessageInserted,
+                                    &mut payload,
+                                    Some(&turn_id),
+                                    assistant_sequence,
+                                );
+                            }
+                            let _ = emit_event(
+                                &state_for_events,
+                                session_id,
+                                Some(run_id),
+                                Some(turn_id),
+                                SessionEventType::AssistantMessageInserted,
+                                payload,
+                            )
+                            .await;
+                        }
+                    }
+                    if let Some(update) =
+                        build_turn_tool_update_from_payload(&event_type, &raw_payload)
+                    {
+                        let prev = if matches!(event.event_type, SessionEventType::ToolCallUpdate) {
+                            tool_cache.get(&update.tool_call_id).cloned()
+                        } else if let Some(cached) = tool_cache.get(&update.tool_call_id).cloned() {
+                            Some(cached)
+                        } else {
+                            store
+                                .get_session_turn_tool(session_id, &update.tool_call_id)
+                                .await
+                                .ok()
+                                .flatten()
+                        };
+                        let merged = merge_tool_update(
+                            prev.as_ref(),
+                            update,
+                            session_id,
+                            turn_id,
+                            event.seq,
+                            event.created_at,
+                        );
+                        if matches!(event.event_type, SessionEventType::ToolCallUpdate) {
+                            tool_cache.insert(merged.tool_call_id.clone(), merged);
+                        } else {
+                            let (
+                                delta_total,
+                                delta_pending,
+                                delta_running,
+                                delta_completed,
+                                delta_failed,
+                            ) = tool_count_deltas(prev.as_ref(), &merged);
+                            let _ = store.upsert_session_turn_tool(merged.clone()).await;
+                            if delta_total != 0
+                                || delta_pending != 0
+                                || delta_running != 0
+                                || delta_completed != 0
+                                || delta_failed != 0
+                            {
                                 let _ = store
-                                    .update_session_turn_partial(
+                                    .update_session_turn_tool_counts(
                                         session_id,
                                         turn_id,
-                                        None,
-                                        Some(&thought_partial),
+                                        SessionTurnToolCountDeltas {
+                                            total: delta_total,
+                                            pending: delta_pending,
+                                            running: delta_running,
+                                            completed: delta_completed,
+                                            failed: delta_failed,
+                                        },
                                         event.created_at,
                                     )
                                     .await;
                             }
+                            tool_cache.insert(merged.tool_call_id.clone(), merged);
                         }
                     }
-                    SessionEventType::Notice => {
-                        if event
-                            .payload_json
-                            .get("kind")
-                            .and_then(Value::as_str)
-                            .is_some_and(|kind| kind == "session_gap")
-                        {
-                            let reason = event
-                                .payload_json
-                                .get("reason")
-                                .and_then(Value::as_str)
-                                .map(|value| value.to_string());
-                            state_for_events
-                                .workspaces
-                                .workspace_active_snapshot
-                                .publish_session_gap(workspace_id, session_id, event.seq, reason)
-                                .await;
-                        }
-                    }
-                    SessionEventType::ToolCall
-                    | SessionEventType::ToolCallUpdate
-                    | SessionEventType::ToolResult => {
-                        if !assistant_partial.is_empty() {
+                }
+                SessionEventType::AssistantComplete => {
+                    let provider_message_id = event
+                        .payload_json
+                        .get("message_id")
+                        .or_else(|| event.payload_json.get("messageId"))
+                        .and_then(Value::as_str)
+                        .map(|s: &str| s.to_string())
+                        .or_else(|| assistant_partial_message_id.clone());
+                    let content: Option<String> = event
+                        .payload_json
+                        .get("full_content")
+                        .or_else(|| event.payload_json.get("content"))
+                        .and_then(Value::as_str)
+                        .map(|s: &str| s.to_string())
+                        .or_else(|| {
+                            if assistant_partial.is_empty() {
+                                None
+                            } else {
+                                Some(assistant_partial.clone())
+                            }
+                        });
+                    if let Some(content) = content {
+                        if let Some(content) = strip_emitted_prefix(&content, &assistant_emitted) {
                             let message_id = ctx_core::ids::MessageId::new();
                             let order_seq = {
                                 let mut order_seq_state = order_seq_state.lock().await;
@@ -1074,7 +1226,7 @@ async fn start_turn(
                                 task_id,
                                 run_id,
                                 turn_id,
-                                assistant_partial.clone(),
+                                content,
                                 assistant_sequence + 1,
                                 event.created_at,
                             )
@@ -1091,25 +1243,13 @@ async fn start_turn(
                                     "turn_sequence": saved.turn_sequence,
                                     "order_seq": saved.order_seq,
                                 });
-                                if let Some(provider_message_id) =
-                                    assistant_partial_message_id.take()
-                                {
+                                if let Some(provider_message_id) = provider_message_id {
                                     if let Some(obj) = payload.as_object_mut() {
                                         obj.insert(
                                             "provider_message_id".to_string(),
                                             json!(provider_message_id),
                                         );
                                     }
-                                }
-                                {
-                                    let mut order_seq_state = order_seq_state.lock().await;
-                                    attach_order_seq(
-                                        &mut order_seq_state,
-                                        &SessionEventType::AssistantMessageInserted,
-                                        &mut payload,
-                                        Some(&turn_id),
-                                        assistant_sequence,
-                                    );
                                 }
                                 let _ = emit_event(
                                     &state_for_events,
@@ -1120,307 +1260,171 @@ async fn start_turn(
                                     payload,
                                 )
                                 .await;
-                            }
-                        }
-                        if let Some(update) =
-                            build_turn_tool_update_from_payload(&event_type, &raw_payload)
-                        {
-                            let prev =
-                                if matches!(event.event_type, SessionEventType::ToolCallUpdate) {
-                                    tool_cache.get(&update.tool_call_id).cloned()
-                                } else if let Some(cached) =
-                                    tool_cache.get(&update.tool_call_id).cloned()
-                                {
-                                    Some(cached)
-                                } else {
-                                    store
-                                        .get_session_turn_tool(session_id, &update.tool_call_id)
-                                        .await
-                                        .ok()
-                                        .flatten()
-                                };
-                            let merged = merge_tool_update(
-                                prev.as_ref(),
-                                update,
-                                session_id,
-                                turn_id,
-                                event.seq,
-                                event.created_at,
-                            );
-                            if matches!(event.event_type, SessionEventType::ToolCallUpdate) {
-                                tool_cache.insert(merged.tool_call_id.clone(), merged);
-                            } else {
-                                let (
-                                    delta_total,
-                                    delta_pending,
-                                    delta_running,
-                                    delta_completed,
-                                    delta_failed,
-                                ) = tool_count_deltas(prev.as_ref(), &merged);
-                                let _ = store.upsert_session_turn_tool(merged.clone()).await;
-                                if delta_total != 0
-                                    || delta_pending != 0
-                                    || delta_running != 0
-                                    || delta_completed != 0
-                                    || delta_failed != 0
-                                {
-                                    let _ = store
-                                        .update_session_turn_tool_counts(
-                                            session_id,
-                                            turn_id,
-                                            SessionTurnToolCountDeltas {
-                                                total: delta_total,
-                                                pending: delta_pending,
-                                                running: delta_running,
-                                                completed: delta_completed,
-                                                failed: delta_failed,
-                                            },
-                                            event.created_at,
-                                        )
-                                        .await;
-                                }
-                                tool_cache.insert(merged.tool_call_id.clone(), merged);
-                            }
-                        }
-                    }
-                    SessionEventType::AssistantComplete => {
-                        let provider_message_id = event
-                            .payload_json
-                            .get("message_id")
-                            .or_else(|| event.payload_json.get("messageId"))
-                            .and_then(Value::as_str)
-                            .map(|s: &str| s.to_string())
-                            .or_else(|| assistant_partial_message_id.clone());
-                        let content: Option<String> = event
-                            .payload_json
-                            .get("full_content")
-                            .or_else(|| event.payload_json.get("content"))
-                            .and_then(Value::as_str)
-                            .map(|s: &str| s.to_string())
-                            .or_else(|| {
-                                if assistant_partial.is_empty() {
-                                    None
-                                } else {
-                                    Some(assistant_partial.clone())
-                                }
-                            });
-                        if let Some(content) = content {
-                            if let Some(content) =
-                                strip_emitted_prefix(&content, &assistant_emitted)
-                            {
-                                let message_id = ctx_core::ids::MessageId::new();
-                                let order_seq = {
-                                    let mut order_seq_state = order_seq_state.lock().await;
-                                    order_seq_state
-                                        .get_or_assign(format!("message:{}", message_id.0), None)
-                                };
-                                if let Ok(saved) = persist_assistant_message(
-                                    &store,
-                                    message_id,
-                                    order_seq,
-                                    session_id,
-                                    task_id,
-                                    run_id,
-                                    turn_id,
-                                    content,
-                                    assistant_sequence + 1,
-                                    event.created_at,
-                                )
-                                .await
-                                {
-                                    assistant_sequence += 1;
-                                    assistant_emitted.push_str(&saved.content);
-                                    assistant_partial.clear();
-                                    let mut payload = json!({
-                                        "message_id": saved.id.0,
-                                        "content": saved.content,
-                                        "delivery": saved.delivery,
-                                        "attachments": saved.attachments,
-                                        "turn_sequence": saved.turn_sequence,
-                                        "order_seq": saved.order_seq,
-                                    });
-                                    if let Some(provider_message_id) = provider_message_id {
-                                        if let Some(obj) = payload.as_object_mut() {
-                                            obj.insert(
-                                                "provider_message_id".to_string(),
-                                                json!(provider_message_id),
-                                            );
-                                        }
-                                    }
-                                    let _ = emit_event(
-                                        &state_for_events,
-                                        session_id,
-                                        Some(run_id),
-                                        Some(turn_id),
-                                        SessionEventType::AssistantMessageInserted,
-                                        payload,
-                                    )
-                                    .await;
-                                    assistant_partial_message_id = None;
-                                }
-                            } else {
-                                assistant_partial.clear();
                                 assistant_partial_message_id = None;
                             }
+                        } else {
+                            assistant_partial.clear();
+                            assistant_partial_message_id = None;
                         }
-                        // NOTE: AssistantComplete means the assistant has finished streaming the
-                        // current assistant message, not that the Turn is complete. Tools may
-                        // still be executing, and we only finalize turn status on Done /
-                        // TurnFinished (or interrupt/error paths).
-                        let _ = store
-                            .delete_session_events_for_turn_types(
-                                session_id,
-                                turn_id,
-                                &[
-                                    SessionEventType::AssistantChunk,
-                                    SessionEventType::ThoughtChunk,
-                                ],
-                            )
-                            .await;
                     }
-                    SessionEventType::Done => {
-                        if !telemetry_emitted {
-                            telemetry_emitted = true;
-                            let duration_ms = run_started_at.elapsed().as_millis() as u64;
-                            let mut run_labels = HashMap::new();
-                            run_labels.insert("provider_id".to_string(), provider_id.clone());
-                            run_labels.insert("model_id".to_string(), model_id.clone());
-                            run_labels.insert("env_target".to_string(), env_target.clone());
-                            run_labels.insert("event".to_string(), "run_complete".to_string());
-                            let run_metric = PerfMetric {
-                                name: "scheduler.run_total_ms".to_string(),
-                                kind: PerfMetricKind::Histogram,
-                                unit: "ms".to_string(),
-                                value: duration_ms as f64,
-                                labels: run_labels,
-                            };
-                            state_for_events
-                                .telemetry
-                                .perf_telemetry
-                                .record_metric(run_metric, perf_run_id.clone(), None, None)
-                                .await;
-                            state_for_events
-                                .telemetry
-                                .telemetry
-                                .emit(TelemetryEvent::provider_call(
-                                    provider_id.clone(),
-                                    model_id.clone(),
-                                    Some(env_target.clone()),
-                                    true,
-                                    duration_ms,
-                                ))
-                                .await;
-                            state_for_events
-                                .telemetry
-                                .telemetry
-                                .emit(TelemetryEvent::session_completed(
-                                    provider_id.clone(),
-                                    model_id.clone(),
-                                    Some(env_target.clone()),
-                                    "completed".to_string(),
-                                    duration_ms,
-                                ))
-                                .await;
-                        }
-                        let metrics = event.payload_json.get("context_window");
-                        if terminal_status.is_none() {
-                            let _ = store
-                                .update_session_turn_status(
-                                    session_id,
-                                    turn_id,
-                                    SessionTurnStatus::Completed,
-                                    Some(event.seq),
-                                    metrics,
-                                    event.created_at,
-                                )
-                                .await;
-                        }
-                        let _ = store
-                            .delete_session_events_for_turn_types(
-                                session_id,
-                                turn_id,
-                                &[SessionEventType::ThoughtChunk],
-                            )
-                            .await;
-                        let _ = emit_event(
-                            &state_for_events,
+                    // NOTE: AssistantComplete means the assistant has finished streaming the
+                    // current assistant message, not that the Turn is complete. Tools may
+                    // still be executing, and we only finalize turn status on Done /
+                    // TurnFinished (or interrupt/error paths).
+                    let _ = store
+                        .delete_session_events_for_turn_types(
                             session_id,
-                            Some(run_id),
-                            Some(turn_id),
-                            SessionEventType::TurnFinished,
-                            json!({
-                                "message_id": message_id.0,
-                                "status": "completed",
-                            }),
+                            turn_id,
+                            &[
+                                SessionEventType::AssistantChunk,
+                                SessionEventType::ThoughtChunk,
+                            ],
                         )
                         .await;
+                }
+                SessionEventType::Done => {
+                    if !telemetry_emitted {
+                        telemetry_emitted = true;
+                        let duration_ms = run_started_at.elapsed().as_millis() as u64;
+                        let mut run_labels = HashMap::new();
+                        run_labels.insert("provider_id".to_string(), provider_id.clone());
+                        run_labels.insert("model_id".to_string(), model_id.clone());
+                        run_labels.insert("env_target".to_string(), env_target.clone());
+                        run_labels.insert("event".to_string(), "run_complete".to_string());
+                        let run_metric = PerfMetric {
+                            name: "scheduler.run_total_ms".to_string(),
+                            kind: PerfMetricKind::Histogram,
+                            unit: "ms".to_string(),
+                            value: duration_ms as f64,
+                            labels: run_labels,
+                        };
+                        state_for_events
+                            .telemetry
+                            .perf_telemetry
+                            .record_metric(run_metric, perf_run_id.clone(), None, None)
+                            .await;
+                        state_for_events
+                            .telemetry
+                            .telemetry
+                            .emit(TelemetryEvent::provider_call(
+                                provider_id.clone(),
+                                model_id.clone(),
+                                Some(env_target.clone()),
+                                true,
+                                duration_ms,
+                            ))
+                            .await;
+                        state_for_events
+                            .telemetry
+                            .telemetry
+                            .emit(TelemetryEvent::session_completed(
+                                provider_id.clone(),
+                                model_id.clone(),
+                                Some(env_target.clone()),
+                                "completed".to_string(),
+                                duration_ms,
+                            ))
+                            .await;
                     }
-                    SessionEventType::TurnInterrupted => {
-                        if !telemetry_emitted {
-                            telemetry_emitted = true;
-                            let duration_ms = run_started_at.elapsed().as_millis() as u64;
-                            let mut run_labels = HashMap::new();
-                            run_labels.insert("provider_id".to_string(), provider_id.clone());
-                            run_labels.insert("model_id".to_string(), model_id.clone());
-                            run_labels.insert("env_target".to_string(), env_target.clone());
-                            run_labels.insert("event".to_string(), "run_interrupt".to_string());
-                            let run_metric = PerfMetric {
-                                name: "scheduler.run_total_ms".to_string(),
-                                kind: PerfMetricKind::Histogram,
-                                unit: "ms".to_string(),
-                                value: duration_ms as f64,
-                                labels: run_labels,
-                            };
-                            state_for_events
-                                .telemetry
-                                .perf_telemetry
-                                .record_metric(run_metric, perf_run_id.clone(), None, None)
-                                .await;
-                            state_for_events
-                                .telemetry
-                                .telemetry
-                                .emit(TelemetryEvent::provider_call(
-                                    provider_id.clone(),
-                                    model_id.clone(),
-                                    Some(env_target.clone()),
-                                    false,
-                                    duration_ms,
-                                ))
-                                .await;
-                            state_for_events
-                                .telemetry
-                                .telemetry
-                                .emit(TelemetryEvent::session_completed(
-                                    provider_id.clone(),
-                                    model_id.clone(),
-                                    Some(env_target.clone()),
-                                    "interrupted".to_string(),
-                                    duration_ms,
-                                ))
-                                .await;
-                        }
-                        terminal_status = Some(SessionTurnStatus::Interrupted);
+                    let metrics = event.payload_json.get("context_window");
+                    if terminal_status.is_none() {
                         let _ = store
                             .update_session_turn_status(
                                 session_id,
                                 turn_id,
-                                SessionTurnStatus::Interrupted,
+                                SessionTurnStatus::Completed,
                                 Some(event.seq),
-                                None,
+                                metrics,
                                 event.created_at,
                             )
                             .await;
-                        let _ = store
-                            .delete_session_events_for_turn_types(
-                                session_id,
-                                turn_id,
-                                &[
-                                    SessionEventType::AssistantChunk,
-                                    SessionEventType::ThoughtChunk,
-                                ],
-                            )
+                    }
+                    let _ = store
+                        .delete_session_events_for_turn_types(
+                            session_id,
+                            turn_id,
+                            &[SessionEventType::ThoughtChunk],
+                        )
+                        .await;
+                    let _ = emit_event(
+                        &state_for_events,
+                        session_id,
+                        Some(run_id),
+                        Some(turn_id),
+                        SessionEventType::TurnFinished,
+                        json!({
+                            "message_id": message_id.0,
+                            "status": "completed",
+                        }),
+                    )
+                    .await;
+                }
+                SessionEventType::TurnInterrupted => {
+                    if !telemetry_emitted {
+                        telemetry_emitted = true;
+                        let duration_ms = run_started_at.elapsed().as_millis() as u64;
+                        let mut run_labels = HashMap::new();
+                        run_labels.insert("provider_id".to_string(), provider_id.clone());
+                        run_labels.insert("model_id".to_string(), model_id.clone());
+                        run_labels.insert("env_target".to_string(), env_target.clone());
+                        run_labels.insert("event".to_string(), "run_interrupt".to_string());
+                        let run_metric = PerfMetric {
+                            name: "scheduler.run_total_ms".to_string(),
+                            kind: PerfMetricKind::Histogram,
+                            unit: "ms".to_string(),
+                            value: duration_ms as f64,
+                            labels: run_labels,
+                        };
+                        state_for_events
+                            .telemetry
+                            .perf_telemetry
+                            .record_metric(run_metric, perf_run_id.clone(), None, None)
                             .await;
-                        let _ = emit_event(
+                        state_for_events
+                            .telemetry
+                            .telemetry
+                            .emit(TelemetryEvent::provider_call(
+                                provider_id.clone(),
+                                model_id.clone(),
+                                Some(env_target.clone()),
+                                false,
+                                duration_ms,
+                            ))
+                            .await;
+                        state_for_events
+                            .telemetry
+                            .telemetry
+                            .emit(TelemetryEvent::session_completed(
+                                provider_id.clone(),
+                                model_id.clone(),
+                                Some(env_target.clone()),
+                                "interrupted".to_string(),
+                                duration_ms,
+                            ))
+                            .await;
+                    }
+                    terminal_status = Some(SessionTurnStatus::Interrupted);
+                    let _ = store
+                        .update_session_turn_status(
+                            session_id,
+                            turn_id,
+                            SessionTurnStatus::Interrupted,
+                            Some(event.seq),
+                            None,
+                            event.created_at,
+                        )
+                        .await;
+                    let _ = store
+                        .delete_session_events_for_turn_types(
+                            session_id,
+                            turn_id,
+                            &[
+                                SessionEventType::AssistantChunk,
+                                SessionEventType::ThoughtChunk,
+                            ],
+                        )
+                        .await;
+                    let _ = emit_event(
                             &state_for_events,
                             session_id,
                             Some(run_id),
@@ -1434,90 +1438,89 @@ async fn start_turn(
                             }),
                         )
                         .await;
+                }
+                SessionEventType::Error => {
+                    if matches!(terminal_status, Some(SessionTurnStatus::Interrupted)) {
+                        continue;
                     }
-                    SessionEventType::Error => {
-                        if matches!(terminal_status, Some(SessionTurnStatus::Interrupted)) {
-                            continue;
-                        }
-                        if !telemetry_emitted {
-                            telemetry_emitted = true;
-                            let duration_ms = run_started_at.elapsed().as_millis() as u64;
-                            let mut run_labels = HashMap::new();
-                            run_labels.insert("provider_id".to_string(), provider_id.clone());
-                            run_labels.insert("model_id".to_string(), model_id.clone());
-                            run_labels.insert("env_target".to_string(), env_target.clone());
-                            run_labels.insert("event".to_string(), "run_failed".to_string());
-                            let run_metric = PerfMetric {
-                                name: "scheduler.run_total_ms".to_string(),
-                                kind: PerfMetricKind::Histogram,
-                                unit: "ms".to_string(),
-                                value: duration_ms as f64,
-                                labels: run_labels,
-                            };
-                            state_for_events
-                                .telemetry
-                                .perf_telemetry
-                                .record_metric(run_metric, perf_run_id.clone(), None, None)
-                                .await;
-                            state_for_events
-                                .telemetry
-                                .telemetry
-                                .emit(TelemetryEvent::provider_call(
-                                    provider_id.clone(),
-                                    model_id.clone(),
-                                    Some(env_target.clone()),
-                                    false,
-                                    duration_ms,
-                                ))
-                                .await;
-                            state_for_events
-                                .telemetry
-                                .telemetry
-                                .emit(TelemetryEvent::session_completed(
-                                    provider_id.clone(),
-                                    model_id.clone(),
-                                    Some(env_target.clone()),
-                                    "failed".to_string(),
-                                    duration_ms,
-                                ))
-                                .await;
-                        }
-                        terminal_status = Some(SessionTurnStatus::Failed);
-                        let _ = store
-                            .update_session_turn_status(
-                                session_id,
-                                turn_id,
-                                SessionTurnStatus::Failed,
-                                None,
-                                None,
-                                event.created_at,
-                            )
+                    if !telemetry_emitted {
+                        telemetry_emitted = true;
+                        let duration_ms = run_started_at.elapsed().as_millis() as u64;
+                        let mut run_labels = HashMap::new();
+                        run_labels.insert("provider_id".to_string(), provider_id.clone());
+                        run_labels.insert("model_id".to_string(), model_id.clone());
+                        run_labels.insert("env_target".to_string(), env_target.clone());
+                        run_labels.insert("event".to_string(), "run_failed".to_string());
+                        let run_metric = PerfMetric {
+                            name: "scheduler.run_total_ms".to_string(),
+                            kind: PerfMetricKind::Histogram,
+                            unit: "ms".to_string(),
+                            value: duration_ms as f64,
+                            labels: run_labels,
+                        };
+                        state_for_events
+                            .telemetry
+                            .perf_telemetry
+                            .record_metric(run_metric, perf_run_id.clone(), None, None)
                             .await;
-                        let _ = store
-                            .delete_session_events_for_turn_types(
-                                session_id,
-                                turn_id,
-                                &[
-                                    SessionEventType::AssistantChunk,
-                                    SessionEventType::ThoughtChunk,
-                                ],
-                            )
+                        state_for_events
+                            .telemetry
+                            .telemetry
+                            .emit(TelemetryEvent::provider_call(
+                                provider_id.clone(),
+                                model_id.clone(),
+                                Some(env_target.clone()),
+                                false,
+                                duration_ms,
+                            ))
                             .await;
-                        let _ = emit_event(
-                            &state_for_events,
+                        state_for_events
+                            .telemetry
+                            .telemetry
+                            .emit(TelemetryEvent::session_completed(
+                                provider_id.clone(),
+                                model_id.clone(),
+                                Some(env_target.clone()),
+                                "failed".to_string(),
+                                duration_ms,
+                            ))
+                            .await;
+                    }
+                    terminal_status = Some(SessionTurnStatus::Failed);
+                    let _ = store
+                        .update_session_turn_status(
                             session_id,
-                            Some(run_id),
-                            Some(turn_id),
-                            SessionEventType::TurnFinished,
-                            json!({
-                                "message_id": message_id.0,
-                                "status": "failed",
-                            }),
+                            turn_id,
+                            SessionTurnStatus::Failed,
+                            None,
+                            None,
+                            event.created_at,
                         )
                         .await;
-                    }
-                    _ => {}
+                    let _ = store
+                        .delete_session_events_for_turn_types(
+                            session_id,
+                            turn_id,
+                            &[
+                                SessionEventType::AssistantChunk,
+                                SessionEventType::ThoughtChunk,
+                            ],
+                        )
+                        .await;
+                    let _ = emit_event(
+                        &state_for_events,
+                        session_id,
+                        Some(run_id),
+                        Some(turn_id),
+                        SessionEventType::TurnFinished,
+                        json!({
+                            "message_id": message_id.0,
+                            "status": "failed",
+                        }),
+                    )
+                    .await;
                 }
+                _ => {}
             }
         }
         let _ = events_done_tx.send(());
@@ -1840,9 +1843,15 @@ async fn emit_event(
     payload_json: serde_json::Value,
 ) -> Result<SessionEvent> {
     let store = state.store_for_session(session_id).await?;
-    let event = store
-        .append_session_event(session_id, run_id, turn_id, event_type, payload_json)
-        .await?;
+    let event = append_session_event_with_retry(
+        &store,
+        session_id,
+        run_id,
+        turn_id,
+        event_type,
+        payload_json,
+    )
+    .await?;
     state.publish_event(event.clone()).await;
     Ok(event)
 }
@@ -1933,6 +1942,49 @@ fn strip_emitted_prefix(full_content: &str, emitted: &str) -> Option<String> {
     }
 }
 
+const STORE_WRITE_RETRY_LIMIT: usize = 3;
+const STORE_WRITE_RETRY_BASE_MS: u64 = 40;
+
+fn is_transient_store_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_lowercase();
+    msg.contains("database is locked")
+        || msg.contains("sqlite_busy")
+        || msg.contains("database is busy")
+}
+
+async fn append_session_event_with_retry(
+    store: &ctx_store::Store,
+    session_id: ctx_core::ids::SessionId,
+    run_id: Option<RunId>,
+    turn_id: Option<TurnId>,
+    event_type: SessionEventType,
+    payload_json: serde_json::Value,
+) -> Result<SessionEvent> {
+    let mut attempt = 0usize;
+    loop {
+        match store
+            .append_session_event(
+                session_id,
+                run_id,
+                turn_id,
+                event_type.clone(),
+                payload_json.clone(),
+            )
+            .await
+        {
+            Ok(event) => return Ok(event),
+            Err(err) => {
+                if !is_transient_store_error(&err) || attempt >= STORE_WRITE_RETRY_LIMIT {
+                    return Err(err);
+                }
+                attempt += 1;
+                let backoff_ms = STORE_WRITE_RETRY_BASE_MS.saturating_mul(attempt as u64);
+                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn persist_assistant_message(
     store: &ctx_store::Store,
@@ -1964,7 +2016,21 @@ async fn persist_assistant_message(
         delivered_at: Some(created_at),
         created_at,
     };
-    store.insert_message(msg).await
+    let mut attempt = 0usize;
+    loop {
+        match store.insert_message(msg.clone()).await {
+            Ok(saved) => return Ok(saved),
+            Err(err) => {
+                if !is_transient_store_error(&err) || attempt >= STORE_WRITE_RETRY_LIMIT {
+                    tracing::warn!("assistant message insert failed: {err:#}");
+                    return Err(err);
+                }
+                attempt += 1;
+                let backoff_ms = STORE_WRITE_RETRY_BASE_MS.saturating_mul(attempt as u64);
+                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+            }
+        }
+    }
 }
 
 fn compute_context_window_metrics(

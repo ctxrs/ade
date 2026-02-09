@@ -54,9 +54,19 @@ test("workbench: spinner clears after replayed completion", async ({ page }) => 
     .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
 
-  const prompt = "slow-diff-test spinner replay";
+  const prompt = `slow-diff-test spinner replay
+[[tool_calls]]
+[
+  {"kind":"execute","title":"tool","input":{"command":"echo 1"}}
+]
+[[/tool_calls]]`;
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(prompt);
+  const createSessionResp = page.waitForResponse((resp) => {
+    if (resp.request().method() !== "POST") return false;
+    return /\/api\/tasks\/[^/]+\/sessions$/.test(resp.url()) && resp.status() === 200;
+  });
   await page.locator('.wb-new-composer-stack button[aria-label="Send"]').click();
+  await createSessionResp;
 
   const activeSpinners = page.locator(
     ".wb-task-row-active .wb-task-spinner:not(.wb-task-spinner-archive)",

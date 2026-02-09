@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path as StdPath, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context};
 use axum::extract::{Path, Query, State};
@@ -35,6 +35,36 @@ use ctx_fs::git::delete_branch;
 use ctx_fs::vcs;
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_store::is_unique_constraint_violation;
+
+const GLOBAL_INDEX_WRITE_RETRY_LIMIT: usize = 3;
+const GLOBAL_INDEX_WRITE_RETRY_BASE_MS: u64 = 40;
+
+fn is_transient_store_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_lowercase();
+    msg.contains("database is locked")
+        || msg.contains("sqlite_busy")
+        || msg.contains("database is busy")
+}
+
+async fn retry_global_index_write<Fut>(mut op: impl FnMut() -> Fut) -> Result<(), anyhow::Error>
+where
+    Fut: std::future::Future<Output = Result<(), anyhow::Error>>,
+{
+    let mut attempt = 0usize;
+    loop {
+        match op().await {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                if !is_transient_store_error(&err) || attempt >= GLOBAL_INDEX_WRITE_RETRY_LIMIT {
+                    return Err(err);
+                }
+                attempt += 1;
+                let backoff_ms = GLOBAL_INDEX_WRITE_RETRY_BASE_MS.saturating_mul(attempt as u64);
+                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+            }
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateTaskTitleReq {
@@ -1473,15 +1503,19 @@ pub(super) async fn create_session_for_task(
                     .insert_worktree(worktree.clone())
                     .await
                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                if let Err(e) = state
-                    .global_store()
-                    .upsert_workspace_worktree_index(worktree_id, task.workspace_id)
-                    .await
+                if let Err(e) = retry_global_index_write(|| async {
+                    state
+                        .global_store()
+                        .upsert_workspace_worktree_index(worktree_id, task.workspace_id)
+                        .await
+                })
+                .await
                 {
                     tracing::warn!(
                         worktree_id = %worktree_id.0,
                         "failed to update worktree index: {e:?}"
                     );
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
                 }
                 if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
                     Arc::clone(&state),
@@ -1621,12 +1655,16 @@ pub(super) async fn create_session_for_task(
         }
     }
     state.remember_session_meta(&session).await;
-    if let Err(e) = state
-        .global_store()
-        .upsert_workspace_session_index(session.id, task.workspace_id)
-        .await
+    if let Err(e) = retry_global_index_write(|| async {
+        state
+            .global_store()
+            .upsert_workspace_session_index(session.id, task.workspace_id)
+            .await
+    })
+    .await
     {
         tracing::warn!(session_id = %session.id.0, "failed to update session index: {e:?}");
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     if session.parent_session_id.is_none() && session.relationship.is_none() {

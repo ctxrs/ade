@@ -1891,6 +1891,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const isOptimisticSessionId =
     !!activeSessionId &&
     (optimisticSessionIdSet.has(activeSessionId) ||
+      activeSessionId.startsWith("optimistic-") ||
       (optimisticStartingSessionId && optimisticStartingSessionId === activeSessionId));
   const openSessionId = activeSessionId && !isOptimisticSessionId ? activeSessionId : "";
   useOpenSession(openSessionId, { watchDiff: diffOpen });

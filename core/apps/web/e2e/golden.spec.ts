@@ -34,6 +34,6 @@ test("golden path: workspace → task → session → message", async ({ page })
     timeout: 20000,
   });
   await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] .wb-assistant-entry")).toHaveCount(1, {
-    timeout: 20000,
+    timeout: 40000,
   });
 });

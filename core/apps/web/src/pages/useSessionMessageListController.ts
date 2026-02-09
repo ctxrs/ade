@@ -114,16 +114,24 @@ export function useSessionMessageListController(params: Params): Result {
   const debugLoggedSessionRef = useRef<string | null>(null);
 
   const lastScrollLocationRef = useRef<ListScrollLocation | null>(null);
-  const stickToBottomRef = useRef(true);
-  const lastAtBottomRef = useRef<boolean | null>(null);
+  const stickToBottomRef = useRef(scrollState?.stickToBottom ?? true);
+  const lastAtBottomRef = useRef<boolean | null>(scrollState ? scrollState.stickToBottom : null);
   const lastListOffsetRef = useRef<number | null>(null);
-  const lastKnownScrollTopRef = useRef<number | null>(null);
+  const lastKnownScrollTopRef = useRef<number | null>(scrollState?.scrollTop ?? null);
+  const suppressInitialBottomPersistRef = useRef<{
+    untilMs: number;
+    targetScrollTop: number | null;
+  } | null>(
+    scrollState && !scrollState.stickToBottom
+      ? { untilMs: Date.now() + 1500, targetScrollTop: scrollState.scrollTop ?? null }
+      : null,
+  );
 
   // Best-effort anchoring based on rendered data (no DOM reads).
   // NOTE: `onRenderedDataChange` can include overscan. Anchoring to `range[0]` can anchor an offscreen
   // row and cause visible jumps, especially with large `increaseViewportBy`. Prefer a mid-range anchor.
-  const renderedAnchorIdRef = useRef<string | null>(null);
-  const renderedTopIdRef = useRef<string | null>(null);
+  const renderedAnchorIdRef = useRef<string | null>(scrollState?.anchorItemId ?? null);
+  const renderedTopIdRef = useRef<string | null>(scrollState?.anchorItemId ?? null);
   const firstListItemIdRef = useRef<string | null>(null);
 
   const pendingHistoryRef = useRef(false);
@@ -146,45 +154,88 @@ export function useSessionMessageListController(params: Params): Result {
     console.debug("[MessageList][debug]", { sessionId, isActive, loaded });
   }, [isActive, loaded, sessionId, showDebug]);
 
-  // Persist scroll state at most once per frame. This avoids forced layout reads on every scroll event.
-  const pendingScrollStateRef = useRef<{
+  useEffect(() => {
+    // When only one session slot is mounted, switching tasks/sessions can remount the list.
+    // Virtuoso may briefly report "at bottom" on initial layout; avoid immediately deleting a
+    // previously persisted non-bottom scroll state before restoration can run.
+    if (scrollState && !scrollState.stickToBottom) {
+      suppressInitialBottomPersistRef.current = {
+        untilMs: Date.now() + 1500,
+        targetScrollTop: scrollState.scrollTop ?? null,
+      };
+    } else {
+      suppressInitialBottomPersistRef.current = null;
+    }
+  }, [sessionId]);
+
+  type ScrollStatePersist = {
     stickToBottom: boolean;
     anchorItemId: string | null;
     scrollTop: number | null;
-  } | null>(null);
+  };
+
+  // Persist scroll state at most once per frame.
+  const pendingScrollStateRef = useRef<ScrollStatePersist | null>(null);
+  const lastPersistedScrollStateRef = useRef<ScrollStatePersist | null>(null);
   const scrollStateRafRef = useRef<number | null>(null);
+  const anchorOffsetTimerRef = useRef<number | null>(null);
 
   const flushScrollState = useCallback(() => {
     scrollStateRafRef.current = null;
     const pending = pendingScrollStateRef.current;
     pendingScrollStateRef.current = null;
     if (!pending || !onScrollStateChange) return;
+    lastPersistedScrollStateRef.current = pending;
+    // Avoid DOM/layout reads in the scroll hot path. If we can compute an anchor offset, do it
+    // lazily after scroll settles (scheduled from `onScroll`).
+    onScrollStateChange({ ...pending, anchorOffset: null });
+  }, [onScrollStateChange, methodsRef]);
 
-    const scroller = methodsRef.current?.scrollerElement?.() ?? null;
-    const { anchorItemId } = pending;
-    let anchorOffset: number | null = null;
-    if (scroller && anchorItemId) {
-      // Note: still a layout read, but amortized (rAF) so we don't do it on every scroll callback.
+  const scheduleAnchorOffsetPersist = useCallback(() => {
+    if (!onScrollStateChange) return;
+    if (anchorOffsetTimerRef.current != null) {
+      window.clearTimeout(anchorOffsetTimerRef.current);
+      anchorOffsetTimerRef.current = null;
+    }
+    anchorOffsetTimerRef.current = window.setTimeout(() => {
+      anchorOffsetTimerRef.current = null;
+      const pending = lastPersistedScrollStateRef.current;
+      if (!pending) return;
+      if (pending.stickToBottom) return;
+      const { anchorItemId } = pending;
+      if (!anchorItemId) return;
+      const scroller = methodsRef.current?.scrollerElement?.() ?? null;
+      if (!scroller) return;
+
       const scrollerRect = scroller.getBoundingClientRect();
       const anchorEl = scroller.querySelector(`[data-thread-item-id="${anchorItemId}"]`);
       const itemEl = anchorEl?.closest("[role=\"listitem\"]") as HTMLElement | null;
-      if (itemEl) {
-        const itemRect = itemEl.getBoundingClientRect();
-        anchorOffset = itemRect.top - scrollerRect.top;
-      }
-    }
+      if (!itemEl) return;
+      const itemRect = itemEl.getBoundingClientRect();
+      const anchorOffset = itemRect.top - scrollerRect.top;
+      // If the anchor isn't actually within the visible viewport (overscan), fall back to
+      // `scrollTop` restoration.
+      if (anchorOffset < 0 || anchorOffset > scrollerRect.height) return;
 
-    onScrollStateChange({ ...pending, anchorOffset });
-  }, [onScrollStateChange, methodsRef]);
+      onScrollStateChange({ ...pending, anchorOffset });
+    }, 150);
+  }, [methodsRef, onScrollStateChange]);
 
   useLayoutEffect(() => {
     return () => {
       if (scrollStateRafRef.current != null) {
+        // Persist the most recent scroll state even if the component unmounts before the next rAF.
+        // This is important when switching tasks/sessions quickly (only one slot mounted).
         cancelAnimationFrame(scrollStateRafRef.current);
         scrollStateRafRef.current = null;
+        flushScrollState();
+      }
+      if (anchorOffsetTimerRef.current != null) {
+        window.clearTimeout(anchorOffsetTimerRef.current);
+        anchorOffsetTimerRef.current = null;
       }
     };
-  }, []);
+  }, [flushScrollState]);
 
   const initialLocation = useMemo<ItemLocation>(() => {
     if (!scrollState || scrollState.stickToBottom) return INITIAL_LOCATION_BOTTOM;
@@ -198,7 +249,10 @@ export function useSessionMessageListController(params: Params): Result {
         };
       }
     }
-    return INITIAL_LOCATION_BOTTOM;
+    // We know the user was not at bottom, but we don't have a resolvable anchor yet.
+    // Starting at bottom would immediately mark the session as "stickToBottom" and clobber the
+    // saved scroll state before restoration can occur.
+    return { index: 0, align: "start" };
   }, [listItems, scrollState]);
 
   // Keep an up-to-date reference without introducing additional hook ordering churn under HMR.
@@ -211,24 +265,66 @@ export function useSessionMessageListController(params: Params): Result {
       if (!isActive) return;
 
       const scroller = methodsRef.current?.scrollerElement?.() ?? null;
-      const scrollTop = scroller ? scroller.scrollTop : null;
-      if (scrollTop != null) lastKnownScrollTopRef.current = scrollTop;
-      const atBottom = location.bottomOffset <= 16;
+      let scrollTop: number | null = null;
+      if (scroller) {
+        scrollTop = scroller.scrollTop;
+        lastKnownScrollTopRef.current = scrollTop;
+      } else {
+        scrollTop = lastKnownScrollTopRef.current;
+      }
+      const atBottomFromLocation = location.bottomOffset <= 16;
+      // Virtuoso's `bottomOffset` can be optimistic during fast task/session switches. Prefer the
+      // actual DOM scroller metrics when available so scroll state doesn't incorrectly snap to bottom.
+      const atBottom =
+        scroller && scrollTop != null
+          ? scroller.scrollHeight - (scrollTop + scroller.clientHeight) <= 16
+          : atBottomFromLocation;
       stickToBottomRef.current = atBottom;
       if (onAtBottomChange && lastAtBottomRef.current !== atBottom) {
         lastAtBottomRef.current = atBottom;
         onAtBottomChange(atBottom);
       }
 
-      if (onScrollStateChange) {
+      let allowPersist = true;
+      // During task/session switches the Virtuoso scroller can temporarily disappear; avoid
+      // persisting a partial/incorrect state which can clobber a previously saved non-bottom
+      // scroll position.
+      if (!scroller) {
+        allowPersist = false;
+      }
+      const suppress = suppressInitialBottomPersistRef.current;
+      if (suppress) {
+        if (Date.now() > suppress.untilMs) {
+          suppressInitialBottomPersistRef.current = null;
+        } else if (!atBottom) {
+          suppressInitialBottomPersistRef.current = null;
+        } else if (
+          suppress.targetScrollTop != null &&
+          scrollTop != null &&
+          Math.abs(scrollTop - suppress.targetScrollTop) <= 2
+        ) {
+          suppressInitialBottomPersistRef.current = null;
+        } else if (atBottom) {
+          allowPersist = false;
+        }
+      }
+
+      if (onScrollStateChange && allowPersist) {
         const anchorItemId = renderedAnchorIdRef.current;
-        pendingScrollStateRef.current = {
+        const nextPending: ScrollStatePersist = {
           stickToBottom: stickToBottomRef.current,
           anchorItemId,
           scrollTop,
         };
+        pendingScrollStateRef.current = nextPending;
+        lastPersistedScrollStateRef.current = nextPending;
         if (scrollStateRafRef.current == null) {
           scrollStateRafRef.current = requestAnimationFrame(flushScrollState);
+        }
+        // If the user is not at bottom, try to capture a stable anchor offset once scrolling settles.
+        // This is lower-frequency than rAF persistence and keeps layout reads off the scroll hot path.
+        if (!stickToBottomRef.current && anchorItemId) {
+          scheduleAnchorOffsetPersist();
         }
       }
 
@@ -425,14 +521,16 @@ export function useSessionMessageListController(params: Params): Result {
       setLoadingOlder(false);
       lastScrollLocationRef.current = null;
       lastListOffsetRef.current = null;
-      stickToBottomRef.current = true;
-      lastAtBottomRef.current = null;
-      renderedAnchorIdRef.current = null;
-      renderedTopIdRef.current = null;
+      stickToBottomRef.current = scrollState?.stickToBottom ?? true;
+      lastAtBottomRef.current = stickToBottomRef.current;
+      renderedAnchorIdRef.current = scrollState?.anchorItemId ?? null;
+      renderedTopIdRef.current = scrollState?.anchorItemId ?? null;
       firstListItemIdRef.current = null;
+      lastKnownScrollTopRef.current = scrollState?.scrollTop ?? null;
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 3 };
       methods.data.replace(nextRaw, { initialLocation, purgeItemSizes: true });
+      restoreNonBottomScroll();
       if (import.meta.env.DEV && showDebug) {
         // eslint-disable-next-line no-console
         console.debug("[MessageList][data:replace]", { sessionId, nextLen: nextRaw.length, reason: "sessionChanged" });
@@ -451,6 +549,7 @@ export function useSessionMessageListController(params: Params): Result {
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 2 };
       methods.data.replace(nextRaw, { initialLocation, purgeItemSizes: true });
+      restoreNonBottomScroll();
       if (import.meta.env.DEV && showDebug) {
         // eslint-disable-next-line no-console
         console.debug("[MessageList][data:replace]", {
