@@ -161,7 +161,8 @@ describe("buildWorkbenchThreadViewModel", () => {
 
     const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
     const items = out.groups[0]?.items ?? [];
-    const thoughtItems = items.filter((it: any) => it.kind === "thought");
+    type ThoughtItem = { kind: "thought"; id: string; turn_id: string; created_at: string; content: string };
+    const thoughtItems = items.filter((it): it is ThoughtItem => (it as any).kind === "thought");
     expect(thoughtItems.length).toBe(1);
     expect(String(thoughtItems[0]?.content)).toContain("Thinking about bar");
     expect(String(thoughtItems[0]?.content)).not.toContain("Reading foo");
@@ -596,9 +597,9 @@ describe("buildWorkbenchThreadViewModel", () => {
 
     const pending = [
       {
-        clientId: "client-1",
+        clientId: "m-pending-1",
         message: {
-          id: "client-1",
+          id: "m-pending-1",
           session_id: "s1",
           task_id: "t1",
           role: "user",
@@ -611,7 +612,7 @@ describe("buildWorkbenchThreadViewModel", () => {
 
     const merged = mergeQueuedMessagesForPanel([] as any, pending as any);
     expect(merged).toHaveLength(1);
-    expect(String(merged[0]?.id)).toBe("client-1");
+    expect(String(merged[0]?.id)).toBe("m-pending-1");
   }, 10000);
 
   it("filters queued panel items once a turn starts running", async () => {

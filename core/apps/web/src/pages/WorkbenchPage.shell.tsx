@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso } from "react-virtuoso";
+import { flushSync } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowUp,
@@ -27,6 +28,7 @@ import {
   ProviderOptions,
   ProviderStatus,
   type Session,
+  type SessionTurn,
   type SessionSnapshotSummary,
   type Task,
   WebSessionInfo,
@@ -144,6 +146,16 @@ import {
 const DIFF_LINE_GUARD_LIMIT = 10000;
 const DIFF_FILE_GUARD_LIMIT = 200;
 
+type TaskScrollbarDragState = {
+  pointerId: number;
+  startY: number;
+  startScrollTop: number;
+  trackHeight: number;
+  thumbHeight: number;
+  scrollHeight: number;
+  clientHeight: number;
+};
+
 const readDiffSummaryNumber = (summary: Record<string, unknown> | null, keys: string[]): number | null => {
   if (!summary) return null;
   for (const key of keys) {
@@ -210,13 +222,14 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const workspaceSnapshot = useWorkspaceActiveSnapshotSnapshot();
   const tasksById = workspaceSnapshot.tasksById;
   const workbenchSnap = useWorkbenchShellSnapshot();
-  const [optimisticFocus, setOptimisticFocus] = useState<OptimisticFocus | null>(null);
-  const { taskId: activeTaskIdFromTab, sessionId: activeSessionIdFromTab } = useActiveWorkbenchIds();
-  const navToken = workbenchStore.getNavToken();
-  const optimisticFocusActive = Boolean(optimisticFocus && navToken === optimisticFocus.navToken);
-  const activeTaskId = activeTaskIdFromTab ?? (optimisticFocusActive ? optimisticFocus.taskId : null);
-  const activeSessionIdFromTabResolved =
-    activeSessionIdFromTab ?? (optimisticFocusActive ? optimisticFocus.sessionId : null);
+	const [optimisticFocus, setOptimisticFocus] = useState<OptimisticFocus | null>(null);
+	const { taskId: activeTaskIdFromTab, sessionId: activeSessionIdFromTab } = useActiveWorkbenchIds();
+	const navToken = workbenchStore.getNavToken();
+	const optimisticFocusActive = Boolean(optimisticFocus && navToken === optimisticFocus.navToken);
+	const activeTaskId =
+	  activeTaskIdFromTab ?? (optimisticFocusActive && optimisticFocus ? optimisticFocus.taskId : null);
+	const activeSessionIdFromTabResolved =
+	  activeSessionIdFromTab ?? (optimisticFocusActive && optimisticFocus ? optimisticFocus.sessionId : null);
   const { value: newTaskDraft, setValue: setNewTaskDraft } = useNewTaskDraft();
   const draftPrompt = newTaskDraft.text;
   const draftMode = newTaskDraft.modeId;
@@ -289,6 +302,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const [taskQuery, setTaskQuery] = useState("");
   const [optimisticTasks, setOptimisticTasks] = useState<OptimisticTaskSummary[]>([]);
+  // When we switch the Workbench tab to a brand-new optimistic task, the tab/store update can race
+  // the React state update that inserts the optimistic task summary. Keep a synchronous fallback
+  // so the task/session pane never renders blank.
+  const optimisticStartingTaskRef = useRef<OptimisticTaskSummary | null>(null);
   const optimisticTasksById = useMemo(() => {
     return Object.fromEntries(optimisticTasks.map((item) => [item.id, item]));
   }, [optimisticTasks]);
@@ -891,8 +908,27 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (!activeTaskId) return null;
     const optimistic = optimisticTasksById[activeTaskId];
     if (optimistic && optimistic.localStatus !== "synced") return optimistic;
-    return tasksById[activeTaskId] ?? optimistic ?? null;
+    const server = tasksById[activeTaskId] ?? null;
+    if (server) return server;
+    const fallback = optimisticStartingTaskRef.current;
+    if (fallback && fallback.id === activeTaskId && fallback.localStatus !== "synced") {
+      return fallback;
+    }
+    return optimistic ?? null;
   }, [activeTaskId, optimisticTasksById, tasksById]);
+
+  useEffect(() => {
+    const cur = optimisticStartingTaskRef.current;
+    if (!cur) return;
+    if (optimisticTasksById[cur.id]) {
+      optimisticStartingTaskRef.current = null;
+      return;
+    }
+    if (activeTaskId && activeTaskId !== cur.id && activeTaskIdFromTab) {
+      // Once we have a real active tab selection away from the optimistic task, drop the fallback.
+      optimisticStartingTaskRef.current = null;
+    }
+  }, [activeTaskId, activeTaskIdFromTab, optimisticTasksById]);
   const sessionSummaries = useMemo(() => activeTaskSummary?.sessions ?? [], [activeTaskSummary]);
   const sessions = useMemo(() => sessionSummaries.map((s) => s.session), [sessionSummaries]);
   const sessionIds = useMemo(
@@ -1407,15 +1443,15 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const seenMs = parseMs(t.assistant_seen_at ?? null);
       const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
       const ageIso = t.last_activity_at ?? t.updated_at ?? t.created_at;
-      let statusKind = archivePending
-        ? "archive"
-        : hasError
-          ? "error"
-          : working
-            ? "working"
-            : unread
-              ? "unread"
-              : "idle";
+	      let statusKind: "error" | "idle" | "archive" | "working" | "unread" = archivePending
+	        ? "archive"
+	        : hasError
+	          ? "error"
+	          : working
+	            ? "working"
+	            : unread
+	              ? "unread"
+	              : "idle";
       if (localStatus === "failed") {
         statusKind = "error";
       } else if (localStatus === "starting") {
@@ -1847,7 +1883,16 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return pickPreferredSessionId(sessions, null);
   }, [activeSessionIdFromTabResolved, primarySessionId, sessions]);
   const preserveScrollOnFocus = true;
-  const openSessionId = activeSessionId && !optimisticSessionIdSet.has(activeSessionId) ? activeSessionId : "";
+  // `optimisticSessionIdSet` is derived from React state, but on the first tick of "New Task" we can
+  // temporarily focus an optimistic session before the optimistic task/session summary is committed.
+  // If we call `openSession()` in that transient render, the replica hydration path can clobber the
+  // seeded optimistic head, causing a brief empty thread until the daemon responds.
+  const optimisticStartingSessionId = String(optimisticStartingTaskRef.current?.primarySessionId ?? "");
+  const isOptimisticSessionId =
+    !!activeSessionId &&
+    (optimisticSessionIdSet.has(activeSessionId) ||
+      (optimisticStartingSessionId && optimisticStartingSessionId === activeSessionId));
+  const openSessionId = activeSessionId && !isOptimisticSessionId ? activeSessionId : "";
   useOpenSession(openSessionId, { watchDiff: diffOpen });
 
   const showDebugIds = useMemo(() => {
@@ -2121,7 +2166,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const refreshDiff = useCallback(
     async (sessionId: string) => {
       if (!sessionId) return;
-      if (sessionId.startsWith("optimistic-")) return;
+      const optimisticStartingSessionId = String(optimisticStartingTaskRef.current?.primarySessionId ?? "");
+      if (optimisticSessionIdSet.has(sessionId) || (optimisticStartingSessionId && optimisticStartingSessionId === sessionId)) {
+        return;
+      }
       if (sessionId !== activeSessionId) return;
       // If we can't get a summary, do not fetch the full diff (it can be huge and crash the renderer).
       if (!snapshotHasCounts || !activeWorktreeVcsSummary) {
@@ -2149,7 +2197,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       diffContentInFlightRef.current.set(sessionId, request);
       return request;
     },
-    [activeSessionId, activeWorktreeVcsSummary, snapshotHasCounts, supervisor],
+    [activeSessionId, activeWorktreeVcsSummary, optimisticSessionIdSet, snapshotHasCounts, supervisor],
   );
 
   const toggleDiffPane = useCallback(() => {
@@ -2364,9 +2412,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const toStart =
       draftTracks.length > 0 ? draftTracks : [{ key: "t1", label: "", providerId: "codex", modelId: "" }];
     const primaryTrack = toStart[0];
-    const optimisticTaskId = `optimistic-task-${randomUuid()}`;
-    const optimisticSessionId = `optimistic-session-${randomUuid()}`;
-    const optimisticMessageId = `optimistic-message-${randomUuid()}`;
+    const optimisticTaskId = randomUuid();
+    const optimisticSessionId = randomUuid();
+    const optimisticMessageId = randomUuid();
+    const optimisticTurnId = randomUuid();
     const optimisticModelId =
       primaryTrack.modelId ||
       modelIdsFromOptions(providerOptions[primaryTrack.providerId])[0] ||
@@ -2421,29 +2470,53 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       localMessageId: optimisticMessageId,
     };
 
-    setOptimisticTasks((prev) => [optimisticItem, ...prev]);
-    focusTask(optimisticTaskId, optimisticSessionId);
-    setOptimisticFocus({
-      taskId: optimisticTaskId,
-      sessionId: optimisticSessionId,
-      navToken: workbenchStore.getNavToken(),
-    });
     const optimisticMessage: Message = {
       id: optimisticMessageId,
       session_id: optimisticSessionId,
       task_id: optimisticTaskId,
-      turn_id: null,
+      turn_id: optimisticTurnId,
       turn_sequence: null,
-      order_seq: 1,
       role: "user",
       content: prompt,
       attachments: attachmentsToSend,
       delivery: "immediate",
       created_at: nowIso,
     };
+    const optimisticTurn: SessionTurn = {
+      turn_id: optimisticTurnId,
+      session_id: optimisticSessionId,
+      run_id: null,
+      user_message_id: optimisticMessageId,
+      status: "running",
+      start_seq: null,
+      end_seq: null,
+      started_at: nowIso,
+      updated_at: nowIso,
+      assistant_partial: null,
+      thought_partial: null,
+      metrics_json: null,
+      tool_total: 0,
+      tool_pending: 0,
+      tool_running: 0,
+      tool_completed: 0,
+      tool_failed: 0,
+    };
 
-    supervisor.setSession(optimisticSession);
-    supervisor.setMessages(optimisticSessionId, [optimisticMessage], { replace: true });
+    // Keep the "switch to task tab" + optimistic seed in the same sync commit to avoid a transient
+    // render where the task pane is focused but has no session/thread data yet.
+    flushSync(() => {
+      optimisticStartingTaskRef.current = optimisticItem;
+      setOptimisticTasks((prev) => [optimisticItem, ...prev]);
+      focusTask(optimisticTaskId, optimisticSessionId);
+      setOptimisticFocus({
+        taskId: optimisticTaskId,
+        sessionId: optimisticSessionId,
+        navToken: workbenchStore.getNavToken(),
+      });
+      supervisor.setSession(optimisticSession);
+      supervisor.setTurns(optimisticSessionId, [optimisticTurn], { replace: true });
+      supervisor.setMessages(optimisticSessionId, [optimisticMessage], { replace: true });
+    });
 
     setNewTaskDraft({ text: "", modeId: "default" });
     await workbenchStore.flushDraft(NEW_TASK_DRAFT_KEY);
@@ -2454,34 +2527,39 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     let primaryMessagePosted = false;
 
     try {
-      const task = await createTask(workspaceId, title, undefined, { create_default_session: false });
+      const task = await createTask(workspaceId, title, undefined, {
+        create_default_session: false,
+        id: optimisticTaskId,
+      });
       const taskId = idToString(task.id);
       if (!taskId) throw new Error("Task creation failed.");
 
-      if (taskId !== currentTaskId) {
-        const prevTaskId = currentTaskId;
-        currentTaskId = taskId;
-        workbenchStore.replaceTaskId(prevTaskId, taskId);
-        supervisor.replaceSessionTaskId(currentSessionId, taskId);
-        setOptimisticTasks((prev) =>
-          prev.map((item) => {
-            if (item.id !== prevTaskId) return item;
-            const nextTask: Task = { ...task, primary_session_id: item.primarySessionId ?? null };
-            const nextSessions = item.sessions.map((summary) => ({
-              ...summary,
-              session: { ...summary.session, task_id: taskId, workspace_id: task.workspace_id ?? summary.session.workspace_id },
-            }));
-            return {
-              ...item,
-              id: taskId,
-              task: nextTask,
-              sessions: nextSessions,
-              sort_at: task.created_at ?? item.sort_at,
-              sortAtMs: Date.parse(task.created_at ?? item.sort_at ?? "") || item.sortAtMs,
-            };
-          }),
-        );
+      if (taskId !== optimisticTaskId) {
+        throw new Error("Task creation returned an unexpected id.");
       }
+
+      currentTaskId = taskId;
+      setOptimisticTasks((prev) =>
+        prev.map((item) => {
+          if (item.id !== currentTaskId) return item;
+          const nextTask: Task = { ...task, primary_session_id: item.primarySessionId ?? null };
+          const nextSessions = item.sessions.map((summary) => ({
+            ...summary,
+            session: {
+              ...summary.session,
+              task_id: currentTaskId,
+              workspace_id: task.workspace_id ?? summary.session.workspace_id,
+            },
+          }));
+          return {
+            ...item,
+            task: nextTask,
+            sessions: nextSessions,
+            sort_at: task.created_at ?? item.sort_at,
+            sortAtMs: Date.parse(task.created_at ?? item.sort_at ?? "") || item.sortAtMs,
+          };
+        }),
+      );
 
       for (let i = 0; i < toStart.length; i++) {
         const dt = toStart[i];
@@ -2498,21 +2576,31 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
           const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
           const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
-          const session = await createSession(currentTaskId, dt.providerId, modelId, { env_target });
+          const clientSessionId = i === 0 ? optimisticSessionId : randomUuid();
+          const messageId = primaryMessagePosted ? randomUuid() : optimisticMessageId;
+          const turnId = primaryMessagePosted ? randomUuid() : optimisticTurnId;
+          const shouldSendInitialPrompt = attachmentsToSend.length === 0;
+          const session = await createSession(currentTaskId, dt.providerId, modelId, {
+            env_target,
+            id: clientSessionId,
+            initial_message_id: messageId,
+            initial_turn_id: turnId,
+            ...(shouldSendInitialPrompt ? { initial_prompt: prompt } : {}),
+          });
           const sessionId = idToString(session.id);
           if (!sessionId) throw new Error("Session creation failed.");
 
           if (!primaryMessagePosted) {
-            const prevSessionId = currentSessionId;
+            if (sessionId !== clientSessionId) {
+              throw new Error("Session creation returned an unexpected id.");
+            }
             currentSessionId = sessionId;
-            workbenchStore.replaceSessionId(prevSessionId, sessionId);
-            supervisor.replaceSessionId(prevSessionId, sessionId);
             supervisor.setSession(session);
             setOptimisticTasks((prev) =>
               prev.map((item) => {
                 if (item.id !== currentTaskId) return item;
                 const nextSessions = item.sessions.map((summary) => {
-                  if (idToString(summary.session.id) !== prevSessionId) return summary;
+                  if (idToString(summary.session.id) !== sessionId) return summary;
                   const nextSummary: SessionSnapshotSummary = {
                     ...summary,
                     session,
@@ -2534,17 +2622,33 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             supervisor.setSession(session);
           }
 
-          const posted = await postMessage(sessionId, prompt, "immediate", attachmentsToSend);
-          if (sessionId === currentSessionId) {
-            supervisor.replaceMessage(sessionId, optimisticMessageId, posted);
-            primaryMessagePosted = true;
-            setOptimisticTasks((prev) =>
-              prev.map((item) =>
-                item.id === currentTaskId && item.localStatus === "starting"
-                  ? { ...item, localStatus: "synced" }
-                  : item,
-              ),
-            );
+          if (shouldSendInitialPrompt) {
+            if (sessionId === currentSessionId) {
+              primaryMessagePosted = true;
+              setOptimisticTasks((prev) =>
+                prev.map((item) =>
+                  item.id === currentTaskId && item.localStatus === "starting"
+                    ? { ...item, localStatus: "synced" }
+                    : item,
+                ),
+              );
+            }
+          } else {
+            const posted = await postMessage(sessionId, prompt, "immediate", attachmentsToSend, {
+              id: messageId,
+              turn_id: turnId,
+            });
+            if (sessionId === currentSessionId) {
+              supervisor.setMessages(sessionId, [posted]);
+              primaryMessagePosted = true;
+              setOptimisticTasks((prev) =>
+                prev.map((item) =>
+                  item.id === currentTaskId && item.localStatus === "starting"
+                    ? { ...item, localStatus: "synced" }
+                    : item,
+                ),
+              );
+            }
           }
         } catch (e: any) {
           const message = e?.message ?? String(e);

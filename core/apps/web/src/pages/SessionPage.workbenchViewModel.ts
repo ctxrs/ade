@@ -718,8 +718,8 @@ export function buildPendingTurns(turns: SessionTurn[], messages: Message[]): Se
     if (message.role !== "user") continue;
     const mid = idToString(message.id);
     if (!mid || userMessageIds.has(mid)) continue;
-    let turnId = idToString(message.turn_id);
-    if (!turnId) turnId = `pending-turn-${mid}`;
+    const turnId = idToString(message.turn_id);
+    if (!turnId) continue;
     if (turnIds.has(turnId)) continue;
     pending.push({
       turn_id: turnId,
@@ -1356,6 +1356,17 @@ export function buildWorkbenchThreadViewModelFromTurns(
         ? Math.min(...timelineOrderSeq)
         : Number.NaN;
     if (!Number.isFinite(groupOrderSeq)) {
+      // Optimistic turns can be created before the daemon assigns `order_seq` fields.
+      // Still show the turn immediately (for no-jank optimistic UX) by falling back to
+      // a stable monotonic-ish value derived from timestamps.
+      const fallbackAt = header?.created_at ?? turn.started_at ?? turn.created_at ?? "";
+      const parsed = Date.parse(String(fallbackAt));
+      const fallbackOrder = Number.isFinite(parsed) ? parsed : Number.NaN;
+      if (!Number.isFinite(fallbackOrder)) continue;
+      groups.push({
+        sort_seq: fallbackOrder as number,
+        group: { key: `turn-${turnId}`, header, items },
+      });
       continue;
     }
     groups.push({

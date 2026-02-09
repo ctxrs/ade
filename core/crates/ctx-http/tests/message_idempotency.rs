@@ -1,0 +1,101 @@
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode};
+use serde_json::json;
+
+mod common;
+
+#[tokio::test]
+async fn post_message_idempotent_same_payload() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let task = common::create_task(&app, ws.id.0, "t1").await;
+    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+
+    let message_id = common::fixed_uuid(1);
+    let turn_id = common::fixed_uuid(2);
+    let body = json!({
+        "content": "hello",
+        "id": message_id.to_string(),
+        "turn_id": turn_id.to_string(),
+    });
+
+    let (status, msg1): (StatusCode, ctx_core::models::Message) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/sessions/{}/messages", session.id.0),
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(msg1.id.0, message_id);
+    assert_eq!(msg1.turn_id.map(|id| id.0), Some(turn_id));
+
+    let (status, msg2): (StatusCode, ctx_core::models::Message) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/sessions/{}/messages", session.id.0),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(msg2.id.0, message_id);
+    assert_eq!(msg2.turn_id.map(|id| id.0), Some(turn_id));
+}
+
+#[tokio::test]
+async fn post_message_idempotent_conflict_on_change() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let task = common::create_task(&app, ws.id.0, "t1").await;
+    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+
+    let message_id = common::fixed_uuid(10);
+    let turn_id = common::fixed_uuid(11);
+    let body = json!({
+        "content": "hello",
+        "id": message_id.to_string(),
+        "turn_id": turn_id.to_string(),
+    });
+    let (status, _msg): (StatusCode, ctx_core::models::Message) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/sessions/{}/messages", session.id.0),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let conflict_body = json!({
+        "content": "hello changed",
+        "id": message_id.to_string(),
+        "turn_id": turn_id.to_string(),
+    });
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/sessions/{}/messages", session.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(conflict_body.to_string()))
+        .unwrap();
+    let (status, _) = common::oneshot_bytes(&app, req).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}

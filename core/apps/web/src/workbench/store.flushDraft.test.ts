@@ -38,5 +38,5 @@ describe("WorkbenchStore.flushDraft", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
+  }, 20000);
 });

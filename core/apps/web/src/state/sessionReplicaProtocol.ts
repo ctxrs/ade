@@ -36,9 +36,7 @@ export type SessionReplicaCommand =
   | { type: "refresh_session"; sessionId: string }
   | { type: "seed_head"; sessionId: string; head: SessionHeadSnapshot }
   | { type: "workspace_event"; event: WorkspaceActiveSnapshotEvent }
-  | { type: "set_session"; session: Session }
-  | { type: "replace_session_id"; oldSessionId: string; newSessionId: string }
-  | { type: "replace_session_task_id"; sessionId: string; taskId: string };
+  | { type: "set_session"; session: Session };
 
 export type SessionReplicaData = {
   session?: Session;

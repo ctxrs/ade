@@ -248,12 +248,6 @@ export class SessionReplicaCore {
       case "set_session":
         this.setSession(cmd.session);
         return;
-      case "replace_session_id":
-        this.replaceSessionId(cmd.oldSessionId, cmd.newSessionId);
-        return;
-      case "replace_session_task_id":
-        this.replaceSessionTaskId(cmd.sessionId, cmd.taskId);
-        return;
       default:
         return;
     }
@@ -308,47 +302,6 @@ export class SessionReplicaCore {
     const entry = this.ensureEntry(sessionId);
     entry.session = session;
     this.emitPatch("append", sessionId, { session });
-  }
-
-  private replaceSessionId(oldSessionId: string, newSessionId: string) {
-    const from = normalizeId(oldSessionId);
-    const to = normalizeId(newSessionId);
-    if (!from || !to || from === to) return;
-    const entry = this.entries.get(from);
-    if (!entry) return;
-    this.entries.delete(from);
-    entry.sessionId = to;
-    if (entry.session) {
-      entry.session = { ...entry.session, id: to };
-    }
-    entry.turns = entry.turns.map((turn) =>
-      idToString(turn.session_id) === from ? { ...turn, session_id: to } : turn,
-    );
-    entry.messages = entry.messages.map((msg) =>
-      idToString(msg.session_id) === from ? { ...msg, session_id: to } : msg,
-    );
-    entry.events = entry.events.map((event) =>
-      idToString(event.session_id) === from ? { ...event, session_id: to } : event,
-    );
-    entry.toolSummaries = entry.toolSummaries.map((summary) =>
-      idToString(summary.session_id) === from ? { ...summary, session_id: to } : summary,
-    );
-    if (entry.summaryCheckpoint && idToString(entry.summaryCheckpoint.session_id) === from) {
-      entry.summaryCheckpoint = { ...entry.summaryCheckpoint, session_id: to };
-    }
-    this.entries.set(to, entry);
-  }
-
-  private replaceSessionTaskId(sessionId: string, taskId: string) {
-    const id = normalizeId(sessionId);
-    const nextTaskId = String(taskId || "").trim();
-    if (!id || !nextTaskId) return;
-    const entry = this.entries.get(id);
-    if (!entry) return;
-    if (entry.session) {
-      entry.session = { ...entry.session, task_id: nextTaskId };
-    }
-    entry.messages = entry.messages.map((msg) => ({ ...msg, task_id: nextTaskId }));
   }
 
   private closeSession(sessionId: string) {

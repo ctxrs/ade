@@ -44,6 +44,7 @@ import { useDictationController } from "../utils/useDictationController";
 import { useWorkbenchStore } from "../workbench/store";
 import { buildModelsFromProviderOptions } from "../components/workbenchComposer/WorkbenchComposer.utils";
 import { VIRTUOSO_MESSAGE_LIST_LICENSE_KEY } from "../config/licenses";
+import { randomUuid } from "../utils/randomUuid";
 import {
   AssistantEntry,
   ThreadItemView,
@@ -91,22 +92,8 @@ type PendingMessageEntry = {
 };
 
 // Edge case: the workspace stream can deliver the real message before the
-// POST response updates the optimistic entry. We drop client-id pending
-// messages when a matching real message arrives within this time window,
-// allowing small client/server clock skew.
-const PENDING_MATCH_WINDOW_MS = 15_000;
-const PENDING_MATCH_EARLY_SKEW_MS = 2_000;
-const isClientMessageId = (value: unknown): boolean => {
-  const id = typeof value === "string" ? value : "";
-  return Boolean(id && id.startsWith("client-"));
-};
-
-const createClientMessageId = (): string => {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `client-${crypto.randomUUID()}`;
-  }
-  return `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-};
+// POST response updates the optimistic entry. We drop pending entries once
+// the real message with the same id is observed.
 
 const getEstimateBucket = (length: number): string => {
   if (length > 8000) return "xxl";
@@ -237,68 +224,9 @@ const getItemEstimateKey = (item: WorkbenchListItem): string => {
   }
 };
 
-const normalizeAttachmentKey = (value: MessageAttachment): string => {
-  const key = String((value as any)?.blob_id ?? (value as any)?.name ?? (value as any)?.kind ?? "").trim();
-  return key;
-};
-
-const buildAttachmentSignature = (attachments?: MessageAttachment[]): string => {
-  if (!Array.isArray(attachments) || attachments.length === 0) return "";
-  const keys = attachments.map(normalizeAttachmentKey).filter(Boolean).sort();
-  return keys.join("|");
-};
-
-const buildMessageSignature = (message: Message): string => {
-  if (!message || message.role !== "user") return "";
-  const content = String(message.content ?? "");
-  const attachments = buildAttachmentSignature(message.attachments);
-  return `${content}::${attachments}`;
-};
-
-const parseMessageTimestamp = (value?: string | null): number | null => {
-  const ts = Date.parse(value ?? "");
-  return Number.isFinite(ts) ? ts : null;
-};
-
-const buildSignatureTimestampIndex = (messages: Message[]): Map<string, number[]> => {
-  const index = new Map<string, number[]>();
-  for (const message of messages) {
-    if (!message || message.role !== "user") continue;
-    const signature = buildMessageSignature(message);
-    if (!signature) continue;
-    const ts = parseMessageTimestamp(message.created_at);
-    if (ts == null) continue;
-    const list = index.get(signature);
-    if (list) {
-      list.push(ts);
-    } else {
-      index.set(signature, [ts]);
-    }
-  }
-  return index;
-};
-
-const shouldDropPendingMessage = (
-  pending: Message,
-  realIds: Set<string>,
-  realBySignature: Map<string, number[]>,
-): boolean => {
+const shouldDropPendingMessage = (pending: Message, realIds: Set<string>): boolean => {
   const pid = idToString(pending.id);
-  if (pid && realIds.has(pid)) return true;
-  if (!isClientMessageId(pid)) return false;
-  if (pending.role !== "user") return false;
-  const signature = buildMessageSignature(pending);
-  if (!signature) return false;
-  const pendingTs = parseMessageTimestamp(pending.created_at);
-  if (pendingTs == null) return false;
-  const candidates = realBySignature.get(signature);
-  if (!candidates || candidates.length === 0) return false;
-  for (const realTs of candidates) {
-    if (realTs + PENDING_MATCH_EARLY_SKEW_MS < pendingTs) continue;
-    if (realTs - pendingTs > PENDING_MATCH_WINDOW_MS) continue;
-    return true;
-  }
-  return false;
+  return Boolean(pid && realIds.has(pid));
 };
 
 function isSameContextWindow(a: ContextWindowInfo | null, b: ContextWindowInfo | null): boolean {
@@ -576,6 +504,13 @@ export function SessionView({
     },
     [mergedQueueForPanel, turnsKey, optimisticQueueRemovalIds.length, optimisticQueueRemovalSet],
   );
+  const pendingQueueMessageIdSet = useMemo(() => {
+    return new Set(
+      pendingQueueMessages
+        .map((entry) => idToString(entry.message.id))
+        .filter((messageId): messageId is string => !!messageId),
+    );
+  }, [pendingQueueMessages]);
   useEffect(() => {
     if (optimisticQueueRemovalIds.length === 0) return;
     const liveIds = new Set(
@@ -625,11 +560,10 @@ export function SessionView({
   useEffect(() => {
     if (pendingMessages.length === 0) return;
     const realIds = new Set(messages.map((m) => idToString(m.id)));
-    const realBySignature = buildSignatureTimestampIndex(messages);
     setPendingMessages((prev) => {
       if (prev.length === 0) return prev;
       const next = prev.filter((entry) => {
-        return !shouldDropPendingMessage(entry.message, realIds, realBySignature);
+        return !shouldDropPendingMessage(entry.message, realIds);
       });
       return next.length === prev.length ? prev : next;
     });
@@ -637,11 +571,10 @@ export function SessionView({
   useEffect(() => {
     if (pendingQueueMessages.length === 0) return;
     const realIds = new Set(queue.map((m) => idToString(m.id)));
-    const realBySignature = buildSignatureTimestampIndex(queue);
     setPendingQueueMessages((prev) => {
       if (prev.length === 0) return prev;
       const next = prev.filter((entry) => {
-        return !shouldDropPendingMessage(entry.message, realIds, realBySignature);
+        return !shouldDropPendingMessage(entry.message, realIds);
       });
       return next.length === prev.length ? prev : next;
     });
@@ -840,7 +773,7 @@ export function SessionView({
     loaded: Boolean(entry?.stateLoaded),
     listItems,
     canLoadOlder: Boolean(id && hasMoreTurns),
-    loadOlder: () => (id ? supervisor.loadMoreTurns(id) : Promise.resolve()),
+    loadOlder: () => (id ? supervisor.loadMoreTurns(id).then(() => {}) : Promise.resolve()),
     showDebug,
     onAtBottomChange: setAtBottom,
   });
@@ -925,24 +858,15 @@ export function SessionView({
     setSendBusy(next);
   };
 
-  const getNextOptimisticOrderSeq = () => {
-    let maxSeq = 0;
-    const consider = (message: Message) => {
-      const seq = Number(message.order_seq ?? Number.NaN);
-      if (Number.isFinite(seq) && seq > maxSeq) {
-        maxSeq = seq;
-      }
-    };
-    for (const message of messages) {
-      consider(message);
+  const formatMemoryMb = (value?: number | null): string => {
+    if (!Number.isFinite(value)) return "—";
+    const mb = value as number;
+    const gb = mb / 1024;
+    if (gb >= 1) {
+      const precision = gb >= 10 ? 0 : 1;
+      return `${gb.toFixed(precision)} GB`;
     }
-    for (const entry of pendingMessages) {
-      consider(entry.message);
-    }
-    for (const entry of pendingQueueMessages) {
-      consider(entry.message);
-    }
-    return Math.max(maxSeq + 1, 1);
+    return `${Math.round(mb)} MB`;
   };
 
   const sendNow = async () => {
@@ -967,14 +891,14 @@ export function SessionView({
     }
     const attachmentsToSend = draftAttachments;
     const shouldQueue = hasActiveTurn && queuedMessagesEnabled;
-    const optimisticId = createClientMessageId();
+    const messageId = randomUuid();
+    const turnId = randomUuid();
     const optimisticMessage: Message = {
-      id: optimisticId,
+      id: messageId,
       session_id: id,
       task_id: session?.task_id ?? "",
-      turn_id: null,
+      turn_id: turnId,
       turn_sequence: null,
-      order_seq: getNextOptimisticOrderSeq(),
       role: "user",
       content: text,
       attachments: attachmentsToSend,
@@ -983,22 +907,25 @@ export function SessionView({
     };
     setSendError(null);
     if (shouldQueue) {
-      setPendingQueueMessages((prev) => [...prev, { clientId: optimisticId, message: optimisticMessage }]);
+      setPendingQueueMessages((prev) => [...prev, { clientId: messageId, message: optimisticMessage }]);
     } else {
-      setPendingMessages((prev) => [...prev, { clientId: optimisticId, message: optimisticMessage }]);
+      setPendingMessages((prev) => [...prev, { clientId: messageId, message: optimisticMessage }]);
     }
     setAtBottom(true);
     setInput("");
     setDraftAttachments([]);
     try {
-      const posted = await postMessage(id, text, shouldQueue ? "queued" : undefined, attachmentsToSend);
+      const posted = await postMessage(id, text, shouldQueue ? "queued" : undefined, attachmentsToSend, {
+        id: messageId,
+        turn_id: turnId,
+      });
       if (shouldQueue) {
         setPendingQueueMessages((prev) =>
-          prev.map((entry) => (entry.clientId === optimisticId ? { ...entry, message: posted } : entry)),
+          prev.map((entry) => (entry.clientId === messageId ? { ...entry, message: posted } : entry)),
         );
       } else {
         setPendingMessages((prev) =>
-          prev.map((entry) => (entry.clientId === optimisticId ? { ...entry, message: posted } : entry)),
+          prev.map((entry) => (entry.clientId === messageId ? { ...entry, message: posted } : entry)),
         );
       }
       try {
@@ -1008,9 +935,9 @@ export function SessionView({
       }
     } catch (e: any) {
       if (shouldQueue) {
-        setPendingQueueMessages((prev) => prev.filter((entry) => entry.clientId !== optimisticId));
+        setPendingQueueMessages((prev) => prev.filter((entry) => entry.clientId !== messageId));
       } else {
-        setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== optimisticId));
+        setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== messageId));
       }
       setInput(text);
       setDraftAttachments(attachmentsToSend);
@@ -1101,12 +1028,13 @@ export function SessionView({
     }
     setSendBusySafe(true);
 
-    const optimisticId = createClientMessageId();
+    const messageId = randomUuid();
+    const turnId = randomUuid();
     const optimisticMessage: Message = {
-      id: optimisticId,
+      id: messageId,
       session_id: id,
       task_id: session?.task_id ?? "",
-      turn_id: null,
+      turn_id: turnId,
       turn_sequence: null,
       role: "user",
       content,
@@ -1114,16 +1042,19 @@ export function SessionView({
       delivery: "immediate",
       created_at: new Date().toISOString(),
     };
-    setPendingMessages((prev) => [...prev, { clientId: optimisticId, message: optimisticMessage }]);
+    setPendingMessages((prev) => [...prev, { clientId: messageId, message: optimisticMessage }]);
     setAtBottom(true);
 
     try {
-      const posted = await postMessage(id, content, "immediate", attachments);
+      const posted = await postMessage(id, content, "immediate", attachments, {
+        id: messageId,
+        turn_id: turnId,
+      });
       setPendingMessages((prev) =>
-        prev.map((entry) => (entry.clientId === optimisticId ? { ...entry, message: posted } : entry)),
+        prev.map((entry) => (entry.clientId === messageId ? { ...entry, message: posted } : entry)),
       );
     } catch (e: any) {
-      setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== optimisticId));
+      setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== messageId));
       setSendError(e?.message ? String(e.message) : String(e));
     } finally {
       setSendBusySafe(false);
@@ -1656,7 +1587,7 @@ export function SessionView({
                   const attachments = getQueuedAttachments(m);
                   const preview = formatQueuedPreview(m, attachments);
                   const attachmentMeta = formatQueuedAttachmentMeta(attachments);
-                  const isPending = !!messageId && messageId.startsWith("client-");
+                  const isPending = !!messageId && pendingQueueMessageIdSet.has(messageId);
                   const canInteract = !!messageId && !isPending;
                   const canSendNow = index === 0 && canInteract;
                   return (

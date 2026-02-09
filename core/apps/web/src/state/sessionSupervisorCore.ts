@@ -11,7 +11,6 @@ import {
   type Artifact,
   type GitStatusSummary,
   type Message,
-  type MessageAttachment,
   type ProviderOptions,
   type Session,
   type SessionEvent,
@@ -182,30 +181,6 @@ const normalizeGitStatusSummaryInput = (value: unknown, entries?: unknown): Part
   if (Array.isArray(src.entries)) out.entries = src.entries as GitStatusSummary["entries"];
   if (Array.isArray(entries)) out.entries = entries as GitStatusSummary["entries"];
   return out;
-};
-
-const isOptimisticMessageId = (value: unknown): boolean => {
-  const id = idToString(typeof value === "string" ? value : "");
-  return Boolean(id && id.startsWith("optimistic-"));
-};
-
-const normalizeAttachmentKey = (value: MessageAttachment): string => {
-  const key = String((value as any)?.blob_id ?? (value as any)?.name ?? (value as any)?.kind ?? "").trim();
-  return key;
-};
-
-const buildAttachmentSignature = (attachments?: MessageAttachment[]): string => {
-  if (!Array.isArray(attachments) || attachments.length === 0) return "";
-  const keys = attachments.map(normalizeAttachmentKey).filter(Boolean).sort();
-  return keys.join("|");
-};
-
-const messagesMatchForOptimistic = (optimistic: Message, incoming: Message): boolean => {
-  if (!optimistic || !incoming) return false;
-  if (optimistic.role !== incoming.role) return false;
-  if (optimistic.role !== "user") return false;
-  if (String(optimistic.content ?? "") !== String(incoming.content ?? "")) return false;
-  return buildAttachmentSignature(optimistic.attachments) === buildAttachmentSignature(incoming.attachments);
 };
 
 const extractAcpMetaFromEvent = (event: SessionEvent): AcpMeta | null => {
@@ -412,16 +387,40 @@ export class SessionSupervisor {
     this.publish();
   };
 
-  replaceMessage = (sessionId: string, localId: string, message: Message) => {
+  setTurns = (sessionId: string, turns: SessionTurn[], opts?: { replace?: boolean }) => {
     const id = String(sessionId || "").trim();
     if (!id) return;
     const entry = this.ensureEntry(id);
-    const local = idToString(localId);
-    const next = entry.messages.filter((m) => idToString(m.id) !== local);
-    next.push(message);
-    entry.messages = [];
-    entry.queue = [];
-    this.mergeMessages(entry, next);
+    if (opts?.replace) {
+      entry.turns = [];
+    }
+
+    if (turns.length > 0) {
+      const byId = new Map<string, SessionTurn>();
+      for (const t of entry.turns) {
+        const tid = idToString(t.turn_id);
+        if (tid) byId.set(tid, t);
+      }
+      for (const t of turns) {
+        const tid = idToString(t.turn_id);
+        if (tid) byId.set(tid, t);
+      }
+      const merged = Array.from(byId.values());
+      merged.sort((a, b) => {
+        const aSeq = Number(a.start_seq ?? Number.NaN);
+        const bSeq = Number(b.start_seq ?? Number.NaN);
+        if (Number.isFinite(aSeq) && Number.isFinite(bSeq) && aSeq !== bSeq) return aSeq - bSeq;
+        if (Number.isFinite(aSeq) && !Number.isFinite(bSeq)) return -1;
+        if (!Number.isFinite(aSeq) && Number.isFinite(bSeq)) return 1;
+        const aStart = String(a.started_at ?? "");
+        const bStart = String(b.started_at ?? "");
+        if (aStart !== bStart) return aStart.localeCompare(bStart);
+        return String(a.turn_id ?? "").localeCompare(String(b.turn_id ?? ""));
+      });
+      entry.turns = merged;
+      entry.turnsHydrated = true;
+    }
+
     entry.updatedAtMs = Date.now();
     this.publish();
   };
@@ -433,51 +432,6 @@ export class SessionSupervisor {
     entry.error = error ?? undefined;
     entry.updatedAtMs = Date.now();
     this.publish();
-  };
-
-  replaceSessionId = (oldSessionId: string, newSessionId: string) => {
-    const from = String(oldSessionId || "").trim();
-    const to = String(newSessionId || "").trim();
-    if (!from || !to || from === to) return;
-    const entry = this.entries.get(from);
-    if (!entry) return;
-    this.entries.delete(from);
-    entry.sessionId = to;
-    if (entry.session) {
-      entry.session = { ...entry.session, id: to };
-    }
-    entry.turns = entry.turns.map((turn) =>
-      idToString(turn.session_id) === from ? { ...turn, session_id: to } : turn,
-    );
-    entry.messages = entry.messages.map((msg) =>
-      idToString(msg.session_id) === from ? { ...msg, session_id: to } : msg,
-    );
-    entry.queue = entry.queue.map((msg) =>
-      idToString(msg.session_id) === from ? { ...msg, session_id: to } : msg,
-    );
-    this.activeTaskSessionIds = this.activeTaskSessionIds.map((id) => (id === from ? to : id));
-    this.warmSessionIds = this.warmSessionIds.map((id) => (id === from ? to : id));
-    this.subscribedSessionIds = this.subscribedSessionIds.map((id) => (id === from ? to : id));
-    this.entries.set(to, entry);
-    this.refreshSubscriptions();
-    this.publish();
-    this.replica.dispatch({ type: "replace_session_id", oldSessionId: from, newSessionId: to });
-  };
-
-  replaceSessionTaskId = (sessionId: string, taskId: string) => {
-    const id = String(sessionId || "").trim();
-    const nextTaskId = String(taskId || "").trim();
-    if (!id || !nextTaskId) return;
-    const entry = this.entries.get(id);
-    if (!entry) return;
-    if (entry.session) {
-      entry.session = { ...entry.session, task_id: nextTaskId };
-    }
-    entry.messages = entry.messages.map((msg) => ({ ...msg, task_id: nextTaskId }));
-    entry.queue = entry.queue.map((msg) => ({ ...msg, task_id: nextTaskId }));
-    entry.updatedAtMs = Date.now();
-    this.publish();
-    this.replica.dispatch({ type: "replace_session_task_id", sessionId: id, taskId: nextTaskId });
   };
 
   dropSessionEntry = (sessionId: string) => {
@@ -637,22 +591,21 @@ export class SessionSupervisor {
       if (!sessionId) continue;
       const entry = this.ensureEntry(sessionId);
       const incomingMessages = Array.isArray(patch.data.messages) ? patch.data.messages : [];
-      const optimisticMessages = entry.messages.filter((message) => isOptimisticMessageId(message.id));
-      const optimisticMatchesIncoming = (message: Message) =>
-        incomingMessages.some((incoming) => messagesMatchForOptimistic(message, incoming));
-      const optimisticMessagesToKeep =
-        patch.op === "replace" && optimisticMessages.length > 0
-          ? optimisticMessages.filter((message) => !optimisticMatchesIncoming(message))
-          : [];
-      const optimisticDropIds =
-        patch.op !== "replace" && incomingMessages.length > 0 && optimisticMessages.length > 0
+      const incomingMessageIds =
+        patch.op === "replace"
           ? new Set(
-              optimisticMessages
-                .filter((message) => optimisticMatchesIncoming(message))
+              incomingMessages
                 .map((message) => idToString(message.id))
-                .filter(Boolean),
+                .filter((id): id is string => !!id),
             )
           : null;
+      const localOnlyMessages =
+        patch.op === "replace" && incomingMessageIds
+          ? entry.messages.filter((message) => {
+              const id = idToString(message.id);
+              return id ? !incomingMessageIds.has(id) : false;
+            })
+          : [];
       if (patch.op === "replace") {
         this.resetEntryForGap(entry, { skipPublish: true });
       }
@@ -683,15 +636,8 @@ export class SessionSupervisor {
       if (data.messages && data.messages.length > 0) {
         this.mergeMessages(entry, data.messages);
       }
-      if (optimisticMessagesToKeep.length > 0) {
-        this.mergeMessages(entry, optimisticMessagesToKeep);
-      }
-      if (optimisticDropIds && optimisticDropIds.size > 0) {
-        entry.messages = entry.messages.filter((message) => {
-          const id = idToString(message.id);
-          return !id || !optimisticDropIds.has(id);
-        });
-        entry.queue = entry.messages.filter((message) => message.delivery === "queued");
+      if (localOnlyMessages.length > 0) {
+        this.mergeMessages(entry, localOnlyMessages);
       }
       if (data.events && data.events.length > 0) {
         this.mergeEvents(entry, data.events, { notify: patch.op !== "replace" });

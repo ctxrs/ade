@@ -269,6 +269,8 @@ pub(crate) async fn run_daemon_workload(
                 let content = build_message_content(idx, counter, message_size, tool_calls);
                 let start = Instant::now();
                 let req = PostMessageRequest {
+                    id: None,
+                    turn_id: None,
                     content: content.clone(),
                     delivery: None,
                     attachments: Vec::new(),

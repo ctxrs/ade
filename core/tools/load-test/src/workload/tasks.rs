@@ -34,6 +34,7 @@ pub(crate) async fn setup_tasks_and_sessions(
             .create_task(
                 workspace_id,
                 &CreateTaskRequest {
+                    id: None,
                     title,
                     description: None,
                     create_default_session: Some(false),
@@ -50,6 +51,7 @@ pub(crate) async fn setup_tasks_and_sessions(
                 .create_session(
                     task.id,
                     &CreateSessionRequest {
+                        id: None,
                         provider_id: cli.provider_id.clone(),
                         model_id: cli.model_id.clone(),
                         parent_session_id: None,
@@ -57,6 +59,8 @@ pub(crate) async fn setup_tasks_and_sessions(
                         env_target: None,
                         worktree_id: None,
                         initial_prompt: None,
+                        initial_message_id: None,
+                        initial_turn_id: None,
                     },
                 )
                 .await

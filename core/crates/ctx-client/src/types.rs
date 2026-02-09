@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use ctx_core::ids::{SessionId, TaskId, WorktreeId};
+use ctx_core::ids::{MessageId, SessionId, TaskId, TurnId, WorktreeId};
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, MessageAttachment, MessageDelivery, Session,
     WorkspaceAttachmentKind, WorkspaceIndexCursor,
@@ -71,6 +71,8 @@ pub enum EnvTarget {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateTaskRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<TaskId>,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -85,6 +87,8 @@ pub struct UpdateTaskTitleRequest<'a> {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateSessionRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<SessionId>,
     pub provider_id: String,
     pub model_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -97,6 +101,10 @@ pub struct CreateSessionRequest {
     pub worktree_id: Option<WorktreeId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_message_id: Option<MessageId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_turn_id: Option<TurnId>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -115,6 +123,10 @@ pub struct CreateTerminalRequest {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PostMessageRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<MessageId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivery: Option<MessageDelivery>,

@@ -221,11 +221,12 @@ export const createTask = (
   workspaceId: string,
   title: string,
   description?: string,
-  opts?: { create_default_session?: boolean },
+  opts?: { create_default_session?: boolean; id?: string },
 ) =>
   apiAny<Task>(`/api/workspaces/${workspaceId}/tasks`, {
     method: "POST",
     body: JSON.stringify({
+      ...(opts?.id ? { id: opts.id } : {}),
       title,
       description,
       ...(opts?.create_default_session === undefined ? {} : { create_default_session: opts.create_default_session }),

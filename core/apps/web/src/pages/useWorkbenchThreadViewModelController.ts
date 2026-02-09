@@ -34,6 +34,47 @@ type InternalState = {
   eventsLen: number;
 };
 
+function buildStateFromInputs(opts: {
+  turns: SessionTurn[];
+  messages: Message[];
+  toolsByTurnId: Record<string, SessionTurnTool[]>;
+  toolSummariesReady: boolean;
+  events: SessionEvent[];
+  askUserQuestionAnswers: Map<string, AskUserQuestionAnswerState>;
+  verbosity: SessionViewVerbosity;
+}): Pick<InternalState, "view" | "listItems" | "groupRanges" | "turnsLen" | "messagesLen" | "eventsLen"> {
+  const { turns, messages, toolsByTurnId, toolSummariesReady, events, askUserQuestionAnswers, verbosity } = opts;
+  const view = buildWorkbenchThreadViewModelFromTurns(
+    turns,
+    messages,
+    toolSummariesReady ? toolsByTurnId : {},
+    events,
+    askUserQuestionAnswers,
+  );
+
+  const listItems: WorkbenchListItem[] = [];
+  const groupRanges = new Map<string, { start: number; end: number }>();
+  for (const g of view.groups) {
+    const start = listItems.length;
+    if (g.header) {
+      listItems.push({ kind: "turn_header", id: `turn-header-${g.header.id}`, header: g.header });
+    }
+    const filtered = filterThreadItemsForVerbosity(g.items, verbosity);
+    listItems.push(...filtered);
+    const end = listItems.length;
+    groupRanges.set(String(g.key), { start, end });
+  }
+
+  return {
+    view,
+    listItems,
+    groupRanges,
+    turnsLen: turns.length,
+    messagesLen: messages.length,
+    eventsLen: events.length,
+  };
+}
+
 /**
  * Builds the workbench thread view model outside of render and incrementally updates it
  * on streaming event appends. This prevents full thread re-derivation on every WAL tick.
@@ -59,12 +100,15 @@ export function useWorkbenchThreadViewModelController(
   } = params;
 
   const [state, setState] = useState<InternalState>(() => ({
-    view: { groups: [], debugEvents: [] },
-    listItems: [],
-    groupRanges: new Map(),
-    turnsLen: 0,
-    messagesLen: 0,
-    eventsLen: 0,
+    ...buildStateFromInputs({
+      turns,
+      messages,
+      toolsByTurnId,
+      toolSummariesReady,
+      events,
+      askUserQuestionAnswers,
+      verbosity,
+    }),
   }));
 
   const turnsById = useMemo(() => {
@@ -86,26 +130,15 @@ export function useWorkbenchThreadViewModelController(
 
   const fullRebuild = useRef(() => {});
   fullRebuild.current = () => {
-    const view = buildWorkbenchThreadViewModelFromTurns(
+    const { view, listItems, groupRanges } = buildStateFromInputs({
       turns,
       messages,
-      toolSummariesReady ? toolsByTurnId : {},
+      toolsByTurnId,
+      toolSummariesReady,
       events,
       askUserQuestionAnswers,
-    );
-
-    const listItems: WorkbenchListItem[] = [];
-    const groupRanges = new Map<string, { start: number; end: number }>();
-    for (const g of view.groups) {
-      const start = listItems.length;
-      if (g.header) {
-        listItems.push({ kind: "turn_header", id: `turn-header-${g.header.id}`, header: g.header });
-      }
-      const filtered = filterThreadItemsForVerbosity(g.items, verbosity);
-      listItems.push(...filtered);
-      const end = listItems.length;
-      groupRanges.set(String(g.key), { start, end });
-    }
+      verbosity,
+    });
 
     // Reset per-turn caches; incremental updates depend on these.
     const byTurnMsg = new Map<string, Message[]>();

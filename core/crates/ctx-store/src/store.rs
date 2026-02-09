@@ -33,6 +33,24 @@ pub struct SessionRetentionPruneStats {
     pub turn_thoughts_cleared: u64,
 }
 
+pub fn is_unique_constraint_violation(err: &anyhow::Error) -> bool {
+    for cause in err.chain() {
+        let Some(sqlx::Error::Database(db_err)) = cause.downcast_ref::<sqlx::Error>() else {
+            continue;
+        };
+        if let Some(code) = db_err.code() {
+            if matches!(code.as_ref(), "1555" | "2067") {
+                return true;
+            }
+        }
+        let message = db_err.message();
+        if message.contains("UNIQUE constraint failed") || message.contains("PRIMARY KEY") {
+            return true;
+        }
+    }
+    false
+}
+
 const SESSION_HEAD_MAX_TURNS: u32 = 200;
 const SESSION_HEAD_MESSAGE_LIMIT: usize = 200;
 const SESSION_HEAD_EVENT_LIMIT: usize = 200;
@@ -1659,9 +1677,20 @@ impl Store {
         title: String,
         description: Option<String>,
     ) -> Result<Task> {
+        self.create_task_with_id(workspace_id, TaskId::new(), title, description)
+            .await
+    }
+
+    pub async fn create_task_with_id(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+        title: String,
+        description: Option<String>,
+    ) -> Result<Task> {
         let now = Utc::now();
         let task = Task {
-            id: TaskId::new(),
+            id: task_id,
             workspace_id,
             title,
             description,
@@ -1677,9 +1706,10 @@ impl Store {
             last_assistant_message_at: None,
             has_active_session: false,
         };
-        self.query(
+        let result = self.query(
             r#"INSERT INTO tasks (id, workspace_id, title, description, status, exec_plan_id, primary_session_id, primary_worktree_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO NOTHING"#,
         )
         .bind(task.id.0.to_string())
         .bind(task.workspace_id.0.to_string())
@@ -1693,6 +1723,14 @@ impl Store {
         .bind(task.updated_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
+
+        if result.rows_affected() == 0 {
+            return self
+                .get_task(task_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("task exists but could not be loaded"));
+        }
+
         Ok(task)
     }
 
@@ -2921,6 +2959,35 @@ impl Store {
         relationship: Option<String>,
         provider_session_ref: Option<String>,
     ) -> Result<Session> {
+        self.create_session_with_id(
+            SessionId::new(),
+            task_id,
+            workspace_id,
+            worktree_id,
+            provider_id,
+            model_id,
+            agent_role,
+            parent_session_id,
+            relationship,
+            provider_session_ref,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_session_with_id(
+        &self,
+        session_id: SessionId,
+        task_id: TaskId,
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+        provider_id: String,
+        model_id: String,
+        agent_role: String,
+        parent_session_id: Option<SessionId>,
+        relationship: Option<String>,
+        provider_session_ref: Option<String>,
+    ) -> Result<Session> {
         let relationship = relationship.and_then(|value| {
             let trimmed = value.trim();
             if trimmed.is_empty() {
@@ -2936,14 +3003,13 @@ impl Store {
             anyhow::bail!("relationship requires parent_session_id");
         }
         let now = Utc::now();
-        let id = SessionId::new();
         let title = if relationship.as_deref() == Some("sub_agent") {
-            format!("subagent-{}", id.0)
+            format!("subagent-{}", session_id.0)
         } else {
             "New Task".to_string()
         };
         let session = Session {
-            id,
+            id: session_id,
             task_id,
             workspace_id,
             worktree_id,
@@ -2958,10 +3024,11 @@ impl Store {
             created_at: now,
             updated_at: now,
         };
-        self.query(
+        let result = self.query(
             r#"INSERT INTO sessions (id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
                provider_id, model_id, title, agent_role, status, provider_session_ref, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO NOTHING"#,
         )
         .bind(session.id.0.to_string())
         .bind(session.task_id.0.to_string())
@@ -2979,6 +3046,14 @@ impl Store {
         .bind(session.updated_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
+
+        if result.rows_affected() == 0 {
+            return self
+                .get_session(session_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("session exists but could not be loaded"));
+        }
+
         self.ensure_session_snapshot_summary(session.id).await?;
         self.refresh_active_snapshot_head(session.id, None).await?;
         Ok(session)
@@ -5670,6 +5745,22 @@ impl Store {
         .bind(turn_id.0.to_string())
         .fetch_optional(&self.pool)
         .await?;
+
+        Ok(row.and_then(|r| build_session_turn_from_row(r).ok()))
+    }
+
+    pub async fn get_session_turn_by_id(&self, turn_id: TurnId) -> Result<Option<SessionTurn>> {
+        let row = self
+            .query(
+                r#"SELECT turn_id, session_id, run_id, user_message_id, status,
+                      start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
+                      metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+               FROM session_turns
+               WHERE turn_id = ?"#,
+            )
+            .bind(turn_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.and_then(|r| build_session_turn_from_row(r).ok()))
     }

@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use anyhow::Context;
 use base64::Engine;
+use sha2::Digest;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -43,6 +44,7 @@ use ctx_providers::{
     ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome},
     crp::probe_crp_models,
 };
+use ctx_store::is_unique_constraint_violation;
 use tokio::sync::mpsc;
 pub(super) async fn get_session_snapshot(
     State(state): State<Arc<AppState>>,
@@ -1388,6 +1390,10 @@ pub(super) async fn delete_message(
 
 #[derive(Debug, Deserialize)]
 pub(super) struct PostMessageReq {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    turn_id: Option<String>,
     content: String,
     delivery: Option<MessageDelivery>,
     #[serde(default)]
@@ -1442,6 +1448,144 @@ async fn normalize_message_attachments(
     Ok(out)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct AttachmentSignature {
+    mime_type: String,
+    name: Option<String>,
+    sha256: String,
+}
+
+async fn attachment_signature(
+    state: &Arc<AppState>,
+    attachment: &MessageAttachment,
+) -> Result<AttachmentSignature, StatusCode> {
+    match attachment {
+        MessageAttachment::Image {
+            mime_type,
+            data_base64,
+            name,
+        } => {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(data_base64.as_bytes())
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(&bytes);
+            let sha256 = hex::encode(hasher.finalize());
+            Ok(AttachmentSignature {
+                mime_type: mime_type.clone(),
+                name: name.clone(),
+                sha256,
+            })
+        }
+        MessageAttachment::ImageRef {
+            blob_id,
+            mime_type,
+            name,
+        } => {
+            let blob = state
+                .global_store()
+                .get_blob(blob_id)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let Some((sha256, _mime_type, _bytes, _name, _created_at)) = blob else {
+                return Err(StatusCode::BAD_REQUEST);
+            };
+            Ok(AttachmentSignature {
+                mime_type: mime_type.clone(),
+                name: name.clone(),
+                sha256,
+            })
+        }
+    }
+}
+
+async fn attachments_match(
+    state: &Arc<AppState>,
+    existing: &[MessageAttachment],
+    requested: &[MessageAttachment],
+) -> Result<bool, StatusCode> {
+    if existing.len() != requested.len() {
+        return Ok(false);
+    }
+    let mut existing_sig = Vec::with_capacity(existing.len());
+    for attachment in existing {
+        existing_sig.push(attachment_signature(state, attachment).await?);
+    }
+    let mut requested_sig = Vec::with_capacity(requested.len());
+    for attachment in requested {
+        requested_sig.push(attachment_signature(state, attachment).await?);
+    }
+    Ok(existing_sig == requested_sig)
+}
+
+fn delivery_matches(left: &MessageDelivery, right: &MessageDelivery) -> bool {
+    std::mem::discriminant(left) == std::mem::discriminant(right)
+}
+
+pub(super) async fn ensure_session_turn_for_message(
+    store: &ctx_store::Store,
+    session_id: SessionId,
+    turn_id: TurnId,
+    message: &Message,
+) -> Result<(), StatusCode> {
+    let existing_turn = store
+        .get_session_turn_by_id(turn_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if let Some(existing) = existing_turn {
+        let matches =
+            existing.session_id == session_id && existing.user_message_id == Some(message.id);
+        if !matches {
+            return Err(StatusCode::CONFLICT);
+        }
+        return Ok(());
+    }
+
+    let turn_status = if matches!(message.delivery, MessageDelivery::Queued) {
+        SessionTurnStatus::Queued
+    } else {
+        SessionTurnStatus::Running
+    };
+    let turn = SessionTurn {
+        turn_id,
+        session_id,
+        run_id: message.run_id,
+        user_message_id: Some(message.id),
+        status: turn_status,
+        start_seq: None,
+        end_seq: None,
+        started_at: message.created_at,
+        updated_at: message.created_at,
+        assistant_partial: None,
+        thought_partial: None,
+        metrics_json: None,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+    };
+    if let Err(err) = store.insert_session_turn(turn).await {
+        if !is_unique_constraint_violation(&err) {
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        let existing = store
+            .get_session_turn_by_id(turn_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if let Some(existing) = existing {
+            let matches =
+                existing.session_id == session_id && existing.user_message_id == Some(message.id);
+            if !matches {
+                return Err(StatusCode::CONFLICT);
+            }
+        } else {
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+    Ok(())
+}
+
 impl TitleGenerationSource {}
 
 pub(super) async fn post_message(
@@ -1467,7 +1611,8 @@ pub(super) async fn post_message(
         .ok_or(StatusCode::NOT_FOUND)?;
     state.remember_session_meta(&session).await;
 
-    let delivery = match req.delivery {
+    let requested_delivery = req.delivery.clone();
+    let delivery = match requested_delivery.clone() {
         Some(d) => d,
         None => {
             if state.is_running(session_id).await {
@@ -1478,16 +1623,63 @@ pub(super) async fn post_message(
         }
     };
 
+    let (message_id, turn_id, client_ids) = match (
+        req.id.as_deref().map(str::trim).filter(|v| !v.is_empty()),
+        req.turn_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty()),
+    ) {
+        (Some(message_id), Some(turn_id)) => (
+            MessageId(uuid::Uuid::parse_str(message_id).map_err(|_| StatusCode::BAD_REQUEST)?),
+            TurnId(uuid::Uuid::parse_str(turn_id).map_err(|_| StatusCode::BAD_REQUEST)?),
+            true,
+        ),
+        (None, None) => (MessageId::new(), TurnId::new(), false),
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+
     let attachments = normalize_message_attachments(&state, req.attachments).await?;
+    let content = req.content;
+
+    if client_ids {
+        if let Some(existing) = store
+            .get_message(message_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        {
+            let matches = existing.session_id == session_id
+                && existing.turn_id == Some(turn_id)
+                && matches!(existing.role, MessageRole::User)
+                && existing.content == content
+                && match requested_delivery.as_ref() {
+                    Some(requested_delivery) => {
+                        delivery_matches(&existing.delivery, requested_delivery)
+                    }
+                    None => true,
+                }
+                && attachments_match(&state, &existing.attachments, &attachments).await?;
+            if matches {
+                ensure_session_turn_for_message(&store, session_id, turn_id, &existing).await?;
+                return Ok(Json(existing));
+            }
+            return Err(StatusCode::CONFLICT);
+        }
+    }
 
     let run_id = RunId::new();
-    let turn_id = TurnId::new();
-    let message_id = MessageId::new();
     let order_seq_state = state.sessions.get_order_seq_state(&store, session_id).await;
     let order_seq = {
         let mut order_seq_state = order_seq_state.lock().await;
         order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
     };
+    let idempotency_payload = client_ids.then(|| {
+        (
+            content.clone(),
+            attachments.clone(),
+            requested_delivery.clone(),
+        )
+    });
     let msg = Message {
         id: message_id,
         session_id,
@@ -1497,16 +1689,44 @@ pub(super) async fn post_message(
         turn_sequence: Some(0),
         order_seq: Some(order_seq),
         role: MessageRole::User,
-        content: req.content,
+        content,
         attachments,
         delivery,
         delivered_at: None,
         created_at: chrono::Utc::now(),
     };
-    let saved = store
-        .insert_message(msg)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let saved = match store.insert_message(msg).await {
+        Ok(saved) => saved,
+        Err(err) if idempotency_payload.is_some() && is_unique_constraint_violation(&err) => {
+            let (content, attachments, requested_delivery) =
+                idempotency_payload.expect("checked is_some");
+            let Some(existing) = store
+                .get_message(message_id)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            else {
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            };
+
+            let matches = existing.session_id == session_id
+                && existing.turn_id == Some(turn_id)
+                && matches!(existing.role, MessageRole::User)
+                && existing.content == content
+                && match requested_delivery.as_ref() {
+                    Some(requested_delivery) => {
+                        delivery_matches(&existing.delivery, requested_delivery)
+                    }
+                    None => true,
+                }
+                && attachments_match(&state, &existing.attachments, &attachments).await?;
+            if matches {
+                existing
+            } else {
+                return Err(StatusCode::CONFLICT);
+            }
+        }
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
 
     let event = store
         .append_session_event(
@@ -1550,7 +1770,34 @@ pub(super) async fn post_message(
         tool_completed: 0,
         tool_failed: 0,
     };
-    let _ = store.insert_session_turn(turn).await;
+    let existing_turn = store
+        .get_session_turn_by_id(turn_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if let Some(existing) = existing_turn {
+        let matches =
+            existing.session_id == session_id && existing.user_message_id == Some(saved.id);
+        if !matches {
+            return Err(StatusCode::CONFLICT);
+        }
+    } else if let Err(err) = store.insert_session_turn(turn).await {
+        if !is_unique_constraint_violation(&err) {
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        let existing = store
+            .get_session_turn_by_id(turn_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if let Some(existing) = existing {
+            let matches =
+                existing.session_id == session_id && existing.user_message_id == Some(saved.id);
+            if !matches {
+                return Err(StatusCode::CONFLICT);
+            }
+        } else {
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
     state.publish_event(event).await;
 
     if matches!(saved.delivery, MessageDelivery::Queued) {

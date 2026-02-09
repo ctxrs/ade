@@ -59,16 +59,20 @@ export const createSession = (
   provider_id: string,
   model_id: string,
   opts?: {
+    id?: string;
     parent_session_id?: string | null;
     relationship?: string | null;
     env_target?: "worktree" | "local" | "cloud";
     worktree_id?: string | null;
     initial_prompt?: string | null;
+    initial_message_id?: string | null;
+    initial_turn_id?: string | null;
   },
 ) =>
   apiAny<Session>(`/api/tasks/${taskId}/sessions`, {
     method: "POST",
     body: JSON.stringify({
+      ...(opts?.id ? { id: opts.id } : {}),
       provider_id,
       model_id,
       ...(opts?.parent_session_id ? { parent_session_id: opts.parent_session_id } : {}),
@@ -76,6 +80,9 @@ export const createSession = (
       ...(opts?.env_target ? { env_target: opts.env_target } : {}),
       ...(opts?.worktree_id ? { worktree_id: opts.worktree_id } : {}),
       ...(opts?.initial_prompt ? { initial_prompt: opts.initial_prompt } : {}),
+      ...(opts?.initial_message_id && opts?.initial_turn_id
+        ? { initial_message_id: opts.initial_message_id, initial_turn_id: opts.initial_turn_id }
+        : {}),
     }),
   });
 
@@ -224,10 +231,17 @@ export const postMessage = (
   content: string,
   delivery?: "immediate" | "queued",
   attachments?: MessageAttachment[],
+  opts?: { id?: string; turn_id?: string },
 ) =>
   apiAny<Message>(`/api/sessions/${sessionId}/messages`, {
     method: "POST",
-    body: JSON.stringify({ content, delivery, attachments: attachments ?? [] }),
+    body: JSON.stringify({
+      content,
+      delivery,
+      attachments: attachments ?? [],
+      ...(opts?.id ? { id: opts.id } : {}),
+      ...(opts?.turn_id ? { turn_id: opts.turn_id } : {}),
+    }),
   });
 
 export const uploadBlob = async (file: File): Promise<BlobUploadResp> => {
