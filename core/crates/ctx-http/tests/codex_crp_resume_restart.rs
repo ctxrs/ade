@@ -216,7 +216,10 @@ async fn wait_for_terminal_turn_count(
             .unwrap();
         let terminal_turns = turns.iter().filter(|t| is_terminal_turn(&t.status)).count();
         if terminal_turns >= expected_terminal_turns {
-            if turns.iter().any(|t| matches!(t.status, SessionTurnStatus::Failed)) {
+            if turns
+                .iter()
+                .any(|t| matches!(t.status, SessionTurnStatus::Failed))
+            {
                 panic!("saw Failed turn status: {turns:#?}");
             }
             if turns
