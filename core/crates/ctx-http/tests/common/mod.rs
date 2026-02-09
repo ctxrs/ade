@@ -18,6 +18,9 @@ use tokio::process::Command;
 use tokio::task::JoinHandle;
 use tower::ServiceExt;
 
+pub mod crp_fixture_runtime;
+pub mod openai_responses_stub;
+
 const JJ_MIN_VERSION: (u64, u64, u64) = (0, 25, 0);
 
 fn parse_jj_version(output: &str) -> Option<(u64, u64, u64)> {

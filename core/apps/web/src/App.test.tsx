@@ -18,5 +18,6 @@ beforeEach(() => {
 
 test("renders app shell", async () => {
   render(<App />);
-  expect(await screen.findByText("Workspaces")).toBeInTheDocument();
+  // App root route is the launcher.
+  expect(await screen.findByText("New Workspace")).toBeInTheDocument();
 });

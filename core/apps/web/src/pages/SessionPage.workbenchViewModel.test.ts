@@ -699,6 +699,6 @@ describe("buildWorkbenchThreadViewModel", () => {
     const filteredTurns = filterTurnsForQueuedMessages(turns as any, new Set(["m-queued"]));
     const out = buildWorkbenchThreadViewModelFromTurns(filteredTurns as any, messages as any, {}, [], new Map());
     expect(out.groups.length).toBe(1);
-    expect(out.groups[0]?.header?.id).toBe("m-live");
+    expect(out.groups[0]?.header?.id).toBe("t-live");
   }, 10000);
 });

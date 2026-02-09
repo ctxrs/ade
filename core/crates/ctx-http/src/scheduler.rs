@@ -467,6 +467,7 @@ async fn start_turn(
         "CTX_DATA_ROOT".to_string(),
         state.core.data_root.to_string_lossy().to_string(),
     );
+    provider_env.insert("CTX_PROVIDER_ID".to_string(), session.provider_id.clone());
     provider_env.insert(
         "CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL".to_string(),
         "1".to_string(),
@@ -557,10 +558,24 @@ async fn start_turn(
     for (key, value) in runtime_plan.env_overrides.iter() {
         provider_env.insert(key.clone(), value.clone());
     }
-    if (session.provider_id == "codex" || session.provider_id == "codex-crp") && !is_container {
-        if let Ok(env) =
-            provider_accounts::codex_env_for_active_account(&state.core.data_root).await
-        {
+    if (session.provider_id == "codex" || session.provider_id == "codex-crp")
+        && !provider_env.contains_key("CODEX_HOME")
+    {
+        let codex_env = if is_container {
+            if let Some(root) = provider_env.get("CTX_DATA_ROOT") {
+                let root = std::path::PathBuf::from(root);
+                provider_accounts::codex_env_for_fallback_root(&root)
+                    .await
+                    .ok()
+            } else {
+                None
+            }
+        } else {
+            provider_accounts::codex_env_for_active_account(&state.core.data_root)
+                .await
+                .ok()
+        };
+        if let Some(env) = codex_env {
             for (key, value) in env {
                 provider_env.insert(key, value);
             }
@@ -1629,7 +1644,7 @@ pub async fn reconcile_turn_failed_on_provider_exit(
 
     // If we already have a terminal event in the event log, let the normal reconciler derive the
     // terminal state from that. The important bit here is the "no terminal events at all" case.
-    let events = store
+    let mut events = store
         .list_session_events_for_turn(session_id, turn_id, false)
         .await?;
     if events.iter().rev().any(|ev| {
@@ -1643,6 +1658,34 @@ pub async fn reconcile_turn_failed_on_provider_exit(
     }) {
         return reconcile_turn_terminal_state(state, session_id, run_id, turn_id, fallback_reason)
             .await;
+    }
+
+    // Give any in-flight terminal event a chance to flush before failing the turn.
+    // We specifically want to avoid emitting a provider-exit Error if the harness already wrote
+    // `turn.completed` but the stdout pump hasn't ingested it yet.
+    for _ in 0..20 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        events = store
+            .list_session_events_for_turn(session_id, turn_id, false)
+            .await?;
+        if events.iter().rev().any(|ev| {
+            matches!(
+                ev.event_type,
+                SessionEventType::Done
+                    | SessionEventType::Error
+                    | SessionEventType::TurnInterrupted
+                    | SessionEventType::TurnFinished
+            )
+        }) {
+            return reconcile_turn_terminal_state(
+                state,
+                session_id,
+                run_id,
+                turn_id,
+                fallback_reason,
+            )
+            .await;
+        }
     }
 
     let failed_at = Utc::now();

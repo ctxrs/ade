@@ -1,0 +1,205 @@
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use ctx_providers::adapters::ProviderAdapter;
+use ctx_providers::crp::Tier1CrpAdapter;
+
+pub fn python_binary() -> Option<PathBuf> {
+    which::which("python3")
+        .or_else(|_| which::which("python"))
+        .ok()
+}
+
+pub fn write_crp_fixture_runtime(root: &Path) -> PathBuf {
+    let script_dir = root
+        .join("providers")
+        .join("agent-servers")
+        .join("crp-fixtures")
+        .join("fake");
+    std::fs::create_dir_all(&script_dir).unwrap();
+    let script_path = script_dir.join("crp_fixture_runtime.py");
+
+    // This CRP runtime replays deterministic fixtures keyed by CTX_PROVIDER_ID.
+    // Fixtures live under $CTX_TEST_FIXTURES_DIR/<provider_id>/<scenario>.json.
+    let script = r#"
+import json
+import os
+import sys
+import uuid
+
+SEQ = 1
+PROVIDER_ID = os.environ.get("CTX_PROVIDER_ID")
+FIXTURE_ROOT = os.environ.get("CTX_TEST_FIXTURES_DIR")
+SCENARIO = os.environ.get("CTX_TEST_SCENARIO") or "basic"
+
+scenario = {"turns": []}
+try:
+    if not PROVIDER_ID:
+        raise RuntimeError("missing CTX_PROVIDER_ID")
+    if not FIXTURE_ROOT:
+        raise RuntimeError("missing CTX_TEST_FIXTURES_DIR")
+    fixture_path = os.path.join(FIXTURE_ROOT, PROVIDER_ID, SCENARIO + ".json")
+    with open(fixture_path, "r") as f:
+        scenario = json.load(f)
+except Exception as e:
+    sys.stderr.write("fixture load failed: %r\n" % (e,))
+    sys.stderr.flush()
+
+provider_session_id = PROVIDER_ID + "-thread"
+
+def send(msg, channel="control"):
+    global SEQ
+    msg["seq"] = SEQ
+    SEQ += 1
+    msg["channel"] = channel
+    sys.stdout.write(json.dumps(msg))
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+def send_turn(session_id, turn_id, turn):
+    thought = turn.get("thought")
+    if thought:
+        item_id = str(uuid.uuid4())
+        send({
+            "type": "reasoning.trace",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "chunk": thought,
+            "item_id": item_id,
+            "summary_index": 0,
+        }, channel="data")
+        send({
+            "type": "reasoning.trace.final",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "content": thought,
+            "item_id": item_id,
+            "summary_index": 0,
+        }, channel="data")
+
+    for tool in (turn.get("tools") or []):
+        tool_call_id = str(uuid.uuid4())
+        tool_name = tool.get("tool_name") or "exec_command"
+        tool_input = tool.get("input")
+        tool_output = tool.get("output") or "ok"
+        send({
+            "type": "tool.started",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "input": tool_input,
+        }, channel="data")
+        send({
+            "type": "tool.output.delta",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "tool_call_id": tool_call_id,
+            "chunk": tool_output,
+        }, channel="data")
+        send({
+            "type": "tool.completed",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "status": "success",
+            "output": {"text": tool_output},
+        }, channel="data")
+
+    msg_id = str(uuid.uuid4())
+    final = turn.get("final") or ("hola from " + PROVIDER_ID)
+    for chunk in (turn.get("deltas") or []):
+        send({
+            "type": "message.delta",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "message_id": msg_id,
+            "delta": chunk,
+        }, channel="data")
+    send({
+        "type": "message.final",
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "message_id": msg_id,
+        "content": final,
+    }, channel="data")
+    send({
+        "type": "turn.completed",
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "status": "success",
+    }, channel="control")
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        cmd = json.loads(line)
+    except Exception:
+        continue
+    t = cmd.get("type")
+
+    if t == "models.list":
+        send({
+            "type": "models.list",
+            "models": [{"id": "fake-model"}],
+            "current_model_id": "fake-model",
+        })
+        continue
+
+    if t == "session.open":
+        session_id = cmd.get("session_id") or "sess_1"
+        send({
+            "type": "session.opened",
+            "session_id": session_id,
+            "provider_session_id": provider_session_id,
+        })
+        continue
+
+    if t == "session.prompt":
+        session_id = cmd.get("session_id") or "sess_1"
+        turn_id = cmd.get("turn_id") or "turn_1"
+        try:
+            turn_index = 0
+            turns = scenario.get("turns") or []
+            if turns:
+                turn_index = min(int(cmd.get("turn_index") or 0), len(turns) - 1)
+                send_turn(session_id, turn_id, turns[turn_index])
+            else:
+                send_turn(session_id, turn_id, {})
+        except Exception as e:
+            sys.stderr.write("fixture turn failed: %r\n" % (e,))
+            sys.stderr.flush()
+            send({
+                "type": "turn.completed",
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "status": "error",
+                "error": {"message": str(e), "kind": "fixture_turn_error"},
+            }, channel="control")
+        continue
+"#;
+
+    std::fs::write(&script_path, script.trim()).unwrap();
+    script_path
+}
+
+pub fn build_crp_fixture_providers(
+    provider_ids: &[&str],
+    python: &Path,
+    script_path: &Path,
+) -> HashMap<String, Arc<dyn ProviderAdapter>> {
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    for provider_id in provider_ids {
+        let adapter: Arc<Tier1CrpAdapter> = Arc::new(Tier1CrpAdapter::from_raw(
+            provider_id,
+            python.to_string_lossy().to_string(),
+            vec![script_path.to_string_lossy().to_string()],
+        ));
+        providers.insert((*provider_id).to_string(), adapter);
+    }
+    providers
+}

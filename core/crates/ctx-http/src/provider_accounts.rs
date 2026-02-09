@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -129,15 +129,41 @@ pub fn codex_env_for_account(data_root: &Path, account_id: &str) -> HashMap<Stri
     env
 }
 
-pub async fn codex_env_for_active_account(_data_root: &Path) -> Result<HashMap<String, String>> {
-    let base = directories::BaseDirs::new().ok_or_else(|| anyhow!("missing home dir"))?;
-    let codex_home = base.home_dir().join(".codex");
+pub async fn codex_env_for_fallback_root(state_root: &Path) -> Result<HashMap<String, String>> {
+    let fallback = codex_fallback_home(state_root);
+    tokio::fs::create_dir_all(&fallback).await?;
     let mut env = HashMap::new();
     env.insert(
         "CODEX_HOME".to_string(),
-        codex_home.to_string_lossy().to_string(),
+        fallback.to_string_lossy().to_string(),
     );
     Ok(env)
+}
+
+pub async fn codex_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
+    if let Ok(value) = std::env::var("CTX_CODEX_HOME") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            let dir = PathBuf::from(trimmed);
+            tokio::fs::create_dir_all(&dir).await?;
+            let mut env = HashMap::new();
+            env.insert("CODEX_HOME".to_string(), dir.to_string_lossy().to_string());
+            return Ok(env);
+        }
+    }
+
+    let registry = load_codex_registry(data_root).await;
+    if let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let _ = ensure_codex_account_dir(data_root, active).await?;
+        return Ok(codex_env_for_account(data_root, active));
+    }
+
+    codex_env_for_fallback_root(data_root).await
 }
 
 pub fn normalize_label(label: Option<String>, account_id: &str) -> String {
@@ -145,4 +171,69 @@ pub fn normalize_label(label: Option<String>, account_id: &str) -> String {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| format!("Codex Account {account_id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner())
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn without(key: &'static str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.prev.as_deref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn codex_env_uses_active_account_dir() {
+        let _env_lock = lock_env();
+        let _guard = EnvGuard::without("CTX_CODEX_HOME");
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = CodexAccountRegistry {
+            active_account_id: Some("acct-123".to_string()),
+            accounts: Vec::new(),
+        };
+        save_codex_registry(root, &registry).await.unwrap();
+
+        let env = codex_env_for_active_account(root).await.unwrap();
+        let home = env.get("CODEX_HOME").unwrap();
+        assert_eq!(home, &codex_account_dir(root, "acct-123").to_string_lossy());
+        assert!(codex_account_dir(root, "acct-123").exists());
+    }
+
+    #[tokio::test]
+    async fn codex_env_falls_back_to_ctx_home() {
+        let _env_lock = lock_env();
+        let _guard = EnvGuard::without("CTX_CODEX_HOME");
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        let env = codex_env_for_active_account(root).await.unwrap();
+        let home = env.get("CODEX_HOME").unwrap();
+        assert_eq!(home, &codex_fallback_home(root).to_string_lossy());
+        assert!(codex_fallback_home(root).exists());
+    }
 }
