@@ -222,6 +222,7 @@ const syncBundles = () => {
       if (target.buildCodexCrp && !linuxEnv.CTX_BUNDLE_BUILD_CODEX_CRP) {
         // Managed codex-crp artifacts currently publish linux/x86_64 only.
         // Build linux/aarch64 locally so Apple Silicon container sessions work.
+        // Build-time container paths in ensure_bundled_harnesses.sh are Docker-only.
         linuxEnv.CTX_BUNDLE_BUILD_CODEX_CRP = "1";
       }
       const linuxRes = childProcess.spawnSync(bundleScript, {

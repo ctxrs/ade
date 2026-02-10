@@ -39,13 +39,6 @@ case "$host_os_raw" in
   MINGW*|MSYS*|CYGWIN*|Windows_NT) host_os="windows";;
 esac
 
-host_arch_raw="$(uname -m 2>/dev/null || true)"
-host_arch="unknown"
-case "$host_arch_raw" in
-  x86_64|amd64) host_arch="x86_64";;
-  aarch64|arm64) host_arch="aarch64";;
-esac
-
 PYTHON_HOST_CMD=()
 if command -v python3 >/dev/null 2>&1; then
   PYTHON_HOST_CMD=(python3)
@@ -99,6 +92,111 @@ if result.stdout:
     sys.stdout.write(result.stdout)
 sys.exit(result.returncode)
 PY
+}
+
+# Build-time container contract:
+# - Build-time operations (containerized codex-crp builds + bundled harness image builds)
+#   use Docker as the only engine, with Docker buildx required for image bundling.
+# - Podman remains a bundled runtime artifact for runtime container execution only.
+docker_buildx_output_looks_unhealthy() {
+  local output="$1"
+  if [[ -z "$output" ]]; then
+    return 1
+  fi
+  if printf '%s\n' "$output" | grep -Eiq 'Cannot load builder|context deadline exceeded'; then
+    return 0
+  fi
+  if printf '%s\n' "$output" | grep -Eiq '(^|[[:space:]])error([[:space:]:]|$)'; then
+    return 0
+  fi
+  return 1
+}
+
+docker_probe_health() {
+  local quiet="${1:-0}"
+  local require_buildx="${2:-1}"
+  local info_output=""
+  local buildx_output=""
+
+  info_output="$(run_with_timeout_capture "$DOCKER_HEALTH_TIMEOUT_SECS" docker info --format '{{.ServerVersion}}|{{.OSType}}|{{.Architecture}}' 2>&1)" || {
+    if [[ "$quiet" != "1" ]]; then
+      log "warn: docker info health check failed."
+      if [[ -n "$info_output" ]]; then
+        log "$info_output"
+      fi
+    fi
+    return 1
+  }
+
+  if [[ "$require_buildx" == "1" ]]; then
+    buildx_output="$(run_with_timeout_capture "$DOCKER_HEALTH_TIMEOUT_SECS" docker buildx ls 2>&1)" || {
+      if [[ "$quiet" != "1" ]]; then
+        log "warn: docker buildx ls health check failed."
+        if [[ -n "$buildx_output" ]]; then
+          log "$buildx_output"
+        fi
+      fi
+      return 1
+    }
+
+    if docker_buildx_output_looks_unhealthy "$buildx_output"; then
+      if [[ "$quiet" != "1" ]]; then
+        log "warn: docker buildx reported unhealthy builders."
+        log "$buildx_output"
+      fi
+      return 1
+    fi
+  fi
+
+  return 0
+}
+
+try_start_docker_desktop_macos() {
+  if [[ "$host_os" != "macos" ]]; then
+    return 1
+  fi
+  if ! command -v open >/dev/null 2>&1; then
+    return 1
+  fi
+  if open -gj -a Docker >/dev/null 2>&1 || open -a Docker >/dev/null 2>&1; then
+    log "warn: Docker health check failed. Attempting self-heal by launching Docker Desktop and waiting up to ${DOCKER_HEALTH_WAIT_SECS}s."
+    return 0
+  fi
+  return 1
+}
+
+ensure_docker_ready_for_builds() {
+  local require_buildx="${1:-0}"
+  local operation="${2:-build-time container operation}"
+
+  if ! command -v docker >/dev/null 2>&1; then
+    log "error: ${operation} requires docker on PATH."
+    return 1
+  fi
+
+  if [[ "$require_buildx" == "1" ]] && ! docker buildx version >/dev/null 2>&1; then
+    log "error: ${operation} requires docker buildx."
+    return 1
+  fi
+
+  if docker_probe_health "1" "$require_buildx"; then
+    return 0
+  fi
+
+  if try_start_docker_desktop_macos; then
+    local deadline=$((SECONDS + DOCKER_HEALTH_WAIT_SECS))
+    while (( SECONDS < deadline )); do
+      if docker_probe_health "1" "$require_buildx"; then
+        log "docker daemon became healthy after Docker Desktop startup."
+        return 0
+      fi
+      sleep 2
+    done
+  fi
+
+  docker_probe_health "0" "$require_buildx" || true
+  log "error: docker daemon is not healthy. Ensure Docker Desktop is running and retry."
+  return 1
 }
 
 INSTALLER_RS="$ROOT/core/crates/ctx-http/src/installer.rs"
@@ -988,20 +1086,9 @@ local_codex_crp_binary_path() {
 	fi
 
 	build_codex_crp_in_container() {
-	  local engine=""
-	  if command -v podman >/dev/null 2>&1; then
-	    engine="podman"
-	  elif command -v docker >/dev/null 2>&1; then
-	    engine="docker"
-	  else
-	    log "error: building codex-crp for ${os}/${arch} requires podman or docker on PATH"
-	    log "       Alternative: build bundles on a linux/${arch} host and use CTX_BUNDLE_APPEND=1 to combine manifests."
-	    exit 5
-	  fi
-
-	  if [[ "$engine" == "podman" && "$host_arch" != "$arch" ]]; then
-	    log "error: refusing to build codex-crp for ${os}/${arch} on host arch ${host_arch} using podman (would likely produce wrong-arch binary)"
-	    log "       Use docker with --platform emulation, or build on a ${arch} host."
+	  if ! ensure_docker_ready_for_builds "0" "codex-crp container build"; then
+	    log "error: building codex-crp for ${os}/${arch} requires Docker on PATH and a healthy daemon."
+	    log "       Ensure Docker Desktop (or Docker Engine) is running and retry."
 	    exit 5
 	  fi
 
@@ -1015,10 +1102,7 @@ local_codex_crp_binary_path() {
 	  local image="${CTX_BUNDLE_RUST_IMAGE:-rust:1}"
 
 	  local -a run_args
-	  run_args=(run --rm -v "$CODEX_CRP_WORKSPACE:/work:rw" -v "$target_dir:/target:rw" -w /work -e CARGO_TARGET_DIR=/target)
-	  if [[ "$engine" == "docker" ]]; then
-	    run_args+=(--platform "$platform")
-	  fi
+	  run_args=(run --rm --platform "$platform" -v "$CODEX_CRP_WORKSPACE:/work:rw" -v "$target_dir:/target:rw" -w /work -e CARGO_TARGET_DIR=/target)
 
 	  # Avoid `bash -l` here: login shells can reset PATH and drop Cargo.
 	  #
@@ -1033,7 +1117,7 @@ local_codex_crp_binary_path() {
 	      "CARGO_PROFILE_RELEASE_OPT_LEVEL=2"
 	    )
 	  fi
-	  "$engine" "${run_args[@]}" "$image" bash -c "set -euo pipefail; export PATH=\"/usr/local/cargo/bin:\$PATH\"; rustup target add '$rust_target' >/dev/null 2>&1 || true; ${cargo_profile_env[*]} cargo build -p codex-crp --target '$rust_target' ${profile_args[*]}"
+	  docker "${run_args[@]}" "$image" bash -c "set -euo pipefail; export PATH=\"/usr/local/cargo/bin:\$PATH\"; rustup target add '$rust_target' >/dev/null 2>&1 || true; ${cargo_profile_env[*]} cargo build -p codex-crp --target '$rust_target' ${profile_args[*]}"
 	}
 
 	if [[ "$os" == "linux" && "$host_os" != "linux" ]]; then
@@ -1476,109 +1560,11 @@ PY
   fi
 fi
 
-docker_buildx_output_looks_unhealthy() {
-  local output="$1"
-  if [[ -z "$output" ]]; then
-    return 1
-  fi
-  if printf '%s\n' "$output" | grep -Eiq 'Cannot load builder|context deadline exceeded'; then
-    return 0
-  fi
-  if printf '%s\n' "$output" | grep -Eiq '(^|[[:space:]])error([[:space:]:]|$)'; then
-    return 0
-  fi
-  return 1
-}
-
-docker_probe_health() {
-  local quiet="${1:-0}"
-  local info_output=""
-  local buildx_output=""
-
-  info_output="$(run_with_timeout_capture "$DOCKER_HEALTH_TIMEOUT_SECS" docker info --format '{{.ServerVersion}}|{{.OSType}}|{{.Architecture}}' 2>&1)" || {
-    if [[ "$quiet" != "1" ]]; then
-      log "warn: docker info health check failed."
-      if [[ -n "$info_output" ]]; then
-        log "$info_output"
-      fi
-    fi
-    return 1
-  }
-
-  buildx_output="$(run_with_timeout_capture "$DOCKER_HEALTH_TIMEOUT_SECS" docker buildx ls 2>&1)" || {
-    if [[ "$quiet" != "1" ]]; then
-      log "warn: docker buildx ls health check failed."
-      if [[ -n "$buildx_output" ]]; then
-        log "$buildx_output"
-      fi
-    fi
-    return 1
-  }
-
-  if docker_buildx_output_looks_unhealthy "$buildx_output"; then
-    if [[ "$quiet" != "1" ]]; then
-      log "warn: docker buildx reported unhealthy builders."
-      log "$buildx_output"
-    fi
-    return 1
-  fi
-
-  return 0
-}
-
-try_start_docker_desktop_macos() {
-  if [[ "$host_os" != "macos" ]]; then
-    return 1
-  fi
-  if ! command -v open >/dev/null 2>&1; then
-    return 1
-  fi
-  if open -gj -a Docker >/dev/null 2>&1 || open -a Docker >/dev/null 2>&1; then
-    log "warn: Docker health check failed. Attempting self-heal by launching Docker Desktop and waiting up to ${DOCKER_HEALTH_WAIT_SECS}s."
-    return 0
-  fi
-  return 1
-}
-
-ensure_docker_healthy() {
-  local require_buildx="${1:-0}"
-
-  if ! command -v docker >/dev/null 2>&1; then
-    log "error: bundling harness image requires podman or docker on PATH"
-    return 1
-  fi
-
-  if [[ "$require_buildx" == "1" ]] && ! docker buildx version >/dev/null 2>&1; then
-    log "error: docker buildx is required for multi-arch harness image bundling."
-    return 1
-  fi
-
-  if docker_probe_health "1"; then
-    return 0
-  fi
-
-  if try_start_docker_desktop_macos; then
-    local deadline=$((SECONDS + DOCKER_HEALTH_WAIT_SECS))
-    while (( SECONDS < deadline )); do
-      if docker_probe_health "1"; then
-        log "docker daemon became healthy after Docker Desktop startup."
-        return 0
-      fi
-      sleep 2
-    done
-  fi
-
-  docker_probe_health "0" || true
-  log "error: docker daemon is not healthy. Ensure Docker Desktop is running and retry."
-  return 1
-}
-
 bundle_harness_image() {
   local image_ref="$1"
   local tar_rel="$2"
   local tar_path="$bundle_dir/$tar_rel"
   local platform="${3:-}"
-  local build_arch="${4:-}"
 
   mkdir -p "$(dirname "$tar_path")"
 
@@ -1588,44 +1574,18 @@ bundle_harness_image() {
     exit 2
   fi
 
-  if command -v podman >/dev/null 2>&1; then
-    if [[ -n "$build_arch" && "$build_arch" != "$host_arch" ]]; then
-      log "error: cannot bundle ctx-harness for $build_arch on host $host_arch using podman build (would likely produce wrong-arch tar)."
-      log "       Either run bundling on a $build_arch host, or install docker+buildx and retry."
-      exit 2
-    fi
-    podman build -t "$image_ref" -f "$ROOT/containers/ctx-harness/Dockerfile" "$ROOT"
-    podman save --format docker-archive -o "$tar_path" "$image_ref"
-    return 0
+  if ! ensure_docker_ready_for_builds "1" "harness image bundling"; then
+    exit 2
   fi
 
-  if command -v docker >/dev/null 2>&1; then
-    if ! ensure_docker_healthy "0"; then
-      return 1
-    fi
-    if docker buildx version >/dev/null 2>&1; then
-      # Build the requested Linux arch and write a docker-archive compatible tar.
-      docker buildx build \
-        --progress plain \
-        --platform "$platform" \
-        -t "$image_ref" \
-        -f "$ROOT/containers/ctx-harness/Dockerfile" \
-        --output "type=docker,dest=$tar_path" \
-        "$ROOT"
-      return 0
-    fi
-    if [[ -n "$build_arch" && "$build_arch" != "$host_arch" ]]; then
-      log "error: cannot bundle ctx-harness for $build_arch on host $host_arch without docker buildx (would likely produce wrong-arch tar)."
-      log "       Install docker buildx or run bundling on a $build_arch host."
-      exit 2
-    fi
-    docker build -t "$image_ref" -f "$ROOT/containers/ctx-harness/Dockerfile" "$ROOT"
-    docker save -o "$tar_path" "$image_ref"
-    return 0
-  fi
-
-  log "error: bundling harness image requires podman or docker on PATH"
-  exit 2
+  # Build the requested Linux arch and write a docker-archive compatible tar.
+  docker buildx build \
+    --progress plain \
+    --platform "$platform" \
+    -t "$image_ref" \
+    -f "$ROOT/containers/ctx-harness/Dockerfile" \
+    --output "type=docker,dest=$tar_path" \
+    "$ROOT"
 }
 
 bundle_harness_manifest_entry() {
@@ -1668,7 +1628,7 @@ if is_truthy "${bundle_harness_mode:-}"; then
   if [[ "$arch" == "aarch64" ]]; then
     harness_platform="linux/arm64"
   fi
-  bundle_harness_image "$HARNESS_IMAGE_REF" "$harness_tar_rel" "$harness_platform" "$arch"
+  bundle_harness_image "$HARNESS_IMAGE_REF" "$harness_tar_rel" "$harness_platform"
   harness_sha="$(sha256_file "$bundle_dir/$harness_tar_rel")"
   bundle_harness_manifest_entry "$HARNESS_IMAGE_REF" "$arch" "$harness_tar_rel" "$harness_sha"
 elif [[ "$bundle_harness_mode" == "both" || "$bundle_harness_mode" == "all" ]]; then
@@ -1677,21 +1637,11 @@ elif [[ "$bundle_harness_mode" == "both" || "$bundle_harness_mode" == "all" ]]; 
   tar_x86="images/ctx-harness-linux-x86_64.tar"
   tar_arm="images/ctx-harness-linux-aarch64.tar"
 
-  # Building both arches requires docker buildx (or running the script on each arch and using append).
-  if ! command -v docker >/dev/null 2>&1 || ! docker buildx version >/dev/null 2>&1; then
-    log "error: CTX_BUNDLE_HARNESS_IMAGE=$bundle_harness_mode requires docker buildx to build both linux/amd64 and linux/arm64 image tars."
-    log "       Alternatively, run the bundler twice on different hosts and use CTX_BUNDLE_APPEND=1 to combine manifests."
-    exit 2
-  fi
-  if ! ensure_docker_healthy "1"; then
-    exit 2
-  fi
-
-  bundle_harness_image "$HARNESS_IMAGE_REF" "$tar_x86" "linux/amd64" "x86_64"
+  bundle_harness_image "$HARNESS_IMAGE_REF" "$tar_x86" "linux/amd64"
   sha_x86="$(sha256_file "$bundle_dir/$tar_x86")"
   bundle_harness_manifest_entry "$HARNESS_IMAGE_REF" "x86_64" "$tar_x86" "$sha_x86"
 
-  bundle_harness_image "$HARNESS_IMAGE_REF" "$tar_arm" "linux/arm64" "aarch64"
+  bundle_harness_image "$HARNESS_IMAGE_REF" "$tar_arm" "linux/arm64"
   sha_arm="$(sha256_file "$bundle_dir/$tar_arm")"
   bundle_harness_manifest_entry "$HARNESS_IMAGE_REF" "aarch64" "$tar_arm" "$sha_arm"
 fi
