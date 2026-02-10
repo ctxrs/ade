@@ -206,6 +206,85 @@ describe("SessionSupervisor", () => {
     expect(entry?.lastEventSeq).toBe(2);
   });
 
+  it("clears stale load error after replica deltas recover", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-recovery";
+    (getSessionSnapshot as any).mockRejectedValue(new Error("Load failed"));
+    (getSessionHead as any).mockRejectedValue(new Error("Load failed"));
+
+    const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (listener: (evt: WorkspaceActiveSnapshotEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      setSubscribedSessionIds: () => {},
+      getSnapshot: () => ({
+        workspaceId: "ws-1",
+        initialized: true,
+        connection: "connected" as const,
+        tasksById: {},
+        activeIds: [],
+        archivedIds: [],
+        totalActive: 0,
+        totalArchived: 0,
+        fetchState: { active: "idle", archived: "idle" },
+        hasMoreActive: false,
+        hasMoreArchived: false,
+        archivedLoaded: false,
+      }),
+    };
+
+    const sup = new SessionSupervisor();
+    sup.bindWorkspaceActiveSnapshotStore(store);
+    sup.openSession(sessionId);
+
+    await waitForCondition(() => Boolean(sup.getSnapshot().sessions[sessionId]?.error));
+    expect(sup.getSnapshot().sessions[sessionId]?.error).toContain("Load failed");
+
+    const now = new Date().toISOString();
+    const message: Message = {
+      id: "m-recovery",
+      session_id: sessionId,
+      turn_id: "turn-recovery",
+      role: "assistant",
+      content: "Recovered",
+      delivery: "immediate",
+      created_at: now,
+    };
+    const event: SessionEvent = {
+      seq: 1,
+      id: "e-recovery",
+      session_id: sessionId,
+      turn_id: "turn-recovery",
+      event_type: "assistant_chunk",
+      payload_json: { content_fragment: "Recovered" },
+      created_at: now,
+    };
+
+    const deltaEvent: WorkspaceActiveSnapshotEvent = {
+      type: "session_head_delta",
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      delta: {
+        session_id: sessionId,
+        last_event_seq: 1,
+        state_rev: 1,
+        message,
+        event,
+      },
+    };
+
+    listeners.forEach((listener) => listener(deltaEvent));
+
+    await waitForCondition(() => (sup.getSnapshot().sessions[sessionId]?.messages.length ?? 0) > 0);
+    expect(sup.getSnapshot().sessions[sessionId]?.error).toBeUndefined();
+  });
+
   it("preserves arrival order for transient assistant chunks (seq=null)", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

@@ -409,6 +409,9 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [diffResizing, setDiffResizing] = useState(false);
   const [diffOpenHydrated, setDiffOpenHydrated] = useState(false);
   const [diffContentLoading, setDiffContentLoading] = useState(false);
+  const [diffContentErrorBySessionId, setDiffContentErrorBySessionId] = useState<
+    Record<string, string | undefined>
+  >({});
   const [artifactsOpenHydrated, setArtifactsOpenHydrated] = useState(false);
   const [artifactsOpenSeeded, setArtifactsOpenSeeded] = useState(false);
   const [, setArtifactsAutoOpenPending] = useState(false);
@@ -1904,6 +1907,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const sessionCache = useSessionCacheSnapshot();
   const activeEntry = useSessionEntry(activeSessionId ?? "");
   const activeSessionDiff = activeEntry?.diff ?? "";
+  const activeDiffContentError = activeSessionId ? diffContentErrorBySessionId[activeSessionId] ?? null : null;
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
   const activeWorktreeVcsSnapshot = activeWorktreeId
     ? workspaceSnapshot.worktreeVcsById?.[activeWorktreeId] ?? null
@@ -2156,22 +2160,27 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       if (sessionId !== activeSessionId) return;
       // If we can't get a summary, do not fetch the full diff (it can be huge and crash the renderer).
       if (!snapshotHasCounts || !activeWorktreeVcsSummary) {
+        setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: undefined }));
         supervisor.setDiff(sessionId, "");
         return;
       }
       if (isDiffSummaryTooLarge(activeWorktreeVcsSummary)) {
+        setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: undefined }));
         supervisor.setDiff(sessionId, "");
         return;
       }
       const existing = diffContentInFlightRef.current.get(sessionId);
       if (existing) return existing;
       setDiffContentLoading(true);
+      setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: undefined }));
       const request = (async () => {
         try {
           const resp = await getSessionDiff(sessionId);
           supervisor.setDiff(sessionId, resp.diff ?? "");
-        } catch {
-          supervisor.setDiff(sessionId, "");
+          setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: undefined }));
+        } catch (err: any) {
+          const msg = err?.message ? `Failed to load diff content: ${err.message}` : "Failed to load diff content.";
+          setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: msg }));
         }
       })().finally(() => {
         diffContentInFlightRef.current.delete(sessionId);
@@ -3637,7 +3646,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                             <div className="wb-muted">{diffTooLargeLabel ?? "Diff too large to display."}</div>
                           </div>
                         ) : (
-                          <DiffReviewPane diff={activeSessionDiff} />
+                          <DiffReviewPane
+                            diff={activeSessionDiff}
+                            labels={activeDiffContentError ? { empty: activeDiffContentError } : undefined}
+                          />
                         )
                       ) : (
                         <div className="wb-diff-empty">

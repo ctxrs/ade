@@ -590,22 +590,6 @@ export class SessionSupervisor {
       const sessionId = String(patch.sessionId || "").trim();
       if (!sessionId) continue;
       const entry = this.ensureEntry(sessionId);
-      const incomingMessages = Array.isArray(patch.data.messages) ? patch.data.messages : [];
-      const incomingMessageIds =
-        patch.op === "replace"
-          ? new Set(
-              incomingMessages
-                .map((message) => idToString(message.id))
-                .filter((id): id is string => !!id),
-            )
-          : null;
-      const localOnlyMessages =
-        patch.op === "replace" && incomingMessageIds
-          ? entry.messages.filter((message) => {
-              const id = idToString(message.id);
-              return id ? !incomingMessageIds.has(id) : false;
-            })
-          : [];
       if (patch.op === "replace") {
         this.resetEntryForGap(entry, { skipPublish: true });
       }
@@ -626,6 +610,22 @@ export class SessionSupervisor {
         continue;
       }
       const data = patch.data;
+      const incomingMessages = Array.isArray(data.messages) ? data.messages : [];
+      const incomingMessageIds =
+        patch.op === "replace"
+          ? new Set(
+              incomingMessages
+                .map((message) => idToString(message.id))
+                .filter((id): id is string => !!id),
+            )
+          : null;
+      const localOnlyMessages =
+        patch.op === "replace" && incomingMessageIds
+          ? entry.messages.filter((message) => {
+              const id = idToString(message.id);
+              return id ? !incomingMessageIds.has(id) : false;
+            })
+          : [];
       if (data.session) {
         entry.session = data.session;
         void this.ensureThoughtCache(entry);
@@ -693,8 +693,23 @@ export class SessionSupervisor {
       if (data.loading !== undefined) {
         entry.loading = data.loading;
       }
+      const hasRecoveryData =
+        data.session !== undefined ||
+        (Array.isArray(data.turns) && data.turns.length > 0) ||
+        (Array.isArray(data.messages) && data.messages.length > 0) ||
+        (Array.isArray(data.events) && data.events.length > 0) ||
+        (Array.isArray(data.toolSummaries) && data.toolSummaries.length > 0) ||
+        data.lastEventSeq !== undefined ||
+        data.stateRev !== undefined ||
+        data.summaryCheckpoint !== undefined ||
+        data.headWindow !== undefined ||
+        data.hasMoreTurns !== undefined ||
+        data.turnsHydrated !== undefined;
       if (data.error !== undefined) {
         entry.error = data.error ?? undefined;
+      } else if (hasRecoveryData) {
+        // Replica patches with real session data indicate recovery from transient head/snapshot failures.
+        entry.error = undefined;
       }
       if (data.subagentNotice) {
         void this.ensureSubagentInvocations(entry, { force: true });
