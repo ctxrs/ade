@@ -62,6 +62,45 @@ run_python() {
   "${PYTHON_HOST_CMD[@]}" "$@"
 }
 
+run_with_timeout_capture() {
+  local timeout_secs="$1"
+  shift
+  run_python - "$timeout_secs" "$@" <<'PY'
+import subprocess
+import sys
+
+if len(sys.argv) < 3:
+    print("internal error: run_with_timeout_capture requires timeout + command", file=sys.stderr)
+    sys.exit(2)
+
+try:
+    timeout = float(sys.argv[1])
+except ValueError:
+    print(f"internal error: invalid timeout {sys.argv[1]!r}", file=sys.stderr)
+    sys.exit(2)
+
+cmd = sys.argv[2:]
+try:
+    result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=timeout,
+    )
+except subprocess.TimeoutExpired as exc:
+    output = exc.stdout or ""
+    if output:
+        sys.stdout.write(output)
+    print(f"timed out after {timeout:.0f}s: {' '.join(cmd)}")
+    sys.exit(124)
+
+if result.stdout:
+    sys.stdout.write(result.stdout)
+sys.exit(result.returncode)
+PY
+}
+
 INSTALLER_RS="$ROOT/core/crates/ctx-http/src/installer.rs"
 MATRIX_JSON="$ROOT/core/crates/ctx-http/src/provider_matrix.json"
 
@@ -85,6 +124,8 @@ PODMAN_ARCHIVE_URL="${PODMAN_ARCHIVE_URL:-}"
 PODMAN_ARCHIVE_PATH="${PODMAN_ARCHIVE_PATH:-}"
 PODMAN_BIN_REL="${PODMAN_BIN_REL:-}"
 PODMAN_EXTRACT_SUBDIR="${PODMAN_EXTRACT_SUBDIR:-}"
+DOCKER_HEALTH_TIMEOUT_SECS="${CTX_BUNDLE_DOCKER_HEALTH_TIMEOUT_SECS:-8}"
+DOCKER_HEALTH_WAIT_SECS="${CTX_BUNDLE_DOCKER_HEALTH_WAIT_SECS:-60}"
 
 bundle_os="${CTX_BUNDLE_OS:-${CTX_BUNDLE_TARGET_OS:-}}"
 bundle_arch="${CTX_BUNDLE_ARCH:-${CTX_BUNDLE_TARGET_ARCH:-}}"
@@ -1435,6 +1476,103 @@ PY
   fi
 fi
 
+docker_buildx_output_looks_unhealthy() {
+  local output="$1"
+  if [[ -z "$output" ]]; then
+    return 1
+  fi
+  if printf '%s\n' "$output" | grep -Eiq 'Cannot load builder|context deadline exceeded'; then
+    return 0
+  fi
+  if printf '%s\n' "$output" | grep -Eiq '(^|[[:space:]])error([[:space:]:]|$)'; then
+    return 0
+  fi
+  return 1
+}
+
+docker_probe_health() {
+  local quiet="${1:-0}"
+  local info_output=""
+  local buildx_output=""
+
+  info_output="$(run_with_timeout_capture "$DOCKER_HEALTH_TIMEOUT_SECS" docker info --format '{{.ServerVersion}}|{{.OSType}}|{{.Architecture}}' 2>&1)" || {
+    if [[ "$quiet" != "1" ]]; then
+      log "warn: docker info health check failed."
+      if [[ -n "$info_output" ]]; then
+        log "$info_output"
+      fi
+    fi
+    return 1
+  }
+
+  buildx_output="$(run_with_timeout_capture "$DOCKER_HEALTH_TIMEOUT_SECS" docker buildx ls 2>&1)" || {
+    if [[ "$quiet" != "1" ]]; then
+      log "warn: docker buildx ls health check failed."
+      if [[ -n "$buildx_output" ]]; then
+        log "$buildx_output"
+      fi
+    fi
+    return 1
+  }
+
+  if docker_buildx_output_looks_unhealthy "$buildx_output"; then
+    if [[ "$quiet" != "1" ]]; then
+      log "warn: docker buildx reported unhealthy builders."
+      log "$buildx_output"
+    fi
+    return 1
+  fi
+
+  return 0
+}
+
+try_start_docker_desktop_macos() {
+  if [[ "$host_os" != "macos" ]]; then
+    return 1
+  fi
+  if ! command -v open >/dev/null 2>&1; then
+    return 1
+  fi
+  if open -gj -a Docker >/dev/null 2>&1 || open -a Docker >/dev/null 2>&1; then
+    log "warn: Docker health check failed. Attempting self-heal by launching Docker Desktop and waiting up to ${DOCKER_HEALTH_WAIT_SECS}s."
+    return 0
+  fi
+  return 1
+}
+
+ensure_docker_healthy() {
+  local require_buildx="${1:-0}"
+
+  if ! command -v docker >/dev/null 2>&1; then
+    log "error: bundling harness image requires podman or docker on PATH"
+    return 1
+  fi
+
+  if [[ "$require_buildx" == "1" ]] && ! docker buildx version >/dev/null 2>&1; then
+    log "error: docker buildx is required for multi-arch harness image bundling."
+    return 1
+  fi
+
+  if docker_probe_health "1"; then
+    return 0
+  fi
+
+  if try_start_docker_desktop_macos; then
+    local deadline=$((SECONDS + DOCKER_HEALTH_WAIT_SECS))
+    while (( SECONDS < deadline )); do
+      if docker_probe_health "1"; then
+        log "docker daemon became healthy after Docker Desktop startup."
+        return 0
+      fi
+      sleep 2
+    done
+  fi
+
+  docker_probe_health "0" || true
+  log "error: docker daemon is not healthy. Ensure Docker Desktop is running and retry."
+  return 1
+}
+
 bundle_harness_image() {
   local image_ref="$1"
   local tar_rel="$2"
@@ -1462,9 +1600,13 @@ bundle_harness_image() {
   fi
 
   if command -v docker >/dev/null 2>&1; then
+    if ! ensure_docker_healthy "0"; then
+      return 1
+    fi
     if docker buildx version >/dev/null 2>&1; then
       # Build the requested Linux arch and write a docker-archive compatible tar.
       docker buildx build \
+        --progress plain \
         --platform "$platform" \
         -t "$image_ref" \
         -f "$ROOT/containers/ctx-harness/Dockerfile" \
@@ -1539,6 +1681,9 @@ elif [[ "$bundle_harness_mode" == "both" || "$bundle_harness_mode" == "all" ]]; 
   if ! command -v docker >/dev/null 2>&1 || ! docker buildx version >/dev/null 2>&1; then
     log "error: CTX_BUNDLE_HARNESS_IMAGE=$bundle_harness_mode requires docker buildx to build both linux/amd64 and linux/arm64 image tars."
     log "       Alternatively, run the bundler twice on different hosts and use CTX_BUNDLE_APPEND=1 to combine manifests."
+    exit 2
+  fi
+  if ! ensure_docker_healthy "1"; then
     exit 2
   fi
 
