@@ -254,6 +254,31 @@ async fn wait_for_terminal_turn_count(
     }
 }
 
+async fn wait_for_failed_turn(
+    state: &Arc<AppState>,
+    session_id: ctx_core::ids::SessionId,
+) -> Vec<ctx_core::models::SessionEvent> {
+    let store = state.store_for_session(session_id).await.unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        let turns = store
+            .list_session_turns_page_by_seq(session_id, None, Some(50))
+            .await
+            .unwrap();
+        if turns
+            .iter()
+            .any(|t| matches!(t.status, SessionTurnStatus::Failed))
+        {
+            return store.list_session_events(session_id).await.unwrap();
+        }
+        if tokio::time::Instant::now() >= deadline {
+            let events = store.list_session_events(session_id).await.unwrap();
+            panic!("timed out waiting for failed turn: turns={turns:#?} events={events:#?}");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 fn assert_no_session_gap(events: &[ctx_core::models::SessionEvent]) {
     let saw_gap = events.iter().any(|event| {
         matches!(event.event_type, SessionEventType::Notice)
@@ -283,6 +308,66 @@ fn assert_saw_notice_kind(events: &[ctx_core::models::SessionEvent], expected_ki
 
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
+async fn codex_crp_missing_runtime_auth_fails_preflight() {
+    let _env_lock = lock_env();
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let _guard_codex_home = EnvGuard::remove("CODEX_HOME");
+    let _guard = EnvGuard::remove("CTX_CODEX_HOME");
+
+    let Some(python) = python_binary() else {
+        eprintln!("skipping: python3/python not found");
+        return;
+    };
+
+    let script_path = write_fake_codex_crp_script(data_dir.path());
+
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        stores,
+        build_providers(&python, &script_path),
+        "http://127.0.0.1:0".to_string(),
+        None,
+    ));
+    let app = ctx_http::api::router(state.clone());
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let task = common::create_task(&app, ws.id.0, "t1").await;
+    let session = common::create_session(&app, task.id.0, "codex-crp", "fake-model").await;
+
+    post_message(&app, session.id.0, "first").await;
+    let events = wait_for_failed_turn(&state, session.id).await;
+
+    let saw_preflight_error = events.iter().any(|event| {
+        matches!(event.event_type, SessionEventType::Error)
+            && event
+                .payload_json
+                .get("message")
+                .or_else(|| event.payload_json.get("error"))
+                .and_then(|value| value.as_str())
+                .is_some_and(|msg| msg.contains("Codex authentication is not configured"))
+    });
+    assert!(
+        saw_preflight_error,
+        "expected codex auth preflight error; events={events:#?}"
+    );
+    let saw_resume_notice = events.iter().any(|event| {
+        matches!(event.event_type, SessionEventType::Notice)
+            && event
+                .payload_json
+                .get("kind")
+                .and_then(|value| value.as_str())
+                .is_some_and(|kind| kind == "resume_hit" || kind == "resume_miss")
+    });
+    assert!(
+        !saw_resume_notice,
+        "provider runtime should not have started when auth preflight fails; events={events:#?}"
+    );
+}
+
+#[allow(clippy::await_holding_lock)]
+#[tokio::test]
 async fn codex_crp_resume_across_restart_keeps_provider_session_ref() {
     let _env_lock = lock_env();
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
@@ -290,6 +375,13 @@ async fn codex_crp_resume_across_restart_keeps_provider_session_ref() {
     let _guard_codex_home = EnvGuard::remove("CODEX_HOME");
     let codex_home = tempfile::tempdir().unwrap();
     let _guard = EnvGuard::set("CTX_CODEX_HOME", &codex_home.path().to_string_lossy());
+    tokio::fs::create_dir_all(codex_home.path()).await.unwrap();
+    tokio::fs::write(
+        codex_home.path().join("auth.json"),
+        br#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .await
+    .unwrap();
 
     let Some(python) = python_binary() else {
         eprintln!("skipping: python3/python not found");
@@ -374,6 +466,13 @@ async fn codex_crp_resume_breaks_if_codex_home_changes() {
 
     let codex_home1 = tempfile::tempdir().unwrap();
     let guard1 = EnvGuard::set("CTX_CODEX_HOME", &codex_home1.path().to_string_lossy());
+    tokio::fs::create_dir_all(codex_home1.path()).await.unwrap();
+    tokio::fs::write(
+        codex_home1.path().join("auth.json"),
+        br#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .await
+    .unwrap();
 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let state = Arc::new(AppState::new(
@@ -405,6 +504,13 @@ async fn codex_crp_resume_breaks_if_codex_home_changes() {
 
     let codex_home2 = tempfile::tempdir().unwrap();
     let _guard2 = EnvGuard::set("CTX_CODEX_HOME", &codex_home2.path().to_string_lossy());
+    tokio::fs::create_dir_all(codex_home2.path()).await.unwrap();
+    tokio::fs::write(
+        codex_home2.path().join("auth.json"),
+        br#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .await
+    .unwrap();
 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let state2 = Arc::new(AppState::new(
@@ -461,6 +567,41 @@ async fn codex_crp_resume_survives_ctx_default_codex_home() {
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let task = common::create_task(&app, ws.id.0, "t1").await;
     let session = common::create_session(&app, task.id.0, "codex-crp", "fake-model").await;
+    let account_id = "acct-default";
+    let registry = ctx_http::provider_accounts::CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![ctx_http::provider_accounts::CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "Default".to_string(),
+            kind: ctx_http::provider_accounts::CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+            email: None,
+            plan_type: None,
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: ctx_http::provider_accounts::CodexEndpointProfile::default(),
+        }],
+    };
+    ctx_http::provider_accounts::save_codex_registry(data_dir.path(), &registry)
+        .await
+        .unwrap();
+    let account_dir =
+        ctx_http::provider_accounts::ensure_codex_account_dir(data_dir.path(), account_id)
+            .await
+            .unwrap();
+    tokio::fs::write(
+        account_dir.join("auth.json"),
+        br#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .await
+    .unwrap();
+    ctx_http::provider_accounts::ingest_codex_account_auth_to_secret_store(
+        data_dir.path(),
+        account_id,
+    )
+    .await
+    .unwrap();
+    let codex_home = ctx_http::provider_accounts::codex_runtime_home(data_dir.path());
 
     post_message(&app, session.id.0, "first").await;
     wait_for_terminal_turn_count(&state, session.id, 1).await;
@@ -472,13 +613,12 @@ async fn codex_crp_resume_survives_ctx_default_codex_home() {
         .clone()
         .expect("expected provider session ref");
 
-    let codex_home = ctx_http::provider_accounts::codex_fallback_home(data_dir.path());
     let marker = codex_home
         .join("rollouts")
         .join(format!("{provider_ref1}.marker"));
     assert!(
         marker.exists(),
-        "expected provider state persisted under ctx fallback CODEX_HOME at {marker:?}"
+        "expected provider state persisted under ctx runtime CODEX_HOME at {marker:?}"
     );
 
     drop(app);

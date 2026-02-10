@@ -80,6 +80,12 @@ export type DesktopEditorSettings = {
   remote_authority?: string | null;
 };
 
+export type DesktopCodexLoginRelayReq = {
+  login_id: string;
+  callback_url: string;
+  completion_token: string;
+};
+
 export const isDesktopApp = (): boolean => {
   try {
     const g = globalThis as any;
@@ -218,6 +224,9 @@ export const desktopDaemonRequest = async (req: {
   headers?: Array<[string, string]>;
 }): Promise<DesktopHttpResponse> =>
   invoke<DesktopHttpResponse>("desktop_daemon_request", { req });
+
+export const desktopStartCodexLoginRelay = async (req: DesktopCodexLoginRelayReq): Promise<boolean> =>
+  invoke<boolean>("desktop_start_codex_login_relay", { req });
 
 export const desktopStorageGet = async (key: string): Promise<unknown | null> =>
   invoke<unknown | null>("desktop_storage_get", { key });

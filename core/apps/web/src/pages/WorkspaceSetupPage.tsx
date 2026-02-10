@@ -6,15 +6,21 @@ import remarkGfm from "remark-gfm";
 import LauncherBrand from "../components/LauncherBrand";
 import {
   createWorkspace,
+  CodexHostImportProbe,
   ensureWorkspaceHarnessContainer,
   getHealth,
+  importProviderAuthCandidates,
   idToString,
+  listProviderAuthImportCandidates,
   listWorkspaces,
+  type ProviderAuthImportCandidate,
   repoClone,
   repoInit,
   repoStatus,
   setDaemonAuthToken,
   setDaemonBaseUrl,
+  importCodexHostAuth,
+  probeCodexHostImport,
   updateWorkspaceExecutionConfig,
   updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig,
@@ -111,6 +117,9 @@ export default function WorkspaceSetupPage() {
   const [remoteError, setRemoteError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [codexImportProbe, setCodexImportProbe] = useState<CodexHostImportProbe | null>(null);
+  const [codexImportDecision, setCodexImportDecision] = useState<"undecided" | "import" | "skip" | "imported">("undecided");
+  const [codexImportBusy, setCodexImportBusy] = useState(false);
   const [importRepoStatus, setImportRepoStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
   const [importRepoNote, setImportRepoNote] = useState<string | null>(null);
   const [sourcePath, setSourcePath] = useState("");
@@ -132,8 +141,15 @@ export default function WorkspaceSetupPage() {
   const [remotePathSuggestions, setRemotePathSuggestions] = useState<DesktopSshPathEntry[]>([]);
   const [remotePathStatus, setRemotePathStatus] = useState<"idle" | "loading" | "error">("idle");
   const [remotePathError, setRemotePathError] = useState<string | null>(null);
+  const [authImportCandidates, setAuthImportCandidates] = useState<ProviderAuthImportCandidate[]>([]);
+  const [authImportSelected, setAuthImportSelected] = useState<Record<string, boolean>>({});
+  const [authImportBusy, setAuthImportBusy] = useState(false);
+  const [authImportError, setAuthImportError] = useState<string | null>(null);
+  const [authImportResults, setAuthImportResults] = useState<Array<{ provider: string; status: string; message?: string | null }>>([]);
+  const [authImportScannedKey, setAuthImportScannedKey] = useState<string | null>(null);
 
   const containerMode = selections.container;
+  const authImportStepVisible = authImportCandidates.length > 0;
 
   const steps = useMemo<WizardStep[]>(() => {
     const out: WizardStep[] = [
@@ -146,6 +162,17 @@ export default function WorkspaceSetupPage() {
           { id: "remote", title: "Remote", desc: "Agents run on your existing dev box (remote IDE experience)." },
         ],
       },
+    ];
+
+    if (authImportStepVisible) {
+      out.push({
+        key: "auth-import",
+        title: "Import Existing Auth",
+        note: "Optional: import provider credentials found on this host.",
+      });
+    }
+
+    out.push(
       {
         key: "container",
         title: "Agent Sandbox Isolation",
@@ -180,7 +207,7 @@ export default function WorkspaceSetupPage() {
           { id: "new", title: "New empty", desc: "Initialize a new git repo." },
         ],
       },
-    ];
+    );
 
     if (containerMode !== "no-container") {
       out.push({
@@ -245,7 +272,7 @@ export default function WorkspaceSetupPage() {
     );
 
     return out;
-  }, [containerMode]);
+  }, [containerMode, authImportStepVisible]);
 
   useEffect(() => {
     setStepIndex((idx) => Math.min(idx, Math.max(0, steps.length - 1)));
@@ -268,7 +295,11 @@ export default function WorkspaceSetupPage() {
   const needsAllowlist = step.key === "network" && selections.network === "allowlist";
   const hasAllowlist = !needsAllowlist
     || networkAllowlist.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length > 0;
+  const needsCodexDecision = step.key === "confirm"
+    && codexImportProbe?.available
+    && codexImportDecision === "undecided";
   const parsedRemote = parseUserHost(remoteHostInput);
+  const authScanKey = `${selections.location ?? ""}|${parsedRemote?.user ?? ""}@${parsedRemote?.host ?? ""}`;
   const hasRemoteHost = Boolean(parsedRemote?.host);
   const canAdvance = (!requiresSelection || hasSelection)
     && (!isRemoteStep || (hasRemoteHost && remoteStatus !== "connecting"))
@@ -276,6 +307,8 @@ export default function WorkspaceSetupPage() {
     && hasRepoUrl
     && hasTargetBranch
     && hasAllowlist
+    && (step.key !== "auth-import" || !authImportBusy)
+    && !needsCodexDecision
     ;
 
   function applyConnection(info: DesktopConnectionInfo) {
@@ -301,6 +334,34 @@ export default function WorkspaceSetupPage() {
       await sleepMs(200);
     }
     throw lastErr ?? new Error("Timed out waiting for daemon health.");
+  };
+
+  const connectDaemonForImport = async () => {
+    if (!isDesktopApp()) {
+      throw new Error("Auth import requires the desktop app.");
+    }
+    if (selections.location === "remote") {
+      const parsed = parseUserHost(remoteHostInput);
+      if (!parsed?.host) {
+        throw new Error("Remote host is required before scanning auth.");
+      }
+      if (remoteStatus !== "connected") {
+        throw new Error("Verify remote host connection before scanning auth.");
+      }
+      const info = await desktopConnectSsh({
+        host: parsed.host,
+        user: parsed.user ?? null,
+        remote_port: null,
+        start_remote: true,
+        remote_data_dir: null,
+      });
+      applyConnection(info);
+      await waitForDaemonReady(15000);
+      return;
+    }
+    const info = await desktopConnectLocal();
+    applyConnection(info);
+    await waitForDaemonReady(15000);
   };
 
   const parseCloneDestPath = (raw: string): { dest_parent: string; dest_name?: string | null } | null => {
@@ -342,6 +403,16 @@ export default function WorkspaceSetupPage() {
       setRemoteError(null);
       setImportRepoStatus("idle");
       setImportRepoNote(null);
+    }
+    if (stepKey === "location") {
+      setCodexImportProbe(null);
+      setCodexImportDecision("undecided");
+      setCodexImportBusy(false);
+      setAuthImportScannedKey(null);
+      setAuthImportCandidates([]);
+      setAuthImportSelected({});
+      setAuthImportError(null);
+      setAuthImportResults([]);
     }
     if (stepKey === "container" && optionId === "no-container") {
       setNetworkAllowlist("");
@@ -410,6 +481,60 @@ export default function WorkspaceSetupPage() {
       .then((hosts) => setSshHosts(hosts))
       .catch(() => setSshHosts([]));
   }, []);
+
+  useEffect(() => {
+    if (!selections.location) {
+      setAuthImportCandidates([]);
+      setAuthImportSelected({});
+      setAuthImportError(null);
+      setAuthImportResults([]);
+      setAuthImportScannedKey(null);
+      return;
+    }
+    if (selections.location === "remote") {
+      if (!parsedRemote?.host) return;
+      if (remoteStatus !== "connected") return;
+    }
+    if (authImportScannedKey === authScanKey) return;
+
+    let cancelled = false;
+    setAuthImportBusy(true);
+    setAuthImportError(null);
+    setAuthImportResults([]);
+
+    connectDaemonForImport()
+      .then(() => listProviderAuthImportCandidates())
+      .then((resp) => {
+        if (cancelled) return;
+        const candidates = resp.candidates ?? [];
+        setAuthImportCandidates(candidates);
+        setAuthImportSelected(
+          Object.fromEntries(candidates.map((candidate) => [candidate.id, candidate.parse_status === "parsed"])),
+        );
+        setAuthImportScannedKey(authScanKey);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setAuthImportCandidates([]);
+        setAuthImportSelected({});
+        setAuthImportError(err?.message ?? String(err));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAuthImportBusy(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    authImportScannedKey,
+    authScanKey,
+    parsedRemote?.host,
+    remoteStatus,
+    selections.location,
+  ]);
 
   useEffect(() => {
     const shouldSuggest = needsSourcePath
@@ -564,6 +689,7 @@ export default function WorkspaceSetupPage() {
   const onRemoteInputChange = (value: string) => {
     setCreateError(null);
     setRemoteHostInput(value);
+    setAuthImportScannedKey(null);
     if (remoteStatus !== "idle") {
       setRemoteStatus("idle");
       setRemoteError(null);
@@ -612,6 +738,35 @@ export default function WorkspaceSetupPage() {
       }
       return;
     }
+    if (step.key === "auth-import") {
+      if (authImportBusy) return;
+      const candidateIds = authImportCandidates
+        .filter((candidate) => authImportSelected[candidate.id])
+        .map((candidate) => candidate.id);
+      if (!candidateIds.length) {
+        setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+        return;
+      }
+      setAuthImportBusy(true);
+      setAuthImportError(null);
+      try {
+        await connectDaemonForImport();
+        const resp = await importProviderAuthCandidates(candidateIds);
+        const results = (resp.results ?? []).map((result) => ({
+          provider: result.provider_id,
+          status: result.status,
+          message: result.message ?? null,
+        }));
+        setAuthImportResults(results);
+      } catch (err: any) {
+        setAuthImportError(err?.message ?? String(err));
+        setAuthImportBusy(false);
+        return;
+      }
+      setAuthImportBusy(false);
+      setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+      return;
+    }
     setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
   };
 
@@ -643,6 +798,37 @@ export default function WorkspaceSetupPage() {
       // Ensure the daemon is reachable before we navigate away from the wizard.
       // This avoids landing on the workbench too early on cold start.
       await waitForDaemonReady(15000);
+
+      // Optional Codex auth import prompt during onboarding: detect existing daemon-host auth
+      // and require an explicit Import/Skip choice before creating the workspace.
+      let importProbe = codexImportProbe;
+      if (!importProbe) {
+        try {
+          importProbe = await probeCodexHostImport();
+          setCodexImportProbe(importProbe);
+        } catch (err: any) {
+          setCodexImportProbe({
+            available: false,
+            error: err?.message ?? String(err),
+          });
+          importProbe = null;
+        }
+      }
+      if (importProbe?.available && codexImportDecision === "undecided") {
+        const confirmIdx = steps.findIndex((s) => s.key === "confirm");
+        if (confirmIdx >= 0) setStepIndex(confirmIdx);
+        setCreateError("Existing Codex auth detected. Choose Import or Skip in Confirm before creating the workspace.");
+        return;
+      }
+      if (importProbe?.available && codexImportDecision === "import") {
+        setCodexImportBusy(true);
+        try {
+          await importCodexHostAuth();
+          setCodexImportDecision("imported");
+        } finally {
+          setCodexImportBusy(false);
+        }
+      }
 
       // 2. Ensure we have a VCS repo root_path (workspace creation requires this).
       let rootPath = "";
@@ -951,6 +1137,65 @@ export default function WorkspaceSetupPage() {
                     {remoteStatus === "error" && remoteError && (
                       <div className="wizard-error">{remoteError}</div>
                     )}
+                  </div>
+                )}
+                {step.key === "auth-import" && (
+                  <div className="wizard-input">
+                    {authImportBusy ? <div className="wizard-note">Scanning/importing credentials…</div> : null}
+                    {authImportError ? <div className="wizard-error">{authImportError}</div> : null}
+                    {!authImportBusy && !authImportCandidates.length ? (
+                      <div className="wizard-note">No import candidates found on this host.</div>
+                    ) : null}
+                    {authImportCandidates.length > 0 && (
+                      <div className="wizard-option-grid">
+                        {authImportCandidates.map((candidate) => {
+                          const checked = Boolean(authImportSelected[candidate.id]);
+                          const importable = candidate.parse_status === "parsed";
+                          return (
+                            <label key={candidate.id} className="wizard-option" style={{ cursor: importable ? "pointer" : "not-allowed" }}>
+                              <div className="wizard-option-title">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={!importable || authImportBusy}
+                                  onChange={(e) =>
+                                    setAuthImportSelected((prev) => ({ ...prev, [candidate.id]: e.target.checked }))
+                                  }
+                                />
+                                <span className="wizard-option-title-text">{candidate.provider_label}</span>
+                                <span className="wizard-option-badge">{candidate.parse_status}</span>
+                              </div>
+                              <div className="wizard-option-desc">{candidate.path}</div>
+                              {candidate.summary ? <div className="wizard-note wizard-note--tight">{candidate.summary}</div> : null}
+                              {candidate.unsupported_reason ? (
+                                <div className="wizard-note wizard-note--tight">{candidate.unsupported_reason}</div>
+                              ) : null}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {authImportResults.length > 0 && (
+                      <div className="wizard-note">
+                        {authImportResults.map((entry, idx) => (
+                          <div key={`${entry.provider}:${entry.status}:${idx}`}>
+                            {entry.provider}: {entry.status}
+                            {entry.message ? ` (${entry.message})` : ""}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      className="wizard-skip wizard-skip--left wizard-skip--below"
+                      onClick={() => {
+                        setAuthImportSelected({});
+                        setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+                      }}
+                      disabled={authImportBusy}
+                    >
+                      Skip for now
+                    </button>
                   </div>
                 )}
                 {step.key === "source" && needsSourcePath && (
@@ -1281,6 +1526,47 @@ export default function WorkspaceSetupPage() {
                           </div>
                         </div>
                       )}
+                      {codexImportProbe?.available && (
+                        <div className="wizard-summary-row">
+                          <div className="wizard-summary-k">Codex auth</div>
+                          <div className="wizard-summary-v">
+                            <div>
+                              Found {codexImportProbe.auth_kind === "oauth" ? "subscription tokens" : "API key"} at {" "}
+                              {codexImportProbe.path ?? "~/.codex/auth.json"}
+                            </div>
+                            <div className="wizard-input-row" style={{ marginTop: 8 }}>
+                              <button
+                                type="button"
+                                className="wizard-input-button"
+                                onClick={() => {
+                                  setCreateError(null);
+                                  setCodexImportDecision("import");
+                                }}
+                                disabled={creating || codexImportBusy}
+                              >
+                                {codexImportDecision === "import" || codexImportDecision === "imported" ? "Import selected" : "Import"}
+                              </button>
+                              <button
+                                type="button"
+                                className="wizard-input-button"
+                                onClick={() => {
+                                  setCreateError(null);
+                                  setCodexImportDecision("skip");
+                                }}
+                                disabled={creating || codexImportBusy}
+                              >
+                                {codexImportDecision === "skip" ? "Skip selected" : "Skip"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {codexImportProbe?.error && (
+                        <div className="wizard-summary-row">
+                          <div className="wizard-summary-k">Codex auth</div>
+                          <div className="wizard-summary-v">Probe error: {codexImportProbe.error}</div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1305,6 +1591,7 @@ export default function WorkspaceSetupPage() {
                   if (selections.location !== "remote") return false;
                   return remoteStatus === "connected" && Boolean(parseUserHost(remoteHostInput)?.host);
                 }
+                if (key === "auth-import") return true;
                 if (key === "source") {
                   if (!selections.source) return false;
                   if (selections.source === "clone" && !repoUrl.trim()) return false;

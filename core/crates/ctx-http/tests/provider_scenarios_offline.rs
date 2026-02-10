@@ -199,6 +199,14 @@ async fn provider_scenarios_offline_crp_fixtures() {
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
+    let codex_home = tempfile::tempdir().unwrap();
+    tokio::fs::write(
+        codex_home.path().join("auth.json"),
+        br#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .await
+    .unwrap();
+    let _guard_codex_home = EnvGuard::set("CTX_CODEX_HOME", &codex_home.path().to_string_lossy());
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
     let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
