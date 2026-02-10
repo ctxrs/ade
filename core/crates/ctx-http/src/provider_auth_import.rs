@@ -385,15 +385,6 @@ fn summarize_env(
     .into_iter()
     .find_map(|k| env_map.get(k).cloned().filter(|s| !s.trim().is_empty()));
 
-    let auth_type = if env_map
-        .keys()
-        .any(|k| k.contains("API_KEY") || k.contains("TOKEN"))
-    {
-        Some("api_key".to_string())
-    } else {
-        None
-    };
-
     let key_name = env_map
         .keys()
         .find(|k| k.contains("API_KEY") || k.contains("TOKEN"))
@@ -405,7 +396,7 @@ fn summarize_env(
         _ => None,
     };
 
-    (summary, endpoint.or(auth_type.clone()))
+    (summary, endpoint)
 }
 
 fn candidate_from_spec(spec: &PathSpec) -> Option<CandidateMaterial> {
@@ -488,9 +479,9 @@ fn candidate_from_spec(spec: &PathSpec) -> Option<CandidateMaterial> {
                     label: None,
                 });
             }
-            let (summary, endpoint_or_auth) = summarize_env(spec.provider_id, &env_map);
+            let (summary, endpoint) = summarize_env(spec.provider_id, &env_map);
             candidate.summary = summary;
-            candidate.endpoint = endpoint_or_auth.clone();
+            candidate.endpoint = endpoint;
             candidate.auth_type = Some("api_key".to_string());
             candidate.parse_status = "parsed".to_string();
             Some(format!("{} API key", spec.provider_label))
@@ -615,13 +606,24 @@ async fn import_codex_candidate(
     };
 
     let imported_fingerprint = sha256_hex(bytes);
+    let imported_auth = serde_json::from_slice::<serde_json::Value>(bytes).ok();
     let mut registry = provider_accounts::load_codex_registry(data_root).await;
 
     for account in &registry.accounts {
+        // Accounts imported via host flow may only have secret_ref and no account-dir auth.json.
+        // Hydrate before fingerprint comparison so dedupe catches both storage modes.
+        let _ = provider_accounts::hydrate_codex_account_home_from_secret(data_root, &account.id).await;
         let auth_path =
             provider_accounts::codex_account_dir(data_root, &account.id).join("auth.json");
         if let Ok(existing) = tokio::fs::read(&auth_path).await {
-            if sha256_hex(&existing) == imported_fingerprint {
+            let matches_auth = if let Some(imported_auth) = imported_auth.as_ref() {
+                serde_json::from_slice::<serde_json::Value>(&existing)
+                    .ok()
+                    .is_some_and(|existing_auth| existing_auth == *imported_auth)
+            } else {
+                sha256_hex(&existing) == imported_fingerprint
+            };
+            if matches_auth {
                 return Ok(ProviderAuthImportResult {
                     candidate_id: material.candidate.id.clone(),
                     provider_id: "codex".to_string(),
@@ -890,6 +892,79 @@ mod tests {
             parsed.get("OPENAI_BASE_URL"),
             Some(&"https://api.example.com/v1".to_string())
         );
+    }
+
+    #[test]
+    fn summarize_env_does_not_fill_endpoint_with_auth_type() {
+        let env = BTreeMap::from([("OPENAI_API_KEY".to_string(), "sk-test".to_string())]);
+        let (_summary, endpoint) = summarize_env("qwen", &env);
+        assert_eq!(endpoint, None);
+    }
+
+    #[tokio::test]
+    async fn codex_import_dedupes_secret_backed_accounts() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let account_id = "acct-1";
+        let auth_bytes = br#"{"OPENAI_API_KEY":"sk-test"}"#;
+        let account_dir = provider_accounts::ensure_codex_account_dir(root, account_id)
+            .await
+            .unwrap();
+        tokio::fs::write(account_dir.join("auth.json"), auth_bytes)
+            .await
+            .unwrap();
+        provider_accounts::save_codex_registry(
+            root,
+            &provider_accounts::CodexAccountRegistry {
+                active_account_id: Some(account_id.to_string()),
+                accounts: vec![provider_accounts::CodexAccountEntry {
+                    id: account_id.to_string(),
+                    label: "Test".to_string(),
+                    kind: provider_accounts::CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+                    email: None,
+                    plan_type: None,
+                    created_at: Utc::now(),
+                    last_used_at: Some(Utc::now()),
+                    secret_ref: None,
+                    endpoint_profile: provider_accounts::CodexEndpointProfile::default(),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+        provider_accounts::ingest_codex_account_auth_to_secret_store(root, account_id)
+            .await
+            .unwrap();
+        tokio::fs::remove_file(account_dir.join("auth.json"))
+            .await
+            .unwrap();
+
+        let material = CandidateMaterial {
+            candidate: ProviderAuthImportCandidate {
+                id: "codex-candidate".to_string(),
+                provider_id: "codex".to_string(),
+                provider_label: "Codex".to_string(),
+                kind: "json_file".to_string(),
+                path: "/tmp/.codex/auth.json".to_string(),
+                signal_strength: "strong".to_string(),
+                confidence: "high".to_string(),
+                parse_status: "parsed".to_string(),
+                unsupported_reason: None,
+                summary: Some("Codex auth session".to_string()),
+                account_identity: None,
+                endpoint: None,
+                auth_type: Some("subscription".to_string()),
+                fingerprint: Some(sha256_hex(auth_bytes)),
+                last_modified: None,
+            },
+            importable: true,
+            secret_bytes: Some(auth_bytes.to_vec()),
+            label: Some("Imported Codex profile".to_string()),
+        };
+
+        let result = import_codex_candidate(root, &material).await.unwrap();
+        assert_eq!(result.status, "already_imported");
+        assert_eq!(result.profile_id.as_deref(), Some(account_id));
     }
 
     #[test]

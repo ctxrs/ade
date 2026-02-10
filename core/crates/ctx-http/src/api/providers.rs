@@ -723,6 +723,12 @@ pub(super) async fn import_provider_auth_candidates(
                     }),
                 )
             })?;
+    let codex_mutated = results.iter().any(|result| {
+        result.provider_id == "codex" && matches!(result.status.as_str(), "imported" | "updated")
+    });
+    if codex_mutated {
+        restart_codex_providers_for_auth_change(&state, "codex auth updated").await;
+    }
     Ok(Json(ProviderAuthImportResponse { results }))
 }
 
