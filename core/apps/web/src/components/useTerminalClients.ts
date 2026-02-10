@@ -131,7 +131,7 @@ export function useTerminalClients(
   useEffect(() => {
     const theme = terminalTheme(themeVariant);
     for (const client of clientsRef.current.values()) {
-      client.terminal.setOption("theme", theme);
+      client.terminal.options.theme = theme;
     }
   }, [themeVariant]);
 

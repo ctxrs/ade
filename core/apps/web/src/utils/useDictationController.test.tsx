@@ -73,11 +73,11 @@ describe("useDictationController integration", () => {
       checkPermission: vi.fn(async () => ({
         microphone: "granted",
         speechRecognition: "granted",
-      })),
+      } as const)),
       requestPermission: vi.fn(async () => ({
         microphone: "granted",
         speechRecognition: "granted",
-      })),
+      } as const)),
       startListening: vi.fn(async () => {}),
       stopListening: vi.fn(async () => {}),
       onResult: vi.fn(async (handler) => {

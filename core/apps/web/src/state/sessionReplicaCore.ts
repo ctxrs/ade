@@ -61,7 +61,7 @@ const isFinalThoughtEvent = (event: SessionEvent | null | undefined): boolean =>
   );
 };
 
-const PARTIAL_EVENT_TYPES: Set<SessionEvent["event_type"]> = new Set(["assistant_chunk"]);
+const PARTIAL_EVENT_TYPES = new Set<string>(["assistant_chunk"]);
 
 const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
   if (!event) return false;
@@ -254,9 +254,16 @@ export class SessionReplicaCore {
   };
 
   private emitPatches(patches: SessionReplicaPatch[]) { if (patches.length) this.deps.emit(patches); }
-  private emitPatch(op: SessionReplicaPatch["op"], sessionId: string, data: SessionReplicaData) {
+  private emitPatch(op: "append" | "replace", sessionId: string, data: SessionReplicaData): void;
+  private emitPatch(op: "evict", sessionId: string, data: { eventsBeforeSeq?: number }): void;
+  private emitPatch(
+    op: SessionReplicaPatch["op"],
+    sessionId: string,
+    data: SessionReplicaData | { eventsBeforeSeq?: number },
+  ) {
     const id = normalizeId(sessionId);
-    if (id) this.emitPatches([{ op, sessionId: id, data }]);
+    if (!id) return;
+    this.emitPatches([{ op, sessionId: id, data } as SessionReplicaPatch]);
   }
 
   private ensureEntry(sessionId: string): SessionReplicaEntry {

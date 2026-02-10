@@ -249,7 +249,7 @@ const installHooks = (recorder: WalRecorder, getMode: () => WalMode) => {
     const originalSend = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.open = function (method: string, url: string, ...rest: any[]) {
       (this as any).__ctxWal = { method, url, start: 0, request_bytes: undefined };
-      return originalOpen.call(this, method, url, ...rest);
+      return (originalOpen as any).call(this, method, url, ...rest);
     };
     XMLHttpRequest.prototype.send = function (body?: Document | BodyInit | null) {
       const meta = (this as any).__ctxWal;
@@ -740,25 +740,23 @@ export const initWalRecorder = (): WalRecorder | null => {
     getStatus,
   };
 
-  if (modeState !== "off") {
-    recorder.onRender = ((id, phase, actualDuration, baseDuration, startTime, commitTime) => {
-      const shouldSample = modeState !== "heavy" && actualDuration < 16;
-      if (shouldSample) return;
-      const origin = performance?.timeOrigin ?? Date.now();
-      record(
-        "react:render",
-        {
-          id,
-          phase,
-          actual_duration_ms: Math.round(actualDuration),
-          base_duration_ms: Math.round(baseDuration),
-          start_ms: Math.round(origin + startTime),
-          commit_ms: Math.round(origin + commitTime),
-        },
-        { level: modeState === "heavy" ? "heavy" : "light" },
-      );
-    }) as ProfilerOnRenderCallback;
-  }
+  recorder.onRender = ((id, phase, actualDuration, baseDuration, startTime, commitTime) => {
+    const shouldSample = modeState !== "heavy" && actualDuration < 16;
+    if (shouldSample) return;
+    const origin = performance?.timeOrigin ?? Date.now();
+    record(
+      "react:render",
+      {
+        id,
+        phase,
+        actual_duration_ms: Math.round(actualDuration),
+        base_duration_ms: Math.round(baseDuration),
+        start_ms: Math.round(origin + startTime),
+        commit_ms: Math.round(origin + commitTime),
+      },
+      { level: modeState === "heavy" ? "heavy" : "light" },
+    );
+  }) as ProfilerOnRenderCallback;
 
   globalAny.__CTX_WAL__ = recorder;
   installHooks(recorder, () => modeState);

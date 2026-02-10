@@ -68,6 +68,23 @@ const mkSession = (sessionId: string): Session => ({
   status: "active",
 });
 
+const mkWorkspaceSnapshotState = () => ({
+  workspaceId: "ws-1",
+  initialized: true,
+  connection: "connected" as const,
+  tasksById: {},
+  activeIds: [],
+  archivedIds: [],
+  totalActive: 0,
+  totalArchived: 0,
+  archivedRev: 0,
+  worktreeVcsById: {},
+  fetchState: { active: "idle" as const, archived: "idle" as const },
+  hasMoreActive: false,
+  hasMoreArchived: false,
+  archivedLoaded: false,
+});
+
 describe("SessionSupervisor", () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -82,6 +99,7 @@ describe("SessionSupervisor", () => {
       {
         id: "m1",
         session_id: sessionId,
+        task_id: "task-1",
         role: "user",
         content: "queued",
         delivery: "queued",
@@ -142,21 +160,9 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessionIds: () => {},
-      getSnapshot: () => ({
-        workspaceId: "ws-1",
-        initialized: true,
-        connection: "connected" as const,
-        tasksById: {},
-        activeIds: [],
-        archivedIds: [],
-        totalActive: 0,
-        totalArchived: 0,
-        fetchState: { active: "idle", archived: "idle" },
-        hasMoreActive: false,
-        hasMoreArchived: false,
-        archivedLoaded: false,
-      }),
+      getSnapshot: () => mkWorkspaceSnapshotState(),
     };
 
     sup.bindWorkspaceActiveSnapshotStore(store);
@@ -177,6 +183,7 @@ describe("SessionSupervisor", () => {
     const message: Message = {
       id: "m2",
       session_id: sessionId,
+      task_id: "task-1",
       turn_id: "turn-1",
       role: "assistant",
       content: "hello",
@@ -222,21 +229,9 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessionIds: () => {},
-      getSnapshot: () => ({
-        workspaceId: "ws-1",
-        initialized: true,
-        connection: "connected" as const,
-        tasksById: {},
-        activeIds: [],
-        archivedIds: [],
-        totalActive: 0,
-        totalArchived: 0,
-        fetchState: { active: "idle", archived: "idle" },
-        hasMoreActive: false,
-        hasMoreArchived: false,
-        archivedLoaded: false,
-      }),
+      getSnapshot: () => mkWorkspaceSnapshotState(),
     };
 
     const sup = new SessionSupervisor();
@@ -250,6 +245,7 @@ describe("SessionSupervisor", () => {
     const message: Message = {
       id: "m-recovery",
       session_id: sessionId,
+      task_id: "task-1",
       turn_id: "turn-recovery",
       role: "assistant",
       content: "Recovered",
@@ -312,21 +308,9 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessionIds: () => {},
-      getSnapshot: () => ({
-        workspaceId: "ws-1",
-        initialized: true,
-        connection: "connected" as const,
-        tasksById: {},
-        activeIds: [],
-        archivedIds: [],
-        totalActive: 0,
-        totalArchived: 0,
-        fetchState: { active: "idle", archived: "idle" },
-        hasMoreActive: false,
-        hasMoreArchived: false,
-        archivedLoaded: false,
-      }),
+      getSnapshot: () => mkWorkspaceSnapshotState(),
     };
 
     const sup = new SessionSupervisor();
@@ -399,21 +383,9 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessionIds: () => {},
-      getSnapshot: () => ({
-        workspaceId: "ws-1",
-        initialized: true,
-        connection: "connected" as const,
-        tasksById: {},
-        activeIds: [],
-        archivedIds: [],
-        totalActive: 0,
-        totalArchived: 0,
-        fetchState: { active: "idle", archived: "idle" },
-        hasMoreActive: false,
-        hasMoreArchived: false,
-        archivedLoaded: false,
-      }),
+      getSnapshot: () => mkWorkspaceSnapshotState(),
     };
 
     sup.bindWorkspaceActiveSnapshotStore(store);
@@ -486,21 +458,9 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessionIds: () => {},
-      getSnapshot: () => ({
-        workspaceId: "ws-1",
-        initialized: true,
-        connection: "connected" as const,
-        tasksById: {},
-        activeIds: [],
-        archivedIds: [],
-        totalActive: 0,
-        totalArchived: 0,
-        fetchState: { active: "idle", archived: "idle" },
-        hasMoreActive: false,
-        hasMoreArchived: false,
-        archivedLoaded: false,
-      }),
+      getSnapshot: () => mkWorkspaceSnapshotState(),
     };
 
     sup.bindWorkspaceActiveSnapshotStore(store);
@@ -521,6 +481,7 @@ describe("SessionSupervisor", () => {
     const message: Message = {
       id: "m3",
       session_id: sessionId,
+      task_id: "task-1",
       turn_id: "turn-2",
       role: "assistant",
       content: "final",
@@ -564,6 +525,7 @@ describe("SessionSupervisor", () => {
         {
           id: "msg-gap",
           session_id: sessionId,
+          task_id: "task-1",
           turn_id: "turn-gap",
           role: "assistant",
           content: "hello",
@@ -585,21 +547,9 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessionIds: () => {},
-      getSnapshot: () => ({
-        workspaceId: "ws-1",
-        initialized: true,
-        connection: "connected" as const,
-        tasksById: {},
-        activeIds: [],
-        archivedIds: [],
-        totalActive: 0,
-        totalArchived: 0,
-        fetchState: { active: "idle", archived: "idle" },
-        hasMoreActive: false,
-        hasMoreArchived: false,
-        archivedLoaded: false,
-      }),
+      getSnapshot: () => mkWorkspaceSnapshotState(),
     };
 
     const sup = new SessionSupervisor();
@@ -729,21 +679,9 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessionIds: () => {},
-      getSnapshot: () => ({
-        workspaceId: "ws-1",
-        initialized: true,
-        connection: "connected" as const,
-        tasksById: {},
-        activeIds: [],
-        archivedIds: [],
-        totalActive: 0,
-        totalArchived: 0,
-        fetchState: { active: "idle", archived: "idle" },
-        hasMoreActive: false,
-        hasMoreArchived: false,
-        archivedLoaded: false,
-      }),
+      getSnapshot: () => mkWorkspaceSnapshotState(),
     };
 
     const sup = new SessionSupervisor();
@@ -849,21 +787,9 @@ describe("SessionSupervisor", () => {
       subscribeEvents: (_listener: (evt: WorkspaceActiveSnapshotEvent) => void) => () => {},
       getSessionHeadSnapshot: (id: string) => (id === sessionId ? head : null),
       getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessionIds: () => {},
-      getSnapshot: () => ({
-        workspaceId: "ws-1",
-        initialized: true,
-        connection: "connected" as const,
-        tasksById: {},
-        activeIds: [],
-        archivedIds: [],
-        totalActive: 0,
-        totalArchived: 0,
-        fetchState: { active: "idle", archived: "idle" },
-        hasMoreActive: false,
-        hasMoreArchived: false,
-        archivedLoaded: false,
-      }),
+      getSnapshot: () => mkWorkspaceSnapshotState(),
     };
 
     const sup = new SessionSupervisor();

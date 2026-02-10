@@ -31,6 +31,8 @@ describe("TaskRow rename draft", () => {
       archived: false,
       archiving: false,
       archivePending: false,
+      archivePendingAction: null,
+      statusKind: "idle" as const,
       selected: false,
       hovered: false,
       isRenaming: true,

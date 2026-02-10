@@ -94,6 +94,11 @@ export type SessionCacheEntry = {
   loading: boolean;
   error?: string;
   subscribed: boolean;
+  oldestTurnSeq?: number;
+  fetching?: {
+    head: boolean;
+    history: boolean;
+  };
   updatedAtMs: number;
 };
 
@@ -576,6 +581,8 @@ export class SessionSupervisor {
         loading: e.loading,
         error: e.error,
         subscribed: e.subscribed,
+        oldestTurnSeq: e.oldestTurnSeq,
+        fetching: { ...e.fetching },
         updatedAtMs: e.updatedAtMs,
       };
     }
@@ -1144,7 +1151,6 @@ export class SessionSupervisor {
           status: summary.status,
           input_json: summary.input_preview ?? null,
           output_text: null,
-          first_event_seq: summary.first_event_seq ?? null,
           input_truncated: summary.input_truncated ?? null,
           input_original_bytes: summary.input_original_bytes ?? null,
           output_truncated: summary.output_truncated ?? null,
@@ -1194,7 +1200,6 @@ export class SessionSupervisor {
         status: summary.status ?? null,
         input_json: summary.input_preview ?? null,
         output_text: null,
-        first_event_seq: summary.first_event_seq ?? null,
         input_truncated: summary.input_truncated ?? null,
         input_original_bytes: summary.input_original_bytes ?? null,
         output_truncated: summary.output_truncated ?? null,
@@ -1266,7 +1271,7 @@ export class SessionSupervisor {
       last_event_seq: entry.lastEventSeq ?? 0,
       has_more_turns: entry.hasMoreTurns,
       summary_checkpoint: entry.summaryCheckpoint ?? null,
-      head_window: entry.headWindow ?? null,
+      head_window: entry.headWindow ?? undefined,
     };
     await saveSessionHeadV1(entry.sessionId, head);
   }

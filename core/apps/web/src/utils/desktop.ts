@@ -102,7 +102,6 @@ export const getDesktopPlatform = async (): Promise<DesktopPlatform> => {
     const value = await mod.platform();
     switch (value) {
       case "macos":
-      case "darwin":
         return "macos";
       case "windows":
         return "windows";

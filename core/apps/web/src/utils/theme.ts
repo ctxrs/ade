@@ -18,11 +18,7 @@ const getThemeMedia = (): MediaQueryList | null => {
 
 const stopSystemThemeListener = () => {
   if (systemThemeMedia && systemThemeListener) {
-    if ("removeEventListener" in systemThemeMedia) {
-      systemThemeMedia.removeEventListener("change", systemThemeListener);
-    } else if ("removeListener" in systemThemeMedia) {
-      systemThemeMedia.removeListener(systemThemeListener);
-    }
+    systemThemeMedia.removeEventListener("change", systemThemeListener);
   }
   systemThemeMedia = null;
   systemThemeListener = null;
@@ -47,11 +43,7 @@ const startSystemThemeListener = (target: HTMLElement) => {
   if (!media) return;
   systemThemeMedia = media;
   systemThemeListener = update;
-  if ("addEventListener" in media) {
-    media.addEventListener("change", update);
-  } else if ("addListener" in media) {
-    media.addListener(update);
-  }
+  media.addEventListener("change", update);
 };
 
 const coerceThemeMode = (value: string | null | undefined): ThemeMode | null =>
@@ -181,11 +173,7 @@ export const useThemeVariant = (target?: HTMLElement): ThemeVariant => {
     const media = getThemeMedia();
     const onMediaChange = () => update();
     if (media) {
-      if ("addEventListener" in media) {
-        media.addEventListener("change", onMediaChange);
-      } else if ("addListener" in media) {
-        media.addListener(onMediaChange);
-      }
+      media.addEventListener("change", onMediaChange);
     }
     const onStorage = (event: StorageEvent) => {
       if (event.key === THEME_STORAGE_KEY) update();
@@ -196,11 +184,7 @@ export const useThemeVariant = (target?: HTMLElement): ThemeVariant => {
     return () => {
       observer?.disconnect();
       if (media) {
-        if ("removeEventListener" in media) {
-          media.removeEventListener("change", onMediaChange);
-        } else if ("removeListener" in media) {
-          media.removeListener(onMediaChange);
-        }
+        media.removeEventListener("change", onMediaChange);
       }
       if (typeof window !== "undefined") {
         window.removeEventListener("storage", onStorage);

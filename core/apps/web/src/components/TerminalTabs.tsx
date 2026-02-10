@@ -11,7 +11,7 @@ type TerminalTabsProps = {
   titleOverrides: Record<string, string>;
   renamingId: string | null;
   renameValue: string;
-  renameInputRef: React.RefObject<HTMLInputElement>;
+  renameInputRef: React.RefObject<HTMLInputElement | null>;
   scope: TerminalScope;
   scopeDisabled: boolean;
   activeTaskId: string | null;

@@ -12,7 +12,7 @@ import type {
   WorkbenchThreadView,
   WorkbenchTurnHeader,
 } from "./SessionPage.types";
-import { humanToolKind } from "./SessionPage.helpers";
+import { humanToolKind, parseIsoMs } from "./SessionPage.helpers";
 import type { ContextWindowInfo } from "../components/WorkbenchComposer";
 import type { SessionViewVerbosity } from "../state/uiStateStore";
 
@@ -383,8 +383,8 @@ function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> 
   const sorted = events
     .slice()
     .sort((a, b) => {
-      const sa = readEventOrderSeq(a);
-      const sb = readEventOrderSeq(b);
+      const sa = readEventOrderSeq(a) ?? Number.NaN;
+      const sb = readEventOrderSeq(b) ?? Number.NaN;
       if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
       if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
       if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
@@ -794,7 +794,7 @@ function buildSystemMessageGroups(messages: Message[]): SortableThreadGroup[] {
     .filter((m) => m.role === "system")
     .map((m, idx) => ({
       message: m,
-      orderSeq: Number(m.order_seq ?? Number.NaN),
+      orderSeq: Number(m.turn_sequence ?? Number.NaN),
       idx,
     }))
     .filter((entry) => Number.isFinite(entry.orderSeq))
@@ -810,7 +810,7 @@ function buildSystemMessageGroups(messages: Message[]): SortableThreadGroup[] {
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] system message missing id", {
           created_at: m.created_at ?? null,
-          order_seq: m.order_seq ?? null,
+          turn_sequence: m.turn_sequence ?? null,
         });
       }
       return [];
@@ -1141,8 +1141,8 @@ export function buildWorkbenchThreadViewModelFromTurns(
     if (Number.isFinite(aEnd) && Number.isFinite(bEnd) && aEnd !== bEnd) return aEnd - bEnd;
     if (Number.isFinite(aEnd) && !Number.isFinite(bEnd)) return -1;
     if (!Number.isFinite(aEnd) && Number.isFinite(bEnd)) return 1;
-    const aStart = String(a.started_at ?? a.created_at ?? "");
-    const bStart = String(b.started_at ?? b.created_at ?? "");
+    const aStart = String(a.started_at ?? "");
+    const bStart = String(b.started_at ?? "");
     if (aStart !== bStart) return aStart.localeCompare(bStart);
     const aId = idToString(a.turn_id) ?? "";
     const bId = idToString(b.turn_id) ?? "";
@@ -1178,7 +1178,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] turn missing turn_id", {
           started_at: turn.started_at ?? null,
-          created_at: turn.created_at ?? null,
+          updated_at: turn.updated_at ?? null,
         });
       }
       continue;
@@ -1201,7 +1201,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
         created_at: userMessage.created_at,
       }
       : null;
-    const headerOrderSeq = Number(userMessage?.order_seq ?? Number.NaN);
+    const headerOrderSeq = Number(userMessage?.turn_sequence ?? Number.NaN);
 
     let tools = (toolsByTurnId[turnId] ?? []).map((tool) => {
       const toolKind = String(tool.tool_kind ?? "tool");
@@ -1252,14 +1252,14 @@ export function buildWorkbenchThreadViewModelFromTurns(
     type TimelineEntry = {
       item: ThreadItem;
       created_at: string;
-      kind: "assistant" | "tool" | "thought" | "ask_user_question";
+      kind: "assistant" | "tool" | "thought" | "ask_user_question" | "message";
       order_seq?: number;
       turn_sequence?: number;
     };
 
     const timeline: TimelineEntry[] = [];
     for (const m of assistantMessages) {
-      const orderSeq = Number(m.order_seq ?? Number.NaN);
+      const orderSeq = Number(m.turn_sequence ?? Number.NaN);
       if (!Number.isFinite(orderSeq)) continue;
       const messageId = idToString(m.id);
       if (!messageId) {
@@ -1269,7 +1269,6 @@ export function buildWorkbenchThreadViewModelFromTurns(
           console.error("[WorkbenchThreadViewModel] assistant message missing id", {
             turnId,
             created_at: m.created_at,
-            order_seq: m.order_seq ?? null,
             turn_sequence: m.turn_sequence ?? null,
           });
         }
@@ -1396,7 +1395,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
       // Optimistic turns can be created before the daemon assigns `order_seq` fields.
       // Still show the turn immediately (for no-jank optimistic UX) by falling back to
       // a stable monotonic-ish value derived from timestamps.
-      const fallbackAt = header?.created_at ?? turn.started_at ?? turn.created_at ?? "";
+      const fallbackAt = header?.created_at ?? turn.started_at ?? "";
       const parsed = Date.parse(String(fallbackAt));
       const fallbackOrder = Number.isFinite(parsed) ? parsed : Number.NaN;
       if (!Number.isFinite(fallbackOrder)) continue;
@@ -1439,7 +1438,7 @@ function buildWorkbenchThreadViewModelFromEvents(
 
   const userMessages = messages
     .filter((m) => m.role === "user")
-    .map((m, idx) => ({ message: m, orderSeq: Number(m.order_seq ?? Number.NaN), idx }))
+    .map((m, idx) => ({ message: m, orderSeq: Number(m.turn_sequence ?? Number.NaN), idx }))
     .filter((entry) => Number.isFinite(entry.orderSeq))
     .sort((a, b) => {
       if (a.orderSeq !== b.orderSeq) return (a.orderSeq as number) - (b.orderSeq as number);
@@ -1452,7 +1451,7 @@ function buildWorkbenchThreadViewModelFromEvents(
 
   const assistantMessages = messages
     .filter((m) => m.role === "assistant")
-    .map((m, idx) => ({ message: m, orderSeq: Number(m.order_seq ?? Number.NaN), idx }))
+    .map((m, idx) => ({ message: m, orderSeq: Number(m.turn_sequence ?? Number.NaN), idx }))
     .filter((entry) => Number.isFinite(entry.orderSeq))
     .sort((a, b) => {
       if (a.orderSeq !== b.orderSeq) return (a.orderSeq as number) - (b.orderSeq as number);
@@ -1958,7 +1957,7 @@ function buildWorkbenchThreadViewModelFromEvents(
   for (let i = 0; i < userMessages.length; i++) {
     const u = userMessages[i];
     const nextUser = userMessages[i + 1] ?? null;
-    const userOrderSeq = Number(u.order_seq ?? Number.NaN);
+    const userOrderSeq = Number(u.turn_sequence ?? Number.NaN);
 
     const mid = idToString(u.id);
     if (!mid) {
@@ -1966,7 +1965,7 @@ function buildWorkbenchThreadViewModelFromEvents(
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] user message missing id (events-only view)", {
           created_at: u.created_at ?? null,
-          order_seq: u.order_seq ?? null,
+          turn_sequence: u.turn_sequence ?? null,
         });
       }
       continue;
@@ -1990,9 +1989,9 @@ function buildWorkbenchThreadViewModelFromEvents(
       assistant_complete_at: null,
     };
 
-    const nextUserOrderSeq = nextUser ? Number(nextUser.order_seq ?? Number.NaN) : Number.NaN;
+    const nextUserOrderSeq = nextUser ? Number(nextUser.turn_sequence ?? Number.NaN) : Number.NaN;
     const assistant = assistantMessages.find((a) => {
-      const aSeq = Number(a.order_seq ?? Number.NaN);
+      const aSeq = Number(a.turn_sequence ?? Number.NaN);
       if (!Number.isFinite(userOrderSeq) || !Number.isFinite(aSeq)) return false;
       if (aSeq <= (userOrderSeq as number)) return false;
       if (!nextUser) return true;

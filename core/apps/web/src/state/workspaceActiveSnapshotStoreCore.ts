@@ -384,7 +384,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private e2eDropStreamMessages = false;
   private persistNotifier: (() => void) | null = null;
   private workerPatchEmitter: ((patch: WorkspaceActiveSnapshotPatch) => void) | null = null;
-  private workerPatchTimer: number | null = null;
+  private workerPatchTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private workerPatchPendingEvents: WorkspaceActiveSnapshotEvent[] = [];
   private workerPatchPendingPersist = false;
   private workerPatchDirty = false;
@@ -407,7 +407,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private archivedCursor: WorkspaceIndexCursor | null = null;
   private ws: WebSocket | null = null;
   private connecting = false;
-  private reconnectTimer: number | null = null;
+  private reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private reconnectDelayMs = 1000;
   private snapshotRev = 0;
   private archivedRev = 0;
@@ -416,8 +416,8 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private cacheHydrated = false;
   private liveSnapshotApplied = false;
   private pendingWorkerCache: PersistedWorkspaceActiveSnapshotV1 | null = null;
-  private snapshotWaitTimer: number | null = null;
-  private cachePersistTimer: number | null = null;
+  private snapshotWaitTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  private cachePersistTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private streamQueue: Promise<void> = Promise.resolve();
   private destroyed = false;
 
@@ -872,7 +872,11 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.placeInOrders(normalized);
     }
 
-    const totalCount = Number.isFinite(cached.active?.totalCount) ? cached.active.totalCount : nextActiveIds.size;
+    const totalCountRaw = cached.active?.totalCount;
+    const totalCount =
+      typeof totalCountRaw === "number" && Number.isFinite(totalCountRaw)
+        ? totalCountRaw
+        : nextActiveIds.size;
     this.totalActive = Math.max(totalCount, nextActiveIds.size);
     this.snapshotRev = Math.max(this.snapshotRev, cached.snapshotRev ?? 0);
     this.activeSessionIds = this.collectActiveSessionIds();
@@ -1401,7 +1405,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         this.snapshotRev = Math.max(this.snapshotRev, evt.snapshot_rev);
       }
     }
-    if (typeof evt.archived_rev === "number") {
+    if ("archived_rev" in evt && typeof evt.archived_rev === "number") {
       if (evt.archived_rev !== this.archivedRev) {
         this.archivedRev = evt.archived_rev;
         this.archivedLoaded = false;

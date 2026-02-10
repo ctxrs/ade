@@ -150,7 +150,7 @@ async function getBackend(): Promise<StorageBackend> {
 class WriteBehindStorage {
   private pending = new Map<string, StorageBatchOp>();
   private readCache = new Map<string, unknown>();
-  private flushTimer: number | null = null;
+  private flushTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private flushing = false;
   private flushPromise: Promise<void> | null = null;
 

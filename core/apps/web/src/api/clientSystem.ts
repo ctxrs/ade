@@ -205,7 +205,7 @@ export type NetworkProfilesSettings = {
 export const getSettings = () =>
   apiAny<Settings>("/api/settings");
 
-export const updateSettings = (settings: Settings) =>
+export const updateSettings = (settings: Partial<Settings>) =>
   apiAny<Settings>("/api/settings", {
     method: "POST",
     body: JSON.stringify(settings),

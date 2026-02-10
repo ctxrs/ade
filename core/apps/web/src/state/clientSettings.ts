@@ -39,7 +39,7 @@ const normalizeSettings = (raw: unknown): ClientSettings => {
   if (!raw || typeof raw !== "object") return DEFAULT_SETTINGS;
   const rec = raw as Partial<ClientSettings>;
   if (rec.v !== 1) return DEFAULT_SETTINGS;
-  const desktopNotifications = rec.desktopNotifications ?? {};
+  const desktopNotifications = (rec.desktopNotifications ?? {}) as Partial<ClientSettings["desktopNotifications"]>;
   const turnCompleted =
     typeof desktopNotifications.turnCompleted === "boolean"
       ? desktopNotifications.turnCompleted

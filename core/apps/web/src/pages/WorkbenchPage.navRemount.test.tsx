@@ -40,7 +40,7 @@ const buildSessionSnap = () => ({
   },
 });
 
-const buildWorkspaceSnapshotSnap = () => ({
+const buildWorkspaceSnapshotSnap = (): any => ({
   workspaceId,
   initialized: true,
   connection: "connected",

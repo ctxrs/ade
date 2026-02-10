@@ -50,7 +50,7 @@ describe("useTauriSttModelStatus integration", () => {
       await Promise.resolve();
       await Promise.resolve();
     };
-    const languages = [{ code: "en-US", installed: false }];
+    const languages = [{ code: "en-US", name: "English (US)", installed: false }];
     let downloadHandler: ((payload: { progress?: number; status?: string }) => void) | null = null;
 
     const sttApi: SttApi = {
@@ -59,11 +59,11 @@ describe("useTauriSttModelStatus integration", () => {
       checkPermission: vi.fn(async () => ({
         microphone: "granted",
         speechRecognition: "granted",
-      })),
+      } as const)),
       requestPermission: vi.fn(async () => ({
         microphone: "granted",
         speechRecognition: "granted",
-      })),
+      } as const)),
       startListening: vi.fn(async () => {}),
       stopListening: vi.fn(async () => {}),
       onResult: vi.fn(async () => () => {}),

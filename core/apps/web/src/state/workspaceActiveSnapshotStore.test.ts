@@ -540,7 +540,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
       last_message_preview: "hello",
       last_event_seq: 10,
       state_rev: 5,
-      activity: { is_working: false, last_turn_status: "completed" },
+      activity: { is_working: false, last_turn_status: "completed" as const },
     };
 
     const activeSnapshot: WorkspaceActiveSnapshot = {
