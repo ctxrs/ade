@@ -350,7 +350,7 @@ fn build_candidate_id(provider_id: &str, kind: &str, path: &Path) -> String {
     hasher.update(kind.as_bytes());
     hasher.update(b"|");
     hasher.update(path.to_string_lossy().as_bytes());
-    format!("{}", hex::encode(hasher.finalize()))
+    hex::encode(hasher.finalize())
 }
 
 fn parse_env_file(raw: &str) -> BTreeMap<String, String> {
@@ -612,7 +612,8 @@ async fn import_codex_candidate(
     for account in &registry.accounts {
         // Accounts imported via host flow may only have secret_ref and no account-dir auth.json.
         // Hydrate before fingerprint comparison so dedupe catches both storage modes.
-        let _ = provider_accounts::hydrate_codex_account_home_from_secret(data_root, &account.id).await;
+        let _ =
+            provider_accounts::hydrate_codex_account_home_from_secret(data_root, &account.id).await;
         let auth_path =
             provider_accounts::codex_account_dir(data_root, &account.id).join("auth.json");
         if let Ok(existing) = tokio::fs::read(&auth_path).await {
@@ -652,19 +653,20 @@ async fn import_codex_candidate(
     let kind = serde_json::from_slice::<serde_json::Value>(bytes)
         .ok()
         .and_then(|value| {
-            let has_tokens = value
-                .get("tokens")
-                .and_then(|v| v.as_object())
-                .is_some_and(|tokens| {
-                    tokens
-                        .get("access_token")
-                        .and_then(|v| v.as_str())
-                        .is_some_and(|v| !v.trim().is_empty())
-                        && tokens
-                            .get("refresh_token")
+            let has_tokens =
+                value
+                    .get("tokens")
+                    .and_then(|v| v.as_object())
+                    .is_some_and(|tokens| {
+                        tokens
+                            .get("access_token")
                             .and_then(|v| v.as_str())
                             .is_some_and(|v| !v.trim().is_empty())
-                });
+                            && tokens
+                                .get("refresh_token")
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|v| !v.trim().is_empty())
+                    });
             if has_tokens {
                 return Some(provider_accounts::CODEX_CREDENTIAL_KIND_OAUTH.to_string());
             }
