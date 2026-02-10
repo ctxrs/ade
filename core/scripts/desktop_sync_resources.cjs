@@ -58,13 +58,16 @@ const resetBundleDir = () => {
     if (keep.has(entry)) continue;
     fs.rmSync(path.join(destBundleDir, entry), { recursive: true, force: true });
   }
+  // Tauri resource globs include bundles/images/**/*; ensure directory exists even when empty.
+  fs.mkdirSync(path.join(destBundleDir, "images"), { recursive: true });
 };
 
 const shouldSyncBundles = () => {
   const flag = String(process.env.CTX_DESKTOP_SYNC_BUNDLES || "").trim();
   if (flag) return flag === "1" || flag.toLowerCase() === "true";
-  // For release builds, we want deterministic, self-contained bundles by default.
-  return profile === "release";
+  // Desktop prep should include bundles by default so debug and release both exercise
+  // the same runtime/provider packaging paths.
+  return profile === "release" || profile === "debug";
 };
 
 const syncBundles = () => {
@@ -79,9 +82,9 @@ const syncBundles = () => {
   if (profile === "release") {
     env.CTX_BUNDLE_HARNESS_IMAGE = env.CTX_BUNDLE_HARNESS_IMAGE || "both";
   }
-  // For desktop releases we want container mode to work out-of-box without relying on system
-  // Podman installs (PATH). Bundle Podman (plus its macOS helper binaries) deterministically.
-  if (profile === "release" && process.platform === "darwin") {
+  // For desktop builds on macOS we want container mode to work out-of-box without relying on
+  // system Podman installs (PATH). Bundle Podman (plus helper binaries) deterministically.
+  if (process.platform === "darwin") {
     env.CTX_BUNDLE_PODMAN = env.CTX_BUNDLE_PODMAN || "1";
     if (env.CTX_BUNDLE_PODMAN === "1") {
       env.PODMAN_VERSION = env.PODMAN_VERSION || "5.7.1";
@@ -102,7 +105,7 @@ const syncBundles = () => {
 
   // Container mode runs Linux containers even on macOS/Windows. Bundle Linux provider
   // binaries too so "disk-isolated container" can work offline/out-of-box.
-  if (profile === "release" && process.platform === "darwin") {
+  if (process.platform === "darwin") {
     for (const arch of ["aarch64", "x86_64"]) {
       const linuxEnv = {
         ...env,

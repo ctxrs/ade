@@ -608,9 +608,9 @@ async fn start_turn(
     {
         if is_container {
             // Container runtimes must not rely on the host's ~/.codex directory being available.
-            // We use a deterministic CODEX_HOME under the container's per-workspace CTX_DATA_ROOT.
+            // We always use the ctx-managed runtime home under the container's CTX_DATA_ROOT.
             if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
-                let codex_home = provider_accounts::codex_fallback_home(std::path::Path::new(root));
+                let codex_home = provider_accounts::codex_runtime_home(std::path::Path::new(root));
                 tokio::fs::create_dir_all(&codex_home).await.ok();
                 // Opt-in: if enabled, seed host auth.json into the container-accessible CODEX_HOME.
                 // If enabled but it fails, fail the turn early with a clear error.
@@ -627,6 +627,19 @@ async fn start_turn(
                 provider_env.insert(key, value);
             }
         }
+    }
+    if session.provider_id == "codex" || session.provider_id == "codex-crp" {
+        let codex_home = provider_env
+            .get("CODEX_HOME")
+            .cloned()
+            .ok_or_else(|| anyhow!("missing CODEX_HOME for {}", session.provider_id))?;
+        provider_accounts::ensure_codex_auth_ready(Path::new(&codex_home))
+            .await
+            .map_err(|err| {
+                anyhow!(
+                    "Codex authentication is not configured. Open Settings -> Codex and add a subscription login or API key. Details: {err}"
+                )
+            })?;
     }
 
     if let Ok(cfg) = installer::load_agent_server_config(&state.core.data_root).await {

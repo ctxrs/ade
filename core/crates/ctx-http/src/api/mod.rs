@@ -231,6 +231,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route("/api/providers/codex/accounts", get(list_codex_accounts))
         .route(
+            "/api/providers/codex/import/host",
+            get(probe_host_codex_import).post(import_host_codex_auth),
+        )
+        .route(
             "/api/providers/codex/accounts/usage",
             get(get_codex_accounts_usage),
         )
@@ -240,7 +244,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route(
             "/api/providers/codex/accounts/login/:id",
-            get(get_codex_login),
+            get(get_codex_login).post(complete_codex_login),
         )
         .route(
             "/api/providers/codex/active-account",

@@ -14,6 +14,7 @@ use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
+use url::Url;
 
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
@@ -199,6 +200,9 @@ pub(super) struct CodexLoginStartReq {
 pub(super) struct CodexLoginStartResp {
     account_id: String,
     auth_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected_callback_url: Option<String>,
+    completion_token: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -226,6 +230,23 @@ pub(super) struct ProviderAuthImportResponse {
     results: Vec<provider_auth_import::ProviderAuthImportResult>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct CodexHostImportReq {
+    label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct CodexLoginCompleteReq {
+    callback_url: String,
+    completion_token: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct CodexLoginCompleteResp {
+    accepted: bool,
+    status_code: u16,
+}
+
 pub(super) struct CodexLoginProcess {
     login_id: String,
     auth_url: String,
@@ -242,18 +263,208 @@ pub(super) struct CodexLoginCompletion {
 
 const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub(super) async fn list_codex_accounts(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+fn is_loopback_host(value: &str) -> bool {
+    let host = value.trim().to_ascii_lowercase();
+    if host == "localhost" {
+        return true;
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return ip.is_loopback();
+    }
+    false
+}
+
+fn expected_callback_from_auth_url(auth_url: &str) -> Option<String> {
+    let parsed = Url::parse(auth_url).ok()?;
+    let redirect = parsed
+        .query_pairs()
+        .find_map(|(key, value)| (key == "redirect_uri").then_some(value.into_owned()))?;
+    let callback = Url::parse(&redirect).ok()?;
+    let host = callback.host_str()?;
+    if !is_loopback_host(host) {
+        return None;
+    }
+    Some(callback.to_string())
+}
+
+fn validate_callback_url(
+    callback_url: &str,
+    expected_callback_url: Option<&str>,
+) -> anyhow::Result<()> {
+    let callback = Url::parse(callback_url)
+        .with_context(|| format!("invalid callback_url: {callback_url}"))?;
+    if callback.scheme() != "http" {
+        anyhow::bail!("callback_url must use http scheme");
+    }
+    let host = callback
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("callback_url must include host"))?;
+    if !is_loopback_host(host) {
+        anyhow::bail!("callback_url host must be loopback");
+    }
+    if callback.port().is_none() {
+        anyhow::bail!("callback_url must include explicit port");
+    }
+    if !callback.path().starts_with("/auth/callback") {
+        anyhow::bail!("callback_url path must start with /auth/callback");
+    }
+    if callback.query().is_none() {
+        anyhow::bail!("callback_url must include query parameters");
+    }
+
+    if let Some(expected_raw) = expected_callback_url {
+        let expected = Url::parse(expected_raw)
+            .with_context(|| format!("invalid expected callback URL: {expected_raw}"))?;
+        if callback.port() != expected.port() {
+            anyhow::bail!("callback_url port mismatch");
+        }
+        if callback.path() != expected.path() {
+            anyhow::bail!("callback_url path mismatch");
+        }
+    }
+    Ok(())
+}
+
+async fn codex_accounts_response(state: &Arc<AppState>) -> CodexAccountsResponse {
     let registry = provider_accounts::load_codex_registry(&state.core.data_root).await;
     let logins = {
         let map = state.providers.codex_login_sessions.lock().await;
         map.values().cloned().collect::<Vec<_>>()
     };
-    Ok(Json(CodexAccountsResponse {
+    CodexAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
         logins,
+    }
+}
+
+async fn restart_codex_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
+    let adapters = {
+        let map = state.providers.adapters.lock().await;
+        ["codex", "codex-crp"]
+            .iter()
+            .filter_map(|provider_id| {
+                map.get(*provider_id)
+                    .map(|adapter| (provider_id.to_string(), Arc::clone(adapter)))
+            })
+            .collect::<Vec<_>>()
+    };
+    for (provider_id, adapter) in adapters {
+        if let Err(err) = adapter.restart(reason, ProviderRestartMode::Drain).await {
+            tracing::warn!("failed to drain-restart {provider_id} after auth change: {err}");
+        }
+    }
+}
+
+pub(super) async fn list_codex_accounts(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    Ok(Json(codex_accounts_response(&state).await))
+}
+
+pub(super) async fn probe_host_codex_import(
+    State(_state): State<Arc<AppState>>,
+) -> Result<Json<provider_accounts::CodexHostImportProbe>, (StatusCode, Json<ApiErrorResp>)> {
+    Ok(Json(
+        provider_accounts::probe_host_codex_auth_candidate().await,
+    ))
+}
+
+pub(super) async fn import_host_codex_auth(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CodexHostImportReq>,
+) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::import_host_codex_auth_to_secret_store(&state.core.data_root, req.label)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_codex_providers_for_auth_change(&state, "codex auth updated").await;
+    Ok(Json(codex_accounts_response(&state).await))
+}
+
+pub(super) async fn complete_codex_login(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<CodexLoginCompleteReq>,
+) -> Result<Json<CodexLoginCompleteResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let expected_callback = {
+        let map = state.providers.codex_login_sessions.lock().await;
+        let Some(status) = map.get(&id) else {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "login not found".to_string(),
+                }),
+            ));
+        };
+        if status.status != "pending" {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(ApiErrorResp {
+                    error: "login is not pending".to_string(),
+                }),
+            ));
+        }
+        if status.completion_token.as_deref() != Some(req.completion_token.as_str()) {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ApiErrorResp {
+                    error: "invalid completion token".to_string(),
+                }),
+            ));
+        }
+        status.expected_callback_url.clone()
+    };
+
+    validate_callback_url(&req.callback_url, expected_callback.as_deref()).map_err(|err| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: err.to_string(),
+            }),
+        )
+    })?;
+
+    let response = reqwest::Client::new()
+        .get(&req.callback_url)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiErrorResp {
+                    error: format!("failed to replay callback: {err}"),
+                }),
+            )
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(ApiErrorResp {
+                error: format!("callback replay returned {status}"),
+            }),
+        ));
+    }
+    let status_code = status.as_u16();
+
+    {
+        let mut map = state.providers.codex_login_sessions.lock().await;
+        if let Some(status) = map.get_mut(&id) {
+            status.completion_token = None;
+        }
+    }
+
+    Ok(Json(CodexLoginCompleteResp {
+        accepted: true,
+        status_code,
     }))
 }
 
@@ -283,6 +494,11 @@ pub(super) async fn get_codex_accounts_usage(
     let mut entries = Vec::new();
 
     for account in registry.accounts {
+        let _ = provider_accounts::hydrate_codex_account_home_from_secret(
+            &state.core.data_root,
+            &account.id,
+        )
+        .await;
         let env = provider_accounts::codex_env_for_account(&state.core.data_root, &account.id);
         let usage = if active_id.as_deref() == Some(&account.id) {
             if let Some(snapshot) = cached_active.clone() {
@@ -339,9 +555,14 @@ pub(super) async fn start_codex_login(
             ));
         }
     };
+    let expected_callback_url = expected_callback_from_auth_url(&login.auth_url);
+    let completion_token = uuid::Uuid::new_v4().to_string();
+    let auth_url = login.auth_url.clone();
     let status = provider_accounts::CodexLoginStatus {
         account_id: account_id.clone(),
-        auth_url: login.auth_url.clone(),
+        auth_url: auth_url.clone(),
+        expected_callback_url: expected_callback_url.clone(),
+        completion_token: Some(completion_token.clone()),
         status: "pending".to_string(),
         error: None,
     };
@@ -351,7 +572,6 @@ pub(super) async fn start_codex_login(
     }
     let state_clone = Arc::clone(&state);
     let account_id_for_task = account_id.clone();
-    let auth_url = login.auth_url.clone();
     tokio::spawn(async move {
         monitor_codex_login(state_clone, account_id_for_task, label, login).await;
     });
@@ -359,6 +579,8 @@ pub(super) async fn start_codex_login(
     Ok(Json(CodexLoginStartResp {
         account_id,
         auth_url,
+        expected_callback_url,
+        completion_token,
     }))
 }
 
@@ -397,13 +619,18 @@ pub(super) async fn set_codex_active_account(
         provider_accounts::set_active_codex_account(&state.core.data_root, req.account_id)
             .await
             .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: e.to_string(),
-                    }),
-                )
+                let msg = e.to_string();
+                let status = if msg.contains("api_shape=openai_responses")
+                    || msg.contains("auth_type=bearer")
+                    || msg.contains("unknown account")
+                {
+                    StatusCode::BAD_REQUEST
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                };
+                (status, Json(ApiErrorResp { error: msg }))
             })?;
+    restart_codex_providers_for_auth_change(&state, "codex auth updated").await;
     let logins = {
         let map = state.providers.codex_login_sessions.lock().await;
         map.values().cloned().collect::<Vec<_>>()
@@ -429,6 +656,7 @@ pub(super) async fn delete_codex_account(
                 }),
             )
         })?;
+    restart_codex_providers_for_auth_change(&state, "codex auth updated").await;
     let logins = {
         let mut map = state.providers.codex_login_sessions.lock().await;
         map.remove(&id);
@@ -589,20 +817,29 @@ pub(super) async fn monitor_codex_login(
         let entry = provider_accounts::CodexAccountEntry {
             id: account_id.clone(),
             label,
+            kind: provider_accounts::CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
             email,
             plan_type,
             created_at: Utc::now(),
             last_used_at: Some(Utc::now()),
+            secret_ref: None,
+            endpoint_profile: provider_accounts::CodexEndpointProfile::default(),
         };
         if provider_accounts::upsert_codex_account(&state.core.data_root, entry)
             .await
             .is_ok()
         {
+            let _ = provider_accounts::ingest_codex_account_auth_to_secret_store(
+                &state.core.data_root,
+                &account_id,
+            )
+            .await;
             let _ = provider_accounts::set_active_codex_account(
                 &state.core.data_root,
                 Some(account_id.clone()),
             )
             .await;
+            restart_codex_providers_for_auth_change(&state, "codex auth updated").await;
         }
     } else {
         let _ = tokio::fs::remove_dir_all(&login.account_dir).await;
@@ -616,6 +853,7 @@ pub(super) async fn monitor_codex_login(
             } else {
                 "failed".to_string()
             };
+            entry.completion_token = None;
             entry.error = status.error;
         }
     }
@@ -1324,4 +1562,38 @@ pub(super) async fn dev_restart_providers(
         mode: mode.as_str().to_string(),
         results,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expected_callback_extracts_loopback_redirect() {
+        let auth_url = "https://chat.openai.com/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A6543%2Fauth%2Fcallback";
+        let expected = expected_callback_from_auth_url(auth_url);
+        assert_eq!(
+            expected.as_deref(),
+            Some("http://localhost:6543/auth/callback")
+        );
+    }
+
+    #[test]
+    fn callback_validation_rejects_non_loopback_host() {
+        let err = validate_callback_url(
+            "http://example.com:1234/auth/callback?code=abc",
+            Some("http://localhost:1234/auth/callback"),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("loopback"));
+    }
+
+    #[test]
+    fn callback_validation_accepts_expected_port_path_and_query() {
+        validate_callback_url(
+            "http://127.0.0.1:4321/auth/callback?code=abc&state=def",
+            Some("http://localhost:4321/auth/callback"),
+        )
+        .expect("callback URL should validate");
+    }
 }

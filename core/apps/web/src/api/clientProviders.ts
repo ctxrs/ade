@@ -85,6 +85,7 @@ export const getProviderUsage = (providerId: string, refresh?: boolean) => {
 export type CodexAccountEntry = {
   id: string;
   label: string;
+  kind?: string;
   email?: string | null;
   plan_type?: string | null;
   created_at: string;
@@ -107,6 +108,8 @@ export type CodexAccountUsageResponse = {
 export type CodexLoginStatus = {
   account_id: string;
   auth_url: string;
+  expected_callback_url?: string | null;
+  completion_token?: string | null;
   status: string;
   error?: string | null;
 };
@@ -120,6 +123,20 @@ export type CodexAccountsResponse = {
 export type CodexLoginStartResponse = {
   account_id: string;
   auth_url: string;
+  expected_callback_url?: string | null;
+  completion_token: string;
+};
+
+export type CodexLoginCompleteResponse = {
+  accepted: boolean;
+  status_code: number;
+};
+
+export type CodexHostImportProbe = {
+  available: boolean;
+  path?: string | null;
+  auth_kind?: string | null;
+  error?: string | null;
 };
 
 export type ProviderAuthImportCandidate = {
@@ -166,6 +183,15 @@ export type ProviderImportedAuthProfile = {
 export const listCodexAccounts = () =>
   apiAny<CodexAccountsResponse>(`/api/providers/codex/accounts`);
 
+export const probeCodexHostImport = () =>
+  apiAny<CodexHostImportProbe>(`/api/providers/codex/import/host`);
+
+export const importCodexHostAuth = (label?: string) =>
+  apiAny<CodexAccountsResponse>(`/api/providers/codex/import/host`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
 export const getCodexAccountUsage = (refresh?: boolean) => {
   const params = refresh ? "?refresh=true" : "";
   return apiAny<CodexAccountUsageResponse>(`/api/providers/codex/accounts/usage${params}`);
@@ -179,6 +205,15 @@ export const startCodexLogin = (label?: string) =>
 
 export const getCodexLogin = (accountId: string) =>
   apiAny<CodexLoginStatus>(`/api/providers/codex/accounts/login/${accountId}`);
+
+export const completeCodexLogin = (accountId: string, callbackUrl: string, completionToken: string) =>
+  apiAny<CodexLoginCompleteResponse>(`/api/providers/codex/accounts/login/${accountId}`, {
+    method: "POST",
+    body: JSON.stringify({
+      callback_url: callbackUrl,
+      completion_token: completionToken,
+    }),
+  });
 
 export const setCodexActiveAccount = (accountId: string | null) =>
   apiAny<CodexAccountsResponse>(`/api/providers/codex/active-account`, {

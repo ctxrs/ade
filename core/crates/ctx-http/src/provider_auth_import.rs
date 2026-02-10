@@ -647,14 +647,46 @@ async fn import_codex_candidate(
         .label
         .clone()
         .unwrap_or_else(|| format!("Codex import {}", &account_id[..8]));
+    let kind = serde_json::from_slice::<serde_json::Value>(bytes)
+        .ok()
+        .and_then(|value| {
+            let has_tokens = value
+                .get("tokens")
+                .and_then(|v| v.as_object())
+                .is_some_and(|tokens| {
+                    tokens
+                        .get("access_token")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|v| !v.trim().is_empty())
+                        && tokens
+                            .get("refresh_token")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|v| !v.trim().is_empty())
+                });
+            if has_tokens {
+                return Some(provider_accounts::CODEX_CREDENTIAL_KIND_OAUTH.to_string());
+            }
+            let has_api_key = value
+                .get("OPENAI_API_KEY")
+                .and_then(|v| v.as_str())
+                .is_some_and(|v| !v.trim().is_empty());
+            if has_api_key {
+                return Some(provider_accounts::CODEX_CREDENTIAL_KIND_API_KEY.to_string());
+            }
+            None
+        })
+        .unwrap_or_else(|| provider_accounts::CODEX_CREDENTIAL_KIND_API_KEY.to_string());
 
     let entry = provider_accounts::CodexAccountEntry {
         id: account_id.clone(),
         label,
+        kind,
         email: None,
         plan_type: None,
         created_at: Utc::now(),
         last_used_at: Some(Utc::now()),
+        secret_ref: None,
+        endpoint_profile: provider_accounts::CodexEndpointProfile::default(),
     };
     if let Some(existing) = registry.accounts.iter_mut().find(|a| a.id == entry.id) {
         *existing = entry;
