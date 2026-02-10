@@ -68,15 +68,6 @@ export type ProviderUsageSnapshot = {
   error?: string;
 };
 
-export const authenticateProviderForWorkspace = (workspaceId: string, providerId: string, method_id?: string) =>
-  apiAny<ProviderAuthCheck>(`/api/workspaces/${workspaceId}/providers/${providerId}/authenticate`, {
-    method: "POST",
-    body: JSON.stringify(method_id ? { method_id } : {}),
-  });
-
-export const verifyProviderForWorkspace = (workspaceId: string, providerId: string) =>
-  apiAny<ProviderAuthCheck>(`/api/workspaces/${workspaceId}/providers/${providerId}/verify`, { method: "POST" });
-
 export const getProviderUsage = (providerId: string, refresh?: boolean) => {
   const params = refresh ? "?refresh=true" : "";
   return apiAny<ProviderUsageSnapshot>(`/api/providers/${providerId}/usage${params}`);

@@ -55,7 +55,6 @@ import {
   postMessage,
   unarchiveTask,
   updateTaskTitle,
-  verifyProviderForWorkspace,
 } from "../api/client";
 import {
   useOpenSession,
@@ -712,23 +711,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const runPostInstallAuthVerify = useCallback(
     async (providerId: string) => {
       if (!workspaceId) return;
-
-      // First: probe (no prompt) so we can learn if auth is required.
-      const opts = await refreshProviderOptions(providerId);
-      if (!opts) return;
-
-      if (opts.auth_required) {
-        // Don't automatically kick off long-running auth flows; surface the Authenticate button instead.
-        return;
-      }
-
-      // Second: explicit verify (tiny prompt) to catch BYO-key / endpoint issues that don't show up on probe.
-      try {
-        await verifyProviderForWorkspace(workspaceId, providerId);
-      } catch {
-        // ignore; options refresh will surface status details
-      }
-
+      // Refresh probe status after install; auth actions live under harness subscriptions.
       await refreshProviderOptions(providerId);
     },
     [refreshProviderOptions, workspaceId],

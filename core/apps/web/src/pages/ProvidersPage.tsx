@@ -6,7 +6,6 @@ import {
   ProviderStatus,
   ProviderOptions,
   Workspace,
-  authenticateProviderForWorkspace,
   getInstall,
   getProviderOptions,
   idToString,
@@ -16,11 +15,11 @@ import {
   listProviders,
   listInstallEvents,
   listWorkspaces,
-  verifyProviderForWorkspace,
 } from "../api/client";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { isDesktopApp } from "../utils/desktop";
 import { PROVIDER_INSTALLS_ENABLED } from "../utils/providerInstallGate";
+import { formatProviderVersionDisplay, getMatrixVersionDisplay } from "../utils/providerVersionLabel";
 
 type InstallSession = {
   installId: string;
@@ -56,8 +55,6 @@ export default function ProvidersPage() {
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({});
   const [optsBusy, setOptsBusy] = useState<Record<string, boolean>>({});
-  const [authBusy, setAuthBusy] = useState<Record<string, boolean>>({});
-  const [verifyBusy, setVerifyBusy] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [installs, setInstalls] = useState<Record<string, InstallSession>>({});
@@ -277,34 +274,6 @@ export default function ProvidersPage() {
     }
   };
 
-  const onAuthenticate = async (providerId: string) => {
-    if (!workspaceId) return;
-    setAuthBusy((prev) => ({ ...prev, [providerId]: true }));
-    setError(null);
-    try {
-      await authenticateProviderForWorkspace(workspaceId, providerId);
-      await ensureProviderOpts(providerId);
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
-    } finally {
-      setAuthBusy((prev) => ({ ...prev, [providerId]: false }));
-    }
-  };
-
-  const onVerify = async (providerId: string) => {
-    if (!workspaceId) return;
-    setVerifyBusy((prev) => ({ ...prev, [providerId]: true }));
-    setError(null);
-    try {
-      await verifyProviderForWorkspace(workspaceId, providerId);
-      await ensureProviderOpts(providerId);
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
-    } finally {
-      setVerifyBusy((prev) => ({ ...prev, [providerId]: false }));
-    }
-  };
-
   return (
     <div className="page">
       <div className="header">
@@ -330,7 +299,7 @@ export default function ProvidersPage() {
 
       <div className="card">
         <div className="row">
-          <strong>Auth status</strong>
+          <strong>Provider status</strong>
           <select
             value={workspaceId ?? ""}
             onChange={(e) => setWorkspaceId(e.target.value || null)}
@@ -346,7 +315,7 @@ export default function ProvidersPage() {
             })}
           </select>
         </div>
-        <div className="muted">Provider auth checks run against the selected workspace root.</div>
+        <div className="muted">Provider probes run against the selected workspace root.</div>
       </div>
 
       <ul className="list">
@@ -354,6 +323,9 @@ export default function ProvidersPage() {
           const installSupported = p.details?.install_supported === "true";
           const installRunning = installs[p.provider_id]?.state === "running";
           const installDisabled = busy !== null || installRunning || !installSupported;
+          const detectedVersionLabel = formatProviderVersionDisplay(p);
+          const recommendedVersionLabel = getMatrixVersionDisplay(p.details, "recommended");
+          const latestVersionLabel = getMatrixVersionDisplay(p.details, "latest");
 
           return (
             <li key={p.provider_id} className="card">
@@ -381,22 +353,6 @@ export default function ProvidersPage() {
                     title="Probe session/new (no prompt) to detect auth_required and list models/modes"
                   >
                     {optsBusy[p.provider_id] ? "Checking…" : "Check"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onAuthenticate(p.provider_id)}
-                    disabled={!workspaceId || authBusy[p.provider_id] || !providerOptions[p.provider_id]?.auth_required}
-                    title="Attempt ACP authenticate for this provider"
-                  >
-                    {authBusy[p.provider_id] ? "Authenticating…" : "Authenticate"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onVerify(p.provider_id)}
-                    disabled={!workspaceId || verifyBusy[p.provider_id]}
-                    title="Send a tiny prompt to confirm credentials and connectivity"
-                  >
-                    {verifyBusy[p.provider_id] ? "Verifying…" : "Verify"}
                   </button>
                 </div>
               </>
@@ -434,16 +390,14 @@ export default function ProvidersPage() {
               </div>
             )}
 
-            {(p.version ||
-              p.details?.matrix_recommended_version ||
-              p.details?.matrix_latest_version ||
+            {(detectedVersionLabel ||
+              recommendedVersionLabel ||
+              latestVersionLabel ||
               p.details?.matrix_update_available === "true" ||
               p.details?.matrix_update_requires_context === "true") && (
               <div className="muted">
-                {p.version ? `Detected: ${p.version}` : "Detected: unknown"}
-                {p.details?.matrix_recommended_version
-                  ? ` · Recommended: ${p.details.matrix_recommended_version}`
-                  : ""}
+                {detectedVersionLabel ? `Detected: ${detectedVersionLabel}` : "Detected: unknown"}
+                {recommendedVersionLabel ? ` · Recommended: ${recommendedVersionLabel}` : ""}
                 {p.details?.matrix_update_available === "true" ? " · Update available" : ""}
                 {p.details?.matrix_update_requires_context === "true" ? " · Requires ctx update" : ""}
               </div>

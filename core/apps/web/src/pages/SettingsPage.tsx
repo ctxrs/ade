@@ -9,9 +9,6 @@ import {
   MobileAccessStatus,
   EnableMobileAccessResponse,
   ProviderOptions,
-  ProviderAuthImportCandidate,
-  ProviderAuthImportResult,
-  ProviderImportedAuthProfile,
   ProviderStatus,
   ProviderUsageSnapshot,
   ResourceGovernanceLimits,
@@ -47,7 +44,6 @@ import {
   getTitleGenerationLocalStatus,
   Workspace,
   WorkspaceExecutionConfig,
-  authenticateProviderForWorkspace,
   getInstall,
   getWorkspaceExecutionConfig,
   getProviderOptions,
@@ -60,8 +56,6 @@ import {
   installStreamUrl,
   listMergeQueueEntries,
   listCodexAccounts,
-  listProviderAuthImportCandidates,
-  listProviderAuthImportProfiles,
   probeCodexHostImport,
   listWorkspaceAttachments,
   listInstallEvents,
@@ -70,13 +64,11 @@ import {
   retryMergeQueueEntry,
   setCodexActiveAccount,
   startCodexLogin,
-  importProviderAuthCandidates,
   syncWorkspaceAttachments,
   updateSettings,
   updateAgentSystemPrompt,
   updateSubagentSystemPrompt,
   updateWorkspaceExecutionConfig,
-  verifyProviderForWorkspace,
 } from "../api/client";
 import {
   type DesktopEditorSettings,
@@ -98,6 +90,7 @@ import {
 import { useTauriSttModelStatus } from "../utils/useTauriSttModelStatus";
 import { HARNESS_CATALOG, type HarnessCatalogEntry } from "../utils/harnessCatalog";
 import { PROVIDER_INSTALLS_ENABLED } from "../utils/providerInstallGate";
+import { formatProviderVersionDisplay } from "../utils/providerVersionLabel";
 import {
   ENTITLEMENTS_CACHE_KEY,
   ENTITLEMENTS_CACHE_TTL_MS,
@@ -296,8 +289,6 @@ export default function SettingsPage() {
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({});
   const [optsBusy, setOptsBusy] = useState<Record<string, boolean>>({});
-  const [authBusy, setAuthBusy] = useState<Record<string, boolean>>({});
-  const [verifyBusy, setVerifyBusy] = useState<Record<string, boolean>>({});
   const [providerError, setProviderError] = useState<string | null>(null);
   const [installBusy, setInstallBusy] = useState<string | null>(null);
   const [installs, setInstalls] = useState<Record<string, InstallSession>>({});
@@ -326,12 +317,6 @@ export default function SettingsPage() {
   const [workspaceAllowlistText, setWorkspaceAllowlistText] = useState("");
   const [workspaceAllowlistDirty, setWorkspaceAllowlistDirty] = useState(false);
   const [workspaceAllowlistSaving, setWorkspaceAllowlistSaving] = useState(false);
-  const [importCandidates, setImportCandidates] = useState<ProviderAuthImportCandidate[]>([]);
-  const [importProfiles, setImportProfiles] = useState<ProviderImportedAuthProfile[]>([]);
-  const [importSelected, setImportSelected] = useState<Record<string, boolean>>({});
-  const [importBusy, setImportBusy] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [importResults, setImportResults] = useState<ProviderAuthImportResult[]>([]);
   const [codexAccounts, setCodexAccounts] = useState<CodexAccountsResponse | null>(null);
   const [codexAccountsBusy, setCodexAccountsBusy] = useState(false);
   const [codexAccountsError, setCodexAccountsError] = useState<string | null>(null);
@@ -872,40 +857,6 @@ export default function SettingsPage() {
       .then(setProviders)
       .catch((e: any) => setProviderError(e?.message ?? String(e)));
 
-  const refreshImportCandidates = useCallback(async () => {
-    setImportBusy(true);
-    setImportError(null);
-    try {
-      const next = await listProviderAuthImportCandidates();
-      const items = next.candidates ?? [];
-      setImportCandidates(items);
-      setImportSelected((prev) => {
-        const out: Record<string, boolean> = {};
-        for (const item of items) {
-          out[item.id] = prev[item.id] ?? item.parse_status === "parsed";
-        }
-        return out;
-      });
-      return items;
-    } catch (e: any) {
-      setImportError(e?.message ?? String(e));
-      return [];
-    } finally {
-      setImportBusy(false);
-    }
-  }, []);
-
-  const refreshImportProfiles = useCallback(async () => {
-    try {
-      const next = await listProviderAuthImportProfiles();
-      setImportProfiles(next.profiles ?? []);
-      return next.profiles ?? [];
-    } catch (e: any) {
-      setImportError(e?.message ?? String(e));
-      return [];
-    }
-  }, []);
-
   const refreshCodexAccounts = useCallback(async () => {
     setCodexAccountsBusy(true);
     setCodexAccountsError(null);
@@ -1253,12 +1204,6 @@ export default function SettingsPage() {
   }, [active, refreshCodexAccounts, refreshCodexImportProbe, refreshCodexUsage]);
 
   useEffect(() => {
-    if (active !== "credential_imports") return;
-    refreshImportCandidates();
-    refreshImportProfiles();
-  }, [active, refreshImportCandidates, refreshImportProfiles]);
-
-  useEffect(() => {
     const pending = codexAccounts?.logins?.some((login) => login.status === "pending");
     if (!pending) return;
     const t = window.setInterval(() => {
@@ -1589,34 +1534,6 @@ export default function SettingsPage() {
     }
   };
 
-  const onAuthenticate = async (providerId: string) => {
-    if (!workspaceId) return;
-    setAuthBusy((prev) => ({ ...prev, [providerId]: true }));
-    setProviderError(null);
-    try {
-      await authenticateProviderForWorkspace(workspaceId, providerId);
-    } catch (e: any) {
-      setProviderError(e?.message ?? String(e));
-    } finally {
-      setAuthBusy((prev) => ({ ...prev, [providerId]: false }));
-      ensureProviderOpts(providerId, { force: true }).catch(() => {});
-    }
-  };
-
-  const onVerify = async (providerId: string) => {
-    if (!workspaceId) return;
-    setVerifyBusy((prev) => ({ ...prev, [providerId]: true }));
-    setProviderError(null);
-    try {
-      await verifyProviderForWorkspace(workspaceId, providerId);
-    } catch (e: any) {
-      setProviderError(e?.message ?? String(e));
-    } finally {
-      setVerifyBusy((prev) => ({ ...prev, [providerId]: false }));
-      ensureProviderOpts(providerId, { force: true }).catch(() => {});
-    }
-  };
-
   const onInstall = async (id: string) => {
     setInstallBusy(id);
     setProviderError(null);
@@ -1653,29 +1570,6 @@ export default function SettingsPage() {
       setProviderError(e?.message ?? String(e));
     } finally {
       setInstallBusy(null);
-    }
-  };
-
-  const onImportSelectedAuth = async () => {
-    const selectedIds = importCandidates.filter((c) => importSelected[c.id]).map((c) => c.id);
-    if (!selectedIds.length) {
-      setImportResults([]);
-      return;
-    }
-    setImportBusy(true);
-    setImportError(null);
-    try {
-      const resp = await importProviderAuthCandidates(selectedIds);
-      const results = resp.results ?? [];
-      setImportResults(results);
-      await refreshImportCandidates();
-      await refreshImportProfiles();
-      await refreshCodexAccounts();
-      await refreshCodexUsage({ refresh: true, silent: true });
-    } catch (e: any) {
-      setImportError(e?.message ?? String(e));
-    } finally {
-      setImportBusy(false);
     }
   };
 
@@ -3729,12 +3623,15 @@ export default function SettingsPage() {
     if (active === "agent_harnesses") {
       const anyWorkspace = workspaces.length > 0;
       const visibleProviders = providers.filter((p) => p.details?.ui_hidden !== "true").slice();
-      const providersById = new Map<string, ProviderStatus>(visibleProviders.map((p) => [p.provider_id, p]));
       const installControlsEnabled = PROVIDER_INSTALLS_ENABLED;
+      const scopedVisibleProviders = installControlsEnabled
+        ? visibleProviders
+        : visibleProviders.filter((p) => p.installed === true && p.health === "ok");
+      const providersById = new Map<string, ProviderStatus>(scopedVisibleProviders.map((p) => [p.provider_id, p]));
 
       const order = new Map<string, number>(HARNESS_CATALOG.map((h, idx) => [h.id, idx]));
       const curated = HARNESS_CATALOG.filter((h) => providersById.has(h.id));
-      const extras: HarnessCatalogEntry[] = visibleProviders
+      const extras: HarnessCatalogEntry[] = scopedVisibleProviders
         .filter((p) => !order.has(p.provider_id))
         .map((p) => ({ id: p.provider_id, label: p.provider_id, logoSrc: "" }))
         .sort((a, b) => a.id.localeCompare(b.id));
@@ -3757,7 +3654,7 @@ export default function SettingsPage() {
             ) : null}
             <Row
               title="Workspace"
-              description="Used for authenticate/verify checks."
+              description="Used for provider status probes."
               control={
                 <select
                   className="settings-control settings-select"
@@ -3790,6 +3687,7 @@ export default function SettingsPage() {
                 const installUi = installs[id];
                 const installRunning = installUi?.state === "running" || p.details?.install_running === "true";
                 const installBusyLocal = installBusy !== null || installRunning;
+                const versionLabel = formatProviderVersionDisplay(p);
                 const installLabel =
                   installBusyLocal && installUi?.pct !== null
                     ? `${clampPct(installUi.pct)}%`
@@ -3801,12 +3699,12 @@ export default function SettingsPage() {
 
                 const opts = providerOptions[id];
                 const verifyStatus = String((opts as any)?.verify?.status ?? "");
-                const needsAuth = Boolean(opts?.auth_required || verifyStatus === "auth_required");
-                const showVerify = !needsAuth && verifyStatus !== "ok";
 
                 const statusPill = (() => {
                   if (!opts) return null;
-                  if (needsAuth) return <span className="settings-pill settings-pill-warn">Auth required</span>;
+                  if (opts.auth_required || verifyStatus === "auth_required") {
+                    return <span className="settings-pill settings-pill-warn">Auth required</span>;
+                  }
                   if (verifyStatus === "network_error") return <span className="settings-pill settings-pill-warn">Offline</span>;
                   if (verifyStatus === "error") return <span className="settings-pill settings-pill-err">Error</span>;
                   if (opts.probe_ok === false) return <span className="settings-pill settings-pill-err">Unhealthy</span>;
@@ -3834,7 +3732,7 @@ export default function SettingsPage() {
                       </div>
                       <div className="settings-row-desc">
                         {installed ? "Installed" : "Not installed"}
-                        {p.version ? ` · ${p.version}` : ""}
+                        {versionLabel ? ` · ${versionLabel}` : ""}
                       </div>
                     </div>
                     <div className="settings-row-right settings-harness-actions">
@@ -3857,28 +3755,6 @@ export default function SettingsPage() {
                         ) : null
                       ) : (
                         <>
-                          {needsAuth ? (
-                            <button
-                              type="button"
-                              className="settings-btn settings-btn-secondary"
-                              onClick={() => onAuthenticate(id)}
-                              disabled={!anyWorkspace || authBusy[id]}
-                              title="Authenticate this provider"
-                            >
-                              {authBusy[id] ? "Auth…" : "Authenticate"}
-                            </button>
-                          ) : null}
-                          {showVerify ? (
-                            <button
-                              type="button"
-                              className="settings-btn settings-btn-secondary"
-                              onClick={() => onVerify(id)}
-                              disabled={!anyWorkspace || verifyBusy[id]}
-                              title="Send a tiny prompt to confirm credentials and connectivity"
-                            >
-                              {verifyBusy[id] ? "Verifying…" : "Verify"}
-                            </button>
-                          ) : null}
                           <button
                             type="button"
                             className="settings-btn settings-btn-secondary"
@@ -3899,160 +3775,6 @@ export default function SettingsPage() {
           </div>
 
           {providerError ? <div className="settings-banner settings-banner-error">{providerError}</div> : null}
-        </>
-      );
-    }
-
-    if (active === "credential_imports") {
-      const grouped = new Map<string, ProviderAuthImportCandidate[]>();
-      for (const candidate of importCandidates) {
-        const key = candidate.provider_label || candidate.provider_id;
-        const list = grouped.get(key) ?? [];
-        list.push(candidate);
-        grouped.set(key, list);
-      }
-      const groups = [...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-      const selectedCount = importCandidates.filter((c) => importSelected[c.id]).length;
-
-      return (
-        <>
-          <Card title="Import Existing Auth">
-            <Row
-              title="Detected candidates"
-              description="Found in canonical provider auth/config paths on this daemon host."
-              control={
-                <button
-                  type="button"
-                  className="settings-btn settings-btn-secondary"
-                  onClick={() => {
-                    setImportResults([]);
-                    refreshImportCandidates();
-                  }}
-                  disabled={importBusy}
-                >
-                  {importBusy ? "Scanning…" : "Re-scan"}
-                </button>
-              }
-            />
-            <div className="settings-card-block">
-              {!groups.length ? (
-                <div className="settings-empty-compact">No import candidates found on this host.</div>
-              ) : (
-                groups.map(([providerLabel, items]) => (
-                  <div key={providerLabel} style={{ marginBottom: 12 }}>
-                    <div className="settings-table-sub" style={{ marginBottom: 6 }}>
-                      {providerLabel}
-                    </div>
-                    <div className="settings-table settings-table-codex-logins">
-                      <div className="settings-table-head">
-                        <div />
-                        <div>Source</div>
-                        <div>Status</div>
-                      </div>
-                      {items.map((candidate) => {
-                        const selected = Boolean(importSelected[candidate.id]);
-                        const importable = candidate.parse_status === "parsed";
-                        const descBits = [
-                          candidate.summary ? candidate.summary : null,
-                          candidate.endpoint ? `Endpoint: ${candidate.endpoint}` : null,
-                          candidate.unsupported_reason ? candidate.unsupported_reason : null,
-                        ].filter(Boolean);
-                        return (
-                          <div key={candidate.id} className="settings-table-row">
-                            <div>
-                              <input
-                                type="checkbox"
-                                checked={selected}
-                                disabled={!importable || importBusy}
-                                onChange={(e) =>
-                                  setImportSelected((prev) => ({ ...prev, [candidate.id]: e.target.checked }))
-                                }
-                              />
-                            </div>
-                            <div>
-                              <div className="settings-table-mono">{candidate.path}</div>
-                              {descBits.length ? <div className="settings-table-sub">{descBits.join(" · ")}</div> : null}
-                            </div>
-                            <div>
-                              <span
-                                className={
-                                  importable
-                                    ? "settings-pill settings-pill-ok"
-                                    : candidate.parse_status === "unsupported"
-                                      ? "settings-pill settings-pill-warn"
-                                      : "settings-pill settings-pill-err"
-                                }
-                              >
-                                {candidate.parse_status}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-            <Row
-              title="Import selected"
-              description={selectedCount ? `${selectedCount} candidate(s) selected.` : "Select candidates to import."}
-              control={
-                <button
-                  type="button"
-                  className="settings-btn"
-                  onClick={onImportSelectedAuth}
-                  disabled={importBusy || selectedCount === 0}
-                >
-                  {importBusy ? "Importing…" : "Import"}
-                </button>
-              }
-            />
-          </Card>
-
-          {importError ? <div className="settings-banner settings-banner-error">{importError}</div> : null}
-          {importResults.length ? (
-            <div className="settings-banner">
-              {importResults.map((result) => (
-                <div key={`${result.candidate_id}:${result.status}`} className="settings-meta-line">
-                  {result.provider_id}: {result.status}
-                  {result.message ? ` · ${result.message}` : ""}
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          <Card title="Imported profiles">
-            <div className="settings-card-block">
-              {!importProfiles.length ? (
-                <div className="settings-empty-compact">No imported profiles yet.</div>
-              ) : (
-                <div className="settings-table settings-table-codex-usage">
-                  <div className="settings-table-head">
-                    <div>Profile</div>
-                    <div>Provider</div>
-                    <div>Source</div>
-                    <div>Updated</div>
-                  </div>
-                  {importProfiles.map((profile) => (
-                    <div key={profile.id} className="settings-table-row">
-                      <div>
-                        <div className="settings-table-title">{profile.label}</div>
-                        <div className="settings-table-sub">{profile.auth_type ?? "unknown auth"}</div>
-                      </div>
-                      <div className="settings-table-mono">{profile.provider_id}</div>
-                      <div className="settings-table-sub">{profile.source_path}</div>
-                      <div className="settings-table-sub">
-                        {Number.isNaN(Date.parse(profile.updated_at))
-                          ? profile.updated_at
-                          : new Date(profile.updated_at).toLocaleString()}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </Card>
         </>
       );
     }

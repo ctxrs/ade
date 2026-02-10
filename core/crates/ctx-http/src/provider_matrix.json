@@ -31,6 +31,7 @@
       "releases": [
         {
           "version": "0.0.0-ctx.3",
+          "upstream_version": "0.98.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Linux x86_64 only"

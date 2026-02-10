@@ -134,6 +134,8 @@ pub struct ProviderRelease {
     #[serde(default)]
     pub status: ProviderReleaseStatus,
     #[serde(default)]
+    pub upstream_version: Option<String>,
+    #[serde(default)]
     pub context_min: Option<String>,
     #[serde(default)]
     pub context_max: Option<String>,
@@ -392,11 +394,23 @@ pub async fn apply_matrix_to_status(
             "matrix_recommended_version".to_string(),
             rec.version.clone(),
         );
+        if let Some(upstream) = rec.upstream_version.as_ref() {
+            status.details.insert(
+                "matrix_recommended_upstream_version".to_string(),
+                upstream.clone(),
+            );
+        }
     }
     if let Some(latest) = latest_release(entry) {
         status
             .details
             .insert("matrix_latest_version".to_string(), latest.version.clone());
+        if let Some(upstream) = latest.upstream_version.as_ref() {
+            status.details.insert(
+                "matrix_latest_upstream_version".to_string(),
+                upstream.clone(),
+            );
+        }
     }
 
     let mut diagnostics = Vec::new();
@@ -405,6 +419,12 @@ pub async fn apply_matrix_to_status(
         if let Some(version) = detected_version.as_deref() {
             match release_for_version(entry, version) {
                 Some(release) => {
+                    if let Some(upstream) = release.upstream_version.as_ref() {
+                        status.details.insert(
+                            "matrix_detected_upstream_version".to_string(),
+                            upstream.clone(),
+                        );
+                    }
                     if release.status != ProviderReleaseStatus::Supported {
                         diagnostics.push(format!(
                             "Provider version {} is blocked by the support matrix",
@@ -787,6 +807,7 @@ mod tests {
             ProviderRelease {
                 version: "0.7.1".to_string(),
                 status: ProviderReleaseStatus::Supported,
+                upstream_version: None,
                 context_min: None,
                 context_max: None,
                 notes: None,
@@ -794,6 +815,7 @@ mod tests {
             ProviderRelease {
                 version: "0.7.3".to_string(),
                 status: ProviderReleaseStatus::Supported,
+                upstream_version: None,
                 context_min: None,
                 context_max: None,
                 notes: None,
@@ -809,6 +831,7 @@ mod tests {
         let release = ProviderRelease {
             version: "1.0.0".to_string(),
             status: ProviderReleaseStatus::Supported,
+            upstream_version: None,
             context_min: Some("1.2.0".to_string()),
             context_max: None,
             notes: None,
