@@ -2179,6 +2179,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           supervisor.setDiff(sessionId, resp.diff ?? "");
           setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: undefined }));
         } catch (err: any) {
+          supervisor.setDiff(sessionId, "");
           const msg = err?.message ? `Failed to load diff content: ${err.message}` : "Failed to load diff content.";
           setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: msg }));
         }

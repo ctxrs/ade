@@ -626,6 +626,60 @@ describe("SessionSupervisor", () => {
     alertSpy.mockRestore();
   });
 
+  it("preserves local-only queued messages across replica replace patches", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-replace-local-only";
+    const sup = new SessionSupervisor();
+    const internalEntry = (sup as any).ensureEntry(sessionId);
+    const now = Date.now();
+
+    const serverMessage: Message = {
+      id: "m-server",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-1",
+      role: "assistant",
+      content: "old server copy",
+      delivery: "immediate",
+      created_at: new Date(now).toISOString(),
+    };
+    const queuedLocalMessage: Message = {
+      id: "m-local",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-2",
+      role: "user",
+      content: "queued local draft",
+      delivery: "queued",
+      created_at: new Date(now + 1).toISOString(),
+    };
+
+    internalEntry.messages = [serverMessage, queuedLocalMessage];
+    internalEntry.queue = [queuedLocalMessage];
+
+    (sup as any).handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          messages: [
+            {
+              ...serverMessage,
+              content: "fresh server copy",
+            },
+          ],
+        },
+      },
+    ]);
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.messages.map((message) => message.id)).toEqual(["m-server", "m-local"]);
+    expect(entry?.messages.find((message) => message.id === "m-server")?.content).toBe("fresh server copy");
+    expect(entry?.messages.find((message) => message.id === "m-local")?.content).toBe("queued local draft");
+    expect(entry?.queue.map((message) => message.id)).toEqual(["m-local"]);
+  });
+
   it("ignores active task upserts without head data", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

@@ -590,7 +590,18 @@ export class SessionSupervisor {
       const sessionId = String(patch.sessionId || "").trim();
       if (!sessionId) continue;
       const entry = this.ensureEntry(sessionId);
+      let localOnlyMessages: Message[] = [];
       if (patch.op === "replace") {
+        const incomingMessages = Array.isArray(patch.data.messages) ? patch.data.messages : [];
+        const incomingMessageIds = new Set(
+          incomingMessages
+            .map((message) => idToString(message.id))
+            .filter((id): id is string => !!id),
+        );
+        localOnlyMessages = entry.messages.filter((message) => {
+          const id = idToString(message.id);
+          return id ? !incomingMessageIds.has(id) : false;
+        });
         this.resetEntryForGap(entry, { skipPublish: true });
       }
       if (patch.op === "evict") {
@@ -610,22 +621,6 @@ export class SessionSupervisor {
         continue;
       }
       const data = patch.data;
-      const incomingMessages = Array.isArray(data.messages) ? data.messages : [];
-      const incomingMessageIds =
-        patch.op === "replace"
-          ? new Set(
-              incomingMessages
-                .map((message) => idToString(message.id))
-                .filter((id): id is string => !!id),
-            )
-          : null;
-      const localOnlyMessages =
-        patch.op === "replace" && incomingMessageIds
-          ? entry.messages.filter((message) => {
-              const id = idToString(message.id);
-              return id ? !incomingMessageIds.has(id) : false;
-            })
-          : [];
       if (data.session) {
         entry.session = data.session;
         void this.ensureThoughtCache(entry);
