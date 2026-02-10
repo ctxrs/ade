@@ -36,6 +36,12 @@ import {
   type DesktopSshPathEntry,
   type DesktopSshHost,
 } from "../utils/desktop";
+import {
+  deriveRepoNameFromUrl,
+  getSourceStepValidation,
+  parseCloneDestPath,
+  resolveWorkspaceName,
+} from "./WorkspaceSetupPage.logic";
 
 type WizardOption = {
   id: string;
@@ -287,11 +293,14 @@ export default function WorkspaceSetupPage() {
   const useDiskIsolatedStaging =
     selections.container === "disk-isolated" &&
     (selections.source === "clone" || selections.source === "new");
-  const needsSourcePath =
-    isSourceStep && Boolean(selections.source) && !useDiskIsolatedStaging;
-  const hasSourcePath = !needsSourcePath || sourcePath.trim() !== "";
-  const needsRepoUrl = isSourceStep && selections.source === "clone";
-  const hasRepoUrl = !needsRepoUrl || repoUrl.trim() !== "";
+  const sourceStepValidation = getSourceStepValidation({
+    source: selections.source,
+    sourcePath,
+    repoUrl,
+    useDiskIsolatedStaging,
+  });
+  const needsSourcePath = isSourceStep && sourceStepValidation.needsSourcePath;
+  const hasSourceStepInputs = !isSourceStep || sourceStepValidation.isComplete;
   const needsTargetBranch = step.key === "merge-queue" && !mergeQueueSkipped;
   const hasTargetBranch = !needsTargetBranch || targetBranch.trim() !== "";
   const needsAllowlist = step.key === "network" && selections.network === "allowlist";
@@ -311,8 +320,7 @@ export default function WorkspaceSetupPage() {
   })();
   const canAdvance = (!requiresSelection || hasSelection)
     && (!isRemoteStep || (hasRemoteHost && remoteStatus !== "connecting" && parsedRemotePort !== null))
-    && hasSourcePath
-    && hasRepoUrl
+    && hasSourceStepInputs
     && hasTargetBranch
     && hasAllowlist
     && (step.key !== "auth-import" || !authImportBusy)
@@ -369,35 +377,6 @@ export default function WorkspaceSetupPage() {
     const info = await desktopConnectLocal();
     applyConnection(info);
     await waitForDaemonReady(15000);
-  };
-
-  const parseCloneDestPath = (raw: string): { dest_parent: string; dest_name?: string | null } | null => {
-    const input = String(raw || "").trim();
-    if (!input) return null;
-    const hasTrailingSlash = /\/+$/.test(input);
-    const normalized = input.replace(/\/+$/, "");
-    if (!normalized) return null;
-    // Basic POSIX parsing (desktop app is our primary target here).
-    if (hasTrailingSlash) {
-      return { dest_parent: normalized, dest_name: null };
-    }
-    const idx = normalized.lastIndexOf("/");
-    if (idx < 0) return null;
-    const dest_parent = normalized.slice(0, idx) || "/";
-    const dest_name = normalized.slice(idx + 1).trim();
-    if (!dest_name) return null;
-    return { dest_parent, dest_name };
-  };
-
-  const deriveRepoNameFromUrl = (url: string): string | null => {
-    const trimmed = url.trim().replace(/\/+$/, "");
-    if (!trimmed) return null;
-    const normalized = trimmed.replace(":", "/");
-    const parts = normalized.split("/");
-    const last = parts[parts.length - 1]?.trim();
-    if (!last) return null;
-    const name = last.replace(/\.git$/i, "").trim();
-    return name || null;
   };
 
   const shouldAutoAdvance = (stepKey: string, optionId: string): boolean => {
@@ -824,6 +803,24 @@ export default function WorkspaceSetupPage() {
       await waitForDaemonReady(15000);
 
       // 2. Ensure we have a VCS repo root_path (workspace creation requires this).
+      let allWorkspaces: Awaited<ReturnType<typeof listWorkspaces>> | null = null;
+      const getAllWorkspaces = async () => {
+        if (!allWorkspaces) {
+          allWorkspaces = await listWorkspaces();
+        }
+        return allWorkspaces;
+      };
+      const getExistingWorkspaceNamesForGenerated = async () => {
+        try {
+          const all = await getAllWorkspaces();
+          return all
+            .map((workspace) => String((workspace as any).name ?? "").trim())
+            .filter(Boolean);
+        } catch {
+          // Name collision avoidance is best-effort; do not block creation on listing failures.
+          return [];
+        }
+      };
       let rootPath = "";
       let name: string | undefined;
       let wsId = "";
@@ -839,7 +836,7 @@ export default function WorkspaceSetupPage() {
           rootPath = String(st.canonical_path).trim() || rootPath;
         }
         // Prefer existing workspace if already registered.
-        const all = await listWorkspaces();
+        const all = await getAllWorkspaces();
         const hit = all.find((w) => String((w as any).root_path) === rootPath);
         if (hit) {
           wsId = idToString((hit as any).id);
@@ -867,7 +864,15 @@ export default function WorkspaceSetupPage() {
           dest_name,
         });
         rootPath = resp.path;
-        name = (dest_name ?? "").trim() || undefined;
+        const existingWorkspaceNames = await getExistingWorkspaceNamesForGenerated();
+        name = resolveWorkspaceName({
+          source: selections.source,
+          workspaceName,
+          repoUrl,
+          destPath: useDiskIsolatedStaging ? null : sourcePath,
+          useDiskIsolatedStaging,
+          existingWorkspaceNames,
+        });
       } else if (selections.source === "new") {
         let destPath: string;
         if (useDiskIsolatedStaging) {
@@ -880,7 +885,15 @@ export default function WorkspaceSetupPage() {
         // Allow existing empty directories (daemon still refuses non-empty dirs).
         await repoInit({ path: destPath, allow_existing: true });
         rootPath = destPath;
-        name = workspaceName.trim() || parseCloneDestPath(destPath)?.dest_name || undefined;
+        const existingWorkspaceNames = await getExistingWorkspaceNamesForGenerated();
+        name = resolveWorkspaceName({
+          source: selections.source,
+          workspaceName,
+          repoUrl,
+          destPath,
+          useDiskIsolatedStaging,
+          existingWorkspaceNames,
+        });
       } else {
         throw new Error("Choose a source option.");
       }
@@ -1619,11 +1632,7 @@ export default function WorkspaceSetupPage() {
                 }
                 if (key === "auth-import") return true;
                 if (key === "source") {
-                  if (!selections.source) return false;
-                  if (selections.source === "clone" && !repoUrl.trim()) return false;
-                  if (!sourcePath.trim()) return false;
-                  if (selections.source === "clone" && !parseCloneDestPath(sourcePath)) return false;
-                  return true;
+                  return sourceStepValidation.isComplete;
                 }
                 if (key === "merge-queue") return mergeQueueSkipped || Boolean(targetBranch.trim());
                 if (key === "setup") return true;
