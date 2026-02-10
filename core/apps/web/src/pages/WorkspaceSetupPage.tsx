@@ -16,6 +16,7 @@ import {
   repoClone,
   repoInit,
   repoStatus,
+  repoStagingPath,
   setDaemonAuthToken,
   setDaemonBaseUrl,
   updateWorkspaceExecutionConfig,
@@ -283,7 +284,11 @@ export default function WorkspaceSetupPage() {
   const mergeQueueSkipped = selections["merge-queue"] === "skip";
   const isRemoteStep = step.key === "location" && selections.location === "remote";
   const isSourceStep = step.key === "source";
-  const needsSourcePath = isSourceStep && Boolean(selections.source);
+  const useDiskIsolatedStaging =
+    selections.container === "disk-isolated" &&
+    (selections.source === "clone" || selections.source === "new");
+  const needsSourcePath =
+    isSourceStep && Boolean(selections.source) && !useDiskIsolatedStaging;
   const hasSourcePath = !needsSourcePath || sourcePath.trim() !== "";
   const needsRepoUrl = isSourceStep && selections.source === "clone";
   const hasRepoUrl = !needsRepoUrl || repoUrl.trim() !== "";
@@ -382,6 +387,17 @@ export default function WorkspaceSetupPage() {
     const dest_name = normalized.slice(idx + 1).trim();
     if (!dest_name) return null;
     return { dest_parent, dest_name };
+  };
+
+  const deriveRepoNameFromUrl = (url: string): string | null => {
+    const trimmed = url.trim().replace(/\/+$/, "");
+    if (!trimmed) return null;
+    const normalized = trimmed.replace(":", "/");
+    const parts = normalized.split("/");
+    const last = parts[parts.length - 1]?.trim();
+    if (!last) return null;
+    const name = last.replace(/\.git$/i, "").trim();
+    return name || null;
   };
 
   const shouldAutoAdvance = (stepKey: string, optionId: string): boolean => {
@@ -831,19 +847,36 @@ export default function WorkspaceSetupPage() {
           name = workspaceName.trim() || undefined;
         }
       } else if (selections.source === "clone") {
-        const dest = parseCloneDestPath(sourcePath);
-        if (!dest) throw new Error("Destination must be an absolute path (e.g. /Users/example-user/projects/ or /Users/example-user/projects/repo-name).");
+        let dest_parent: string;
+        let dest_name: string | null;
+        if (useDiskIsolatedStaging) {
+          const staging = await repoStagingPath();
+          dest_parent = staging.path;
+          dest_name = deriveRepoNameFromUrl(repoUrl) || workspaceName.trim() || null;
+          if (!dest_name) throw new Error("Could not derive repo name from URL.");
+        } else {
+          const dest = parseCloneDestPath(sourcePath);
+          if (!dest) throw new Error("Destination must be an absolute path (e.g. /Users/example-user/projects/ or /Users/example-user/projects/repo-name).");
+          dest_parent = dest.dest_parent;
+          dest_name = dest.dest_name ?? null;
+        }
         const resp = await repoClone({
           repo_url: repoUrl.trim(),
           branch: repoBranch.trim() || null,
-          dest_parent: dest.dest_parent,
-          dest_name: dest.dest_name ?? null,
+          dest_parent,
+          dest_name,
         });
         rootPath = resp.path;
-        name = (dest.dest_name ?? "").trim() || undefined;
+        name = (dest_name ?? "").trim() || undefined;
       } else if (selections.source === "new") {
-        const destPath = sourcePath.trim().replace(/\/+$/, "");
-        if (!destPath) throw new Error("Destination folder is required.");
+        let destPath: string;
+        if (useDiskIsolatedStaging) {
+          const staging = await repoStagingPath();
+          destPath = staging.path;
+        } else {
+          destPath = sourcePath.trim().replace(/\/+$/, "");
+          if (!destPath) throw new Error("Destination folder is required.");
+        }
         // Allow existing empty directories (daemon still refuses non-empty dirs).
         await repoInit({ path: destPath, allow_existing: true });
         rootPath = destPath;
@@ -1259,11 +1292,6 @@ export default function WorkspaceSetupPage() {
 	                        {importRepoNote}
 	                      </div>
 	                    )}
-	                    {selections.source === "clone" && (
-	                      <div className="wizard-note">
-	                        Tip: If you enter a folder ending in <code>/</code>, ctx will derive the repo name from the URL.
-	                      </div>
-	                    )}
                     {selections.location === "remote" && remotePathSuggestions.length > 0 && (
                       <div className="wizard-path-list">
                         {remotePathSuggestions.map((entry) => (
@@ -1312,6 +1340,16 @@ export default function WorkspaceSetupPage() {
                           }}
 	                      />
 	                    </label>
+                    {useDiskIsolatedStaging && (
+                      <div className="wizard-note">
+                        Ctx will clone into a managed staging path. Your workspace will live in the container.
+                      </div>
+                    )}
+                    {!useDiskIsolatedStaging && (
+                      <div className="wizard-note">
+                        Tip: If you enter a folder ending in <code>/</code>, ctx will derive the repo name from the URL.
+                      </div>
+                    )}
 	                  </div>
 	                )}
                 {step.key === "setup" && (
@@ -1341,6 +1379,11 @@ export default function WorkspaceSetupPage() {
                           }}
 	                      />
 		                    </label>
+                    {selections.source === "new" && useDiskIsolatedStaging && (
+                      <div className="wizard-note">
+                        Ctx will create the repo in a managed staging path. Your workspace will live in the container.
+                      </div>
+                    )}
 	                  </div>
 	                )}
                 {step.key === "merge-queue" && (
@@ -1480,10 +1523,12 @@ export default function WorkspaceSetupPage() {
                           <div className="wizard-summary-v">{repoUrl.trim()}</div>
                         </div>
                       )}
-                      {selections.source === "clone" && sourcePath.trim() && (
+                      {selections.source === "clone" && (sourcePath.trim() || useDiskIsolatedStaging) && (
                         <div className="wizard-summary-row">
                           <div className="wizard-summary-k">Destination</div>
-                          <div className="wizard-summary-v">{sourcePath.trim()}</div>
+                          <div className="wizard-summary-v">
+                            {useDiskIsolatedStaging ? "Managed staging (container)" : sourcePath.trim()}
+                          </div>
                         </div>
                       )}
                       {selections.source === "import" && sourcePath.trim() && (
@@ -1492,10 +1537,12 @@ export default function WorkspaceSetupPage() {
                           <div className="wizard-summary-v">{sourcePath.trim()}</div>
                         </div>
                       )}
-                      {selections.source === "new" && sourcePath.trim() && (
+                      {selections.source === "new" && (sourcePath.trim() || useDiskIsolatedStaging) && (
                         <div className="wizard-summary-row">
                           <div className="wizard-summary-k">Destination</div>
-                          <div className="wizard-summary-v">{sourcePath.trim()}</div>
+                          <div className="wizard-summary-v">
+                            {useDiskIsolatedStaging ? "Managed staging (container)" : sourcePath.trim()}
+                          </div>
                         </div>
                       )}
                       {(selections.source === "new" || selections.source === "import") && workspaceName.trim() && (

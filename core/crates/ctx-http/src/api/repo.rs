@@ -1,12 +1,16 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
+use uuid::Uuid;
 
 use super::errors::ApiErrorResp;
+use crate::daemon::AppState;
 use crate::logs;
 use ctx_fs::vcs;
 
@@ -468,6 +472,45 @@ pub(super) async fn repo_status(
             error: Some(logs::redact_sensitive(&err.to_string())),
         })),
     }
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct RepoStagingPathResp {
+    path: String,
+}
+
+/// Returns a unique staging path under data_root/workspaces/staging/<uuid>.
+/// Used for disk-isolated clone/new: the daemon manages the path so the wizard
+/// doesn't need to ask the user for a host destination.
+pub(super) async fn repo_staging_path(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<RepoStagingPathResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let staging_dir = state
+        .core
+        .data_root
+        .join("workspaces")
+        .join("staging")
+        .join(Uuid::new_v4().to_string());
+
+    tokio::fs::create_dir_all(&staging_dir).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: format!(
+                    "failed to create staging dir '{}': {e}",
+                    staging_dir.display()
+                ),
+            }),
+        )
+    })?;
+
+    let path = tokio::fs::canonicalize(&staging_dir)
+        .await
+        .unwrap_or(staging_dir)
+        .to_string_lossy()
+        .to_string();
+
+    Ok(Json(RepoStagingPathResp { path }))
 }
 
 // Keep rustfmt from reordering these unused imports in some feature combos.

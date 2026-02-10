@@ -47,3 +47,12 @@ export const repoStatus = (req: RepoStatusRequest) =>
     method: "POST",
     body: JSON.stringify(req),
   });
+
+export type RepoStagingPathResponse = {
+  path: string;
+};
+
+export const repoStagingPath = () =>
+  apiAny<RepoStagingPathResponse>("/api/repo/staging_path", {
+    method: "GET",
+  });
