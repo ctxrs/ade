@@ -27,6 +27,7 @@ pub mod oracle;
 pub mod order_seq;
 pub mod perf_telemetry;
 pub mod provider_accounts;
+pub mod provider_auth_import;
 pub mod provider_child_reclassifier;
 pub mod provider_guard;
 pub mod provider_matrix;

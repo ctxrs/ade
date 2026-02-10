@@ -8,8 +8,11 @@ import {
   createWorkspace,
   ensureWorkspaceHarnessContainer,
   getHealth,
+  importProviderAuthCandidates,
   idToString,
+  listProviderAuthImportCandidates,
   listWorkspaces,
+  type ProviderAuthImportCandidate,
   repoClone,
   repoInit,
   repoStatus,
@@ -132,8 +135,15 @@ export default function WorkspaceSetupPage() {
   const [remotePathSuggestions, setRemotePathSuggestions] = useState<DesktopSshPathEntry[]>([]);
   const [remotePathStatus, setRemotePathStatus] = useState<"idle" | "loading" | "error">("idle");
   const [remotePathError, setRemotePathError] = useState<string | null>(null);
+  const [authImportCandidates, setAuthImportCandidates] = useState<ProviderAuthImportCandidate[]>([]);
+  const [authImportSelected, setAuthImportSelected] = useState<Record<string, boolean>>({});
+  const [authImportBusy, setAuthImportBusy] = useState(false);
+  const [authImportError, setAuthImportError] = useState<string | null>(null);
+  const [authImportResults, setAuthImportResults] = useState<Array<{ provider: string; status: string; message?: string | null }>>([]);
+  const [authImportScannedKey, setAuthImportScannedKey] = useState<string | null>(null);
 
   const containerMode = selections.container;
+  const authImportStepVisible = authImportCandidates.length > 0;
 
   const steps = useMemo<WizardStep[]>(() => {
     const out: WizardStep[] = [
@@ -146,6 +156,17 @@ export default function WorkspaceSetupPage() {
           { id: "remote", title: "Remote", desc: "Agents run on your existing dev box (remote IDE experience)." },
         ],
       },
+    ];
+
+    if (authImportStepVisible) {
+      out.push({
+        key: "auth-import",
+        title: "Import Existing Auth",
+        note: "Optional: import provider credentials found on this host.",
+      });
+    }
+
+    out.push(
       {
         key: "container",
         title: "Agent Sandbox Isolation",
@@ -180,7 +201,7 @@ export default function WorkspaceSetupPage() {
           { id: "new", title: "New empty", desc: "Initialize a new git repo." },
         ],
       },
-    ];
+    );
 
     if (containerMode !== "no-container") {
       out.push({
@@ -245,7 +266,7 @@ export default function WorkspaceSetupPage() {
     );
 
     return out;
-  }, [containerMode]);
+  }, [containerMode, authImportStepVisible]);
 
   useEffect(() => {
     setStepIndex((idx) => Math.min(idx, Math.max(0, steps.length - 1)));
@@ -269,6 +290,7 @@ export default function WorkspaceSetupPage() {
   const hasAllowlist = !needsAllowlist
     || networkAllowlist.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length > 0;
   const parsedRemote = parseUserHost(remoteHostInput);
+  const authScanKey = `${selections.location ?? ""}|${parsedRemote?.user ?? ""}@${parsedRemote?.host ?? ""}`;
   const hasRemoteHost = Boolean(parsedRemote?.host);
   const canAdvance = (!requiresSelection || hasSelection)
     && (!isRemoteStep || (hasRemoteHost && remoteStatus !== "connecting"))
@@ -276,6 +298,7 @@ export default function WorkspaceSetupPage() {
     && hasRepoUrl
     && hasTargetBranch
     && hasAllowlist
+    && (step.key !== "auth-import" || !authImportBusy)
     ;
 
   function applyConnection(info: DesktopConnectionInfo) {
@@ -301,6 +324,34 @@ export default function WorkspaceSetupPage() {
       await sleepMs(200);
     }
     throw lastErr ?? new Error("Timed out waiting for daemon health.");
+  };
+
+  const connectDaemonForImport = async () => {
+    if (!isDesktopApp()) {
+      throw new Error("Auth import requires the desktop app.");
+    }
+    if (selections.location === "remote") {
+      const parsed = parseUserHost(remoteHostInput);
+      if (!parsed?.host) {
+        throw new Error("Remote host is required before scanning auth.");
+      }
+      if (remoteStatus !== "connected") {
+        throw new Error("Verify remote host connection before scanning auth.");
+      }
+      const info = await desktopConnectSsh({
+        host: parsed.host,
+        user: parsed.user ?? null,
+        remote_port: null,
+        start_remote: true,
+        remote_data_dir: null,
+      });
+      applyConnection(info);
+      await waitForDaemonReady(15000);
+      return;
+    }
+    const info = await desktopConnectLocal();
+    applyConnection(info);
+    await waitForDaemonReady(15000);
   };
 
   const parseCloneDestPath = (raw: string): { dest_parent: string; dest_name?: string | null } | null => {
@@ -342,6 +393,13 @@ export default function WorkspaceSetupPage() {
       setRemoteError(null);
       setImportRepoStatus("idle");
       setImportRepoNote(null);
+    }
+    if (stepKey === "location") {
+      setAuthImportScannedKey(null);
+      setAuthImportCandidates([]);
+      setAuthImportSelected({});
+      setAuthImportError(null);
+      setAuthImportResults([]);
     }
     if (stepKey === "container" && optionId === "no-container") {
       setNetworkAllowlist("");
@@ -410,6 +468,60 @@ export default function WorkspaceSetupPage() {
       .then((hosts) => setSshHosts(hosts))
       .catch(() => setSshHosts([]));
   }, []);
+
+  useEffect(() => {
+    if (!selections.location) {
+      setAuthImportCandidates([]);
+      setAuthImportSelected({});
+      setAuthImportError(null);
+      setAuthImportResults([]);
+      setAuthImportScannedKey(null);
+      return;
+    }
+    if (selections.location === "remote") {
+      if (!parsedRemote?.host) return;
+      if (remoteStatus !== "connected") return;
+    }
+    if (authImportScannedKey === authScanKey) return;
+
+    let cancelled = false;
+    setAuthImportBusy(true);
+    setAuthImportError(null);
+    setAuthImportResults([]);
+
+    connectDaemonForImport()
+      .then(() => listProviderAuthImportCandidates())
+      .then((resp) => {
+        if (cancelled) return;
+        const candidates = resp.candidates ?? [];
+        setAuthImportCandidates(candidates);
+        setAuthImportSelected(
+          Object.fromEntries(candidates.map((candidate) => [candidate.id, candidate.parse_status === "parsed"])),
+        );
+        setAuthImportScannedKey(authScanKey);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setAuthImportCandidates([]);
+        setAuthImportSelected({});
+        setAuthImportError(err?.message ?? String(err));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAuthImportBusy(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    authImportScannedKey,
+    authScanKey,
+    parsedRemote?.host,
+    remoteStatus,
+    selections.location,
+  ]);
 
   useEffect(() => {
     const shouldSuggest = needsSourcePath
@@ -564,6 +676,7 @@ export default function WorkspaceSetupPage() {
   const onRemoteInputChange = (value: string) => {
     setCreateError(null);
     setRemoteHostInput(value);
+    setAuthImportScannedKey(null);
     if (remoteStatus !== "idle") {
       setRemoteStatus("idle");
       setRemoteError(null);
@@ -610,6 +723,35 @@ export default function WorkspaceSetupPage() {
         setRemoteStatus("error");
         setRemoteError(err?.message ?? String(err));
       }
+      return;
+    }
+    if (step.key === "auth-import") {
+      if (authImportBusy) return;
+      const candidateIds = authImportCandidates
+        .filter((candidate) => authImportSelected[candidate.id])
+        .map((candidate) => candidate.id);
+      if (!candidateIds.length) {
+        setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+        return;
+      }
+      setAuthImportBusy(true);
+      setAuthImportError(null);
+      try {
+        await connectDaemonForImport();
+        const resp = await importProviderAuthCandidates(candidateIds);
+        const results = (resp.results ?? []).map((result) => ({
+          provider: result.provider_id,
+          status: result.status,
+          message: result.message ?? null,
+        }));
+        setAuthImportResults(results);
+      } catch (err: any) {
+        setAuthImportError(err?.message ?? String(err));
+        setAuthImportBusy(false);
+        return;
+      }
+      setAuthImportBusy(false);
+      setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
       return;
     }
     setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
@@ -951,6 +1093,65 @@ export default function WorkspaceSetupPage() {
                     {remoteStatus === "error" && remoteError && (
                       <div className="wizard-error">{remoteError}</div>
                     )}
+                  </div>
+                )}
+                {step.key === "auth-import" && (
+                  <div className="wizard-input">
+                    {authImportBusy ? <div className="wizard-note">Scanning/importing credentials…</div> : null}
+                    {authImportError ? <div className="wizard-error">{authImportError}</div> : null}
+                    {!authImportBusy && !authImportCandidates.length ? (
+                      <div className="wizard-note">No import candidates found on this host.</div>
+                    ) : null}
+                    {authImportCandidates.length > 0 && (
+                      <div className="wizard-option-grid">
+                        {authImportCandidates.map((candidate) => {
+                          const checked = Boolean(authImportSelected[candidate.id]);
+                          const importable = candidate.parse_status === "parsed";
+                          return (
+                            <label key={candidate.id} className="wizard-option" style={{ cursor: importable ? "pointer" : "not-allowed" }}>
+                              <div className="wizard-option-title">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={!importable || authImportBusy}
+                                  onChange={(e) =>
+                                    setAuthImportSelected((prev) => ({ ...prev, [candidate.id]: e.target.checked }))
+                                  }
+                                />
+                                <span className="wizard-option-title-text">{candidate.provider_label}</span>
+                                <span className="wizard-option-badge">{candidate.parse_status}</span>
+                              </div>
+                              <div className="wizard-option-desc">{candidate.path}</div>
+                              {candidate.summary ? <div className="wizard-note wizard-note--tight">{candidate.summary}</div> : null}
+                              {candidate.unsupported_reason ? (
+                                <div className="wizard-note wizard-note--tight">{candidate.unsupported_reason}</div>
+                              ) : null}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {authImportResults.length > 0 && (
+                      <div className="wizard-note">
+                        {authImportResults.map((entry, idx) => (
+                          <div key={`${entry.provider}:${entry.status}:${idx}`}>
+                            {entry.provider}: {entry.status}
+                            {entry.message ? ` (${entry.message})` : ""}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      className="wizard-skip wizard-skip--left wizard-skip--below"
+                      onClick={() => {
+                        setAuthImportSelected({});
+                        setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+                      }}
+                      disabled={authImportBusy}
+                    >
+                      Skip for now
+                    </button>
                   </div>
                 )}
                 {step.key === "source" && needsSourcePath && (
@@ -1305,6 +1506,7 @@ export default function WorkspaceSetupPage() {
                   if (selections.location !== "remote") return false;
                   return remoteStatus === "connected" && Boolean(parseUserHost(remoteHostInput)?.host);
                 }
+                if (key === "auth-import") return true;
                 if (key === "source") {
                   if (!selections.source) return false;
                   if (selections.source === "clone" && !repoUrl.trim()) return false;

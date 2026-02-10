@@ -4,6 +4,7 @@ export type SectionId =
   | "general"
   | "privacy"
   | "agent_harnesses"
+  | "credential_imports"
   | "harness_subscriptions"
   | "models_routing"
   | "sandboxing"

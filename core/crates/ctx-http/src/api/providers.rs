@@ -21,6 +21,7 @@ use crate::installer;
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
 use crate::logs;
 use crate::provider_accounts;
+use crate::provider_auth_import;
 use crate::provider_usage;
 use ctx_core::ids::WorkspaceId;
 use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
@@ -203,6 +204,26 @@ pub(super) struct CodexLoginStartResp {
 #[derive(Debug, Deserialize)]
 pub(super) struct CodexActiveAccountReq {
     account_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ProviderAuthImportCandidatesResponse {
+    candidates: Vec<provider_auth_import::ProviderAuthImportCandidate>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ProviderAuthImportProfilesResponse {
+    profiles: Vec<provider_auth_import::ProviderImportedAuthProfile>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ProviderAuthImportReq {
+    candidate_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ProviderAuthImportResponse {
+    results: Vec<provider_auth_import::ProviderAuthImportResult>,
 }
 
 pub(super) struct CodexLoginProcess {
@@ -418,6 +439,63 @@ pub(super) async fn delete_codex_account(
         accounts: registry.accounts,
         logins,
     }))
+}
+
+pub(super) async fn list_provider_auth_import_candidates(
+    _state: State<Arc<AppState>>,
+) -> Result<Json<ProviderAuthImportCandidatesResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let candidates = provider_auth_import::list_provider_auth_import_candidates()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    Ok(Json(ProviderAuthImportCandidatesResponse { candidates }))
+}
+
+pub(super) async fn list_provider_auth_import_profiles(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ProviderAuthImportProfilesResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let profiles = provider_auth_import::list_provider_auth_profiles(&state.core.data_root)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    Ok(Json(ProviderAuthImportProfilesResponse { profiles }))
+}
+
+pub(super) async fn import_provider_auth_candidates(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ProviderAuthImportReq>,
+) -> Result<Json<ProviderAuthImportResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let mut ids = Vec::new();
+    for id in req.candidate_ids {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() {
+            ids.push(trimmed.to_string());
+        }
+    }
+    let results =
+        provider_auth_import::import_provider_auth_candidates(&state.core.data_root, &ids)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: e.to_string(),
+                    }),
+                )
+            })?;
+    Ok(Json(ProviderAuthImportResponse { results }))
 }
 
 pub(super) async fn start_codex_login_process(

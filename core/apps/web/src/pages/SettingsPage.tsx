@@ -9,6 +9,9 @@ import {
   MobileAccessStatus,
   EnableMobileAccessResponse,
   ProviderOptions,
+  ProviderAuthImportCandidate,
+  ProviderAuthImportResult,
+  ProviderImportedAuthProfile,
   ProviderStatus,
   ProviderUsageSnapshot,
   ResourceGovernanceLimits,
@@ -54,6 +57,8 @@ import {
   installStreamUrl,
   listMergeQueueEntries,
   listCodexAccounts,
+  listProviderAuthImportCandidates,
+  listProviderAuthImportProfiles,
   listWorkspaceAttachments,
   listInstallEvents,
   listProviders,
@@ -61,6 +66,7 @@ import {
   retryMergeQueueEntry,
   setCodexActiveAccount,
   startCodexLogin,
+  importProviderAuthCandidates,
   syncWorkspaceAttachments,
   updateSettings,
   updateAgentSystemPrompt,
@@ -315,6 +321,12 @@ export default function SettingsPage() {
   const [workspaceAllowlistText, setWorkspaceAllowlistText] = useState("");
   const [workspaceAllowlistDirty, setWorkspaceAllowlistDirty] = useState(false);
   const [workspaceAllowlistSaving, setWorkspaceAllowlistSaving] = useState(false);
+  const [importCandidates, setImportCandidates] = useState<ProviderAuthImportCandidate[]>([]);
+  const [importProfiles, setImportProfiles] = useState<ProviderImportedAuthProfile[]>([]);
+  const [importSelected, setImportSelected] = useState<Record<string, boolean>>({});
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importResults, setImportResults] = useState<ProviderAuthImportResult[]>([]);
   const [codexAccounts, setCodexAccounts] = useState<CodexAccountsResponse | null>(null);
   const [codexAccountsBusy, setCodexAccountsBusy] = useState(false);
   const [codexAccountsError, setCodexAccountsError] = useState<string | null>(null);
@@ -851,6 +863,40 @@ export default function SettingsPage() {
       .then(setProviders)
       .catch((e: any) => setProviderError(e?.message ?? String(e)));
 
+  const refreshImportCandidates = useCallback(async () => {
+    setImportBusy(true);
+    setImportError(null);
+    try {
+      const next = await listProviderAuthImportCandidates();
+      const items = next.candidates ?? [];
+      setImportCandidates(items);
+      setImportSelected((prev) => {
+        const out: Record<string, boolean> = {};
+        for (const item of items) {
+          out[item.id] = prev[item.id] ?? item.parse_status === "parsed";
+        }
+        return out;
+      });
+      return items;
+    } catch (e: any) {
+      setImportError(e?.message ?? String(e));
+      return [];
+    } finally {
+      setImportBusy(false);
+    }
+  }, []);
+
+  const refreshImportProfiles = useCallback(async () => {
+    try {
+      const next = await listProviderAuthImportProfiles();
+      setImportProfiles(next.profiles ?? []);
+      return next.profiles ?? [];
+    } catch (e: any) {
+      setImportError(e?.message ?? String(e));
+      return [];
+    }
+  }, []);
+
   const refreshCodexAccounts = useCallback(async () => {
     setCodexAccountsBusy(true);
     setCodexAccountsError(null);
@@ -1181,6 +1227,12 @@ export default function SettingsPage() {
     refreshCodexAccounts();
     refreshCodexUsage({ refresh: false, silent: true });
   }, [active, refreshCodexAccounts, refreshCodexUsage]);
+
+  useEffect(() => {
+    if (active !== "credential_imports") return;
+    refreshImportCandidates();
+    refreshImportProfiles();
+  }, [active, refreshImportCandidates, refreshImportProfiles]);
 
   useEffect(() => {
     const pending = codexAccounts?.logins?.some((login) => login.status === "pending");
@@ -1577,6 +1629,29 @@ export default function SettingsPage() {
       setProviderError(e?.message ?? String(e));
     } finally {
       setInstallBusy(null);
+    }
+  };
+
+  const onImportSelectedAuth = async () => {
+    const selectedIds = importCandidates.filter((c) => importSelected[c.id]).map((c) => c.id);
+    if (!selectedIds.length) {
+      setImportResults([]);
+      return;
+    }
+    setImportBusy(true);
+    setImportError(null);
+    try {
+      const resp = await importProviderAuthCandidates(selectedIds);
+      const results = resp.results ?? [];
+      setImportResults(results);
+      await refreshImportCandidates();
+      await refreshImportProfiles();
+      await refreshCodexAccounts();
+      await refreshCodexUsage({ refresh: true, silent: true });
+    } catch (e: any) {
+      setImportError(e?.message ?? String(e));
+    } finally {
+      setImportBusy(false);
     }
   };
 
@@ -3723,6 +3798,160 @@ export default function SettingsPage() {
           </div>
 
           {providerError ? <div className="settings-banner settings-banner-error">{providerError}</div> : null}
+        </>
+      );
+    }
+
+    if (active === "credential_imports") {
+      const grouped = new Map<string, ProviderAuthImportCandidate[]>();
+      for (const candidate of importCandidates) {
+        const key = candidate.provider_label || candidate.provider_id;
+        const list = grouped.get(key) ?? [];
+        list.push(candidate);
+        grouped.set(key, list);
+      }
+      const groups = [...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+      const selectedCount = importCandidates.filter((c) => importSelected[c.id]).length;
+
+      return (
+        <>
+          <Card title="Import Existing Auth">
+            <Row
+              title="Detected candidates"
+              description="Found in canonical provider auth/config paths on this daemon host."
+              control={
+                <button
+                  type="button"
+                  className="settings-btn settings-btn-secondary"
+                  onClick={() => {
+                    setImportResults([]);
+                    refreshImportCandidates();
+                  }}
+                  disabled={importBusy}
+                >
+                  {importBusy ? "Scanning…" : "Re-scan"}
+                </button>
+              }
+            />
+            <div className="settings-card-block">
+              {!groups.length ? (
+                <div className="settings-empty-compact">No import candidates found on this host.</div>
+              ) : (
+                groups.map(([providerLabel, items]) => (
+                  <div key={providerLabel} style={{ marginBottom: 12 }}>
+                    <div className="settings-table-sub" style={{ marginBottom: 6 }}>
+                      {providerLabel}
+                    </div>
+                    <div className="settings-table settings-table-codex-logins">
+                      <div className="settings-table-head">
+                        <div />
+                        <div>Source</div>
+                        <div>Status</div>
+                      </div>
+                      {items.map((candidate) => {
+                        const selected = Boolean(importSelected[candidate.id]);
+                        const importable = candidate.parse_status === "parsed";
+                        const descBits = [
+                          candidate.summary ? candidate.summary : null,
+                          candidate.endpoint ? `Endpoint: ${candidate.endpoint}` : null,
+                          candidate.unsupported_reason ? candidate.unsupported_reason : null,
+                        ].filter(Boolean);
+                        return (
+                          <div key={candidate.id} className="settings-table-row">
+                            <div>
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                disabled={!importable || importBusy}
+                                onChange={(e) =>
+                                  setImportSelected((prev) => ({ ...prev, [candidate.id]: e.target.checked }))
+                                }
+                              />
+                            </div>
+                            <div>
+                              <div className="settings-table-mono">{candidate.path}</div>
+                              {descBits.length ? <div className="settings-table-sub">{descBits.join(" · ")}</div> : null}
+                            </div>
+                            <div>
+                              <span
+                                className={
+                                  importable
+                                    ? "settings-pill settings-pill-ok"
+                                    : candidate.parse_status === "unsupported"
+                                      ? "settings-pill settings-pill-warn"
+                                      : "settings-pill settings-pill-err"
+                                }
+                              >
+                                {candidate.parse_status}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            <Row
+              title="Import selected"
+              description={selectedCount ? `${selectedCount} candidate(s) selected.` : "Select candidates to import."}
+              control={
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={onImportSelectedAuth}
+                  disabled={importBusy || selectedCount === 0}
+                >
+                  {importBusy ? "Importing…" : "Import"}
+                </button>
+              }
+            />
+          </Card>
+
+          {importError ? <div className="settings-banner settings-banner-error">{importError}</div> : null}
+          {importResults.length ? (
+            <div className="settings-banner">
+              {importResults.map((result) => (
+                <div key={`${result.candidate_id}:${result.status}`} className="settings-meta-line">
+                  {result.provider_id}: {result.status}
+                  {result.message ? ` · ${result.message}` : ""}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <Card title="Imported profiles">
+            <div className="settings-card-block">
+              {!importProfiles.length ? (
+                <div className="settings-empty-compact">No imported profiles yet.</div>
+              ) : (
+                <div className="settings-table settings-table-codex-usage">
+                  <div className="settings-table-head">
+                    <div>Profile</div>
+                    <div>Provider</div>
+                    <div>Source</div>
+                    <div>Updated</div>
+                  </div>
+                  {importProfiles.map((profile) => (
+                    <div key={profile.id} className="settings-table-row">
+                      <div>
+                        <div className="settings-table-title">{profile.label}</div>
+                        <div className="settings-table-sub">{profile.auth_type ?? "unknown auth"}</div>
+                      </div>
+                      <div className="settings-table-mono">{profile.provider_id}</div>
+                      <div className="settings-table-sub">{profile.source_path}</div>
+                      <div className="settings-table-sub">
+                        {Number.isNaN(Date.parse(profile.updated_at))
+                          ? profile.updated_at
+                          : new Date(profile.updated_at).toLocaleString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Card>
         </>
       );
     }

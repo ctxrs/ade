@@ -217,6 +217,18 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/providers/install_all", post(install_all_providers))
         .route("/api/providers/:id", get(get_provider))
         .route("/api/providers/:id/usage", get(get_provider_usage))
+        .route(
+            "/api/providers/auth/import/candidates",
+            get(list_provider_auth_import_candidates),
+        )
+        .route(
+            "/api/providers/auth/import/profiles",
+            get(list_provider_auth_import_profiles),
+        )
+        .route(
+            "/api/providers/auth/import",
+            post(import_provider_auth_candidates),
+        )
         .route("/api/providers/codex/accounts", get(list_codex_accounts))
         .route(
             "/api/providers/codex/accounts/usage",

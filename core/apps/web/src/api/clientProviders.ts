@@ -122,6 +122,47 @@ export type CodexLoginStartResponse = {
   auth_url: string;
 };
 
+export type ProviderAuthImportCandidate = {
+  id: string;
+  provider_id: string;
+  provider_label: string;
+  kind: string;
+  path: string;
+  signal_strength: string;
+  confidence: string;
+  parse_status: string;
+  unsupported_reason?: string | null;
+  summary?: string | null;
+  account_identity?: string | null;
+  endpoint?: string | null;
+  auth_type?: string | null;
+  fingerprint?: string | null;
+  last_modified?: string | null;
+};
+
+export type ProviderAuthImportResult = {
+  candidate_id: string;
+  provider_id: string;
+  status: string;
+  profile_id?: string | null;
+  message?: string | null;
+};
+
+export type ProviderImportedAuthProfile = {
+  id: string;
+  provider_id: string;
+  provider_label: string;
+  label: string;
+  account_identity?: string | null;
+  endpoint?: string | null;
+  auth_type?: string | null;
+  source_path: string;
+  source_kind: string;
+  secret_fingerprint: string;
+  imported_at: string;
+  updated_at: string;
+};
+
 export const listCodexAccounts = () =>
   apiAny<CodexAccountsResponse>(`/api/providers/codex/accounts`);
 
@@ -148,6 +189,18 @@ export const setCodexActiveAccount = (accountId: string | null) =>
 export const deleteCodexAccount = (accountId: string) =>
   apiAny<CodexAccountsResponse>(`/api/providers/codex/accounts/${accountId}`, {
     method: "DELETE",
+  });
+
+export const listProviderAuthImportCandidates = () =>
+  apiAny<{ candidates: ProviderAuthImportCandidate[] }>(`/api/providers/auth/import/candidates`);
+
+export const listProviderAuthImportProfiles = () =>
+  apiAny<{ profiles: ProviderImportedAuthProfile[] }>(`/api/providers/auth/import/profiles`);
+
+export const importProviderAuthCandidates = (candidateIds: string[]) =>
+  apiAny<{ results: ProviderAuthImportResult[] }>(`/api/providers/auth/import`, {
+    method: "POST",
+    body: JSON.stringify({ candidate_ids: candidateIds }),
   });
 
 export const installProvider = (providerId: string) =>
