@@ -330,9 +330,14 @@ pub fn get_entry<'a>(
 }
 
 pub fn is_managed_supported(matrix: &ProviderMatrix, provider_id: &str) -> bool {
-    get_entry(matrix, provider_id)
-        .and_then(|p| p.managed_install.as_ref())
-        .is_some()
+    let Some(entry) = get_entry(matrix, provider_id) else {
+        return false;
+    };
+    if entry.managed_install.is_none() {
+        return false;
+    }
+    let context_version = updates::normalize_version_str(env!("CARGO_PKG_VERSION"));
+    recommended_release(entry, context_version.as_ref()).is_some()
 }
 
 pub fn recommended_release<'a>(

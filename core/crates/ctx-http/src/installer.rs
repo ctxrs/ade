@@ -66,14 +66,10 @@ pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()>
     install_provider_impl(state, provider_id, None).await
 }
 
-/// Some user-facing provider ids are aliases for the underlying managed install id.
-///
-/// This is used to keep the UI stable (`codex`/`claude`) while still using the managed-install
-/// matrix/runtime ids (`codex-crp`/`claude-crp`).
+/// Some provider ids are aliases for the underlying managed install id.
 pub fn canonical_managed_provider_id(provider_id: &str) -> &str {
     match provider_id {
         "codex" => "codex-crp",
-        "claude" => "claude-crp",
         _ => provider_id,
     }
 }
@@ -1448,16 +1444,6 @@ async fn install_provider_impl(
                     "codex".to_string(),
                     std::sync::Arc::new(Tier1CrpAdapter::from_raw(
                         "codex",
-                        managed.command.clone(),
-                        managed.args.clone(),
-                    )),
-                );
-            }
-            if provider_id == "claude-crp" {
-                map.insert(
-                    "claude".to_string(),
-                    std::sync::Arc::new(Tier1CrpAdapter::from_raw(
-                        "claude",
                         managed.command.clone(),
                         managed.args.clone(),
                     )),

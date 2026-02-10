@@ -36,7 +36,6 @@ pub(super) async fn list_providers(
     let mut out: Vec<ProviderStatus> = map.values().cloned().collect();
     drop(map);
     let has_codex_crp = out.iter().any(|p| p.provider_id == "codex-crp");
-    let has_claude_crp = out.iter().any(|p| p.provider_id == "claude-crp");
 
     let managed = installer::load_agent_server_config(&state.core.data_root)
         .await
@@ -57,9 +56,6 @@ pub(super) async fn list_providers(
             );
         }
         if status.provider_id == "codex" && has_codex_crp {
-            status.details.insert("ui_hidden".into(), "true".into());
-        }
-        if status.provider_id == "claude" && has_claude_crp {
             status.details.insert("ui_hidden".into(), "true".into());
         }
         let canonical_id = installer::canonical_managed_provider_id(&status.provider_id);
@@ -1278,8 +1274,7 @@ pub(super) async fn install_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<InstallStartResponse>, StatusCode> {
-    // User-facing provider ids sometimes alias to the underlying managed runtime id.
-    // This keeps the UI stable ("codex"/"claude") while still using the managed-install matrix.
+    // Some legacy/user-facing provider ids alias to the underlying managed runtime id.
     let canonical_id = installer::canonical_managed_provider_id(&id).to_string();
     let matrix = crate::provider_matrix::load_matrix_cached(
         &state.core.data_root,

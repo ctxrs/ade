@@ -419,13 +419,9 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         None => Tier1CrpAdapter::from_raw("codex", "codex-crp".to_string(), Vec::new()),
     });
     let claude_crp_cmd = installer::resolve_provider_command(&agent_cfg, "claude-crp");
-    let claude_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(match claude_crp_cmd.clone() {
+    let claude_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(match claude_crp_cmd {
         Some(cmd) => Tier1CrpAdapter::from_raw("claude-crp", cmd.command, cmd.args),
         None => Tier1CrpAdapter::claude(),
-    });
-    let claude_adapter: Arc<Tier1CrpAdapter> = Arc::new(match claude_crp_cmd {
-        Some(cmd) => Tier1CrpAdapter::from_raw("claude", cmd.command, cmd.args),
-        None => Tier1CrpAdapter::from_raw("claude", "claude-crp".to_string(), Vec::new()),
     });
 
     let gemini_cmd =
@@ -490,7 +486,6 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     providers.insert("codex-crp".into(), codex_crp_adapter);
     providers.insert("codex".into(), codex_adapter);
     providers.insert("claude-crp".into(), claude_crp_adapter);
-    providers.insert("claude".into(), claude_adapter);
     providers.insert("gemini".into(), gemini_adapter.clone());
     providers.insert("qwen".into(), qwen_adapter.clone());
     providers.insert("opencode".into(), opencode_adapter.clone());

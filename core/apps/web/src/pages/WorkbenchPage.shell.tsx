@@ -289,7 +289,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (installed.includes("codex-crp")) return "codex-crp";
     if (installed.includes("codex")) return "codex";
     if (installed.includes("claude-crp")) return "claude-crp";
-    if (installed.includes("claude")) return "claude";
     if (installed.includes("gemini")) return "gemini";
     if (installed.includes("qwen")) return "qwen";
     if (installed.includes("opencode")) return "opencode";

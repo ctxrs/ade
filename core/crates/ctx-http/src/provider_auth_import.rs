@@ -188,8 +188,8 @@ fn build_catalog(roots: &HostRoots) -> Vec<PathSpec> {
             path: roots.codex_home.join("auth.json"),
         },
         PathSpec {
-            provider_id: "claude",
-            provider_label: "Claude",
+            provider_id: "claude-crp",
+            provider_label: "Claude Code",
             kind: "auth_file",
             signal_strength: "strong",
             confidence: "medium",
@@ -198,8 +198,8 @@ fn build_catalog(roots: &HostRoots) -> Vec<PathSpec> {
             path: roots.home.join(".claude.json"),
         },
         PathSpec {
-            provider_id: "claude",
-            provider_label: "Claude",
+            provider_id: "claude-crp",
+            provider_label: "Claude Code",
             kind: "auth_file",
             signal_strength: "strong",
             confidence: "medium",
@@ -208,8 +208,8 @@ fn build_catalog(roots: &HostRoots) -> Vec<PathSpec> {
             path: roots.xdg_config.join("claude-code").join("auth.json"),
         },
         PathSpec {
-            provider_id: "claude",
-            provider_label: "Claude",
+            provider_id: "claude-crp",
+            provider_label: "Claude Code",
             kind: "auth_file",
             signal_strength: "weak",
             confidence: "medium",

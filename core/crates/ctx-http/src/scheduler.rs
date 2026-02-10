@@ -68,7 +68,7 @@ fn provider_mode_id_for(
     match control_mode {
         ProviderControlMode::Full => match provider_id {
             "codex" | "codex-crp" => Some("full-access"),
-            "claude" | "claude-crp" => Some("bypassPermissions"),
+            "claude-crp" => Some("bypassPermissions"),
             _ => None,
         },
         ProviderControlMode::HarnessNative | ProviderControlMode::CtxEnforced => None,
@@ -2173,7 +2173,7 @@ fn normalize_session_model_id(model_id: &str) -> Option<String> {
 }
 
 fn provider_supports_system_prompt_append(provider_id: &str) -> bool {
-    matches!(provider_id, "claude" | "codex")
+    matches!(provider_id, "claude-crp" | "codex")
 }
 
 #[cfg(test)]

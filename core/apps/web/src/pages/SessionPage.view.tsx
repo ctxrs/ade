@@ -1140,7 +1140,7 @@ export function SessionView({
         { name: "logout", description: "Log out" },
       ];
     }
-    if (provider === "claude") {
+    if (provider === "claude" || provider === "claude-crp") {
       return [
         { name: "login", description: "Log in" },
         { name: "logout", description: "Log out" },
