@@ -48,10 +48,18 @@ fn main() {
         .manage(ConnectionManager::default())
         .manage(DeepLinkTokenStore::default())
         .manage(WorkspaceWindowRegistry::default())
-        .manage(DesktopStorage::default())
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        .manage(DesktopStorage::default());
+
+    // Keep single-instance behavior for normal desktop usage. Automation builds need
+    // isolated instances so tests don't attach to a long-running interactive app.
+    #[cfg(not(feature = "automation"))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             focus_app_window(app);
-        }))
+        }));
+    }
+
+    builder = builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -325,10 +333,14 @@ struct SshConnectReq {
     user: Option<String>,
     #[serde(default)]
     remote_port: Option<u16>,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     start_remote: bool,
     #[serde(default)]
     remote_data_dir: Option<String>,
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -1184,18 +1196,13 @@ async fn desktop_connect_ssh(
 
     let user = req.user.clone();
     let remote_data_dir = req.remote_data_dir.clone();
+    let remote_data_dir_for_connect = remote_data_dir.clone();
     let start_remote = req.start_remote;
     let host_for_provision = host.clone();
     let user_for_provision = user.clone();
     let app_for_provision = app.clone();
     let (base_url, token, tunnel) = tauri::async_runtime::spawn_blocking(move || {
-        let no_start_remote = std::env::var(DESKTOP_SSH_NO_START_REMOTE_ENV)
-            .ok()
-            .map(|v| {
-                let v = v.trim().to_ascii_lowercase();
-                matches!(v.as_str(), "1" | "true" | "yes" | "y")
-            })
-            .unwrap_or(false);
+        let no_start_remote = env_bool("CTX_DESKTOP_SSH_NO_START_REMOTE", false);
 
         // Prefer connecting to an already-running daemon. This avoids restarting/touching
         // the remote daemon when users (or tests) already have it running on the target port.
@@ -1212,7 +1219,7 @@ async fn desktop_connect_ssh(
                 &host,
                 user.as_deref(),
                 remote_port,
-                remote_data_dir.as_deref(),
+                remote_data_dir_for_connect.as_deref(),
             )?;
 
             local_port = pick_unused_local_port()?;
@@ -1232,11 +1239,16 @@ async fn desktop_connect_ssh(
             tunnel = tunnel2;
         } else if let Err(e) = health {
             let _ = try_kill_child(tunnel);
-            return Err(e);
+            return Err(anyhow!(
+                "{e:#}; remote start skipped (start_remote={start_remote}, no_start_remote={no_start_remote})"
+            ));
         }
 
-        let auth =
-            read_remote_daemon_auth_with_retry(&host, user.as_deref(), remote_data_dir.as_deref())?;
+        let auth = read_remote_daemon_auth_with_retry(
+            &host,
+            user.as_deref(),
+            remote_data_dir_for_connect.as_deref(),
+        )?;
         Ok((base_url, auth.token, tunnel))
     })
     .await
@@ -1246,16 +1258,24 @@ async fn desktop_connect_ssh(
     state.set_ssh(base_url, Some(token), tunnel);
 
     // Best-effort provisioning: ensure the default harness image is present on remote Linux hosts
-    // so restricted networking works without relying on registry pulls.
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Err(err) = ensure_remote_ctx_harness_image(
+    // so restricted networking works without relying on registry pulls. We await completion so
+    // users can immediately create remote container workspaces without racing image load.
+    match tauri::async_runtime::spawn_blocking(move || {
+        ensure_remote_ctx_harness_image(
             &app_for_provision,
             &host_for_provision,
             user_for_provision.as_deref(),
-        ) {
-            eprintln!("remote harness image provisioning skipped/failed: {err:#}");
-        }
-    });
+            remote_data_dir.as_deref(),
+        )
+    })
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => eprintln!("remote harness image provisioning skipped/failed: {err:#}"),
+        Err(join_err) => eprintln!(
+            "remote harness image provisioning task failed to join: {join_err:#}"
+        ),
+    }
     Ok(state.info())
 }
 
@@ -2599,7 +2619,10 @@ impl ConnectionManager {
             match active {
                 ActiveConnection::Local(c) => {
                     if c.systemd_scope {
-                        stop_systemd_scope();
+                        stop_systemd_scope("ctx-daemon");
+                        if let Some(scope) = systemd_scope_for_local_daemon_url(&c.base_url) {
+                            stop_systemd_scope(&scope);
+                        }
                     }
                     let _ = try_kill_child(c.child);
                 }
@@ -3241,7 +3264,12 @@ const SSH_TUNNEL_HEALTH_BASE_DELAY_MS: u64 = 150;
 const LOCAL_DAEMON_HEALTH_RETRIES: usize = 20;
 const LOCAL_DAEMON_HEALTH_BASE_DELAY_MS: u64 = 100;
 const DESKTOP_DAEMON_DATA_DIR_ENV: &str = "CTX_DESKTOP_DAEMON_DATA_DIR";
-const DESKTOP_SSH_NO_START_REMOTE_ENV: &str = "CTX_DESKTOP_SSH_NO_START_REMOTE";
+const DESKTOP_REMOTE_CTX_BIN_ENV: &str = "CTX_DESKTOP_REMOTE_CTX_BIN";
+const DAEMON_ENV_PASSTHROUGH: &[&str] = &[
+    "CTX_ALLOW_SYSTEM_PODMAN",
+    "CTX_PODMAN_PATH",
+    "CTX_PODMAN_MACHINE_PREFETCH",
+];
 
 fn start_ssh_tunnel(
     host: &str,
@@ -3258,6 +3286,8 @@ fn start_ssh_tunnel(
     cmd.arg("-N")
         .arg("-o")
         .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=15")
         .arg("-o")
         .arg("ExitOnForwardFailure=yes")
         .arg("-o")
@@ -3319,30 +3349,72 @@ fn start_remote_daemon_over_ssh(
         .unwrap_or("~/.ctx");
     let log_dir = format!("{}/logs", data_dir.trim_end_matches('/'));
     let log_dir_expr = remote_path_expr(&log_dir);
-    let exec_cmd = format!(
-        "if command -v ctx >/dev/null 2>&1; then ctx serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not found on PATH' >&2; exit 127; fi",
-        dir = remote_path_expr(data_dir),
-    );
+    let log_file = format!("{}/daemon.log", log_dir.trim_end_matches('/'));
+    let log_file_expr = remote_path_expr(&log_file);
+    let configured_ctx_bin = std::env::var(DESKTOP_REMOTE_CTX_BIN_ENV)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    // Remote daemon should be able to use host Podman when available (same behavior expected in
+    // launcher container modes on Linux remotes). Pass through optional podman tuning envs.
+    let mut daemon_env = vec!["CTX_ALLOW_SYSTEM_PODMAN=1".to_string()];
+    if let Ok(v) = std::env::var("CTX_PODMAN_PATH") {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            daemon_env.push(format!("CTX_PODMAN_PATH={}", shell_escape(trimmed)));
+        }
+    }
+    if let Ok(v) = std::env::var("CTX_PODMAN_MACHINE_PREFETCH") {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            daemon_env.push(format!(
+                "CTX_PODMAN_MACHINE_PREFETCH={}",
+                shell_escape(trimmed)
+            ));
+        }
+    }
+    let daemon_env_prefix = if daemon_env.is_empty() {
+        String::new()
+    } else {
+        format!("env {} ", daemon_env.join(" "))
+    };
+    let exec_cmd = if let Some(ctx_bin) = configured_ctx_bin {
+        let ctx_bin_expr = remote_path_expr(&ctx_bin);
+        format!(
+            "if [ -x {ctx_bin} ]; then {env}{ctx_bin} serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not executable at configured remote path' >&2; exit 127; fi",
+            env = daemon_env_prefix,
+            ctx_bin = ctx_bin_expr,
+            dir = remote_path_expr(data_dir),
+        )
+    } else {
+        format!(
+            "if command -v ctx >/dev/null 2>&1; then {env}ctx serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not found on PATH' >&2; exit 127; fi",
+            env = daemon_env_prefix,
+            dir = remote_path_expr(data_dir),
+        )
+    };
     let log_cmd = format!(
-        "mkdir -p {log_dir} && {exec_cmd} > {log_dir}/daemon.log 2>&1",
-        log_dir = log_dir_expr
+        "mkdir -p {log_dir} && {exec_cmd} > {log_file} 2>&1",
+        log_dir = log_dir_expr,
+        log_file = log_file_expr,
     );
-    let systemd_cmd = format!(
-        "systemd-run --user --scope --unit ctx-daemon --no-block /bin/sh -lc {}",
-        shell_escape(&log_cmd)
-    );
-    let nohup_cmd = format!(
-        "nohup /bin/sh -lc {} >/dev/null 2>&1 &",
-        shell_escape(&log_cmd)
-    );
+    // Always start the remote daemon via nohup so the SSH command returns immediately.
+    // systemd-run --scope for a long-lived daemon can keep the SSH session open indefinitely.
     let remote_cmd = format!(
-        "if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then {}; else {}; fi",
-        systemd_cmd, nohup_cmd
+        "mkdir -p {log_dir} && nohup /bin/sh -lc {cmd} >/dev/null 2>&1 < /dev/null &",
+        log_dir = log_dir_expr,
+        cmd = shell_escape(&log_cmd),
     );
 
     let output = Command::new("ssh")
         .arg("-o")
         .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=15")
+        .arg("-o")
+        .arg("ServerAliveInterval=15")
+        .arg("-o")
+        .arg("ServerAliveCountMax=2")
         .arg(target)
         // NOTE: sshd does not preserve argv boundaries for the remote command; pass as one string.
         .arg(format!("sh -lc {}", shell_escape(&remote_cmd)))
@@ -3352,9 +3424,9 @@ fn start_remote_daemon_over_ssh(
         .output()
         .context("starting remote daemon over ssh")?;
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(anyhow!(
-            "ssh start failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "ssh start failed: {stderr}; remote_cmd={remote_cmd}"
         ));
     }
     Ok(())
@@ -3523,6 +3595,12 @@ fn read_remote_daemon_auth(
     let output = Command::new("ssh")
         .arg("-o")
         .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=15")
+        .arg("-o")
+        .arg("ServerAliveInterval=15")
+        .arg("-o")
+        .arg("ServerAliveCountMax=2")
         .arg(target)
         // NOTE: sshd does not preserve argv boundaries for the remote command; pass as one string.
         .arg(remote_cmd)
@@ -3644,8 +3722,29 @@ fn ensure_remote_ctx_harness_image(
     app: &tauri::AppHandle,
     host: &str,
     user: Option<&str>,
+    remote_data_dir: Option<&str>,
 ) -> Result<()> {
     let target = ssh_target(host, user);
+    let data_dir = remote_data_dir
+        .filter(|d| !d.trim().is_empty())
+        .unwrap_or("~/.ctx");
+    let podman_xdg_root = format!("{}/podman/xdg", data_dir.trim_end_matches('/'));
+    let podman_xdg_config = format!("{}/config", podman_xdg_root);
+    let podman_xdg_data = format!("{}/data", podman_xdg_root);
+    let podman_xdg_run = format!("{}/run", podman_xdg_root);
+    let podman_env_prefix = format!(
+        "XDG_CONFIG_HOME={} XDG_DATA_HOME={} XDG_RUNTIME_DIR={}",
+        remote_path_expr(&podman_xdg_config),
+        remote_path_expr(&podman_xdg_data),
+        remote_path_expr(&podman_xdg_run),
+    );
+    let podman_prepare_cmd = format!(
+        "mkdir -p {} {} {} && chmod 700 {} >/dev/null 2>&1 || true",
+        remote_path_expr(&podman_xdg_config),
+        remote_path_expr(&podman_xdg_data),
+        remote_path_expr(&podman_xdg_run),
+        remote_path_expr(&podman_xdg_run),
+    );
 
     // Only provision the Linux container image on Linux hosts.
     let os_out = ssh_output(&target, "uname -s")?;
@@ -3677,11 +3776,21 @@ fn ensure_remote_ctx_harness_image(
     if !podman_out.status.success() {
         return Ok(());
     }
+    let prep_out = ssh_output(&target, &podman_prepare_cmd)?;
+    if !prep_out.status.success() {
+        anyhow::bail!(
+            "ssh podman xdg setup failed: {}",
+            String::from_utf8_lossy(&prep_out.stderr).trim()
+        );
+    }
 
     let (tar, image) = read_bundled_ctx_harness_image(app, arch)?;
 
     // Check if the image is already present.
-    let exists_out = ssh_output(&target, &format!("podman image exists -- {}", shell_escape(&image)))?;
+    let exists_out = ssh_output(
+        &target,
+        &format!("{podman_env_prefix} podman image exists -- {}", shell_escape(&image)),
+    )?;
     if exists_out.status.success() {
         return Ok(());
     }
@@ -3693,7 +3802,10 @@ fn ensure_remote_ctx_harness_image(
     }
 
     // Stream tar to podman load over SSH.
-    let remote_cmd = format!("sh -lc {}", shell_escape("podman load"));
+    let remote_cmd = format!(
+        "sh -lc {}",
+        shell_escape(&format!("{podman_prepare_cmd} && {podman_env_prefix} podman load"))
+    );
     let mut child = Command::new("ssh")
         .arg("-o")
         .arg("BatchMode=yes")
@@ -3725,6 +3837,16 @@ fn ensure_remote_ctx_harness_image(
         anyhow::bail!(
             "remote podman load failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let exists_after = ssh_output(
+        &target,
+        &format!("{podman_env_prefix} podman image exists -- {}", shell_escape(&image)),
+    )?;
+    if !exists_after.status.success() {
+        anyhow::bail!(
+            "remote podman load completed but image is still missing for daemon storage: {}",
+            image
         );
     }
 
@@ -4057,15 +4179,42 @@ fn should_use_systemd_scope() -> bool {
     false
 }
 
-fn stop_systemd_scope() {
+fn env_bool(name: &str, default: bool) -> bool {
+    let Ok(raw) = std::env::var(name) else {
+        return default;
+    };
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => true,
+        "0" | "false" | "no" | "off" => false,
+        _ => default,
+    }
+}
+
+fn stop_systemd_scope(_unit: &str) {
     #[cfg(target_os = "linux")]
     {
+        let scope = if _unit.ends_with(".scope") {
+            _unit.to_string()
+        } else {
+            format!("{_unit}.scope")
+        };
         let _ = Command::new("systemctl")
             .arg("--user")
             .arg("stop")
-            .arg("ctx-daemon.scope")
+            .arg(&scope)
+            .status();
+        let _ = Command::new("systemctl")
+            .arg("--user")
+            .arg("reset-failed")
+            .arg(&scope)
             .status();
     }
+}
+
+fn systemd_scope_for_local_daemon_url(base_url: &str) -> Option<String> {
+    let url = Url::parse(base_url).ok()?;
+    let port = url.port()?;
+    Some(format!("ctx-daemon-{port}"))
 }
 
 fn spawn_daemon(
@@ -4134,16 +4283,19 @@ fn spawn_daemon_with_mode(
 
     let local_port = pick_unused_local_port()?;
     let base_url = format!("http://127.0.0.1:{local_port}");
+    let systemd_unit = format!("ctx-daemon-{local_port}");
 
     if use_systemd_scope {
-        stop_systemd_scope();
+        // Best-effort cleanup in case a prior run left stale units around.
+        stop_systemd_scope("ctx-daemon");
+        stop_systemd_scope(&systemd_unit);
     }
     let mut cmd = if use_systemd_scope {
         let mut cmd = Command::new("systemd-run");
         cmd.arg("--user")
             .arg("--scope")
             .arg("--unit")
-            .arg("ctx-daemon")
+            .arg(&systemd_unit)
             .arg("--same-dir");
         if let Some(dist) = web_dist.as_ref() {
             cmd.arg("--setenv")
@@ -4164,6 +4316,11 @@ fn spawn_daemon_with_mode(
             cmd.arg("--setenv")
                 .arg(format!("CTX_APPIMAGE_PATH={appimage}"));
         }
+        for key in DAEMON_ENV_PASSTHROUGH {
+            if let Ok(value) = std::env::var(key) {
+                cmd.arg("--setenv").arg(format!("{key}={value}"));
+            }
+        }
         cmd.arg(&ctx_bin);
         cmd
     } else {
@@ -4182,6 +4339,11 @@ fn spawn_daemon_with_mode(
         }
         if let Ok(appimage) = std::env::var("APPIMAGE") {
             cmd.env("CTX_APPIMAGE_PATH", appimage.clone());
+        }
+        for key in DAEMON_ENV_PASSTHROUGH {
+            if let Ok(value) = std::env::var(key) {
+                cmd.env(key, value);
+            }
         }
         cmd
     };

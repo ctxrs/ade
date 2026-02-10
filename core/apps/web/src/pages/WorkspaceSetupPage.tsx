@@ -115,6 +115,9 @@ export default function WorkspaceSetupPage() {
   const [remoteHostInput, setRemoteHostInput] = useState("");
   const [remoteStatus, setRemoteStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
   const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteAdvancedOpen, setRemoteAdvancedOpen] = useState(false);
+  const [remotePortInput, setRemotePortInput] = useState("4399");
+  const [remoteDataDirInput, setRemoteDataDirInput] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [codexImportProbe, setCodexImportProbe] = useState<CodexHostImportProbe | null>(null);
@@ -301,8 +304,17 @@ export default function WorkspaceSetupPage() {
   const parsedRemote = parseUserHost(remoteHostInput);
   const authScanKey = `${selections.location ?? ""}|${parsedRemote?.user ?? ""}@${parsedRemote?.host ?? ""}`;
   const hasRemoteHost = Boolean(parsedRemote?.host);
+  const parsedRemotePort = (() => {
+    const raw = remotePortInput.trim();
+    if (!raw) return null;
+    const v = Number(raw);
+    if (!Number.isFinite(v)) return null;
+    const port = Math.trunc(v);
+    if (port < 1 || port > 65535) return null;
+    return port;
+  })();
   const canAdvance = (!requiresSelection || hasSelection)
-    && (!isRemoteStep || (hasRemoteHost && remoteStatus !== "connecting"))
+    && (!isRemoteStep || (hasRemoteHost && remoteStatus !== "connecting" && parsedRemotePort !== null))
     && hasSourcePath
     && hasRepoUrl
     && hasTargetBranch
@@ -630,9 +642,9 @@ export default function WorkspaceSetupPage() {
       desktopConnectSsh({
         host: parsed.host,
         user: parsed.user ?? null,
-        remote_port: null,
+        remote_port: parsedRemotePort,
         start_remote: true,
-        remote_data_dir: null,
+        remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
       })
         .then((info) => {
           if (cancelled) return null;
@@ -661,7 +673,16 @@ export default function WorkspaceSetupPage() {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [step.key, selections.location, remoteStatus, selections.source, remoteHostInput, sourcePath]);
+  }, [
+    step.key,
+    selections.location,
+    remoteStatus,
+    selections.source,
+    remoteHostInput,
+    sourcePath,
+    parsedRemotePort,
+    remoteDataDirInput,
+  ]);
 
   const sshSuggestions = useMemo(() => {
     const query = remoteHostInput.trim().toLowerCase();
@@ -788,9 +809,9 @@ export default function WorkspaceSetupPage() {
         ? await desktopConnectSsh({
           host: parsed!.host,
           user: parsed!.user ?? null,
-          remote_port: null,
+          remote_port: parsedRemotePort,
           start_remote: true,
-          remote_data_dir: null,
+          remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
         })
         : await desktopConnectLocal();
       applyConnection(info);
@@ -1111,6 +1132,49 @@ export default function WorkspaceSetupPage() {
 	                        />
 	                      </label>
                     </div>
+                    <button
+                      type="button"
+                      className="wizard-advanced-toggle"
+                      data-testid="wizard-remote-advanced-toggle"
+                      onClick={() => setRemoteAdvancedOpen((v) => !v)}
+                    >
+                      <span className="wizard-advanced-toggle-icon" aria-hidden="true">
+                        {remoteAdvancedOpen ? "▾" : "▸"}
+                      </span>
+                      Advanced
+                    </button>
+                    {remoteAdvancedOpen && (
+                      <div className="wizard-advanced">
+                        <div className="wizard-input">
+                          <label>
+                            Remote daemon port
+                            <input
+                              data-testid="wizard-remote-port"
+                              placeholder="4399"
+                              value={remotePortInput}
+                              onChange={(e) => setRemotePortInput(e.target.value)}
+                            />
+                          </label>
+                          <div className="wizard-note">
+                            Use a non-default port for E2E/shared hosts so tests do not touch an existing daemon.
+                          </div>
+                        </div>
+                        <div className="wizard-input">
+                          <label>
+                            Remote data dir (optional)
+                            <input
+                              data-testid="wizard-remote-data-dir"
+                              placeholder="/tmp/ctx-e2e-123/daemon"
+                              value={remoteDataDirInput}
+                              onChange={(e) => setRemoteDataDirInput(e.target.value)}
+                            />
+                          </label>
+                          <div className="wizard-note">
+                            Leave blank for remote defaults. Set for isolated test state.
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {sshSuggestions.length > 0 && (
                       <div className="wizard-remote-list">
                         {sshSuggestions.map((entry) => {

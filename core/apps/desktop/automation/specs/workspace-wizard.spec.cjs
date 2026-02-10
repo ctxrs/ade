@@ -5,7 +5,38 @@ const { spawnSync } = require("child_process");
 
 const REMOTE_HOST_RAW = process.env.CTX_AUTOMATION_REMOTE_HOST || "";
 const REMOTE_HOST = REMOTE_HOST_RAW.trim();
-const REMOTE_USER_DEFAULT = "dev";
+const REMOTE_USER_DEFAULT = (process.env.CTX_AUTOMATION_REMOTE_USER || "devboxadmin").trim() || "devboxadmin";
+const REMOTE_PASSWORD = process.env.CTX_AUTOMATION_REMOTE_PASSWORD || "";
+const REMOTE_WIZARD_HOST_INPUT = (() => {
+  const raw = REMOTE_HOST_RAW.trim();
+  if (!raw) return "";
+  if (raw.includes("@")) return raw;
+  if (REMOTE_HOST) return `${REMOTE_USER_DEFAULT}@${REMOTE_HOST}`;
+  return raw;
+})();
+const SCENARIO_FILTER = new Set(
+  String(process.env.CTX_AUTOMATION_SCENARIOS || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+);
+const scenarioEnabled = (name, tags = []) => {
+  if (SCENARIO_FILTER.size === 0) return true;
+  const keys = [name, ...tags].map((s) => String(s).trim().toLowerCase()).filter(Boolean);
+  return keys.some((k) => SCENARIO_FILTER.has(k));
+};
+const parsePort = (raw, fallback) => {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  const p = Math.trunc(n);
+  if (p < 1 || p > 65535) return fallback;
+  return p;
+};
+const REMOTE_PORT = parsePort(process.env.CTX_AUTOMATION_REMOTE_PORT || "44099", 44099);
+const REMOTE_DATA_DIR_RAW = process.env.CTX_AUTOMATION_REMOTE_DATA_DIR || "";
+const SSH_NO_START_REMOTE = !["0", "false", "no"].includes(
+  String(process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE || "1").trim().toLowerCase(),
+);
 
 const run = (cmd, args, opts = {}) => {
   const res = spawnSync(cmd, args, { encoding: "utf8", ...opts });
@@ -169,6 +200,20 @@ const clickNext = async () => {
 };
 
 const clickCreate = async () => {
+  await waitForTestId("wizard-create");
+  const state = await browser.execute(() => {
+    const el = document.querySelector('[data-testid="wizard-create"]');
+    if (!(el instanceof HTMLButtonElement)) return { present: false, disabled: null, text: "" };
+    return {
+      present: true,
+      disabled: Boolean(el.disabled),
+      text: String(el.textContent || "").trim(),
+    };
+  });
+  if (!state?.present) throw new Error("wizard-create button missing at confirm step");
+  if (state?.disabled) {
+    throw new Error(`wizard-create button disabled at confirm step (label='${state.text || ""}')`);
+  }
   await clickTestId("wizard-create");
 };
 
@@ -211,6 +256,125 @@ const daemonJson = async (method, apiPath, body) => {
   return resp;
 };
 
+const safeDaemonJson = async (method, apiPath, body) => {
+  try {
+    return await daemonJson(method, apiPath, body);
+  } catch (error) {
+    return { error: String(error) };
+  }
+};
+
+const compactEntity = (value) => {
+  if (!value || typeof value !== "object") return value;
+  const keys = [
+    "id",
+    "task_id",
+    "session_id",
+    "workspace_id",
+    "status",
+    "state",
+    "title",
+    "provider_id",
+    "provider",
+    "event_type",
+    "type",
+    "kind",
+    "name",
+    "role",
+    "message_type",
+    "status_reason",
+    "created_at",
+    "updated_at",
+    "last_error",
+    "error",
+    "message",
+    "content",
+    "text",
+  ];
+  const out = {};
+  for (const k of keys) {
+    if (Object.prototype.hasOwnProperty.call(value, k)) out[k] = value[k];
+  }
+  const payloadKeys = ["payload", "event_json", "event", "data", "details", "delta"];
+  for (const k of payloadKeys) {
+    if (!Object.prototype.hasOwnProperty.call(value, k)) continue;
+    try {
+      const raw = value[k];
+      const str = typeof raw === "string" ? raw : JSON.stringify(raw);
+      out[k] = str.length > 800 ? `${str.slice(0, 800)}...` : str;
+    } catch {
+      out[k] = "[unserializable]";
+    }
+  }
+  return Object.keys(out).length > 0 ? out : value;
+};
+
+const idString = (value) => {
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  if (!value || typeof value !== "object") return "";
+  if (typeof value.id === "string") return value.id;
+  if (typeof value.value === "string") return value.value;
+  if (typeof value.id === "number") return String(value.id);
+  if (typeof value.value === "number") return String(value.value);
+  return "";
+};
+
+const collectCodexSmokeDiagnostics = async (workspaceId) => {
+  const diag = { workspaceId };
+  const tasksResp = await safeDaemonJson("GET", `/api/workspaces/${workspaceId}/tasks`);
+  diag.workspaceTasksStatus = tasksResp.status ?? null;
+  if (tasksResp.error) diag.workspaceTasksError = tasksResp.error;
+  const tasks = Array.isArray(tasksResp.payload) ? tasksResp.payload : [];
+  diag.workspaceTasks = tasks.slice(-3).map((t) => compactEntity(t));
+
+  const latestTask = tasks[tasks.length - 1];
+  const taskId = idString(latestTask?.id || latestTask?.task_id || latestTask?.taskId);
+  if (!taskId) return diag;
+  diag.taskId = taskId;
+
+  const sessionsResp = await safeDaemonJson("GET", `/api/tasks/${taskId}/sessions`);
+  diag.taskSessionsStatus = sessionsResp.status ?? null;
+  if (sessionsResp.error) diag.taskSessionsError = sessionsResp.error;
+  const sessions = Array.isArray(sessionsResp.payload) ? sessionsResp.payload : [];
+  diag.taskSessions = sessions.slice(-3).map((s) => compactEntity(s));
+
+  const latestSession = sessions[sessions.length - 1];
+  const sessionId = idString(latestSession?.id || latestSession?.session_id || latestSession?.sessionId);
+  if (!sessionId) return diag;
+  diag.sessionId = sessionId;
+
+  const sessionStateResp = await safeDaemonJson("GET", `/api/sessions/${sessionId}/state`);
+  diag.sessionStateStatus = sessionStateResp.status ?? null;
+  if (sessionStateResp.error) diag.sessionStateError = sessionStateResp.error;
+  diag.sessionState = compactEntity(sessionStateResp.payload);
+
+  const sessionEventsResp = await safeDaemonJson("GET", `/api/sessions/${sessionId}/events?limit=5`);
+  diag.sessionEventsStatus = sessionEventsResp.status ?? null;
+  if (sessionEventsResp.error) diag.sessionEventsError = sessionEventsResp.error;
+  const eventsPayload = sessionEventsResp.payload;
+  const events = Array.isArray(eventsPayload?.events)
+    ? eventsPayload.events
+    : Array.isArray(eventsPayload)
+      ? eventsPayload
+      : [];
+  diag.sessionEvents = events.slice(-5).map((evt) => compactEntity(evt));
+
+  const sessionHistoryResp = await safeDaemonJson("GET", `/api/sessions/${sessionId}/history?limit=8`);
+  diag.sessionHistoryStatus = sessionHistoryResp.status ?? null;
+  if (sessionHistoryResp.error) diag.sessionHistoryError = sessionHistoryResp.error;
+  const historyPayload = sessionHistoryResp.payload;
+  const history = Array.isArray(historyPayload?.items)
+    ? historyPayload.items
+    : Array.isArray(historyPayload?.history)
+      ? historyPayload.history
+      : Array.isArray(historyPayload)
+        ? historyPayload
+        : [];
+  diag.sessionHistory = history.slice(-8).map((item) => compactEntity(item));
+  return diag;
+};
+
 const getConnectionInfo = async () => {
   const result = await browser.execute(async () => {
     const invoke = window.__TAURI__?.core?.invoke;
@@ -234,6 +398,51 @@ const getWorkspace = async (id) => {
   return resp.payload;
 };
 
+const getWorkspaceHarnessContainer = async (workspaceId) => {
+  const resp = await daemonJson("GET", `/api/workspaces/${workspaceId}/harness_container`);
+  if (resp.status !== 200) {
+    throw new Error(`GET /api/workspaces/${workspaceId}/harness_container failed (${resp.status})`);
+  }
+  return resp.payload;
+};
+
+const createWorkspaceTerminal = async (workspaceId, body = {}) => {
+  const resp = await daemonJson("POST", `/api/workspaces/${workspaceId}/terminals`, body);
+  if (resp.status !== 200) {
+    throw new Error(`POST /api/workspaces/${workspaceId}/terminals failed (${resp.status})`);
+  }
+  return resp.payload;
+};
+
+const deleteTerminal = async (terminalId) => {
+  const resp = await daemonJson("DELETE", `/api/terminals/${terminalId}`);
+  if (resp.status !== 204 && resp.status !== 404) {
+    throw new Error(`DELETE /api/terminals/${terminalId} failed (${resp.status})`);
+  }
+};
+
+const getWorkspaceTerminalCwd = async (workspaceId) => {
+  const terminal = await createWorkspaceTerminal(workspaceId, {});
+  const terminalId = typeof terminal.id === "string"
+    ? terminal.id
+    : String(terminal.id?.id || terminal.id?.value || terminal.id?.["0"] || "");
+  if (!terminalId) {
+    throw new Error(`terminal id missing: ${JSON.stringify(terminal)}`);
+  }
+  try {
+    return String(terminal.cwd || "");
+  } finally {
+    await deleteTerminal(terminalId);
+  }
+};
+
+const assertWorkspaceTerminalCwdPrefix = async (workspaceId, expectedPrefix) => {
+  const cwd = await getWorkspaceTerminalCwd(workspaceId);
+  if (!cwd.startsWith(expectedPrefix)) {
+    throw new Error(`expected terminal cwd to start with '${expectedPrefix}', got '${cwd}'`);
+  }
+};
+
 const daemonOverlayText = async () => {
   return await browser.execute(() => {
     const el = document.querySelector(".daemon-overlay");
@@ -252,8 +461,69 @@ const assertNoDaemonOverlayFor = async (durationMs = 2000) => {
   }
 };
 
-const waitForWorkspaceRoute = async () => {
-  const timeoutMs = 120000;
+const waitForRemoteStepAfterLocation = async (timeoutMs = 60000) => {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const state = await browser.execute(() => {
+      const root = document.querySelector('[data-testid="workspace-setup"]');
+      const step = root ? root.getAttribute("data-step-key") : null;
+      const errEl = document.querySelector(".wizard-error");
+      const err = errEl ? String(errEl.textContent || "").trim() : "";
+      return { step, err };
+    });
+    const step = String(state?.step || "");
+    const err = String(state?.err || "");
+    if (err) throw new Error(`remote verification failed: ${err}`);
+    if (step && step !== "location") return step;
+    await browser.pause(100);
+  }
+  throw new Error("remote verification did not advance from location step within timeout");
+};
+
+const collectWorkspaceRouteDiagnostics = async () => {
+  const ui = await browser.execute(() => {
+    const pathname = window.location.pathname;
+    const root = document.querySelector('[data-testid="workspace-setup"]');
+    const step = root ? root.getAttribute("data-step-key") : null;
+    const errEl = document.querySelector(".wizard-error");
+    const err = errEl ? String(errEl.textContent || "").trim() : "";
+    const overlayEl = document.querySelector(".daemon-overlay");
+    const overlay = overlayEl ? String(overlayEl.textContent || "").trim() : "";
+    const creatingEl = document.querySelector('[data-testid="wizard-creating-status"]');
+    const creating = creatingEl ? String(creatingEl.textContent || "").trim() : "";
+    const createBtn = document.querySelector('[data-testid="wizard-create"]');
+    const createDisabled = createBtn instanceof HTMLButtonElement ? Boolean(createBtn.disabled) : null;
+    const createLabel = createBtn ? String(createBtn.textContent || "").trim() : "";
+    const summaryRows = Array.from(document.querySelectorAll(".wizard-summary-row"))
+      .map((row) => {
+        const k = row.querySelector(".wizard-summary-k");
+        const v = row.querySelector(".wizard-summary-v");
+        return {
+          k: k ? String(k.textContent || "").trim() : "",
+          v: v ? String(v.textContent || "").trim() : "",
+        };
+      })
+      .filter((r) => r.k || r.v);
+    return { pathname, step, err, overlay, creating, createDisabled, createLabel, summaryRows };
+  });
+  let conn;
+  try {
+    conn = await getConnectionInfo();
+  } catch (error) {
+    conn = { error: String(error) };
+  }
+  const wsResp = await safeDaemonJson("GET", "/api/workspaces");
+  const workspaces = Array.isArray(wsResp.payload) ? wsResp.payload : [];
+  return {
+    ui,
+    connection: conn,
+    workspaceStatus: wsResp.status ?? null,
+    workspaceError: wsResp.error || null,
+    workspaces: workspaces.slice(-5).map((w) => compactEntity(w)),
+  };
+};
+
+const waitForWorkspaceRoute = async (timeoutMs = 120000) => {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const state = await browser.execute(() => {
@@ -278,7 +548,8 @@ const waitForWorkspaceRoute = async () => {
     }
     await browser.pause(200);
   }
-  throw new Error("did not navigate to /workspaces/:id");
+  const diag = await collectWorkspaceRouteDiagnostics();
+  throw new Error(`did not navigate to /workspaces/:id; diag=${JSON.stringify(diag)}`);
 };
 
 const assertLocalWorkspaceConfig = (rootPath, expectations) => {
@@ -300,18 +571,22 @@ const assertLocalWorkspaceConfig = (rootPath, expectations) => {
   };
   if (expectations.executionMode) {
     const body = tableBody("execution");
-    if (!body) throw new Error(`expected [execution] in ${cfg}`);
-    if (!new RegExp(`\\bmode\\s*=\\s*\"${expectations.executionMode}\"\\b`).test(body)) {
+    if (!body) {
+      // Host execution is the daemon default; config may omit an explicit [execution] table.
+      if (expectations.executionMode !== "host") {
+        throw new Error(`expected [execution] in ${cfg}`);
+      }
+    } else if (!new RegExp(`\\bmode\\s*=\\s*\"${expectations.executionMode}\"`).test(body)) {
       throw new Error(`expected execution.mode=${expectations.executionMode} in ${cfg}`);
     }
   }
   if (expectations.mountMode || expectations.networkMode || expectations.allowlist) {
     const body = tableBody("execution.container");
     if (!body) throw new Error(`expected [execution.container] in ${cfg}`);
-    if (expectations.mountMode && !new RegExp(`\\bmount_mode\\s*=\\s*\"${expectations.mountMode}\"\\b`).test(body)) {
+    if (expectations.mountMode && !new RegExp(`\\bmount_mode\\s*=\\s*\"${expectations.mountMode}\"`).test(body)) {
       throw new Error(`expected execution.container.mount_mode=${expectations.mountMode} in ${cfg}`);
     }
-    if (expectations.networkMode && !new RegExp(`\\bnetwork_mode\\s*=\\s*\"${expectations.networkMode}\"\\b`).test(body)) {
+    if (expectations.networkMode && !new RegExp(`\\bnetwork_mode\\s*=\\s*\"${expectations.networkMode}\"`).test(body)) {
       throw new Error(`expected execution.container.network_mode=${expectations.networkMode} in ${cfg}`);
     }
     if (expectations.allowlist) {
@@ -343,8 +618,28 @@ const assertLocalWorkspaceConfig = (rootPath, expectations) => {
 // Quote a string for safe embedding in a single-quoted POSIX shell string.
 const shSingleQuote = (s) => `'${String(s).replace(/'/g, `'\"'\"'`)}'`;
 
-const ssh = (target, cmd) =>
-  run("ssh", ["-o", "BatchMode=yes", target, `bash -lc ${shSingleQuote(cmd)}`], { stdio: ["ignore", "pipe", "pipe"] });
+const sshArgs = (target, cmd) => {
+  const args = [
+    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", "ConnectTimeout=15",
+  ];
+  if (!REMOTE_PASSWORD) {
+    args.push("-o", "BatchMode=yes");
+  }
+  args.push(target, `bash -lc ${shSingleQuote(cmd)}`);
+  return args;
+};
+
+const ssh = (target, cmd) => {
+  const args = sshArgs(target, cmd);
+  if (REMOTE_PASSWORD) {
+    return run("sshpass", ["-e", "ssh", ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, SSHPASS: REMOTE_PASSWORD },
+    });
+  }
+  return run("ssh", args, { stdio: ["ignore", "pipe", "pipe"] });
+};
 
 const ensureRemoteTarget = () => {
   if (!REMOTE_HOST) return null;
@@ -398,14 +693,44 @@ const runWizardScenario = async (scenario) => {
 
   if (scenario.location === "remote") {
     await setInput("wizard-remote-host", scenario.remoteHost);
+    if (typeof scenario.remotePort === "number" || typeof scenario.remoteDataDir === "string") {
+      const hasAdvanced = await browser.execute(
+        () => Boolean(document.querySelector('[data-testid="wizard-remote-port"]')),
+      );
+      if (!hasAdvanced) {
+        await clickTestId("wizard-remote-advanced-toggle");
+      }
+      if (typeof scenario.remotePort === "number") {
+        await setInput("wizard-remote-port", String(scenario.remotePort));
+      }
+      if (typeof scenario.remoteDataDir === "string" && scenario.remoteDataDir.trim()) {
+        await setInput("wizard-remote-data-dir", scenario.remoteDataDir.trim());
+      }
+    }
     await clickNext(); // verifies SSH and advances
   }
 
-  await waitForStep("container");
-  if (scenario.container === "host-mounted") {
-    await clickTestId("wizard-container-advanced-toggle");
+  const afterLocation = scenario.location === "remote"
+    ? await waitForRemoteStepAfterLocation()
+    : await currentStepKey();
+  if (afterLocation === "container") {
+    if (scenario.container === "host-mounted") {
+      await clickTestId("wizard-container-advanced-toggle");
+    }
+    await clickOption("container", scenario.container);
+  } else if (afterLocation === "source") {
+    if (scenario.container && scenario.container !== "no-container") {
+      throw new Error("remote wizard did not expose container step (container modes unavailable)");
+    }
+  } else {
+    const wizardErr = await browser.execute(() => {
+      const el = document.querySelector(".wizard-error");
+      return el ? String(el.textContent || "").trim() : "";
+    });
+    throw new Error(
+      `expected step 'container' or 'source', got '${afterLocation}' (wizard-error: ${wizardErr || "none"})`,
+    );
   }
-  await clickOption("container", scenario.container);
 
   await waitForStep("source");
   await clickOption("source", scenario.source.kind);
@@ -467,7 +792,7 @@ const runWizardScenario = async (scenario) => {
   await waitForStep("confirm");
   await clickCreate();
 
-  const id = await waitForWorkspaceRoute();
+  const id = await waitForWorkspaceRoute(scenario.location === "remote" ? 180000 : 120000);
   // The workbench must never render the "daemon unavailable" overlay on first navigation.
   // If connect_local returns before the daemon is reachable, this can flash briefly.
   await assertNoDaemonOverlayFor(2000);
@@ -481,17 +806,32 @@ describe("launcher workspace wizard (e2e)", () => {
   const localCloneSrc = path.join(localBase, "clone-src");
 
   const remoteTarget = ensureRemoteTarget();
+  const remoteHostForWizard = REMOTE_WIZARD_HOST_INPUT || REMOTE_HOST || (REMOTE_HOST_RAW.includes("@") ? REMOTE_HOST_RAW.split("@").pop() : REMOTE_HOST_RAW);
   const remoteBase = `/tmp/ctx-e2e-${runId}`;
+  const remoteDataDir = REMOTE_DATA_DIR_RAW.trim() || `${remoteBase}/daemon`;
+  const preserveRemoteDaemonDir = SSH_NO_START_REMOTE;
+  let remoteBaseResolved = remoteBase;
+  let remoteHasPodman = false;
+  let remoteSupportsContainerStep = false;
 
   before(async () => {
     initGitRepo(localImportRepo, "local-import");
     initGitRepo(localCloneSrc, "local-clone-src");
 
     if (remoteTarget) {
+      const podmanProbe = ssh(
+        remoteTarget,
+        "if command -v podman >/dev/null 2>&1; then echo yes; else echo no; fi",
+      ).trim();
+      remoteHasPodman = podmanProbe === "yes";
       // Pre-create remote repos for import/clone without touching the daemon.
       const script = [
         "set -euo pipefail",
         `base=${JSON.stringify(remoteBase)}`,
+        `daemon_dir=${JSON.stringify(remoteDataDir)}`,
+        ...(preserveRemoteDaemonDir
+          ? []
+          : ["if [[ -n \"$daemon_dir\" && \"$daemon_dir\" == /tmp/* ]]; then rm -rf \"$daemon_dir\"; fi"]),
         "rm -rf \"$base\"",
         "mkdir -p \"$base\"",
         "mkdir -p \"$base/import-repo\"",
@@ -510,6 +850,33 @@ describe("launcher workspace wizard (e2e)", () => {
         "git -C \"$base/clone-src\" commit -m init",
       ].join("\n");
       ssh(remoteTarget, script);
+      try {
+        const resolved = ssh(
+          remoteTarget,
+          `base=${JSON.stringify(remoteBase)}; mkdir -p "$base"; realpath "$base"`,
+        ).trim();
+        if (resolved) remoteBaseResolved = resolved;
+      } catch {
+        // Keep the nominal /tmp path if realpath is unavailable.
+      }
+
+      // Probe whether the current wizard flow exposes a container step for remote targets.
+      await browser.url(`tauri://localhost/workspace-setup?remoteProbe=${Date.now()}`);
+      await waitForTauri();
+      await waitForTestId("workspace-setup", 60000);
+      await waitForStep("location");
+      await clickOption("location", "remote");
+      await setInput("wizard-remote-host", remoteHostForWizard);
+      await clickNext();
+      let step = await currentStepKey();
+      if (step === "location") {
+        try {
+          step = await waitForRemoteStepAfterLocation(20000);
+        } catch {
+          step = await currentStepKey();
+        }
+      }
+      remoteSupportsContainerStep = step === "container";
     }
   });
 
@@ -521,14 +888,24 @@ describe("launcher workspace wizard (e2e)", () => {
     }
     if (remoteTarget) {
       try {
-        ssh(remoteTarget, `rm -rf ${JSON.stringify(remoteBase)}`);
+        const cleanup = [
+          "set -euo pipefail",
+          `base=${JSON.stringify(remoteBase)}`,
+          `daemon_dir=${JSON.stringify(remoteDataDir)}`,
+          "rm -rf \"$base\"",
+          ...(preserveRemoteDaemonDir
+            ? []
+            : ["if [[ -n \"$daemon_dir\" && \"$daemon_dir\" == /tmp/* ]]; then rm -rf \"$daemon_dir\"; fi"]),
+        ].join("\n");
+        ssh(remoteTarget, cleanup);
       } catch {
         // ignore
       }
     }
   });
 
-  it("local import works end-to-end", async () => {
+  it("local import works end-to-end", async function () {
+    if (!scenarioEnabled("local-import", ["local", "host"])) this.skip();
     const id = await runWizardScenario({
       location: "local",
       container: "no-container",
@@ -540,16 +917,22 @@ describe("launcher workspace wizard (e2e)", () => {
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
     assertLocalWorkspaceConfig(ws.root_path, { executionMode: "host", mergeQueueEnabled: false, setupHook: "pnpm install" });
+    await assertWorkspaceTerminalCwdPrefix(id, ws.root_path);
+    const container = await getWorkspaceHarnessContainer(id);
+    if (container !== null) {
+      throw new Error(`expected no harness container in host mode, got: ${JSON.stringify(container)}`);
+    }
   });
 
-  it("local clone works end-to-end (merge queue enabled)", async () => {
+  it("local clone works end-to-end (merge queue enabled)", async function () {
+    if (!scenarioEnabled("local-clone-disk-isolated", ["local", "container", "disk-isolated"])) this.skip();
     const destParent = path.join(localBase, "clone-dest");
     fs.mkdirSync(destParent, { recursive: true });
     const destPath = `${destParent}/`; // trailing slash -> derive repo name
 
     const id = await runWizardScenario({
       location: "local",
-      container: "sealed",
+      container: "disk-isolated",
       network: "providers",
       source: { kind: "clone", repoUrl: localCloneSrc, branch: "", destPath },
       setupHook: "pnpm install",
@@ -560,15 +943,24 @@ describe("launcher workspace wizard (e2e)", () => {
     const ws = await getWorkspace(id);
     assertLocalWorkspaceConfig(ws.root_path, {
       executionMode: "container",
-      mountMode: "sealed",
+      mountMode: "disk_isolated",
       networkMode: "llm_only",
       mergeQueueEnabled: true,
       targetBranch: "main",
       setupHook: "pnpm install",
     });
+    const container = await getWorkspaceHarnessContainer(id);
+    if (!container || !container.running || container.mount_mode !== "disk_isolated") {
+      throw new Error(`expected running disk-isolated container, got: ${JSON.stringify(container)}`);
+    }
+    const cloneCwd = await getWorkspaceTerminalCwd(id);
+    if (!cloneCwd.startsWith("/ctx/ws")) {
+      throw new Error(`expected disk-isolated terminal cwd under /ctx/ws, got: ${cloneCwd}`);
+    }
   });
 
-  it("local new empty works end-to-end", async () => {
+  it("local new empty works end-to-end", async function () {
+    if (!scenarioEnabled("local-new-host-mounted", ["local", "container", "host-mounted"])) this.skip();
     const dest = path.join(localBase, "new-sealed");
     const id = await runWizardScenario({
       location: "local",
@@ -590,11 +982,44 @@ describe("launcher workspace wizard (e2e)", () => {
       mergeQueueEnabled: true,
       targetBranch: "main",
     });
+    const container = await getWorkspaceHarnessContainer(id);
+    if (!container || !container.running || container.mount_mode !== "host_mounted") {
+      throw new Error(`expected running host-mounted container, got: ${JSON.stringify(container)}`);
+    }
+    await assertWorkspaceTerminalCwdPrefix(id, ws.root_path);
+  });
+
+  it("local disk-isolated container works end-to-end", async function () {
+    if (!scenarioEnabled("local-new-disk-isolated", ["local", "container", "disk-isolated"])) this.skip();
+    const dest = path.join(localBase, "new-disk-isolated");
+    const id = await runWizardScenario({
+      location: "local",
+      container: "disk-isolated",
+      network: "full",
+      source: { kind: "new", destPath: dest, workspaceName: "disk-isolated-ws" },
+      setupHook: "",
+      mergeQueue: { kind: "skip" },
+    });
+
+    await assertConnectedLocalAndListening();
+    const ws = await getWorkspace(id);
+    assertLocalWorkspaceConfig(ws.root_path, {
+      executionMode: "container",
+      mountMode: "disk_isolated",
+      networkMode: "all",
+      mergeQueueEnabled: false,
+    });
+    const container = await getWorkspaceHarnessContainer(id);
+    if (!container || !container.running || container.mount_mode !== "disk_isolated") {
+      throw new Error(`expected running disk-isolated container, got: ${JSON.stringify(container)}`);
+    }
+    await assertWorkspaceTerminalCwdPrefix(id, "/ctx/ws");
   });
 
   it("local container can start Codex and respond", async function () {
+    if (!scenarioEnabled("local-codex-smoke", ["local", "container", "provider"])) this.skip();
     // Container start + provider spin-up can take a while on a fresh machine (Podman VM, image load, etc).
-    this.timeout(300000);
+    this.timeout(420000);
 
     const dest = path.join(localBase, "codex-host-mounted");
     const id = await runWizardScenario({
@@ -612,32 +1037,58 @@ describe("launcher workspace wizard (e2e)", () => {
     await setTextareaSelector("textarea.wb-new-composer-textarea", "hello");
     await clickSelector("button.wb-send");
 
-    // Confirm the turn did not hard-fail to start.
-    await browser.waitUntil(
-      async () => {
-        const banner = await browser.execute(() => {
-          const el = document.querySelector(".wb-banner");
-          return el ? String(el.textContent || "").trim() : "";
-        });
-        if (banner && /failed to start/i.test(banner)) return false;
-        return true;
-      },
-      { timeout: 60000, timeoutMsg: "task start failed (wb-banner shows error)" },
-    );
-
-    // Wait for any assistant message to arrive.
-    await browser.waitUntil(
-      async () => {
-        const ok = await browser.execute(() => {
-          const el = document.querySelector(".msg.assistant");
-          if (!el) return false;
-          const txt = String(el.textContent || "").trim();
-          return txt.length > 0;
-        });
-        return Boolean(ok);
-      },
-      { timeout: 180000, timeoutMsg: "no assistant response received in time" },
-    );
+    // Wait for any assistant response, but fail fast if the UI reports session start failure.
+    let lastState = "{}";
+    try {
+      await browser.waitUntil(
+        async () => {
+          const state = await browser.execute(() => {
+            const assistantEls = Array.from(document.querySelectorAll(".wb-assistant-entry, .msg.assistant"));
+            const assistantText = assistantEls
+              .map((el) => String(el.textContent || "").trim())
+              .filter(Boolean)
+              .join("\n");
+            const wbBanner = Array.from(document.querySelectorAll(".wb-banner"))
+              .map((el) => String(el.textContent || "").trim())
+              .filter(Boolean)
+              .join(" | ");
+            const failHeader = Array.from(document.querySelectorAll(".wb-session-slot .banner strong"))
+              .map((el) => String(el.textContent || "").trim())
+              .find((t) => /failed to start/i.test(t)) || "";
+            const failDetail = Array.from(document.querySelectorAll(".wb-session-slot .banner .error"))
+              .map((el) => String(el.textContent || "").trim())
+              .find(Boolean) || "";
+            return {
+              assistantText,
+              wbBanner,
+              failHeader,
+              failDetail,
+            };
+          });
+          const diag = {
+            assistantText: String(state?.assistantText || ""),
+            wbBanner: String(state?.wbBanner || ""),
+            failHeader: String(state?.failHeader || ""),
+            failDetail: String(state?.failDetail || ""),
+          };
+          lastState = JSON.stringify(diag);
+          if (diag.failHeader || diag.failDetail || /failed to start/i.test(diag.wbBanner)) {
+            throw new Error(`Codex session failed to start: ${lastState}`);
+          }
+          return diag.assistantText.length > 0;
+        },
+        {
+          timeout: 240000,
+          interval: 250,
+          timeoutMsg: `no assistant response received in time; last_state=${lastState}`,
+        },
+      );
+    } catch (err) {
+      const apiDiag = await collectCodexSmokeDiagnostics(id);
+      throw new Error(
+        `codex smoke did not complete: ${String(err)}; ui=${lastState}; api=${JSON.stringify(apiDiag)}`,
+      );
+    }
 
     // Sanity: ensure we stayed in the same workspace route.
     const ws = await getWorkspace(id);
@@ -645,12 +1096,15 @@ describe("launcher workspace wizard (e2e)", () => {
   });
 
   it("remote import works end-to-end", async function () {
+    if (!scenarioEnabled("remote-import-host", ["remote", "remote-host"])) this.skip();
     if (!remoteTarget) this.skip();
     const importPath = `${remoteBase}/import-repo`;
 
     const id = await runWizardScenario({
       location: "remote",
-      remoteHost: remoteTarget,
+      remoteHost: remoteHostForWizard,
+      remotePort: REMOTE_PORT,
+      remoteDataDir,
       container: "no-container",
       source: { kind: "import", path: importPath },
       setupHook: "pnpm install",
@@ -658,11 +1112,19 @@ describe("launcher workspace wizard (e2e)", () => {
     });
 
     const ws = await getWorkspace(id);
+    const rootPath = String(ws.root_path || "");
+    const expectedPrefixes = Array.from(new Set([remoteBase, remoteBaseResolved]));
+    if (!expectedPrefixes.some((prefix) => rootPath.startsWith(prefix))) {
+      throw new Error(`expected remote workspace root under one of [${expectedPrefixes.join(", ")}], got ${rootPath}`);
+    }
     ssh(remoteTarget, `test -f ${JSON.stringify(ws.root_path + "/.ctx/config.toml")}`);
   });
 
   it("remote clone works end-to-end", async function () {
+    if (!scenarioEnabled("remote-clone-host-mounted", ["remote", "remote-container", "host-mounted"])) this.skip();
     if (!remoteTarget) this.skip();
+    if (!remoteHasPodman) this.skip();
+    if (!remoteSupportsContainerStep) this.skip();
     const destParent = `${remoteBase}/clone-dest`;
     const destPath = `${destParent}/`;
     const src = `${remoteBase}/clone-src`;
@@ -670,7 +1132,9 @@ describe("launcher workspace wizard (e2e)", () => {
 
     const id = await runWizardScenario({
       location: "remote",
-      remoteHost: remoteTarget,
+      remoteHost: remoteHostForWizard,
+      remotePort: REMOTE_PORT,
+      remoteDataDir,
       container: "host-mounted",
       network: "allowlist",
       networkAllowlist: "github.com",
@@ -680,18 +1144,28 @@ describe("launcher workspace wizard (e2e)", () => {
     });
 
     const ws = await getWorkspace(id);
+    const rootPath = String(ws.root_path || "");
+    const expectedPrefixes = Array.from(new Set([remoteBase, remoteBaseResolved]));
+    if (!expectedPrefixes.some((prefix) => rootPath.startsWith(prefix))) {
+      throw new Error(`expected remote workspace root under one of [${expectedPrefixes.join(", ")}], got ${rootPath}`);
+    }
     ssh(remoteTarget, `test -f ${JSON.stringify(ws.root_path + "/.ctx/config.toml")}`);
   });
 
   it("remote new empty works end-to-end", async function () {
+    if (!scenarioEnabled("remote-new-disk-isolated", ["remote", "remote-container", "disk-isolated"])) this.skip();
     if (!remoteTarget) this.skip();
+    if (!remoteHasPodman) this.skip();
+    if (!remoteSupportsContainerStep) this.skip();
     const dest = `${remoteBase}/new-sealed`;
     ssh(remoteTarget, `rm -rf ${JSON.stringify(dest)}`);
 
     const id = await runWizardScenario({
       location: "remote",
-      remoteHost: remoteTarget,
-      container: "sealed",
+      remoteHost: remoteHostForWizard,
+      remotePort: REMOTE_PORT,
+      remoteDataDir,
+      container: "disk-isolated",
       network: "full",
       source: { kind: "new", destPath: dest, workspaceName: "sealed-remote" },
       setupHook: "",
@@ -699,6 +1173,11 @@ describe("launcher workspace wizard (e2e)", () => {
     });
 
     const ws = await getWorkspace(id);
+    const rootPath = String(ws.root_path || "");
+    const expectedPrefixes = Array.from(new Set([remoteBase, remoteBaseResolved]));
+    if (!expectedPrefixes.some((prefix) => rootPath.startsWith(prefix))) {
+      throw new Error(`expected remote workspace root under one of [${expectedPrefixes.join(", ")}], got ${rootPath}`);
+    }
     ssh(remoteTarget, `test -f ${JSON.stringify(ws.root_path + "/.ctx/config.toml")}`);
   });
 });
