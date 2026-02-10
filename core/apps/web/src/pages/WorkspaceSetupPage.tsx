@@ -6,7 +6,6 @@ import remarkGfm from "remark-gfm";
 import LauncherBrand from "../components/LauncherBrand";
 import {
   createWorkspace,
-  CodexHostImportProbe,
   ensureWorkspaceHarnessContainer,
   getHealth,
   importProviderAuthCandidates,
@@ -19,8 +18,6 @@ import {
   repoStatus,
   setDaemonAuthToken,
   setDaemonBaseUrl,
-  importCodexHostAuth,
-  probeCodexHostImport,
   updateWorkspaceExecutionConfig,
   updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig,
@@ -120,9 +117,6 @@ export default function WorkspaceSetupPage() {
   const [remoteDataDirInput, setRemoteDataDirInput] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [codexImportProbe, setCodexImportProbe] = useState<CodexHostImportProbe | null>(null);
-  const [codexImportDecision, setCodexImportDecision] = useState<"undecided" | "import" | "skip" | "imported">("undecided");
-  const [codexImportBusy, setCodexImportBusy] = useState(false);
   const [importRepoStatus, setImportRepoStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
   const [importRepoNote, setImportRepoNote] = useState<string | null>(null);
   const [sourcePath, setSourcePath] = useState("");
@@ -298,9 +292,6 @@ export default function WorkspaceSetupPage() {
   const needsAllowlist = step.key === "network" && selections.network === "allowlist";
   const hasAllowlist = !needsAllowlist
     || networkAllowlist.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length > 0;
-  const needsCodexDecision = step.key === "confirm"
-    && codexImportProbe?.available
-    && codexImportDecision === "undecided";
   const parsedRemote = parseUserHost(remoteHostInput);
   const authScanKey = `${selections.location ?? ""}|${parsedRemote?.user ?? ""}@${parsedRemote?.host ?? ""}`;
   const hasRemoteHost = Boolean(parsedRemote?.host);
@@ -320,7 +311,6 @@ export default function WorkspaceSetupPage() {
     && hasTargetBranch
     && hasAllowlist
     && (step.key !== "auth-import" || !authImportBusy)
-    && !needsCodexDecision
     ;
 
   function applyConnection(info: DesktopConnectionInfo) {
@@ -417,9 +407,6 @@ export default function WorkspaceSetupPage() {
       setImportRepoNote(null);
     }
     if (stepKey === "location") {
-      setCodexImportProbe(null);
-      setCodexImportDecision("undecided");
-      setCodexImportBusy(false);
       setAuthImportScannedKey(null);
       setAuthImportCandidates([]);
       setAuthImportSelected({});
@@ -819,37 +806,6 @@ export default function WorkspaceSetupPage() {
       // Ensure the daemon is reachable before we navigate away from the wizard.
       // This avoids landing on the workbench too early on cold start.
       await waitForDaemonReady(15000);
-
-      // Optional Codex auth import prompt during onboarding: detect existing daemon-host auth
-      // and require an explicit Import/Skip choice before creating the workspace.
-      let importProbe = codexImportProbe;
-      if (!importProbe) {
-        try {
-          importProbe = await probeCodexHostImport();
-          setCodexImportProbe(importProbe);
-        } catch (err: any) {
-          setCodexImportProbe({
-            available: false,
-            error: err?.message ?? String(err),
-          });
-          importProbe = null;
-        }
-      }
-      if (importProbe?.available && codexImportDecision === "undecided") {
-        const confirmIdx = steps.findIndex((s) => s.key === "confirm");
-        if (confirmIdx >= 0) setStepIndex(confirmIdx);
-        setCreateError("Existing Codex auth detected. Choose Import or Skip in Confirm before creating the workspace.");
-        return;
-      }
-      if (importProbe?.available && codexImportDecision === "import") {
-        setCodexImportBusy(true);
-        try {
-          await importCodexHostAuth();
-          setCodexImportDecision("imported");
-        } finally {
-          setCodexImportBusy(false);
-        }
-      }
 
       // 2. Ensure we have a VCS repo root_path (workspace creation requires this).
       let rootPath = "";
@@ -1588,47 +1544,6 @@ export default function WorkspaceSetupPage() {
                           <div className="wizard-summary-v">
                             {`${(pushRemote.trim() || "origin")}:${pushBranch.trim() || targetBranch.trim() || "main"}`}
                           </div>
-                        </div>
-                      )}
-                      {codexImportProbe?.available && (
-                        <div className="wizard-summary-row">
-                          <div className="wizard-summary-k">Codex auth</div>
-                          <div className="wizard-summary-v">
-                            <div>
-                              Found {codexImportProbe.auth_kind === "oauth" ? "subscription tokens" : "API key"} at {" "}
-                              {codexImportProbe.path ?? "~/.codex/auth.json"}
-                            </div>
-                            <div className="wizard-input-row" style={{ marginTop: 8 }}>
-                              <button
-                                type="button"
-                                className="wizard-input-button"
-                                onClick={() => {
-                                  setCreateError(null);
-                                  setCodexImportDecision("import");
-                                }}
-                                disabled={creating || codexImportBusy}
-                              >
-                                {codexImportDecision === "import" || codexImportDecision === "imported" ? "Import selected" : "Import"}
-                              </button>
-                              <button
-                                type="button"
-                                className="wizard-input-button"
-                                onClick={() => {
-                                  setCreateError(null);
-                                  setCodexImportDecision("skip");
-                                }}
-                                disabled={creating || codexImportBusy}
-                              >
-                                {codexImportDecision === "skip" ? "Skip selected" : "Skip"}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                      {codexImportProbe?.error && (
-                        <div className="wizard-summary-row">
-                          <div className="wizard-summary-k">Codex auth</div>
-                          <div className="wizard-summary-v">Probe error: {codexImportProbe.error}</div>
                         </div>
                       )}
                     </div>
