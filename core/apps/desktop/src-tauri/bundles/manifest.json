@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-02-09T04:13:29Z",
+  "generated_at": "2026-02-10T15:44:05Z",
   "providers": [
     {
       "id": "acp-crp-bridge",
@@ -79,17 +79,8 @@
       "version": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04",
       "os": "linux",
       "arch": "aarch64",
-      "sha256": "a0bb1848e7baf0dca91090e4d91d9800577fc7f9a06a50e6012d990ec5dcbb27",
+      "sha256": "f5698f4ea90c3a823f125f042e81a9849d13e9f32700a92e13f35257890e527c",
       "tar": "images/ctx-harness-linux-aarch64.tar",
-      "image": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04"
-    },
-    {
-      "id": "ctx-harness",
-      "version": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04",
-      "os": "linux",
-      "arch": "x86_64",
-      "sha256": "e705dceef23aebbfde1928cbdf4349b2c523c8605801227f9edfcf67fea881c2",
-      "tar": "images/ctx-harness-linux-x86_64.tar",
       "image": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04"
     }
   ]
