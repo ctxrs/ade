@@ -243,7 +243,6 @@ impl Default for SandboxingSettings {
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionMode {
     #[default]
-    #[serde(alias = "auto")]
     Host,
     Container,
 }
@@ -260,7 +259,6 @@ pub enum ContainerRuntimeKind {
 pub enum ContainerMountMode {
     #[default]
     HostMounted,
-    #[serde(alias = "sealed")]
     DiskIsolated,
 }
 

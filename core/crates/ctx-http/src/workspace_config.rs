@@ -155,8 +155,6 @@ struct WorkspaceExecutionConfig {
     #[serde(default)]
     environment: Option<ExecutionEnvironment>,
     #[serde(default)]
-    mode: Option<ExecutionMode>,
-    #[serde(default)]
     container: Option<WorkspaceContainerExecutionConfig>,
 }
 
@@ -164,8 +162,6 @@ struct WorkspaceExecutionConfig {
 struct WorkspaceContainerExecutionConfig {
     #[serde(default)]
     runtime: Option<ContainerRuntimeKind>,
-    #[serde(default)]
-    mount_mode: Option<ContainerMountMode>,
     #[serde(default)]
     network_mode: Option<ContainerNetworkMode>,
     #[serde(default)]
@@ -236,14 +232,9 @@ pub async fn load_execution_settings_override(
                 ov.container.mount_mode = Some(ContainerMountMode::DiskIsolated);
             }
         }
-    } else {
-        ov.mode = exec.mode;
     }
     if let Some(c) = exec.container {
         ov.container.runtime = c.runtime;
-        if environment.is_none() {
-            ov.container.mount_mode = c.mount_mode;
-        }
         ov.container.network_mode = c.network_mode;
         ov.container.allowlist = c.allowlist.map(|v| {
             v.into_iter()
@@ -1011,32 +1002,6 @@ allowlist = ["example.com"]
         assert_eq!(
             ov.container.allowlist,
             Some(vec!["example.com".to_string()])
-        );
-    }
-
-    #[tokio::test]
-    async fn load_execution_settings_override_reads_legacy_auto_and_sealed() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_workspace_config(
-            tmp.path(),
-            r#"
-[execution]
-mode = "auto"
-
-[execution.container]
-mount_mode = "sealed"
-"#,
-        )
-        .await;
-
-        let ov = load_execution_settings_override(tmp.path())
-            .await
-            .unwrap()
-            .expect("override should exist");
-        assert_eq!(ov.mode, Some(ExecutionMode::Host));
-        assert_eq!(
-            ov.container.mount_mode,
-            Some(ContainerMountMode::DiskIsolated)
         );
     }
 
