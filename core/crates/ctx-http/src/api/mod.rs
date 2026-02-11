@@ -178,14 +178,9 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
     let api = axum::Router::new()
         .route("/api/health", get(health))
         .route("/api/settings", get(get_settings).post(update_settings))
-        .route(
-            "/api/execution/container_image/prefetch",
-            post(prefetch_container_image),
-        )
-        .route(
-            "/api/execution/container_image/status",
-            get(container_image_status),
-        )
+        .route("/api/execution/launch/start", post(launch_start))
+        .route("/api/execution/launch/status", get(launch_status))
+        .route("/api/execution/launch/stream", get(launch_stream_ws))
         .route(
             "/api/title_generation/local/status",
             get(get_title_generation_local_status),
@@ -913,6 +908,7 @@ struct DiagnosticsResp {
     daemon: HealthResp,
     platform: serde_json::Value,
     logs: serde_json::Value,
+    execution: serde_json::Value,
     providers: Vec<ProviderStatus>,
     managed_installs: serde_json::Value,
 }
@@ -920,6 +916,7 @@ struct DiagnosticsResp {
 async fn diagnostics(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<DiagnosticsResp>, StatusCode> {
+    let startup_prewarm = state.execution.setup.startup_status().await;
     let providers = {
         let map = state.providers.statuses.lock().await;
         map.values()
@@ -970,6 +967,9 @@ async fn diagnostics(
         logs: serde_json::json!({
             "dir": logs::logs_dir(&state.core.data_root).to_string_lossy(),
             "files": log_files,
+        }),
+        execution: serde_json::json!({
+            "startup_prewarm": startup_prewarm,
         }),
         providers,
         managed_installs,

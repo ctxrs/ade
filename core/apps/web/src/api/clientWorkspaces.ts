@@ -14,7 +14,7 @@ import type {
   WorkspaceAttachment,
   WorkspaceAttachmentKind,
 } from "@ctx/types";
-import { apiAny, daemonFetchRaw, idToString } from "./clientBase";
+import { apiAny, authToken, daemonFetchRaw, idToString, resolveDaemonWsBaseUrl } from "./clientBase";
 
 export const listWorkspaces = () =>
   apiAny<Workspace[]>("/api/workspaces");
@@ -90,6 +90,75 @@ export const ensureWorkspaceHarnessContainer = (workspaceId: string) =>
   apiAny<void>(`/api/workspaces/${workspaceId}/harness_container/ensure`, {
     method: "POST",
   });
+
+export type ExecutionLaunchPhase =
+  | "machine_check"
+  | "machine_start_or_init"
+  | "image_check"
+  | "image_load"
+  | "container_check"
+  | "container_start_or_create"
+  | "runtime_network_setup"
+  | "ready";
+
+export type ExecutionLaunchLogLevel = "info" | "warn" | "error";
+
+export type ExecutionLaunchState = "running" | "ready" | "error";
+
+export type ExecutionLaunchLogLine = {
+  seq: number;
+  ts: string;
+  phase: ExecutionLaunchPhase;
+  level: ExecutionLaunchLogLevel;
+  message: string;
+};
+
+export type ExecutionLaunchPhaseStatus = {
+  phase: ExecutionLaunchPhase;
+  started_at: string;
+  finished_at?: string | null;
+  elapsed_ms?: number | null;
+};
+
+export type ExecutionLaunchSnapshot = {
+  job_id: string;
+  workspace_id: string;
+  kind: "workspace_launch" | "startup_prewarm";
+  state: ExecutionLaunchState;
+  created_at: string;
+  started_at: string;
+  finished_at?: string | null;
+  current_phase?: ExecutionLaunchPhase | null;
+  phases: ExecutionLaunchPhaseStatus[];
+  logs: ExecutionLaunchLogLine[];
+  error?: string | null;
+};
+
+export type ExecutionLaunchStreamEvent =
+  | { type: "launch_snapshot"; snapshot: ExecutionLaunchSnapshot }
+  | { type: "launch_log"; job_id: string; line: ExecutionLaunchLogLine }
+  | { type: "launch_complete"; snapshot: ExecutionLaunchSnapshot }
+  | { type: "launch_error"; snapshot: ExecutionLaunchSnapshot };
+
+export const startExecutionLaunch = (workspaceId: string) =>
+  apiAny<ExecutionLaunchSnapshot>("/api/execution/launch/start", {
+    method: "POST",
+    body: JSON.stringify({ workspace_id: workspaceId }),
+  });
+
+export const getExecutionLaunchStatus = (jobId: string) =>
+  apiAny<ExecutionLaunchSnapshot>(
+    `/api/execution/launch/status?job_id=${encodeURIComponent(jobId)}`,
+  );
+
+export const buildExecutionLaunchWsUrl = (jobId: string): string => {
+  const wsBase = resolveDaemonWsBaseUrl();
+  const qs = new URLSearchParams();
+  qs.set("job_id", jobId);
+  const token = authToken();
+  if (token) qs.set("token", token);
+  return `${wsBase}/api/execution/launch/stream?${qs.toString()}`;
+};
 
 export type UpdateWorktreeBootstrapConfigRequest = {
   setup_command?: string | null;

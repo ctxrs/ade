@@ -667,6 +667,90 @@
   font-size: 12px;
 }
 
+.wizard-launch-log-panel {
+  border: 1px solid var(--launcher-border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.wizard-launch-log-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wizard-launch-log-title {
+  color: var(--launcher-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.wizard-launch-log-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--launcher-muted);
+}
+
+.wizard-launch-log-body {
+  border: 1px solid rgba(231, 231, 231, 0.14);
+  border-radius: 8px;
+  background: rgba(12, 12, 12, 0.55);
+  max-height: 260px;
+  overflow: auto;
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.wizard-launch-log-line {
+  display: grid;
+  grid-template-columns: auto auto auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.wizard-launch-log-ts {
+  color: var(--launcher-muted);
+  white-space: nowrap;
+}
+
+.wizard-launch-log-phase {
+  color: var(--launcher-text);
+  white-space: nowrap;
+}
+
+.wizard-launch-log-level {
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.wizard-launch-log-level--info {
+  color: var(--launcher-muted);
+}
+
+.wizard-launch-log-level--warn {
+  color: #ffb84d;
+}
+
+.wizard-launch-log-level--error {
+  color: #ff7777;
+}
+
+.wizard-launch-log-msg {
+  color: var(--launcher-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .wizard-option-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -1053,5 +1137,10 @@
   .crash-course-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .wizard-launch-log-line {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 }

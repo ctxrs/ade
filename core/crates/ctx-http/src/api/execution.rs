@@ -1,130 +1,210 @@
+use std::path::Path as StdPath;
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::Json;
-use serde::Serialize;
+use futures::{SinkExt, StreamExt};
+use serde::Deserialize;
+use tokio::sync::broadcast;
+
+use ctx_core::ids::WorkspaceId;
 
 use crate::daemon::AppState;
-use crate::harness_runtime;
-use crate::settings as user_settings;
+use crate::execution_setup::{
+    ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionLaunchStreamEvent,
+};
+use crate::logs;
+use crate::workspace_config;
 
-#[derive(Debug, Serialize)]
-pub(super) struct PrefetchContainerImageResp {
-    started: bool,
-    image: String,
-    present: bool,
-    available: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
+use super::errors::ApiErrorResp;
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ExecutionLaunchStartReq {
+    workspace_id: String,
 }
 
-pub(super) async fn prefetch_container_image(
+pub(super) async fn launch_start(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<PrefetchContainerImageResp>, StatusCode> {
-    let settings = user_settings::load_settings(&state.core.data_root).await;
-    let exec = settings.execution.unwrap_or_default();
-    let image = harness_runtime::resolve_container_image(&exec.container);
+    Json(req): Json<ExecutionLaunchStartReq>,
+) -> Result<Json<ExecutionLaunchSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id =
+        WorkspaceId(uuid::Uuid::parse_str(req.workspace_id.trim()).map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: "invalid workspace id".to_string(),
+                }),
+            )
+        })?);
 
-    let st = harness_runtime::container_image_status(&state.core.data_root, &image)
+    let (workspace, execution_settings) =
+        resolve_workspace_execution_settings(&state, workspace_id).await?;
+
+    let snapshot = state
+        .execution
+        .setup
+        .start_workspace_launch(workspace, execution_settings, state.core.daemon_url.clone())
+        .await;
+    Ok(Json(snapshot))
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ExecutionLaunchStatusQuery {
+    job_id: String,
+}
+
+pub(super) async fn launch_status(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ExecutionLaunchStatusQuery>,
+) -> Result<Json<ExecutionLaunchSnapshot>, StatusCode> {
+    let job_id = query.job_id.trim();
+    if job_id.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let snapshot = state
+        .execution
+        .setup
+        .launch_status(job_id)
         .await
-        .unwrap_or(harness_runtime::ContainerImageStatus {
-            present: false,
-            available: false,
-            error: Some("failed to determine container image status".to_string()),
-        });
-    if !st.available {
-        return Ok(Json(PrefetchContainerImageResp {
-            started: false,
-            image,
-            present: st.present,
-            available: st.available,
-            error: st.error,
-        }));
-    }
-    if st.present {
-        return Ok(Json(PrefetchContainerImageResp {
-            started: false,
-            image,
-            present: true,
-            available: true,
-            error: None,
-        }));
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(snapshot))
+}
+
+pub(super) async fn launch_stream_ws(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ExecutionLaunchStatusQuery>,
+) -> impl IntoResponse {
+    let job_id = query.job_id.trim().to_string();
+    if job_id.is_empty() {
+        return StatusCode::BAD_REQUEST.into_response();
     }
 
-    if !harness_runtime::is_default_container_image(&image) {
-        return Ok(Json(PrefetchContainerImageResp {
-            started: false,
-            image,
-            present: false,
-            available: true,
-            error: Some(
-                "container image prefetch is only supported for the default ctx-harness image; custom images must already exist in podman".to_string(),
-            ),
-        }));
-    }
+    let Some((snapshot, rx)) = state.execution.setup.subscribe_launch(&job_id).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
 
-    if harness_runtime::bundled_default_container_image_tar().is_none() {
-        return Ok(Json(PrefetchContainerImageResp {
-            started: false,
-            image,
-            present: false,
-            available: true,
-            error: Some(
-                "default ctx-harness image is missing and no bundled image tar was found (CTX_BUNDLE_DIR not set?)".to_string(),
-            ),
-        }));
-    }
-
-    // Fire-and-forget: prefetch is opportunistic and should not block UI flows.
-    let image_clone = image.clone();
-    let data_root = state.core.data_root.clone();
-    tokio::spawn(async move {
-        if let Err(err) = harness_runtime::prefetch_container_image(&data_root, &image_clone).await
-        {
-            tracing::warn!(
-                "container image prefetch failed for '{}': {err:#}",
-                image_clone
-            );
+    ws.on_upgrade(move |socket| async move {
+        if let Err(err) = handle_launch_stream_ws(socket, snapshot, rx).await {
+            tracing::debug!("execution launch stream ended: {err:#}");
         }
-    });
-
-    Ok(Json(PrefetchContainerImageResp {
-        started: true,
-        image,
-        present: false,
-        available: true,
-        error: None,
-    }))
+    })
+    .into_response()
 }
 
-#[derive(Debug, Serialize)]
-pub(super) struct ContainerImageStatusResp {
-    image: String,
-    present: bool,
-    available: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
+async fn handle_launch_stream_ws(
+    socket: WebSocket,
+    snapshot: ExecutionLaunchSnapshot,
+    mut rx: broadcast::Receiver<ExecutionLaunchStreamEvent>,
+) -> anyhow::Result<()> {
+    let (mut sender, mut receiver) = socket.split();
+
+    send_event(
+        &mut sender,
+        &ExecutionLaunchStreamEvent::LaunchSnapshot {
+            snapshot: snapshot.clone(),
+        },
+    )
+    .await?;
+
+    if !matches!(snapshot.state, ExecutionLaunchState::Running) {
+        return Ok(());
+    }
+
+    loop {
+        tokio::select! {
+            incoming = receiver.next() => {
+                match incoming {
+                    Some(Ok(WsMessage::Close(_))) | None => break,
+                    Some(Ok(WsMessage::Ping(payload))) => {
+                        let _ = sender.send(WsMessage::Pong(payload)).await;
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(_)) => break,
+                }
+            }
+            event = rx.recv() => {
+                match event {
+                    Ok(event) => {
+                        let is_terminal = matches!(event, ExecutionLaunchStreamEvent::LaunchComplete { .. } | ExecutionLaunchStreamEvent::LaunchError { .. });
+                        send_event(&mut sender, &event).await?;
+                        if is_terminal {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
-pub(super) async fn container_image_status(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<ContainerImageStatusResp>, StatusCode> {
-    let settings = user_settings::load_settings(&state.core.data_root).await;
-    let exec = settings.execution.unwrap_or_default();
-    let image = harness_runtime::resolve_container_image(&exec.container);
+async fn send_event<S>(sender: &mut S, event: &ExecutionLaunchStreamEvent) -> anyhow::Result<()>
+where
+    S: futures::Sink<WsMessage, Error = axum::Error> + Unpin,
+{
+    let raw = serde_json::to_string(event)?;
+    sender.send(WsMessage::Text(raw.into())).await?;
+    Ok(())
+}
 
-    let st = harness_runtime::container_image_status(&state.core.data_root, &image)
+async fn resolve_workspace_execution_settings(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+) -> Result<
+    (
+        ctx_core::models::Workspace,
+        crate::settings::ExecutionSettings,
+    ),
+    (StatusCode, Json<ApiErrorResp>),
+> {
+    let workspace = state
+        .global_store()
+        .get_workspace(workspace_id)
         .await
-        .unwrap_or(harness_runtime::ContainerImageStatus {
-            present: false,
-            available: false,
-            error: Some("failed to determine container image status".to_string()),
-        });
-    Ok(Json(ContainerImageStatusResp {
-        image,
-        present: st.present,
-        available: st.available,
-        error: st.error,
-    }))
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let settings = crate::settings::load_settings(&state.core.data_root).await;
+    let mut execution_settings = settings.execution.clone().unwrap_or_default();
+    match workspace_config::load_execution_settings_override(StdPath::new(&workspace.root_path))
+        .await
+    {
+        Ok(Some(ov)) => {
+            workspace_config::apply_execution_settings_override(&mut execution_settings, &ov)
+        }
+        Ok(None) => {}
+        Err(err) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            ));
+        }
+    }
+
+    Ok((workspace, execution_settings))
 }

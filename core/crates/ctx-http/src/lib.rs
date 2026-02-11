@@ -10,6 +10,7 @@ pub mod dictation_livekit;
 pub mod disk_isolated;
 pub mod edit_plans;
 pub mod execution_effective;
+pub mod execution_setup;
 pub mod git_status;
 pub mod harness_runtime;
 pub mod installer;
@@ -82,6 +83,7 @@ mod tests {
 
     use crate::api;
     use crate::daemon::AppState;
+    use crate::execution_setup::{ExecutionLaunchSnapshot, ExecutionLaunchState};
 
     async fn run_git(root: &Path, args: &[&str]) {
         let output = Command::new("git")
@@ -479,5 +481,89 @@ mod tests {
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn execution_launch_start_and_status_host_mode() {
+        let git_repo = setup_git_repo().await;
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+
+        let data_dir = tempfile::tempdir().unwrap();
+        let stores = StoreManager::open(data_dir.path()).await.unwrap();
+
+        let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+            HashMap::new();
+        providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+
+        let state = Arc::new(AppState::new(
+            data_dir.path().to_path_buf(),
+            stores,
+            providers,
+            "http://127.0.0.1:4399".to_string(),
+            None,
+        ));
+        let app = api::router(state.clone());
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/workspaces")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "root_path": git_repo.path().to_string_lossy(),
+                    "name": "ws"
+                })
+                .to_string(),
+            ))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let ws: ctx_core::models::Workspace = serde_json::from_slice(&body).unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/execution/launch/start")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "workspace_id": ws.id.0.to_string(),
+                })
+                .to_string(),
+            ))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let snapshot: ExecutionLaunchSnapshot = serde_json::from_slice(&body).unwrap();
+        assert_eq!(snapshot.workspace_id, ws.id.0.to_string());
+        assert!(matches!(
+            snapshot.state,
+            ExecutionLaunchState::Running | ExecutionLaunchState::Ready
+        ));
+        assert!(!snapshot.job_id.trim().is_empty());
+
+        let mut status_snapshot = snapshot.clone();
+        for _ in 0..20 {
+            let req = Request::builder()
+                .method("GET")
+                .uri(format!(
+                    "/api/execution/launch/status?job_id={}",
+                    snapshot.job_id
+                ))
+                .body(Body::empty())
+                .unwrap();
+            let res = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+            let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            status_snapshot = serde_json::from_slice(&body).unwrap();
+            if status_snapshot.state == ExecutionLaunchState::Ready {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(status_snapshot.job_id, snapshot.job_id);
+        assert_eq!(status_snapshot.state, ExecutionLaunchState::Ready);
     }
 }

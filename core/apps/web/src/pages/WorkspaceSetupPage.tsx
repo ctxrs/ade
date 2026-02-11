@@ -5,13 +5,20 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import LauncherBrand from "../components/LauncherBrand";
 import {
+  buildExecutionLaunchWsUrl,
   createWorkspace,
-  ensureWorkspaceHarnessContainer,
+  getExecutionLaunchStatus,
   getHealth,
   importProviderAuthCandidates,
   idToString,
   listProviderAuthImportCandidates,
   listWorkspaces,
+  startExecutionLaunch,
+  type ExecutionLaunchLogLine,
+  type ExecutionLaunchPhase,
+  type ExecutionLaunchPhaseStatus,
+  type ExecutionLaunchSnapshot,
+  type ExecutionLaunchStreamEvent,
   type ProviderAuthImportCandidate,
   repoClone,
   repoInit,
@@ -114,6 +121,83 @@ const parseUserHost = (raw: string): { host: string; user?: string | null } | nu
   return { host: trimmed };
 };
 
+const LAUNCH_LOG_MAX = 400;
+
+const launchPhaseLabel = (phase?: ExecutionLaunchPhase | null): string => {
+  if (!phase) return "Preparing";
+  switch (phase) {
+    case "machine_check":
+      return "Machine check";
+    case "machine_start_or_init":
+      return "Machine start/init";
+    case "image_check":
+      return "Image check";
+    case "image_load":
+      return "Image load";
+    case "container_check":
+      return "Container check";
+    case "container_start_or_create":
+      return "Container start/create";
+    case "runtime_network_setup":
+      return "Network setup";
+    case "ready":
+      return "Ready";
+    default:
+      return phase;
+  }
+};
+
+const parseUtcMs = (value?: string | null): number | null => {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const phaseEntryForCurrent = (snapshot: ExecutionLaunchSnapshot): ExecutionLaunchPhaseStatus | null => {
+  if (!snapshot.current_phase) return null;
+  for (let i = snapshot.phases.length - 1; i >= 0; i -= 1) {
+    if (snapshot.phases[i].phase === snapshot.current_phase) {
+      return snapshot.phases[i];
+    }
+  }
+  return null;
+};
+
+const mergeLaunchLogs = (
+  current: ExecutionLaunchLogLine[],
+  incoming: ExecutionLaunchLogLine[],
+): ExecutionLaunchLogLine[] => {
+  if (!incoming.length) return current.slice(-LAUNCH_LOG_MAX);
+  const bySeq = new Map<number, ExecutionLaunchLogLine>();
+  for (const line of current) bySeq.set(line.seq, line);
+  for (const line of incoming) bySeq.set(line.seq, line);
+  const merged = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+  return merged.slice(-LAUNCH_LOG_MAX);
+};
+
+const launchErrorFromSnapshot = (snapshot: ExecutionLaunchSnapshot): string => {
+  const phase = launchPhaseLabel(snapshot.current_phase);
+  const message = String(snapshot.error ?? "").trim();
+  if (!message) return `Workspace launch failed during ${phase}.`;
+  return `${phase}: ${message}`;
+};
+
+const formatLaunchElapsed = (ms: number | null): string => {
+  if (ms === null || !Number.isFinite(ms) || ms < 0) return "0s";
+  const rounded = Math.floor(ms / 1000);
+  const minutes = Math.floor(rounded / 60);
+  const seconds = rounded % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+};
+
+const formatLaunchTime = (ts: string): string => {
+  const value = parseUtcMs(ts);
+  if (value === null) return ts;
+  const date = new Date(value);
+  return date.toLocaleTimeString([], { hour12: false });
+};
+
 export default function WorkspaceSetupPage() {
   const navigate = useNavigate();
   const [stepIndex, setStepIndex] = useState(0);
@@ -128,6 +212,10 @@ export default function WorkspaceSetupPage() {
   const [remoteDataDirInput, setRemoteDataDirInput] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [launchSnapshot, setLaunchSnapshot] = useState<ExecutionLaunchSnapshot | null>(null);
+  const [launchLogs, setLaunchLogs] = useState<ExecutionLaunchLogLine[]>([]);
+  const [launchTick, setLaunchTick] = useState(0);
+  const [launchCopyState, setLaunchCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [importRepoStatus, setImportRepoStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
   const [importRepoNote, setImportRepoNote] = useState<string | null>(null);
   const [sourcePath, setSourcePath] = useState("");
@@ -287,6 +375,12 @@ export default function WorkspaceSetupPage() {
   useEffect(() => {
     setStepIndex((idx) => Math.min(idx, Math.max(0, steps.length - 1)));
   }, [steps.length]);
+  useEffect(() => {
+    if (!creating || !launchSnapshot || launchSnapshot.state !== "running") return;
+    const handle = window.setInterval(() => setLaunchTick((value) => value + 1), 1000);
+    return () => window.clearInterval(handle);
+  }, [creating, launchSnapshot?.job_id, launchSnapshot?.state]);
+
   const step = steps[stepIndex];
   const infoStep = openInfoKey ? steps.find((s) => s.key === openInfoKey) : null;
   const isFirst = stepIndex === 0;
@@ -331,6 +425,24 @@ export default function WorkspaceSetupPage() {
     && hasAllowlist
     && (step.key !== "auth-import" || !authImportBusy)
     ;
+  const showLaunchPanel = Boolean(launchSnapshot) && (creating || launchSnapshot?.state === "error");
+  const currentLaunchPhaseLabel = launchPhaseLabel(launchSnapshot?.current_phase);
+  const currentLaunchPhaseEntry = launchSnapshot ? phaseEntryForCurrent(launchSnapshot) : null;
+  const currentLaunchElapsed = useMemo(() => {
+    if (!launchSnapshot) return "0s";
+    const elapsedMs = currentLaunchPhaseEntry?.elapsed_ms ?? null;
+    if (elapsedMs !== null && elapsedMs !== undefined) {
+      return formatLaunchElapsed(elapsedMs);
+    }
+    const started = parseUtcMs(currentLaunchPhaseEntry?.started_at);
+    if (started === null) return "0s";
+    return formatLaunchElapsed(Date.now() - started);
+  }, [currentLaunchPhaseEntry, launchSnapshot, launchTick]);
+  const launchCopyLabel = launchCopyState === "copied"
+    ? "Copied"
+    : launchCopyState === "failed"
+      ? "Copy failed"
+      : "Copy diagnostics";
 
   function applyConnection(info: DesktopConnectionInfo) {
     const baseUrl = String(info.base_url ?? "").trim();
@@ -808,8 +920,105 @@ export default function WorkspaceSetupPage() {
     setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
   };
 
+  const applyLaunchSnapshot = (snapshot: ExecutionLaunchSnapshot) => {
+    setLaunchSnapshot(snapshot);
+    setLaunchLogs((prev) => mergeLaunchLogs(prev, snapshot.logs ?? []));
+  };
+
+  const appendLaunchLine = (line: ExecutionLaunchLogLine) => {
+    setLaunchLogs((prev) => mergeLaunchLogs(prev, [line]));
+  };
+
+  const waitForLaunchCompletion = async (workspaceId: string) => {
+    const initial = await startExecutionLaunch(workspaceId);
+    applyLaunchSnapshot(initial);
+
+    if (initial.state === "ready") return;
+    if (initial.state === "error") throw new Error(launchErrorFromSnapshot(initial));
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const ws = new WebSocket(buildExecutionLaunchWsUrl(initial.job_id));
+
+      const settle = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        ws.close();
+        if (err) reject(err);
+        else resolve();
+      };
+
+      ws.onmessage = (event) => {
+        let parsed: ExecutionLaunchStreamEvent | null = null;
+        try {
+          parsed = JSON.parse(String(event.data ?? "")) as ExecutionLaunchStreamEvent;
+        } catch {
+          return;
+        }
+        if (!parsed) return;
+        if (parsed.type === "launch_log") {
+          appendLaunchLine(parsed.line);
+          return;
+        }
+        if (parsed.type === "launch_snapshot") {
+          applyLaunchSnapshot(parsed.snapshot);
+          return;
+        }
+        if (parsed.type === "launch_complete") {
+          applyLaunchSnapshot(parsed.snapshot);
+          settle();
+          return;
+        }
+        if (parsed.type === "launch_error") {
+          applyLaunchSnapshot(parsed.snapshot);
+          settle(new Error(launchErrorFromSnapshot(parsed.snapshot)));
+        }
+      };
+
+      ws.onerror = () => {
+        // Wait for close and then fall back to status query.
+      };
+
+      ws.onclose = () => {
+        if (settled) return;
+        getExecutionLaunchStatus(initial.job_id)
+          .then((latest) => {
+            applyLaunchSnapshot(latest);
+            if (latest.state === "ready") {
+              settle();
+            } else if (latest.state === "error") {
+              settle(new Error(launchErrorFromSnapshot(latest)));
+            } else {
+              settle(new Error("Lost workspace launch stream before setup finished."));
+            }
+          })
+          .catch((err: any) => {
+            settle(new Error(err?.message ?? String(err)));
+          });
+      };
+    });
+  };
+
+  const onCopyLaunchDiagnostics = async () => {
+    if (!launchSnapshot) return;
+    const payload = {
+      snapshot: launchSnapshot,
+      logs: launchLogs,
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      setLaunchCopyState("copied");
+    } catch {
+      setLaunchCopyState("failed");
+    }
+  };
+
   const onCreate = async () => {
     setCreateError(null);
+    setLaunchSnapshot(null);
+    setLaunchLogs([]);
+    setLaunchCopyState("idle");
+    setLaunchTick(0);
     setCreating(true);
     try {
       if (!isDesktopApp()) {
@@ -984,7 +1193,7 @@ export default function WorkspaceSetupPage() {
       // If container execution is enabled, eagerly provision the workspace harness container so
       // we don't land in the workbench before the sandbox is actually ready.
       if (containerEnabled) {
-        await ensureWorkspaceHarnessContainer(wsId);
+        await waitForLaunchCompletion(wsId);
       }
 
       // 5. Persist repo-scoped config only if the user opted in / provided values.
@@ -1140,6 +1349,42 @@ export default function WorkspaceSetupPage() {
 	              <div className="wizard-step-body">
                   {createError && (
                     <div className="wizard-error">{createError}</div>
+                  )}
+                  {showLaunchPanel && launchSnapshot && (
+                    <div className="wizard-launch-log-panel" data-testid="wizard-launch-log-panel">
+                      <div className="wizard-launch-log-header">
+                        <div>
+                          <div className="wizard-launch-log-title">Workspace Launch Logs</div>
+                          <div className="wizard-launch-log-meta">
+                            <span>{currentLaunchPhaseLabel}</span>
+                            <span>{currentLaunchElapsed}</span>
+                            <span>{launchSnapshot.state}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="wizard-input-button"
+                          onClick={onCopyLaunchDiagnostics}
+                          data-testid="wizard-launch-copy"
+                        >
+                          {launchCopyLabel}
+                        </button>
+                      </div>
+                      <div className="wizard-launch-log-body">
+                        {launchLogs.length === 0 ? (
+                          <div className="wizard-note">Waiting for launch logs…</div>
+                        ) : (
+                          launchLogs.map((line) => (
+                            <div key={line.seq} className="wizard-launch-log-line">
+                              <span className="wizard-launch-log-ts">{formatLaunchTime(line.ts)}</span>
+                              <span className="wizard-launch-log-phase">{launchPhaseLabel(line.phase)}</span>
+                              <span className={`wizard-launch-log-level wizard-launch-log-level--${line.level}`}>{line.level}</span>
+                              <span className="wizard-launch-log-msg">{line.message}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
                   )}
                 {step.options && (
                   <>

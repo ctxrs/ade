@@ -8,6 +8,7 @@ use tokio::sync::{broadcast, mpsc, watch, Mutex, Notify};
 
 use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
+use crate::execution_setup::ExecutionSetupCoordinator;
 use crate::harness_runtime::HarnessRuntimeManager;
 use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
 use crate::mobile_tunnel::MobileTunnelManager;
@@ -116,6 +117,7 @@ pub struct TransportRuntime {
 
 pub struct ExecutionRuntime {
     pub harness: Arc<HarnessRuntimeManager>,
+    pub setup: Arc<ExecutionSetupCoordinator>,
 }
 
 pub struct AppState {
@@ -359,7 +361,13 @@ impl AppState {
         let ops_events = OpsEvents::new(data_root.clone());
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
         let harness_runtime = Arc::new(HarnessRuntimeManager::new(data_root.clone()));
-        harness_runtime.spawn_background_podman_machine_download();
+        let execution_setup = Arc::new(ExecutionSetupCoordinator::new(
+            data_root.clone(),
+            harness_runtime.clone(),
+            perf_telemetry.clone(),
+            ops_events.clone(),
+        ));
+        execution_setup.spawn_startup_prewarm();
         let workspace_active_snapshot = Arc::new(WorkspaceActiveSnapshotHub::new());
         let web_sessions = Arc::new(WebSessionManager::new());
         let merge_queue_notify = Arc::new(Notify::new());
@@ -433,6 +441,7 @@ impl AppState {
             },
             execution: ExecutionRuntime {
                 harness: harness_runtime,
+                setup: execution_setup,
             },
         }
     }

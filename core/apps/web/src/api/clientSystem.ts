@@ -234,27 +234,6 @@ export const getResourceUtilization = (workspaceId: string) =>
 
 export const getHealth = () => apiAny<Health>(`/api/health`);
 
-export type PrefetchContainerImageResponse = {
-  started: boolean;
-  image: string;
-  present: boolean;
-  available: boolean;
-  error?: string | null;
-};
-
-export const prefetchContainerImage = () =>
-  apiAny<PrefetchContainerImageResponse>(`/api/execution/container_image/prefetch`, { method: "POST" });
-
-export type ContainerImageStatusResponse = {
-  image: string;
-  present: boolean;
-  available: boolean;
-  error?: string | null;
-};
-
-export const getContainerImageStatus = () =>
-  apiAny<ContainerImageStatusResponse>(`/api/execution/container_image/status`);
-
 export const getLspStatus = () => apiAny<LspStatus>(`/api/lsp/status`);
 
 export const openLogsFolder = () => apiAny(`/api/logs/open`, { method: "POST" });

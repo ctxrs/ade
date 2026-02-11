@@ -50,6 +50,53 @@ const PODMAN_MACHINE_READY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const PODMAN_OP_TIMEOUT: Duration = Duration::from_secs(60);
 const PODMAN_LOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum HarnessSetupPhase {
+    MachineCheck,
+    MachineStartOrInit,
+    ImageCheck,
+    ImageLoad,
+    ContainerCheck,
+    ContainerStartOrCreate,
+    RuntimeNetworkSetup,
+    Ready,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum HarnessSetupLogLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+pub trait HarnessSetupObserver: Send + Sync {
+    fn on_phase(&self, phase: HarnessSetupPhase, message: &str);
+    fn on_log(&self, phase: HarnessSetupPhase, level: HarnessSetupLogLevel, message: &str);
+}
+
+fn observe_phase(
+    observer: Option<&dyn HarnessSetupObserver>,
+    phase: HarnessSetupPhase,
+    message: &str,
+) {
+    if let Some(observer) = observer {
+        observer.on_phase(phase, message);
+    }
+}
+
+fn observe_log(
+    observer: Option<&dyn HarnessSetupObserver>,
+    phase: HarnessSetupPhase,
+    level: HarnessSetupLogLevel,
+    message: &str,
+) {
+    if let Some(observer) = observer {
+        observer.on_log(phase, level, message);
+    }
+}
+
 pub(crate) fn workspace_container_name(workspace_id: WorkspaceId) -> String {
     format!("ctx-harness-{}", workspace_id.0)
 }
@@ -217,6 +264,7 @@ impl HarnessRuntimeManager {
                 &settings.container,
                 proxy_host,
                 daemon_port,
+                None,
             )
             .await
             .map_err(|err| anyhow::anyhow!("container runtime failed: {err:#}"))?;
@@ -253,6 +301,17 @@ impl HarnessRuntimeManager {
         settings: &ExecutionSettings,
         daemon_url: &str,
     ) -> Result<()> {
+        self.ensure_workspace_container_with_observer(workspace, settings, daemon_url, None)
+            .await
+    }
+
+    pub async fn ensure_workspace_container_with_observer(
+        &self,
+        workspace: &Workspace,
+        settings: &ExecutionSettings,
+        daemon_url: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()> {
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
         }
@@ -268,6 +327,7 @@ impl HarnessRuntimeManager {
                 &settings.container,
                 proxy_host,
                 daemon_port,
+                observer,
             )
             .await?;
         Ok(())
@@ -370,28 +430,62 @@ impl HarnessRuntimeManager {
         settings: &ContainerExecutionSettings,
         daemon_host: &str,
         daemon_port: u16,
+        observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<HarnessContainer> {
         let name = format!("ctx-harness-{}", workspace.id.0);
         let image = resolve_container_image(settings);
+        observe_phase(
+            observer,
+            HarnessSetupPhase::MachineCheck,
+            "checking container runtime",
+        );
         // On macOS/Windows the engine is a VM; ensure it is running before we run any podman ops.
-        ensure_podman_machine_running(&self.data_root).await?;
+        ensure_podman_machine_running_with_observer(&self.data_root, observer).await?;
         if matches!(settings.mount_mode, ContainerMountMode::DiskIsolated) {
+            observe_log(
+                observer,
+                HarnessSetupPhase::ContainerCheck,
+                HarnessSetupLogLevel::Info,
+                "ensuring workspace volume for disk-isolated mode",
+            );
             let _ = ensure_workspace_volume(&self.data_root, workspace.id).await?;
         }
         let mount_plan = build_mounts(&self.data_root, workspace, worktree, settings);
         let mut containers = self.containers.lock().await;
         let mut recreate = false;
+        observe_phase(
+            observer,
+            HarnessSetupPhase::ContainerCheck,
+            "checking existing workspace container",
+        );
         if let Some(container) = containers.get(&workspace.id) {
             if container.mount_mode != settings.mount_mode
                 || container.external_mounts != mount_plan.external_mounts
             {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::ContainerCheck,
+                    HarnessSetupLogLevel::Info,
+                    "container configuration changed; recreating",
+                );
                 recreate = true;
             } else {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::ContainerCheck,
+                    HarnessSetupLogLevel::Info,
+                    "container already ready in runtime cache",
+                );
                 return Ok(container.clone());
             }
         }
 
         if recreate {
+            observe_phase(
+                observer,
+                HarnessSetupPhase::ContainerStartOrCreate,
+                "recreating workspace container",
+            );
             if let Ok(mut cmd) = podman_command(&self.data_root) {
                 cmd.arg("rm").arg("-f").arg(&name);
                 let _ = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await;
@@ -403,11 +497,17 @@ impl HarnessRuntimeManager {
         } else {
             container_exists(&self.data_root, &name).await?
         };
+
         if exists {
             let running = container_running(&self.data_root, &name)
                 .await?
                 .unwrap_or(false);
             if !running {
+                observe_phase(
+                    observer,
+                    HarnessSetupPhase::ContainerStartOrCreate,
+                    "starting existing workspace container",
+                );
                 let mut cmd = podman_command(&self.data_root)?;
                 cmd.arg("start").arg(&name);
                 let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
@@ -420,9 +520,42 @@ impl HarnessRuntimeManager {
                     }
                     anyhow::bail!("podman start failed for {name}: {combined}");
                 }
+            } else {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::ContainerCheck,
+                    HarnessSetupLogLevel::Info,
+                    "workspace container already running",
+                );
             }
         } else {
-            ensure_container_image_available(&self.data_root, &image).await?;
+            observe_phase(
+                observer,
+                HarnessSetupPhase::ImageCheck,
+                "checking harness image availability",
+            );
+            let image_present = container_image_present(&self.data_root, &image).await?;
+            if !image_present {
+                observe_phase(
+                    observer,
+                    HarnessSetupPhase::ImageLoad,
+                    "loading harness image into podman",
+                );
+                ensure_container_image_available(&self.data_root, &image, observer).await?;
+            } else {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::ImageCheck,
+                    HarnessSetupLogLevel::Info,
+                    "harness image already present",
+                );
+            }
+
+            observe_phase(
+                observer,
+                HarnessSetupPhase::ContainerStartOrCreate,
+                "creating workspace container",
+            );
             let mut cmd = podman_command(&self.data_root)?;
             cmd.arg("run").arg("-d").arg("--name").arg(&name);
             cmd.arg("--userns=keep-id");
@@ -457,11 +590,28 @@ impl HarnessRuntimeManager {
             verify_disk_isolated_container_mounts(&self.data_root, workspace, &name).await?;
         }
 
+        observe_phase(
+            observer,
+            HarnessSetupPhase::RuntimeNetworkSetup,
+            "configuring container network policy",
+        );
         let egress_guard = if matches!(settings.network_mode, ContainerNetworkMode::All) {
             if let Err(err) = stop_transparent_proxy(&self.data_root, &name).await {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::RuntimeNetworkSetup,
+                    HarnessSetupLogLevel::Warn,
+                    &format!("failed to stop transparent proxy: {err:#}"),
+                );
                 tracing::warn!("failed to stop transparent proxy: {err:#}");
             }
             if let Err(err) = clear_egress_guard(&self.data_root, &name).await {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::RuntimeNetworkSetup,
+                    HarnessSetupLogLevel::Warn,
+                    &format!("failed to clear egress guard: {err:#}"),
+                );
                 tracing::warn!("failed to clear egress guard: {err:#}");
             }
             false
@@ -511,6 +661,12 @@ impl HarnessRuntimeManager {
             )
             .await?
         };
+        observe_log(
+            observer,
+            HarnessSetupPhase::RuntimeNetworkSetup,
+            HarnessSetupLogLevel::Info,
+            "container network policy configured",
+        );
         let container = HarnessContainer {
             name: name.clone(),
             mount_mode: settings.mount_mode.clone(),
@@ -555,8 +711,8 @@ pub async fn prefetch_container_image(data_root: &Path, image: &str) -> Result<(
         anyhow::bail!("image is required");
     }
     // On macOS/Windows `podman` is a remote client; image ops require a running machine.
-    ensure_podman_machine_running(data_root).await?;
-    ensure_container_image_available(data_root, image).await
+    ensure_podman_machine_running_with_observer(data_root, None).await?;
+    ensure_container_image_available(data_root, image, None).await
 }
 
 pub async fn container_image_present(data_root: &Path, image: &str) -> Result<bool> {
@@ -579,7 +735,11 @@ pub async fn container_image_present(data_root: &Path, image: &str) -> Result<bo
     }
 }
 
-async fn ensure_container_image_available(data_root: &Path, image: &str) -> Result<()> {
+async fn ensure_container_image_available(
+    data_root: &Path,
+    image: &str,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
     let image = image.trim();
     if image.is_empty() {
         anyhow::bail!("image is required");
@@ -599,6 +759,12 @@ async fn ensure_container_image_available(data_root: &Path, image: &str) -> Resu
                 image
             )
         })?;
+        observe_log(
+            observer,
+            HarnessSetupPhase::ImageLoad,
+            HarnessSetupLogLevel::Info,
+            &format!("loading default harness image from {}", tar.display()),
+        );
         let mut cmd = podman_command(data_root)?;
         cmd.arg("load").arg("-i").arg(&tar);
         let output = command_output_with_timeout(cmd, PODMAN_LOAD_TIMEOUT)
@@ -1116,6 +1282,19 @@ fn podman_machine_required() -> bool {
     cfg!(target_os = "macos") || cfg!(target_os = "windows")
 }
 
+pub fn container_runtime_available() -> bool {
+    podman_available()
+}
+
+pub async fn podman_engine_ready(data_root: &Path) -> Result<bool> {
+    let mut cmd = podman_command(data_root)?;
+    cmd.arg("info");
+    match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
+        Ok(out) => Ok(out.status.success()),
+        Err(_) => Ok(false),
+    }
+}
+
 async fn podman_machine_present(data_root: &Path) -> Result<bool> {
     // `inspect` is the cheapest existence check and avoids JSON schema drift.
     let mut cmd = podman_command(data_root)?;
@@ -1126,8 +1305,17 @@ async fn podman_machine_present(data_root: &Path) -> Result<bool> {
     Ok(output.status.success())
 }
 
-async fn ensure_podman_machine_running(data_root: &Path) -> Result<()> {
+async fn ensure_podman_machine_running_with_observer(
+    data_root: &Path,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
     if !podman_machine_required() {
+        observe_log(
+            observer,
+            HarnessSetupPhase::MachineCheck,
+            HarnessSetupLogLevel::Info,
+            "podman machine not required on this platform",
+        );
         return Ok(());
     }
 
@@ -1137,11 +1325,25 @@ async fn ensure_podman_machine_running(data_root: &Path) -> Result<()> {
         let mut cmd = podman_command(data_root)?;
         cmd.arg("info");
         match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
-            Ok(out) if out.status.success() => return Ok(()),
+            Ok(out) if out.status.success() => {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::MachineCheck,
+                    HarnessSetupLogLevel::Info,
+                    "podman runtime is already reachable",
+                );
+                return Ok(());
+            }
             Ok(out) => String::from_utf8_lossy(&out.stderr).trim().to_string(),
             Err(err) => err.to_string(),
         }
     };
+
+    observe_phase(
+        observer,
+        HarnessSetupPhase::MachineStartOrInit,
+        "starting or initializing podman machine",
+    );
 
     // Prefer starting an existing machine; fall back to init when no machine exists.
     let start_out = {
@@ -1168,6 +1370,12 @@ async fn ensure_podman_machine_running(data_root: &Path) -> Result<()> {
             || combined_lc.contains("no machine");
 
         if looks_like_missing_machine {
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Info,
+                "podman machine not found; running init --now",
+            );
             let mut init = podman_command(data_root)?;
             init.arg("machine")
                 .arg("init")
@@ -1210,7 +1418,15 @@ async fn ensure_podman_machine_running(data_root: &Path) -> Result<()> {
         let mut cmd = podman_command(data_root)?;
         cmd.arg("info");
         match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
-            Ok(out) if out.status.success() => return Ok(()),
+            Ok(out) if out.status.success() => {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::MachineStartOrInit,
+                    HarnessSetupLogLevel::Info,
+                    "podman machine is ready",
+                );
+                return Ok(());
+            }
             Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
             Err(err) => last_err = err.to_string(),
         }
@@ -1237,7 +1453,15 @@ async fn ensure_podman_machine_running(data_root: &Path) -> Result<()> {
         let mut cmd = podman_command(data_root)?;
         cmd.arg("info");
         match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
-            Ok(out) if out.status.success() => return Ok(()),
+            Ok(out) if out.status.success() => {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::MachineStartOrInit,
+                    HarnessSetupLogLevel::Info,
+                    "podman machine recovered after restart",
+                );
+                return Ok(());
+            }
             Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
             Err(err) => last_err = err.to_string(),
         }
