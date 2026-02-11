@@ -578,6 +578,34 @@
   line-height: 1.5;
 }
 
+.wizard-modal-copy {
+  margin-bottom: 8px;
+}
+
+.wizard-modal-path {
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+
+.wizard-modal-note {
+  color: var(--launcher-muted);
+  margin-top: 2px;
+}
+
+.wizard-modal-actions {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 520px) {
+  .wizard-modal-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+}
+
 .wizard-markdown {
   color: rgba(231, 231, 231, 0.88);
   font-size: 13px;

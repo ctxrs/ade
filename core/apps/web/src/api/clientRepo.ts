@@ -20,6 +20,7 @@ export const repoClone = (req: RepoCloneRequest) =>
 export type RepoInitRequest = {
   path: string;
   allow_existing?: boolean;
+  allow_non_empty?: boolean;
 };
 
 export type RepoInitResponse = {

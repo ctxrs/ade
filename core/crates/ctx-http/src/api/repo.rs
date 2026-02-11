@@ -258,6 +258,8 @@ pub(super) struct RepoInitReq {
     path: String,
     #[serde(default)]
     allow_existing: bool,
+    #[serde(default)]
+    allow_non_empty: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -305,8 +307,8 @@ pub(super) async fn repo_init(
         )
     })?;
 
-    // Refuse to init into a non-empty directory. Users can still choose "Import folder" for
-    // existing projects, or explicitly run `git init` themselves.
+    // By default we refuse to init into a non-empty directory.
+    // Import onboarding can opt in with allow_non_empty=true after explicit user confirmation.
     let mut dir = tokio::fs::read_dir(&path).await.map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -315,7 +317,7 @@ pub(super) async fn repo_init(
             }),
         )
     })?;
-    if dir
+    let has_entries = dir
         .next_entry()
         .await
         .map_err(|e| {
@@ -326,8 +328,8 @@ pub(super) async fn repo_init(
                 }),
             )
         })?
-        .is_some()
-    {
+        .is_some();
+    if has_entries && !req.allow_non_empty {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {

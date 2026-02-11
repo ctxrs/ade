@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ChevronRight, Info, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -64,6 +64,10 @@ type SshRecent = {
   host: string;
   user?: string | null;
   updated_at_ms: number;
+};
+
+type ImportInitDialogState = {
+  path: string;
 };
 
 const SSH_RECENTS_KEY = "contextDesktopSshRecentsV1";
@@ -142,6 +146,7 @@ export default function WorkspaceSetupPage() {
   const [pushBranch, setPushBranch] = useState("main");
   const [pushBranchTouched, setPushBranchTouched] = useState(false);
   const [openInfoKey, setOpenInfoKey] = useState<string | null>(null);
+  const [importInitDialog, setImportInitDialog] = useState<ImportInitDialogState | null>(null);
   const [remotePathSuggestions, setRemotePathSuggestions] = useState<DesktopSshPathEntry[]>([]);
   const [remotePathStatus, setRemotePathStatus] = useState<"idle" | "loading" | "error">("idle");
   const [remotePathError, setRemotePathError] = useState<string | null>(null);
@@ -151,6 +156,7 @@ export default function WorkspaceSetupPage() {
   const [authImportError, setAuthImportError] = useState<string | null>(null);
   const [authImportResults, setAuthImportResults] = useState<Array<{ provider: string; status: string; message?: string | null }>>([]);
   const [authImportScannedKey, setAuthImportScannedKey] = useState<string | null>(null);
+  const importInitResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
 
   const containerMode = selections.container;
   const authImportStepVisible = authImportCandidates.length > 0;
@@ -455,15 +461,28 @@ export default function WorkspaceSetupPage() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (importInitDialog) {
+          const resolve = importInitResolveRef.current;
+          importInitResolveRef.current = null;
+          setImportInitDialog(null);
+          resolve?.(false);
+          return;
+        }
         setOpenInfoKey(null);
       }
     };
-    if (openInfoKey) {
+    if (openInfoKey || importInitDialog) {
       window.addEventListener("keydown", onKeyDown);
       return () => window.removeEventListener("keydown", onKeyDown);
     }
     return;
-  }, [openInfoKey]);
+  }, [openInfoKey, importInitDialog]);
+
+  useEffect(() => () => {
+    const resolve = importInitResolveRef.current;
+    importInitResolveRef.current = null;
+    resolve?.(false);
+  }, []);
 
   useEffect(() => {
     setSshRecents(loadSshRecents());
@@ -577,12 +596,12 @@ export default function WorkspaceSetupPage() {
     }
     let cancelled = false;
     setImportRepoStatus("checking");
-    setImportRepoNote("Checking git repo…");
+    setImportRepoNote(null);
     desktopGetGitBranch({ path: sourcePath })
       .then((branch) => {
         if (cancelled) return;
         setImportRepoStatus("ok");
-        setImportRepoNote(branch ? `Git repo detected (branch: ${branch})` : "Git repo detected.");
+        setImportRepoNote(null);
         if (!branch || targetBranchTouched) return;
         setTargetBranch(branch);
         if (!pushBranchTouched) setPushBranch(branch);
@@ -620,7 +639,7 @@ export default function WorkspaceSetupPage() {
     let cancelled = false;
     const handle = window.setTimeout(() => {
       setImportRepoStatus("checking");
-      setImportRepoNote("Checking remote git repo…");
+      setImportRepoNote(null);
       desktopConnectSsh({
         host: parsed.host,
         user: parsed.user ?? null,
@@ -638,7 +657,7 @@ export default function WorkspaceSetupPage() {
           if (!st) return;
           if (st.is_repo) {
             setImportRepoStatus("ok");
-            setImportRepoNote(st.canonical_path ? `Remote git repo detected: ${st.canonical_path}` : "Remote git repo detected.");
+            setImportRepoNote(null);
           } else {
             setImportRepoStatus("error");
             const detail = String((st as any).error ?? "").trim();
@@ -711,6 +730,22 @@ export default function WorkspaceSetupPage() {
       // ignore
     }
   };
+
+  const resolveImportInitDialog = (confirmed: boolean) => {
+    const resolve = importInitResolveRef.current;
+    importInitResolveRef.current = null;
+    setImportInitDialog(null);
+    resolve?.(confirmed);
+  };
+
+  const confirmInitImportFolder = (path: string) =>
+    new Promise<boolean>((resolve) => {
+      if (importInitResolveRef.current) {
+        importInitResolveRef.current(false);
+      }
+      importInitResolveRef.current = resolve;
+      setImportInitDialog({ path });
+    });
 
   const onNext = async () => {
     if (step.key === "location" && selections.location === "remote") {
@@ -827,14 +862,34 @@ export default function WorkspaceSetupPage() {
       if (selections.source === "import") {
         rootPath = sourcePath.trim().replace(/\/+$/, "");
         if (!rootPath) throw new Error("Folder is required.");
-        const st = await repoStatus({ path: rootPath }).catch(() => null);
+        let st = await repoStatus({ path: rootPath }).catch(() => null);
+        if (!st) {
+          setImportRepoStatus("error");
+          setImportRepoNote("Could not verify the selected folder. Check the path and try again.");
+          throw new Error("Could not verify the selected folder as a repository.");
+        }
         if (st && !st.is_repo) {
-          const detail = String((st as any).error ?? "").trim();
-          throw new Error(detail ? `Selected folder is not a repo: ${detail}` : "Selected folder is not a repo.");
+          const confirmed = await confirmInitImportFolder(rootPath);
+          if (!confirmed) {
+            setImportRepoStatus("error");
+            setImportRepoNote("Folder is not a repo. Initialization cancelled.");
+            throw new Error("Selected folder is not a repo.");
+          }
+          setImportRepoStatus("checking");
+          setImportRepoNote("Initializing Git repo in selected folder…");
+          const init = await repoInit({ path: rootPath, allow_existing: true, allow_non_empty: true });
+          rootPath = String(init.path ?? "").trim() || rootPath;
+          st = await repoStatus({ path: rootPath });
+          if (!st.is_repo) {
+            const detailAfter = String((st as any).error ?? "").trim();
+            throw new Error(detailAfter ? `Selected folder is not a repo: ${detailAfter}` : "Selected folder is not a repo.");
+          }
         }
         if (st?.canonical_path) {
           rootPath = String(st.canonical_path).trim() || rootPath;
         }
+        setImportRepoStatus("ok");
+        setImportRepoNote(null);
         // Prefer existing workspace if already registered.
         const all = await getAllWorkspaces();
         const hit = all.find((w) => String((w as any).root_path) === rootPath);
@@ -958,7 +1013,7 @@ export default function WorkspaceSetupPage() {
       const stepKeyForError = (m: string): WizardStep["key"] | null => {
         const s = String(m || "");
         if (s.includes("Remote host is required")) return "location";
-        if (s.includes("repo_url") || s.includes("Destination") || s.includes("Folder") || s.includes("git clone") || s.includes("git init") || s.includes("root_path")) {
+        if (s.includes("repo_url") || s.includes("Destination") || s.includes("Folder") || s.includes("git clone") || s.includes("git init") || s.includes("root_path") || s.includes("not a repo")) {
           return "source";
         }
         return null;
@@ -981,6 +1036,59 @@ export default function WorkspaceSetupPage() {
 		          data-testid="workspace-setup"
 		          data-step-key={step.key}
 		        >
+          {importInitDialog && (
+            <div
+              className="wizard-modal-backdrop"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Initialize Git repo"
+              data-testid="wizard-import-init-modal"
+              onClick={() => resolveImportInitDialog(false)}
+            >
+              <div className="wizard-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="wizard-modal-header">
+                  <div className="wizard-modal-title">Initialize Git repo in this folder?</div>
+                  <button
+                    type="button"
+                    className="wizard-modal-close"
+                    aria-label="Close"
+                    onClick={() => resolveImportInitDialog(false)}
+                  >
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                </div>
+                <div className="wizard-modal-body">
+                  <div className="wizard-modal-copy">
+                    The selected folder is not currently a repository.
+                  </div>
+                  <div className="wizard-modal-path">
+                    <code>{importInitDialog.path}</code>
+                  </div>
+                  <div className="wizard-modal-note">
+                    This will run <code>git init</code> and create one empty initial commit. Existing files are not staged or committed.
+                  </div>
+                  <div className="wizard-modal-actions">
+                    <button
+                      type="button"
+                      className="wizard-secondary"
+                      data-testid="wizard-import-init-cancel"
+                      onClick={() => resolveImportInitDialog(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="wizard-primary"
+                      data-testid="wizard-import-init-confirm"
+                      onClick={() => resolveImportInitDialog(true)}
+                    >
+                      Initialize Git repo here
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 	          {infoStep?.info && (
 	            <div
 	              className="wizard-modal-backdrop"
