@@ -172,9 +172,9 @@ export type Settings = {
   network_profiles?: NetworkProfilesSettings | null;
 };
 
-export type ExecutionMode = "auto" | "host" | "container";
+export type ExecutionMode = "host" | "container";
 export type ContainerRuntimeKind = "podman";
-export type ContainerMountMode = "host_mounted" | "sealed" | "disk_isolated";
+export type ContainerMountMode = "host_mounted" | "disk_isolated";
 export type ContainerNetworkMode = "llm_only" | "allowlist" | "all";
 
 export type ContainerExecutionSettings = {

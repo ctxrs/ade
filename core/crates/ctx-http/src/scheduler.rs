@@ -693,24 +693,9 @@ async fn start_turn(
         provider_env.insert("CTX_SYSTEM_PROMPT_APPEND".to_string(), append.to_string());
     }
 
-    let sealed_worktree_root = runtime_plan
-        .sealed_root
-        .as_ref()
-        .map(|base| base.join(session.worktree_id.0.to_string()));
-    if let Some(sealed_root) = sealed_worktree_root.as_ref() {
-        if let Err(err) = state
-            .execution
-            .harness
-            .sync_worktree_to_sealed(workdir, sealed_root)
-            .await
-        {
-            tracing::warn!("failed to sync worktree to sealed runtime: {err:#}");
-        }
-    }
-
     let run_started_at = Instant::now();
     let spawn_started_at = Instant::now();
-    let mut handle = match adapter
+    let handle = match adapter
         .run(
             TurnInput {
                 content: prompt,
@@ -811,21 +796,6 @@ async fn start_turn(
             return Err(err);
         }
     };
-
-    if let Some(sealed_root) = sealed_worktree_root {
-        let (done_tx, done_rx) = oneshot::channel();
-        let mut original_done = handle.done;
-        let harness = Arc::clone(&state.execution.harness);
-        let host_root = workdir.to_path_buf();
-        tokio::spawn(async move {
-            let _ = (&mut original_done).await;
-            if let Err(err) = harness.sync_sealed_to_host(&sealed_root, &host_root).await {
-                tracing::warn!("failed to sync sealed runtime to worktree: {err:#}");
-            }
-            let _ = done_tx.send(());
-        });
-        handle.done = done_rx;
-    }
 
     let state_for_events = Arc::clone(state);
     let store = store.clone();

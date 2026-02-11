@@ -153,6 +153,8 @@ struct WorkspaceMergeQueueConfig {
 #[derive(Debug, Deserialize, Default)]
 struct WorkspaceExecutionConfig {
     #[serde(default)]
+    environment: Option<ExecutionEnvironment>,
+    #[serde(default)]
     mode: Option<ExecutionMode>,
     #[serde(default)]
     container: Option<WorkspaceContainerExecutionConfig>,
@@ -178,6 +180,24 @@ pub struct ExecutionSettingsOverride {
     pub container: ContainerExecutionSettingsOverride,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionEnvironment {
+    Host,
+    ContainerHostMounted,
+    ContainerDiskIsolated,
+}
+
+impl ExecutionEnvironment {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Host => "host",
+            Self::ContainerHostMounted => "container_host_mounted",
+            Self::ContainerDiskIsolated => "container_disk_isolated",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ContainerExecutionSettingsOverride {
     pub runtime: Option<ContainerRuntimeKind>,
@@ -200,13 +220,30 @@ pub async fn load_execution_settings_override(
     let Some(exec) = cfg.execution else {
         return Ok(None);
     };
-    let mut ov = ExecutionSettingsOverride {
-        mode: exec.mode,
-        ..Default::default()
-    };
+    let mut ov = ExecutionSettingsOverride::default();
+    let environment = exec.environment;
+    if let Some(environment) = environment {
+        match environment {
+            ExecutionEnvironment::Host => {
+                ov.mode = Some(ExecutionMode::Host);
+            }
+            ExecutionEnvironment::ContainerHostMounted => {
+                ov.mode = Some(ExecutionMode::Container);
+                ov.container.mount_mode = Some(ContainerMountMode::HostMounted);
+            }
+            ExecutionEnvironment::ContainerDiskIsolated => {
+                ov.mode = Some(ExecutionMode::Container);
+                ov.container.mount_mode = Some(ContainerMountMode::DiskIsolated);
+            }
+        }
+    } else {
+        ov.mode = exec.mode;
+    }
     if let Some(c) = exec.container {
         ov.container.runtime = c.runtime;
-        ov.container.mount_mode = c.mount_mode;
+        if environment.is_none() {
+            ov.container.mount_mode = c.mount_mode;
+        }
         ov.container.network_mode = c.network_mode;
         ov.container.allowlist = c.allowlist.map(|v| {
             v.into_iter()
@@ -670,9 +707,8 @@ pub async fn update_worktree_bootstrap_setup_command(
 
 #[derive(Debug, Clone)]
 pub struct ExecutionConfigUpdate {
-    pub mode: ExecutionMode,
+    pub environment: ExecutionEnvironment,
     pub runtime: Option<ContainerRuntimeKind>,
-    pub mount_mode: Option<ContainerMountMode>,
     pub network_mode: Option<ContainerNetworkMode>,
     pub allowlist: Option<Vec<String>>,
     pub image: Option<String>,
@@ -708,18 +744,16 @@ pub async fn update_execution_config(
         .ok_or_else(|| anyhow!(".ctx/config.toml [execution] must be a TOML table"))?;
 
     exec_table.insert(
-        "mode".to_string(),
-        TomlValue::String(
-            match update.mode {
-                ExecutionMode::Host => "host",
-                ExecutionMode::Auto => "auto",
-                ExecutionMode::Container => "container",
-            }
-            .to_string(),
-        ),
+        "environment".to_string(),
+        TomlValue::String(update.environment.as_str().to_string()),
     );
+    // Remove legacy shape keys when writing fresh config.
+    exec_table.remove("mode");
 
-    if matches!(update.mode, ExecutionMode::Container) {
+    if matches!(
+        update.environment,
+        ExecutionEnvironment::ContainerHostMounted | ExecutionEnvironment::ContainerDiskIsolated
+    ) {
         let container_value = exec_table
             .entry("container".to_string())
             .or_insert_with(|| TomlValue::Table(toml::value::Table::new()));
@@ -740,21 +774,7 @@ pub async fn update_execution_config(
         } else {
             container_table.remove("runtime");
         }
-        if let Some(mount_mode) = update.mount_mode {
-            container_table.insert(
-                "mount_mode".to_string(),
-                TomlValue::String(
-                    match mount_mode {
-                        ContainerMountMode::HostMounted => "host_mounted",
-                        ContainerMountMode::Sealed => "sealed",
-                        ContainerMountMode::DiskIsolated => "disk_isolated",
-                    }
-                    .to_string(),
-                ),
-            );
-        } else {
-            container_table.remove("mount_mode");
-        }
+        container_table.remove("mount_mode");
         if let Some(network_mode) = update.network_mode {
             container_table.insert(
                 "network_mode".to_string(),
@@ -944,6 +964,105 @@ pub async fn update_subagent_system_prompt_append(
         .await
         .context("writing .ctx/config.toml")?;
     Ok(config_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::{ContainerMountMode, ContainerNetworkMode, ExecutionMode};
+
+    async fn write_workspace_config(root: &Path, contents: &str) {
+        let config_path = root.join(WORKSPACE_CONFIG_REL_PATH);
+        if let Some(parent) = config_path.parent() {
+            tokio::fs::create_dir_all(parent).await.unwrap();
+        }
+        tokio::fs::write(config_path, contents).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn load_execution_settings_override_reads_environment_shape() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_workspace_config(
+            tmp.path(),
+            r#"
+[execution]
+environment = "container_disk_isolated"
+
+[execution.container]
+network_mode = "allowlist"
+allowlist = ["example.com"]
+"#,
+        )
+        .await;
+
+        let ov = load_execution_settings_override(tmp.path())
+            .await
+            .unwrap()
+            .expect("override should exist");
+        assert_eq!(ov.mode, Some(ExecutionMode::Container));
+        assert_eq!(
+            ov.container.mount_mode,
+            Some(ContainerMountMode::DiskIsolated)
+        );
+        assert_eq!(
+            ov.container.network_mode,
+            Some(ContainerNetworkMode::Allowlist)
+        );
+        assert_eq!(
+            ov.container.allowlist,
+            Some(vec!["example.com".to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn load_execution_settings_override_reads_legacy_auto_and_sealed() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_workspace_config(
+            tmp.path(),
+            r#"
+[execution]
+mode = "auto"
+
+[execution.container]
+mount_mode = "sealed"
+"#,
+        )
+        .await;
+
+        let ov = load_execution_settings_override(tmp.path())
+            .await
+            .unwrap()
+            .expect("override should exist");
+        assert_eq!(ov.mode, Some(ExecutionMode::Host));
+        assert_eq!(
+            ov.container.mount_mode,
+            Some(ContainerMountMode::DiskIsolated)
+        );
+    }
+
+    #[tokio::test]
+    async fn update_execution_config_writes_environment_and_removes_legacy_shape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _ = update_execution_config(
+            tmp.path(),
+            ExecutionConfigUpdate {
+                environment: ExecutionEnvironment::ContainerHostMounted,
+                runtime: Some(ContainerRuntimeKind::Podman),
+                network_mode: Some(ContainerNetworkMode::LlmOnly),
+                allowlist: None,
+                image: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let text = tokio::fs::read_to_string(tmp.path().join(WORKSPACE_CONFIG_REL_PATH))
+            .await
+            .unwrap();
+        assert!(text.contains("environment = \"container_host_mounted\""));
+        assert!(!text.contains("mode = \"container\""));
+        assert!(!text.contains("mount_mode"));
+    }
 }
 
 fn trimmed_nonempty(value: &str) -> Option<String> {

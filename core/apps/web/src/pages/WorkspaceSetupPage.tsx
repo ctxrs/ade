@@ -905,12 +905,12 @@ export default function WorkspaceSetupPage() {
       }
 
       // 4. Persist per-workspace execution settings.
-      const execMode = selections.container === "no-container" ? "host" : "container";
-      const mountMode = selections.container === "host-mounted"
-        ? "host_mounted"
-        : selections.container === "disk-isolated"
-          ? "disk_isolated"
-          : "sealed";
+      const environment = selections.container === "no-container"
+        ? "host"
+        : selections.container === "host-mounted"
+          ? "container_host_mounted"
+          : "container_disk_isolated";
+      const containerEnabled = environment !== "host";
       const allowlist = networkAllowlist
         .split(/\r?\n/)
         .map((line) => line.trim())
@@ -921,15 +921,14 @@ export default function WorkspaceSetupPage() {
           ? "all"
           : "llm_only";
       await updateWorkspaceExecutionConfig(wsId, {
-        mode: execMode,
-        mount_mode: execMode === "container" ? mountMode : null,
-        network_mode: execMode === "container" ? netMode : null,
-        allowlist: execMode === "container" && netMode === "allowlist" ? allowlist : null,
+        environment,
+        network_mode: containerEnabled ? netMode : null,
+        allowlist: containerEnabled && netMode === "allowlist" ? allowlist : null,
       });
 
       // If container execution is enabled, eagerly provision the workspace harness container so
       // we don't land in the workbench before the sandbox is actually ready.
-      if (execMode === "container") {
+      if (containerEnabled) {
         await ensureWorkspaceHarnessContainer(wsId);
       }
 

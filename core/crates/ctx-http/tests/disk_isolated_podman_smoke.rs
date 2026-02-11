@@ -218,8 +218,7 @@ async fn disk_isolated_smoke_podman_volume_buffers_terminal() {
             ws.id.0
         ))
         .json(&json!({
-            "mode": "container",
-            "mount_mode": "disk_isolated",
+            "environment": "container_disk_isolated",
             "network_mode": "all",
         }))
         .send()

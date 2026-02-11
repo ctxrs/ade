@@ -242,9 +242,9 @@ impl Default for SandboxingSettings {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionMode {
-    Host,
     #[default]
-    Auto,
+    #[serde(alias = "auto")]
+    Host,
     Container,
 }
 
@@ -260,7 +260,7 @@ pub enum ContainerRuntimeKind {
 pub enum ContainerMountMode {
     #[default]
     HostMounted,
-    Sealed,
+    #[serde(alias = "sealed")]
     DiskIsolated,
 }
 
@@ -1084,7 +1084,6 @@ pub async fn load_settings(data_root: &Path) -> Settings {
         let mode = match normalized.as_str() {
             "host" => Some(ExecutionMode::Host),
             "container" => Some(ExecutionMode::Container),
-            "auto" => Some(ExecutionMode::Auto),
             _ => None,
         };
         if let Some(mode) = mode {

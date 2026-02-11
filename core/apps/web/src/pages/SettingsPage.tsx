@@ -1017,7 +1017,7 @@ export default function SettingsPage() {
       .map((line) => line.trim())
       .filter(Boolean);
 
-    if (workspaceExecution.mode !== "container") {
+    if (workspaceExecution.environment === "host") {
       setWorkspaceExecutionError("Allowlist only applies in container mode.");
       return;
     }
@@ -1034,8 +1034,7 @@ export default function SettingsPage() {
     setWorkspaceExecutionError(null);
     try {
       await updateWorkspaceExecutionConfig(workspaceId, {
-        mode: workspaceExecution.mode,
-        mount_mode: workspaceExecution.mount_mode ?? null,
+        environment: workspaceExecution.environment,
         network_mode: workspaceExecution.network_mode ?? null,
         allowlist,
       });
@@ -2387,15 +2386,27 @@ export default function SettingsPage() {
       const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
       const configPath = selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/config.toml` : ".ctx/config.toml";
       const exec = workspaceExecution;
-      const modeLabel = exec?.mode === "container" ? "Container" : exec?.mode === "host" ? "Host" : "Auto";
-      const mountLabel = exec?.mount_mode === "host_mounted" ? "Host-mounted" : "Sealed";
+      const modeLabel =
+        exec?.environment === "container_disk_isolated"
+          ? "Container"
+          : exec?.environment === "container_host_mounted"
+            ? "Container"
+            : "Host";
+      const mountLabel =
+        exec?.environment === "container_disk_isolated"
+          ? "Disk-isolated"
+          : exec?.environment === "container_host_mounted"
+            ? "Host-mounted"
+            : "";
       const netLabel =
-        exec?.network_mode === "all"
+        exec?.environment === "host"
+          ? "Not applicable (host mode)"
+          : exec?.network_mode === "all"
           ? "Full access"
           : exec?.network_mode === "allowlist"
             ? "Allowlist"
             : "LLM providers only";
-      const allowlistActive = exec?.mode === "container" && exec?.network_mode === "allowlist";
+      const allowlistActive = exec?.environment !== "host" && exec?.network_mode === "allowlist";
 
       return (
         <>
@@ -2432,7 +2443,7 @@ export default function SettingsPage() {
               control={
                 <span className="settings-pill">
                   {workspaceExecutionLoading ? "Loading…" : exec ? modeLabel : "—"}
-                  {exec?.mode === "container" ? ` (${mountLabel})` : ""}
+                  {exec?.environment !== "host" ? ` (${mountLabel})` : ""}
                 </span>
               }
             />

@@ -963,9 +963,7 @@ pub(super) async fn update_worktree_bootstrap_config(
 
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateExecutionConfigReq {
-    mode: String,
-    #[serde(default)]
-    mount_mode: Option<String>,
+    environment: String,
     #[serde(default)]
     network_mode: Option<String>,
     #[serde(default)]
@@ -977,8 +975,7 @@ pub(super) struct WorkspaceExecutionConfigResp {
     // Always points at the workspace root config path (may not exist if unset).
     config_path: String,
     source: String,               // "workspace" | "daemon_default"
-    mode: String,                 // "host" | "container" | "auto"
-    mount_mode: Option<String>,   // "sealed" | "host_mounted" | "disk_isolated"
+    environment: String,          // "host" | "container_host_mounted" | "container_disk_isolated"
     network_mode: Option<String>, // "llm_only" | "allowlist" | "all"
     allowlist: Option<Vec<String>>,
 }
@@ -1030,16 +1027,16 @@ pub(super) async fn get_execution_config(
         }
     }
 
-    let mode = match effective.mode {
-        crate::settings::ExecutionMode::Host => "host",
-        crate::settings::ExecutionMode::Container => "container",
-        crate::settings::ExecutionMode::Auto => "auto",
-    }
-    .to_string();
-    let mount_mode = match effective.container.mount_mode {
-        crate::settings::ContainerMountMode::Sealed => "sealed",
-        crate::settings::ContainerMountMode::HostMounted => "host_mounted",
-        crate::settings::ContainerMountMode::DiskIsolated => "disk_isolated",
+    let environment = match (&effective.mode, &effective.container.mount_mode) {
+        (crate::settings::ExecutionMode::Host, _) => "host",
+        (
+            crate::settings::ExecutionMode::Container,
+            crate::settings::ContainerMountMode::HostMounted,
+        ) => "container_host_mounted",
+        (
+            crate::settings::ExecutionMode::Container,
+            crate::settings::ContainerMountMode::DiskIsolated,
+        ) => "container_disk_isolated",
     }
     .to_string();
     let network_mode = match effective.container.network_mode {
@@ -1057,8 +1054,7 @@ pub(super) async fn get_execution_config(
     Ok(Json(WorkspaceExecutionConfigResp {
         config_path,
         source,
-        mode,
-        mount_mode: Some(mount_mode),
+        environment,
         network_mode: Some(network_mode),
         allowlist: Some(effective.container.allowlist.clone()),
     }))
@@ -1096,30 +1092,19 @@ pub(super) async fn update_execution_config(
             }),
         ))?;
 
-    let mode = match req.mode.trim() {
-        "host" => crate::settings::ExecutionMode::Host,
-        "container" => crate::settings::ExecutionMode::Container,
-        "auto" => crate::settings::ExecutionMode::Auto,
-        _ => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "invalid mode (expected host|container|auto)".to_string(),
-                }),
-            ));
+    let environment = match req.environment.trim() {
+        "host" => crate::workspace_config::ExecutionEnvironment::Host,
+        "container_host_mounted" => {
+            crate::workspace_config::ExecutionEnvironment::ContainerHostMounted
         }
-    };
-
-    let mount_mode = match req.mount_mode.as_deref().map(|v| v.trim()) {
-        None | Some("") => None,
-        Some("sealed") => Some(crate::settings::ContainerMountMode::Sealed),
-        Some("host_mounted") => Some(crate::settings::ContainerMountMode::HostMounted),
-        Some("disk_isolated") => Some(crate::settings::ContainerMountMode::DiskIsolated),
+        "container_disk_isolated" => {
+            crate::workspace_config::ExecutionEnvironment::ContainerDiskIsolated
+        }
         _ => {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
-                    error: "invalid mount_mode (expected sealed|host_mounted|disk_isolated)"
+                    error: "invalid environment (expected host|container_host_mounted|container_disk_isolated)"
                         .to_string(),
                 }),
             ));
@@ -1152,9 +1137,8 @@ pub(super) async fn update_execution_config(
     let cfg_path = workspace_config::update_execution_config(
         StdPath::new(&workspace.root_path),
         workspace_config::ExecutionConfigUpdate {
-            mode,
+            environment,
             runtime: Some(crate::settings::ContainerRuntimeKind::Podman),
-            mount_mode,
             network_mode,
             allowlist,
             image: None,

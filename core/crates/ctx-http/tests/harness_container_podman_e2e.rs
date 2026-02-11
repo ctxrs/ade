@@ -228,30 +228,6 @@ async fn run_container_python(container_name: &str, script: &str) -> std::proces
         .unwrap()
 }
 
-async fn inspect_container_mount_sources(container_name: &str) -> Vec<String> {
-    let podman = podman_binary_for_tests().expect("podman required for e2e");
-    let output = Command::new(podman)
-        .arg("container")
-        .arg("inspect")
-        .arg("--format")
-        .arg("{{json .Mounts}}")
-        .arg(container_name)
-        .output()
-        .await
-        .unwrap();
-    assert!(output.status.success(), "podman inspect failed");
-    let mounts: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    if let Some(array) = mounts.as_array() {
-        array
-            .iter()
-            .filter_map(|entry| entry.get("Source").and_then(|value| value.as_str()))
-            .map(|value| value.to_string())
-            .collect()
-    } else {
-        Vec::new()
-    }
-}
-
 async fn create_session_with_provider(
     app: &mut axum::Router,
     git_repo_root: &Path,
@@ -387,73 +363,6 @@ async fn harness_container_podman_fake_acp() {
     let session_id = session.id.0.to_string();
     post_message(&mut app, &session_id, PROMPT).await;
     wait_for_done(&state, session.id).await;
-}
-
-#[tokio::test]
-#[ignore]
-async fn harness_container_podman_sealed_mounts() {
-    if std::env::var("CTX_E2E_PODMAN").ok().as_deref() != Some("1") {
-        eprintln!("skipping: CTX_E2E_PODMAN not set");
-        return;
-    }
-    if podman_binary_for_tests().is_none() {
-        eprintln!("skipping: podman not found");
-        return;
-    }
-    let _guard = EnvGuard::set("CTX_ALLOW_SYSTEM_PODMAN", "1");
-
-    let git_repo = setup_git_repo().await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let script_path = write_fake_crp_script(data_dir.path());
-    configure_fake_provider(data_dir.path(), &script_path).await;
-    configure_container_settings(data_dir.path(), ContainerMountMode::Sealed, "python:3.11").await;
-
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert(
-        "codex-crp".into(),
-        Arc::new(Tier1CrpAdapter::from_raw(
-            "codex-crp",
-            "python3".to_string(),
-            vec![script_path.to_string_lossy().to_string()],
-        )),
-    );
-
-    let state = Arc::new(AppState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let mut app = api::router(state.clone());
-    let session = create_session_with_provider(&mut app, git_repo.path(), "codex-crp").await;
-
-    let session_id = session.id.0.to_string();
-    post_message(&mut app, &session_id, PROMPT).await;
-    wait_for_done(&state, session.id).await;
-
-    let container_name = format!("ctx-harness-{}", session.workspace_id.0);
-    let mounts = inspect_container_mount_sources(&container_name).await;
-    let workspace_root = git_repo.path().to_string_lossy().to_string();
-    assert!(
-        !mounts.iter().any(|source| source == &workspace_root),
-        "sealed mode should not mount workspace root"
-    );
-    let sealed_root = data_dir
-        .path()
-        .join("containers")
-        .join("workspaces")
-        .join(session.workspace_id.0.to_string())
-        .join("sealed-worktrees")
-        .join(session.worktree_id.0.to_string());
-    let sealed_root = sealed_root.to_string_lossy().to_string();
-    assert!(
-        mounts.iter().any(|source| source == &sealed_root),
-        "sealed worktree should be mounted"
-    );
 }
 
 #[tokio::test]

@@ -569,7 +569,15 @@ const assertLocalWorkspaceConfig = (rootPath, expectations) => {
     }
     return lines.slice(start + 1, end).join("\n");
   };
-  if (expectations.executionMode) {
+  if (expectations.environment) {
+    const body = tableBody("execution");
+    if (!body) {
+      throw new Error(`expected [execution] in ${cfg}`);
+    }
+    if (!new RegExp(`\\benvironment\\s*=\\s*\"${expectations.environment}\"`).test(body)) {
+      throw new Error(`expected execution.environment=${expectations.environment} in ${cfg}`);
+    }
+  } else if (expectations.executionMode) {
     const body = tableBody("execution");
     if (!body) {
       // Host execution is the daemon default; config may omit an explicit [execution] table.
@@ -916,7 +924,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
-    assertLocalWorkspaceConfig(ws.root_path, { executionMode: "host", mergeQueueEnabled: false, setupHook: "pnpm install" });
+    assertLocalWorkspaceConfig(ws.root_path, { environment: "host", mergeQueueEnabled: false, setupHook: "pnpm install" });
     await assertWorkspaceTerminalCwdPrefix(id, ws.root_path);
     const container = await getWorkspaceHarnessContainer(id);
     if (container !== null) {
@@ -942,8 +950,7 @@ describe("launcher workspace wizard (e2e)", () => {
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
     assertLocalWorkspaceConfig(ws.root_path, {
-      executionMode: "container",
-      mountMode: "disk_isolated",
+      environment: "container_disk_isolated",
       networkMode: "llm_only",
       mergeQueueEnabled: true,
       targetBranch: "main",
@@ -961,13 +968,13 @@ describe("launcher workspace wizard (e2e)", () => {
 
   it("local new empty works end-to-end", async function () {
     if (!scenarioEnabled("local-new-host-mounted", ["local", "container", "host-mounted"])) this.skip();
-    const dest = path.join(localBase, "new-sealed");
+    const dest = path.join(localBase, "new-host-mounted");
     const id = await runWizardScenario({
       location: "local",
       container: "host-mounted",
       network: "allowlist",
       networkAllowlist: "github.com\nregistry.npmjs.org",
-      source: { kind: "new", destPath: dest, workspaceName: "sealed-ws" },
+      source: { kind: "new", destPath: dest, workspaceName: "host-mounted-ws" },
       setupHook: "",
       mergeQueue: { kind: "enabled", targetBranch: "main", verifyCommand: "" },
     });
@@ -975,8 +982,7 @@ describe("launcher workspace wizard (e2e)", () => {
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
     assertLocalWorkspaceConfig(ws.root_path, {
-      executionMode: "container",
-      mountMode: "host_mounted",
+      environment: "container_host_mounted",
       networkMode: "allowlist",
       allowlist: ["github.com", "registry.npmjs.org"],
       mergeQueueEnabled: true,
@@ -1004,8 +1010,7 @@ describe("launcher workspace wizard (e2e)", () => {
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
     assertLocalWorkspaceConfig(ws.root_path, {
-      executionMode: "container",
-      mountMode: "disk_isolated",
+      environment: "container_disk_isolated",
       networkMode: "all",
       mergeQueueEnabled: false,
     });
@@ -1092,7 +1097,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
     // Sanity: ensure we stayed in the same workspace route.
     const ws = await getWorkspace(id);
-    assertLocalWorkspaceConfig(ws.root_path, { executionMode: "container", mountMode: "host_mounted" });
+    assertLocalWorkspaceConfig(ws.root_path, { environment: "container_host_mounted" });
   });
 
   it("remote import works end-to-end", async function () {
@@ -1157,7 +1162,7 @@ describe("launcher workspace wizard (e2e)", () => {
     if (!remoteTarget) this.skip();
     if (!remoteHasPodman) this.skip();
     if (!remoteSupportsContainerStep) this.skip();
-    const dest = `${remoteBase}/new-sealed`;
+    const dest = `${remoteBase}/new-disk-isolated`;
     ssh(remoteTarget, `rm -rf ${JSON.stringify(dest)}`);
 
     const id = await runWizardScenario({
@@ -1167,7 +1172,7 @@ describe("launcher workspace wizard (e2e)", () => {
       remoteDataDir,
       container: "disk-isolated",
       network: "full",
-      source: { kind: "new", destPath: dest, workspaceName: "sealed-remote" },
+      source: { kind: "new", destPath: dest, workspaceName: "disk-isolated-remote" },
       setupHook: "",
       mergeQueue: { kind: "skip" },
     });

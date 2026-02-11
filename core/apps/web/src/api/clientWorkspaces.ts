@@ -64,8 +64,7 @@ export const updateWorkspaceMergeQueueConfig = (workspaceId: string, req: Update
   });
 
 export type UpdateExecutionConfigRequest = {
-  mode: "host" | "container" | "auto";
-  mount_mode?: "sealed" | "host_mounted" | "disk_isolated" | null;
+  environment: "host" | "container_host_mounted" | "container_disk_isolated";
   network_mode?: "llm_only" | "allowlist" | "all" | null;
   allowlist?: string[] | null;
 };
@@ -73,8 +72,7 @@ export type UpdateExecutionConfigRequest = {
 export type WorkspaceExecutionConfig = {
   config_path: string;
   source: "workspace" | "daemon_default";
-  mode: "host" | "container" | "auto";
-  mount_mode?: "sealed" | "host_mounted" | "disk_isolated" | null;
+  environment: "host" | "container_host_mounted" | "container_disk_isolated";
   network_mode?: "llm_only" | "allowlist" | "all" | null;
   allowlist?: string[] | null;
 };

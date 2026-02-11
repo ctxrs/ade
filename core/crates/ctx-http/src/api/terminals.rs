@@ -16,7 +16,6 @@ use crate::settings::{ContainerMountMode, ExecutionMode};
 use crate::terminals::{PodmanTerminalSpec, TerminalCreateRequest};
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
-use ctx_fs::worktrees::worktrees_root;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateTerminalReq {
@@ -199,11 +198,6 @@ pub(super) async fn create_workspace_terminal(
     let container_workspace_root = match effective.container.mount_mode {
         ContainerMountMode::DiskIsolated => {
             PathBuf::from(harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT)
-        }
-        // Sealed mode mounts container-owned storage at the host worktrees root path.
-        // A workspace-scoped terminal (no worktree_id) should land in that directory.
-        ContainerMountMode::Sealed => {
-            worktrees_root(&state.core.data_root).join(workspace_id.0.to_string())
         }
         // Host-mounted uses host paths directly inside the container.
         ContainerMountMode::HostMounted => workspace_root.clone(),

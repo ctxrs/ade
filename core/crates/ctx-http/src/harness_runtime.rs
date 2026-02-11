@@ -64,7 +64,6 @@ pub enum HarnessRuntimeKind {
 pub struct HarnessExecutionPlan {
     pub runtime: HarnessRuntimeKind,
     pub env_overrides: HashMap<String, String>,
-    pub sealed_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -187,7 +186,6 @@ impl HarnessRuntimeManager {
         settings: &ExecutionSettings,
         daemon_url: &str,
     ) -> Result<HarnessExecutionPlan> {
-        let mode = resolve_execution_mode(settings);
         let mut env_overrides = HashMap::new();
         env_overrides.insert(
             "CTX_DATA_ROOT_HOST".to_string(),
@@ -199,11 +197,10 @@ impl HarnessRuntimeManager {
                 path.to_string_lossy().to_string(),
             );
         }
-        if matches!(mode, ExecutionMode::Host) {
+        if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(HarnessExecutionPlan {
                 runtime: HarnessRuntimeKind::Host,
                 env_overrides,
-                sealed_root: None,
             });
         }
 
@@ -242,18 +239,11 @@ impl HarnessRuntimeManager {
             env_overrides.insert("CTX_HARNESS_CONTAINER_USER".to_string(), user);
         }
 
-        let sealed_root = if matches!(container.mount_mode, ContainerMountMode::Sealed) {
-            Some(sealed_worktrees_root(&self.data_root, workspace.id))
-        } else {
-            None
-        };
-
         Ok(HarnessExecutionPlan {
             runtime: HarnessRuntimeKind::Container {
                 name: container.name,
             },
             env_overrides,
-            sealed_root,
         })
     }
 
@@ -263,8 +253,7 @@ impl HarnessRuntimeManager {
         settings: &ExecutionSettings,
         daemon_url: &str,
     ) -> Result<()> {
-        let mode = resolve_execution_mode(settings);
-        if matches!(mode, ExecutionMode::Host) {
+        if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
         }
         if !podman_available() {
@@ -281,44 +270,6 @@ impl HarnessRuntimeManager {
                 daemon_port,
             )
             .await?;
-        Ok(())
-    }
-
-    pub async fn sync_worktree_to_sealed(
-        &self,
-        host_root: &Path,
-        sealed_root: &Path,
-    ) -> Result<()> {
-        if !rsync_available() {
-            anyhow::bail!("rsync not available for sealed sync");
-        }
-        tokio::fs::create_dir_all(sealed_root).await.ok();
-        let mut cmd = Command::new("rsync");
-        cmd.arg("-a")
-            .arg("--delete")
-            .arg(format!("{}/", host_root.to_string_lossy()))
-            .arg(sealed_root);
-        let status = cmd.status().await?;
-        if !status.success() {
-            anyhow::bail!("rsync failed with status {}", status);
-        }
-        Ok(())
-    }
-
-    pub async fn sync_sealed_to_host(&self, sealed_root: &Path, host_root: &Path) -> Result<()> {
-        if !rsync_available() {
-            anyhow::bail!("rsync not available for sealed sync");
-        }
-        tokio::fs::create_dir_all(host_root).await.ok();
-        let mut cmd = Command::new("rsync");
-        cmd.arg("-a")
-            .arg("--delete")
-            .arg(format!("{}/", sealed_root.to_string_lossy()))
-            .arg(host_root);
-        let status = cmd.status().await?;
-        if !status.success() {
-            anyhow::bail!("rsync failed with status {}", status);
-        }
         Ok(())
     }
 
@@ -438,12 +389,6 @@ impl HarnessRuntimeManager {
             } else {
                 return Ok(container.clone());
             }
-        } else if matches!(settings.mount_mode, ContainerMountMode::Sealed)
-            && container_exists(&self.data_root, &name)
-                .await
-                .unwrap_or(false)
-        {
-            recreate = true;
         }
 
         if recreate {
@@ -576,13 +521,6 @@ impl HarnessRuntimeManager {
         };
         containers.insert(workspace.id, container.clone());
         Ok(container)
-    }
-}
-
-fn resolve_execution_mode(settings: &ExecutionSettings) -> ExecutionMode {
-    match &settings.mode {
-        ExecutionMode::Auto => ExecutionMode::Host,
-        other => other.clone(),
     }
 }
 
@@ -752,14 +690,6 @@ fn container_data_root(data_root: &Path, workspace_id: WorkspaceId) -> PathBuf {
         .join("data")
 }
 
-fn sealed_worktrees_root(data_root: &Path, workspace_id: WorkspaceId) -> PathBuf {
-    data_root
-        .join("containers")
-        .join("workspaces")
-        .join(workspace_id.0.to_string())
-        .join("sealed-worktrees")
-}
-
 struct MountPlan {
     mounts: Vec<String>,
     external_mounts: HashSet<String>,
@@ -774,11 +704,10 @@ fn volume_mount(name: &str, dst: &str, read_only: bool) -> String {
 fn build_mounts(
     data_root: &Path,
     workspace: &Workspace,
-    worktree: Option<&Worktree>,
+    _worktree: Option<&Worktree>,
     settings: &ContainerExecutionSettings,
 ) -> MountPlan {
     let mut mounts = Vec::new();
-    let mut external_mounts = HashSet::new();
     let workspace_root = PathBuf::from(&workspace.root_path);
 
     let worktrees_root = worktrees_root(data_root).join(workspace.id.0.to_string());
@@ -787,25 +716,6 @@ fn build_mounts(
         // We mount that volume at a fixed path inside the container. The daemon mediates access.
         let vol_name = format!("ctx-ws-{}", workspace.id.0);
         mounts.push(volume_mount(&vol_name, CTX_CONTAINER_WORKSPACE_ROOT, false));
-    } else if matches!(settings.mount_mode, ContainerMountMode::Sealed) {
-        let sealed_root = sealed_worktrees_root(data_root, workspace.id);
-        ensure_dir(&sealed_root);
-        mounts.push(bind_mount(&sealed_root, &worktrees_root, false));
-
-        // Seal mode mounts container-owned storage at the host worktrees root path.
-        // If a worktree lives outside that root (escape hatch), we additionally bind-mount
-        // its sealed path to the external absolute path so `CWD` remains valid inside the
-        // container.
-        if let Some(worktree) = worktree {
-            let worktree_root = PathBuf::from(&worktree.root_path);
-            if !worktree_root.starts_with(&worktrees_root) {
-                let sealed_worktree = sealed_root.join(worktree.id.0.to_string());
-                ensure_dir(&sealed_worktree);
-                let mount = bind_mount(&sealed_worktree, &worktree_root, false);
-                external_mounts.insert(mount.clone());
-                mounts.push(mount);
-            }
-        }
     } else {
         ensure_dir(&workspace_root);
         mounts.push(bind_mount(&workspace_root, &workspace_root, false));
@@ -837,7 +747,7 @@ fn build_mounts(
 
     MountPlan {
         mounts,
-        external_mounts,
+        external_mounts: HashSet::new(),
     }
 }
 
@@ -1468,10 +1378,6 @@ async fn verify_disk_isolated_container_mounts(
     Ok(())
 }
 
-fn rsync_available() -> bool {
-    which::which("rsync").is_ok()
-}
-
 #[cfg(unix)]
 fn container_user() -> Option<String> {
     let uid = unsafe { libc::geteuid() };
@@ -1573,25 +1479,6 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("podman unavailable"));
         assert!(message.contains("execution mode is container"));
-    }
-
-    #[tokio::test]
-    async fn auto_mode_uses_host_when_podman_unavailable() {
-        let _guard = EnvGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
-        let tmp = tempfile::tempdir().unwrap();
-        let manager = runtime_manager(&tmp).await;
-        let workspace = sample_workspace(&tmp);
-        let worktree = sample_worktree(&tmp, workspace.id);
-        let settings = ExecutionSettings {
-            mode: ExecutionMode::Auto,
-            container: ContainerExecutionSettings::default(),
-        };
-
-        let plan = manager
-            .prepare(&workspace, &worktree, &settings, "http://127.0.0.1:9999")
-            .await
-            .unwrap();
-        assert!(matches!(plan.runtime, HarnessRuntimeKind::Host));
     }
 
     #[test]
