@@ -1,12 +1,11 @@
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
-test("workbench: session_gap only refetches the affected session head", async ({ page, request }) => {
+test("workbench: session_gap recovers without active /head refetch", async ({ page, request }) => {
   const seed = await seedDummyWorkspace(request, {
     tasks: 2,
     sessionsPerTask: 1,
-    // Force the UI to open sessions via the SessionReplica (no seeded head content),
-    // so a session_gap can trigger a GET /head refetch.
+    // Keep heads lightweight for this scenario.
     turnsPerSession: 0,
     throttleMs: 5,
   });
@@ -67,15 +66,11 @@ test("workbench: session_gap only refetches the affected session head", async ({
     // Only the active session is open (refCount > 0), so inject the gap for the active session.
     { sessionId: sessionIdB, workspaceId: seed.workspaceId },
   );
-
-  await expect
-    .poll(async () => requests.some((r) => r.url.includes(`/api/sessions/${sessionIdB}/head`)), { timeout: 60_000 })
-    .toBe(true);
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(600);
 
   const after = requests.filter((r) => r.ts >= cutoff);
   const headRequestsB = after.filter((r) => r.url.includes(`/api/sessions/${sessionIdB}/head`));
-  expect(headRequestsB.length).toBeGreaterThan(0);
+  expect(headRequestsB.length).toBe(0);
   const headRequestsA = after.filter((r) => r.url.includes(`/api/sessions/${sessionIdA}/head`));
   expect(headRequestsA.length).toBe(0);
 });

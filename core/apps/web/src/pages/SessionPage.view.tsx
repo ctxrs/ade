@@ -261,6 +261,7 @@ export function SessionView({
   sessionId,
   isActive = true,
   autoOpenSession = true,
+  sessionMode = "active",
   draft,
   onDraftChange,
   onDraftPersistNow,
@@ -271,6 +272,7 @@ export function SessionView({
 }: {
   sessionId: string;
   isActive?: boolean;
+  sessionMode?: "active" | "archived";
   draft?: { text: string; modeId: WorkbenchModeId } | null;
   onDraftChange?: ((text: string) => void) | null;
   onDraftPersistNow?: (() => void | Promise<void>) | null;
@@ -428,7 +430,7 @@ export function SessionView({
     setFileOpenError(message);
   }, []);
 
-  useOpenSession(autoOpenSession ? id ?? "" : "", { watchDiff: true });
+  useOpenSession(autoOpenSession ? id ?? "" : "", { watchDiff: true, mode: sessionMode });
   const refreshAll = useCallback(async () => {
     if (!id) return;
     await supervisor.refreshQueue(id);
@@ -1439,7 +1441,7 @@ export function SessionView({
         </div>
       )}
       <div className={leftClass}>
-        {entry?.error && (
+        {entry?.loadState === "fatal" && entry?.error && (
           <div className="banner">
             <span className="error">{entry.error}</span>
           </div>

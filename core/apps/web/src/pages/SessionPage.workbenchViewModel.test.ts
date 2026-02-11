@@ -154,7 +154,14 @@ describe("buildWorkbenchThreadViewModel", () => {
         run_id: "r1",
         turn_id: "t1",
         event_type: "thought_chunk",
-        payload_json: { content_fragment: "Thinking about bar", crp_seq: 2, crp_channel: "data", order_seq: 2 },
+        payload_json: {
+          content_fragment: "Thinking about bar",
+          crp_seq: 2,
+          crp_channel: "data",
+          item_id: "thought-item-1",
+          summary_index: 0,
+          order_seq: 2,
+        },
         created_at: "2025-12-15T00:00:02.000Z",
       },
     ];
@@ -211,7 +218,14 @@ describe("buildWorkbenchThreadViewModel", () => {
         run_id: "r1",
         turn_id: "t1",
         event_type: "thought_chunk",
-        payload_json: { content_fragment: "first", crp_seq: 1, crp_channel: "data", order_seq: 1 },
+        payload_json: {
+          content_fragment: "first",
+          crp_seq: 1,
+          crp_channel: "data",
+          item_id: "thought-item-1",
+          summary_index: 0,
+          order_seq: 1,
+        },
         created_at: "2025-12-15T00:00:01.000Z",
       },
       {
@@ -231,7 +245,14 @@ describe("buildWorkbenchThreadViewModel", () => {
         run_id: "r1",
         turn_id: "t1",
         event_type: "thought_chunk",
-        payload_json: { content_fragment: "second", crp_seq: 3, crp_channel: "data", order_seq: 3 },
+        payload_json: {
+          content_fragment: "second",
+          crp_seq: 3,
+          crp_channel: "data",
+          item_id: "thought-item-1",
+          summary_index: 1,
+          order_seq: 3,
+        },
         created_at: "2025-12-15T00:00:03.000Z",
       },
     ];

@@ -1,8 +1,6 @@
 import {
   getProviderOptions,
-  getSessionHead,
   getSessionHistory,
-  getSessionSnapshot,
   getSessionState,
   idToString,
   listSessionArtifacts,
@@ -57,6 +55,8 @@ const readTunableInt = (key: string, fallback: number) => {
 };
 
 type ConnectionStatus = "connecting" | "connected" | "disconnected" | "idle";
+export type SessionMode = "active" | "archived";
+export type SessionLoadState = "pending_hydration" | "live" | "recovering" | "fatal";
 
 export type SessionSupervisorSnapshot = {
   connection: ConnectionStatus;
@@ -65,6 +65,8 @@ export type SessionSupervisorSnapshot = {
 
 export type SessionCacheEntry = {
   sessionId: string;
+  mode?: SessionMode;
+  loadState: SessionLoadState;
   session?: Session;
   acpModels?: any;
   acpModes?: any;
@@ -112,6 +114,7 @@ type OpenOptions = {
   watchDiff?: boolean;
   force?: boolean;
   silent?: boolean;
+  mode?: SessionMode;
 };
 
 type AcpMeta = {
@@ -247,6 +250,8 @@ const MAX_CACHED_SESSIONS = readTunableInt(
 );
 const WARM_TTL_MS = readTunableInt("contextWarmSessionTtlMs", 10 * 60 * 1000);
 const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
+const MODE_RESOLUTION_MAX_ATTEMPTS = 6;
+const MODE_RESOLUTION_RETRY_MS = 100;
 
 // The daemon serializes transient events with `seq: null` (see Rust `SessionEvent` Serialize).
 // We assign a stable synthetic seq in a negative JS-safe range so sorting never scrambles
@@ -268,6 +273,9 @@ export class SessionSupervisor {
   private providerOptionsInFlight = new Map<string, Promise<ProviderOptions | undefined>>();
   private taskThoughtCache = new Map<string, PersistedTaskThoughtsV1>();
   private taskThoughtCacheLoading = new Map<string, Promise<PersistedTaskThoughtsV1>>();
+  private modeResolutionTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>();
+  private modeResolutionAttempts = new Map<string, number>();
+  private modeResolutionOptions = new Map<string, OpenOptions | undefined>();
 
   constructor() {
     this.replica = new SessionReplicaBridge(this.handleReplicaPatches, {
@@ -294,6 +302,9 @@ export class SessionSupervisor {
     }
     this.snapshotStore = store;
     if (!store) {
+      for (const sessionId of [...this.modeResolutionTimers.keys()]) {
+        this.clearModeResolution(sessionId);
+      }
       this.setConnection("disconnected");
       return;
     }
@@ -303,8 +314,13 @@ export class SessionSupervisor {
       const next = this.mapConnection(state.connection);
       this.setConnection(next);
       this.syncActiveSnapshot(state);
+      this.resolvePendingSessionModes(state);
+      if (next !== "connected") {
+        this.markOpenSessionsRecovering();
+      }
     });
     this.setConnection(this.mapConnection(store.getSnapshot().connection));
+    this.resolvePendingSessionModes(store.getSnapshot());
     this.refreshSubscriptions();
   }
 
@@ -312,21 +328,22 @@ export class SessionSupervisor {
     const entry = this.ensureEntry(sessionId);
     entry.refCount += 1;
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
-    const seededHead = this.getActiveSnapshotHead(sessionId);
-    if (seededHead) {
-      this.replica.dispatch({ type: "seed_head", sessionId, head: seededHead });
+    if (opts?.mode) {
+      entry.mode = opts.mode;
     }
-    // For active sessions, rely on the snapshot+stream model for hydration and only refetch on explicit force
-    // or on stream gap recovery (handled separately via `session_gap`).
-    if (!seededHead || opts?.force) {
-      this.replica.dispatch({
-        type: "open_session",
-        sessionId,
-        force: opts?.force,
-        silent: opts?.silent,
-      });
+    if (entry.error) {
+      entry.error = undefined;
+    }
+    this.setSessionLoadState(entry, "pending_hydration");
+    const mode = this.resolveSessionMode(sessionId, entry, opts?.mode);
+    if (mode) {
+      this.clearModeResolution(sessionId);
+      this.openSessionWithMode(sessionId, entry, mode, opts);
+    } else {
+      this.scheduleModeResolution(sessionId, opts);
     }
     this.refreshSubscriptions();
+    this.publish();
     return () => this.closeSession(sessionId, opts);
   };
 
@@ -335,13 +352,36 @@ export class SessionSupervisor {
     if (!entry) return;
     entry.refCount = Math.max(0, entry.refCount - 1);
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
+    if (entry.refCount === 0) {
+      this.clearModeResolution(sessionId);
+    }
     this.replica.dispatch({ type: "close_session", sessionId });
     this.refreshSubscriptions();
     this.publish();
   };
 
   refreshSession = (sessionId: string, opts?: OpenOptions) => {
-    this.replica.dispatch({ type: "refresh_session", sessionId });
+    const entry = this.entries.get(String(sessionId));
+    if (!entry) return;
+    const mode = this.resolveSessionMode(sessionId, entry, opts?.mode);
+    if (!mode) {
+      this.scheduleModeResolution(sessionId, opts);
+      return;
+    }
+    this.clearModeResolution(sessionId);
+    this.replica.dispatch({
+      type: "refresh_session",
+      sessionId,
+    });
+    if (mode === "archived") {
+      this.replica.dispatch({
+        type: "hydrate_session_head",
+        sessionId,
+        force: true,
+        silent: true,
+      });
+      this.setSessionLoadState(entry, "pending_hydration");
+    }
   };
 
   loadArtifacts = (sessionId: string, opts?: { force?: boolean }) => {
@@ -434,7 +474,12 @@ export class SessionSupervisor {
     const id = String(sessionId || "").trim();
     if (!id) return;
     const entry = this.ensureEntry(id);
-    entry.error = error ?? undefined;
+    if (error) {
+      this.setFatalError(entry, error);
+    } else {
+      entry.error = undefined;
+      this.setSessionLoadState(entry, "live");
+    }
     entry.updatedAtMs = Date.now();
     this.publish();
   };
@@ -443,6 +488,7 @@ export class SessionSupervisor {
     const id = String(sessionId || "").trim();
     if (!id) return;
     if (!this.entries.has(id)) return;
+    this.clearModeResolution(id);
     this.entries.delete(id);
     this.activeTaskSessionIds = this.activeTaskSessionIds.filter((entryId) => entryId !== id);
     this.warmSessionIds = this.warmSessionIds.filter((entryId) => entryId !== id);
@@ -552,6 +598,8 @@ export class SessionSupervisor {
     for (const [id, e] of this.entries) {
       sessions[id] = {
         sessionId: e.sessionId,
+        mode: e.mode,
+        loadState: e.loadState,
         session: e.session,
         acpModels: e.acpModels,
         acpModes: e.acpModes,
@@ -630,6 +678,12 @@ export class SessionSupervisor {
       const data = patch.data;
       if (data.session) {
         entry.session = data.session;
+        if (!entry.mode) {
+          const resolvedMode = this.resolveSessionMode(sessionId, entry);
+          if (resolvedMode) {
+            entry.mode = resolvedMode;
+          }
+        }
         void this.ensureThoughtCache(entry);
       }
       if (data.turns && data.turns.length > 0) {
@@ -694,6 +748,9 @@ export class SessionSupervisor {
       }
       if (data.loading !== undefined) {
         entry.loading = data.loading;
+        if (data.loading && entry.loadState !== "live") {
+          this.setSessionLoadState(entry, "pending_hydration");
+        }
       }
       const hasRecoveryData =
         data.session !== undefined ||
@@ -708,10 +765,17 @@ export class SessionSupervisor {
         data.hasMoreTurns !== undefined ||
         data.turnsHydrated !== undefined;
       if (data.error !== undefined) {
-        entry.error = data.error ?? undefined;
+        if (data.error) {
+          this.setFatalError(entry, data.error);
+        } else {
+          entry.error = undefined;
+          if (entry.loadState === "fatal") {
+            this.setSessionLoadState(entry, "pending_hydration");
+          }
+        }
       } else if (hasRecoveryData) {
-        // Replica patches with real session data indicate recovery from transient head/snapshot failures.
         entry.error = undefined;
+        this.setSessionLoadState(entry, "live");
       }
       if (data.subagentNotice) {
         void this.ensureSubagentInvocations(entry, { force: true });
@@ -736,6 +800,7 @@ export class SessionSupervisor {
       .sort((a, b) => a.updatedAtMs - b.updatedAtMs);
     for (const c of candidates) {
       if (this.entries.size <= MAX_CACHED_SESSIONS) break;
+      this.clearModeResolution(c.sessionId);
       this.entries.delete(c.sessionId);
     }
   }
@@ -745,6 +810,8 @@ export class SessionSupervisor {
     if (existing) return existing;
     const entry: InternalEntry = {
       sessionId,
+      mode: undefined,
+      loadState: "pending_hydration",
       session: undefined,
       acpModels: undefined,
       acpModes: undefined,
@@ -914,56 +981,6 @@ export class SessionSupervisor {
     }
   }
 
-  private async ensureLoaded(sessionId: string, opts?: OpenOptions) {
-    const entry = this.ensureEntry(sessionId);
-    if (!entry.loadedFromCache) {
-      entry.loadedFromCache = true;
-      void this.loadCachedHead(entry);
-    }
-    const seeded = this.seedHeadFromActiveSnapshot(entry);
-    if (seeded) {
-      entry.error = undefined;
-      entry.updatedAtMs = Date.now();
-      if (entry.turnsHydrated && !opts?.force && !entry.headFromCache) {
-        void this.ensureState(entry);
-        this.publish();
-        return;
-      }
-    }
-    if (entry.fetching.head) return;
-    if (entry.turnsHydrated && !opts?.force && !entry.headFromCache) {
-      void this.ensureState(entry);
-      return;
-    }
-    entry.fetching.head = true;
-    if (!opts?.silent) {
-      entry.loading = true;
-      this.publish();
-    }
-    try {
-      const [snapshot, head] = await Promise.all([
-        getSessionSnapshot(sessionId, HEAD_LIMIT, true),
-        getSessionHead(sessionId, HEAD_LIMIT, true),
-      ]);
-      this.applyHead(entry, head as SessionHead);
-      this.applyState(entry, snapshot.state ?? null, head.state_rev ?? snapshot.summary?.state_rev);
-      await this.persistHead(entry);
-      void this.ensureArtifacts(entry);
-      void this.ensureSubagentInvocations(entry);
-    } catch (e: any) {
-      if (!opts?.silent) {
-        entry.error = e?.message ?? "Failed to load session";
-      }
-    } finally {
-      if (!opts?.silent) {
-        entry.loading = false;
-      }
-      entry.fetching.head = false;
-      entry.updatedAtMs = Date.now();
-      this.publish();
-    }
-  }
-
   private async ensureState(entry: InternalEntry, opts?: { force?: boolean }) {
     if (entry.stateLoading) return;
     if (entry.stateLoaded && !opts?.force) return;
@@ -1104,6 +1121,187 @@ export class SessionSupervisor {
     return null;
   }
 
+  private openSessionWithMode(
+    sessionId: string,
+    entry: InternalEntry,
+    mode: SessionMode,
+    opts?: OpenOptions,
+  ) {
+    entry.mode = mode;
+    const seededHead = mode === "active" ? this.seedHeadFromActiveSnapshot(entry) : false;
+    this.replica.dispatch({
+      type: "open_session",
+      sessionId,
+      force: opts?.force,
+      silent: opts?.silent,
+    });
+    if (mode === "archived") {
+      this.replica.dispatch({
+        type: "hydrate_session_head",
+        sessionId,
+        force: opts?.force,
+        silent: opts?.silent,
+      });
+      this.setSessionLoadState(entry, "pending_hydration");
+      return;
+    }
+    if (seededHead || entry.turnsHydrated || entry.messages.length > 0 || entry.events.length > 0) {
+      this.setSessionLoadState(entry, "live");
+      return;
+    }
+    this.setSessionLoadState(entry, "pending_hydration");
+  }
+
+  private resolveSessionMode(
+    sessionId: string,
+    entry?: InternalEntry,
+    explicitMode?: SessionMode,
+  ): SessionMode | null {
+    const id = String(sessionId ?? "").trim();
+    if (!id) return null;
+    if (explicitMode) {
+      if (entry) entry.mode = explicitMode;
+      return explicitMode;
+    }
+    if (entry?.mode) return entry.mode;
+    const state = this.snapshotStore?.getSnapshot();
+    if (!state) {
+      if (entry) {
+        entry.mode = "active";
+      }
+      return "active";
+    }
+    const mode = this.resolveSessionModeFromState(state, id);
+    if (mode && entry) {
+      entry.mode = mode;
+    }
+    return mode;
+  }
+
+  private resolveSessionModeFromState(state: WorkspaceActiveSnapshotState, sessionId: string): SessionMode | null {
+    const id = String(sessionId ?? "").trim();
+    if (!id) return null;
+    const isSessionInTask = (taskId: string): boolean => {
+      const task = state.tasksById[taskId];
+      if (!task) return false;
+      if (idToString(task.task.primary_session_id ?? "") === id) return true;
+      const primaryHeadId = idToString(task.primarySessionHead?.session?.id ?? "");
+      if (primaryHeadId === id) return true;
+      for (const summary of task.sessions) {
+        if (idToString(summary.session.id) === id) return true;
+      }
+      return false;
+    };
+
+    for (const activeTaskId of state.activeIds) {
+      if (isSessionInTask(activeTaskId)) return "active";
+    }
+    for (const archivedTaskId of state.archivedIds) {
+      if (isSessionInTask(archivedTaskId)) return "archived";
+    }
+    return null;
+  }
+
+  private scheduleModeResolution(sessionId: string, opts?: OpenOptions) {
+    const id = String(sessionId ?? "").trim();
+    if (!id) return;
+    const entry = this.entries.get(id);
+    if (!entry || entry.refCount <= 0) return;
+    this.modeResolutionOptions.set(id, opts ? { ...opts } : undefined);
+    this.setSessionLoadState(entry, "pending_hydration");
+    if (this.modeResolutionTimers.has(id)) return;
+
+    const run = () => {
+      const current = this.entries.get(id);
+      if (!current || current.refCount <= 0) {
+        this.clearModeResolution(id);
+        return;
+      }
+      const mode = this.resolveSessionMode(id, current);
+      if (mode) {
+        const resolvedOpts = this.modeResolutionOptions.get(id);
+        this.clearModeResolution(id);
+        this.openSessionWithMode(id, current, mode, resolvedOpts);
+        this.refreshSubscriptions();
+        this.publish();
+        return;
+      }
+      const attempts = (this.modeResolutionAttempts.get(id) ?? 0) + 1;
+      this.modeResolutionAttempts.set(id, attempts);
+      if (attempts >= MODE_RESOLUTION_MAX_ATTEMPTS) {
+        this.clearModeResolution(id);
+        this.setFatalError(current, `Session not found in workspace snapshot: ${id}`);
+        current.updatedAtMs = Date.now();
+        this.publish();
+        return;
+      }
+      const timer = globalThis.setTimeout(run, MODE_RESOLUTION_RETRY_MS);
+      this.modeResolutionTimers.set(id, timer);
+    };
+
+    const timer = globalThis.setTimeout(run, MODE_RESOLUTION_RETRY_MS);
+    this.modeResolutionTimers.set(id, timer);
+  }
+
+  private resolvePendingSessionModes(state: WorkspaceActiveSnapshotState) {
+    if (this.modeResolutionTimers.size === 0) return;
+    let changed = false;
+    for (const sessionId of [...this.modeResolutionTimers.keys()]) {
+      const entry = this.entries.get(sessionId);
+      if (!entry || entry.refCount <= 0) {
+        this.clearModeResolution(sessionId);
+        continue;
+      }
+      const mode = this.resolveSessionModeFromState(state, sessionId);
+      if (!mode) continue;
+      const opts = this.modeResolutionOptions.get(sessionId);
+      this.clearModeResolution(sessionId);
+      this.openSessionWithMode(sessionId, entry, mode, opts);
+      changed = true;
+    }
+    if (changed) {
+      this.refreshSubscriptions();
+      this.publish();
+    }
+  }
+
+  private clearModeResolution(sessionId: string) {
+    const id = String(sessionId ?? "").trim();
+    if (!id) return;
+    const timer = this.modeResolutionTimers.get(id);
+    if (timer) {
+      globalThis.clearTimeout(timer);
+    }
+    this.modeResolutionTimers.delete(id);
+    this.modeResolutionAttempts.delete(id);
+    this.modeResolutionOptions.delete(id);
+  }
+
+  private setSessionLoadState(entry: InternalEntry, next: SessionLoadState) {
+    if (entry.loadState === next) return;
+    entry.loadState = next;
+  }
+
+  private setFatalError(entry: InternalEntry, message: string) {
+    entry.error = message;
+    this.setSessionLoadState(entry, "fatal");
+  }
+
+  private markOpenSessionsRecovering() {
+    let changed = false;
+    for (const entry of this.entries.values()) {
+      if (entry.refCount <= 0) continue;
+      if (entry.loadState === "fatal") continue;
+      if (entry.loadState !== "recovering") {
+        entry.loadState = "recovering";
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.publish();
+    }
+  }
+
   private applyHead(
     entry: InternalEntry,
     head: SessionHead,
@@ -1111,6 +1309,12 @@ export class SessionSupervisor {
   ) {
     entry.headFromCache = Boolean(opts?.fromCache);
     entry.session = head.session;
+    if (!entry.mode) {
+      const resolvedMode = this.resolveSessionMode(entry.sessionId, entry);
+      if (resolvedMode) {
+        entry.mode = resolvedMode;
+      }
+    }
     entry.summaryCheckpoint = head.summary_checkpoint ?? null;
     entry.headWindow = head.head_window ?? null;
     entry.turnsHydrated = true;
@@ -1172,9 +1376,8 @@ export class SessionSupervisor {
       }
     }
     entry.toolSummariesReady = true;
-    if (!opts?.fromCache) {
-      entry.error = undefined;
-    }
+    entry.error = undefined;
+    this.setSessionLoadState(entry, "live");
     void this.ensureThoughtCache(entry);
     entry.updatedAtMs = Date.now();
     this.publish();
@@ -1962,6 +2165,17 @@ export class SessionSupervisor {
       if (taskId) {
         void this.clearTaskThoughts(taskId);
       }
+    } else if (evt.type === "session_gap") {
+      const sessionId = idToString(evt.session_id);
+      if (sessionId) {
+        const entry = this.entries.get(sessionId);
+        if (entry) {
+          this.setSessionLoadState(entry, "recovering");
+          entry.error = undefined;
+          entry.updatedAtMs = Date.now();
+          this.publish();
+        }
+      }
     }
     this.replica.dispatch({ type: "workspace_event", event: evt });
   }
@@ -1986,6 +2200,7 @@ export class SessionSupervisor {
   }
 
   private applyActiveSnapshotHead(entry: InternalEntry, head: SessionHead | SessionHeadSnapshot): boolean {
+    entry.mode = "active";
     const nextSeq = typeof head.last_event_seq === "number" ? head.last_event_seq : -1;
     const prevSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
     if (entry.turnsHydrated && prevSeq >= nextSeq) {
@@ -1998,6 +2213,7 @@ export class SessionSupervisor {
     this.applyHead(entry, head as SessionHead);
     void this.persistHead(entry);
     entry.error = undefined;
+    this.setSessionLoadState(entry, "live");
     return true;
   }
 
@@ -2029,6 +2245,7 @@ export class SessionSupervisor {
     entry.turnsHydrated = false;
     entry.toolSummariesReady = false;
     entry.hasMoreTurns = true;
+    this.setSessionLoadState(entry, "recovering");
     entry.updatedAtMs = Date.now();
     if (!opts?.skipPublish) {
       this.publish();

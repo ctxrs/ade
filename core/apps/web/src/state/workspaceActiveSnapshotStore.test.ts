@@ -215,6 +215,66 @@ describe("WorkspaceActiveSnapshotStore", () => {
     );
 
     expect(ws.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String((ws.send as any).mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.type).toBe("subscribe");
+    expect(payload.include_active_heads).toBe(false);
+  });
+
+  it("applies session_head_seed events", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = new Date().toISOString();
+    const task = mkTask("task-seed", "ws-1", now);
+    const session = mkSession("session-seed", "task-seed", "ws-1", now);
+    const summary = mkSummary(session, now);
+    const head = mkHead(session);
+    const activeSnapshot: WorkspaceActiveSnapshot = {
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: { total_count: 1, tasks: [mkActiveSummary(task, summary, head, now)] },
+    };
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await (store as any).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: activeSnapshot,
+      }),
+    );
+
+    const seededHead: SessionHeadSnapshot = {
+      ...head,
+      last_event_seq: 3,
+      messages: [
+        {
+          id: "msg-seed",
+          session_id: "session-seed",
+          task_id: "task-seed",
+          role: "assistant",
+          content: "seeded",
+          delivery: "immediate",
+          created_at: now,
+        },
+      ],
+    };
+
+    await (store as any).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 2,
+        event: {
+          type: "session_head_seed",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          head: seededHead,
+        },
+      }),
+    );
+
+    expect(store.getSessionHeadSnapshot("session-seed")?.last_event_seq).toBe(3);
+    expect(store.getSessionHeadSnapshot("session-seed")?.messages?.[0]?.content).toBe("seeded");
   });
 
   it("requests snapshot on stream seq gap", async () => {

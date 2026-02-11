@@ -1342,6 +1342,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         .unwrap();
 
     let mut seen_gap = false;
+    let mut seen_seed_after_gap = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -1351,25 +1352,36 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         let wait = remaining.min(Duration::from_millis(250));
         let next = tokio::time::timeout(wait, socket.next()).await;
         if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
-            if let Ok(message) =
+            if let Ok(ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
+                event, ..
+            }) =
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if matches!(
-                    message,
-                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { ref event, .. }
-                        if matches!(
-                            event.as_ref(),
-                            ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap { .. }
-                        )
-                ) {
-                    seen_gap = true;
-                    break;
+                match event.as_ref() {
+                    ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap {
+                        session_id,
+                        ..
+                    } if *session_id == session.id => {
+                        seen_gap = true;
+                    }
+                    ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadSeed {
+                        head,
+                        ..
+                    } if seen_gap && head.session.id == session.id => {
+                        seen_seed_after_gap = true;
+                        break;
+                    }
+                    _ => {}
                 }
             }
         }
     }
 
     assert!(seen_gap, "expected session_gap for large replay");
+    assert!(
+        seen_seed_after_gap,
+        "expected session_head_seed after session_gap for large replay"
+    );
 }
 
 #[tokio::test]

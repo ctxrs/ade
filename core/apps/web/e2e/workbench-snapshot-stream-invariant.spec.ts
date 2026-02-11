@@ -1,0 +1,144 @@
+import { test, expect } from "./fixtures";
+import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
+
+const readId = (value: unknown): string => (typeof value === "string" ? value : "");
+
+test("workbench: snapshot+stream invariant keeps active sessions head-free", async ({ page, request }) => {
+  const seed = await seedDummyWorkspace(request, {
+    tasks: 2,
+    sessionsPerTask: 1,
+    turnsPerSession: 1,
+    throttleMs: 5,
+  });
+
+  const sessionIdB = seed.sessionIdsByTask[seed.taskIds[1]][0];
+  const snapshotResp = await request.get(`/api/workspaces/${seed.workspaceId}/active_snapshot`);
+  expect(snapshotResp.ok()).toBeTruthy();
+  const snapshot = (await snapshotResp.json()) as any;
+  const taskB =
+    snapshot?.active?.tasks?.find((task: any) => {
+      const primarySessionId = readId(task?.primary_session?.session?.id) || readId(task?.task?.primary_session_id);
+      return primarySessionId === sessionIdB;
+    }) ?? null;
+  expect(taskB).toBeTruthy();
+  const fallbackSummary = taskB?.primary_session ?? taskB?.sessions?.[0] ?? null;
+  const baseHead = (taskB?.primary_session_head ??
+    (fallbackSummary
+      ? {
+          session: fallbackSummary.session,
+          turns: [],
+          events: [],
+          messages: [],
+          tool_summaries: [],
+          last_event_seq: Number(fallbackSummary.last_event_seq ?? 0),
+          state_rev: Number(fallbackSummary.state_rev ?? 0),
+          has_more_turns: false,
+          has_more_history: false,
+          history_cursor: null,
+        }
+      : null)) as any;
+  expect(baseHead?.session).toBeTruthy();
+
+  const headRequests: Array<{ url: string; method: string; ts: number }> = [];
+  page.on("request", (req) => {
+    const url = req.url();
+    if (!url.includes("/api/sessions/") || !url.includes("/head")) return;
+    headRequests.push({ url, method: req.method(), ts: Date.now() });
+  });
+
+  await page.goto(`/workspaces/${seed.workspaceId}?ctxE2E=1`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("workbench-task-search")).toBeVisible({ timeout: 30000 });
+  const rows = page.locator(".wb-task-row");
+  await expect(rows).toHaveCount(2, { timeout: 20000 });
+  const rowA = rows.filter({ hasText: "fixture task 1" });
+  const rowB = rows.filter({ hasText: "fixture task 2" });
+  await expect(rowA).toHaveCount(1);
+  await expect(rowB).toHaveCount(1);
+
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .toBe("connected");
+  await expect
+    .poll(async () => page.evaluate(() => typeof (window as any).__ctxE2E?.workspaceStream?.dispatchMessage === "function"))
+    .toBe(true);
+
+  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
+  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
+  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
+
+  const cutoff = Date.now();
+  const newPrompt = `invariant-new-task-${Date.now()}`;
+  const newComposer = page.locator(".wb-new-composer-stack textarea.wb-composer-textarea");
+  await expect(newComposer).toBeVisible({ timeout: 20000 });
+  await newComposer.fill(newPrompt);
+  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
+    timeout: 20000,
+  });
+  await expect(
+    page
+      .locator(".wb-session-slot[aria-hidden=\"false\"] .wb-turn-header-content")
+      .filter({ hasText: newPrompt })
+      .first(),
+  ).toBeVisible({ timeout: 20000 });
+
+  await rowB.click();
+  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
+    timeout: 20000,
+  });
+
+  await page.evaluate(() => {
+    (window as any).__ctxE2E?.workspaceStream?.close?.();
+  });
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .toBe("disconnected");
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()), {
+      timeout: 30000,
+    })
+    .toBe("connected");
+
+  const baselineMessages = await page.evaluate(
+    (sessionId: string) => (window as any).__ctxE2E?.getSessionHeadMessages?.(sessionId) ?? [],
+    sessionIdB,
+  );
+  expect(Array.isArray(baselineMessages)).toBeTruthy();
+  expect(baselineMessages.length).toBeGreaterThan(0);
+  const baselineLastEventSeq = await page.evaluate(
+    (sessionId: string) => Number((window as any).__ctxE2E?.getSessionLastEventSeq?.(sessionId) ?? 0),
+    sessionIdB,
+  );
+
+  await page.evaluate(
+    ({ sessionId, workspaceId, afterSeq }) => {
+      const stream = (window as any).__ctxE2E?.workspaceStream;
+      if (!stream?.dispatchMessage) return;
+      stream.dispatchMessage({
+        type: "event",
+        event: {
+          type: "session_gap",
+          workspace_id: workspaceId,
+          session_id: sessionId,
+          after_seq: afterSeq,
+        },
+      });
+    },
+    { sessionId: sessionIdB, workspaceId: seed.workspaceId, afterSeq: baselineLastEventSeq + 100 },
+  );
+
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(
+          (sessionId: string) => (window as any).__ctxE2E?.getSessionHeadMessages?.(sessionId) ?? [],
+          sessionIdB,
+        ),
+      { timeout: 20000 },
+    )
+    .toEqual(baselineMessages);
+
+  const after = headRequests.filter((requestItem) => requestItem.ts >= cutoff);
+  expect(after).toEqual([]);
+  await expect(page.locator(".banner .error").filter({ hasText: /load failed/i })).toHaveCount(0);
+});

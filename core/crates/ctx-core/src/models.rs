@@ -1002,7 +1002,7 @@ pub enum WorkspaceActiveSnapshotEvent {
         snapshot_rev: i64,
         delta: Box<SessionHeadDelta>,
     },
-    SessionHeadReset {
+    SessionHeadSeed {
         workspace_id: WorkspaceId,
         snapshot_rev: i64,
         head: Box<SessionHeadSnapshot>,

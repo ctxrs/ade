@@ -1867,11 +1867,11 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (activeSessionIdFromTabResolved) return activeSessionIdFromTabResolved;
     return pickPreferredSessionId(sessions, null);
   }, [activeSessionIdFromTabResolved, primarySessionId, sessions]);
+  const activeTaskArchived = Boolean(activeTaskSummary?.task?.archived_at);
   const preserveScrollOnFocus = true;
   // `optimisticSessionIdSet` is derived from React state, but on the first tick of "New Task" we can
   // temporarily focus an optimistic session before the optimistic task/session summary is committed.
-  // If we call `openSession()` in that transient render, the replica hydration path can clobber the
-  // seeded optimistic head, causing a brief empty thread until the daemon responds.
+  // Avoid opening that transient id until the optimistic summary is committed.
   const optimisticStartingSessionId = String(optimisticStartingTaskRef.current?.primarySessionId ?? "");
   const isOptimisticSessionId =
     !!activeSessionId &&
@@ -1879,7 +1879,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       activeSessionId.startsWith("optimistic-") ||
       (optimisticStartingSessionId && optimisticStartingSessionId === activeSessionId));
   const openSessionId = activeSessionId && !isOptimisticSessionId ? activeSessionId : "";
-  useOpenSession(openSessionId, { watchDiff: diffOpen });
+  useOpenSession(openSessionId, { watchDiff: diffOpen, mode: activeTaskArchived ? "archived" : "active" });
 
   const showDebugIds = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1929,7 +1929,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const diffSummaryLoading =
     !diffSummaryError && (!activeWorktreeVcsSnapshot || !snapshotHasCounts);
   const diffLoading = diffSummaryLoading || diffContentLoading;
-  const activeTaskArchived = Boolean(activeTaskSummary?.task?.archived_at);
   const [webSessions, setWebSessions] = useState<WebSessionInfo[]>([]);
   const [webSessionsLoading, setWebSessionsLoading] = useState(false);
   const [activeWebSessionId, setActiveWebSessionId] = useState<string | null>(null);

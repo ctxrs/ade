@@ -14,6 +14,11 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
     messageBytes: { min: 180, max: 240 },
     messagePrefix: "composer-jank",
   });
+  const seedTaskId = seed.taskIds[0] ?? "";
+  const seedSessionId = seedTaskId ? seed.sessionIdsByTask[seedTaskId]?.[0] ?? "" : "";
+  if (!seedSessionId) {
+    throw new Error("failed to resolve seeded session id");
+  }
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   const rows = page.locator(".wb-task-row");
@@ -25,6 +30,18 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
 
   const scroller = page.locator(scrollSelector).first();
   await expect(scroller).toBeVisible({ timeout: 20000 });
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const overflow = await scroller.evaluate((el) => el.scrollHeight - el.clientHeight);
+    if (overflow > 80) break;
+    const extraResp = await request.post(`/api/sessions/${seedSessionId}/messages`, {
+      data: {
+        content: `composer-jank-overflow-seed ${attempt} ${"x".repeat(400)}`,
+        delivery: "immediate",
+      },
+    });
+    expect(extraResp.ok(), `failed to append overflow seed ${attempt}`).toBeTruthy();
+    await page.waitForTimeout(120);
+  }
   await expect
     .poll(async () => scroller.evaluate((el) => el.scrollHeight - el.clientHeight), { timeout: 20000 })
     .toBeGreaterThan(80);

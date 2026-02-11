@@ -16,7 +16,7 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
 
   const workspaceName = `ws-${Date.now()}`;
 
-  await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
+  const workspaceId = await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
 
   // Choose Fake harness so the test doesn't depend on external agents.
   await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
@@ -67,9 +67,26 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
   await newestTaskRow.click();
   await expect(activeThread).toContainText(msg2, { timeout: 20000 });
 
+  // Ensure both tasks are durably visible in the daemon snapshot before refresh.
+  await expect
+    .poll(
+      async () => {
+        const resp = await page.request.get(`/api/workspaces/${workspaceId}/active_snapshot`);
+        if (!resp.ok()) return 0;
+        const snapshot = await resp.json();
+        const active = snapshot?.active;
+        const total = Number(active?.total_count ?? NaN);
+        if (Number.isFinite(total)) return total;
+        return Array.isArray(active?.tasks) ? active.tasks.length : 0;
+      },
+      { timeout: 30000 },
+    )
+    .toBeGreaterThanOrEqual(2);
+
   // Refresh should restore the same selection from IndexedDB (window-scoped).
   await page.reload();
-  await expect(activeThread).toContainText(msg2, { timeout: 20000 });
+  await expect(page.locator(".wb-task-row")).toHaveCount(2, { timeout: 30000 });
+  await expect(activeThread).toContainText(msg2, { timeout: 30000 });
   const urlAfterReload = new URL(page.url());
   expect(urlAfterReload.searchParams.get("task")).toBeNull();
   expect(urlAfterReload.searchParams.get("track")).toBeNull();

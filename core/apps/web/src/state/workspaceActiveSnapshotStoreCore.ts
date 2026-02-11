@@ -105,7 +105,6 @@ const shouldRequestSnapshot = (reason: string): boolean => {
     case "ws_open":
     case "reset_required":
     case "snapshot_rev_reset":
-    case "session_gap":
     case "stream_seq_gap":
     case "stream_seq_reset":
       return true;
@@ -1461,8 +1460,8 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
           this.schedulePersistCache();
         }
         break;
-      case "session_head_reset":
-        if (this.applySessionHeadReset(evt.head)) {
+      case "session_head_seed":
+        if (this.applySessionHeadSeed(evt.head)) {
           this.publish();
           this.schedulePersistCache();
         }
@@ -1904,7 +1903,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     return changed;
   }
 
-  private applySessionHeadReset(head: SessionHeadSnapshot | null | undefined): boolean {
+  private applySessionHeadSeed(head: SessionHeadSnapshot | null | undefined): boolean {
     if (!head) return false;
     const sessionId = idToString((head as any)?.session?.id ?? "");
     if (!sessionId) return false;

@@ -231,13 +231,26 @@ export class SessionReplicaCore {
         this.deps.api.setAuth?.(cmd.baseUrl ?? null, cmd.authToken ?? null, cmd.runId ?? null);
         return;
       case "open_session":
-        this.openSession(cmd.sessionId, { force: cmd.force, silent: cmd.silent }).catch(() => {});
+        this.openSession(cmd.sessionId, {
+          force: cmd.force,
+          silent: cmd.silent,
+        }).catch(() => {});
         return;
       case "close_session":
         this.closeSession(cmd.sessionId);
         return;
       case "refresh_session":
-        this.openSession(cmd.sessionId, { force: true, silent: true, emitOp: "append" }).catch(() => {});
+        this.openSession(cmd.sessionId, {
+          force: true,
+          silent: true,
+          emitOp: "append",
+        }).catch(() => {});
+        return;
+      case "hydrate_session_head":
+        this.hydrateSessionHead(cmd.sessionId, {
+          force: cmd.force,
+          silent: cmd.silent,
+        }).catch(() => {});
         return;
       case "seed_head":
         this.seedHead(cmd.sessionId, cmd.head);
@@ -371,7 +384,13 @@ export class SessionReplicaCore {
 
   private async openSession(
     sessionId: string,
-    opts?: { force?: boolean; silent?: boolean; minEventSeq?: number; skipCache?: boolean; emitOp?: "append" | "replace" },
+    opts?: {
+      force?: boolean;
+      silent?: boolean;
+      minEventSeq?: number;
+      skipCache?: boolean;
+      emitOp?: "append" | "replace";
+    },
   ) {
     const id = normalizeId(sessionId);
     if (!id) return;
@@ -401,6 +420,27 @@ export class SessionReplicaCore {
       }
     }
 
+    // Stream/cache open path: no REST head hydration here.
+    entry.loading = true;
+    if (!opts?.silent) this.emitPatch("append", id, { loading: true, error: null });
+    entry.loading = false;
+    if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: null });
+  }
+
+  private async hydrateSessionHead(
+    sessionId: string,
+    opts?: {
+      force?: boolean;
+      silent?: boolean;
+      emitOp?: "append" | "replace";
+    },
+  ) {
+    const id = normalizeId(sessionId);
+    if (!id) return;
+    const entry = this.ensureEntry(id);
+    if (entry.loading && !opts?.force) return;
+    if (!opts?.force && entry.hydrated) return;
+    const token = ++entry.requestToken;
     entry.loading = true;
     if (!opts?.silent) this.emitPatch("append", id, { loading: true, error: null });
 
@@ -436,7 +476,7 @@ export class SessionReplicaCore {
       if (delta) this.applyHeadDelta(delta);
       return;
     }
-    if (evtType === "session_head_reset") {
+    if (evtType === "session_head_seed") {
       const head = (evt as { head?: SessionHeadSnapshot }).head;
       const sessionId = normalizeId(head?.session?.id ?? "");
       if (!head || !sessionId) return;
@@ -468,16 +508,6 @@ export class SessionReplicaCore {
       const entry = this.entries.get(sessionId);
       if (!entry) return;
       entry.hydrated = false;
-      if (typeof afterSeq === "number") {
-        const entrySeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
-        if (afterSeq > entrySeq) {
-          entry.lastEventSeq = afterSeq;
-          this.emitPatch("append", sessionId, { lastEventSeq: afterSeq });
-        }
-      }
-      // If we still have an entry for this session, it is currently "open" in the supervisor.
-      // Refetch the head to recover from missed events.
-      void this.openSession(sessionId, { force: true, silent: true, minEventSeq: afterSeq });
       return;
     }
   }

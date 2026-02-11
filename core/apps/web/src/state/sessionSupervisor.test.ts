@@ -54,7 +54,6 @@ vi.mock("./uiStateStore", () => ({
 }));
 
 import { getSessionHead, getSessionSnapshot } from "../api/client";
-import { saveSessionHeadV1 } from "./uiStateStore";
 
 const mkSession = (sessionId: string): Session => ({
   id: sessionId,
@@ -122,7 +121,7 @@ describe("SessionSupervisor", () => {
     });
 
     const sup = new SessionSupervisor();
-    sup.openSession(sessionId);
+    sup.openSession(sessionId, { mode: "archived" });
 
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 1);
 
@@ -166,9 +165,26 @@ describe("SessionSupervisor", () => {
     };
 
     sup.bindWorkspaceActiveSnapshotStore(store);
-    sup.openSession(sessionId);
+    sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.session != null);
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId] != null);
+    const seedEvent: WorkspaceActiveSnapshotEvent = {
+      type: "session_head_seed",
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      head: {
+        session: mkSession(sessionId),
+        turns: [] as SessionTurn[],
+        events: [] as SessionEvent[],
+        messages: [] as Message[],
+        last_event_seq: 2,
+        state_rev: 2,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+    };
+    listeners.forEach((listener) => listener(seedEvent));
 
     const now = new Date().toISOString();
     const event: SessionEvent = {
@@ -213,12 +229,31 @@ describe("SessionSupervisor", () => {
     expect(entry?.lastEventSeq).toBe(2);
   });
 
-  it("clears stale load error after replica deltas recover", async () => {
+  it("uses recovering->live transitions for active session gap recovery", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-recovery";
-    (getSessionSnapshot as any).mockRejectedValue(new Error("Load failed"));
-    (getSessionHead as any).mockRejectedValue(new Error("Load failed"));
+    const now = new Date().toISOString();
+    const activeState = mkWorkspaceSnapshotState() as any;
+    activeState.activeIds = ["task-recovery"];
+    activeState.tasksById = {
+      "task-recovery": {
+        id: "task-recovery",
+        task: {
+          id: "task-recovery",
+          workspace_id: "ws-1",
+          title: "Recovery",
+          status: "running",
+          primary_session_id: sessionId,
+          created_at: now,
+          updated_at: now,
+          archived_at: null,
+        },
+        sessions: [{ session: mkSession(sessionId) }],
+        primarySessionHead: null,
+        sortAtMs: Date.parse(now),
+      },
+    };
 
     const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
     const store: WorkspaceActiveSnapshotEventSource = {
@@ -231,54 +266,59 @@ describe("SessionSupervisor", () => {
       getWorktreeRoot: () => null,
       getWorktreeVcsSnapshot: () => null,
       setSubscribedSessionIds: () => {},
-      getSnapshot: () => mkWorkspaceSnapshotState(),
+      getSnapshot: () => activeState,
     };
 
     const sup = new SessionSupervisor();
     sup.bindWorkspaceActiveSnapshotStore(store);
-    sup.openSession(sessionId);
+    sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => Boolean(sup.getSnapshot().sessions[sessionId]?.error));
-    expect(sup.getSnapshot().sessions[sessionId]?.error).toContain("Load failed");
+    await waitForCondition(() => Boolean(sup.getSnapshot().sessions[sessionId]));
+    expect(sup.getSnapshot().sessions[sessionId]?.loadState).toBe("pending_hydration");
 
-    const now = new Date().toISOString();
-    const message: Message = {
-      id: "m-recovery",
-      session_id: sessionId,
-      task_id: "task-1",
-      turn_id: "turn-recovery",
-      role: "assistant",
-      content: "Recovered",
-      delivery: "immediate",
-      created_at: now,
-    };
-    const event: SessionEvent = {
-      seq: 1,
-      id: "e-recovery",
-      session_id: sessionId,
-      turn_id: "turn-recovery",
-      event_type: "assistant_chunk",
-      payload_json: { content_fragment: "Recovered" },
-      created_at: now,
-    };
-
-    const deltaEvent: WorkspaceActiveSnapshotEvent = {
-      type: "session_head_delta",
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    const gapEvent: WorkspaceActiveSnapshotEvent = {
+      type: "session_gap",
       workspace_id: "ws-1",
       snapshot_rev: 1,
-      delta: {
-        session_id: sessionId,
+      session_id: sessionId,
+      after_seq: 100,
+    };
+    listeners.forEach((listener) => listener(gapEvent));
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.loadState === "recovering");
+    expect(sup.getSnapshot().sessions[sessionId]?.error).toBeUndefined();
+
+    const seedEvent: WorkspaceActiveSnapshotEvent = {
+      type: "session_head_seed",
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      head: {
+        session: mkSession(sessionId),
+        turns: [] as SessionTurn[],
+        events: [] as SessionEvent[],
+        messages: [
+          {
+            id: "m-recovery",
+            session_id: sessionId,
+            task_id: "task-recovery",
+            role: "assistant",
+            content: "Recovered",
+            delivery: "immediate",
+            created_at: now,
+          } as Message,
+        ],
         last_event_seq: 1,
         state_rev: 1,
-        message,
-        event,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
       },
     };
-
-    listeners.forEach((listener) => listener(deltaEvent));
-
+    listeners.forEach((listener) => listener(seedEvent));
     await waitForCondition(() => (sup.getSnapshot().sessions[sessionId]?.messages.length ?? 0) > 0);
+    expect(sup.getSnapshot().sessions[sessionId]?.loadState).toBe("live");
     expect(sup.getSnapshot().sessions[sessionId]?.error).toBeUndefined();
+    alertSpy.mockRestore();
   });
 
   it("preserves arrival order for transient assistant chunks (seq=null)", async () => {
@@ -315,9 +355,9 @@ describe("SessionSupervisor", () => {
 
     const sup = new SessionSupervisor();
     sup.bindWorkspaceActiveSnapshotStore(store);
-    sup.openSession(sessionId);
+    sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.session != null);
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId] != null);
 
     const now = Date.now();
     const sendChunk = (id: string, fragment: string, t: number) => {
@@ -389,9 +429,9 @@ describe("SessionSupervisor", () => {
     };
 
     sup.bindWorkspaceActiveSnapshotStore(store);
-    sup.openSession(sessionId);
+    sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.session != null);
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId] != null);
 
     const now = new Date().toISOString();
     const turnId = "turn-1";
@@ -429,7 +469,7 @@ describe("SessionSupervisor", () => {
     expect(sup.getSnapshot().sessions[sessionId]?.turns[0]?.status).toBe("completed");
   });
 
-  it("persists delta heads without partial events", async () => {
+  it("applies seeded+deltas without requiring /head hydration", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-3";
@@ -464,9 +504,9 @@ describe("SessionSupervisor", () => {
     };
 
     sup.bindWorkspaceActiveSnapshotStore(store);
-    sup.openSession(sessionId);
+    sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.session != null);
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId] != null);
 
     const now = new Date().toISOString();
     const event: SessionEvent = {
@@ -504,39 +544,29 @@ describe("SessionSupervisor", () => {
 
     listeners.forEach((listener) => listener(deltaEvent));
 
-    await waitForCondition(() => (saveSessionHeadV1 as any).mock.calls.length > 0);
-
-    const calls = (saveSessionHeadV1 as any).mock.calls;
-    const call = calls[calls.length - 1];
-    const persisted = call?.[1];
-    expect(persisted?.events?.length ?? 0).toBe(0);
-    expect(persisted?.turns?.[0]?.assistant_partial ?? null).toBeNull();
+    await waitForCondition(() => (sup.getSnapshot().sessions[sessionId]?.events.length ?? 0) > 0);
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.messages.length).toBe(1);
+    expect(entry?.events.length).toBe(1);
+    expect(entry?.loadState).toBe("live");
+    expect(getSessionHead).not.toHaveBeenCalled();
+    expect(getSessionSnapshot).not.toHaveBeenCalled();
   });
 
-  it("resets and reloads on session gap", async () => {
+  it("marks entry stale on session gap without forcing /head refetch", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-gap";
-    const headWithMessage = {
-      session: mkSession(sessionId),
-      turns: [] as SessionTurn[],
-      events: [] as SessionEvent[],
-      messages: [
-        {
-          id: "msg-gap",
-          session_id: sessionId,
-          task_id: "task-1",
-          turn_id: "turn-gap",
-          role: "assistant",
-          content: "hello",
-          delivery: "immediate",
-          created_at: new Date().toISOString(),
-        } as Message,
-      ],
-      last_event_seq: 2,
-      has_more_turns: false,
+    const seededMessage: Message = {
+      id: "msg-gap",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-gap",
+      role: "assistant",
+      content: "hello",
+      delivery: "immediate",
+      created_at: new Date().toISOString(),
     };
-    (getSessionHead as any).mockResolvedValue(headWithMessage);
 
     const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
     const store: WorkspaceActiveSnapshotEventSource = {
@@ -554,11 +584,29 @@ describe("SessionSupervisor", () => {
 
     const sup = new SessionSupervisor();
     sup.bindWorkspaceActiveSnapshotStore(store);
-    sup.openSession(sessionId);
+    sup.openSession(sessionId, { mode: "active" });
+    const seedEvent: WorkspaceActiveSnapshotEvent = {
+      type: "session_head_seed",
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      head: {
+        session: mkSession(sessionId),
+        turns: [] as SessionTurn[],
+        events: [] as SessionEvent[],
+        messages: [seededMessage],
+        last_event_seq: 2,
+        state_rev: 2,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+    };
+    listeners.forEach((listener) => listener(seedEvent));
 
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 1);
 
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    const priorSeq = sup.getSnapshot().sessions[sessionId]?.lastEventSeq;
     const gapEvent: WorkspaceActiveSnapshotEvent = {
       type: "session_gap",
       workspace_id: "ws-1",
@@ -571,7 +619,9 @@ describe("SessionSupervisor", () => {
     const internalEntry = (sup as any).entries.get(sessionId);
     expect(internalEntry.turnsHydrated).toBe(false);
     expect(internalEntry.messages.length).toBe(1);
-    expect(internalEntry.lastEventSeq).toBe(5);
+    expect(internalEntry.lastEventSeq).toBe(priorSeq);
+    expect(internalEntry.loadState).toBe("recovering");
+    expect(getSessionHead).toHaveBeenCalledTimes(0);
 
     alertSpy.mockRestore();
   });
@@ -754,7 +804,7 @@ describe("SessionSupervisor", () => {
     });
 
     const sup = new SessionSupervisor();
-    sup.openSession(sessionId);
+    sup.openSession(sessionId, { mode: "archived" });
 
     await waitForCondition(() => (getSessionHead as any).mock.calls.length > 0);
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.turnToolsByTurnId[turnId]?.length === 1);
@@ -794,7 +844,7 @@ describe("SessionSupervisor", () => {
 
     const sup = new SessionSupervisor();
     sup.bindWorkspaceActiveSnapshotStore(store);
-    sup.openSession(sessionId);
+    sup.openSession(sessionId, { mode: "active" });
 
     await waitForCondition(() => {
       const entry = sup.getSnapshot().sessions[sessionId];
@@ -803,5 +853,204 @@ describe("SessionSupervisor", () => {
 
     expect(getSessionHead).not.toHaveBeenCalled();
     expect(getSessionSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("skips /head hydrate for active sessions when snapshot store is bound", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-active-no-head";
+    (getSessionHead as any).mockRejectedValue(new Error("Load failed"));
+    (getSessionSnapshot as any).mockRejectedValue(new Error("Load failed"));
+
+    const now = new Date().toISOString();
+    const activeState = mkWorkspaceSnapshotState() as any;
+    activeState.activeIds = ["task-active"];
+    activeState.tasksById = {
+      "task-active": {
+        id: "task-active",
+        task: {
+          id: "task-active",
+          workspace_id: "ws-1",
+          title: "Active",
+          status: "running",
+          primary_session_id: sessionId,
+          created_at: now,
+          updated_at: now,
+          archived_at: null,
+        },
+        sessions: [
+          {
+            session: mkSession(sessionId),
+          },
+        ],
+        primarySessionHead: null,
+        sortAtMs: Date.parse(now),
+      },
+    };
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (_listener: (evt: WorkspaceActiveSnapshotEvent) => void) => () => {},
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
+      setSubscribedSessionIds: () => {},
+      getSnapshot: () => activeState,
+    };
+
+    const sup = new SessionSupervisor();
+    sup.bindWorkspaceActiveSnapshotStore(store);
+    sup.openSession(sessionId);
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return Boolean(entry && !entry.loading);
+    });
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.error).toBeUndefined();
+    expect(getSessionHead).not.toHaveBeenCalled();
+    expect(getSessionSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("hydrates /head for archived sessions", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-archived-head";
+    const now = new Date().toISOString();
+    const headMessage: Message = {
+      id: "m-archived",
+      session_id: sessionId,
+      task_id: "task-archived",
+      role: "assistant",
+      content: "archived",
+      delivery: "immediate",
+      created_at: now,
+    };
+    (getSessionHead as any).mockResolvedValue({
+      session: { ...mkSession(sessionId), task_id: "task-archived", status: "completed" },
+      turns: [] as SessionTurn[],
+      events: [] as SessionEvent[],
+      messages: [headMessage],
+      last_event_seq: 1,
+      has_more_turns: false,
+    });
+
+    const archivedState = mkWorkspaceSnapshotState() as any;
+    archivedState.archivedIds = ["task-archived"];
+    archivedState.tasksById = {
+      "task-archived": {
+        id: "task-archived",
+        task: {
+          id: "task-archived",
+          workspace_id: "ws-1",
+          title: "Archived",
+          status: "completed",
+          primary_session_id: sessionId,
+          created_at: now,
+          updated_at: now,
+          archived_at: now,
+        },
+        sessions: [
+          {
+            session: { ...mkSession(sessionId), task_id: "task-archived", status: "completed" },
+          },
+        ],
+        primarySessionHead: null,
+        sortAtMs: Date.parse(now),
+      },
+    };
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (_listener: (evt: WorkspaceActiveSnapshotEvent) => void) => () => {},
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
+      setSubscribedSessionIds: () => {},
+      getSnapshot: () => archivedState,
+    };
+
+    const sup = new SessionSupervisor();
+    sup.bindWorkspaceActiveSnapshotStore(store);
+    sup.openSession(sessionId);
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 1);
+
+    expect(getSessionHead).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks archived hydrate failures as fatal", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-archived-fatal";
+    const now = new Date().toISOString();
+    (getSessionHead as any).mockRejectedValue(new Error("Load failed"));
+
+    const archivedState = mkWorkspaceSnapshotState() as any;
+    archivedState.archivedIds = ["task-archived-fatal"];
+    archivedState.tasksById = {
+      "task-archived-fatal": {
+        id: "task-archived-fatal",
+        task: {
+          id: "task-archived-fatal",
+          workspace_id: "ws-1",
+          title: "Archived fatal",
+          status: "completed",
+          primary_session_id: sessionId,
+          created_at: now,
+          updated_at: now,
+          archived_at: now,
+        },
+        sessions: [
+          {
+            session: { ...mkSession(sessionId), task_id: "task-archived-fatal", status: "completed" },
+          },
+        ],
+        primarySessionHead: null,
+        sortAtMs: Date.parse(now),
+      },
+    };
+
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (_listener: (evt: WorkspaceActiveSnapshotEvent) => void) => () => {},
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
+      setSubscribedSessionIds: () => {},
+      getSnapshot: () => archivedState,
+    };
+
+    const sup = new SessionSupervisor();
+    sup.bindWorkspaceActiveSnapshotStore(store);
+    sup.openSession(sessionId);
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.loadState === "fatal");
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.error).toContain("Load failed");
+    expect(getSessionHead).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fallback to /head for unknown sessions and marks fatal after bounded resolution", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-unknown";
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (_listener: (evt: WorkspaceActiveSnapshotEvent) => void) => () => {},
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
+      setSubscribedSessionIds: () => {},
+      getSnapshot: () => mkWorkspaceSnapshotState(),
+    };
+
+    const sup = new SessionSupervisor();
+    sup.bindWorkspaceActiveSnapshotStore(store);
+    sup.openSession(sessionId);
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.loadState === "fatal");
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.error).toContain("Session not found in workspace snapshot");
+    expect(getSessionHead).not.toHaveBeenCalled();
   });
 });

@@ -535,7 +535,7 @@ export type WorkspaceActiveSnapshotEvent =
       delta: SessionHeadDelta;
     }
   | {
-      type: "session_head_reset";
+      type: "session_head_seed";
       workspace_id: string;
       snapshot_rev: number;
       head: SessionHeadSnapshot;

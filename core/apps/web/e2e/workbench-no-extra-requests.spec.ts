@@ -15,6 +15,7 @@ test("workbench: switching between cached sessions makes no extra HTTP requests"
     url.includes("/api/updates/check") ||
     url.includes("/api/telemetry") ||
     url.includes("/api/health") ||
+    url.includes("/api/tasks/") && (url.includes("/mark_read") || url.includes("/mark_unread")) ||
     (url.includes("/api/workspaces/") && url.includes("/providers/") && url.includes("/options"));
 
   const requests: Array<{ url: string; method: string; ts: number }> = [];

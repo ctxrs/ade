@@ -31,9 +31,15 @@ export type SessionReplicaCommand =
       authToken?: string | null;
       runId?: string | null;
     }
-  | { type: "open_session"; sessionId: string; force?: boolean; silent?: boolean }
+  | {
+      type: "open_session";
+      sessionId: string;
+      force?: boolean;
+      silent?: boolean;
+    }
   | { type: "close_session"; sessionId: string }
   | { type: "refresh_session"; sessionId: string }
+  | { type: "hydrate_session_head"; sessionId: string; force?: boolean; silent?: boolean }
   | { type: "seed_head"; sessionId: string; head: SessionHeadSnapshot }
   | { type: "workspace_event"; event: WorkspaceActiveSnapshotEvent }
   | { type: "set_session"; session: Session };

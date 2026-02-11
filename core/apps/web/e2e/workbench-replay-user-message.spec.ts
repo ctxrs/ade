@@ -42,6 +42,10 @@ test("workbench: replay restores missed assistant message after stream drop", as
   const primarySessionId = String(activeTaskSummary?.task?.primary_session_id ?? "");
   const latestSessionId = String(activeTaskSummary?.sessions?.[activeTaskSummary?.sessions?.length - 1]?.session?.id ?? "");
   const sessionId = latestSessionId || primarySessionId || seed.sessionIdsByTask[seed.taskIds[0]][0];
+  const seedSession =
+    activeTaskSummary?.sessions?.find((summary: any) => String(summary?.session?.id ?? "") === sessionId)?.session ??
+    activeTaskSummary?.primary_session?.session;
+  expect(seedSession).toBeTruthy();
   const prompt = `missed-assistant-${Date.now()}`;
   const assistantText = `done: ${prompt}`;
 
@@ -64,9 +68,6 @@ test("workbench: replay restores missed assistant message after stream drop", as
     (window as any).__ctxE2E?.workspaceStream?.setDropMessages?.(true);
   });
 
-  const headResp = await request.get(`/api/sessions/${sessionId}/head?limit=50`);
-  expect(headResp.ok()).toBeTruthy();
-  const headSnapshot = (await headResp.json()) as any;
   const nowIso = new Date().toISOString();
   const turnId = `turn-${Date.now()}`;
   const runId = `run-${Date.now()}`;
@@ -116,13 +117,18 @@ test("workbench: replay restores missed assistant message after stream drop", as
     created_at: nowIso,
   };
   const replayHead = {
-    ...headSnapshot,
-    messages: [...(headSnapshot?.messages ?? []), assistantMessage],
-    turns: [...(headSnapshot?.turns ?? []), assistantTurn],
-    events: [...(headSnapshot?.events ?? []), assistantEvent],
+    session: seedSession,
+    turns: [assistantTurn],
+    events: [assistantEvent],
+    messages: [assistantMessage],
+    last_event_seq: 1,
+    state_rev: 0,
+    has_more_turns: false,
+    has_more_history: false,
+    history_cursor: null,
   };
   const replayEvent = {
-    type: "session_head_reset",
+    type: "session_head_seed",
     workspace_id: seed.workspaceId,
     head: replayHead,
   };

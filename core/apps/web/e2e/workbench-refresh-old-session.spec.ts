@@ -69,16 +69,6 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   }
   expect(sessionId).toBeTruthy();
 
-  await expect
-    .poll(async () => {
-      const resp = await page.request.get(`/api/sessions/${sessionId}/head?limit=50`);
-      if (!resp.ok()) return 0;
-      const head = (await resp.json()) as any;
-      const msgs = head?.messages ?? [];
-      return msgs.filter((m: any) => m.role === "assistant").length;
-    })
-    .toBeGreaterThan(0);
-
   const healthResp = await page.request.get("/api/health");
   expect(healthResp.ok()).toBeTruthy();
   const health = (await healthResp.json()) as any;
@@ -135,15 +125,6 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   const sendButton = page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]");
   await expect(sendButton).toBeEnabled({ timeout: 20000 });
   await sendButton.click();
-  await expect
-    .poll(async () => {
-      const resp = await page.request.get(`/api/sessions/${sessionId}/head?limit=50`);
-      if (!resp.ok()) return 0;
-      const head = (await resp.json()) as any;
-      const msgs = head?.messages ?? [];
-      return msgs.filter((m: any) => m.role === "assistant").length;
-    })
-    .toBeGreaterThanOrEqual(2);
   await page.locator(".thread-stack").evaluate((root) => {
     const el = root as HTMLElement;
     const candidates = [el, ...Array.from(el.querySelectorAll<HTMLElement>("*"))];

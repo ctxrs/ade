@@ -3,6 +3,7 @@ import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 test.describe.serial("workbench: tool summaries stability", () => {
   let workspaceId = "";
+  let sessionId = "";
   const toolMarkerFor = (seed: string) =>
     `[[tool_calls]]\n${JSON.stringify([
       {
@@ -13,23 +14,13 @@ test.describe.serial("workbench: tool summaries stability", () => {
       },
     ])}\n[[/tool_calls]]`;
 
-  const composerLocator = (page: any) =>
-    page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
-
   const sendToolSeed = async (page: any, seed: string) => {
-    const composer = composerLocator(page);
-    await expect(composer).toBeVisible({ timeout: 20_000 });
-    await composer.fill(`tool seed ${seed}\n${toolMarkerFor(seed)}`);
-    const sendResp = page.waitForResponse((resp: any) => {
-      if (resp.request().method() !== "POST") return false;
-      if (!/\/api\/sessions\/[^/]+\/messages$/.test(resp.url())) return false;
-      const body = resp.request().postData() ?? "";
-      return body.includes(`tool seed ${seed}`);
+    const resp = await page.request.post(`/api/sessions/${sessionId}/messages`, {
+      data: {
+        content: `tool seed ${seed}\n${toolMarkerFor(seed)}`,
+        delivery: "immediate",
+      },
     });
-    await page
-      .locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]")
-      .click();
-    const resp = await sendResp;
     expect(resp.status(), `tool seed POST failed: ${resp.url()}`).toBe(200);
   };
 
@@ -75,6 +66,12 @@ test.describe.serial("workbench: tool summaries stability", () => {
       turnsPerSession: 1,
     });
     workspaceId = seed.workspaceId;
+    const firstTaskId = seed.taskIds[0] ?? "";
+    const sessions = firstTaskId ? seed.sessionIdsByTask[firstTaskId] ?? [] : [];
+    sessionId = sessions[0] ?? "";
+    if (!sessionId) {
+      throw new Error("failed to seed primary session id");
+    }
   });
 
   test("tool summaries render without waterfall", async ({ page }) => {

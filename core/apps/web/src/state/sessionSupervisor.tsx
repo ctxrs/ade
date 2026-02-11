@@ -1,8 +1,14 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { SessionSupervisor, type SessionCacheEntry, type SessionSupervisorSnapshot } from "./sessionSupervisorCore";
+import {
+  SessionSupervisor,
+  type SessionCacheEntry,
+  type SessionLoadState,
+  type SessionMode,
+  type SessionSupervisorSnapshot,
+} from "./sessionSupervisorCore";
 
 export { SessionSupervisor };
-export type { SessionCacheEntry, SessionSupervisorSnapshot };
+export type { SessionCacheEntry, SessionLoadState, SessionMode, SessionSupervisorSnapshot };
 
 type OpenOptions = Parameters<SessionSupervisor["openSession"]>[1];
 
@@ -45,8 +51,9 @@ export function useOpenSession(sessionId: string, opts?: OpenOptions) {
       watchDiff: opts?.watchDiff ?? false,
       force: opts?.force ?? false,
       silent: opts?.silent ?? false,
+      mode: opts?.mode,
     }),
-    [opts?.watchDiff, opts?.force, opts?.silent],
+    [opts?.watchDiff, opts?.force, opts?.silent, opts?.mode],
   );
   useEffect(() => {
     if (!sessionId) return;

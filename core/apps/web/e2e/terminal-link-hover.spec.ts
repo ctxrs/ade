@@ -155,8 +155,8 @@ async function seedTerminalOutput(baseURL: string, token: string, terminalId: st
     };
 
     ws.on("open", () => {
-      ws.send(JSON.stringify({ kind: "resize", cols: 120, rows: 30 }));
-      ws.send(JSON.stringify({ kind: "input", data: `${command}\n` }));
+      ws.send(JSON.stringify({ type: "resize", cols: 120, rows: 30 }));
+      ws.send(`${command}\n`);
     });
 
     ws.on("message", (data) => {

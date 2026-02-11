@@ -592,7 +592,7 @@ async fn handle_mobile_secure_ws(
                                     ids.insert(delta.session_id);
                                 }
                             }
-                            WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. }
+                            WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. }
                                 if head.session.task_id == foreground_task_id =>
                             {
                                 if let Some(ids) =
@@ -623,7 +623,7 @@ async fn handle_mobile_secure_ws(
                                 cursor.last_sent = delta.last_event_seq;
                             }
                         }
-                        WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. } => {
+                        WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
                             let Some(cursor) = subscriptions.get_mut(&head.session.id) else {
                                 continue;
                             };
@@ -639,7 +639,7 @@ async fn handle_mobile_secure_ws(
                         WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
                             Some(delta.session_id)
                         }
-                        WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. } => {
+                        WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
                             Some(head.session.id)
                         }
                         WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => {
@@ -809,7 +809,7 @@ fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option<i64> {
         | WorkspaceActiveSnapshotEvent::SessionSummary { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionSummaryDelta { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionHeadDelta { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::SessionHeadReset { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::SessionHeadSeed { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionGap { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::WorktreeBootstrap { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot { snapshot_rev, .. } => {
@@ -1633,6 +1633,25 @@ where
                 event: Box::new(gap),
             })
             .await?;
+            if let Some(head) = state
+                .workspaces
+                .workspace_active_snapshot
+                .get_session_head(session_id)
+                .await
+            {
+                let last_sent = head.last_event_seq.max(0);
+                let seed = WorkspaceActiveSnapshotEvent::SessionHeadSeed {
+                    workspace_id,
+                    snapshot_rev,
+                    head: Box::new(head),
+                };
+                emit(WorkspaceActiveSnapshotStreamMessage::Event {
+                    rev: 0,
+                    event: Box::new(seed),
+                })
+                .await?;
+                return Ok(ReplayOutcome::Replay { last_sent });
+            }
             Ok(ReplayOutcome::Replay {
                 last_sent: last_known_seq.max(after_seq),
             })
@@ -2560,7 +2579,7 @@ async fn handle_workspace_active_snapshot_ws(
                                     ids.insert(delta.session_id);
                                 }
                             }
-                            WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. }
+                            WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. }
                                 if head.session.task_id == foreground_task_id =>
                             {
                                 if let Some(ids) =
@@ -2591,7 +2610,7 @@ async fn handle_workspace_active_snapshot_ws(
                                 cursor.last_sent = delta.last_event_seq;
                             }
                         }
-                        WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. } => {
+                        WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
                             let Some(cursor) = subscriptions.get_mut(&head.session.id) else {
                                 continue;
                             };
@@ -2607,7 +2626,7 @@ async fn handle_workspace_active_snapshot_ws(
                         WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
                             Some(delta.session_id)
                         }
-                        WorkspaceActiveSnapshotEvent::SessionHeadReset { head, .. } => {
+                        WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
                             Some(head.session.id)
                         }
                         WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => {
@@ -2762,6 +2781,25 @@ where
                 event: Box::new(gap),
             })
             .await?;
+            if let Some(head) = state
+                .workspaces
+                .workspace_active_snapshot
+                .get_session_head(session_id)
+                .await
+            {
+                let last_sent = head.last_event_seq.max(0);
+                let seed = WorkspaceActiveSnapshotEvent::SessionHeadSeed {
+                    workspace_id,
+                    snapshot_rev,
+                    head: Box::new(head),
+                };
+                emit(WorkspaceActiveSnapshotStreamMessage::Event {
+                    rev: 0,
+                    event: Box::new(seed),
+                })
+                .await?;
+                return Ok(ReplayOutcome::Replay { last_sent });
+            }
             Ok(ReplayOutcome::Replay {
                 last_sent: last_known_seq.max(after_seq),
             })
