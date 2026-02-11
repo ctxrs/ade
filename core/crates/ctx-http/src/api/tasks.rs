@@ -1189,7 +1189,11 @@ pub(super) async fn create_task(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
+                    error: format!(
+                        "disk-isolated worktree provisioning failed: {}. \
+retry after checking container runtime health.",
+                        logs::redact_sensitive(&e.to_string())
+                    ),
                 }),
             )
         })?
@@ -1453,7 +1457,14 @@ pub(super) async fn create_session_for_task(
                         &branch_name,
                     )
                     .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                    .map_err(|e| {
+                        tracing::warn!(
+                            task_id = %task.id.0,
+                            worktree_id = %worktree_id.0,
+                            "disk-isolated worktree provisioning failed: {e:#}"
+                        );
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?
                 } else {
                     let wt_path = managed_worktree_path(
                         &state.core.data_root,

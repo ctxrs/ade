@@ -27,6 +27,14 @@ fn is_false(v: &bool) -> bool {
     !*v
 }
 
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: TaskId,
@@ -118,6 +126,12 @@ pub enum WorktreeVcsComputeState {
     Computing,
     Ready,
     Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffUnavailableReason {
+    NoRepo,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -220,6 +234,10 @@ pub struct WorktreeVcsSnapshot {
     pub git_status: WorktreeVcsGitStatusSummary,
     #[serde(default)]
     pub touched_files: WorktreeVcsTouchedFiles,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<DiffUnavailableReason>,
     #[serde(default)]
     pub schema_version: i64,
 }

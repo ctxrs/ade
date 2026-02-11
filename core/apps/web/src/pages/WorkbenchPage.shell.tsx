@@ -1917,17 +1917,21 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return { ...activeWorktreeVcsSnapshot.summary };
   }, [activeWorktreeVcsSnapshot]);
   const activeWorktreeVcsComputeState = activeWorktreeVcsSnapshot?.compute_state ?? null;
+  const activeWorktreeDiffAvailable = activeWorktreeVcsSnapshot?.available !== false;
+  const activeWorktreeDiffUnavailableReason = activeWorktreeVcsSnapshot?.unavailable_reason ?? null;
   const snapshotSummaryStats = useMemo(
     () => getDiffSummaryStats(activeWorktreeVcsSummary),
     [activeWorktreeVcsSummary],
   );
   const snapshotHasCounts =
     snapshotSummaryStats.fileCount !== null || snapshotSummaryStats.lineCount !== null;
-  const diffSummary = snapshotHasCounts ? activeWorktreeVcsSummary : null;
+  const diffSummary = activeWorktreeDiffAvailable && snapshotHasCounts ? activeWorktreeVcsSummary : null;
   const diffSummaryError =
-    activeWorktreeVcsComputeState === "error" ? "Failed to compute diff summary." : null;
+    activeWorktreeDiffAvailable && activeWorktreeVcsComputeState === "error"
+      ? "Failed to compute diff summary."
+      : null;
   const diffSummaryLoading =
-    !diffSummaryError && (!activeWorktreeVcsSnapshot || !snapshotHasCounts);
+    !diffSummaryError && activeWorktreeDiffAvailable && (!activeWorktreeVcsSnapshot || !snapshotHasCounts);
   const diffLoading = diffSummaryLoading || diffContentLoading;
   const [webSessions, setWebSessions] = useState<WebSessionInfo[]>([]);
   const [webSessionsLoading, setWebSessionsLoading] = useState(false);
@@ -2102,27 +2106,49 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [diffSummaryStats, diffTooLarge]);
 
   const diffSummaryReady = snapshotHasCounts || diffSummary !== null || diffSummaryError !== null;
+  const diffUnavailableLabel =
+    activeWorktreeDiffAvailable
+      ? null
+      : activeWorktreeDiffUnavailableReason === "no_repo"
+        ? "No git repo detected for this workspace yet."
+        : "Diff unavailable for this workspace.";
   const diffHasChanges =
     diffSummaryCount !== null
       ? diffSummaryCount > 0
       : diffSummaryStats.lineCount !== null
         ? diffSummaryStats.lineCount > 0
         : false;
-  const hasDiff = diffSummaryError !== null ? true : diffSummaryReady ? diffHasChanges : false;
+  const hasDiff = activeWorktreeDiffAvailable
+    ? diffSummaryError !== null
+      ? true
+      : diffSummaryReady
+        ? diffHasChanges
+        : false
+    : false;
   const diffEmptyLabel =
-    diffLoading || !diffSummaryReady ? "Loading changes..." : "No changes on this worktree.";
+    diffUnavailableLabel ??
+    (diffLoading || !diffSummaryReady ? "Loading changes..." : "No changes on this worktree.");
   const diffBadgeCount = useMemo(() => {
+    if (!activeWorktreeDiffAvailable) return 0;
     if (!snapshotHasCounts) return 0;
     if (snapshotSummaryStats.fileCount !== null) return Math.max(0, snapshotSummaryStats.fileCount);
     if (snapshotSummaryStats.lineCount !== null) return Math.max(0, snapshotSummaryStats.lineCount);
     return 0;
-  }, [snapshotHasCounts, snapshotSummaryStats]);
+  }, [activeWorktreeDiffAvailable, snapshotHasCounts, snapshotSummaryStats]);
   const gitStatusSignature = useMemo(() => {
     if (activeWorktreeVcsSnapshot) {
-      return `rev:${activeWorktreeVcsSnapshot.rev ?? 0}`;
+      return [
+        `base:${String(activeWorktreeVcsSnapshot.base_commit_sha ?? "")}`,
+        `head:${String(activeWorktreeVcsSnapshot.head_commit_sha ?? "")}`,
+        `available:${activeWorktreeVcsSnapshot.available === false ? "0" : "1"}`,
+        `reason:${String(activeWorktreeVcsSnapshot.unavailable_reason ?? "")}`,
+        `files:${String(snapshotSummaryStats.fileCount ?? "")}`,
+        `adds:${String(snapshotSummaryStats.additions ?? "")}`,
+        `dels:${String(snapshotSummaryStats.deletions ?? "")}`,
+      ].join("|");
     }
     return "";
-  }, [activeWorktreeVcsSnapshot]);
+  }, [activeWorktreeVcsSnapshot, snapshotSummaryStats]);
   const showReviewPane = diffOpen;
   const showArtifactsPane = artifactsOpen;
   const showSessionsPane = webSessionsEnabled && sessionsOpen;
@@ -2157,6 +2183,11 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         return;
       }
       if (sessionId !== activeSessionId) return;
+      if (!activeWorktreeDiffAvailable) {
+        setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: undefined }));
+        supervisor.setDiff(sessionId, "");
+        return;
+      }
       // If we can't get a summary, do not fetch the full diff (it can be huge and crash the renderer).
       if (!snapshotHasCounts || !activeWorktreeVcsSummary) {
         setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: undefined }));
@@ -2175,6 +2206,11 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const request = (async () => {
         try {
           const resp = await getSessionDiff(sessionId);
+          if (resp.available === false) {
+            supervisor.setDiff(sessionId, "");
+            setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: undefined }));
+            return;
+          }
           supervisor.setDiff(sessionId, resp.diff ?? "");
           setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: undefined }));
         } catch (err: any) {
@@ -2189,7 +2225,14 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       diffContentInFlightRef.current.set(sessionId, request);
       return request;
     },
-    [activeSessionId, activeWorktreeVcsSummary, optimisticSessionIdSet, snapshotHasCounts, supervisor],
+    [
+      activeSessionId,
+      activeWorktreeDiffAvailable,
+      activeWorktreeVcsSummary,
+      optimisticSessionIdSet,
+      snapshotHasCounts,
+      supervisor,
+    ],
   );
 
   const toggleDiffPane = useCallback(() => {

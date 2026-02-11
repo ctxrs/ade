@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use base64::Engine;
@@ -22,8 +22,13 @@ use super::shared::{
 };
 use crate::attachments;
 use crate::completions;
+use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
+use crate::execution_effective;
 use crate::git_status::{load_git_status_snapshot, GitStatusEntry};
+use crate::harness_runtime::{
+    command_output_with_timeout, podman_command, workspace_container_name,
+};
 use crate::installer;
 use crate::logs;
 use crate::oracle;
@@ -46,6 +51,186 @@ use ctx_providers::{
 };
 use ctx_store::is_unique_constraint_violation;
 use tokio::sync::mpsc;
+
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
+pub(crate) fn is_no_vcs_repo_error(err: &anyhow::Error) -> bool {
+    let lower = err.to_string().to_lowercase();
+    lower.contains("no vcs repo found")
+        || lower.contains("not a git repository")
+        || lower.contains("is not a git repo")
+        || lower.contains("not inside a jj repo")
+}
+
+async fn ensure_container_for_worktree(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+) -> anyhow::Result<String> {
+    let workspace = state
+        .global_store()
+        .get_workspace(worktree.workspace_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
+    let ws_root = StdPath::new(&workspace.root_path);
+    let effective =
+        execution_effective::effective_execution_settings(&state.core.data_root, ws_root).await;
+    state
+        .execution
+        .harness
+        .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
+        .await?;
+    Ok(workspace_container_name(worktree.workspace_id))
+}
+
+async fn container_exec_stdout(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    program: &str,
+    args: &[&str],
+) -> anyhow::Result<Vec<u8>> {
+    const PODMAN_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
+    let container = ensure_container_for_worktree(state, worktree).await?;
+    let mut cmd = podman_command(&state.core.data_root)?;
+    cmd.arg("exec")
+        .arg("--workdir")
+        .arg(&worktree.root_path)
+        .arg(&container)
+        .arg(program)
+        .args(args);
+    let out = command_output_with_timeout(cmd, PODMAN_EXEC_TIMEOUT)
+        .await
+        .context("podman exec command timed out")?;
+    if out.status.success() {
+        Ok(out.stdout)
+    } else {
+        anyhow::bail!(
+            "{} {:?} failed: {}",
+            program,
+            args,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+}
+
+async fn container_diff_worktree(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    base_commit_sha: &str,
+) -> anyhow::Result<String> {
+    // Match host behavior by including untracked files, with the same large-file omission rule.
+    let script = r#"
+set -euo pipefail
+base="$1"
+git diff "$base"
+max_bytes=$((512 * 1024))
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  size="$(stat -c %s -- "$f" 2>/dev/null || echo 0)"
+  case "$size" in
+    ''|*[!0-9]*) size=0 ;;
+  esac
+  if [ "$size" -gt "$max_bytes" ]; then
+    printf '\n# untracked: %s (%s bytes; omitted)\n' "$f" "$size"
+    continue
+  fi
+  patch="$(git diff --no-index -- /dev/null "$f" || true)"
+  if [ -n "$patch" ]; then
+    printf '\n%s\n' "$patch"
+  fi
+done < <(git ls-files --others --exclude-standard)
+"#;
+    let bytes = container_exec_stdout(
+        state,
+        worktree,
+        "bash",
+        &["-lc", script, "--", base_commit_sha],
+    )
+    .await?;
+    Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
+async fn container_diff_worktree_summary(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    base_commit_sha: &str,
+) -> anyhow::Result<(i64, i64, i64)> {
+    // Match host behavior by including untracked files and best-effort line counts for small files.
+    let script = r#"
+set -euo pipefail
+base="$1"
+file_count=0
+additions=0
+deletions=0
+while IFS=$'\t' read -r add del path; do
+  [ -z "$path" ] && continue
+  file_count=$((file_count+1))
+  if [ "$add" != "-" ]; then
+    additions=$((additions+add))
+  fi
+  if [ "$del" != "-" ]; then
+    deletions=$((deletions+del))
+  fi
+done < <(git diff --numstat "$base")
+
+max_bytes=$((512 * 1024))
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  file_count=$((file_count+1))
+  size="$(stat -c %s -- "$f" 2>/dev/null || echo 0)"
+  case "$size" in
+    ''|*[!0-9]*) size=0 ;;
+  esac
+  if [ "$size" -gt "$max_bytes" ]; then
+    continue
+  fi
+  lines="$(awk 'END{print NR}' -- "$f" 2>/dev/null || echo 0)"
+  case "$lines" in
+    ''|*[!0-9]*) lines=0 ;;
+  esac
+  additions=$((additions+lines))
+done < <(git ls-files --others --exclude-standard)
+
+printf '%s %s %s\n' "$file_count" "$additions" "$deletions"
+"#;
+    let bytes = container_exec_stdout(
+        state,
+        worktree,
+        "bash",
+        &["-lc", script, "--", base_commit_sha],
+    )
+    .await?;
+    let output = String::from_utf8_lossy(&bytes);
+    let mut parts = output.split_whitespace();
+    let file_count = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
+    let additions = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
+    let deletions = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
+    Ok((file_count, additions, deletions))
+}
+
+async fn diff_worktree_for_session(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    base_commit_sha: &str,
+) -> anyhow::Result<String> {
+    if is_container_path(StdPath::new(&worktree.root_path)) {
+        return container_diff_worktree(state, worktree, base_commit_sha).await;
+    }
+    ctx_fs::worktrees::diff_worktree(&worktree.root_path, base_commit_sha).await
+}
+
+async fn diff_worktree_summary_for_session(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    base_commit_sha: &str,
+) -> anyhow::Result<(i64, i64, i64)> {
+    if is_container_path(StdPath::new(&worktree.root_path)) {
+        return container_diff_worktree_summary(state, worktree, base_commit_sha).await;
+    }
+    ctx_fs::worktrees::diff_worktree_summary(&worktree.root_path, base_commit_sha).await
+}
+
 pub(super) async fn get_session_snapshot(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -237,17 +422,29 @@ pub(super) async fn get_session_diff(
             )
         })?;
     let base_commit_sha = resolve_session_diff_base(&workspace, &worktree, &q).await?;
-    let diff = ctx_fs::worktrees::diff_worktree(&worktree.root_path, &base_commit_sha)
-        .await
-        .map_err(|e| {
-            (
+    let diff = match diff_worktree_for_session(&state, &worktree, &base_commit_sha).await {
+        Ok(diff) => diff,
+        Err(err) if is_no_vcs_repo_error(&err) => {
+            return Ok(Json(SessionDiffResponse {
+                diff: String::new(),
+                available: false,
+                unavailable_reason: Some(DiffUnavailableReason::NoRepo),
+            }))
+        }
+        Err(err) => {
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
+                    error: logs::redact_sensitive(&err.to_string()),
                 }),
-            )
-        })?;
-    Ok(Json(SessionDiffResponse { diff }))
+            ))
+        }
+    };
+    Ok(Json(SessionDiffResponse {
+        diff,
+        available: true,
+        unavailable_reason: None,
+    }))
 }
 
 pub(super) async fn get_session_diff_summary(
@@ -330,17 +527,23 @@ pub(super) async fn get_session_diff_summary(
             )
         })?;
     let base_commit_sha = resolve_session_diff_base(&workspace, &worktree, &q).await?;
-    let (file_count, line_additions, line_deletions) =
-        ctx_fs::worktrees::diff_worktree_summary(&worktree.root_path, &base_commit_sha)
-            .await
-            .map_err(|e| {
-                (
+    let (file_count, line_additions, line_deletions, available, unavailable_reason) =
+        match diff_worktree_summary_for_session(&state, &worktree, &base_commit_sha).await {
+            Ok((file_count, line_additions, line_deletions)) => {
+                (file_count, line_additions, line_deletions, true, None)
+            }
+            Err(err) if is_no_vcs_repo_error(&err) => {
+                (0, 0, 0, false, Some(DiffUnavailableReason::NoRepo))
+            }
+            Err(err) => {
+                return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
+                        error: logs::redact_sensitive(&err.to_string()),
                     }),
-                )
-            })?;
+                ))
+            }
+        };
     let head_commit_sha = match vcs::driver_for_path(StdPath::new(&worktree.root_path)).await {
         Ok(vcs) => match vcs.rev_parse_head(StdPath::new(&worktree.root_path)).await {
             Ok(value) => value,
@@ -348,27 +551,29 @@ pub(super) async fn get_session_diff_summary(
         },
         Err(_) => base_commit_sha.clone(),
     };
-    if let Some(snapshot) = state.get_worktree_vcs_snapshot(worktree.id).await {
-        if snapshot.compute_state == WorktreeVcsComputeState::Ready
-            && snapshot.base_commit_sha == base_commit_sha
-        {
-            let summary = &snapshot.summary;
-            let mismatch = summary.file_count != Some(file_count)
-                || summary.line_additions != Some(line_additions)
-                || summary.line_deletions != Some(line_deletions);
-            if mismatch {
-                tracing::warn!(
-                    worktree_id = %worktree.id.0,
-                    snapshot_rev = snapshot.rev,
-                    base_commit_sha = %base_commit_sha,
-                    snapshot_file_count = ?summary.file_count,
-                    snapshot_additions = ?summary.line_additions,
-                    snapshot_deletions = ?summary.line_deletions,
-                    summary_file_count = file_count,
-                    summary_additions = line_additions,
-                    summary_deletions = line_deletions,
-                    "worktree vcs snapshot summary mismatch"
-                );
+    if available {
+        if let Some(snapshot) = state.get_worktree_vcs_snapshot(worktree.id).await {
+            if snapshot.compute_state == WorktreeVcsComputeState::Ready
+                && snapshot.base_commit_sha == base_commit_sha
+            {
+                let summary = &snapshot.summary;
+                let mismatch = summary.file_count != Some(file_count)
+                    || summary.line_additions != Some(line_additions)
+                    || summary.line_deletions != Some(line_deletions);
+                if mismatch {
+                    tracing::warn!(
+                        worktree_id = %worktree.id.0,
+                        snapshot_rev = snapshot.rev,
+                        base_commit_sha = %base_commit_sha,
+                        snapshot_file_count = ?summary.file_count,
+                        snapshot_additions = ?summary.line_additions,
+                        snapshot_deletions = ?summary.line_deletions,
+                        summary_file_count = file_count,
+                        summary_additions = line_additions,
+                        summary_deletions = line_deletions,
+                        "worktree vcs snapshot summary mismatch"
+                    );
+                }
             }
         }
     }
@@ -378,6 +583,8 @@ pub(super) async fn get_session_diff_summary(
         file_count,
         line_additions,
         line_deletions,
+        available,
+        unavailable_reason,
     }))
 }
 
@@ -762,7 +969,7 @@ pub(super) async fn apply_session_diff_patch(
 
     let base_commit_sha =
         resolve_session_diff_base(&workspace, &worktree, &SessionDiffQuery::default()).await?;
-    let diff = ctx_fs::worktrees::diff_worktree(&worktree.root_path, &base_commit_sha)
+    let diff = diff_worktree_for_session(&state, &worktree, &base_commit_sha)
         .await
         .map_err(|e| {
             (
@@ -772,7 +979,11 @@ pub(super) async fn apply_session_diff_patch(
                 }),
             )
         })?;
-    Ok(Json(SessionDiffResponse { diff }))
+    Ok(Json(SessionDiffResponse {
+        diff,
+        available: true,
+        unavailable_reason: None,
+    }))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -960,6 +1171,10 @@ pub(super) struct SessionDiffApplyReq {
 #[derive(Debug, Serialize)]
 pub(super) struct SessionDiffResponse {
     diff: String,
+    #[serde(skip_serializing_if = "is_true")]
+    available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unavailable_reason: Option<DiffUnavailableReason>,
 }
 #[derive(Debug, Deserialize, Default)]
 pub(crate) struct SessionDiffQuery {
@@ -973,6 +1188,10 @@ pub(super) struct SessionDiffSummaryResponse {
     file_count: i64,
     line_additions: i64,
     line_deletions: i64,
+    #[serde(skip_serializing_if = "is_true")]
+    available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unavailable_reason: Option<DiffUnavailableReason>,
 }
 #[derive(Debug, Serialize)]
 pub(super) struct SessionGitStatusResponse {

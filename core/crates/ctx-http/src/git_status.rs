@@ -442,6 +442,7 @@ async fn load_diff_touched_entries(
     Ok(items)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn build_worktree_vcs_snapshot_from_parts(
     state: &Arc<AppState>,
     worktree: &Worktree,
@@ -450,6 +451,8 @@ async fn build_worktree_vcs_snapshot_from_parts(
     summary: WorktreeVcsSummary,
     compute_state: WorktreeVcsComputeState,
     resolution: Option<crate::api::sessions::WorktreeDiffBaseResolution>,
+    available: bool,
+    unavailable_reason: Option<ctx_core::models::DiffUnavailableReason>,
 ) -> Result<WorktreeVcsSnapshot> {
     let resolution = match resolution {
         Some(resolution) => resolution,
@@ -510,8 +513,40 @@ async fn build_worktree_vcs_snapshot_from_parts(
         summary,
         git_status,
         touched_files,
+        available,
+        unavailable_reason,
         schema_version: 1,
     })
+}
+
+async fn publish_no_repo_snapshot(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    resolution: crate::api::sessions::WorktreeDiffBaseResolution,
+    force_emit: bool,
+) -> Result<()> {
+    let snapshot = build_worktree_vcs_snapshot_from_parts(
+        state,
+        worktree,
+        WorktreeVcsGitStatusSummary::default(),
+        WorktreeVcsTouchedFiles::default(),
+        WorktreeVcsSummary::default(),
+        WorktreeVcsComputeState::Ready,
+        Some(resolution),
+        false,
+        Some(ctx_core::models::DiffUnavailableReason::NoRepo),
+    )
+    .await?;
+    if let Some(snapshot) = upsert_worktree_vcs_snapshot(state, snapshot, force_emit, None).await {
+        if state.is_worktree_vcs_active(worktree.id).await {
+            state
+                .workspaces
+                .workspace_active_snapshot
+                .publish_worktree_vcs_snapshot(worktree.workspace_id, snapshot)
+                .await;
+        }
+    }
+    Ok(())
 }
 
 fn summary_from_counts(
@@ -613,12 +648,14 @@ async fn upsert_worktree_vcs_snapshot(
 }
 
 async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
-    let cached_snapshot = {
+    let cached_summary = {
         let mut cache = state.workspaces.worktree_vcs_snapshots.lock().await;
-        cache.get_mut(&worktree.id).map(|entry| {
+        if let Some(entry) = cache.get_mut(&worktree.id) {
             entry.touch();
-            entry.value.snapshot.clone()
-        })
+            entry.value.snapshot.summary.clone()
+        } else {
+            WorktreeVcsSummary::default()
+        }
     };
     let workspace = state
         .global_store()
@@ -627,39 +664,57 @@ async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) 
         .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
     let resolution =
         resolve_diff_base_with_meta(&workspace, &worktree, &SessionDiffQuery::default()).await;
-    let cached_summary = cached_snapshot
-        .as_ref()
-        .map(|snapshot| snapshot.summary.clone())
-        .unwrap_or_default();
-    let (git_status, touched_files) = if let Some(snapshot) = cached_snapshot {
-        (snapshot.git_status, snapshot.touched_files)
-    } else {
-        let snapshot = load_git_status_snapshot(&state, &worktree).await?;
-        let git_status_entries = build_git_status_entries(&snapshot.entries);
-        let git_status = build_git_status_summary(&snapshot, git_status_entries);
-        let diff_entries =
-            load_diff_touched_entries(&state, &worktree, &resolution.base_commit_sha).await?;
-        let touched = build_touched_files(&diff_entries);
-        (git_status, touched)
+    let git_snapshot = match load_git_status_snapshot(&state, &worktree).await {
+        Ok(snapshot) => snapshot,
+        Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => {
+            return publish_no_repo_snapshot(&state, &worktree, resolution, false).await;
+        }
+        Err(err) => return Err(err),
     };
+    let git_status_entries = build_git_status_entries(&git_snapshot.entries);
+    let git_status = build_git_status_summary(&git_snapshot, git_status_entries);
+    let diff_entries =
+        match load_diff_touched_entries(&state, &worktree, &resolution.base_commit_sha).await {
+            Ok(entries) => entries,
+            Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => {
+                return publish_no_repo_snapshot(&state, &worktree, resolution, false).await;
+            }
+            Err(err) => return Err(err),
+        };
+    let touched_files = build_touched_files(&diff_entries);
     let summary_result = if is_container_path(Path::new(&worktree.root_path)) {
         container_diff_worktree_summary(&state, &worktree, &resolution.base_commit_sha).await
     } else {
         ctx_fs::worktrees::diff_worktree_summary(&worktree.root_path, &resolution.base_commit_sha)
             .await
     };
-    let (summary, compute_state, summary_at) = match summary_result {
+    let (summary, compute_state, summary_at, available, unavailable_reason) = match summary_result {
         Ok((file_count, line_additions, line_deletions)) => (
             summary_from_counts(file_count, line_additions, line_deletions),
             WorktreeVcsComputeState::Ready,
             Some(Instant::now()),
+            true,
+            None,
+        ),
+        Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => (
+            WorktreeVcsSummary::default(),
+            WorktreeVcsComputeState::Ready,
+            None,
+            false,
+            Some(ctx_core::models::DiffUnavailableReason::NoRepo),
         ),
         Err(err) => {
             tracing::warn!(
                 worktree_id = %worktree.id.0,
                 "worktree diff summary failed: {err:#}"
             );
-            (cached_summary, WorktreeVcsComputeState::Error, None)
+            (
+                cached_summary,
+                WorktreeVcsComputeState::Error,
+                None,
+                true,
+                None,
+            )
         }
     };
     let snapshot = build_worktree_vcs_snapshot_from_parts(
@@ -670,6 +725,8 @@ async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) 
         summary,
         compute_state,
         Some(resolution),
+        available,
+        unavailable_reason,
     )
     .await?;
     if let Some(snapshot) = upsert_worktree_vcs_snapshot(&state, snapshot, false, summary_at).await
@@ -737,18 +794,36 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
         .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
     let resolution =
         resolve_diff_base_with_meta(&workspace, worktree, &SessionDiffQuery::default()).await;
-    let git_snapshot = load_git_status_snapshot(state, worktree).await?;
+    let git_snapshot = match load_git_status_snapshot(state, worktree).await {
+        Ok(snapshot) => snapshot,
+        Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => {
+            return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;
+        }
+        Err(err) => return Err(err),
+    };
     let git_status_entries = build_git_status_entries(&git_snapshot.entries);
     let git_status = build_git_status_summary(&git_snapshot, git_status_entries);
     let diff_entries =
-        load_diff_touched_entries(state, worktree, &resolution.base_commit_sha).await?;
+        match load_diff_touched_entries(state, worktree, &resolution.base_commit_sha).await {
+            Ok(entries) => entries,
+            Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => {
+                return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;
+            }
+            Err(err) => return Err(err),
+        };
     let touched_files = build_touched_files(&diff_entries);
-    let cached_summary = {
+    let (cached_summary, cached_available, cached_unavailable_reason) = {
         let cache = state.workspaces.worktree_vcs_snapshots.lock().await;
         cache
             .get(&worktree.id)
-            .map(|entry| entry.value.snapshot.summary.clone())
-            .unwrap_or_default()
+            .map(|entry| {
+                (
+                    entry.value.snapshot.summary.clone(),
+                    entry.value.snapshot.available,
+                    entry.value.snapshot.unavailable_reason.clone(),
+                )
+            })
+            .unwrap_or((WorktreeVcsSummary::default(), true, None))
     };
     let compute_state = if active {
         WorktreeVcsComputeState::Computing
@@ -770,6 +845,8 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
         cached_summary,
         compute_state,
         Some(resolution),
+        cached_available,
+        cached_unavailable_reason,
     )
     .await?;
     let mut published = false;

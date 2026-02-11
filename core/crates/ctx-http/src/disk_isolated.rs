@@ -10,6 +10,43 @@ pub fn container_worktree_root(worktree_id: WorktreeId) -> PathBuf {
     PathBuf::from("/ctx/ws/worktrees").join(worktree_id.0.to_string())
 }
 
+async fn verify_container_git_repo(
+    data_root: &Path,
+    container_id: &str,
+    worktree_root: &Path,
+) -> Result<()> {
+    const PODMAN_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
+    let mut cmd = crate::harness_runtime::podman_command(data_root)?;
+    cmd.arg("exec")
+        .arg("--interactive")
+        .arg("--workdir")
+        .arg(worktree_root)
+        .arg(container_id)
+        .arg("sh")
+        .arg("-lc")
+        .arg("git rev-parse --is-inside-work-tree && git rev-parse HEAD >/dev/null");
+    let out = crate::harness_runtime::command_output_with_timeout(cmd, PODMAN_EXEC_TIMEOUT)
+        .await
+        .context("podman exec git repo verification")?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            "unknown error".to_string()
+        };
+        anyhow::bail!(
+            "disk-isolated worktree verification failed (status {}): {}",
+            out.status,
+            detail
+        );
+    }
+    Ok(())
+}
+
 pub async fn ensure_worktree_from_host_copy(
     data_root: &Path,
     workspace_id: WorkspaceId,
@@ -22,6 +59,13 @@ pub async fn ensure_worktree_from_host_copy(
     const PODMAN_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
     let container_id = format!("ctx-harness-{}", workspace_id.0);
     let dest_root = container_worktree_root(worktree_id);
+    tracing::info!(
+        workspace_id = %workspace_id.0,
+        worktree_id = %worktree_id.0,
+        container_id = %container_id,
+        dest_root = %dest_root.display(),
+        "provisioning disk-isolated worktree from host copy"
+    );
 
     // 1) Create destination directory.
     {
@@ -68,6 +112,11 @@ pub async fn ensure_worktree_from_host_copy(
                 String::from_utf8_lossy(&out.stderr).trim()
             );
         }
+        tracing::debug!(
+            workspace_id = %workspace_id.0,
+            worktree_id = %worktree_id.0,
+            "disk-isolated host copy completed"
+        );
 
         // Best-effort: ensure files are writable for the execution user.
         let mut chmod = crate::harness_runtime::podman_command(data_root)?;
@@ -107,7 +156,23 @@ pub async fn ensure_worktree_from_host_copy(
                 String::from_utf8_lossy(&out.stderr).trim()
             );
         }
+        tracing::debug!(
+            workspace_id = %workspace_id.0,
+            worktree_id = %worktree_id.0,
+            base_commit_sha = %base_commit_sha,
+            branch_name = %branch_name,
+            "disk-isolated checkout completed"
+        );
     }
+
+    // 4) Verify repository integrity after copy + checkout. We fail fast here so callers never
+    // register a worktree/session that cannot answer git/diff requests later.
+    verify_container_git_repo(data_root, &container_id, &dest_root).await?;
+    tracing::info!(
+        workspace_id = %workspace_id.0,
+        worktree_id = %worktree_id.0,
+        "disk-isolated worktree repo verification succeeded"
+    );
 
     Ok(dest_root)
 }

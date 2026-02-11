@@ -95,6 +95,16 @@ export type SessionDiffSummary = {
   additions?: number;
   line_deletions?: number;
   deletions?: number;
+  available?: boolean;
+  unavailable_reason?: DiffUnavailableReason | null;
+};
+
+export type DiffUnavailableReason = "no_repo";
+
+export type SessionDiffResponse = {
+  diff: string;
+  available?: boolean;
+  unavailable_reason?: DiffUnavailableReason | null;
 };
 
 export type GitStatusEntry = {
@@ -311,10 +321,10 @@ export const submitAskUserQuestion = (
   });
 
 export const getSessionDiff = (sessionId: string) =>
-  apiAny<{ diff: string }>(`/api/sessions/${sessionId}/diff`);
+  apiAny<SessionDiffResponse>(`/api/sessions/${sessionId}/diff`);
 
 export const applySessionDiffPatch = (sessionId: string, action: "accept" | "reject", patch: string) =>
-  apiAny<{ diff: string }>(`/api/sessions/${sessionId}/diff/apply`, {
+  apiAny<SessionDiffResponse>(`/api/sessions/${sessionId}/diff/apply`, {
     method: "POST",
     body: JSON.stringify({ action, patch }),
   });

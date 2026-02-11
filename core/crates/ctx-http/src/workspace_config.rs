@@ -957,6 +957,15 @@ pub async fn update_subagent_system_prompt_append(
     Ok(config_path)
 }
 
+fn trimmed_nonempty(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1027,14 +1036,5 @@ allowlist = ["example.com"]
         assert!(text.contains("environment = \"container_host_mounted\""));
         assert!(!text.contains("mode = \"container\""));
         assert!(!text.contains("mount_mode"));
-    }
-}
-
-fn trimmed_nonempty(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
     }
 }
