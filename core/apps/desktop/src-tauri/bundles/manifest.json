@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-02-10T15:44:05Z",
+  "generated_at": "2026-02-12T01:19:29Z",
   "providers": [
     {
       "id": "acp-crp-bridge",
@@ -38,7 +38,7 @@
       "version": "0.0.0-ctx.3",
       "os": "macos",
       "arch": "aarch64",
-      "sha256": "a21b7af528a08c91c57a81d1f21f19a6517e9ea4fb5aca1b133dbd4b3ebdab63",
+      "sha256": "cd2104a1416499be831dd57c115f763045557334d559b7e0273b010fe197e1f8",
       "command": "providers/codex-crp/macos/aarch64/codex-crp",
       "args": []
     }
@@ -79,7 +79,7 @@
       "version": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04",
       "os": "linux",
       "arch": "aarch64",
-      "sha256": "f5698f4ea90c3a823f125f042e81a9849d13e9f32700a92e13f35257890e527c",
+      "sha256": "65baf7e3545eded030e4e6ea15433f215a01f85ee6d87afdfe1a9ccf997ec9db",
       "tar": "images/ctx-harness-linux-aarch64.tar",
       "image": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04"
     }
