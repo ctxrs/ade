@@ -19,12 +19,8 @@ import type {
   WorkspaceTaskSummary,
 } from "@ctx/types";
 import {
-  authToken,
   getDaemonClientConfig,
-  resolveDaemonBaseUrl,
   subscribeDaemonConfig,
-  getDaemonBaseUrl,
-  getHealth,
   idToString,
   listWorkspaceArchivedTaskSummaries,
   type WorkspaceActiveSnapshotClientMessage,
@@ -36,6 +32,7 @@ import {
   type PersistedWorkspaceActiveTaskSummaryV1,
 } from "./uiStateStore";
 import { parseWsJson } from "../utils/wsJson";
+import { emitUiDiagnostic } from "./diagnosticsChannel";
 import type {
   WorkspaceActiveSnapshotCommand,
   WorkspaceActiveSnapshotPatch,
@@ -111,25 +108,6 @@ const shouldRequestSnapshot = (reason: string): boolean => {
     default:
       return false;
   }
-};
-
-const dedupeUrls = (urls: string[]): string[] => {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const url of urls) {
-    if (seen.has(url)) continue;
-    seen.add(url);
-    out.push(url);
-  }
-  return out;
-};
-
-const toWsBaseUrl = (base: string): string => {
-  const trimmed = base.replace(/\/+$/, "");
-  if (trimmed.startsWith("ws://") || trimmed.startsWith("wss://")) return trimmed;
-  if (trimmed.startsWith("https://")) return trimmed.replace(/^https:\/\//, "wss://");
-  if (trimmed.startsWith("http://")) return trimmed.replace(/^http:\/\//, "ws://");
-  return trimmed;
 };
 
 const toHttpBaseUrl = (base: string): string => {
@@ -559,6 +537,16 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.enqueueStreamMessage(normalized);
   };
 
+  e2eGetCanonicalStreamUrl = (): string | null => {
+    if (!this.e2eEnabled) return null;
+    const daemonConfig = getDaemonClientConfig();
+    const wsBaseUrl = this.wsBaseUrlOverride ?? daemonConfig.wsBaseUrl ?? null;
+    const token = this.authTokenOverride ?? daemonConfig.authToken;
+    if (!wsBaseUrl) return null;
+    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+    return `${wsBaseUrl.replace(/\/+$/, "")}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`;
+  };
+
   setSubscribedSessionIds = (sessionIds: string[]) => {
     const activeSet = new Set(this.activeSessionIds);
     const next = sessionIds
@@ -661,7 +649,8 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.wsBaseUrlOverride = nextWs;
 
     if (this.worker) {
-      const baseUrl = opts.baseUrl ?? resolveDaemonBaseUrl() ?? (nextWs ? toHttpBaseUrl(nextWs) : null);
+      const daemonConfig = getDaemonClientConfig();
+      const baseUrl = opts.baseUrl ?? daemonConfig.baseUrl ?? (nextWs ? toHttpBaseUrl(nextWs) : null);
       this.postWorkerCommand({
         type: "update_auth",
         authToken: nextAuth,
@@ -906,6 +895,18 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.snapshotWaitTimer = globalThis.setTimeout(() => {
       this.snapshotWaitTimer = null;
       if (this.destroyed) return;
+      emitUiDiagnostic({
+        source: "workspace_stream",
+        code: "workspace.snapshot_wait_timeout",
+        severity: "warning",
+        message: "Workspace active snapshot was not received from the stream in time.",
+        context: {
+          workspaceId: this.workspaceId,
+          reason,
+          snapshotRev: this.snapshotRev,
+          connection: this.snapshot.connection,
+        },
+      });
       console.error(
         `[ctx] Workspace active snapshot not received over WS (${reason}).`,
         {
@@ -1188,56 +1189,48 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.snapshot.connection = "connecting";
     this.publish();
     try {
-      const urls = await this.resolveWsUrls();
-      if (this.destroyed) return;
-      for (const url of urls) {
-        try {
-          await this.openWebSocket(url);
-          return;
-        } catch {
-          continue;
-        }
+      const daemonConfig = getDaemonClientConfig();
+      const wsBaseUrl = this.wsBaseUrlOverride ?? daemonConfig.wsBaseUrl ?? null;
+      const token = this.authTokenOverride ?? daemonConfig.authToken;
+      if (!wsBaseUrl) {
+        emitUiDiagnostic({
+          source: "workspace_stream",
+          code: "workspace.stream_connection_missing",
+          severity: "warning",
+          message: "Workspace stream connection is not configured.",
+          context: {
+            workspaceId: this.workspaceId,
+          },
+        });
+        this.snapshot.connection = "disconnected";
+        this.publish();
+        return;
       }
-      this.snapshot.connection = "disconnected";
-      this.publish();
-      this.scheduleReconnect();
+      const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+      const url = `${wsBaseUrl.replace(/\/+$/, "")}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`;
+      if (this.destroyed) return;
+      try {
+        await this.openWebSocket(url);
+        return;
+      } catch (err) {
+        emitUiDiagnostic({
+          source: "workspace_stream",
+          code: "workspace.stream_connect_failed",
+          severity: "warning",
+          message: "Workspace stream connection failed; reconnect scheduled.",
+          context: {
+            workspaceId: this.workspaceId,
+            url,
+            error: err instanceof Error && err.message ? err.message : String(err),
+          },
+        });
+        this.snapshot.connection = "disconnected";
+        this.publish();
+        this.scheduleReconnect();
+      }
     } finally {
       this.connecting = false;
     }
-  }
-
-  private async resolveWsUrls(): Promise<string[]> {
-    const token = this.authTokenOverride ?? authToken();
-    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
-    const urls: string[] = [];
-    const wsBaseOverride = this.wsBaseUrlOverride ? toWsBaseUrl(this.wsBaseUrlOverride) : "";
-    if (wsBaseOverride) {
-      urls.push(`${wsBaseOverride}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`);
-    }
-
-    const location = typeof globalThis.location === "object" ? globalThis.location : null;
-    if (location?.host) {
-      const sameOrigin = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`;
-      urls.push(sameOrigin);
-    }
-
-    const configured = getDaemonBaseUrl();
-    if (configured) {
-      const wsBase = toWsBaseUrl(configured);
-      urls.push(`${wsBase}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`);
-    } else if (!wsBaseOverride) {
-      try {
-        const health = await getHealth();
-        const base = String(health.daemon_url || "").trim();
-        if (base) {
-          const wsBase = toWsBaseUrl(base);
-          urls.push(`${wsBase}/api/workspaces/${this.workspaceId}/active_snapshot/stream${qs}`);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return dedupeUrls(urls);
   }
 
   private openWebSocket(url: string): Promise<void> {

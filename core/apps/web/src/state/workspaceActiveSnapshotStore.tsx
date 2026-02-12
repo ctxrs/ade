@@ -6,6 +6,7 @@ import {
   type WorkspaceActiveSnapshotState,
   type WorkspaceActiveSnapshotItem,
 } from "./workspaceActiveSnapshotStoreCore";
+import { clearUiDiagnostics, getUiDiagnostics } from "./diagnosticsChannel";
 
 export type { WorkspaceActiveSnapshotEventSource, WorkspaceActiveSnapshotItem, WorkspaceActiveSnapshotState };
 
@@ -72,16 +73,22 @@ export function WorkspaceActiveSnapshotProvider({
       storeRef.current?.e2eSetDropActiveSnapshotMessages(Boolean(drop));
     win.__ctxE2E.workspaceStream.dispatchMessage = (payload: unknown) =>
       storeRef.current?.e2eDispatchActiveSnapshotStreamMessage(payload);
+    win.__ctxE2E.workspaceStream.getCanonicalUrl = () => storeRef.current?.e2eGetCanonicalStreamUrl?.() ?? null;
+    win.__ctxE2E.getDiagnostics = () => getUiDiagnostics();
+    win.__ctxE2E.clearDiagnostics = () => clearUiDiagnostics();
     return () => {
       if (!win.__ctxE2E) return;
       delete win.__ctxE2E.getSessionHeadMessages;
       delete win.__ctxE2E.getSessionHeadUserMessages;
       delete win.__ctxE2E.getSessionLastEventSeq;
+      delete win.__ctxE2E.getDiagnostics;
+      delete win.__ctxE2E.clearDiagnostics;
       if (win.__ctxE2E.workspaceStream) {
         delete win.__ctxE2E.workspaceStream.getConnectionState;
         delete win.__ctxE2E.workspaceStream.close;
         delete win.__ctxE2E.workspaceStream.setDropMessages;
         delete win.__ctxE2E.workspaceStream.dispatchMessage;
+        delete win.__ctxE2E.workspaceStream.getCanonicalUrl;
       }
     };
   }, [workspaceId, exposeE2E]);

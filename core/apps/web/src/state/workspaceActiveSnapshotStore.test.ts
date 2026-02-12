@@ -9,6 +9,7 @@ import type {
   WorkspaceActiveTaskSummary,
 } from "@ctx/types";
 import { waitForCondition } from "../testUtils/waitForCondition";
+import { getUiDiagnostics, resetUiDiagnosticsForTests } from "./diagnosticsChannel";
 
 vi.mock("../api/client", () => {
   const idToString = (id: string | null | undefined): string => {
@@ -22,28 +23,12 @@ vi.mock("../api/client", () => {
     idToString,
     authToken: vi.fn(() => null),
     getDaemonClientConfig: vi.fn(() => ({
-      baseUrl: "",
-      wsBaseUrl: "",
+      baseUrl: "http://localhost:4399",
+      wsBaseUrl: "ws://localhost:4399",
       authToken: null,
       runId: null,
     })),
-    getDaemonBaseUrl: vi.fn(() => ""),
-    resolveDaemonBaseUrl: vi.fn(() => ""),
-    resolveDaemonWsBaseUrl: vi.fn(() => "ws://localhost"),
     subscribeDaemonConfig: vi.fn(() => () => {}),
-    getHealth: vi.fn(async () => ({
-      version: "0.0.0",
-      daemon_version: "0.0.0",
-      pid: 1,
-      data_root: "/tmp/ctx",
-      daemon_url: "",
-      auth_required: false,
-      compatibility: {
-        desktop_exact_version: "0.0.0",
-        mobile_api_min: 1,
-        mobile_api_max: 1,
-      },
-    })),
     getSessionHead: vi.fn(async () => null),
     getWorkspaceActiveHeads: vi.fn(async () => ({
       workspace_id: "ws-1",
@@ -135,6 +120,7 @@ const mkOpenWs = () => ({
 describe("WorkspaceActiveSnapshotStore", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    resetUiDiagnosticsForTests();
   });
 
   it("hydrates from stream snapshot without HTTP", async () => {
@@ -218,6 +204,52 @@ describe("WorkspaceActiveSnapshotStore", () => {
     const payload = JSON.parse(String((ws.send as any).mock.calls[0]?.[0] ?? "{}"));
     expect(payload.type).toBe("subscribe");
     expect(payload.include_active_heads).toBe(false);
+  });
+
+  it("uses one canonical websocket url per connect cycle", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+    const { getDaemonClientConfig } = await import("../api/client");
+    vi.mocked(getDaemonClientConfig).mockReturnValue({
+      baseUrl: "http://daemon.local",
+      wsBaseUrl: "ws://daemon.local",
+      authToken: "token-1",
+      runId: null,
+    } as any);
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const openSpy = vi.spyOn(store as any, "openWebSocket").mockResolvedValueOnce(undefined);
+    const reconnectSpy = vi.spyOn(store as any, "scheduleReconnect").mockImplementation(() => {});
+
+    await (store as any).connectStream();
+
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(openSpy).toHaveBeenCalledWith(
+      "ws://daemon.local/api/workspaces/ws-1/active_snapshot/stream?token=token-1",
+    );
+    expect(reconnectSpy).not.toHaveBeenCalled();
+    const diagnostics = getUiDiagnostics().filter((event) => event.code === "workspace.stream_connect_failed");
+    expect(diagnostics).toHaveLength(0);
+  });
+
+  it("emits a single connect-failed diagnostic when canonical websocket connect fails", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+    const { getDaemonClientConfig } = await import("../api/client");
+    vi.mocked(getDaemonClientConfig).mockReturnValue({
+      baseUrl: "http://daemon.local",
+      wsBaseUrl: "ws://daemon.local",
+      authToken: null,
+      runId: null,
+    } as any);
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    vi.spyOn(store as any, "openWebSocket").mockRejectedValueOnce(new Error("workspace active snapshot ws timeout"));
+    const reconnectSpy = vi.spyOn(store as any, "scheduleReconnect").mockImplementation(() => {});
+
+    await (store as any).connectStream();
+
+    expect(reconnectSpy).toHaveBeenCalledTimes(1);
+    const diagnostics = getUiDiagnostics().filter((event) => event.code === "workspace.stream_connect_failed");
+    expect(diagnostics).toHaveLength(1);
+    expect((diagnostics[0].context as any)?.url).toBe("ws://daemon.local/api/workspaces/ws-1/active_snapshot/stream");
+    expect((diagnostics[0].context as any)?.error).toContain("timeout");
   });
 
   it("applies session_head_seed events", async () => {

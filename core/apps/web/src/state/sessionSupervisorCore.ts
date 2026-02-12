@@ -41,6 +41,7 @@ import { SessionReplicaBridge } from "./sessionReplicaBridge";
 import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
 import { sendDesktopNotification } from "../utils/desktopNotifications";
 import { isAppInForeground } from "../utils/windowFocus";
+import { emitUiDiagnostic } from "./diagnosticsChannel";
 
 const readTunableInt = (key: string, fallback: number) => {
   try {
@@ -1283,6 +1284,17 @@ export class SessionSupervisor {
   }
 
   private setFatalError(entry: InternalEntry, message: string) {
+    emitUiDiagnostic({
+      source: "session_supervisor",
+      code: "session.load_fatal",
+      severity: "error",
+      fatal: true,
+      message,
+      context: {
+        sessionId: entry.sessionId,
+        mode: entry.mode ?? null,
+      },
+    });
     entry.error = message;
     this.setSessionLoadState(entry, "fatal");
   }
