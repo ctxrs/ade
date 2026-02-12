@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import LauncherBrand from "../components/LauncherBrand";
 import {
+  applyDaemonDesktopConnection,
   buildExecutionLaunchWsUrl,
   createWorkspace,
   getExecutionLaunchStatus,
@@ -24,8 +25,6 @@ import {
   repoInit,
   repoStatus,
   repoStagingPath,
-  setDaemonAuthToken,
-  setDaemonBaseUrl,
   updateWorkspaceExecutionConfig,
   updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig,
@@ -445,11 +444,7 @@ export default function WorkspaceSetupPage() {
       : "Copy diagnostics";
 
   function applyConnection(info: DesktopConnectionInfo) {
-    const baseUrl = String(info.base_url ?? "").trim();
-    const token = String(info.token ?? "").trim();
-    if (baseUrl) setDaemonBaseUrl(baseUrl, true);
-    else setDaemonBaseUrl(null, false);
-    setDaemonAuthToken(token || null);
+    applyDaemonDesktopConnection(info);
   }
 
   const sleepMs = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));

@@ -123,7 +123,6 @@ vi.mock("../api/client", () => ({
   createSession: vi.fn(async () => ({})),
   createTask: vi.fn(async () => ({})),
   deleteTask: vi.fn(async () => ({})),
-  getDaemonBaseUrl: vi.fn(() => ""),
   getHealth: vi.fn(async () => ({
     version: "0.0.0",
     daemon_version: "0.0.0",
@@ -143,7 +142,6 @@ vi.mock("../api/client", () => ({
     current_version: "0.0.0",
     update_available: false,
   })),
-  resolveDaemonWsBaseUrl: vi.fn(() => "ws://localhost:4399"),
   getInstall: vi.fn(async () => ({})),
   getProviderOptions: vi.fn(async () => ({})),
   getSessionGitStatusSummary: vi.fn(async () => null),

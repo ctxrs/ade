@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getDaemonBaseUrl, setDaemonAuthToken, setDaemonBaseUrl } from "../api/client";
+import { resetDaemonConnection } from "../api/client";
+import { useDaemonBaseUrl } from "../api/useDaemonConnection";
 import { desktopDisconnect, isDesktopApp } from "../utils/desktop";
 
 const RECENTS_KEY = "contextDesktopRecentsV1";
 
 export default function AppSettingsPage() {
-  const [baseUrl, setBaseUrl] = useState<string | null>(getDaemonBaseUrl());
+  const baseUrl = useDaemonBaseUrl();
   const [recentsCount, setRecentsCount] = useState(0);
   const [busy, setBusy] = useState(false);
 
@@ -26,9 +27,7 @@ export default function AppSettingsPage() {
       if (isDesktopApp()) {
         await desktopDisconnect();
       }
-      setDaemonAuthToken(null);
-      setDaemonBaseUrl(null, true);
-      setBaseUrl(null);
+      resetDaemonConnection({ persistBaseUrl: true, clearPersistedBaseUrl: true });
     } finally {
       setBusy(false);
     }

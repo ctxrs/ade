@@ -14,7 +14,8 @@ import type {
   WorkspaceAttachment,
   WorkspaceAttachmentKind,
 } from "@ctx/types";
-import { apiAny, authToken, daemonFetchRaw, idToString, resolveDaemonWsBaseUrl } from "./clientBase";
+import { apiAny, daemonFetchRaw, idToString } from "./clientBase";
+import { getDaemonConnection, getDaemonWsUrl } from "./daemonConnection";
 
 export const listWorkspaces = () =>
   apiAny<Workspace[]>("/api/workspaces");
@@ -152,12 +153,11 @@ export const getExecutionLaunchStatus = (jobId: string) =>
   );
 
 export const buildExecutionLaunchWsUrl = (jobId: string): string => {
-  const wsBase = resolveDaemonWsBaseUrl();
   const qs = new URLSearchParams();
   qs.set("job_id", jobId);
-  const token = authToken();
+  const token = getDaemonConnection().authToken;
   if (token) qs.set("token", token);
-  return `${wsBase}/api/execution/launch/stream?${qs.toString()}`;
+  return getDaemonWsUrl("/api/execution/launch/stream", qs);
 };
 
 export type UpdateWorktreeBootstrapConfigRequest = {

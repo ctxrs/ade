@@ -13,7 +13,6 @@ vi.mock("../api/client", async () => {
   return {
     ...actual,
     getSettings: vi.fn(),
-    resolveDaemonWsBaseUrl: vi.fn(() => "ws://localhost"),
   };
 });
 

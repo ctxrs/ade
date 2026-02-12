@@ -3,7 +3,8 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal, type ILink, type ILinkProvider } from "@xterm/xterm";
 import type { TerminalSession } from "@ctx/types";
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { authToken, idToString, resolveDaemonWsBaseUrl } from "../api/client";
+import { idToString } from "../api/client";
+import { getDaemonConnection, getDaemonWsUrl } from "../api/daemonConnection";
 import { openExternalLink } from "../utils/desktop";
 import { readCssVar, useThemeVariant, withAlpha, type ThemeVariant } from "../utils/theme";
 
@@ -139,11 +140,10 @@ export function useTerminalClients(
 }
 
 function buildTerminalWsUrl(terminalId: string): string {
-  const wsBase = resolveDaemonWsBaseUrl();
-  const baseUrl = `${wsBase}/api/terminals/${terminalId}/stream`;
-  const token = authToken();
-  if (!token) return baseUrl;
-  return `${baseUrl}?token=${encodeURIComponent(token)}`;
+  const query = new URLSearchParams();
+  const token = getDaemonConnection().authToken;
+  if (token) query.set("token", token);
+  return getDaemonWsUrl(`/api/terminals/${terminalId}/stream`, query);
 }
 
 function terminalTheme(themeVariant: ThemeVariant) {
@@ -455,7 +455,14 @@ function createClient(
     const nextState =
       reconnectAttempts > DISCONNECTED_AFTER_ATTEMPTS ? "disconnected" : "reconnecting";
     setConnectionStatus(nextState);
-    socket = new WebSocket(buildTerminalWsUrl(id));
+    let wsUrl = "";
+    try {
+      wsUrl = buildTerminalWsUrl(id);
+    } catch {
+      scheduleReconnect();
+      return;
+    }
+    socket = new WebSocket(wsUrl);
     socket.binaryType = "arraybuffer";
     socket.addEventListener("open", () => {
       reconnectAttempts = 0;

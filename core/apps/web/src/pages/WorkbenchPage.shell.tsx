@@ -39,7 +39,6 @@ import {
   createTask,
   deleteTask,
   daemonFetchRaw,
-  getDaemonBaseUrl,
   getHealth,
   getSessionDiff,
   getInstall,
@@ -110,6 +109,7 @@ import {
   useWorkspaceActiveSnapshotStore,
   type WorkspaceActiveSnapshotItem,
 } from "../state/workspaceActiveSnapshotStore";
+import { useDaemonBaseUrl } from "../api/useDaemonConnection";
 import { useEnsureArchivedLoaded } from "../state/useEnsureArchivedLoaded";
 import { TaskRow } from "./WorkbenchPage.taskRow";
 import { TASK_LIST_COMPONENTS } from "./WorkbenchPage.taskList";
@@ -2069,7 +2069,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
   }, [activeWebSessionId, webSessions]);
 
-  const daemonBaseUrl = useMemo(() => getDaemonBaseUrl() ?? window.location.origin, []);
+  const daemonBaseUrl = useDaemonBaseUrl() ?? "";
   const sessionSections = useMemo(() => {
     if (!webSessionsEnabled) return [];
     return [

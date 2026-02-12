@@ -37,7 +37,6 @@ vi.mock("../api/client", () => {
     listSessionArtifacts: vi.fn(async () => []),
     listSessionSubagentInvocations: vi.fn(async () => []),
     listTurnTools: vi.fn(async () => []),
-    resolveDaemonBaseUrl: vi.fn(() => ""),
   };
 });
 

@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  applyDaemonDesktopConnection,
   createWorkspace,
-  getDaemonBaseUrl,
   getHealth,
   idToString,
   listWorkspaces,
-  setDaemonAuthToken,
-  setDaemonBaseUrl,
 } from "../api/client";
+import { useDaemonBaseUrl } from "../api/useDaemonConnection";
 import {
   desktopConnectLocal,
   desktopConnectSsh,
@@ -70,11 +69,7 @@ const upsertRecent = (entry: RecentEntry) => {
 };
 
 function applyConnection(info: DesktopConnectionInfo) {
-  const baseUrl = String(info.base_url ?? "").trim();
-  const token = String(info.token ?? "").trim();
-  if (baseUrl) setDaemonBaseUrl(baseUrl, true);
-  else setDaemonBaseUrl(null, false);
-  setDaemonAuthToken(token || null);
+  applyDaemonDesktopConnection(info);
 }
 
 const sleepMs = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -108,6 +103,7 @@ export default function LauncherPage() {
   const [recents, setRecents] = useState<RecentEntry[]>(() => loadRecents());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const daemonBaseUrl = useDaemonBaseUrl();
 
   const isDesktop = isDesktopApp();
 
@@ -130,9 +126,9 @@ export default function LauncherPage() {
 
   const connectedLabel = useMemo(() => {
     if (!connection || connection.kind === "none") return "";
-    const base = String(connection.base_url ?? getDaemonBaseUrl() ?? "").trim();
+    const base = String(connection.base_url ?? daemonBaseUrl ?? "").trim();
     return `${connection.kind.toUpperCase()} · ${base || "(unknown)"}`;
-  }, [connection]);
+  }, [connection, daemonBaseUrl]);
 
   const connectLocalAndOpen = async (rootPath?: string) => {
     setError(null);

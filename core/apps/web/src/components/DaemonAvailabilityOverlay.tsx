@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { daemonFetchRaw, getDaemonBaseUrl, setDaemonAuthToken, setDaemonBaseUrl } from "../api/client";
+import { applyDaemonDesktopConnection, daemonFetchRaw } from "../api/client";
+import { useDaemonBaseUrl } from "../api/useDaemonConnection";
 import {
   desktopConnectLocal,
   desktopGetConnection,
@@ -92,6 +93,7 @@ export default function DaemonAvailabilityOverlay() {
   const checkingRef = useRef(false);
   const requestIdRef = useRef(0);
   const isDesktop = isDesktopApp();
+  const daemonBaseUrl = useDaemonBaseUrl();
 
   const refreshDesktopKind = useCallback(async () => {
     if (!isDesktop) return null;
@@ -212,11 +214,7 @@ export default function DaemonAvailabilityOverlay() {
   }, [checkNow, status]);
 
   const applyConnection = (info: DesktopConnectionInfo) => {
-    const base = String(info.base_url ?? "").trim();
-    const token = String(info.token ?? "").trim();
-    if (base) setDaemonBaseUrl(base, true);
-    else setDaemonBaseUrl(null, false);
-    setDaemonAuthToken(token || null);
+    applyDaemonDesktopConnection(info);
   };
 
   const restartDaemon = useCallback(async () => {
@@ -237,11 +235,8 @@ export default function DaemonAvailabilityOverlay() {
   }, [checkNow, isDesktop, restartBusy]);
 
   const target = useMemo(() => {
-    const base = getDaemonBaseUrl();
-    if (base) return base;
-    if (!isDesktop) return window.location.origin;
-    return "";
-  }, [isDesktop]);
+    return daemonBaseUrl ?? "";
+  }, [daemonBaseUrl]);
 
   const showOverlay =
     (status === "down" || status === "mismatch") && !overlaySuppressed(location.pathname);

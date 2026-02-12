@@ -2,14 +2,17 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DaemonAvailabilityOverlay from "./DaemonAvailabilityOverlay";
-import { daemonFetchRaw, getDaemonBaseUrl } from "../api/client";
+import { daemonFetchRaw } from "../api/client";
+import { useDaemonBaseUrl } from "../api/useDaemonConnection";
 import { desktopGetConnection, desktopGetVersion, isDesktopApp } from "../utils/desktop";
 
 vi.mock("../api/client", () => ({
+  applyDaemonDesktopConnection: vi.fn(),
   daemonFetchRaw: vi.fn(),
-  getDaemonBaseUrl: vi.fn(),
-  setDaemonBaseUrl: vi.fn(),
-  setDaemonAuthToken: vi.fn(),
+}));
+
+vi.mock("../api/useDaemonConnection", () => ({
+  useDaemonBaseUrl: vi.fn(),
 }));
 
 vi.mock("../utils/desktop", () => ({
@@ -43,7 +46,7 @@ const baseHealth = {
 describe("DaemonAvailabilityOverlay", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getDaemonBaseUrl).mockReturnValue(null);
+    vi.mocked(useDaemonBaseUrl).mockReturnValue(null);
     vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "local" });
   });
 

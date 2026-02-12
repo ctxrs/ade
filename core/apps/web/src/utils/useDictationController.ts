@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getSettings, resolveDaemonWsBaseUrl } from "../api/client";
+import { getSettings } from "../api/client";
 import type { DictationSettings } from "../api/client";
+import { getDaemonConnection, getDaemonWsUrl } from "../api/daemonConnection";
 import { isDesktopApp } from "./desktop";
 import { startMicPcmStream } from "./micPcmStream";
 import {
@@ -321,16 +322,17 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
     if (existing && existing.readyState !== WebSocket.CLOSED) return;
     if (dictationRecording) return;
 
-    const token = (() => {
-      try {
-        return sessionStorage.getItem("ctxAuthToken");
-      } catch {
-        return null;
-      }
-    })();
-    const wsBase = resolveDaemonWsBaseUrl();
-    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
-    const ws = new WebSocket(`${wsBase}/api/dictation/livekit/stream${qs}`);
+    const token = getDaemonConnection().authToken;
+    const query = new URLSearchParams();
+    if (token) query.set("token", token);
+    let wsUrl = "";
+    try {
+      wsUrl = getDaemonWsUrl("/api/dictation/livekit/stream", query);
+    } catch (err: any) {
+      setDictationError(err?.message ?? String(err));
+      return;
+    }
+    const ws = new WebSocket(wsUrl);
     ws.binaryType = "arraybuffer";
     dictationWsRef.current = ws;
     dictationFinalizeWaiterRef.current = null;

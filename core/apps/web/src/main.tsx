@@ -5,38 +5,20 @@ import App from "./App";
 import { initLoadTestTelemetry } from "./utils/loadTestTelemetry";
 import { initWalRecorder } from "./utils/walRecorder";
 import { initTheme } from "./utils/theme";
-import { authToken, getDaemonBaseUrl, setDaemonAuthToken, setDaemonBaseUrl } from "./api/client";
+import { primeDaemonConnection } from "./api/client";
+import { installGlobalRuntimeDiagnosticHandlers } from "./state/diagnosticsChannel";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 
 const primeAuthSession = () => {
-  if (typeof window === "undefined") return;
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get("token");
-  const hadTokenParam = Boolean(token);
-  if (token) {
-    setDaemonAuthToken(token);
-    params.delete("token");
-    const next =
-      window.location.pathname +
-      (params.toString() ? `?${params.toString()}` : "") +
-      window.location.hash;
-    window.history.replaceState({}, "", next);
-  }
-  if (import.meta.env.DEV) {
-    const envToken = import.meta.env.VITE_CTX_AUTH_TOKEN;
-    const envDaemonUrl = import.meta.env.VITE_CTX_DAEMON_URL;
-    if (envToken && !hadTokenParam && authToken() !== envToken) setDaemonAuthToken(envToken);
-    if (envDaemonUrl && !getDaemonBaseUrl()) {
-      setDaemonBaseUrl(envDaemonUrl, true);
-    }
-  }
+  primeDaemonConnection();
 };
 
 primeAuthSession();
 initTheme();
 applyContextTheme();
 initLoadTestTelemetry();
+installGlobalRuntimeDiagnosticHandlers();
 const wal = initWalRecorder();
 
 const app = wal?.onRender ? (

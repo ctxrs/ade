@@ -12,7 +12,8 @@ import type {
   SessionTurnTool,
   SubagentInvocation,
 } from "@ctx/types";
-import { apiAny, authToken, resolveDaemonBaseUrl } from "./clientBase";
+import { apiAny, authToken } from "./clientBase";
+import { getDaemonConnection, getDaemonHttpUrl } from "./daemonConnection";
 import { desktopUploadBlob, isDesktopApp } from "../utils/desktop";
 
 export type BlobUploadResp = {
@@ -348,17 +349,13 @@ export const deleteMessage = (messageId: string) =>
   apiAny(`/api/messages/${messageId}`, { method: "DELETE" });
 
 export const blobUrl = (blobId: string): string => {
-  const base = resolveDaemonBaseUrl();
-  const token = authToken();
-  const prefix = base ? base.replace(/\/+$/, "") : "";
-  const url = `${prefix}/api/blobs/${encodeURIComponent(String(blobId || ""))}`;
+  const token = getDaemonConnection().authToken;
+  const url = getDaemonHttpUrl(`/api/blobs/${encodeURIComponent(String(blobId || ""))}`);
   return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 };
 
 export const artifactUrl = (artifactId: string): string => {
-  const base = resolveDaemonBaseUrl();
-  const token = authToken();
-  const prefix = base ? base.replace(/\/+$/, "") : "";
-  const url = `${prefix}/api/artifacts/${encodeURIComponent(String(artifactId || ""))}`;
+  const token = getDaemonConnection().authToken;
+  const url = getDaemonHttpUrl(`/api/artifacts/${encodeURIComponent(String(artifactId || ""))}`);
   return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 };

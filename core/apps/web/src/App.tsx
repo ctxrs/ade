@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { appendDesktopLog, authToken, getDaemonBaseUrl, setDaemonAuthToken, setDaemonBaseUrl } from "./api/client";
+import { appendDesktopLog } from "./api/client";
 import DaemonAvailabilityOverlay from "./components/DaemonAvailabilityOverlay";
 import LauncherPage from "./pages/LauncherPage";
 import AppSettingsPage from "./pages/AppSettingsPage";
@@ -61,33 +61,6 @@ function DesktopSettingsListener() {
 }
 
 export default function App() {
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
-    if (token) {
-      setDaemonAuthToken(token);
-      params.delete("token");
-      const next =
-        window.location.pathname +
-        (params.toString() ? `?${params.toString()}` : "") +
-        window.location.hash;
-      window.history.replaceState({}, "", next);
-    }
-    const envToken = import.meta.env.VITE_CTX_AUTH_TOKEN;
-    const envDaemonUrl = import.meta.env.VITE_CTX_DAEMON_URL;
-    if (!envToken && !envDaemonUrl) return;
-    const host = typeof window === "undefined" ? "" : String(window.location.hostname ?? "").toLowerCase();
-    const loopback = host === "localhost" || host === "::1" || host.startsWith("127.");
-    if (!loopback) return;
-
-    if (envToken && !authToken()) {
-      setDaemonAuthToken(envToken);
-    }
-    if (envDaemonUrl && !getDaemonBaseUrl()) {
-      setDaemonBaseUrl(envDaemonUrl, true);
-    }
-  }, []);
-
   useEffect(() => {
     appendDesktopLog("ui: app loaded").catch(() => {});
   }, []);

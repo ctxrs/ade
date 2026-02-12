@@ -1,5 +1,15 @@
 import type { ClientTelemetryBatch } from "@ctx/types";
 import { desktopDaemonRequest, isDesktopApp } from "../utils/desktop";
+import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "../state/diagnosticsChannel";
+import {
+  applyDesktopDaemonConnection,
+  bootstrapDaemonConnectionFromRuntime,
+  clearDaemonConnection,
+  getDaemonConnection,
+  normalizeDaemonBaseUrl,
+  setDaemonConnection,
+  subscribeDaemonConnection,
+} from "./daemonConnection";
 
 export type DaemonClientConfig = {
   baseUrl: string | null;
@@ -9,110 +19,59 @@ export type DaemonClientConfig = {
 };
 
 type DaemonConfigListener = (config: DaemonClientConfig) => void;
-const daemonConfigListeners = new Set<DaemonConfigListener>();
+export const authToken = (): string | null => getDaemonConnection().authToken;
 
-const notifyDaemonConfig = () => {
-  if (!daemonConfigListeners.size) return;
-  const config = getDaemonClientConfig();
-  for (const listener of daemonConfigListeners) {
-    listener(config);
-  }
-};
-
-export const authToken = (): string | null => {
-  try {
-    return sessionStorage.getItem("ctxAuthToken");
-  } catch {
-    return null;
-  }
-};
-
-export const getDaemonBaseUrl = (): string | null => {
-  try {
-    return sessionStorage.getItem("contextDaemonBaseUrl") || localStorage.getItem("contextDaemonBaseUrl");
-  } catch {
-    return null;
-  }
-};
-
-const isLoopbackHost = (host: string): boolean => {
-  const normalized = host.replace(/^\[|\]$/g, "").toLowerCase();
-  return normalized === "localhost" || normalized === "::1" || normalized.startsWith("127.");
-};
-
-export const resolveDaemonBaseUrl = (): string | null => {
-  const base = getDaemonBaseUrl();
-  if (!base) return null;
-  if (typeof window === "undefined") return base;
-  try {
-    const baseUrl = new URL(base, window.location.origin);
-    const originUrl = new URL(window.location.origin);
-    if (isLoopbackHost(baseUrl.hostname) && !isLoopbackHost(originUrl.hostname)) {
-      return window.location.origin;
-    }
-  } catch {
-    return base;
-  }
-  return base;
-};
-
-const normalizeWsBaseUrl = (base: string): string => {
-  const trimmed = base.replace(/\/+$/, "");
-  if (trimmed.startsWith("ws://") || trimmed.startsWith("wss://")) return trimmed;
-  if (trimmed.startsWith("https://")) return trimmed.replace(/^https:\/\//, "wss://");
-  if (trimmed.startsWith("http://")) return trimmed.replace(/^http:\/\//, "ws://");
-  return trimmed;
-};
-
-export const resolveDaemonWsBaseUrl = (): string => {
-  const base = resolveDaemonBaseUrl();
-  if (base) return normalizeWsBaseUrl(base);
-  if (typeof window === "undefined") return "";
-  return `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
-};
-
-export const getDaemonClientConfig = (): DaemonClientConfig => ({
-  baseUrl: resolveDaemonBaseUrl(),
-  wsBaseUrl: resolveDaemonWsBaseUrl() || null,
-  authToken: authToken(),
-  runId: getTelemetryRunId(),
-});
-
-export const subscribeDaemonConfig = (listener: DaemonConfigListener): (() => void) => {
-  daemonConfigListeners.add(listener);
-  return () => {
-    daemonConfigListeners.delete(listener);
+export const getDaemonClientConfig = (): DaemonClientConfig => {
+  const connection = getDaemonConnection();
+  return {
+    baseUrl: connection.baseUrl,
+    wsBaseUrl: connection.wsBaseUrl,
+    authToken: connection.authToken,
+    runId: getTelemetryRunId(),
   };
 };
 
+export const subscribeDaemonConfig = (listener: DaemonConfigListener): (() => void) =>
+  subscribeDaemonConnection(() => listener(getDaemonClientConfig()));
+
 export const setDaemonBaseUrl = (baseUrl: string | null, persist?: boolean) => {
-  try {
-    if (!baseUrl) {
-      sessionStorage.removeItem("contextDaemonBaseUrl");
-      if (persist) localStorage.removeItem("contextDaemonBaseUrl");
-      return;
-    }
-    sessionStorage.setItem("contextDaemonBaseUrl", baseUrl);
-    if (persist) localStorage.setItem("contextDaemonBaseUrl", baseUrl);
-  } catch {
-    // ignore
-  } finally {
-    notifyDaemonConfig();
-  }
+  setDaemonConnection(
+    { baseUrl: normalizeDaemonBaseUrl(baseUrl), source: "set_base_url" },
+    { persistBaseUrl: Boolean(persist) },
+  );
 };
 
 export const setDaemonAuthToken = (token: string | null) => {
-  try {
-    if (token) {
-      sessionStorage.setItem("ctxAuthToken", token);
-    } else {
-      sessionStorage.removeItem("ctxAuthToken");
-    }
-  } catch {
-    // ignore
-  } finally {
-    notifyDaemonConfig();
-  }
+  setDaemonConnection({ authToken: token, source: "set_auth_token" });
+};
+
+export const applyDaemonDesktopConnection = applyDesktopDaemonConnection;
+export const resetDaemonConnection = clearDaemonConnection;
+export const primeDaemonConnection = bootstrapDaemonConnectionFromRuntime;
+
+const shouldEmitApiDiagnostic = (path: string): boolean =>
+  path.startsWith("/api/") && !path.startsWith("/api/telemetry");
+
+const emitApiDiagnostic = (args: {
+  path: string;
+  method: string;
+  status?: number;
+  code: "api.transport_error" | "api.http_error";
+  severity: "error" | "warning";
+  message: string;
+}) => {
+  if (!shouldEmitApiDiagnostic(args.path)) return;
+  emitUiDiagnostic({
+    source: "api",
+    code: args.code,
+    severity: args.severity,
+    message: args.message,
+    context: {
+      path: args.path,
+      method: args.method,
+      status: args.status,
+    },
+  });
 };
 
 export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -154,6 +113,13 @@ export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
   } catch (err) {
     const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
     recordClientApiError(path, method, end - start, runId);
+    emitApiDiagnostic({
+      path,
+      method,
+      code: "api.transport_error",
+      severity: "error",
+      message: normalizeDiagnosticErrorMessage(err, "Request failed before receiving a response."),
+    });
     throw err;
   }
   const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
@@ -177,9 +143,16 @@ export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
     if ((contentType.includes("text/html") || looksLikeHtml(text)) && path.startsWith("/api/")) {
       // This usually means the web UI server served its SPA fallback for an /api route.
       // Most commonly: the daemon is old and doesn't implement the endpoint, or the dev proxy isn't pointing at the daemon.
-      throw new Error(
-        `The daemon returned HTML for ${path} (${res.status}). Restart/update the daemon (and ensure Vite is proxying /api to it).`,
-      );
+      const message = `The daemon returned HTML for ${path} (${res.status}). Restart/update the daemon (and ensure Vite is proxying /api to it).`;
+      emitApiDiagnostic({
+        path,
+        method,
+        status: res.status,
+        code: "api.http_error",
+        severity: "error",
+        message,
+      });
+      throw new Error(message);
     }
 
     const lowered = String(text || "").toLowerCase();
@@ -190,20 +163,38 @@ export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
         lowered.includes("connect econnrefused") ||
         lowered.includes("socket hang up"))
     ) {
-      throw new Error(
-        "Cannot reach the ctx daemon via /api. If you're running the web dev server, start the daemon (default http://127.0.0.1:4399) or set CTX_DAEMON_URL before `pnpm dev`.",
-      );
+      const message =
+        "Cannot reach the ctx daemon via /api. If you're running the web dev server, start the daemon (default http://127.0.0.1:4399) or set CTX_DAEMON_URL before `pnpm dev`.";
+      emitApiDiagnostic({
+        path,
+        method,
+        status: res.status,
+        code: "api.http_error",
+        severity: "error",
+        message,
+      });
+      throw new Error(message);
     }
+    let parsedMessage: string | null = null;
     try {
       const parsed = text ? JSON.parse(text) : null;
       const msg = parsed?.error ?? parsed?.message;
       if (typeof msg === "string" && msg.length > 0) {
-        throw new Error(msg);
+        parsedMessage = msg;
       }
     } catch {
       // ignore
     }
-    throw new Error(trimForError(text) || `${res.status} ${res.statusText}`);
+    const message = parsedMessage ?? (trimForError(text) || `${res.status} ${res.statusText}`);
+    emitApiDiagnostic({
+      path,
+      method,
+      status: res.status,
+      code: "api.http_error",
+      severity: res.status >= 500 ? "error" : "warning",
+      message,
+    });
+    throw new Error(message);
   }
   if (res.status === 204) {
     return undefined as T;
@@ -270,6 +261,13 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
   } catch (err) {
     const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
     recordClientApiError(path, method, end - start, runId);
+    emitApiDiagnostic({
+      path,
+      method,
+      code: "api.transport_error",
+      severity: "error",
+      message: normalizeDiagnosticErrorMessage(err, "Desktop daemon request failed."),
+    });
     throw err;
   }
   const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
@@ -292,9 +290,16 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const ok = resp.status >= 200 && resp.status < 300;
   if (!ok) {
     if ((contentType.includes("text/html") || looksLikeHtml(text)) && path.startsWith("/api/")) {
-      throw new Error(
-        `The daemon returned HTML for ${path} (${resp.status}). Restart/update the daemon.`,
-      );
+      const message = `The daemon returned HTML for ${path} (${resp.status}). Restart/update the daemon.`;
+      emitApiDiagnostic({
+        path,
+        method,
+        status: resp.status,
+        code: "api.http_error",
+        severity: "error",
+        message,
+      });
+      throw new Error(message);
     }
     const lowered = String(text || "").toLowerCase();
     if (
@@ -304,18 +309,37 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
         lowered.includes("connect econnrefused") ||
         lowered.includes("socket hang up"))
     ) {
-      throw new Error("Cannot reach the ctx daemon. Connect to a host from the launcher first.");
+      const message = "Cannot reach the ctx daemon. Connect to a host from the launcher first.";
+      emitApiDiagnostic({
+        path,
+        method,
+        status: resp.status,
+        code: "api.http_error",
+        severity: "error",
+        message,
+      });
+      throw new Error(message);
     }
+    let parsedMessage: string | null = null;
     try {
       const parsed = text ? JSON.parse(text) : null;
       const msg = parsed?.error ?? parsed?.message;
       if (typeof msg === "string" && msg.length > 0) {
-        throw new Error(msg);
+        parsedMessage = msg;
       }
     } catch {
       // ignore
     }
-    throw new Error(trimForError(text) || `${resp.status}`);
+    const message = parsedMessage ?? (trimForError(text) || `${resp.status}`);
+    emitApiDiagnostic({
+      path,
+      method,
+      status: resp.status,
+      code: "api.http_error",
+      severity: resp.status >= 500 ? "error" : "warning",
+      message,
+    });
+    throw new Error(message);
   }
 
   if (resp.status === 204) {
@@ -554,6 +578,13 @@ export const daemonFetchRaw = async (path: string, init?: RequestInit): Promise<
   } catch (err) {
     const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
     recordClientApiError(path, method, end - start, runId);
+    emitApiDiagnostic({
+      path,
+      method,
+      code: "api.transport_error",
+      severity: "error",
+      message: normalizeDiagnosticErrorMessage(err, "Raw daemon fetch failed."),
+    });
     throw err;
   }
 };

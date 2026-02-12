@@ -1,4 +1,4 @@
-import { getDaemonBaseUrl } from "../api/client";
+import { getDaemonConnection } from "../api/client";
 import { clearWorkbenchSelectionV1, loadWorkbenchSelectionV1, uiStateBatch, uiStateDelete, uiStateGet, uiStateSet } from "../state/uiStateStore";
 import { randomUuid } from "../utils/randomUuid";
 import type {
@@ -28,7 +28,7 @@ const TERMINAL_LAYOUT_DB_VERSION = 1 as const;
 const TERMINAL_TITLES_DB_VERSION = 1 as const;
 
 export function workbenchDaemonKey(): string {
-  return String(getDaemonBaseUrl() || window.location.origin || "unknown").trim() || "unknown";
+  return String(getDaemonConnection().baseUrl || "unknown").trim() || "unknown";
 }
 
 function safeKeyPart(v: string): string {

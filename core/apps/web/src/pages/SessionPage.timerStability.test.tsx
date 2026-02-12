@@ -9,7 +9,6 @@ const updateSettingsSpy = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/client", () => ({
   deleteMessage: vi.fn(async () => ({})),
-  resolveDaemonWsBaseUrl: vi.fn(() => "ws://localhost"),
   postMessage: vi.fn(async () => ({})),
   setSessionModel: vi.fn(async () => ({})),
   authenticateSession: vi.fn(async () => ({})),
