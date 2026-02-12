@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { expectWsPathOnCanonicalOrigin } from "./utils/wsUrls";
 
 test("terminal reconnects after websocket drop", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
@@ -60,4 +61,5 @@ test("terminal reconnects after websocket drop", async ({ page }) => {
   await expect(status).toContainText(/Reconnecting|Disconnected/, { timeout: 20000 });
 
   await expect(status).toBeHidden({ timeout: 20000 });
+  await expectWsPathOnCanonicalOrigin(page, "/api/terminals/");
 });

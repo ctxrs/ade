@@ -1,5 +1,7 @@
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
+import { clearDiagnostics, expectNoUnexpectedDiagnostics, getDiagnostics } from "./utils/diagnostics";
+import { expectWsPathOnCanonicalOrigin } from "./utils/wsUrls";
 
 test("workbench: first user message renders from stream when head is stale", async ({ page, request }) => {
   test.setTimeout(120000);
@@ -61,12 +63,19 @@ test("workbench: first user message renders from stream when head is stale", asy
   await expect
     .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
+  await clearDiagnostics(page);
 
   await composer.fill(prompt);
   await page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]").click();
 
   const header = page.locator(".wb-turn-header-content").filter({ hasText: prompt });
   await expect(header).toBeVisible({ timeout: 20000 });
+  await expectWsPathOnCanonicalOrigin(page, "/api/workspaces/");
+  await expectNoUnexpectedDiagnostics(page);
+  const streamWarnings = (await getDiagnostics(page)).filter((event) =>
+    ["workspace.stream_connect_failed", "workspace.stream_connection_missing"].includes(event.code),
+  );
+  expect(streamWarnings).toEqual([]);
 
   forceStaleHead = false;
 });

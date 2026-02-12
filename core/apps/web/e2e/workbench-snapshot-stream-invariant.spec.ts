@@ -1,5 +1,7 @@
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
+import { clearDiagnostics, expectNoUnexpectedDiagnostics, getDiagnostics } from "./utils/diagnostics";
+import { expectWsPathOnCanonicalOrigin } from "./utils/wsUrls";
 
 const readId = (value: unknown): string => (typeof value === "string" ? value : "");
 
@@ -61,6 +63,7 @@ test("workbench: snapshot+stream invariant keeps active sessions head-free", asy
   await expect
     .poll(async () => page.evaluate(() => typeof (window as any).__ctxE2E?.workspaceStream?.dispatchMessage === "function"))
     .toBe(true);
+  await clearDiagnostics(page);
 
   await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
   await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
@@ -141,4 +144,10 @@ test("workbench: snapshot+stream invariant keeps active sessions head-free", asy
   const after = headRequests.filter((requestItem) => requestItem.ts >= cutoff);
   expect(after).toEqual([]);
   await expect(page.locator(".banner .error").filter({ hasText: /load failed/i })).toHaveCount(0);
+  await expectWsPathOnCanonicalOrigin(page, "/api/workspaces/");
+  await expectNoUnexpectedDiagnostics(page);
+  const streamWarnings = (await getDiagnostics(page)).filter((event) =>
+    ["workspace.stream_connect_failed", "workspace.stream_connection_missing"].includes(event.code),
+  );
+  expect(streamWarnings).toEqual([]);
 });
