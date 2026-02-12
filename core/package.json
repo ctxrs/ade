@@ -27,7 +27,7 @@
     "crp:codex": "bash -lc '../scripts/build_codex_crp.sh'",
     "crp:codex:test": "bash -lc 'cd ../external-harnesses/codex/codex-rs && cargo test -q -p codex-crp replay_golden_tests && cargo test -q -p codex-crp reasoning_summary_state_tests'",
     "crp:claude": "bash -lc '../scripts/build_claude_crp.sh'",
-    "verify:quick": "turbo run rust:fmt rust:clippy rust:test crp:codex:test supabase:migrations:check supabase:functions:check --filter=ctx-monorepo --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only --log-order=grouped --concurrency=4 --ui=stream --cache=local:rw && pnpm -C apps/web typecheck",
+    "verify:quick": "turbo run rust:fmt rust:clippy rust:test crp:codex:test supabase:migrations:check supabase:functions:check typecheck --filter=ctx-monorepo --filter=ctx-web --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only --log-order=grouped --concurrency=4 --ui=stream --cache=local:rw",
     "verify:e2e": "pnpm test:e2e",
     "verify:nightly": "pnpm verify:e2e && pnpm test:providers:e2e && pnpm test:providers:e2e:runner"
   },
