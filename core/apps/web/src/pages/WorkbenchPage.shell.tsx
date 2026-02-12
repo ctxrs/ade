@@ -2473,6 +2473,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const optimisticSessionId = randomUuid();
     const optimisticMessageId = randomUuid();
     const optimisticTurnId = randomUuid();
+    const optimisticOrderSeq = Date.now();
     const optimisticModelId =
       primaryTrack.modelId ||
       modelIdsFromOptions(providerOptions[primaryTrack.providerId])[0] ||
@@ -2532,7 +2533,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       session_id: optimisticSessionId,
       task_id: optimisticTaskId,
       turn_id: optimisticTurnId,
-      turn_sequence: null,
+      // Keep optimistic turns renderable under strict order_seq/thread-anchor rules.
+      turn_sequence: optimisticOrderSeq,
       role: "user",
       content: prompt,
       attachments: attachmentsToSend,
