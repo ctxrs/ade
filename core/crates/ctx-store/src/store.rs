@@ -876,8 +876,6 @@ pub struct WorktreeBootstrapResultUpdate {
     pub error: Option<String>,
     pub log_path: Option<String>,
     pub log_truncated: Option<bool>,
-    pub config_path: Option<String>,
-    pub config_key: Option<String>,
     pub command: Option<String>,
     pub script_path: Option<String>,
 }
@@ -910,6 +908,13 @@ pub struct MobileAccessConfig {
     pub daemon_private_key: String,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+pub struct RuntimeSettingsDocument {
+    pub id: String,
+    pub schema_version: i64,
+    pub settings_json: String,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -1002,276 +1007,6 @@ impl Store {
 
     fn rewrite_sql<'a>(&self, sql: &'a str) -> Cow<'a, str> {
         Cow::Borrowed(sql)
-    }
-
-    pub async fn migrate_workspace_from_path(
-        &self,
-        legacy_path: &Path,
-        workspace_id: WorkspaceId,
-    ) -> Result<()> {
-        let workspace_id = workspace_id.0.to_string();
-        let legacy_path = legacy_path.to_string_lossy().to_string();
-        let mut conn = self.pool.acquire().await?;
-        self.query("PRAGMA foreign_keys = OFF")
-            .execute(&mut *conn)
-            .await?;
-        self.query("ATTACH DATABASE ? AS legacy")
-            .bind(&legacy_path)
-            .execute(&mut *conn)
-            .await?;
-
-        let migrate = async {
-            self.query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
-
-            self.query(
-                r#"INSERT INTO workspaces
-                   SELECT * FROM legacy.workspaces WHERE id = ?
-                   ON CONFLICT(id) DO UPDATE SET
-                       name = excluded.name,
-                       root_path = excluded.root_path,
-                       created_at = excluded.created_at"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO tasks
-                   SELECT * FROM legacy.tasks WHERE workspace_id = ?"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO worktrees
-                   SELECT * FROM legacy.worktrees WHERE workspace_id = ?"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO sessions
-                   SELECT * FROM legacy.sessions WHERE workspace_id = ?"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO messages
-                   SELECT * FROM legacy.messages
-                   WHERE session_id IN (
-                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
-                   )"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO session_events
-                   SELECT * FROM legacy.session_events
-                   WHERE session_id IN (
-                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
-                   )"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO session_turns
-                   SELECT * FROM legacy.session_turns
-                   WHERE session_id IN (
-                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
-                   )"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO session_turn_tools
-                   SELECT * FROM legacy.session_turn_tools
-                   WHERE session_id IN (
-                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
-                   )"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO artifacts
-                   SELECT * FROM legacy.artifacts WHERE workspace_id = ?"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO workspace_attachments (
-                       id,
-                       workspace_id,
-                       kind,
-                       name,
-                       source,
-                       revision,
-                       subpath,
-                       mount_relpath,
-                       mode,
-                       update_policy,
-                       status,
-                       last_sync_at,
-                       error_message,
-                       created_at,
-                       updated_at
-                   )
-                   SELECT
-                       id,
-                       workspace_id,
-                       kind,
-                       name,
-                       source,
-                       revision,
-                       subpath,
-                       mount_relpath,
-                       mode,
-                       update_policy,
-                       'ready',
-                       NULL,
-                       NULL,
-                       created_at,
-                       updated_at
-                   FROM legacy.workspace_attachments WHERE workspace_id = ?"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO worktree_attachment_mounts
-                   SELECT * FROM legacy.worktree_attachment_mounts
-                   WHERE worktree_id IN (
-                     SELECT id FROM legacy.worktrees WHERE workspace_id = ?
-                   )"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO subagent_invocations
-                   SELECT * FROM legacy.subagent_invocations
-                   WHERE parent_session_id IN (
-                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
-                   )"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO subagent_invocation_children
-                   SELECT * FROM legacy.subagent_invocation_children
-                   WHERE child_session_id IN (
-                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
-                   )"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO merge_queue_entries
-                   SELECT * FROM legacy.merge_queue_entries WHERE workspace_id = ?"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO merge_queue_runs
-                   SELECT * FROM legacy.merge_queue_runs
-                   WHERE entry_id IN (
-                     SELECT id FROM legacy.merge_queue_entries WHERE workspace_id = ?
-                   )"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO session_summary_checkpoints
-                   SELECT * FROM legacy.session_summary_checkpoints
-                   WHERE session_id IN (
-                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
-                   )"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO session_head_materializations
-                   SELECT * FROM legacy.session_head_materializations
-                   WHERE session_id IN (
-                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
-                   )"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO session_snapshot_summaries
-                   SELECT * FROM legacy.session_snapshot_summaries
-                   WHERE session_id IN (
-                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
-                   )"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query(
-                r#"INSERT INTO session_git_status_snapshots
-                   SELECT * FROM legacy.session_git_status_snapshots
-                   WHERE session_id IN (
-                     SELECT id FROM legacy.sessions WHERE workspace_id = ?
-                   )"#,
-            )
-            .bind(&workspace_id)
-            .execute(&mut *conn)
-            .await?;
-
-            self.query("COMMIT").execute(&mut *conn).await?;
-            Ok::<(), anyhow::Error>(())
-        }
-        .await;
-
-        if let Err(err) = migrate {
-            let _ = self.query("ROLLBACK").execute(&mut *conn).await;
-            let _ = self
-                .query("DETACH DATABASE legacy")
-                .execute(&mut *conn)
-                .await;
-            let _ = self
-                .query("PRAGMA foreign_keys = ON")
-                .execute(&mut *conn)
-                .await;
-            return Err(err);
-        }
-
-        self.query("DETACH DATABASE legacy")
-            .execute(&mut *conn)
-            .await?;
-        self.query("PRAGMA foreign_keys = ON")
-            .execute(&mut *conn)
-            .await?;
-        Ok(())
     }
 
     pub async fn prune_session_data_older_than_days(
@@ -2056,8 +1791,6 @@ impl Store {
             bootstrap_error: None,
             bootstrap_log_path: None,
             bootstrap_log_truncated: None,
-            bootstrap_config_path: None,
-            bootstrap_config_key: None,
             bootstrap_command: None,
             bootstrap_script_path: None,
         };
@@ -2069,7 +1802,7 @@ impl Store {
             r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, vcs_kind, base_revision, vcs_ref, created_at,
                       bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
                       bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
-                      bootstrap_config_path, bootstrap_config_key, bootstrap_command, bootstrap_script_path
+                      bootstrap_command, bootstrap_script_path
                FROM worktrees WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -2088,8 +1821,6 @@ impl Store {
             let bootstrap_error: Option<String> = r.try_get("bootstrap_error").ok()?;
             let bootstrap_log_path: Option<String> = r.try_get("bootstrap_log_path").ok()?;
             let bootstrap_log_truncated: Option<i64> = r.try_get("bootstrap_log_truncated").ok()?;
-            let bootstrap_config_path: Option<String> = r.try_get("bootstrap_config_path").ok()?;
-            let bootstrap_config_key: Option<String> = r.try_get("bootstrap_config_key").ok()?;
             let bootstrap_command: Option<String> = r.try_get("bootstrap_command").ok()?;
             let bootstrap_script_path: Option<String> = r.try_get("bootstrap_script_path").ok()?;
             let vcs_kind: Option<String> = r.try_get("vcs_kind").ok()?;
@@ -2121,8 +1852,6 @@ impl Store {
                 bootstrap_error,
                 bootstrap_log_path,
                 bootstrap_log_truncated: bootstrap_log_truncated.map(|v| v != 0),
-                bootstrap_config_path,
-                bootstrap_config_key,
                 bootstrap_command,
                 bootstrap_script_path,
             })
@@ -2138,7 +1867,7 @@ impl Store {
             r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, vcs_kind, base_revision, vcs_ref, created_at,
                       bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
                       bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
-                      bootstrap_config_path, bootstrap_config_key, bootstrap_command, bootstrap_script_path
+                      bootstrap_command, bootstrap_script_path
                FROM worktrees
                WHERE workspace_id = ? AND root_path = ? AND git_branch IS NULL
                ORDER BY created_at DESC
@@ -2161,8 +1890,6 @@ impl Store {
             let bootstrap_error: Option<String> = r.try_get("bootstrap_error").ok()?;
             let bootstrap_log_path: Option<String> = r.try_get("bootstrap_log_path").ok()?;
             let bootstrap_log_truncated: Option<i64> = r.try_get("bootstrap_log_truncated").ok()?;
-            let bootstrap_config_path: Option<String> = r.try_get("bootstrap_config_path").ok()?;
-            let bootstrap_config_key: Option<String> = r.try_get("bootstrap_config_key").ok()?;
             let bootstrap_command: Option<String> = r.try_get("bootstrap_command").ok()?;
             let bootstrap_script_path: Option<String> = r.try_get("bootstrap_script_path").ok()?;
             let vcs_kind: Option<String> = r.try_get("vcs_kind").ok()?;
@@ -2194,8 +1921,6 @@ impl Store {
                 bootstrap_error,
                 bootstrap_log_path,
                 bootstrap_log_truncated: bootstrap_log_truncated.map(|v| v != 0),
-                bootstrap_config_path,
-                bootstrap_config_key,
                 bootstrap_command,
                 bootstrap_script_path,
             })
@@ -2211,7 +1936,7 @@ impl Store {
             r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, vcs_kind, base_revision, vcs_ref, created_at,
                       bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
                       bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
-                      bootstrap_config_path, bootstrap_config_key, bootstrap_command, bootstrap_script_path
+                      bootstrap_command, bootstrap_script_path
                FROM worktrees
                WHERE workspace_id = ? AND root_path = ?
                ORDER BY created_at DESC
@@ -2234,8 +1959,6 @@ impl Store {
             let bootstrap_error: Option<String> = r.try_get("bootstrap_error").ok()?;
             let bootstrap_log_path: Option<String> = r.try_get("bootstrap_log_path").ok()?;
             let bootstrap_log_truncated: Option<i64> = r.try_get("bootstrap_log_truncated").ok()?;
-            let bootstrap_config_path: Option<String> = r.try_get("bootstrap_config_path").ok()?;
-            let bootstrap_config_key: Option<String> = r.try_get("bootstrap_config_key").ok()?;
             let bootstrap_command: Option<String> = r.try_get("bootstrap_command").ok()?;
             let bootstrap_script_path: Option<String> = r.try_get("bootstrap_script_path").ok()?;
             let vcs_kind: Option<String> = r.try_get("vcs_kind").ok()?;
@@ -2267,8 +1990,6 @@ impl Store {
                 bootstrap_error,
                 bootstrap_log_path,
                 bootstrap_log_truncated: bootstrap_log_truncated.map(|v| v != 0),
-                bootstrap_config_path,
-                bootstrap_config_key,
                 bootstrap_command,
                 bootstrap_script_path,
             })
@@ -2280,7 +2001,7 @@ impl Store {
             r#"SELECT id, workspace_id, root_path, base_commit_sha, git_branch, vcs_kind, base_revision, vcs_ref, created_at,
                       bootstrap_status, bootstrap_started_at, bootstrap_finished_at, bootstrap_exit_code,
                       bootstrap_timeout_sec, bootstrap_error, bootstrap_log_path, bootstrap_log_truncated,
-                      bootstrap_config_path, bootstrap_config_key, bootstrap_command, bootstrap_script_path
+                      bootstrap_command, bootstrap_script_path
                FROM worktrees WHERE workspace_id = ? ORDER BY created_at ASC"#,
         )
         .bind(workspace_id.0.to_string())
@@ -2300,8 +2021,6 @@ impl Store {
             let bootstrap_error: Option<String> = r.try_get("bootstrap_error")?;
             let bootstrap_log_path: Option<String> = r.try_get("bootstrap_log_path")?;
             let bootstrap_log_truncated: Option<i64> = r.try_get("bootstrap_log_truncated")?;
-            let bootstrap_config_path: Option<String> = r.try_get("bootstrap_config_path")?;
-            let bootstrap_config_key: Option<String> = r.try_get("bootstrap_config_key")?;
             let bootstrap_command: Option<String> = r.try_get("bootstrap_command")?;
             let bootstrap_script_path: Option<String> = r.try_get("bootstrap_script_path")?;
             let vcs_kind: Option<String> = r.try_get("vcs_kind")?;
@@ -2328,8 +2047,6 @@ impl Store {
                 bootstrap_error,
                 bootstrap_log_path,
                 bootstrap_log_truncated: bootstrap_log_truncated.map(|v| v != 0),
-                bootstrap_config_path,
-                bootstrap_config_key,
                 bootstrap_command,
                 bootstrap_script_path,
             });
@@ -2371,8 +2088,6 @@ impl Store {
                    bootstrap_error = ?,
                    bootstrap_log_path = ?,
                    bootstrap_log_truncated = ?,
-                   bootstrap_config_path = ?,
-                   bootstrap_config_key = ?,
                    bootstrap_command = ?,
                    bootstrap_script_path = ?
                WHERE id = ?"#,
@@ -2385,8 +2100,6 @@ impl Store {
         .bind(update.error)
         .bind(update.log_path)
         .bind(update.log_truncated.map(|v| if v { 1 } else { 0 }))
-        .bind(update.config_path)
-        .bind(update.config_key)
         .bind(update.command)
         .bind(update.script_path)
         .bind(update.worktree_id.0.to_string())
@@ -7657,6 +7370,54 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    pub async fn get_runtime_settings_document(&self) -> Result<Option<RuntimeSettingsDocument>> {
+        let row = self
+            .query(
+                r#"SELECT id, schema_version, settings_json, updated_at
+               FROM runtime_settings
+               WHERE id = ?"#,
+            )
+            .bind("default")
+            .fetch_optional(&self.pool)
+            .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(RuntimeSettingsDocument {
+            id: row.try_get("id")?,
+            schema_version: row.try_get("schema_version")?,
+            settings_json: row.try_get("settings_json")?,
+            updated_at: parse_dt(&row.try_get::<String, _>("updated_at")?)?,
+        }))
+    }
+
+    pub async fn upsert_runtime_settings_document(
+        &self,
+        schema_version: i64,
+        settings_json: &str,
+    ) -> Result<RuntimeSettingsDocument> {
+        let updated_at = Utc::now().to_rfc3339();
+        self.query(
+            r#"INSERT INTO runtime_settings (id, schema_version, settings_json, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   schema_version = excluded.schema_version,
+                   settings_json = excluded.settings_json,
+                   updated_at = excluded.updated_at"#,
+        )
+        .bind("default")
+        .bind(schema_version)
+        .bind(settings_json)
+        .bind(&updated_at)
+        .execute(&self.pool)
+        .await?;
+
+        self.get_runtime_settings_document()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("failed to read back runtime settings"))
     }
 
     pub async fn get_mobile_access_config(&self) -> Result<Option<MobileAccessConfig>> {

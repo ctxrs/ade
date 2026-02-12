@@ -145,11 +145,14 @@ async fn write_settings(data_root: &Path, azure: AzureCloudWorkersSettings) -> R
         }),
         ..DaemonSettings::default()
     };
-    let path = data_root.join("settings.json");
-    let serialized = serde_json::to_string_pretty(&settings).context("serializing settings")?;
-    tokio::fs::write(&path, serialized)
+    let db_path = data_root.join("db").join("db.sqlite");
+    let store = ctx_store::Store::open_sqlite(&db_path, None)
         .await
-        .with_context(|| format!("writing {}", path.display()))?;
+        .with_context(|| format!("opening {}", db_path.display()))?;
+    ctx_http::settings::save_settings(&store, &settings)
+        .await
+        .context("saving settings")?;
+    store.close().await;
     Ok(())
 }
 

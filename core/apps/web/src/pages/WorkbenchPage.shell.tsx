@@ -75,9 +75,11 @@ import { WorkbenchComposer, type DraftTrack, type WorkbenchModeId } from "../com
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import {
   desktopSetTitlebarColor,
+  desktopStorageConsumeNotice,
   getDesktopPlatform,
   isDesktopApp,
   type DesktopPlatform,
+  type DesktopStorageNotice,
   type DesktopTitlebarColor,
 } from "../utils/desktop";
 import { registerDropScope } from "../utils/dragDropScopes";
@@ -285,7 +287,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const installed = providers
       .filter((p) => p.installed && p.health === "ok" && p.details?.ui_hidden !== "true")
       .map((p) => p.provider_id);
-    if (installed.includes("codex-crp")) return "codex-crp";
     if (installed.includes("codex")) return "codex";
     if (installed.includes("claude-crp")) return "claude-crp";
     if (installed.includes("gemini")) return "gemini";
@@ -295,7 +296,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (installed.includes("goose")) return "goose";
     if (installed.includes("kimi")) return "kimi";
     if (installed.includes("auggie")) return "auggie";
-    return installed[0] ?? "codex-crp";
+    return installed[0] ?? "codex";
   }, [providers]);
 
   const [taskQuery, setTaskQuery] = useState("");
@@ -344,6 +345,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const copyTranscriptBusyRef = useRef(false);
   const transcriptSpinnerDelayRef = useRef<number>(spinnerDelayForNow());
   const [transcriptNotice, setTranscriptNotice] = useState<string | null>(null);
+  const [desktopStorageNotice, setDesktopStorageNotice] = useState<DesktopStorageNotice | null>(null);
 
   const getRenameDraft = useCallback((taskId: string, fallback: string) => {
     return renameDraftsRef.current.get(taskId) ?? fallback;
@@ -1297,6 +1299,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setTranscriptNotice(null);
   }, []);
 
+  const dismissDesktopStorageNotice = useCallback(() => {
+    setDesktopStorageNotice(null);
+  }, []);
+
   const archiveConfirmStyle = useMemo(() => {
     if (!archiveConfirm) return null;
     const rect = archiveConfirm.anchor;
@@ -1330,6 +1336,22 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         <div className="wb-snackbar-title">{transcriptNotice}</div>
       </div>
       <button type="button" className="wb-snackbar-close" onClick={dismissTranscriptNotice} aria-label="Dismiss">
+        <X size={14} aria-hidden="true" />
+      </button>
+    </div>
+  ) : null;
+
+  const desktopStorageNoticeSubtitle =
+    desktopStorageNotice?.reason === "schema_mismatch"
+      ? "Desktop detected an outdated local UI state format and reset local UI state."
+      : "Desktop detected invalid local UI state data and reset local UI state.";
+  const desktopStorageNoticeSnackbar = desktopStorageNotice ? (
+    <div className="wb-snackbar" role="status" aria-live="polite">
+      <div className="wb-snackbar-body">
+        <div className="wb-snackbar-title">Local UI state was reset.</div>
+        <div className="wb-snackbar-subtitle">{desktopStorageNoticeSubtitle}</div>
+      </div>
+      <button type="button" className="wb-snackbar-close" onClick={dismissDesktopStorageNotice} aria-label="Dismiss">
         <X size={14} aria-hidden="true" />
       </button>
     </div>
@@ -3303,6 +3325,21 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     };
   }, [desktopUi]);
 
+  useEffect(() => {
+    if (!desktopUi) return;
+    let cancelled = false;
+    desktopStorageConsumeNotice()
+      .then((notice) => {
+        if (!cancelled) {
+          setDesktopStorageNotice(notice);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopUi]);
+
   const useHtmlTopbar = !desktopUi || desktopPlatform !== "macos";
   const workspaceTitle = workspace?.name ?? "";
 
@@ -3382,6 +3419,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         <WorktreeBootstrapSnackbar />
         {archiveCleanupSnackbar}
         {transcriptNoticeSnackbar}
+        {desktopStorageNoticeSnackbar}
         {topbar}
         <div className="wb-main">
           <div className="wb-center">
@@ -3402,6 +3440,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       <WorktreeBootstrapSnackbar />
       {archiveCleanupSnackbar}
       {transcriptNoticeSnackbar}
+      {desktopStorageNoticeSnackbar}
       {topbar}
 
       <UpdateNoticeBanner />

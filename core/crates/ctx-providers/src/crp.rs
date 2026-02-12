@@ -110,7 +110,7 @@ impl Tier1CrpAdapter {
     }
 
     pub fn codex() -> Self {
-        Self::new("codex-crp", "codex-crp", vec![])
+        Self::new("codex", "codex", vec![])
     }
 
     pub fn claude() -> Self {
@@ -255,7 +255,7 @@ fn default_caps(id: &str) -> ProviderCapabilities {
         has_tool_call_ids: true,
         has_file_change_events: false,
         has_command_events: false,
-        supports_resume: matches!(id, "codex-crp"),
+        supports_resume: matches!(id, "codex"),
         supports_stable_session_id: true,
         supports_fork_or_rewind: false,
         supports_headless: true,

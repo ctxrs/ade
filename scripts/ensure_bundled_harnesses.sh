@@ -1139,13 +1139,13 @@ local_codex_crp_binary_path() {
 }
 
 if should_build_codex_crp; then
-  codex_crp_version="$(get_matrix_version "codex-crp")"
+  codex_crp_version="$(get_matrix_version "codex")"
   if [[ -z "$codex_crp_version" ]]; then
     codex_crp_version="local"
   fi
   codex_crp_bin="$(local_codex_crp_binary_path || true)"
   if [[ -n "$codex_crp_bin" && -f "$codex_crp_bin" ]]; then
-    add_local_provider "codex-crp" "local-bin" "$codex_crp_version" "$codex_crp_bin" "codex-crp$BIN_EXT" "[]"
+    add_local_provider "codex" "local-bin" "$codex_crp_version" "$codex_crp_bin" "codex-crp$BIN_EXT" "[]"
   else
     log "error: codex-crp build requested but source not available at $CODEX_CRP_WORKSPACE"
     exit 5

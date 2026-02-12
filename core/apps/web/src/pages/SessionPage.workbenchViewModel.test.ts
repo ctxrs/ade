@@ -4,7 +4,7 @@ vi.mock("react-syntax-highlighter", () => ({ Prism: () => null }));
 vi.mock("react-syntax-highlighter/dist/esm/styles/prism", () => ({ oneDark: {} }));
 
 describe("buildWorkbenchThreadViewModel", () => {
-  it("renders assistant streaming even when messages list is empty", async () => {
+  it("requires explicit degraded mode for events-only rendering", async () => {
     const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
 
     const events = [
@@ -28,10 +28,129 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const out = buildWorkbenchThreadViewModel([], [] as any, {}, events as any);
+    const strict = buildWorkbenchThreadViewModel([], [] as any, {}, events as any);
+    expect(strict.groups.length).toBe(0);
+
+    const degraded = buildWorkbenchThreadViewModel(
+      [],
+      [] as any,
+      {},
+      events as any,
+      undefined,
+      { mode: "events_only_degraded" },
+    );
+    expect(degraded.groups.length).toBe(1);
+    expect(degraded.groups[0]?.header?.content).toBe("hello");
+    expect(
+      degraded.groups[0]?.items.some((it: any) => it.kind === "assistant" && String(it.content).includes("Hi")),
+    ).toBe(true);
+  }, 10000);
+
+  it("does not infer user headers when turn.user_message_id is missing", async () => {
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+
+    const turns = [
+      {
+        turn_id: "t1",
+        session_id: "s1",
+        status: "running",
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        tool_total: 1,
+        tool_pending: 0,
+        tool_running: 1,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ];
+
+    const messages = [
+      {
+        id: "m1",
+        session_id: "s1",
+        role: "user",
+        content: "hello",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        turn_id: "t1",
+        turn_sequence: 1,
+      },
+    ];
+
+    const events = [
+      {
+        id: "e1",
+        session_id: "s1",
+        run_id: "r1",
+        turn_id: "t1",
+        event_type: "tool_call",
+        payload_json: { tool_call_id: "tool-1", title: "ls", order_seq: 2 },
+        created_at: "2025-12-15T00:00:01.000Z",
+      },
+    ];
+
+    const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
     expect(out.groups.length).toBe(1);
-    expect(out.groups[0]?.header?.content).toBe("hello");
-    expect(out.groups[0]?.items.some((it: any) => it.kind === "assistant" && String(it.content).includes("Hi"))).toBe(true);
+    expect(out.groups[0]?.header).toBeNull();
+  }, 10000);
+
+  it("skips turns without any stable order_seq anchor", async () => {
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+
+    const turns = [
+      {
+        turn_id: "t1",
+        session_id: "s1",
+        user_message_id: "m1",
+        status: "running",
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ];
+
+    const messages = [
+      {
+        id: "m1",
+        session_id: "s1",
+        role: "user",
+        content: "hello",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        turn_id: "t1",
+      },
+      {
+        id: "a1",
+        session_id: "s1",
+        role: "assistant",
+        content: "partial",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:01.000Z",
+        turn_id: "t1",
+      },
+    ];
+
+    const events = [
+      {
+        id: "e1",
+        session_id: "s1",
+        run_id: "r1",
+        turn_id: "t1",
+        event_type: "assistant_chunk",
+        payload_json: { content_fragment: "x" },
+        created_at: "2025-12-15T00:00:01.000Z",
+      },
+    ];
+
+    const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
+    expect(out.groups.length).toBe(0);
   }, 10000);
 
   it("interleaves tool + thought activity and appends a status row", async () => {
@@ -41,6 +160,7 @@ describe("buildWorkbenchThreadViewModel", () => {
       {
         turn_id: "t1",
         session_id: "s1",
+        user_message_id: "m1",
         status: "running",
         started_at: "2025-12-15T00:00:00.000Z",
         updated_at: "2025-12-15T00:00:05.000Z",
@@ -111,6 +231,7 @@ describe("buildWorkbenchThreadViewModel", () => {
       {
         turn_id: "t1",
         session_id: "s1",
+        user_message_id: "m1",
         status: "running",
         started_at: "2025-12-15T00:00:00.000Z",
         updated_at: "2025-12-15T00:00:05.000Z",
@@ -185,6 +306,7 @@ describe("buildWorkbenchThreadViewModel", () => {
       {
         turn_id: "t1",
         session_id: "s1",
+        user_message_id: "m1",
         status: "running",
         started_at: "2025-12-15T00:00:00.000Z",
         updated_at: "2025-12-15T00:00:05.000Z",
@@ -478,6 +600,7 @@ describe("buildWorkbenchThreadViewModel", () => {
       {
         turn_id: "t1",
         session_id: "s1",
+        user_message_id: "m1",
         status: "running",
         started_at: "2025-12-15T00:00:00.000Z",
         updated_at: "2025-12-15T00:00:05.000Z",
@@ -538,6 +661,7 @@ describe("buildWorkbenchThreadViewModel", () => {
       {
         turn_id: "t1",
         session_id: "s1",
+        user_message_id: "m1",
         status: "running",
         started_at: "2025-12-15T00:00:00.000Z",
         updated_at: "2025-12-15T00:00:02.000Z",
@@ -594,6 +718,30 @@ describe("buildWorkbenchThreadViewModel", () => {
     const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
     const statusItem = out.groups[0]?.items.find((it: any) => it.kind === "turn_status") as any;
     expect(statusItem?.custom_status).toBe("Searching alpha");
+  }, 10000);
+
+  it("normalizes context-window metrics from canonical keys only", async () => {
+    const { normalizeContextWindowMetrics } = await import("./SessionPage.workbenchViewModel");
+
+    const canonical = normalizeContextWindowMetrics({
+      context_tokens_estimate: 40,
+      context_window_tokens: 100,
+      remaining_tokens_estimate: 60,
+      remaining_fraction: 0.6,
+    });
+    expect(canonical).toEqual({
+      windowTokens: 100,
+      usedTokens: 40,
+      remainingTokens: 60,
+      remainingFraction: 0.6,
+    });
+
+    const legacy = normalizeContextWindowMetrics({
+      context_window: 100,
+      total_tokens: 40,
+      remaining_tokens: 60,
+    });
+    expect(legacy).toBeNull();
   }, 10000);
 
   it("produces a messagesKey that changes when message content changes with same length", async () => {

@@ -405,7 +405,6 @@ exports.config = {
       `[wdio] CTX_DESKTOP_SSH_NO_START_REMOTE=${String(process.env.CTX_DESKTOP_SSH_NO_START_REMOTE || "<unset>")} CTX_DESKTOP_SSH_START_REMOTE=${String(process.env.CTX_DESKTOP_SSH_START_REMOTE || "<unset>")}`,
     );
     if (REMOTE_CTX_BIN) {
-      process.env.CTX_DESKTOP_REMOTE_CTX_BIN = REMOTE_CTX_BIN;
       if (!SSH_NO_START_REMOTE) {
         const targets = [];
         if (process.env.CTX_AUTOMATION_REMOTE_HOST) {
@@ -435,8 +434,6 @@ exports.config = {
           });
         }
       }
-    } else {
-      delete process.env.CTX_DESKTOP_REMOTE_CTX_BIN;
     }
     if (USE_EXTERNAL_DAEMON) {
       delete process.env.CTX_DESKTOP_DAEMON_DATA_DIR;

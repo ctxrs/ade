@@ -10,6 +10,7 @@ export {
   resetDaemonConnection,
   daemonFetchRaw,
   idToString,
+  recordClientCounterMetric,
 } from "./clientBase";
 export type { DaemonRawResponse, DaemonClientConfig } from "./clientBase";
 export {

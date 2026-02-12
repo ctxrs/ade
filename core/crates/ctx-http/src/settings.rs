@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
-
+use anyhow::Context;
+use ctx_store::Store;
 use serde::{Deserialize, Serialize};
 
-const SETTINGS_FILE_NAME: &str = "settings.json";
+const SETTINGS_SCHEMA_VERSION: i64 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Settings {
@@ -113,10 +113,12 @@ impl Default for TitleGenerationLocalSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TitleGenerationSettings {
     pub mode: TitleGenerationMode,
+    #[serde(default)]
     pub remote: TitleGenerationRemoteSettings,
+    #[serde(default)]
     pub local: TitleGenerationLocalSettings,
 }
 
@@ -127,58 +129,6 @@ impl Default for TitleGenerationSettings {
             remote: TitleGenerationRemoteSettings::default(),
             local: TitleGenerationLocalSettings::default(),
         }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TitleGenerationSettingsLegacy {
-    pub base_url: String,
-    pub api_key: String,
-    pub model: String,
-    #[serde(default)]
-    pub use_json: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TitleGenerationSettingsSplit {
-    #[serde(default)]
-    pub mode: TitleGenerationMode,
-    #[serde(default)]
-    pub remote: TitleGenerationRemoteSettings,
-    #[serde(default)]
-    pub local: TitleGenerationLocalSettings,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-enum TitleGenerationSettingsWire {
-    Legacy(TitleGenerationSettingsLegacy),
-    Split(TitleGenerationSettingsSplit),
-}
-
-impl<'de> Deserialize<'de> for TitleGenerationSettings {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = TitleGenerationSettingsWire::deserialize(deserializer)?;
-        Ok(match wire {
-            TitleGenerationSettingsWire::Legacy(legacy) => TitleGenerationSettings {
-                mode: TitleGenerationMode::Remote,
-                remote: TitleGenerationRemoteSettings {
-                    base_url: legacy.base_url,
-                    api_key: legacy.api_key,
-                    model: legacy.model,
-                    use_json: legacy.use_json,
-                },
-                local: TitleGenerationLocalSettings::default(),
-            },
-            TitleGenerationSettingsWire::Split(split) => TitleGenerationSettings {
-                mode: split.mode,
-                remote: split.remote,
-                local: split.local,
-            },
-        })
     }
 }
 
@@ -899,62 +849,13 @@ pub struct UpdateTelemetrySettingsReq {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct UpdateTitleGenerationSettingsLegacy {
-    pub base_url: String,
-    pub api_key: String,
-    pub model: String,
-    #[serde(default)]
-    pub use_json: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct UpdateTitleGenerationSettingsSplit {
-    #[serde(default)]
-    pub mode: TitleGenerationMode,
-    #[serde(default)]
-    pub remote: TitleGenerationRemoteSettings,
-    #[serde(default)]
-    pub local: TitleGenerationLocalSettings,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-enum UpdateTitleGenerationSettingsWire {
-    Legacy(UpdateTitleGenerationSettingsLegacy),
-    Split(UpdateTitleGenerationSettingsSplit),
-}
-
-#[derive(Debug, Clone)]
 pub struct UpdateTitleGenerationSettingsReq {
+    #[serde(default)]
     pub mode: TitleGenerationMode,
+    #[serde(default)]
     pub remote: TitleGenerationRemoteSettings,
+    #[serde(default)]
     pub local: TitleGenerationLocalSettings,
-}
-
-impl<'de> Deserialize<'de> for UpdateTitleGenerationSettingsReq {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = UpdateTitleGenerationSettingsWire::deserialize(deserializer)?;
-        Ok(match wire {
-            UpdateTitleGenerationSettingsWire::Legacy(legacy) => UpdateTitleGenerationSettingsReq {
-                mode: TitleGenerationMode::Remote,
-                remote: TitleGenerationRemoteSettings {
-                    base_url: legacy.base_url,
-                    api_key: legacy.api_key,
-                    model: legacy.model,
-                    use_json: legacy.use_json,
-                },
-                local: TitleGenerationLocalSettings::default(),
-            },
-            UpdateTitleGenerationSettingsWire::Split(split) => UpdateTitleGenerationSettingsReq {
-                mode: split.mode,
-                remote: split.remote,
-                local: split.local,
-            },
-        })
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1040,15 +941,11 @@ pub struct UpdateExecutionSettingsReq {
     pub container: ContainerExecutionSettings,
 }
 
-fn settings_path(data_root: &Path) -> PathBuf {
-    data_root.join(SETTINGS_FILE_NAME)
-}
-
-pub async fn load_settings(data_root: &Path) -> Settings {
-    let path = settings_path(data_root);
-    let mut settings = match tokio::fs::read_to_string(&path).await {
-        Ok(s) => serde_json::from_str::<Settings>(&s).unwrap_or_default(),
-        Err(_) => Settings::default(),
+pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
+    let mut settings = match store.get_runtime_settings_document().await? {
+        Some(doc) => serde_json::from_str::<Settings>(&doc.settings_json)
+            .context("parsing runtime settings document")?,
+        None => Settings::default(),
     };
     if settings.resource_governance.is_none() {
         settings.resource_governance = Some(ResourceGovernanceSettings::default());
@@ -1261,15 +1158,14 @@ pub async fn load_settings(data_root: &Path) -> Settings {
         }
     }
 
-    settings
+    Ok(settings)
 }
 
-pub async fn save_settings(data_root: &Path, settings: &Settings) -> anyhow::Result<()> {
-    let path = settings_path(data_root);
-    let tmp = path.with_extension("json.tmp");
-    let bytes = serde_json::to_vec_pretty(settings)?;
-    tokio::fs::write(&tmp, bytes).await?;
-    tokio::fs::rename(&tmp, &path).await?;
+pub async fn save_settings(store: &Store, settings: &Settings) -> anyhow::Result<()> {
+    let settings_json = serde_json::to_string_pretty(settings)?;
+    store
+        .upsert_runtime_settings_document(SETTINGS_SCHEMA_VERSION, &settings_json)
+        .await?;
     Ok(())
 }
 

@@ -464,6 +464,25 @@ const recordClientApiError = (path: string, method: string, durationMs: number, 
   recordClientApiMetric(path, method, null, false, durationMs, runId);
 };
 
+export const recordClientCounterMetric = (
+  name: string,
+  labels: Record<string, string> = {},
+  value = 1,
+): void => {
+  if (!name.trim() || typeof window === "undefined") return;
+  queueClientTelemetry({
+    name,
+    kind: "counter",
+    unit: "count",
+    value,
+    run_id: getTelemetryRunId(),
+    labels: {
+      source: "client",
+      ...labels,
+    },
+  });
+};
+
 const flushClientTelemetry = async () => {
   if (!clientTelemetryQueue.length) return;
   const batch: ClientTelemetryBatch = { events: clientTelemetryQueue.splice(0) };

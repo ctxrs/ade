@@ -1,5 +1,6 @@
 import {
   idToString,
+  recordClientCounterMetric,
   type Message,
   type MessageAttachment,
   type SessionEvent,
@@ -22,6 +23,18 @@ type PendingMessageEntry = {
 };
 
 const devInvariantLogKeys = new Set<string>();
+const telemetryInvariantKeys = new Set<string>();
+
+function recordThreadInvariantCounter(reason: string, details: Record<string, string> = {}): void {
+  const key = `${reason}:${JSON.stringify(details)}`;
+  if (telemetryInvariantKeys.has(key)) return;
+  if (telemetryInvariantKeys.size > 500) telemetryInvariantKeys.clear();
+  telemetryInvariantKeys.add(key);
+  recordClientCounterMetric("workbench.thread.contract_violation_count", {
+    reason,
+    ...details,
+  });
+}
 
 function logViewModelInvariant(reason: string, details: Record<string, unknown>): void {
   if (!import.meta.env.DEV) return;
@@ -536,46 +549,25 @@ function coerceNumber(value: unknown): number | null {
   return null;
 }
 
+function readMessageOrderSeq(message: any): number {
+  const raw = message?.order_seq ?? message?.turn_sequence;
+  return Number(raw ?? Number.NaN);
+}
+
 export function normalizeContextWindowMetrics(metrics: any): ContextWindowInfo | null {
   if (!metrics || typeof metrics !== "object") return null;
-  const windowTokens =
-    coerceNumber(metrics.context_window_tokens) ??
-    coerceNumber(metrics.context_window_size) ??
-    coerceNumber(metrics.context_window) ??
-    coerceNumber(metrics.context_size) ??
-    coerceNumber(metrics.window_tokens) ??
-    coerceNumber(metrics.max_context_tokens) ??
-    coerceNumber(metrics.max_tokens);
+  const windowTokens = coerceNumber(metrics.context_window_tokens);
   if (!windowTokens || windowTokens <= 0) return null;
 
-  const inputTokens =
-    coerceNumber(metrics.total_input_tokens) ??
-    coerceNumber(metrics.input_tokens) ??
-    coerceNumber(metrics.prompt_tokens) ??
-    coerceNumber(metrics.input);
-  const outputTokens =
-    coerceNumber(metrics.total_output_tokens) ??
-    coerceNumber(metrics.output_tokens) ??
-    coerceNumber(metrics.completion_tokens) ??
-    coerceNumber(metrics.output);
-  const contextTokensEstimate =
-    coerceNumber(metrics.context_tokens_estimate) ??
-    coerceNumber(metrics.context_tokens);
+  const contextTokensEstimate = coerceNumber(metrics.context_tokens_estimate);
 
   let usedTokens: number | null = null;
-  if (inputTokens != null || outputTokens != null) {
-    usedTokens = (inputTokens ?? 0) + (outputTokens ?? 0);
-  } else if (contextTokensEstimate != null) {
+  if (contextTokensEstimate != null) {
     usedTokens = contextTokensEstimate;
   }
 
-  let remainingTokens =
-    coerceNumber(metrics.remaining_tokens_estimate) ??
-    coerceNumber(metrics.remaining_tokens);
-  let remainingFraction =
-    coerceNumber(metrics.remaining_fraction) ??
-    coerceNumber(metrics.remaining_pct) ??
-    coerceNumber(metrics.remaining_percent);
+  let remainingTokens = coerceNumber(metrics.remaining_tokens_estimate);
+  let remainingFraction = coerceNumber(metrics.remaining_fraction);
 
   if (remainingFraction != null && remainingFraction > 1) {
     remainingFraction = remainingFraction <= 100 ? remainingFraction / 100 : null;
@@ -860,13 +852,20 @@ export function buildWorkbenchThreadViewModel(
   toolsByTurnId: Record<string, SessionTurnTool[]>,
   events: SessionEvent[],
   askUserQuestionAnswers?: Map<string, AskUserQuestionAnswerState>,
+  options?: {
+    mode?: "managed" | "events_only_degraded";
+  },
 ): WorkbenchThreadView {
   const answers =
     askUserQuestionAnswers ?? collectAskUserQuestionAnswers(events, {});
   if (turns.length > 0) {
     return buildWorkbenchThreadViewModelFromTurns(turns, messages, toolsByTurnId, events, answers);
   }
-  return buildWorkbenchThreadViewModelFromEvents(events, messages, answers);
+  if (options?.mode === "events_only_degraded") {
+    return buildWorkbenchThreadViewModelFromEvents(events, messages, answers);
+  }
+  recordThreadInvariantCounter("managed_no_turns");
+  return { groups: mergeGroupsWithSystemMessages([], messages), debugEvents: [] };
 }
 
 function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
@@ -1185,10 +1184,10 @@ export function buildWorkbenchThreadViewModelFromTurns(
     }
     const userMessageId = turn.user_message_id ? idToString(turn.user_message_id) : "";
 
-    const turnMessages = messagesByTurnId.get(turnId) ?? [];
-    const fallbackUserMessage =
-      !userMessageId ? turnMessages.find((m) => m.role === "user") : undefined;
-    const userMessage = userMessageId ? messageById.get(userMessageId) : fallbackUserMessage;
+    const userMessage = userMessageId ? messageById.get(userMessageId) : undefined;
+    if (userMessageId && !userMessage) {
+      recordThreadInvariantCounter("missing_user_message_anchor", { turn_id: turnId });
+    }
     const headerId = turnId;
 
     const header: WorkbenchTurnHeader | null = userMessage
@@ -1201,7 +1200,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
         created_at: userMessage.created_at,
       }
       : null;
-    const headerOrderSeq = Number(userMessage?.turn_sequence ?? Number.NaN);
+    const headerOrderSeq = readMessageOrderSeq(userMessage);
 
     let tools = (toolsByTurnId[turnId] ?? []).map((tool) => {
       const toolKind = String(tool.tool_kind ?? "tool");
@@ -1241,8 +1240,8 @@ export function buildWorkbenchThreadViewModelFromTurns(
       .filter((m) => m.role === "assistant")
       .slice()
       .sort((a, b) => {
-        const sa = Number(a.turn_sequence ?? Number.NaN);
-        const sb = Number(b.turn_sequence ?? Number.NaN);
+        const sa = readMessageOrderSeq(a);
+        const sb = readMessageOrderSeq(b);
         if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
         if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
         if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
@@ -1259,7 +1258,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
 
     const timeline: TimelineEntry[] = [];
     for (const m of assistantMessages) {
-      const orderSeq = Number(m.turn_sequence ?? Number.NaN);
+      const orderSeq = readMessageOrderSeq(m);
       if (!Number.isFinite(orderSeq)) continue;
       const messageId = idToString(m.id);
       if (!messageId) {
@@ -1269,6 +1268,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
           console.error("[WorkbenchThreadViewModel] assistant message missing id", {
             turnId,
             created_at: m.created_at,
+            order_seq: (m as any).order_seq ?? null,
             turn_sequence: m.turn_sequence ?? null,
           });
         }
@@ -1287,7 +1287,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
         },
         created_at: m.created_at,
         kind: "assistant",
-        turn_sequence: Number(m.turn_sequence ?? Number.NaN),
+        turn_sequence: orderSeq as number,
         order_seq: orderSeq as number,
       });
     }
@@ -1392,17 +1392,15 @@ export function buildWorkbenchThreadViewModelFromTurns(
         ? Math.min(...timelineOrderSeq)
         : Number.NaN;
     if (!Number.isFinite(groupOrderSeq)) {
-      // Optimistic turns can be created before the daemon assigns `order_seq` fields.
-      // Still show the turn immediately (for no-jank optimistic UX) by falling back to
-      // a stable monotonic-ish value derived from timestamps.
-      const fallbackAt = header?.created_at ?? turn.started_at ?? "";
-      const parsed = Date.parse(String(fallbackAt));
-      const fallbackOrder = Number.isFinite(parsed) ? parsed : Number.NaN;
-      if (!Number.isFinite(fallbackOrder)) continue;
-      groups.push({
-        sort_seq: fallbackOrder as number,
-        group: { key: `turn-${turnId}`, header, items },
-      });
+      recordThreadInvariantCounter("missing_order_seq_anchor", { turn_id: turnId });
+      if (import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.error("[WorkbenchThreadViewModel] turn missing order_seq anchor", {
+          turn_id: turnId,
+          user_message_id: userMessageId || null,
+          status: turn.status ?? null,
+        });
+      }
       continue;
     }
     groups.push({

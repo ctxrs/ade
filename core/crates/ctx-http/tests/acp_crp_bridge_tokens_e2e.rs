@@ -3,7 +3,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde::Deserialize;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
@@ -135,18 +134,6 @@ const PROVIDERS: &[ProviderSpec] = &[
         opencode_config: false,
     },
 ];
-
-#[derive(Deserialize)]
-struct TitleGenSettings {
-    api_key: String,
-    #[serde(default)]
-    base_url: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct SettingsFile {
-    title_generation: Option<TitleGenSettings>,
-}
 
 async fn run_git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -289,15 +276,27 @@ fn ensure_cagent_config(data_root: &Path) -> Option<PathBuf> {
     Some(cfg_path)
 }
 
-fn load_openrouter_settings(data_root: &Path) -> Option<(String, String)> {
-    let settings_path = data_root.join("settings.json");
-    let raw = std::fs::read_to_string(settings_path).ok()?;
-    let parsed: SettingsFile = serde_json::from_str(&raw).ok()?;
-    let title = parsed.title_generation?;
-    let base_url = title
-        .base_url
-        .unwrap_or_else(|| DEFAULT_OPENROUTER_BASE_URL.to_string());
-    Some((title.api_key, base_url))
+async fn load_openrouter_settings(data_root: &Path) -> Option<(String, String)> {
+    let db_path = data_root.join("db").join("db.sqlite");
+    let store = ctx_store::Store::open_sqlite(&db_path, None).await.ok()?;
+    let settings = ctx_http::settings::load_settings(&store).await.ok();
+    store.close().await;
+
+    let settings = settings?;
+    let title = settings.title_generation?;
+    if !matches!(title.mode, ctx_http::settings::TitleGenerationMode::Remote) {
+        return None;
+    }
+    let api_key = title.remote.api_key.trim().to_string();
+    if api_key.is_empty() {
+        return None;
+    }
+    let base_url = if title.remote.base_url.trim().is_empty() {
+        DEFAULT_OPENROUTER_BASE_URL.to_string()
+    } else {
+        title.remote.base_url
+    };
+    Some((api_key, base_url))
 }
 
 fn escape_shell_arg(value: &str) -> String {
@@ -698,11 +697,11 @@ async fn acp_crp_bridge_token_providers() {
         std::env::var("OPENROUTER_BASE_URL").ok(),
     ) {
         (Some(key), Some(base_url)) => (key, base_url),
-        _ => match load_openrouter_settings(&data_root) {
+        _ => match load_openrouter_settings(&data_root).await {
             Some(creds) => creds,
             None => {
                 eprintln!(
-                    "skipping token tests; missing OpenRouter credentials (set OPENROUTER_API_KEY/OPENROUTER_BASE_URL or configure title_generation in settings.json)"
+                    "skipping token tests; missing OpenRouter credentials (set OPENROUTER_API_KEY/OPENROUTER_BASE_URL or configure daemon title_generation settings)"
                 );
                 return;
             }

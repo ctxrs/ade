@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,23 +20,30 @@ const MERGE_QUEUE_CONFLICT_MESSAGE: &str = concat!(
 );
 
 async fn write_merge_queue_config(
-    root: &Path,
+    store: &ctx_store::Store,
     target_branch: &str,
     canonical_sync: &str,
-) -> PathBuf {
-    let ctx_dir = root.join(".ctx");
-    tokio::fs::create_dir_all(&ctx_dir).await.unwrap();
-    let config_path = ctx_dir.join("config.toml");
-    let config = format!(
-        "[merge_queue]\n\
-enabled = true\n\
-target_branch = \"{target_branch}\"\n\
-verify_commands = [\"true\"]\n\
-push_on_success = false\n\
-canonical_sync = \"{canonical_sync}\"\n"
-    );
-    tokio::fs::write(&config_path, config).await.unwrap();
-    config_path
+) {
+    let canonical_sync = match canonical_sync {
+        "never" => ctx_http::workspace_config::MergeQueueCanonicalSync::Never,
+        "clean_only" => ctx_http::workspace_config::MergeQueueCanonicalSync::CleanOnly,
+        "force" => ctx_http::workspace_config::MergeQueueCanonicalSync::Force,
+        _ => panic!("unsupported canonical sync mode: {canonical_sync}"),
+    };
+    ctx_http::workspace_config::update_merge_queue_config(
+        store,
+        ctx_http::workspace_config::MergeQueueConfigUpdate {
+            enabled: true,
+            target_branch: Some(target_branch.to_string()),
+            verify_commands: vec!["true".to_string()],
+            push_on_success: Some(false),
+            push_remote: None,
+            push_branch: None,
+            canonical_sync: Some(canonical_sync),
+        },
+    )
+    .await
+    .unwrap();
 }
 
 async fn append_file(path: &Path, text: &str) {
@@ -93,13 +100,10 @@ async fn wait_for_entry(state: &Arc<AppState>, entry_id: MergeQueueEntryId) -> M
 
 #[tokio::test]
 async fn merge_queue_accepts_unrebased_changes() {
-    let repo = common::init_git_repo(&[
-        ("note.txt", "base\n"),
-        (".gitignore", ".ctx/merge-queue\n.ctx/config.toml\n"),
-    ])
-    .await;
+    let repo =
+        common::init_git_repo(&[("note.txt", "base\n"), (".gitignore", ".ctx/merge-queue\n")])
+            .await;
     let target_branch = git_output(repo.path(), &["rev-parse", "--abbrev-ref", "HEAD"]).await;
-    write_merge_queue_config(repo.path(), &target_branch, "never").await;
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
@@ -113,6 +117,8 @@ async fn merge_queue_accepts_unrebased_changes() {
     merge_queue::spawn_merge_queue_runner(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-unrebased").await;
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    write_merge_queue_config(&store, &target_branch, "never").await;
 
     let worktree_root = tempfile::tempdir().unwrap();
     let feature_path = worktree_root.path().join("feature");
@@ -137,7 +143,6 @@ async fn merge_queue_accepts_unrebased_changes() {
     common::run_git(repo.path(), &["commit", "-m", "target"]).await;
 
     let feature_head = git_output(&feature_path, &["rev-parse", "HEAD"]).await;
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
     let worktree = store
         .create_worktree(
             workspace.id,
@@ -173,13 +178,10 @@ async fn merge_queue_accepts_unrebased_changes() {
 
 #[tokio::test]
 async fn merge_queue_conflict_message_and_cleanup() {
-    let repo = common::init_git_repo(&[
-        ("note.txt", "base\n"),
-        (".gitignore", ".ctx/merge-queue\n.ctx/config.toml\n"),
-    ])
-    .await;
+    let repo =
+        common::init_git_repo(&[("note.txt", "base\n"), (".gitignore", ".ctx/merge-queue\n")])
+            .await;
     let target_branch = git_output(repo.path(), &["rev-parse", "--abbrev-ref", "HEAD"]).await;
-    write_merge_queue_config(repo.path(), &target_branch, "never").await;
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
@@ -193,6 +195,8 @@ async fn merge_queue_conflict_message_and_cleanup() {
     merge_queue::spawn_merge_queue_runner(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-conflict").await;
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    write_merge_queue_config(&store, &target_branch, "never").await;
 
     let worktree_root = tempfile::tempdir().unwrap();
     let feature_path = worktree_root.path().join("feature");
@@ -221,7 +225,6 @@ async fn merge_queue_conflict_message_and_cleanup() {
     common::run_git(repo.path(), &["commit", "-m", "target"]).await;
 
     let feature_head = git_output(&feature_path, &["rev-parse", "HEAD"]).await;
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
     let worktree = store
         .create_worktree(
             workspace.id,
@@ -282,13 +285,10 @@ async fn merge_queue_conflict_message_and_cleanup() {
 
 #[tokio::test]
 async fn merge_queue_isolation_and_canonical_sync() {
-    let repo = common::init_git_repo(&[
-        ("note.txt", "base\n"),
-        (".gitignore", ".ctx/merge-queue\n.ctx/config.toml\n"),
-    ])
-    .await;
+    let repo =
+        common::init_git_repo(&[("note.txt", "base\n"), (".gitignore", ".ctx/merge-queue\n")])
+            .await;
     let target_branch = git_output(repo.path(), &["rev-parse", "--abbrev-ref", "HEAD"]).await;
-    write_merge_queue_config(repo.path(), &target_branch, "never").await;
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
@@ -302,6 +302,8 @@ async fn merge_queue_isolation_and_canonical_sync() {
     merge_queue::spawn_merge_queue_runner(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-test").await;
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    write_merge_queue_config(&store, &target_branch, "never").await;
 
     let worktree_root = tempfile::tempdir().unwrap();
     let feature1_path = worktree_root.path().join("feature-1");
@@ -323,7 +325,6 @@ async fn merge_queue_isolation_and_canonical_sync() {
 
     let base_head = git_output(repo.path(), &["rev-parse", "HEAD"]).await;
     let feature_head = git_output(&feature1_path, &["rev-parse", "HEAD"]).await;
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
     let worktree1 = store
         .create_worktree(
             workspace.id,
@@ -385,7 +386,7 @@ async fn merge_queue_isolation_and_canonical_sync() {
     )
     .await;
 
-    write_merge_queue_config(repo.path(), &target_branch, "clean_only").await;
+    write_merge_queue_config(&store, &target_branch, "clean_only").await;
     append_file(&feature2_path.join("note.txt"), "mq-2\n").await;
     common::run_git(&feature2_path, &["add", "note.txt"]).await;
     common::run_git(&feature2_path, &["commit", "-m", "mq-2"]).await;
@@ -488,13 +489,10 @@ async fn merge_queue_isolation_and_canonical_sync() {
 
 #[tokio::test]
 async fn merge_queue_submit_uses_worktree_root() {
-    let repo = common::init_git_repo(&[
-        ("note.txt", "base\n"),
-        (".gitignore", ".ctx/merge-queue\n.ctx/config.toml\n"),
-    ])
-    .await;
+    let repo =
+        common::init_git_repo(&[("note.txt", "base\n"), (".gitignore", ".ctx/merge-queue\n")])
+            .await;
     let target_branch = git_output(repo.path(), &["rev-parse", "--abbrev-ref", "HEAD"]).await;
-    write_merge_queue_config(repo.path(), &target_branch, "never").await;
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
@@ -508,6 +506,8 @@ async fn merge_queue_submit_uses_worktree_root() {
     merge_queue::spawn_merge_queue_runner(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-root").await;
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    write_merge_queue_config(&store, &target_branch, "never").await;
     let task = common::create_task(&app, workspace.id.0, "mq-root").await;
     let session = common::create_session(&app, task.id.0, "fake", "fake").await;
 
@@ -551,7 +551,6 @@ async fn merge_queue_submit_uses_worktree_root() {
     );
 
     let worktree_id = entry.worktree_id.expect("worktree id missing");
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
     let worktree = store.get_worktree(worktree_id).await.unwrap().unwrap();
     assert_eq!(worktree.root_path, worktree_root_str);
 }

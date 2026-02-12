@@ -483,9 +483,7 @@ async fn ensure_workspace_container_for_attachments(
     state: &AppState,
     workspace: &Workspace,
 ) -> Result<String> {
-    let ws_root = Path::new(&workspace.root_path);
-    let effective =
-        execution_effective::effective_execution_settings(&state.core.data_root, ws_root).await;
+    let effective = execution_effective::effective_execution_settings(state, workspace.id).await?;
     state
         .execution
         .harness

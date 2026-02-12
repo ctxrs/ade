@@ -89,7 +89,8 @@ pub async fn submit_merge_queue_entry(
     .await?;
     let workspace = context.workspace;
     let mut worktree = context.worktree;
-    let config = load_merge_queue_config(Path::new(&workspace.root_path)).await?;
+    let workspace_store = state.store_for_workspace(workspace.id).await?;
+    let config = load_merge_queue_config(&workspace_store).await?;
     if !config.enabled {
         bail!("merge queue is disabled for this workspace");
     }
@@ -156,13 +157,12 @@ pub async fn submit_merge_queue_entry(
             bootstrap_error: None,
             bootstrap_log_path: None,
             bootstrap_log_truncated: None,
-            bootstrap_config_path: None,
-            bootstrap_config_key: None,
             bootstrap_command: None,
             bootstrap_script_path: None,
         };
-        let store = state.store_for_workspace(workspace.id).await?;
-        store.insert_worktree(worktree_record.clone()).await?;
+        workspace_store
+            .insert_worktree(worktree_record.clone())
+            .await?;
         if let Err(err) = state
             .global_store()
             .upsert_workspace_worktree_index(worktree_id, workspace.id)
@@ -205,8 +205,7 @@ pub async fn submit_merge_queue_entry(
         created_at: now,
         updated_at: now,
     };
-    let store = state.store_for_workspace(workspace.id).await?;
-    store.create_merge_queue_entry(&entry).await?;
+    workspace_store.create_merge_queue_entry(&entry).await?;
     state.transport.merge_queue_notify.notify_one();
     let entry = wait_for_merge_queue_completion(state, entry.id).await?;
     ensure_merge_queue_success(&entry)?;
@@ -283,7 +282,7 @@ async fn run_next_entry(state: &Arc<AppState>) -> Result<bool> {
             None => continue,
         };
         let store = state.store_for_workspace(workspace.id).await?;
-        let cfg = load_merge_queue_config(Path::new(&workspace.root_path)).await?;
+        let cfg = load_merge_queue_config(&store).await?;
         if !cfg.enabled {
             continue;
         }

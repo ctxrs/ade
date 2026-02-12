@@ -67,7 +67,7 @@ fn provider_mode_id_for(
 ) -> Option<&'static str> {
     match control_mode {
         ProviderControlMode::Full => match provider_id {
-            "codex" | "codex-crp" => Some("full-access"),
+            "codex" => Some("full-access"),
             "claude-crp" => Some("bypassPermissions"),
             _ => None,
         },
@@ -527,7 +527,7 @@ async fn start_turn(
     provider_env.insert("CTX_MODEL_ID".to_string(), session.model_id.clone());
     let mcp_token = uuid::Uuid::new_v4().to_string();
     provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
-    let settings = settings::load_settings(&state.core.data_root).await;
+    let settings = settings::load_settings(state.global_store()).await?;
     let provider_control_mode = settings
         .sandboxing
         .as_ref()
@@ -568,11 +568,7 @@ async fn start_turn(
         }
     };
     let mut execution_settings = settings.execution.clone().unwrap_or_default();
-    match workspace_config::load_execution_settings_override(std::path::Path::new(
-        &workspace.root_path,
-    ))
-    .await
-    {
+    match workspace_config::load_execution_settings_override(&store).await {
         Ok(Some(ov)) => {
             workspace_config::apply_execution_settings_override(&mut execution_settings, &ov)
         }
@@ -603,9 +599,7 @@ async fn start_turn(
     for (key, value) in runtime_plan.env_overrides.iter() {
         provider_env.insert(key.clone(), value.clone());
     }
-    if (session.provider_id == "codex" || session.provider_id == "codex-crp")
-        && !provider_env.contains_key("CODEX_HOME")
-    {
+    if session.provider_id == "codex" && !provider_env.contains_key("CODEX_HOME") {
         if is_container {
             // Container runtimes must not rely on the host's ~/.codex directory being available.
             // We always use the ctx-managed runtime home under the container's CTX_DATA_ROOT.
@@ -628,7 +622,7 @@ async fn start_turn(
             }
         }
     }
-    if session.provider_id == "codex" || session.provider_id == "codex-crp" {
+    if session.provider_id == "codex" {
         let codex_home = provider_env
             .get("CODEX_HOME")
             .cloned()
@@ -664,16 +658,14 @@ async fn start_turn(
         }
     }
 
-    let prompt_config = workspace_config::load_agent_system_prompt_append(workdir)
+    let prompt_config = workspace_config::load_agent_system_prompt_append(&store)
         .await
-        .unwrap_or_else(|_| workspace_config::AgentSystemPromptAppendConfig::new_default(workdir));
+        .unwrap_or_else(|_| workspace_config::AgentSystemPromptAppendConfig::new_default());
     let mut system_prompt_append = prompt_config.effective_append();
     if session.relationship.as_deref() == Some("sub_agent") {
-        let subagent_config = workspace_config::load_subagent_system_prompt_append(workdir)
+        let subagent_config = workspace_config::load_subagent_system_prompt_append(&store)
             .await
-            .unwrap_or_else(|_| {
-                workspace_config::SubagentSystemPromptAppendConfig::new_default(workdir)
-            });
+            .unwrap_or_else(|_| workspace_config::SubagentSystemPromptAppendConfig::new_default());
         if let Some(subagent_append) = subagent_config.effective_append() {
             system_prompt_append = Some(match system_prompt_append {
                 Some(mut append) => {
@@ -849,10 +841,17 @@ async fn start_turn(
                     .await;
             }
             if matches!(ev.event_type, SessionEventType::Init) {
-                let provider_session_id = payload
-                    .get("provider_session_id")
-                    .or_else(|| payload.get("crp_session_id"))
-                    .and_then(Value::as_str);
+                if payload.get("crp_session_id").is_some() {
+                    state_for_events
+                        .emit_compat_payload_reject_counter(
+                            "scheduler.init_event",
+                            "crp_session_id",
+                            None,
+                        )
+                        .await;
+                }
+                let provider_session_id =
+                    payload.get("provider_session_id").and_then(Value::as_str);
                 if let Some(ps) = provider_session_id {
                     provider_session_ref = Some(ps.to_string());
                     let _ = store
@@ -877,7 +876,7 @@ async fn start_turn(
             if matches!(ev.event_type, SessionEventType::Done) {
                 if let Some(obj) = payload.as_object_mut() {
                     if obj.get("context_window").is_none() {
-                        let metrics = if provider_id == "codex" || provider_id == "codex-crp" {
+                        let metrics = if provider_id == "codex" {
                             provider_session_ref
                                 .as_deref()
                                 .and_then(read_codex_context_window_metrics)

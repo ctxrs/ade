@@ -102,11 +102,9 @@ async fn list_container_worktree_files(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let settings = execution_effective::effective_execution_settings(
-        &state.core.data_root,
-        std::path::Path::new(&workspace.root_path),
-    )
-    .await;
+    let settings = execution_effective::effective_execution_settings(state, workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     state
         .execution
         .harness

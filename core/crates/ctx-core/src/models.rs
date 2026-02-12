@@ -111,10 +111,6 @@ pub struct Worktree {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bootstrap_log_truncated: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bootstrap_config_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bootstrap_config_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bootstrap_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bootstrap_script_path: Option<String>,
@@ -965,10 +961,6 @@ pub struct WorktreeBootstrapNotice {
     pub exit_code: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_sec: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

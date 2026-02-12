@@ -37,7 +37,6 @@ export type HarnessCatalogEntry = {
 export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "claude-crp", label: "Claude Code", logoSrc: claudeLogo },
   { id: "codex", label: "Codex", logoSrc: codexLogo, invertInDark: true },
-  { id: "codex-crp", label: "Codex", logoSrc: codexLogo, invertInDark: true },
   { id: "qwen", label: "Qwen Code", logoSrc: qwenLogo },
   { id: "cursor", label: "Cursor", logoSrc: cursorLogo, invertInDark: true },
   { id: "amp", label: "Amp", logoSrc: ampLogo },

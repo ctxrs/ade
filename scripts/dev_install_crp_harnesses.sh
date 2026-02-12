@@ -58,7 +58,7 @@ managed = payload.get("managed_installs")
 if not isinstance(managed, dict):
     managed = {}
 
-providers["codex-crp"] = {
+providers["codex"] = {
     "command": codex_bin,
     "args": [],
     "dependencies": [],

@@ -10,6 +10,7 @@ use tokio::sync::{broadcast, Mutex};
 
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::Workspace;
+use ctx_store::Store;
 
 use crate::harness_runtime::{
     self, HarnessRuntimeManager, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
@@ -92,9 +93,10 @@ pub enum ExecutionLaunchStreamEvent {
     },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum StartupPrewarmState {
+    #[default]
     Idle,
     Running,
     Ready,
@@ -102,7 +104,7 @@ pub enum StartupPrewarmState {
     Skipped,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StartupPrewarmSnapshot {
     pub state: StartupPrewarmState,
     pub target_image: String,
@@ -119,40 +121,12 @@ pub struct StartupPrewarmSnapshot {
     pub error: Option<String>,
 }
 
-impl Default for StartupPrewarmSnapshot {
-    fn default() -> Self {
-        Self {
-            state: StartupPrewarmState::Idle,
-            target_image: String::new(),
-            needs_prewarm: false,
-            machine_ready: false,
-            image_present: false,
-            image_ref_changed: false,
-            bundled_image_digest_changed: false,
-            last_attempt_at: None,
-            last_success_at: None,
-            error: None,
-        }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct CoordinatorState {
     launch_jobs: HashMap<String, Arc<LaunchJob>>,
     launch_history: VecDeque<String>,
     running_launch_by_workspace: HashMap<WorkspaceId, String>,
     startup: StartupPrewarmSnapshot,
-}
-
-impl Default for CoordinatorState {
-    fn default() -> Self {
-        Self {
-            launch_jobs: HashMap::new(),
-            launch_history: VecDeque::new(),
-            running_launch_by_workspace: HashMap::new(),
-            startup: StartupPrewarmSnapshot::default(),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -666,10 +640,59 @@ impl ExecutionSetupCoordinator {
     }
 
     async fn run_startup_prewarm(&self) {
-        let settings = crate::settings::load_settings(&self.data_root).await;
+        let attempted_at = format_ts(Utc::now());
+        let db_path = self.data_root.join("db").join("db.sqlite");
+        let settings = match Store::open_sqlite(&db_path, None).await {
+            Ok(store) => {
+                let loaded = crate::settings::load_settings(&store).await;
+                store.close().await;
+                match loaded {
+                    Ok(settings) => settings,
+                    Err(err) => {
+                        let message = format!("failed to load execution settings: {err:#}");
+                        let snapshot = StartupPrewarmSnapshot {
+                            state: StartupPrewarmState::Error,
+                            target_image: String::new(),
+                            needs_prewarm: false,
+                            machine_ready: false,
+                            image_present: false,
+                            image_ref_changed: false,
+                            bundled_image_digest_changed: false,
+                            last_attempt_at: Some(attempted_at.clone()),
+                            last_success_at: None,
+                            error: Some(message.clone()),
+                        };
+                        self.set_startup_snapshot(snapshot).await;
+                        let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
+                        event.meta = Some(json!({"error": message}));
+                        self.ops_events.emit(event);
+                        return;
+                    }
+                }
+            }
+            Err(err) => {
+                let message = format!("failed to open global settings store: {err:#}");
+                let snapshot = StartupPrewarmSnapshot {
+                    state: StartupPrewarmState::Error,
+                    target_image: String::new(),
+                    needs_prewarm: false,
+                    machine_ready: false,
+                    image_present: false,
+                    image_ref_changed: false,
+                    bundled_image_digest_changed: false,
+                    last_attempt_at: Some(attempted_at.clone()),
+                    last_success_at: None,
+                    error: Some(message.clone()),
+                };
+                self.set_startup_snapshot(snapshot).await;
+                let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
+                event.meta = Some(json!({"error": message}));
+                self.ops_events.emit(event);
+                return;
+            }
+        };
         let exec = settings.execution.unwrap_or_default();
         let image = harness_runtime::resolve_container_image(&exec.container);
-        let attempted_at = format_ts(Utc::now());
 
         if !harness_runtime::container_runtime_available() {
             let snapshot = StartupPrewarmSnapshot {
@@ -1010,8 +1033,10 @@ mod tests {
         let data_dir = tempfile::tempdir().expect("tempdir");
         let coordinator = test_coordinator(data_dir.path().to_path_buf());
         let workspace = test_workspace(WorkspaceId::new());
-        let mut settings = ExecutionSettings::default();
-        settings.mode = ExecutionMode::Container;
+        let settings = ExecutionSettings {
+            mode: ExecutionMode::Container,
+            ..ExecutionSettings::default()
+        };
 
         let barrier = Arc::new(Barrier::new(3));
 

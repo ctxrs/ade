@@ -210,6 +210,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route("/api/updates/appimage/apply", post(apply_appimage_update))
         .route("/api/providers", get(list_providers))
+        .route(
+            "/api/providers/matrix/refresh",
+            post(refresh_provider_matrix),
+        )
         .route("/api/providers/install_all", post(install_all_providers))
         .route("/api/providers/:id", get(get_provider))
         .route("/api/providers/:id/usage", get(get_provider_usage))
@@ -1524,11 +1528,9 @@ async fn ensure_harness_container_for_workspace(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let settings = crate::execution_effective::effective_execution_settings(
-        &state.core.data_root,
-        std::path::Path::new(&workspace.root_path),
-    )
-    .await;
+    let settings = crate::execution_effective::effective_execution_settings(state, workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     state
         .execution
         .harness

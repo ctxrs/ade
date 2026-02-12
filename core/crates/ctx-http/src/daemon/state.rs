@@ -536,6 +536,54 @@ impl AppState {
             .await;
     }
 
+    pub(crate) async fn emit_compat_payload_reject_counter(
+        &self,
+        surface: &str,
+        issue: &str,
+        extra_label: Option<(&str, &str)>,
+    ) {
+        let mut labels = HashMap::new();
+        labels.insert("source".to_string(), "daemon".to_string());
+        labels.insert("surface".to_string(), surface.to_string());
+        labels.insert("issue".to_string(), issue.to_string());
+        if let Some((key, value)) = extra_label {
+            labels.insert(key.to_string(), value.to_string());
+        }
+        self.emit_counter_metric("compat.payload_reject_count", labels)
+            .await;
+    }
+
+    pub(crate) async fn emit_product_fallback_applied_counter(
+        &self,
+        surface: &str,
+        fallback: &str,
+        extra_label: Option<(&str, &str)>,
+    ) {
+        let mut labels = HashMap::new();
+        labels.insert("source".to_string(), "daemon".to_string());
+        labels.insert("surface".to_string(), surface.to_string());
+        labels.insert("fallback".to_string(), fallback.to_string());
+        if let Some((key, value)) = extra_label {
+            labels.insert(key.to_string(), value.to_string());
+        }
+        self.emit_counter_metric("product.fallback_applied_count", labels)
+            .await;
+    }
+
+    async fn emit_counter_metric(&self, name: &str, labels: HashMap<String, String>) {
+        let metric = PerfMetric {
+            name: name.to_string(),
+            kind: PerfMetricKind::Counter,
+            unit: "count".to_string(),
+            value: 1.0,
+            labels,
+        };
+        self.telemetry
+            .perf_telemetry
+            .record_metric(metric, None, None, None)
+            .await;
+    }
+
     pub async fn sweep_idle_caches(
         &self,
         now: Instant,
@@ -852,12 +900,9 @@ impl AppState {
     }
 
     pub async fn find_running_install(&self, provider_id: &str) -> Option<InstallId> {
-        let canonical = crate::installer::canonical_managed_provider_id(provider_id);
         let map = self.providers.installs.lock().await;
         map.iter().find_map(|(id, st)| {
-            if (st.provider_id == provider_id || st.provider_id == canonical)
-                && matches!(st.state, InstallStateKind::Running)
-            {
+            if st.provider_id == provider_id && matches!(st.state, InstallStateKind::Running) {
                 Some(*id)
             } else {
                 None

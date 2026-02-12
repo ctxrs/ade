@@ -70,6 +70,7 @@ fn main() {
             desktop_disconnect,
             desktop_connect_local,
             desktop_connect_ssh,
+            desktop_kickoff_remote_prewarm,
             desktop_list_ssh_hosts,
             desktop_test_ssh,
             desktop_list_ssh_paths,
@@ -91,6 +92,7 @@ fn main() {
             desktop_upload_blob,
             desktop_storage_get,
             desktop_storage_batch,
+            desktop_storage_consume_notice,
             desktop_daemon_request,
             desktop_start_codex_login_relay,
         ])
@@ -337,6 +339,8 @@ struct SshConnectReq {
     start_remote: bool,
     #[serde(default)]
     remote_data_dir: Option<String>,
+    #[serde(default)]
+    remote_ctx_bin: Option<String>,
 }
 
 const fn default_true() -> bool {
@@ -348,6 +352,17 @@ struct DesktopSshTestReq {
     host: String,
     #[serde(default)]
     user: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DesktopRemotePrewarmReq {
+    host: String,
+    #[serde(default)]
+    user: Option<String>,
+    #[serde(default)]
+    remote_port: Option<u16>,
+    #[serde(default)]
+    remote_data_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -418,10 +433,38 @@ enum DesktopStorageBatchOp {
     },
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DesktopUiStateResetReason {
+    SchemaMismatch,
+    InvalidUiStateDb,
+}
+
+impl DesktopUiStateResetReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::SchemaMismatch => "schema_mismatch",
+            Self::InvalidUiStateDb => "invalid_ui_state_db",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum DesktopStorageNotice {
+    UiStateReset { reason: DesktopUiStateResetReason },
+}
+
 #[derive(Default)]
 struct DesktopStorage {
     pool: OnceCell<SqlitePool>,
 }
+
+const UI_KV_CREATE_SQL: &str =
+    "CREATE TABLE IF NOT EXISTS ui_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at_ms INTEGER NOT NULL)";
+const UI_META_CREATE_SQL: &str =
+    "CREATE TABLE IF NOT EXISTS ui_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at_ms INTEGER NOT NULL)";
+const UI_STATE_RESET_NOTICE_KEY: &str = "ui_state_reset_notice";
 
 impl DesktopStorage {
     async fn pool(&self, app: &tauri::AppHandle) -> Result<&SqlitePool> {
@@ -449,57 +492,270 @@ impl DesktopStorage {
     }
 }
 
-async fn ensure_ui_kv_schema(pool: &SqlitePool) -> Result<()> {
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS ui_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at_ms INTEGER NOT NULL)",
-    )
-    .execute(pool)
-    .await
-    .context("creating ui_kv table")?;
+fn now_ms_i64() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
 
+async fn ensure_ui_meta_schema(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(UI_META_CREATE_SQL)
+        .execute(pool)
+        .await
+        .context("creating ui_meta table")?;
+    Ok(())
+}
+
+async fn read_ui_kv_schema(pool: &SqlitePool) -> Result<Vec<(String, i64, i64)>> {
     let rows = sqlx::query("PRAGMA table_info(ui_kv)")
         .fetch_all(pool)
         .await
         .context("reading ui_kv schema")?;
-    let mut has_key = false;
-    let mut has_value = false;
-    let mut has_updated = false;
+    let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         let name: String = row.try_get("name").context("reading ui_kv column name")?;
-        match name.as_str() {
-            "key" => has_key = true,
-            "value" => has_value = true,
-            "updated_at_ms" => has_updated = true,
-            _ => {}
-        }
+        let notnull: i64 = row.try_get("notnull").context("reading ui_kv notnull")?;
+        let pk: i64 = row.try_get("pk").context("reading ui_kv pk")?;
+        out.push((name, notnull, pk));
     }
+    Ok(out)
+}
 
-    if !has_key || !has_value {
-        sqlx::query("DROP TABLE IF EXISTS ui_kv_legacy")
-            .execute(pool)
-            .await
-            .context("dropping legacy ui_kv table")?;
-        sqlx::query("ALTER TABLE ui_kv RENAME TO ui_kv_legacy")
-            .execute(pool)
-            .await
-            .context("renaming legacy ui_kv table")?;
-        sqlx::query(
-            "CREATE TABLE ui_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at_ms INTEGER NOT NULL)",
-        )
+fn is_current_ui_kv_schema(columns: &[(String, i64, i64)]) -> bool {
+    if columns.len() != 3 {
+        return false;
+    }
+    let (name0, _notnull0, pk0) = &columns[0];
+    let (name1, notnull1, pk1) = &columns[1];
+    let (name2, notnull2, pk2) = &columns[2];
+    name0 == "key"
+        && *pk0 == 1
+        && name1 == "value"
+        && *notnull1 == 1
+        && *pk1 == 0
+        && name2 == "updated_at_ms"
+        && *notnull2 == 1
+        && *pk2 == 0
+}
+
+async fn record_ui_state_reset_notice(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    reason: DesktopUiStateResetReason,
+) -> Result<()> {
+    let value = serde_json::to_string(&DesktopStorageNotice::UiStateReset { reason })
+        .context("serializing ui state reset notice")?;
+    sqlx::query(
+        "INSERT INTO ui_meta (key, value, updated_at_ms) VALUES (?1, ?2, ?3) \
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at_ms=excluded.updated_at_ms",
+    )
+    .bind(UI_STATE_RESET_NOTICE_KEY)
+    .bind(value)
+    .bind(now_ms_i64())
+    .execute(&mut **tx)
+    .await
+    .context("writing ui state reset notice")?;
+    Ok(())
+}
+
+async fn reset_ui_kv_state(pool: &SqlitePool, reason: DesktopUiStateResetReason) -> Result<()> {
+    let mut tx = pool
+        .begin()
+        .await
+        .context("starting ui state reset transaction")?;
+    sqlx::query("DROP TABLE IF EXISTS ui_kv")
+        .execute(&mut *tx)
+        .await
+        .context("dropping ui_kv table during reset")?;
+    sqlx::query(UI_KV_CREATE_SQL)
+        .execute(&mut *tx)
+        .await
+        .context("recreating ui_kv table during reset")?;
+    sqlx::query(UI_META_CREATE_SQL)
+        .execute(&mut *tx)
+        .await
+        .context("ensuring ui_meta table during reset")?;
+    record_ui_state_reset_notice(&mut tx, reason).await?;
+    tx.commit()
+        .await
+        .context("committing ui state reset transaction")?;
+    eprintln!("desktop_ui_state_db_reset reason={}", reason.as_str());
+    Ok(())
+}
+
+async fn ensure_ui_kv_schema(pool: &SqlitePool) -> Result<()> {
+    ensure_ui_meta_schema(pool).await?;
+    sqlx::query(UI_KV_CREATE_SQL)
         .execute(pool)
         .await
-        .context("recreating ui_kv table")?;
-        return Ok(());
-    }
+        .context("creating ui_kv table")?;
 
-    if !has_updated {
-        sqlx::query("ALTER TABLE ui_kv ADD COLUMN updated_at_ms INTEGER NOT NULL DEFAULT 0")
-            .execute(pool)
-            .await
-            .context("migrating ui_kv schema")?;
+    let schema = match read_ui_kv_schema(pool).await {
+        Ok(schema) => schema,
+        Err(err) => {
+            eprintln!(
+                "desktop_ui_state_db_schema_read_failed reason=invalid_ui_state_db error={err:#}"
+            );
+            reset_ui_kv_state(pool, DesktopUiStateResetReason::InvalidUiStateDb).await?;
+            return Ok(());
+        }
+    };
+    if !is_current_ui_kv_schema(&schema) {
+        reset_ui_kv_state(pool, DesktopUiStateResetReason::SchemaMismatch).await?;
     }
 
     Ok(())
+}
+
+async fn consume_desktop_storage_notice(pool: &SqlitePool) -> Result<Option<DesktopStorageNotice>> {
+    let mut tx = pool
+        .begin()
+        .await
+        .context("starting desktop storage notice transaction")?;
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM ui_meta WHERE key = ?1")
+        .bind(UI_STATE_RESET_NOTICE_KEY)
+        .fetch_optional(&mut *tx)
+        .await
+        .context("reading desktop storage notice")?;
+    if row.is_none() {
+        tx.commit()
+            .await
+            .context("committing desktop storage notice transaction")?;
+        return Ok(None);
+    }
+
+    sqlx::query("DELETE FROM ui_meta WHERE key = ?1")
+        .bind(UI_STATE_RESET_NOTICE_KEY)
+        .execute(&mut *tx)
+        .await
+        .context("deleting desktop storage notice")?;
+    tx.commit()
+        .await
+        .context("committing desktop storage notice transaction")?;
+
+    let (raw_value,) = row.expect("notice row checked");
+    match serde_json::from_str::<DesktopStorageNotice>(&raw_value) {
+        Ok(notice) => Ok(Some(notice)),
+        Err(err) => {
+            eprintln!("dropping invalid desktop storage notice payload: {err}");
+            Ok(None)
+        }
+    }
+}
+
+async fn desktop_storage_get_from_pool(
+    pool: &SqlitePool,
+    key: &str,
+) -> Result<Option<serde_json::Value>> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM ui_kv WHERE key = ?1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .context("reading ui_kv value")?;
+    if let Some((value,)) = row {
+        match serde_json::from_str(&value) {
+            Ok(parsed) => Ok(Some(parsed)),
+            Err(err) => {
+                let _ = sqlx::query("DELETE FROM ui_kv WHERE key = ?1")
+                    .bind(key)
+                    .execute(pool)
+                    .await;
+                eprintln!("dropping corrupt ui_kv value for key {key}: {err}");
+                Ok(None)
+            }
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod desktop_storage_tests {
+    use super::*;
+
+    async fn open_memory_pool() -> SqlitePool {
+        SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ensure_ui_kv_schema_initializes_current_schema() {
+        let pool = open_memory_pool().await;
+        ensure_ui_kv_schema(&pool).await.unwrap();
+        let schema = read_ui_kv_schema(&pool).await.unwrap();
+        assert!(is_current_ui_kv_schema(&schema));
+        let notice = consume_desktop_storage_notice(&pool).await.unwrap();
+        assert!(notice.is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn schema_mismatch_resets_ui_state_and_notice_is_one_time() {
+        let pool = open_memory_pool().await;
+        sqlx::query("CREATE TABLE ui_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO ui_kv (key, value) VALUES (?1, ?2)")
+            .bind("legacy")
+            .bind("\"payload\"")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        ensure_ui_kv_schema(&pool).await.unwrap();
+
+        let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ui_kv")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            row_count, 0,
+            "ui_kv contents should be reset on schema mismatch"
+        );
+        let schema = read_ui_kv_schema(&pool).await.unwrap();
+        assert!(is_current_ui_kv_schema(&schema));
+
+        let notice = consume_desktop_storage_notice(&pool).await.unwrap();
+        assert_eq!(
+            notice,
+            Some(DesktopStorageNotice::UiStateReset {
+                reason: DesktopUiStateResetReason::SchemaMismatch,
+            })
+        );
+        let second = consume_desktop_storage_notice(&pool).await.unwrap();
+        assert!(
+            second.is_none(),
+            "reset notice must be consumed after first read"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn corrupt_key_self_heal_is_log_only_and_does_not_emit_notice() {
+        let pool = open_memory_pool().await;
+        ensure_ui_kv_schema(&pool).await.unwrap();
+        sqlx::query("INSERT INTO ui_kv (key, value, updated_at_ms) VALUES (?1, ?2, ?3)")
+            .bind("bad")
+            .bind("{bad-json")
+            .bind(now_ms_i64())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let got = desktop_storage_get_from_pool(&pool, "bad").await.unwrap();
+        assert!(got.is_none());
+        let still_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ui_kv WHERE key = ?1")
+            .bind("bad")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(still_exists, 0);
+
+        let notice = consume_desktop_storage_notice(&pool).await.unwrap();
+        assert!(notice.is_none(), "corrupt-key self-heal must stay log-only");
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1182,7 +1438,6 @@ async fn desktop_connect_local(app: tauri::AppHandle) -> Result<DesktopConnectio
 
 #[tauri::command]
 async fn desktop_connect_ssh(
-    app: tauri::AppHandle,
     state: tauri::State<'_, ConnectionManager>,
     req: SshConnectReq,
 ) -> Result<DesktopConnectionInfo, String> {
@@ -1195,12 +1450,13 @@ async fn desktop_connect_ssh(
     let remote_port = req.remote_port.unwrap_or(4399);
 
     let user = req.user.clone();
-    let remote_data_dir = req.remote_data_dir.clone();
-    let remote_data_dir_for_connect = remote_data_dir.clone();
+    let remote_data_dir_for_connect = req.remote_data_dir.clone();
+    let remote_ctx_bin = normalize_remote_ctx_bin(req.remote_ctx_bin.as_deref())
+        .map(|path| validate_remote_ctx_bin(&path))
+        .transpose()
+        .map_err(to_err)?;
+    let remote_ctx_bin_for_connect = remote_ctx_bin.clone();
     let start_remote = req.start_remote;
-    let host_for_provision = host.clone();
-    let user_for_provision = user.clone();
-    let app_for_provision = app.clone();
     let (base_url, token, tunnel) = tauri::async_runtime::spawn_blocking(move || {
         let no_start_remote = env_bool("CTX_DESKTOP_SSH_NO_START_REMOTE", false);
 
@@ -1215,11 +1471,17 @@ async fn desktop_connect_ssh(
             probe_daemon_health_with_retry(&base_url, local_port, &mut tunnel, &tunnel_stderr);
         if health.is_err() && start_remote && !no_start_remote {
             let _ = try_kill_child(tunnel);
+            let ctx_bin = remote_ctx_bin_for_connect.as_deref().ok_or_else(|| {
+                anyhow!(
+                    "remote daemon start requires `remote_ctx_bin` (absolute path, e.g. /opt/ctx/bin/ctx)"
+                )
+            })?;
             start_remote_daemon_over_ssh(
                 &host,
                 user.as_deref(),
                 remote_port,
                 remote_data_dir_for_connect.as_deref(),
+                ctx_bin,
             )?;
 
             local_port = pick_unused_local_port()?;
@@ -1256,27 +1518,58 @@ async fn desktop_connect_ssh(
     .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?;
 
     state.set_ssh(base_url, Some(token), tunnel);
-
-    // Best-effort provisioning: ensure the default harness image is present on remote Linux hosts
-    // so restricted networking works without relying on registry pulls. We await completion so
-    // users can immediately create remote container workspaces without racing image load.
-    match tauri::async_runtime::spawn_blocking(move || {
-        ensure_remote_ctx_harness_image(
-            &app_for_provision,
-            &host_for_provision,
-            user_for_provision.as_deref(),
-            remote_data_dir.as_deref(),
-        )
-    })
-    .await
-    {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => eprintln!("remote harness image provisioning skipped/failed: {err:#}"),
-        Err(join_err) => eprintln!(
-            "remote harness image provisioning task failed to join: {join_err:#}"
-        ),
-    }
     Ok(state.info())
+}
+
+#[tauri::command]
+async fn desktop_kickoff_remote_prewarm(
+    app: tauri::AppHandle,
+    req: DesktopRemotePrewarmReq,
+) -> Result<(), String> {
+    let host = req.host.trim().to_string();
+    if host.is_empty() {
+        return Err("host is required".to_string());
+    }
+    let user = normalize_optional_text(req.user.as_deref());
+    let remote_port = req.remote_port.unwrap_or(4399);
+    let remote_data_dir = normalize_optional_text(req.remote_data_dir.as_deref());
+    let key = remote_prewarm_dedupe_key(
+        &host,
+        user.as_deref(),
+        remote_port,
+        remote_data_dir.as_deref(),
+    );
+    let should_spawn = {
+        let inflight = remote_prewarm_inflight();
+        let mut guard = inflight
+            .lock()
+            .map_err(|_| "remote prewarm lock poisoned".to_string())?;
+        guard.insert(key.clone())
+    };
+    if !should_spawn {
+        return Ok(());
+    }
+
+    tauri::async_runtime::spawn(async move {
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            ensure_remote_ctx_harness_image(
+                &app,
+                &host,
+                user.as_deref(),
+                remote_data_dir.as_deref(),
+            )
+        })
+        .await;
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => eprintln!("remote prewarm failed: {err:#}"),
+            Err(join_err) => eprintln!("remote prewarm task join failed: {join_err:#}"),
+        }
+        if let Ok(mut guard) = remote_prewarm_inflight().lock() {
+            guard.remove(&key);
+        }
+    });
+    Ok(())
 }
 
 fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) -> Result<()> {
@@ -1286,7 +1579,8 @@ fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) ->
     // Multiple webview requests can race on cold start (overlay pollers, initial data loads, etc.).
     // Serialize the "connect local" path so we don't concurrently spawn the daemon and trip the
     // daemon's lockfile, which can surface as spurious "daemon unavailable" errors in the UI.
-    static LOCAL_CONNECT_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    static LOCAL_CONNECT_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> =
+        std::sync::OnceLock::new();
     let mutex = LOCAL_CONNECT_MUTEX.get_or_init(|| std::sync::Mutex::new(()));
     let _guard = mutex.lock().expect("local connect mutex poisoned");
     if !matches!(state.info().kind, DesktopConnectionKind::None) {
@@ -1311,7 +1605,8 @@ fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) ->
             let auth = read_daemon_auth_with_retry(&data_dir)
                 .with_context(|| format!("spawning local daemon failed: {err:#}"))?;
             let Some(url) = auth.daemon_url.as_deref() else {
-                return Err(err).context("spawning local daemon failed (auth file missing daemon_url)");
+                return Err(err)
+                    .context("spawning local daemon failed (auth file missing daemon_url)");
             };
             probe_local_daemon_health_with_retry(url)?;
             state.set_local_external(url.to_string(), auth.token);
@@ -1391,7 +1686,11 @@ fn write_http_response(stream: &mut TcpStream, status: &str, message: &str) {
     let _ = stream.flush();
 }
 
-fn callback_url_from_target(target: &str, expected_path: &str, expected_port: u16) -> Result<String> {
+fn callback_url_from_target(
+    target: &str,
+    expected_path: &str,
+    expected_port: u16,
+) -> Result<String> {
     let mut url = if target.starts_with("http://") || target.starts_with("https://") {
         Url::parse(target).context("parsing callback request target URL")?
     } else {
@@ -1472,7 +1771,10 @@ fn process_codex_login_relay_connection(
         "502 Bad Gateway",
         "ctx could not complete login relay on the daemon. Use manual callback paste in Settings.",
     );
-    anyhow::bail!("daemon callback completion failed with status {}", response.status)
+    anyhow::bail!(
+        "daemon callback completion failed with status {}",
+        response.status
+    )
 }
 
 #[tauri::command]
@@ -1574,26 +1876,9 @@ async fn desktop_storage_get(
     key: String,
 ) -> Result<Option<serde_json::Value>, String> {
     let pool = storage.pool(&app).await.map_err(to_err)?;
-    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM ui_kv WHERE key = ?1")
-        .bind(&key)
-        .fetch_optional(pool)
+    desktop_storage_get_from_pool(pool, &key)
         .await
-        .map_err(to_err)?;
-    if let Some((value,)) = row {
-        match serde_json::from_str(&value) {
-            Ok(parsed) => Ok(Some(parsed)),
-            Err(err) => {
-                let _ = sqlx::query("DELETE FROM ui_kv WHERE key = ?1")
-                    .bind(&key)
-                    .execute(pool)
-                    .await;
-                eprintln!("dropping corrupt ui_kv value for key {key}: {err}");
-                Ok(None)
-            }
-        }
-    } else {
-        Ok(None)
-    }
+        .map_err(to_err)
 }
 
 #[tauri::command]
@@ -1607,10 +1892,7 @@ async fn desktop_storage_batch(
     }
     let pool = storage.pool(&app).await.map_err(to_err)?;
     let mut tx = pool.begin().await.map_err(to_err)?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
+    let now = now_ms_i64();
     for op in ops {
         match op {
             DesktopStorageBatchOp::Set { key, value } => {
@@ -1637,6 +1919,15 @@ async fn desktop_storage_batch(
     }
     tx.commit().await.map_err(to_err)?;
     Ok(())
+}
+
+#[tauri::command]
+async fn desktop_storage_consume_notice(
+    app: tauri::AppHandle,
+    storage: tauri::State<'_, DesktopStorage>,
+) -> Result<Option<DesktopStorageNotice>, String> {
+    let pool = storage.pool(&app).await.map_err(to_err)?;
+    consume_desktop_storage_notice(pool).await.map_err(to_err)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2161,7 +2452,10 @@ fn resolve_or_create_workspace_id(state: &ConnectionManager, root_path: &str) ->
     }
     let value: serde_json::Value =
         serde_json::from_str(&resp.body).context("parsing workspace response")?;
-    parse_id_value(&value["id"]).ok_or_else(|| anyhow!("workspace id missing"))
+    value["id"]
+        .as_str()
+        .map(|id| id.to_string())
+        .ok_or_else(|| anyhow!("workspace id missing"))
 }
 
 fn resolve_workspace_id_by_path(
@@ -2192,8 +2486,8 @@ fn resolve_workspace_id_by_path(
             .and_then(|v| v.as_str())
             .unwrap_or_default();
         if ws_root == root_path {
-            if let Some(id) = entry.get("id").and_then(parse_id_value) {
-                return Ok(Some(id));
+            if let Some(id) = entry.get("id").and_then(|v| v.as_str()) {
+                return Ok(Some(id.to_string()));
             }
         }
     }
@@ -2245,25 +2539,13 @@ fn resolve_worktree_info(state: &ConnectionManager, worktree_id: &str) -> Result
         .ok_or_else(|| anyhow!("worktree root_path missing"))?;
     let workspace_id = value
         .get("workspace_id")
-        .and_then(parse_id_value)
+        .and_then(|v| v.as_str())
+        .map(|id| id.to_string())
         .ok_or_else(|| anyhow!("worktree workspace_id missing"))?;
     Ok(WorktreeInfo {
         root: PathBuf::from(root),
         workspace_id,
     })
-}
-
-fn parse_id_value(value: &serde_json::Value) -> Option<String> {
-    value
-        .as_str()
-        .map(|s| s.to_string())
-        .or_else(|| {
-            value
-                .get("0")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        })
-        .or_else(|| value.get(0).and_then(|v| v.as_str()).map(|s| s.to_string()))
 }
 
 fn open_workspace_window(
@@ -3264,12 +3546,57 @@ const SSH_TUNNEL_HEALTH_BASE_DELAY_MS: u64 = 150;
 const LOCAL_DAEMON_HEALTH_RETRIES: usize = 20;
 const LOCAL_DAEMON_HEALTH_BASE_DELAY_MS: u64 = 100;
 const DESKTOP_DAEMON_DATA_DIR_ENV: &str = "CTX_DESKTOP_DAEMON_DATA_DIR";
-const DESKTOP_REMOTE_CTX_BIN_ENV: &str = "CTX_DESKTOP_REMOTE_CTX_BIN";
 const DAEMON_ENV_PASSTHROUGH: &[&str] = &[
     "CTX_ALLOW_SYSTEM_PODMAN",
     "CTX_PODMAN_PATH",
     "CTX_PODMAN_MACHINE_PREFETCH",
 ];
+
+fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string())
+}
+
+fn normalize_remote_ctx_bin(value: Option<&str>) -> Option<String> {
+    normalize_optional_text(value)
+}
+
+fn validate_remote_ctx_bin(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("remote_ctx_bin is required");
+    }
+    if !trimmed.starts_with('/') {
+        anyhow::bail!(
+            "remote_ctx_bin must be an absolute path (for example /opt/ctx/bin/ctx)"
+        );
+    }
+    Ok(trimmed.to_string())
+}
+
+fn remote_prewarm_dedupe_key(
+    host: &str,
+    user: Option<&str>,
+    remote_port: u16,
+    remote_data_dir: Option<&str>,
+) -> String {
+    let host = host.trim().to_ascii_lowercase();
+    let user = user.unwrap_or("").trim().to_string();
+    let data_dir = remote_data_dir
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("~/.ctx")
+        .to_string();
+    format!("{user}@{host}:{remote_port}:{data_dir}")
+}
+
+fn remote_prewarm_inflight() -> &'static std::sync::Mutex<HashSet<String>> {
+    static REMOTE_PREWARM_INFLIGHT: std::sync::OnceLock<std::sync::Mutex<HashSet<String>>> =
+        std::sync::OnceLock::new();
+    REMOTE_PREWARM_INFLIGHT.get_or_init(|| std::sync::Mutex::new(HashSet::new()))
+}
 
 fn start_ssh_tunnel(
     host: &str,
@@ -3338,6 +3665,7 @@ fn start_remote_daemon_over_ssh(
     user: Option<&str>,
     remote_port: u16,
     remote_data_dir: Option<&str>,
+    remote_ctx_bin: &str,
 ) -> Result<()> {
     let target = match user {
         Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
@@ -3351,10 +3679,8 @@ fn start_remote_daemon_over_ssh(
     let log_dir_expr = remote_path_expr(&log_dir);
     let log_file = format!("{}/daemon.log", log_dir.trim_end_matches('/'));
     let log_file_expr = remote_path_expr(&log_file);
-    let configured_ctx_bin = std::env::var(DESKTOP_REMOTE_CTX_BIN_ENV)
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
+    let ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
+    let ctx_bin_expr = remote_path_expr(&ctx_bin);
     // Remote daemon should be able to use host Podman when available (same behavior expected in
     // launcher container modes on Linux remotes). Pass through optional podman tuning envs.
     let mut daemon_env = vec!["CTX_ALLOW_SYSTEM_PODMAN=1".to_string()];
@@ -3378,21 +3704,12 @@ fn start_remote_daemon_over_ssh(
     } else {
         format!("env {} ", daemon_env.join(" "))
     };
-    let exec_cmd = if let Some(ctx_bin) = configured_ctx_bin {
-        let ctx_bin_expr = remote_path_expr(&ctx_bin);
-        format!(
-            "if [ -x {ctx_bin} ]; then {env}{ctx_bin} serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not executable at configured remote path' >&2; exit 127; fi",
-            env = daemon_env_prefix,
-            ctx_bin = ctx_bin_expr,
-            dir = remote_path_expr(data_dir),
-        )
-    } else {
-        format!(
-            "if command -v ctx >/dev/null 2>&1; then {env}ctx serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not found on PATH' >&2; exit 127; fi",
-            env = daemon_env_prefix,
-            dir = remote_path_expr(data_dir),
-        )
-    };
+    let exec_cmd = format!(
+        "if [ -x {ctx_bin} ]; then {env}{ctx_bin} serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not executable at configured remote path' >&2; exit 127; fi",
+        env = daemon_env_prefix,
+        ctx_bin = ctx_bin_expr,
+        dir = remote_path_expr(data_dir),
+    );
     let log_cmd = format!(
         "mkdir -p {log_dir} && {exec_cmd} > {log_file} 2>&1",
         log_dir = log_dir_expr,
@@ -3671,8 +3988,8 @@ fn read_bundled_ctx_harness_image(app: &tauri::AppHandle, arch: &str) -> Result<
     let manifest_path = bundle_dir.join("manifest.json");
     let raw = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("reading {}", manifest_path.display()))?;
-    let manifest: DesktopBundledAssetsManifest =
-        serde_json::from_str(&raw).with_context(|| format!("parsing {}", manifest_path.display()))?;
+    let manifest: DesktopBundledAssetsManifest = serde_json::from_str(&raw)
+        .with_context(|| format!("parsing {}", manifest_path.display()))?;
     let entry = manifest
         .images
         .iter()
@@ -3680,10 +3997,7 @@ fn read_bundled_ctx_harness_image(app: &tauri::AppHandle, arch: &str) -> Result<
         .ok_or_else(|| anyhow!("bundled ctx-harness image tar not found for linux/{arch}"))?;
     let tar = bundle_dir.join(&entry.tar);
     if !tar.exists() {
-        anyhow::bail!(
-            "bundled ctx-harness image tar missing at {}",
-            tar.display()
-        );
+        anyhow::bail!("bundled ctx-harness image tar missing at {}", tar.display());
     }
     Ok((tar, entry.image.clone()))
 }
@@ -3789,7 +4103,10 @@ fn ensure_remote_ctx_harness_image(
     // Check if the image is already present.
     let exists_out = ssh_output(
         &target,
-        &format!("{podman_env_prefix} podman image exists -- {}", shell_escape(&image)),
+        &format!(
+            "{podman_env_prefix} podman image exists -- {}",
+            shell_escape(&image)
+        ),
     )?;
     if exists_out.status.success() {
         return Ok(());
@@ -3804,7 +4121,9 @@ fn ensure_remote_ctx_harness_image(
     // Stream tar to podman load over SSH.
     let remote_cmd = format!(
         "sh -lc {}",
-        shell_escape(&format!("{podman_prepare_cmd} && {podman_env_prefix} podman load"))
+        shell_escape(&format!(
+            "{podman_prepare_cmd} && {podman_env_prefix} podman load"
+        ))
     );
     let mut child = Command::new("ssh")
         .arg("-o")
@@ -3826,13 +4145,18 @@ fn ensure_remote_ctx_harness_image(
         .context("spawning ssh for podman load")?;
 
     {
-        let mut file = std::fs::File::open(&tar)
-            .with_context(|| format!("opening {}", tar.display()))?;
-        let mut stdin = child.stdin.take().ok_or_else(|| anyhow!("ssh stdin unavailable"))?;
+        let mut file =
+            std::fs::File::open(&tar).with_context(|| format!("opening {}", tar.display()))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("ssh stdin unavailable"))?;
         std::io::copy(&mut file, &mut stdin).context("streaming image tar to ssh")?;
     }
 
-    let output = child.wait_with_output().context("waiting for ssh podman load")?;
+    let output = child
+        .wait_with_output()
+        .context("waiting for ssh podman load")?;
     if !output.status.success() {
         anyhow::bail!(
             "remote podman load failed: {}",
@@ -3841,7 +4165,10 @@ fn ensure_remote_ctx_harness_image(
     }
     let exists_after = ssh_output(
         &target,
-        &format!("{podman_env_prefix} podman image exists -- {}", shell_escape(&image)),
+        &format!(
+            "{podman_env_prefix} podman image exists -- {}",
+            shell_escape(&image)
+        ),
     )?;
     if !exists_after.status.success() {
         anyhow::bail!(

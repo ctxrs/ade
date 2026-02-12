@@ -15,7 +15,9 @@ use crate::tool_cgroup;
 pub(super) async fn get_settings(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
-    let settings = user_settings::load_settings(&state.core.data_root).await;
+    let settings = user_settings::load_settings(state.global_store())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut public = user_settings::to_public(&settings);
     public.resource_governance =
         resource_governance::build_public_settings(&state, &settings).await;
@@ -27,9 +29,11 @@ pub(super) async fn update_settings(
     State(state): State<Arc<AppState>>,
     Json(req): Json<user_settings::UpdateSettingsReq>,
 ) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
-    let current = user_settings::load_settings(&state.core.data_root).await;
+    let current = user_settings::load_settings(state.global_store())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let next = user_settings::apply_update(current, req);
-    user_settings::save_settings(&state.core.data_root, &next)
+    user_settings::save_settings(state.global_store(), &next)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut telemetry_cfg = TelemetryConfig::default();

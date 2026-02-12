@@ -32,6 +32,7 @@ import {
 import {
   desktopConnectLocal,
   desktopConnectSsh,
+  desktopKickoffRemotePrewarm,
   desktopListSshHosts,
   desktopListSshPaths,
   desktopGetGitBranch,
@@ -72,11 +73,21 @@ type SshRecent = {
   updated_at_ms: number;
 };
 
+type RemoteProfile = {
+  host: string;
+  user?: string | null;
+  remote_port?: number | null;
+  remote_data_dir?: string | null;
+  remote_ctx_bin?: string | null;
+  updated_at_ms: number;
+};
+
 type ImportInitDialogState = {
   path: string;
 };
 
 const SSH_RECENTS_KEY = "contextDesktopSshRecentsV1";
+const REMOTE_PROFILES_KEY = "contextDesktopRemoteProfilesV1";
 
 const loadSshRecents = (): SshRecent[] => {
   try {
@@ -104,6 +115,50 @@ const upsertSshRecent = (host: string, user?: string | null): SshRecent[] => {
     ...recents.filter((r) => `${r.user ?? ""}@${r.host}` !== key),
   ];
   saveSshRecents(next);
+  return next;
+};
+
+const remoteProfileKey = (host: string, user?: string | null) => `${user ?? ""}@${host}`;
+
+const loadRemoteProfiles = (): RemoteProfile[] => {
+  try {
+    const raw = localStorage.getItem(REMOTE_PROFILES_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? (parsed as RemoteProfile[]) : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveRemoteProfiles = (profiles: RemoteProfile[]) => {
+  try {
+    localStorage.setItem(REMOTE_PROFILES_KEY, JSON.stringify(profiles.slice(0, 100)));
+  } catch {
+    // ignore
+  }
+};
+
+const upsertRemoteProfile = (
+  host: string,
+  user: string | null | undefined,
+  fields: {
+    remote_port?: number | null;
+    remote_data_dir?: string | null;
+    remote_ctx_bin?: string | null;
+  },
+): RemoteProfile[] => {
+  const profiles = loadRemoteProfiles();
+  const key = remoteProfileKey(host, user ?? null);
+  const nextEntry: RemoteProfile = {
+    host,
+    user: user ?? null,
+    remote_port: fields.remote_port ?? null,
+    remote_data_dir: fields.remote_data_dir ?? null,
+    remote_ctx_bin: fields.remote_ctx_bin ?? null,
+    updated_at_ms: Date.now(),
+  };
+  const next = [nextEntry, ...profiles.filter((entry) => remoteProfileKey(entry.host, entry.user) !== key)];
+  saveRemoteProfiles(next);
   return next;
 };
 
@@ -209,6 +264,8 @@ export default function WorkspaceSetupPage() {
   const [remoteAdvancedOpen, setRemoteAdvancedOpen] = useState(false);
   const [remotePortInput, setRemotePortInput] = useState("4399");
   const [remoteDataDirInput, setRemoteDataDirInput] = useState("");
+  const [remoteCtxBinInput, setRemoteCtxBinInput] = useState("");
+  const [remoteProfiles, setRemoteProfiles] = useState<RemoteProfile[]>(() => loadRemoteProfiles());
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [launchSnapshot, setLaunchSnapshot] = useState<ExecutionLaunchSnapshot | null>(null);
@@ -244,6 +301,7 @@ export default function WorkspaceSetupPage() {
   const [authImportResults, setAuthImportResults] = useState<Array<{ provider: string; status: string; message?: string | null }>>([]);
   const [authImportScannedKey, setAuthImportScannedKey] = useState<string | null>(null);
   const importInitResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
+  const remoteProfileAutoAppliedKeyRef = useRef<string | null>(null);
 
   const containerMode = selections.container;
   const authImportStepVisible = authImportCandidates.length > 0;
@@ -408,6 +466,8 @@ export default function WorkspaceSetupPage() {
   const parsedRemote = parseUserHost(remoteHostInput);
   const authScanKey = `${selections.location ?? ""}|${parsedRemote?.user ?? ""}@${parsedRemote?.host ?? ""}`;
   const hasRemoteHost = Boolean(parsedRemote?.host);
+  const remoteCtxBinValue = remoteCtxBinInput.trim();
+  const remoteCtxBinIsAbsolute = remoteCtxBinValue.startsWith("/");
   const parsedRemotePort = (() => {
     const raw = remotePortInput.trim();
     if (!raw) return null;
@@ -418,7 +478,11 @@ export default function WorkspaceSetupPage() {
     return port;
   })();
   const canAdvance = (!requiresSelection || hasSelection)
-    && (!isRemoteStep || (hasRemoteHost && remoteStatus !== "connecting" && parsedRemotePort !== null))
+    && (!isRemoteStep || (
+      hasRemoteHost
+      && remoteStatus !== "connecting"
+      && parsedRemotePort !== null
+    ))
     && hasSourceStepInputs
     && hasTargetBranch
     && hasAllowlist
@@ -476,12 +540,20 @@ export default function WorkspaceSetupPage() {
       if (remoteStatus !== "connected") {
         throw new Error("Verify remote host connection before scanning auth.");
       }
+      const remoteCtxBin = remoteCtxBinInput.trim();
+      if (!remoteCtxBin) {
+        throw new Error("Remote ctx binary path is required.");
+      }
+      if (!remoteCtxBin.startsWith("/")) {
+        throw new Error("Remote ctx binary path must be absolute (for example /opt/ctx/bin/ctx).");
+      }
       const info = await desktopConnectSsh({
         host: parsed.host,
         user: parsed.user ?? null,
-        remote_port: null,
+        remote_port: parsedRemotePort,
         start_remote: true,
-        remote_data_dir: null,
+        remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
+        remote_ctx_bin: remoteCtxBin,
       });
       applyConnection(info);
       await waitForDaemonReady(15000);
@@ -729,6 +801,26 @@ export default function WorkspaceSetupPage() {
     setPushBranch(targetBranch);
   }, [targetBranch, pushBranchTouched]);
 
+  useEffect(() => {
+    if (selections.location !== "remote") return;
+    const parsed = parseUserHost(remoteHostInput);
+    if (!parsed?.host) {
+      remoteProfileAutoAppliedKeyRef.current = null;
+      return;
+    }
+    const key = remoteProfileKey(parsed.host, parsed.user ?? null);
+    if (remoteProfileAutoAppliedKeyRef.current === key) return;
+    const profile = remoteProfiles.find((entry) => remoteProfileKey(entry.host, entry.user) === key);
+    if (!profile) return;
+
+    if (typeof profile.remote_port === "number" && Number.isFinite(profile.remote_port)) {
+      setRemotePortInput(String(profile.remote_port));
+    }
+    setRemoteDataDirInput(String(profile.remote_data_dir ?? ""));
+    setRemoteCtxBinInput(String(profile.remote_ctx_bin ?? ""));
+    remoteProfileAutoAppliedKeyRef.current = key;
+  }, [selections.location, remoteHostInput, remoteProfiles]);
+
   // Remote import validation: once SSH is verified, check the selected remote folder is a repo.
   useEffect(() => {
     const shouldCheck =
@@ -753,6 +845,7 @@ export default function WorkspaceSetupPage() {
         remote_port: parsedRemotePort,
         start_remote: true,
         remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
+        remote_ctx_bin: remoteCtxBinValue,
       })
         .then((info) => {
           if (cancelled) return null;
@@ -790,6 +883,7 @@ export default function WorkspaceSetupPage() {
     sourcePath,
     parsedRemotePort,
     remoteDataDirInput,
+    remoteCtxBinValue,
   ]);
 
   const sshSuggestions = useMemo(() => {
@@ -817,6 +911,7 @@ export default function WorkspaceSetupPage() {
 
   const onRemoteInputChange = (value: string) => {
     setCreateError(null);
+    remoteProfileAutoAppliedKeyRef.current = null;
     setRemoteHostInput(value);
     setAuthImportScannedKey(null);
     if (remoteStatus !== "idle") {
@@ -862,6 +957,18 @@ export default function WorkspaceSetupPage() {
         setRemoteError("Remote connections require the desktop app.");
         return;
       }
+      if (!remoteCtxBinValue) {
+        setRemoteAdvancedOpen(true);
+        setRemoteStatus("error");
+        setRemoteError("Remote ctx binary path is required.");
+        return;
+      }
+      if (!remoteCtxBinIsAbsolute) {
+        setRemoteAdvancedOpen(true);
+        setRemoteStatus("error");
+        setRemoteError("Remote ctx binary path must be absolute (for example /opt/ctx/bin/ctx).");
+        return;
+      }
       if (remoteStatus === "connected") {
         setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
         return;
@@ -874,6 +981,21 @@ export default function WorkspaceSetupPage() {
           user: parsedRemote.user ?? null,
         });
         setRemoteStatus("connected");
+        const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
+        setRemoteProfiles(upsertRemoteProfile(parsedRemote.host, parsedRemote.user ?? null, {
+          remote_port: parsedRemotePort ?? 4399,
+          remote_data_dir: normalizedDataDir,
+          remote_ctx_bin: remoteCtxBinValue,
+        }));
+        remoteProfileAutoAppliedKeyRef.current = remoteProfileKey(parsedRemote.host, parsedRemote.user ?? null);
+        void desktopKickoffRemotePrewarm({
+          host: parsedRemote.host,
+          user: parsedRemote.user ?? null,
+          remote_port: parsedRemotePort,
+          remote_data_dir: normalizedDataDir,
+        }).catch((err: any) => {
+          console.debug("remote prewarm kickoff skipped/failed", err?.message ?? String(err));
+        });
         const nextRecents = upsertSshRecent(parsedRemote.host, parsedRemote.user ?? null);
         setSshRecents(nextRecents);
         setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
@@ -1024,6 +1146,12 @@ export default function WorkspaceSetupPage() {
       if (selections.location === "remote" && !parsed?.host) {
         throw new Error("Remote host is required (user@host).");
       }
+      if (selections.location === "remote" && !remoteCtxBinValue) {
+        throw new Error("Remote ctx binary path is required.");
+      }
+      if (selections.location === "remote" && !remoteCtxBinIsAbsolute) {
+        throw new Error("Remote ctx binary path must be absolute (for example /opt/ctx/bin/ctx).");
+      }
 
       // 1. Connect to the intended daemon (reuse existing if already running).
       const info = selections.location === "remote"
@@ -1033,9 +1161,20 @@ export default function WorkspaceSetupPage() {
           remote_port: parsedRemotePort,
           start_remote: true,
           remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
+          remote_ctx_bin: remoteCtxBinValue,
         })
         : await desktopConnectLocal();
       applyConnection(info);
+
+      if (selections.location === "remote" && parsed?.host) {
+        const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
+        setRemoteProfiles(upsertRemoteProfile(parsed.host, parsed.user ?? null, {
+          remote_port: parsedRemotePort ?? 4399,
+          remote_data_dir: normalizedDataDir,
+          remote_ctx_bin: remoteCtxBinValue,
+        }));
+        remoteProfileAutoAppliedKeyRef.current = remoteProfileKey(parsed.host, parsed.user ?? null);
+      }
 
       // Ensure the daemon is reachable before we navigate away from the wizard.
       // This avoids landing on the workbench too early on cold start.
@@ -1191,7 +1330,7 @@ export default function WorkspaceSetupPage() {
         await waitForLaunchCompletion(wsId);
       }
 
-      // 5. Persist repo-scoped config only if the user opted in / provided values.
+      // 5. Persist local per-workspace settings only if the user opted in / provided values.
       if (!mergeQueueSkipped) {
         await updateWorkspaceMergeQueueConfig(wsId, {
           enabled: true,
@@ -1501,11 +1640,37 @@ export default function WorkspaceSetupPage() {
                               data-testid="wizard-remote-port"
                               placeholder="4399"
                               value={remotePortInput}
-                              onChange={(e) => setRemotePortInput(e.target.value)}
+                              onChange={(e) => {
+                                setRemotePortInput(e.target.value);
+                                if (remoteStatus !== "idle") {
+                                  setRemoteStatus("idle");
+                                  setRemoteError(null);
+                                }
+                              }}
                             />
                           </label>
                           <div className="wizard-note">
                             Use a non-default port for E2E/shared hosts so tests do not touch an existing daemon.
+                          </div>
+                        </div>
+                        <div className="wizard-input">
+                          <label>
+                            Remote ctx binary path
+                            <input
+                              data-testid="wizard-remote-ctx-bin"
+                              placeholder="/opt/ctx/bin/ctx"
+                              value={remoteCtxBinInput}
+                              onChange={(e) => {
+                                setRemoteCtxBinInput(e.target.value);
+                                if (remoteStatus !== "idle") {
+                                  setRemoteStatus("idle");
+                                  setRemoteError(null);
+                                }
+                              }}
+                            />
+                          </label>
+                          <div className="wizard-note">
+                            Required absolute path used when starting a remote daemon.
                           </div>
                         </div>
                         <div className="wizard-input">
@@ -1515,7 +1680,13 @@ export default function WorkspaceSetupPage() {
                               data-testid="wizard-remote-data-dir"
                               placeholder="/tmp/ctx-e2e-123/daemon"
                               value={remoteDataDirInput}
-                              onChange={(e) => setRemoteDataDirInput(e.target.value)}
+                              onChange={(e) => {
+                                setRemoteDataDirInput(e.target.value);
+                                if (remoteStatus !== "idle") {
+                                  setRemoteStatus("idle");
+                                  setRemoteError(null);
+                                }
+                              }}
                             />
                           </label>
                           <div className="wizard-note">

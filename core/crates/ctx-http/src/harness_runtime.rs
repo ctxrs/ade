@@ -1673,8 +1673,6 @@ mod tests {
             bootstrap_error: None,
             bootstrap_log_path: None,
             bootstrap_log_truncated: None,
-            bootstrap_config_path: None,
-            bootstrap_config_key: None,
             bootstrap_command: None,
             bootstrap_script_path: None,
         }

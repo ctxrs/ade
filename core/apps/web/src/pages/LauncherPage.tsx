@@ -32,10 +32,34 @@ type RecentEntry =
       remote_port: number;
       start_remote?: boolean;
       remote_data_dir?: string | null;
+      remote_ctx_bin?: string | null;
       updated_at_ms: number;
     };
 
 const RECENTS_KEY = "contextDesktopRecentsV1";
+const REMOTE_PROFILES_KEY = "contextDesktopRemoteProfilesV1";
+
+type RemoteProfile = {
+  host: string;
+  user?: string | null;
+  remote_ctx_bin?: string | null;
+};
+
+const remoteProfileKey = (host: string, user?: string | null) => `${user ?? ""}@${host}`;
+
+const getRemoteCtxBinForHost = (host: string, user?: string | null): string | null => {
+  try {
+    const raw = localStorage.getItem(REMOTE_PROFILES_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (!Array.isArray(parsed)) return null;
+    const key = remoteProfileKey(host, user ?? null);
+    const hit = (parsed as RemoteProfile[]).find((entry) => remoteProfileKey(entry.host, entry.user) === key);
+    const value = String(hit?.remote_ctx_bin ?? "").trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+};
 
 const loadRecents = (): RecentEntry[] => {
   try {
@@ -161,18 +185,20 @@ export default function LauncherPage() {
         await connectLocalAndOpen(r.root_path);
         return;
       }
+      const resolvedRemoteCtxBin = String(r.remote_ctx_bin ?? getRemoteCtxBinForHost(r.host, r.user ?? null) ?? "").trim() || null;
       const info = await desktopConnectSsh({
         host: r.host,
         user: r.user ?? null,
         remote_port: r.remote_port,
         start_remote: Boolean(r.start_remote),
         remote_data_dir: r.remote_data_dir ?? null,
+        remote_ctx_bin: resolvedRemoteCtxBin,
       });
       setConnection(info);
       applyConnection(info);
       // Avoid landing on workspaces while the daemon is still booting / tunnel is coming up.
       await waitForDaemonReady(15000);
-      upsertRecent({ ...r, updated_at_ms: Date.now() });
+      upsertRecent({ ...r, remote_ctx_bin: resolvedRemoteCtxBin, updated_at_ms: Date.now() });
       navigate("/workspaces", { replace: true });
     } catch (e: any) {
       setError(e?.message ?? String(e));

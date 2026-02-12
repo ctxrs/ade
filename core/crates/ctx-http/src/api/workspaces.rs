@@ -44,7 +44,7 @@ pub(super) struct UpdateMergeQueueConfigReq {
 
 #[derive(Debug, Serialize)]
 pub(super) struct UpdateWorkspaceConfigResp {
-    config_path: String,
+    ok: bool,
 }
 
 pub(super) async fn get_worktree(
@@ -222,11 +222,26 @@ pub(super) async fn ensure_workspace_harness_container(
             }),
         ))?;
 
-    let settings = crate::settings::load_settings(&state.core.data_root).await;
-    let mut execution_settings = settings.execution.clone().unwrap_or_default();
-    match workspace_config::load_execution_settings_override(StdPath::new(&workspace.root_path))
+    let settings = crate::settings::load_settings(state.global_store())
         .await
-    {
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let mut execution_settings = settings.execution.clone().unwrap_or_default();
+    let store = state.store_for_workspace(workspace_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    match workspace_config::load_execution_settings_override(&store).await {
         Ok(Some(ov)) => {
             workspace_config::apply_execution_settings_override(&mut execution_settings, &ov)
         }
@@ -525,7 +540,6 @@ pub(super) async fn sync_workspace_attachments(
 
 #[derive(Debug, Serialize)]
 pub(super) struct AgentSystemPromptConfigResponse {
-    config_path: String,
     default_append: String,
     configured_append: Option<String>,
     effective_append: Option<String>,
@@ -540,7 +554,6 @@ pub(super) struct UpdateAgentSystemPromptConfigReq {
 
 #[derive(Debug, Serialize)]
 pub(super) struct SubagentSystemPromptConfigResponse {
-    config_path: String,
     default_append: String,
     configured_append: Option<String>,
     effective_append: Option<String>,
@@ -565,7 +578,7 @@ pub(super) async fn get_agent_system_prompt(
             }),
         )
     })?);
-    let workspace = state
+    let _workspace = state
         .global_store()
         .get_workspace(ws_id)
         .await
@@ -584,7 +597,15 @@ pub(super) async fn get_agent_system_prompt(
             }),
         ))?;
 
-    let cfg = workspace_config::load_agent_system_prompt_append(StdPath::new(&workspace.root_path))
+    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let cfg = workspace_config::load_agent_system_prompt_append(&store)
         .await
         .map_err(|e| {
             (
@@ -606,7 +627,6 @@ pub(super) async fn get_agent_system_prompt(
         workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
     };
     let response = AgentSystemPromptConfigResponse {
-        config_path: cfg.config_path.to_string_lossy().to_string(),
         default_append: cfg.default_append.clone(),
         configured_append,
         effective_append,
@@ -629,7 +649,7 @@ pub(super) async fn update_agent_system_prompt(
             }),
         )
     })?);
-    let workspace = state
+    let _workspace = state
         .global_store()
         .get_workspace(ws_id)
         .await
@@ -648,21 +668,26 @@ pub(super) async fn update_agent_system_prompt(
             }),
         ))?;
 
-    workspace_config::update_agent_system_prompt_append(
-        StdPath::new(&workspace.root_path),
-        req.system_prompt_append,
-    )
-    .await
-    .map_err(|e| {
+    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
         (
-            StatusCode::BAD_REQUEST,
+            StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp {
                 error: logs::redact_sensitive(&e.to_string()),
             }),
         )
     })?;
+    workspace_config::update_agent_system_prompt_append(&store, req.system_prompt_append)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
 
-    let cfg = workspace_config::load_agent_system_prompt_append(StdPath::new(&workspace.root_path))
+    let cfg = workspace_config::load_agent_system_prompt_append(&store)
         .await
         .map_err(|e| {
             (
@@ -684,7 +709,6 @@ pub(super) async fn update_agent_system_prompt(
         workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
     };
     let response = AgentSystemPromptConfigResponse {
-        config_path: cfg.config_path.to_string_lossy().to_string(),
         default_append: cfg.default_append.clone(),
         configured_append,
         effective_append,
@@ -706,7 +730,7 @@ pub(super) async fn get_subagent_system_prompt(
             }),
         )
     })?);
-    let workspace = state
+    let _workspace = state
         .global_store()
         .get_workspace(ws_id)
         .await
@@ -725,17 +749,24 @@ pub(super) async fn get_subagent_system_prompt(
             }),
         ))?;
 
-    let cfg =
-        workspace_config::load_subagent_system_prompt_append(StdPath::new(&workspace.root_path))
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
+    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let cfg = workspace_config::load_subagent_system_prompt_append(&store)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
 
     let configured_append = cfg
         .configured_append
@@ -748,7 +779,6 @@ pub(super) async fn get_subagent_system_prompt(
         workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
     };
     let response = SubagentSystemPromptConfigResponse {
-        config_path: cfg.config_path.to_string_lossy().to_string(),
         default_append: cfg.default_append.clone(),
         configured_append,
         effective_append,
@@ -771,7 +801,7 @@ pub(super) async fn update_subagent_system_prompt(
             }),
         )
     })?);
-    let workspace = state
+    let _workspace = state
         .global_store()
         .get_workspace(ws_id)
         .await
@@ -790,31 +820,35 @@ pub(super) async fn update_subagent_system_prompt(
             }),
         ))?;
 
-    workspace_config::update_subagent_system_prompt_append(
-        StdPath::new(&workspace.root_path),
-        req.system_prompt_append,
-    )
-    .await
-    .map_err(|e| {
+    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
         (
-            StatusCode::BAD_REQUEST,
+            StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp {
                 error: logs::redact_sensitive(&e.to_string()),
             }),
         )
     })?;
+    workspace_config::update_subagent_system_prompt_append(&store, req.system_prompt_append)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
 
-    let cfg =
-        workspace_config::load_subagent_system_prompt_append(StdPath::new(&workspace.root_path))
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
+    let cfg = workspace_config::load_subagent_system_prompt_append(&store)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
 
     let configured_append = cfg
         .configured_append
@@ -827,7 +861,6 @@ pub(super) async fn update_subagent_system_prompt(
         workspace_config::AgentSystemPromptAppendSource::Disabled => "disabled".to_string(),
     };
     let response = SubagentSystemPromptConfigResponse {
-        config_path: cfg.config_path.to_string_lossy().to_string(),
         default_append: cfg.default_append.clone(),
         configured_append,
         effective_append,
@@ -850,7 +883,7 @@ pub(super) async fn update_merge_queue_config(
             }),
         )
     })?);
-    let workspace = state
+    let _workspace = state
         .global_store()
         .get_workspace(ws_id)
         .await
@@ -877,8 +910,16 @@ pub(super) async fn update_merge_queue_config(
         .map(|v| vec![v])
         .unwrap_or_default();
 
-    let cfg_path = workspace_config::update_merge_queue_config(
-        StdPath::new(&workspace.root_path),
+    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    workspace_config::update_merge_queue_config(
+        &store,
         workspace_config::MergeQueueConfigUpdate {
             enabled: req.enabled,
             target_branch: req.target_branch,
@@ -899,15 +940,17 @@ pub(super) async fn update_merge_queue_config(
         )
     })?;
 
-    Ok(Json(UpdateWorkspaceConfigResp {
-        config_path: cfg_path.to_string_lossy().to_string(),
-    }))
+    Ok(Json(UpdateWorkspaceConfigResp { ok: true }))
 }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateWorktreeBootstrapReq {
     #[serde(default)]
     setup_command: Option<String>,
+    #[serde(default)]
+    timeout_sec: Option<u64>,
+    #[serde(default)]
+    wait_for_completion: Option<bool>,
 }
 
 pub(super) async fn update_worktree_bootstrap_config(
@@ -923,7 +966,7 @@ pub(super) async fn update_worktree_bootstrap_config(
             }),
         )
     })?);
-    let workspace = state
+    let _workspace = state
         .global_store()
         .get_workspace(ws_id)
         .await
@@ -942,9 +985,21 @@ pub(super) async fn update_worktree_bootstrap_config(
             }),
         ))?;
 
-    let cfg_path = workspace_config::update_worktree_bootstrap_setup_command(
-        StdPath::new(&workspace.root_path),
-        req.setup_command,
+    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    workspace_config::update_worktree_bootstrap_config(
+        &store,
+        workspace_config::WorktreeBootstrapConfigUpdate {
+            setup_command: req.setup_command,
+            timeout_sec: req.timeout_sec,
+            wait_for_completion: req.wait_for_completion,
+        },
     )
     .await
     .map_err(|e| {
@@ -956,9 +1011,7 @@ pub(super) async fn update_worktree_bootstrap_config(
         )
     })?;
 
-    Ok(Json(UpdateWorkspaceConfigResp {
-        config_path: cfg_path.to_string_lossy().to_string(),
-    }))
+    Ok(Json(UpdateWorkspaceConfigResp { ok: true }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -972,8 +1025,6 @@ pub(super) struct UpdateExecutionConfigReq {
 
 #[derive(Debug, Serialize)]
 pub(super) struct WorkspaceExecutionConfigResp {
-    // Always points at the workspace root config path (may not exist if unset).
-    config_path: String,
     source: String,               // "workspace" | "daemon_default"
     environment: String,          // "host" | "container_host_mounted" | "container_disk_isolated"
     network_mode: Option<String>, // "llm_only" | "allowlist" | "all"
@@ -992,7 +1043,7 @@ pub(super) async fn get_execution_config(
             }),
         )
     })?);
-    let workspace = state
+    let _workspace = state
         .global_store()
         .get_workspace(ws_id)
         .await
@@ -1011,12 +1062,27 @@ pub(super) async fn get_execution_config(
             }),
         ))?;
 
-    let settings = crate::settings::load_settings(&state.core.data_root).await;
+    let settings = crate::settings::load_settings(state.global_store())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
     let mut effective = settings.execution.clone().unwrap_or_default();
     let mut source = "daemon_default".to_string();
-    match workspace_config::load_execution_settings_override(StdPath::new(&workspace.root_path))
-        .await
-    {
+    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    match workspace_config::load_execution_settings_override(&store).await {
         Ok(Some(ov)) => {
             workspace_config::apply_execution_settings_override(&mut effective, &ov);
             source = "workspace".to_string();
@@ -1046,13 +1112,7 @@ pub(super) async fn get_execution_config(
     }
     .to_string();
 
-    let config_path = StdPath::new(&workspace.root_path)
-        .join(workspace_config::WORKSPACE_CONFIG_REL_PATH)
-        .to_string_lossy()
-        .to_string();
-
     Ok(Json(WorkspaceExecutionConfigResp {
-        config_path,
         source,
         environment,
         network_mode: Some(network_mode),
@@ -1073,7 +1133,7 @@ pub(super) async fn update_execution_config(
             }),
         )
     })?);
-    let workspace = state
+    let _workspace = state
         .global_store()
         .get_workspace(ws_id)
         .await
@@ -1134,8 +1194,16 @@ pub(super) async fn update_execution_config(
             .collect::<Vec<String>>()
     });
 
-    let cfg_path = workspace_config::update_execution_config(
-        StdPath::new(&workspace.root_path),
+    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    workspace_config::update_execution_config(
+        &store,
         workspace_config::ExecutionConfigUpdate {
             environment,
             runtime: Some(crate::settings::ContainerRuntimeKind::Podman),
@@ -1154,9 +1222,7 @@ pub(super) async fn update_execution_config(
         )
     })?;
 
-    Ok(Json(UpdateWorkspaceConfigResp {
-        config_path: cfg_path.to_string_lossy().to_string(),
-    }))
+    Ok(Json(UpdateWorkspaceConfigResp { ok: true }))
 }
 
 #[derive(Debug, Deserialize)]

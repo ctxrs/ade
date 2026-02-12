@@ -21,7 +21,6 @@ export const listWorkspaces = () =>
   apiAny<Workspace[]>("/api/workspaces");
 
 export type AgentSystemPromptConfig = {
-  config_path: string;
   default_append: string;
   configured_append?: string | null;
   effective_append?: string | null;
@@ -29,7 +28,6 @@ export type AgentSystemPromptConfig = {
 };
 
 export type SubagentSystemPromptConfig = {
-  config_path: string;
   default_append: string;
   configured_append?: string | null;
   effective_append?: string | null;
@@ -55,7 +53,7 @@ export type UpdateMergeQueueConfigRequest = {
 };
 
 export type UpdateWorkspaceConfigResponse = {
-  config_path: string;
+  ok: boolean;
 };
 
 export const updateWorkspaceMergeQueueConfig = (workspaceId: string, req: UpdateMergeQueueConfigRequest) =>
@@ -71,7 +69,6 @@ export type UpdateExecutionConfigRequest = {
 };
 
 export type WorkspaceExecutionConfig = {
-  config_path: string;
   source: "workspace" | "daemon_default";
   environment: "host" | "container_host_mounted" | "container_disk_isolated";
   network_mode?: "llm_only" | "allowlist" | "all" | null;
@@ -162,6 +159,8 @@ export const buildExecutionLaunchWsUrl = (jobId: string): string => {
 
 export type UpdateWorktreeBootstrapConfigRequest = {
   setup_command?: string | null;
+  timeout_sec?: number | null;
+  wait_for_completion?: boolean | null;
 };
 
 export const updateWorkspaceWorktreeBootstrapConfig = (workspaceId: string, req: UpdateWorktreeBootstrapConfigRequest) =>

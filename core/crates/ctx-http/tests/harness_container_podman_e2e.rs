@@ -171,6 +171,21 @@ async fn configure_fake_provider(data_root: &Path, script_path: &Path) {
     save_agent_server_config(data_root, &cfg).await.unwrap();
 }
 
+async fn load_settings_from_data_root(data_root: &Path) -> Settings {
+    let db_path = data_root.join("db").join("db.sqlite");
+    let store = ctx_store::Store::open_sqlite(&db_path, None).await.unwrap();
+    let settings = load_settings(&store).await.unwrap();
+    store.close().await;
+    settings
+}
+
+async fn save_settings_to_data_root(data_root: &Path, settings: &Settings) {
+    let db_path = data_root.join("db").join("db.sqlite");
+    let store = ctx_store::Store::open_sqlite(&db_path, None).await.unwrap();
+    save_settings(&store, settings).await.unwrap();
+    store.close().await;
+}
+
 async fn configure_container_settings(
     data_root: &Path,
     mount_mode: ContainerMountMode,
@@ -189,7 +204,7 @@ async fn configure_container_settings(
         }),
         ..Default::default()
     };
-    save_settings(data_root, &settings).await.unwrap();
+    save_settings_to_data_root(data_root, &settings).await;
 }
 
 async fn configure_container_network_settings(
@@ -212,7 +227,7 @@ async fn configure_container_network_settings(
         }),
         ..Default::default()
     };
-    save_settings(data_root, &settings).await.unwrap();
+    save_settings_to_data_root(data_root, &settings).await;
 }
 
 async fn run_container_python(container_name: &str, script: &str) -> std::process::Output {
@@ -400,7 +415,7 @@ async fn harness_container_podman_egress_allowlist() {
         vec![allow_host.to_string()],
     )
     .await;
-    let settings = load_settings(data_dir.path()).await;
+    let settings = load_settings_from_data_root(data_dir.path()).await;
     let execution_settings = settings.execution.clone().unwrap_or_default();
     assert_eq!(
         settings
@@ -550,7 +565,7 @@ async fn harness_container_podman_egress_allow_all() {
         Vec::new(),
     )
     .await;
-    let settings = load_settings(data_dir.path()).await;
+    let settings = load_settings_from_data_root(data_dir.path()).await;
     let execution_settings = settings.execution.clone().unwrap_or_default();
 
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
@@ -678,7 +693,7 @@ async fn harness_container_podman_egress_deny_all() {
         Vec::new(),
     )
     .await;
-    let settings = load_settings(data_dir.path()).await;
+    let settings = load_settings_from_data_root(data_dir.path()).await;
     let execution_settings = settings.execution.clone().unwrap_or_default();
 
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =

@@ -1155,8 +1155,16 @@ pub(super) async fn create_task(
 
     let worktree_id = WorktreeId::new();
     let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
-    let effective =
-        execution_effective::effective_execution_settings(&state.core.data_root, ws_root).await;
+    let effective = execution_effective::effective_execution_settings(&state, ws.id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
     let wt_path = if matches!(effective.mode, ExecutionMode::Container)
         && matches!(
             effective.container.mount_mode,
@@ -1240,8 +1248,6 @@ retry after checking container runtime health.",
         bootstrap_error: None,
         bootstrap_log_path: None,
         bootstrap_log_truncated: None,
-        bootstrap_config_path: None,
-        bootstrap_config_key: None,
         bootstrap_command: None,
         bootstrap_script_path: None,
     };
@@ -1399,8 +1405,11 @@ pub(super) async fn create_session_for_task(
         return Err(StatusCode::BAD_REQUEST);
     }
     if req.initial_prompt.is_some()
-        && (req.initial_message_id.is_some() != req.initial_turn_id.is_some())
+        && (req.initial_message_id.is_none() || req.initial_turn_id.is_none())
     {
+        state
+            .emit_compat_payload_reject_counter("tasks.create_session", "missing_initial_ids", None)
+            .await;
         return Err(StatusCode::BAD_REQUEST);
     }
 
@@ -1428,11 +1437,9 @@ pub(super) async fn create_session_for_task(
             }
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-        let effective = execution_effective::effective_execution_settings(
-            &state.core.data_root,
-            workspace_root,
-        )
-        .await;
+        let effective = execution_effective::effective_execution_settings(&state, workspace.id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         match env_target.as_str() {
             "worktree" | "cloud" => {
                 let worktree_id = WorktreeId::new();
@@ -1505,8 +1512,6 @@ pub(super) async fn create_session_for_task(
                     bootstrap_error: None,
                     bootstrap_log_path: None,
                     bootstrap_log_truncated: None,
-                    bootstrap_config_path: None,
-                    bootstrap_config_key: None,
                     bootstrap_command: None,
                     bootstrap_script_path: None,
                 };
@@ -1693,163 +1698,34 @@ pub(super) async fn create_session_for_task(
                 MessageId(uuid::Uuid::parse_str(message_id).map_err(|_| StatusCode::BAD_REQUEST)?),
                 TurnId(uuid::Uuid::parse_str(turn_id).map_err(|_| StatusCode::BAD_REQUEST)?),
             ),
-            (None, None) => (MessageId::new(), TurnId::new()),
             _ => return Err(StatusCode::BAD_REQUEST),
         };
 
         let delivery = MessageDelivery::Immediate;
         let attachments = Vec::new();
-        let has_client_ids = req.initial_message_id.is_some();
-
-        if has_client_ids {
-            if let Some(existing) = store
-                .get_message(message_id)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            {
-                let matches = existing.session_id == session.id
-                    && existing.turn_id == Some(turn_id)
-                    && matches!(existing.role, MessageRole::User)
-                    && existing.content == prompt
-                    && existing.attachments.is_empty()
-                    && matches!(existing.delivery, MessageDelivery::Immediate);
-                if matches {
-                    super::sessions::ensure_session_turn_for_message(
-                        &store, session.id, turn_id, &existing,
-                    )
-                    .await?;
-                } else {
-                    return Err(StatusCode::CONFLICT);
-                }
-            } else {
-                // Fall through to create below.
-                let prompt_for_idempotency = prompt.clone();
-
-                let run_id = RunId::new();
-                let order_seq_state = state.sessions.get_order_seq_state(&store, session.id).await;
-                let order_seq = {
-                    let mut order_seq_state = order_seq_state.lock().await;
-                    order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
-                };
-                let msg = Message {
-                    id: message_id,
-                    session_id: session.id,
-                    task_id: session.task_id,
-                    run_id: Some(run_id),
-                    turn_id: Some(turn_id),
-                    turn_sequence: Some(0),
-                    order_seq: Some(order_seq),
-                    role: MessageRole::User,
-                    content: prompt,
-                    attachments: attachments.clone(),
-                    delivery,
-                    delivered_at: None,
-                    created_at: chrono::Utc::now(),
-                };
-
-                let saved = match store.insert_message(msg).await {
-                    Ok(saved) => saved,
-                    Err(err) if is_unique_constraint_violation(&err) => {
-                        let Some(existing) = store
-                            .get_message(message_id)
-                            .await
-                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                        else {
-                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                        };
-                        let matches = existing.session_id == session.id
-                            && existing.turn_id == Some(turn_id)
-                            && matches!(existing.role, MessageRole::User)
-                            && existing.content == prompt_for_idempotency
-                            && existing.attachments.is_empty()
-                            && matches!(existing.delivery, MessageDelivery::Immediate);
-                        if matches {
-                            existing
-                        } else {
-                            return Err(StatusCode::CONFLICT);
-                        }
-                    }
-                    Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
-                };
-
-                let event = store
-                    .append_session_event(
-                        session.id,
-                        Some(run_id),
-                        Some(turn_id),
-                        SessionEventType::UserMessage,
-                        serde_json::json!({
-                            "message_id": saved.id.0,
-                            "content": saved.content.clone(),
-                            "delivery": saved.delivery.clone(),
-                            "attachments": saved.attachments,
-                            "order_seq": order_seq,
-                        }),
-                    )
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                let start_seq = event.seq;
-
-                let turn = SessionTurn {
-                    turn_id,
-                    session_id: session.id,
-                    run_id: Some(run_id),
-                    user_message_id: Some(saved.id),
-                    status: SessionTurnStatus::Running,
-                    start_seq: Some(start_seq),
-                    end_seq: None,
-                    started_at: saved.created_at,
-                    updated_at: saved.created_at,
-                    assistant_partial: None,
-                    thought_partial: None,
-                    metrics_json: None,
-                    tool_total: 0,
-                    tool_pending: 0,
-                    tool_running: 0,
-                    tool_completed: 0,
-                    tool_failed: 0,
-                };
-
-                if let Err(err) = store.insert_session_turn(turn).await {
-                    if !is_unique_constraint_violation(&err) {
-                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                    }
-                    let existing = store
-                        .get_session_turn_by_id(turn_id)
-                        .await
-                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                    if let Some(existing) = existing {
-                        let matches = existing.session_id == session.id
-                            && existing.user_message_id == Some(saved.id);
-                        if !matches {
-                            return Err(StatusCode::CONFLICT);
-                        }
-                    } else {
-                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                    }
-                }
-
-                state.publish_event(event).await;
-
-                let prompt = saved.content.clone();
-                let tx = state.ensure_scheduler(session.clone()).await;
-                let queued = crate::scheduler::QueuedMessage {
-                    message: saved,
-                    enqueued_at: Instant::now(),
-                    run_id: run_id_header.clone(),
-                };
-                let _ = tx.send(SchedulerCommand::Enqueue(queued)).await;
-
-                let _ = schedule_session_title_generation(
-                    state.clone(),
-                    session.clone(),
-                    prompt,
-                    false,
+        if let Some(existing) = store
+            .get_message(message_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        {
+            let matches = existing.session_id == session.id
+                && existing.turn_id == Some(turn_id)
+                && matches!(existing.role, MessageRole::User)
+                && existing.content == prompt
+                && existing.attachments.is_empty()
+                && matches!(existing.delivery, MessageDelivery::Immediate);
+            if matches {
+                super::sessions::ensure_session_turn_for_message(
+                    &store, session.id, turn_id, &existing,
                 )
-                .await;
+                .await?;
+            } else {
+                return Err(StatusCode::CONFLICT);
             }
         } else {
-            // Back-compat path: no client IDs, still create.
+            // Fall through to create below.
+            let prompt_for_idempotency = prompt.clone();
+
             let run_id = RunId::new();
             let order_seq_state = state.sessions.get_order_seq_state(&store, session.id).await;
             let order_seq = {
@@ -1866,15 +1742,37 @@ pub(super) async fn create_session_for_task(
                 order_seq: Some(order_seq),
                 role: MessageRole::User,
                 content: prompt,
-                attachments,
+                attachments: attachments.clone(),
                 delivery,
                 delivered_at: None,
                 created_at: chrono::Utc::now(),
             };
-            let saved = store
-                .insert_message(msg)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            let saved = match store.insert_message(msg).await {
+                Ok(saved) => saved,
+                Err(err) if is_unique_constraint_violation(&err) => {
+                    let Some(existing) = store
+                        .get_message(message_id)
+                        .await
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                    else {
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    };
+                    let matches = existing.session_id == session.id
+                        && existing.turn_id == Some(turn_id)
+                        && matches!(existing.role, MessageRole::User)
+                        && existing.content == prompt_for_idempotency
+                        && existing.attachments.is_empty()
+                        && matches!(existing.delivery, MessageDelivery::Immediate);
+                    if matches {
+                        existing
+                    } else {
+                        return Err(StatusCode::CONFLICT);
+                    }
+                }
+                Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+            };
+
             let event = store
                 .append_session_event(
                     session.id,
@@ -1912,10 +1810,26 @@ pub(super) async fn create_session_for_task(
                 tool_completed: 0,
                 tool_failed: 0,
             };
-            store
-                .insert_session_turn(turn)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            if let Err(err) = store.insert_session_turn(turn).await {
+                if !is_unique_constraint_violation(&err) {
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                }
+                let existing = store
+                    .get_session_turn_by_id(turn_id)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                if let Some(existing) = existing {
+                    let matches = existing.session_id == session.id
+                        && existing.user_message_id == Some(saved.id);
+                    if !matches {
+                        return Err(StatusCode::CONFLICT);
+                    }
+                } else {
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                }
+            }
+
             state.publish_event(event).await;
 
             let prompt = saved.content.clone();

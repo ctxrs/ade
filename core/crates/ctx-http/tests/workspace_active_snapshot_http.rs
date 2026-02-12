@@ -93,9 +93,17 @@ async fn workspace_active_snapshot_includes_sessions() {
         .await
         .unwrap();
 
+    let initial_message_id = uuid::Uuid::new_v4().to_string();
+    let initial_turn_id = uuid::Uuid::new_v4().to_string();
     let session: ctx_core::models::Session = client
         .post(format!("{base}/api/tasks/{}/sessions", task_active.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model","initial_prompt":"hello"}))
+        .json(&json!({
+            "provider_id":"fake",
+            "model_id":"fake-model",
+            "initial_prompt":"hello",
+            "initial_message_id": initial_message_id,
+            "initial_turn_id": initial_turn_id,
+        }))
         .send()
         .await
         .unwrap()
@@ -120,6 +128,75 @@ async fn workspace_active_snapshot_includes_sessions() {
     assert_eq!(summary.primary_session.session.id, session.id);
     assert!(summary.primary_session_head.is_none());
     assert_eq!(snapshot.active.total_count, 1);
+}
+
+#[tokio::test]
+async fn create_session_rejects_initial_prompt_without_client_ids() {
+    let (repo, _data_dir, _state, server) = setup().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task_active: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
+        .json(&json!({"title":"active"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let resp = client
+        .post(format!("{base}/api/tasks/{}/sessions", task_active.id.0))
+        .json(&json!({"provider_id":"fake","model_id":"fake-model","initial_prompt":"hello"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let summary: Value = client
+        .get(format!(
+            "{base}/api/telemetry/summary?metric=compat.payload_reject_count"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let hit = summary
+        .get("metrics")
+        .and_then(Value::as_array)
+        .map(|metrics| {
+            metrics.iter().any(|metric| {
+                let labels = metric.get("labels").and_then(Value::as_object);
+                metric.get("name").and_then(Value::as_str) == Some("compat.payload_reject_count")
+                    && labels
+                        .and_then(|obj| obj.get("surface"))
+                        .and_then(Value::as_str)
+                        == Some("tasks.create_session")
+                    && labels
+                        .and_then(|obj| obj.get("issue"))
+                        .and_then(Value::as_str)
+                        == Some("missing_initial_ids")
+                    && metric.get("sum").and_then(Value::as_f64).unwrap_or(0.0) >= 1.0
+            })
+        })
+        .unwrap_or(false);
+    assert!(
+        hit,
+        "expected compat.payload_reject_count telemetry for missing initial IDs"
+    );
 }
 
 #[tokio::test]

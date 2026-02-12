@@ -21,6 +21,7 @@ export type SshConnectReq = {
   remote_port?: number | null;
   start_remote?: boolean;
   remote_data_dir?: string | null;
+  remote_ctx_bin?: string | null;
 };
 
 export type DesktopHttpResponse = {
@@ -37,6 +38,12 @@ export type DesktopDeepLinkToken = {
   token: string;
   expires_at_ms: number;
 };
+
+export type DesktopStorageNotice =
+  | {
+      kind: "ui_state_reset";
+      reason: "schema_mismatch" | "invalid_ui_state_db";
+    };
 
 export type DesktopSshHost = {
   host: string;
@@ -169,6 +176,14 @@ export const desktopListSshHosts = async (): Promise<DesktopSshHost[]> =>
 export const desktopTestSsh = async (req: { host: string; user?: string | null }): Promise<void> =>
   invoke<void>("desktop_test_ssh", { req });
 
+export const desktopKickoffRemotePrewarm = async (req: {
+  host: string;
+  user?: string | null;
+  remote_port?: number | null;
+  remote_data_dir?: string | null;
+}): Promise<void> =>
+  invoke<void>("desktop_kickoff_remote_prewarm", { req });
+
 export const desktopListSshPaths = async (req: { host: string; user?: string | null; path?: string | null }): Promise<DesktopSshPathEntry[]> =>
   invoke<DesktopSshPathEntry[]>("desktop_list_ssh_paths", { req });
 
@@ -232,6 +247,9 @@ export const desktopStorageGet = async (key: string): Promise<unknown | null> =>
 
 export const desktopStorageBatch = async (ops: DesktopStorageBatchOp[]): Promise<void> =>
   invoke<void>("desktop_storage_batch", { ops });
+
+export const desktopStorageConsumeNotice = async (): Promise<DesktopStorageNotice | null> =>
+  invoke<DesktopStorageNotice | null>("desktop_storage_consume_notice");
 
 export const desktopUploadBlob = async (args: {
   bytes: number[];

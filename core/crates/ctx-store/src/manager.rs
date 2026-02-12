@@ -21,7 +21,6 @@ pub struct StoreManagerConfig {
 pub struct StoreManager {
     global: Store,
     data_root: PathBuf,
-    global_db_path: PathBuf,
     workspace_stores: Arc<Mutex<HashMap<WorkspaceId, TimedStoreEntry>>>,
     config: StoreManagerConfig,
 }
@@ -69,32 +68,14 @@ impl StoreManager {
         let db_dir = data_root.join("db");
         tokio::fs::create_dir_all(&db_dir).await?;
         let global_db_path = db_dir.join("db.sqlite");
-        let legacy_db_path = data_root.join("db.sqlite");
-        if legacy_db_path.exists() && !global_db_path.exists() {
-            tokio::fs::rename(&legacy_db_path, &global_db_path).await?;
-            let legacy_wal = legacy_db_path.with_extension("sqlite-wal");
-            let legacy_shm = legacy_db_path.with_extension("sqlite-shm");
-            let global_wal = global_db_path.with_extension("sqlite-wal");
-            let global_shm = global_db_path.with_extension("sqlite-shm");
-            if legacy_wal.exists() {
-                tokio::fs::rename(&legacy_wal, &global_wal).await?;
-            }
-            if legacy_shm.exists() {
-                tokio::fs::rename(&legacy_shm, &global_shm).await?;
-            }
-        }
-
         let global = Store::open_sqlite(&global_db_path, config.max_connections).await?;
 
-        let manager = Self {
+        Ok(Self {
             global,
             data_root,
-            global_db_path,
             workspace_stores: Arc::new(Mutex::new(HashMap::new())),
             config,
-        };
-        manager.bootstrap_workspace_dbs().await?;
-        Ok(manager)
+        })
     }
 
     pub fn global(&self) -> &Store {
@@ -144,7 +125,7 @@ impl StoreManager {
             .get_workspace(workspace_id)
             .await?
             .with_context(|| format!("workspace {} not found", workspace_id.0))?;
-        let store = self.open_workspace_store(&workspace, false).await?;
+        let store = self.open_workspace_store(&workspace).await?;
         let mut stores = self.workspace_stores.lock().await;
         if let Some(existing) = stores.get_mut(&workspace_id) {
             existing.touch();
@@ -223,37 +204,13 @@ impl StoreManager {
         evicted
     }
 
-    async fn bootstrap_workspace_dbs(&self) -> Result<()> {
-        let workspaces = self.global.list_workspaces().await?;
-        for workspace in workspaces {
-            self.global.refresh_workspace_indexes(workspace.id).await?;
-            let _ = self.open_workspace_store(&workspace, true).await?;
-        }
-        Ok(())
-    }
-
-    async fn open_workspace_store(
-        &self,
-        workspace: &Workspace,
-        migrate_if_missing: bool,
-    ) -> Result<Store> {
+    async fn open_workspace_store(&self, workspace: &Workspace) -> Result<Store> {
         let path = self.workspace_db_path(workspace.id);
-        let needs_migration = !path.exists();
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
         let store = Store::open_sqlite(&path, self.config.max_connections).await?;
         store.upsert_workspace(workspace).await?;
-        if migrate_if_missing && needs_migration {
-            if let Err(err) = store
-                .migrate_workspace_from_path(&self.global_db_path, workspace.id)
-                .await
-            {
-                store.close().await;
-                let _ = tokio::fs::remove_file(&path).await;
-                return Err(err);
-            }
-        }
         Ok(store)
     }
 
@@ -270,6 +227,7 @@ impl StoreManager {
 mod tests {
     use super::*;
     use ctx_core::models::VcsKind;
+    use std::fs;
 
     #[tokio::test]
     async fn evict_idle_workspaces_skips_active() {
@@ -297,5 +255,103 @@ mod tests {
             .evict_idle_workspaces(Duration::from_secs(0), &HashSet::new())
             .await;
         assert_eq!(evicted, 1);
+    }
+
+    #[tokio::test]
+    async fn startup_uses_split_layout_without_legacy_root_migration() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = StoreManager::open(temp.path()).await.unwrap();
+        let split_global = temp.path().join("db").join("db.sqlite");
+        assert!(split_global.exists(), "expected split-layout global db");
+        drop(manager);
+
+        let legacy_root_db = temp.path().join("db.sqlite");
+        fs::write(&legacy_root_db, b"legacy-data").unwrap();
+        assert!(legacy_root_db.exists());
+
+        let _manager = StoreManager::open(temp.path()).await.unwrap();
+        assert!(
+            legacy_root_db.exists(),
+            "legacy root db must be ignored, not renamed"
+        );
+        let legacy_bytes = fs::read(&legacy_root_db).unwrap();
+        assert_eq!(legacy_bytes, b"legacy-data");
+    }
+
+    #[tokio::test]
+    async fn startup_does_not_bootstrap_workspace_dbs() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = StoreManager::open(temp.path()).await.unwrap();
+        let workspace = manager
+            .global()
+            .create_workspace(
+                "ws".to_string(),
+                temp.path().to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+        let workspace_db_path = temp
+            .path()
+            .join("db")
+            .join("workspaces")
+            .join(workspace.id.0.to_string())
+            .join("db.sqlite");
+        assert!(!workspace_db_path.exists());
+        drop(manager);
+
+        let manager = StoreManager::open(temp.path()).await.unwrap();
+        assert!(
+            !workspace_db_path.exists(),
+            "workspace db should not be created until first workspace access"
+        );
+
+        let _store = manager.workspace(workspace.id).await.unwrap();
+        assert!(workspace_db_path.exists());
+    }
+
+    #[tokio::test]
+    async fn workspace_open_does_not_import_rows_from_global_db() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = StoreManager::open(temp.path()).await.unwrap();
+        let workspace = manager
+            .global()
+            .create_workspace(
+                "ws".to_string(),
+                temp.path().to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .unwrap();
+        let global_task = manager
+            .global()
+            .create_task(workspace.id, "legacy-task".to_string(), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            manager
+                .global()
+                .list_tasks(workspace.id)
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "global db task setup failed"
+        );
+
+        let workspace_store = manager.workspace(workspace.id).await.unwrap();
+        let workspace_tasks = workspace_store.list_tasks(workspace.id).await.unwrap();
+        assert!(
+            workspace_tasks.is_empty(),
+            "workspace open must not import rows"
+        );
+        assert!(
+            workspace_store
+                .get_task(global_task.id)
+                .await
+                .unwrap()
+                .is_none(),
+            "global task id must not appear in workspace db"
+        );
     }
 }

@@ -1078,10 +1078,7 @@ export default function SettingsPage() {
         }
       }
       if (isNotFound) {
-        const fallbackWs = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? workspaces[0];
-        const fallbackPath = fallbackWs ? `${fallbackWs.root_path}/.ctx/config.toml` : ".ctx/config.toml";
         setAgentPromptConfig({
-          config_path: fallbackPath,
           default_append: AGENT_PROMPT_DEFAULT,
           configured_append: null,
           effective_append: AGENT_PROMPT_DEFAULT,
@@ -1122,10 +1119,7 @@ export default function SettingsPage() {
         }
       }
       if (isNotFound) {
-        const fallbackWs = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? workspaces[0];
-        const fallbackPath = fallbackWs ? `${fallbackWs.root_path}/.ctx/config.toml` : ".ctx/config.toml";
         setSubagentPromptConfig({
-          config_path: fallbackPath,
           default_append: SUBAGENT_PROMPT_DEFAULT,
           configured_append: null,
           effective_append: SUBAGENT_PROMPT_DEFAULT,
@@ -2028,9 +2022,7 @@ export default function SettingsPage() {
 
     if (active === "worktree_bootstrap") {
       const anyWorkspace = workspaces.length > 0;
-      const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
-      const configPath = selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/config.toml` : ".ctx/config.toml";
-      const example = `[worktree.bootstrap]\nsetup_worktree = [\"pnpm install\", \"cargo fetch --locked\"]\nsetup_worktree_unix = \"scripts/worktree_bootstrap_unix.sh\"\nsetup_worktree_windows = \"scripts/worktree_bootstrap_windows.ps1\"\ntimeout_sec = 60\nwait_for_completion = false\n`;
+      const example = `setup_command: \"pnpm install\"\ntimeout_sec: 60\nwait_for_completion: false`;
 
       return (
         <>
@@ -2057,13 +2049,8 @@ export default function SettingsPage() {
               }
             />
             <Row
-              title="Config file"
-              description="Repo-scoped worktree bootstrap configuration."
-              control={<span className="settings-pill wb-mono">{configPath}</span>}
-            />
-            <Row
               title="Example"
-              description="Add this section to enable bootstrap."
+              description="Bootstrap settings are stored per-workspace in your local daemon."
               control={<pre className="settings-code-block">{example}</pre>}
             />
           </Card>
@@ -2073,10 +2060,6 @@ export default function SettingsPage() {
 
     if (active === "agent_system_prompt") {
       const anyWorkspace = workspaces.length > 0;
-      const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
-      const configPath =
-        agentPromptConfig?.config_path ??
-        (selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/config.toml` : ".ctx/config.toml");
       const statusLabel = agentPromptConfig?.source === "config" ? "Custom" : "Default";
       const promptDirty = agentPromptDirty;
       const subagentDirty = subagentPromptDirty;
@@ -2108,13 +2091,8 @@ export default function SettingsPage() {
               }
             />
             <Row
-              title="Config file"
-              description="Repo-scoped agent prompt configuration."
-              control={<span className="settings-pill wb-mono">{configPath}</span>}
-            />
-            <Row
               title="Prompt append"
-              description="Saved to .ctx/config.toml. Pre-filled with the default; edit to override."
+              description="Saved in local per-workspace settings. Pre-filled with the default; edit to override."
               control={
                 <textarea
                   className="settings-control settings-control-wide"
@@ -2128,7 +2106,7 @@ export default function SettingsPage() {
             />
             <Row
               title="Subagent prompt append"
-              description="Saved to .ctx/config.toml. Pre-filled with the default; edit to override."
+              description="Saved in local per-workspace settings. Pre-filled with the default; edit to override."
               control={
                 <textarea
                   className="settings-control settings-control-wide"
@@ -2383,8 +2361,6 @@ export default function SettingsPage() {
 
     if (active === "execution") {
       const anyWorkspace = workspaces.length > 0;
-      const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
-      const configPath = selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/config.toml` : ".ctx/config.toml";
       const exec = workspaceExecution;
       const modeLabel =
         exec?.environment === "container_disk_isolated"
@@ -2431,11 +2407,6 @@ export default function SettingsPage() {
                   })}
                 </select>
               }
-            />
-            <Row
-              title="Config file"
-              description="Repo-scoped execution configuration."
-              control={<span className="settings-pill wb-mono">{configPath}</span>}
             />
             <Row
               title="Environment"
@@ -2494,8 +2465,6 @@ export default function SettingsPage() {
 
     if (active === "merge_queue") {
       const anyWorkspace = workspaces.length > 0;
-      const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
-      const configPath = selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/config.toml` : ".ctx/config.toml";
 
       return (
         <>
@@ -2520,11 +2489,6 @@ export default function SettingsPage() {
                   })}
                 </select>
               }
-            />
-            <Row
-              title="Config file"
-              description="Repo-scoped merge queue configuration."
-              control={<span className="settings-pill wb-mono">{configPath}</span>}
             />
             <Row
               title="Actions"

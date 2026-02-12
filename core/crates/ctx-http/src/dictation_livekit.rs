@@ -159,7 +159,23 @@ async fn connect_livekit_inference_stt(
 
 pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::Arc<AppState>) {
     tracing::info!("dictation: client connected");
-    let settings = settings::load_settings(&state.core.data_root).await;
+    let settings = match settings::load_settings(state.global_store()).await {
+        Ok(settings) => settings,
+        Err(err) => {
+            let _ = socket
+                .send(WsMessage::Text(
+                    serde_json::to_string(&ErrorMsg {
+                        r#type: "error",
+                        message: format!("Failed to load dictation settings: {err}"),
+                    })
+                    .unwrap_or_else(|_| {
+                        "{\"type\":\"error\",\"message\":\"dictation unavailable\"}".to_string()
+                    }),
+                ))
+                .await;
+            return;
+        }
+    };
     let Some(dictation) = settings.dictation else {
         let _ = socket
             .send(WsMessage::Text(

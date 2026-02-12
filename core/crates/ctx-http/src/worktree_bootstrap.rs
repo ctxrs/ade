@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use serde::Deserialize;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
@@ -13,63 +12,25 @@ use ctx_core::ids::WorktreeId;
 use ctx_core::models::{Workspace, Worktree, WorktreeBootstrapNotice, WorktreeBootstrapStatus};
 use ctx_store::WorktreeBootstrapResultUpdate;
 
-use crate::buffers::BufferStore;
 use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::harness_runtime;
 use crate::logs;
+use crate::workspace_config;
 
-const CONFIG_REL_PATH: &str = ".ctx/config.toml";
 const DEFAULT_TIMEOUT_SEC: u64 = 60;
 const MAX_LOG_BYTES: usize = 200 * 1024;
 
-#[derive(Debug, Clone, Deserialize)]
-struct WorkspaceConfigFile {
-    #[serde(default)]
-    worktree: Option<WorktreeConfig>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct WorktreeConfig {
-    #[serde(default)]
-    bootstrap: Option<WorktreeBootstrapConfig>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct WorktreeBootstrapConfig {
-    #[serde(default)]
-    setup_worktree: Option<BootstrapCommandSpec>,
-    #[serde(default)]
-    setup_worktree_unix: Option<BootstrapCommandSpec>,
-    #[serde(default)]
-    setup_worktree_windows: Option<BootstrapCommandSpec>,
-    #[serde(default)]
-    timeout_sec: Option<u64>,
-    #[serde(default)]
-    wait_for_completion: Option<bool>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-enum BootstrapCommandSpec {
-    Script(String),
-    Commands(Vec<String>),
-}
-
 #[derive(Debug, Clone)]
 struct ResolvedBootstrap {
-    config_path: PathBuf,
-    config_key: String,
     timeout: Duration,
-    spec: BootstrapCommandSpec,
+    command: String,
     wait_for_completion: bool,
 }
 
 #[derive(Debug, Clone)]
 struct WorktreeBootstrapPlan {
-    config_path: PathBuf,
-    config_key: String,
     timeout: Duration,
     steps: Vec<BootstrapStep>,
     wait_for_completion: bool,
@@ -83,7 +44,6 @@ struct BootstrapStep {
 
 #[derive(Debug, Clone)]
 enum BootstrapStepKind {
-    Script { path: PathBuf, original: String },
     Command { command: String },
 }
 
@@ -140,20 +100,16 @@ async fn prepare_worktree_bootstrap(
         return Ok(None);
     }
 
-    let bootstrap = match load_bootstrap_config(worktree, workspace).await {
+    let bootstrap = match load_bootstrap_config(state, workspace).await {
         Ok(Some(cfg)) => cfg,
         Ok(None) => return Ok(None),
         Err(err) => {
             let started_at = Utc::now();
             let error = err.to_string();
             let error_details = format!("{err:#}");
-            let config_path = detect_bootstrap_config_path(worktree, workspace);
             let mut log = String::new();
             log.push_str("# ctx worktree bootstrap\n");
             log.push_str(&format!("# Worktree: {}\n", worktree.root_path.trim()));
-            if let Some(path) = &config_path {
-                log.push_str(&format!("# Config: {}\n", path.display()));
-            }
             log.push_str(&format!("# Started: {}\n\n", started_at.to_rfc3339()));
             log.push_str("[error]\n");
             log.push_str(&error_details);
@@ -176,10 +132,6 @@ async fn prepare_worktree_bootstrap(
                     error: Some(error.clone()),
                     log_path: log_path.as_ref().map(|p| p.to_string_lossy().to_string()),
                     log_truncated: Some(log_truncated),
-                    config_path: config_path
-                        .as_ref()
-                        .map(|p| p.to_string_lossy().to_string()),
-                    config_key: None,
                     command: None,
                     script_path: None,
                 },
@@ -193,10 +145,6 @@ async fn prepare_worktree_bootstrap(
                 finished_at,
                 exit_code: None,
                 timeout_sec: Some(DEFAULT_TIMEOUT_SEC as i64),
-                config_path: config_path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().to_string()),
-                config_key: None,
                 command: None,
                 script_path: None,
                 log_path: log_path.map(|p| p.to_string_lossy().to_string()),
@@ -208,14 +156,12 @@ async fn prepare_worktree_bootstrap(
         }
     };
 
-    let steps = build_bootstrap_steps(&bootstrap.spec, worktree)?;
+    let steps = build_bootstrap_steps(&bootstrap.command)?;
     if steps.is_empty() {
         return Ok(None);
     }
 
     Ok(Some(WorktreeBootstrapPlan {
-        config_path: bootstrap.config_path,
-        config_key: bootstrap.config_key,
         timeout: bootstrap.timeout,
         steps,
         wait_for_completion: bootstrap.wait_for_completion,
@@ -228,19 +174,11 @@ async fn run_worktree_bootstrap_plan(
     worktree: &Worktree,
     plan: WorktreeBootstrapPlan,
 ) -> Result<()> {
-    let WorktreeBootstrapPlan {
-        config_path,
-        config_key,
-        timeout,
-        steps,
-        ..
-    } = plan;
+    let WorktreeBootstrapPlan { timeout, steps, .. } = plan;
     let started_at = Utc::now();
     let mut log = String::new();
     log.push_str("# ctx worktree bootstrap\n");
     log.push_str(&format!("# Worktree: {}\n", worktree.root_path.trim()));
-    log.push_str(&format!("# Config: {}\n", config_path.display()));
-    log.push_str(&format!("# Key: {}\n", config_key));
     log.push_str(&format!("# Started: {}\n\n", started_at.to_rfc3339()));
 
     let mut last_exit = None;
@@ -308,10 +246,8 @@ async fn run_worktree_bootstrap_plan(
             error: error.clone(),
             log_path: log_path.as_ref().map(|p| p.to_string_lossy().to_string()),
             log_truncated: Some(log_truncated),
-            config_path: Some(config_path.to_string_lossy().to_string()),
-            config_key: Some(config_key.clone()),
             command: last_step.as_ref().and_then(|step| step.command_value()),
-            script_path: last_step.as_ref().and_then(|step| step.script_value()),
+            script_path: None,
         },
     )
     .await;
@@ -325,10 +261,8 @@ async fn run_worktree_bootstrap_plan(
             finished_at,
             exit_code: last_exit,
             timeout_sec: Some(timeout.as_secs() as i64),
-            config_path: Some(config_path.to_string_lossy().to_string()),
-            config_key: Some(config_key.clone()),
             command: last_step.as_ref().and_then(|step| step.command_value()),
-            script_path: last_step.as_ref().and_then(|step| step.script_value()),
+            script_path: None,
             log_path: log_path.map(|p| p.to_string_lossy().to_string()),
             log_truncated: Some(log_truncated),
             error,
@@ -343,57 +277,28 @@ impl BootstrapStep {
     fn command_value(&self) -> Option<String> {
         match &self.kind {
             BootstrapStepKind::Command { command } => Some(command.clone()),
-            _ => None,
-        }
-    }
-
-    fn script_value(&self) -> Option<String> {
-        match &self.kind {
-            BootstrapStepKind::Script { original, .. } => Some(original.clone()),
-            _ => None,
         }
     }
 }
 
 async fn load_bootstrap_config(
-    worktree: &Worktree,
+    state: &AppState,
     workspace: &Workspace,
 ) -> Result<Option<ResolvedBootstrap>> {
-    let worktree_cfg_path = Path::new(&worktree.root_path).join(CONFIG_REL_PATH);
-    if let Some(cfg) = load_bootstrap_config_at(&worktree_cfg_path).await? {
-        return Ok(resolve_bootstrap(cfg, worktree_cfg_path));
-    }
-
-    let workspace_cfg_path = Path::new(&workspace.root_path).join(CONFIG_REL_PATH);
-    if workspace_cfg_path == worktree_cfg_path {
+    let store = state.store_for_workspace(workspace.id).await?;
+    let Some(cfg) = workspace_config::load_worktree_bootstrap_config(&store).await? else {
         return Ok(None);
-    }
-    if let Some(cfg) = load_bootstrap_config_at(&workspace_cfg_path).await? {
-        return Ok(resolve_bootstrap(cfg, workspace_cfg_path));
-    }
-    Ok(None)
-}
+    };
 
-fn resolve_bootstrap(
-    cfg: WorktreeBootstrapConfig,
-    config_path: PathBuf,
-) -> Option<ResolvedBootstrap> {
-    let is_windows = cfg!(windows);
-    let (key, spec) = if is_windows {
-        cfg.setup_worktree_windows
-            .map(|spec| ("setup_worktree_windows".to_string(), spec))
-            .or_else(|| {
-                cfg.setup_worktree
-                    .map(|spec| ("setup_worktree".to_string(), spec))
-            })
-    } else {
-        cfg.setup_worktree_unix
-            .map(|spec| ("setup_worktree_unix".to_string(), spec))
-            .or_else(|| {
-                cfg.setup_worktree
-                    .map(|spec| ("setup_worktree".to_string(), spec))
-            })
-    }?;
+    let command = cfg
+        .setup_command
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let Some(command) = command else {
+        return Ok(None);
+    };
 
     let timeout_sec = cfg.timeout_sec.unwrap_or(DEFAULT_TIMEOUT_SEC);
     let timeout_sec = if timeout_sec == 0 {
@@ -402,60 +307,23 @@ fn resolve_bootstrap(
         timeout_sec
     };
     let wait_for_completion = cfg.wait_for_completion.unwrap_or(false);
-    Some(ResolvedBootstrap {
-        config_path,
-        config_key: key,
+    Ok(Some(ResolvedBootstrap {
         timeout: Duration::from_secs(timeout_sec),
-        spec,
+        command,
         wait_for_completion,
-    })
+    }))
 }
 
-async fn load_bootstrap_config_at(path: &Path) -> Result<Option<WorktreeBootstrapConfig>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let txt = tokio::fs::read_to_string(path)
-        .await
-        .with_context(|| format!("reading {}", path.display()))?;
-    let cfg: WorkspaceConfigFile = toml::from_str(&txt).context("parsing config.toml")?;
-    Ok(cfg.worktree.and_then(|w| w.bootstrap))
-}
-
-fn build_bootstrap_steps(
-    spec: &BootstrapCommandSpec,
-    worktree: &Worktree,
-) -> Result<Vec<BootstrapStep>> {
+fn build_bootstrap_steps(command: &str) -> Result<Vec<BootstrapStep>> {
     let mut steps = Vec::new();
-    match spec {
-        BootstrapCommandSpec::Script(script) => {
-            let trimmed = script.trim();
-            if trimmed.is_empty() {
-                return Ok(steps);
-            }
-            let path = resolve_worktree_path(&worktree.root_path, trimmed);
-            steps.push(BootstrapStep {
-                label: trimmed.to_string(),
-                kind: BootstrapStepKind::Script {
-                    path,
-                    original: trimmed.to_string(),
-                },
-            });
-        }
-        BootstrapCommandSpec::Commands(commands) => {
-            for cmd in commands {
-                let trimmed = cmd.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                steps.push(BootstrapStep {
-                    label: trimmed.to_string(),
-                    kind: BootstrapStepKind::Command {
-                        command: trimmed.to_string(),
-                    },
-                });
-            }
-        }
+    let trimmed = command.trim();
+    if !trimmed.is_empty() {
+        steps.push(BootstrapStep {
+            label: trimmed.to_string(),
+            kind: BootstrapStepKind::Command {
+                command: trimmed.to_string(),
+            },
+        });
     }
     Ok(steps)
 }
@@ -472,7 +340,6 @@ async fn run_bootstrap_step(
     }
 
     let mut cmd = match &step.kind {
-        BootstrapStepKind::Script { path, .. } => command_for_script(path),
         BootstrapStepKind::Command { command } => command_for_shell(command),
     };
 
@@ -556,11 +423,7 @@ async fn run_bootstrap_step_in_container(
     timeout: Duration,
 ) -> Result<BootstrapCommandResult> {
     // Ensure the harness container is up, then execute within it.
-    let settings = execution_effective::effective_execution_settings(
-        &state.core.data_root,
-        Path::new(&workspace.root_path),
-    )
-    .await;
+    let settings = execution_effective::effective_execution_settings(state, workspace.id).await?;
     state
         .execution
         .harness
@@ -609,19 +472,6 @@ async fn run_bootstrap_step_in_container(
     match &step.kind {
         BootstrapStepKind::Command { command } => {
             cmd.arg("sh").arg("-lc").arg(command);
-        }
-        BootstrapStepKind::Script { path, .. } => {
-            let script_path = BufferStore::resolve_path_lexical(
-                Path::new(&worktree.root_path),
-                &path.to_string_lossy(),
-            )?;
-            // `/bin/sh` is typically `dash` in Ubuntu images, so avoid `pipefail`.
-            let runner = "set -eu; if [ -x \"$1\" ]; then \"$1\"; else sh \"$1\"; fi";
-            cmd.arg("sh")
-                .arg("-lc")
-                .arg(runner)
-                .arg("--")
-                .arg(script_path);
         }
     }
 
@@ -681,46 +531,6 @@ fn command_for_shell(command: &str) -> Command {
         cmd.arg("-lc").arg(command);
         cmd
     }
-}
-
-fn command_for_script(path: &Path) -> Command {
-    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-    if cfg!(windows) && ext.eq_ignore_ascii_case("ps1") {
-        let mut cmd = Command::new("powershell");
-        cmd.arg("-NoProfile")
-            .arg("-ExecutionPolicy")
-            .arg("Bypass")
-            .arg("-File")
-            .arg(path);
-        return cmd;
-    }
-    if ext.eq_ignore_ascii_case("sh") {
-        let mut cmd = Command::new("bash");
-        cmd.arg(path);
-        return cmd;
-    }
-    Command::new(path)
-}
-
-fn resolve_worktree_path(worktree_root: &str, raw: &str) -> PathBuf {
-    let path = PathBuf::from(raw);
-    if path.is_absolute() {
-        path
-    } else {
-        Path::new(worktree_root).join(path)
-    }
-}
-
-fn detect_bootstrap_config_path(worktree: &Worktree, workspace: &Workspace) -> Option<PathBuf> {
-    let worktree_cfg_path = Path::new(&worktree.root_path).join(CONFIG_REL_PATH);
-    if worktree_cfg_path.exists() {
-        return Some(worktree_cfg_path);
-    }
-    let workspace_cfg_path = Path::new(&workspace.root_path).join(CONFIG_REL_PATH);
-    if workspace_cfg_path.exists() {
-        return Some(workspace_cfg_path);
-    }
-    None
 }
 
 fn append_output(log: &mut String, output: &str, label: &str) {

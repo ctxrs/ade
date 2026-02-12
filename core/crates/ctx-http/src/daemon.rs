@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use std::{fs, path::Path};
 
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use axum::Router;
 use chrono::Utc;
 use directories::BaseDirs;
@@ -13,10 +14,12 @@ use which::which;
 
 use ctx_core::models::SessionTurnStatus;
 use ctx_lsp::LspManagerConfig;
-use ctx_providers::adapters::ProviderAdapter;
+use ctx_providers::adapters::{
+    ProviderAdapter, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
+};
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
-use ctx_store::{StoreManager, StoreManagerConfig};
+use ctx_store::{Store, StoreManager, StoreManagerConfig};
 
 use crate::api;
 use crate::installer;
@@ -45,13 +48,147 @@ pub use state::{
     WorktreeVcsSnapshotCacheEntry,
 };
 
-fn fallback_provider_command(command: &str, args: Vec<String>) -> installer::AgentServerCommand {
-    installer::AgentServerCommand {
-        command: command.to_string(),
-        args,
-        dependencies: Vec::new(),
-        managed: None,
+struct StaticStatusAdapter {
+    status: ProviderStatus,
+}
+
+#[async_trait]
+impl ProviderAdapter for StaticStatusAdapter {
+    async fn inspect(&self) -> Result<ProviderStatus> {
+        Ok(self.status.clone())
     }
+
+    async fn run(
+        &self,
+        _input: TurnInput,
+        _workdir: PathBuf,
+        _env: HashMap<String, String>,
+        _event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+    ) -> Result<RunHandle> {
+        let msg = self
+            .status
+            .diagnostics
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "provider is unavailable".to_string());
+        anyhow::bail!("{msg}");
+    }
+
+    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+        Ok(())
+    }
+}
+
+fn static_status_adapter(
+    provider_id: &str,
+    installed: bool,
+    health: ProviderHealth,
+    error_code: &str,
+    message: String,
+) -> Arc<dyn ProviderAdapter> {
+    let mut details = HashMap::new();
+    details.insert("error_code".to_string(), error_code.to_string());
+    Arc::new(StaticStatusAdapter {
+        status: ProviderStatus {
+            provider_id: provider_id.to_string(),
+            installed,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health,
+            diagnostics: vec![message],
+            details,
+        },
+    })
+}
+
+fn runtime_command_as_agent_command(
+    cfg: &installer::AgentServerConfigFile,
+    provider_id: &str,
+) -> Result<Option<installer::AgentServerCommand>> {
+    let Some(resolved) = installer::resolve_runtime_provider_command(cfg, provider_id)? else {
+        return Ok(None);
+    };
+    Ok(Some(installer::AgentServerCommand {
+        command: resolved.command_abs_path,
+        args: resolved.args,
+        dependencies: resolved.dependencies,
+        managed: None,
+    }))
+}
+
+fn with_cagent_config_path(
+    data_root: &Path,
+    mut cmd: installer::AgentServerCommand,
+) -> installer::AgentServerCommand {
+    let cfg_path = installer::cagent_config_path(data_root)
+        .to_string_lossy()
+        .to_string();
+    for arg in &mut cmd.args {
+        if arg == "{{cagent_config}}" {
+            *arg = cfg_path.clone();
+        }
+    }
+    cmd
+}
+
+fn acp_status_adapter_bridge_missing(provider_id: &str, msg: String) -> Arc<dyn ProviderAdapter> {
+    static_status_adapter(
+        provider_id,
+        false,
+        ProviderHealth::Error,
+        "acp_bridge_missing",
+        msg,
+    )
+}
+
+fn acp_status_adapter_acp_command_invalid(
+    provider_id: &str,
+    msg: String,
+) -> Arc<dyn ProviderAdapter> {
+    static_status_adapter(
+        provider_id,
+        true,
+        ProviderHealth::Error,
+        "acp_command_invalid",
+        msg,
+    )
+}
+
+fn runtime_command_missing_adapter(provider_id: &str) -> Arc<dyn ProviderAdapter> {
+    static_status_adapter(
+        provider_id,
+        false,
+        ProviderHealth::Missing,
+        "runtime_command_missing",
+        format!("runtime command is not configured for provider '{provider_id}'"),
+    )
+}
+
+fn runtime_command_invalid_adapter(provider_id: &str, err: String) -> Arc<dyn ProviderAdapter> {
+    static_status_adapter(
+        provider_id,
+        false,
+        ProviderHealth::Error,
+        "runtime_command_invalid",
+        format!("invalid runtime command for provider '{provider_id}': {err}"),
+    )
+}
+
+fn acp_bridge_adapter(
+    id: &str,
+    bridge_cmd: &installer::AgentServerCommand,
+    acp_cmd: installer::AgentServerCommand,
+) -> Arc<dyn ProviderAdapter> {
+    let acp_command = format_shell_command(&acp_cmd.command, &acp_cmd.args);
+    let mut args = bridge_cmd.args.clone();
+    args.push("--acp-command".to_string());
+    args.push(acp_command);
+    Arc::new(Tier1CrpAdapter::from_raw(
+        id,
+        bridge_cmd.command.clone(),
+        args,
+    ))
 }
 
 fn escape_shell_arg(value: &str) -> String {
@@ -83,22 +220,6 @@ fn format_shell_command(command: &str, args: &[String]) -> String {
         parts.push(escape_shell_arg(arg));
     }
     parts.join(" ")
-}
-
-fn acp_bridge_adapter(
-    id: &str,
-    bridge_cmd: &installer::AgentServerCommand,
-    acp_cmd: installer::AgentServerCommand,
-) -> Arc<dyn ProviderAdapter> {
-    let acp_command = format_shell_command(&acp_cmd.command, &acp_cmd.args);
-    let mut args = bridge_cmd.args.clone();
-    args.push("--acp-command".to_string());
-    args.push(acp_command);
-    Arc::new(Tier1CrpAdapter::from_raw(
-        id,
-        bridge_cmd.command.clone(),
-        args,
-    ))
 }
 
 fn maybe_wrap_gemini_acp_command(
@@ -313,7 +434,10 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
 
     let _daemon_lock = auth::acquire_daemon_lock(&data_root)?;
 
-    let settings_data = settings::load_settings(&data_root).await;
+    let global_db_path = data_root.join("db").join("db.sqlite");
+    let bootstrap_store = Store::open_sqlite(&global_db_path, None).await?;
+    let settings_data = settings::load_settings(&bootstrap_store).await?;
+    bootstrap_store.close().await;
     let store_config = settings_data
         .storage
         .as_ref()
@@ -398,63 +522,27 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         .unwrap_or_default();
 
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    let bridge_cmd = installer::resolve_provider_command(&agent_cfg, "acp-crp-bridge")
-        .unwrap_or_else(|| {
-            let command = std::env::var("CTX_ACP_CRP_BRIDGE_CMD")
-                .unwrap_or_else(|_| fallback_provider_command("acp-crp-bridge", vec![]).command);
-            installer::AgentServerCommand {
-                command,
-                args: Vec::new(),
-                dependencies: Vec::new(),
-                managed: None,
-            }
-        });
-    let codex_crp_cmd = installer::resolve_provider_command(&agent_cfg, "codex-crp");
-    let codex_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(match codex_crp_cmd.clone() {
-        Some(cmd) => Tier1CrpAdapter::from_raw("codex-crp", cmd.command, cmd.args),
-        None => Tier1CrpAdapter::codex(),
-    });
-    let codex_adapter: Arc<Tier1CrpAdapter> = Arc::new(match codex_crp_cmd {
-        Some(cmd) => Tier1CrpAdapter::from_raw("codex", cmd.command, cmd.args),
-        None => Tier1CrpAdapter::from_raw("codex", "codex-crp".to_string(), Vec::new()),
-    });
-    let claude_crp_cmd = installer::resolve_provider_command(&agent_cfg, "claude-crp");
-    let claude_crp_adapter: Arc<Tier1CrpAdapter> = Arc::new(match claude_crp_cmd {
-        Some(cmd) => Tier1CrpAdapter::from_raw("claude-crp", cmd.command, cmd.args),
-        None => Tier1CrpAdapter::claude(),
-    });
+    let bridge_cmd = match runtime_command_as_agent_command(&agent_cfg, "acp-crp-bridge") {
+        Ok(cmd) => cmd,
+        Err(err) => {
+            tracing::warn!("invalid runtime command for acp-crp-bridge: {err}");
+            None
+        }
+    };
 
-    let gemini_cmd =
-        installer::resolve_provider_command(&agent_cfg, "gemini").unwrap_or_else(|| {
-            fallback_provider_command("gemini", vec!["--experimental-acp".to_string()])
-        });
-    let gemini_cmd = maybe_wrap_gemini_acp_command(&data_root, gemini_cmd);
-    let gemini_adapter = acp_bridge_adapter("gemini", &bridge_cmd, gemini_cmd);
-
-    let qwen_cmd = installer::resolve_provider_command(&agent_cfg, "qwen").unwrap_or_else(|| {
-        fallback_provider_command("qwen", vec!["--experimental-acp".to_string()])
-    });
-    let qwen_adapter = acp_bridge_adapter("qwen", &bridge_cmd, qwen_cmd);
-
-    let opencode_cmd = installer::resolve_provider_command(&agent_cfg, "opencode")
-        .unwrap_or_else(|| fallback_provider_command("opencode", vec!["acp".to_string()]));
-    let opencode_adapter = acp_bridge_adapter("opencode", &bridge_cmd, opencode_cmd);
-
-    let mistral_cmd = installer::resolve_provider_command(&agent_cfg, "mistral")
-        .unwrap_or_else(|| fallback_provider_command("vibe-acp", vec![]));
-    let mistral_adapter = acp_bridge_adapter("mistral", &bridge_cmd, mistral_cmd);
-
-    let goose_cmd = installer::resolve_provider_command(&agent_cfg, "goose")
-        .unwrap_or_else(|| fallback_provider_command("goose", vec!["acp".to_string()]));
-    let goose_adapter = acp_bridge_adapter("goose", &bridge_cmd, goose_cmd);
-
-    let kimi_cmd = installer::resolve_provider_command(&agent_cfg, "kimi")
-        .unwrap_or_else(|| fallback_provider_command("kimi", vec!["--acp".to_string()]));
-    let kimi_adapter = acp_bridge_adapter("kimi", &bridge_cmd, kimi_cmd);
-
-    let auggie_cmd = installer::resolve_provider_command(&agent_cfg, "auggie")
-        .unwrap_or_else(|| fallback_provider_command("auggie", vec!["--acp".to_string()]));
-    let auggie_adapter = acp_bridge_adapter("auggie", &bridge_cmd, auggie_cmd);
+    for provider_id in ["codex", "claude-crp"] {
+        let adapter: Arc<dyn ProviderAdapter> =
+            match runtime_command_as_agent_command(&agent_cfg, provider_id) {
+                Ok(Some(cmd)) => Arc::new(Tier1CrpAdapter::from_raw(
+                    provider_id,
+                    cmd.command.clone(),
+                    cmd.args.clone(),
+                )),
+                Ok(None) => runtime_command_missing_adapter(provider_id),
+                Err(err) => runtime_command_invalid_adapter(provider_id, err.to_string()),
+            };
+        providers.insert(provider_id.to_string(), adapter);
+    }
 
     let cagent_cfg_path = installer::cagent_config_path(&data_root);
     if !cagent_cfg_path.exists() {
@@ -470,48 +558,55 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
 "#;
         std::fs::write(&cagent_cfg_path, cfg).ok();
     }
-    let mut cagent_cmd =
-        installer::resolve_provider_command(&agent_cfg, "cagent").unwrap_or_else(|| {
-            let cfg = cagent_cfg_path.to_string_lossy().to_string();
-            fallback_provider_command("cagent", vec!["acp".to_string(), cfg])
-        });
-    let cfg_path_str = cagent_cfg_path.to_string_lossy().to_string();
-    for arg in &mut cagent_cmd.args {
-        if arg == "{{cagent_config}}" {
-            *arg = cfg_path_str.clone();
-        }
-    }
-    let cagent_adapter = acp_bridge_adapter("cagent", &bridge_cmd, cagent_cmd);
 
-    providers.insert("codex-crp".into(), codex_crp_adapter);
-    providers.insert("codex".into(), codex_adapter);
-    providers.insert("claude-crp".into(), claude_crp_adapter);
-    providers.insert("gemini".into(), gemini_adapter.clone());
-    providers.insert("qwen".into(), qwen_adapter.clone());
-    providers.insert("opencode".into(), opencode_adapter.clone());
-    providers.insert("mistral".into(), mistral_adapter.clone());
-    providers.insert("goose".into(), goose_adapter.clone());
-    providers.insert("kimi".into(), kimi_adapter.clone());
-    providers.insert("auggie".into(), auggie_adapter.clone());
-    providers.insert("cagent".into(), cagent_adapter.clone());
-
-    let extra_acp_bridge_providers: Vec<(&str, &str, Vec<String>)> = vec![
-        ("amp", "amp-acp", vec![]),
-        ("droid", "droid-acp", vec![]),
-        ("copilot", "copilot-cli-acp", vec![]),
-        ("kiro", "kiro-acp", vec![]),
-        ("rovo", "rovo-dev-acp", vec![]),
-        ("cody", "cody-acp", vec![]),
-        ("continue", "cn", vec!["acp".to_string()]),
-        ("cline", "cline-acp", vec![]),
-        ("swe-agent", "sweagent", vec!["acp".to_string()]),
-        ("openhands", "openhands", vec!["acp".to_string()]),
+    let acp_provider_ids = vec![
+        "gemini",
+        "qwen",
+        "opencode",
+        "mistral",
+        "goose",
+        "kimi",
+        "auggie",
+        "cagent",
+        "amp",
+        "droid",
+        "copilot",
+        "kiro",
+        "rovo",
+        "cody",
+        "continue",
+        "cline",
+        "swe-agent",
+        "openhands",
     ];
-    for (id, fallback_cmd, fallback_args) in extra_acp_bridge_providers {
-        let cmd = installer::resolve_provider_command(&agent_cfg, id)
-            .unwrap_or_else(|| fallback_provider_command(fallback_cmd, fallback_args));
-        let adapter = acp_bridge_adapter(id, &bridge_cmd, cmd);
-        providers.insert(id.into(), adapter);
+    for provider_id in acp_provider_ids {
+        let adapter = match bridge_cmd.as_ref() {
+            None => acp_status_adapter_bridge_missing(
+                provider_id,
+                "ACP bridge runtime is not configured or invalid".to_string(),
+            ),
+            Some(bridge) => match runtime_command_as_agent_command(&agent_cfg, provider_id) {
+                Ok(Some(cmd)) => {
+                    let cmd = if provider_id == "gemini" {
+                        maybe_wrap_gemini_acp_command(&data_root, cmd)
+                    } else if provider_id == "cagent" {
+                        with_cagent_config_path(&data_root, cmd)
+                    } else {
+                        cmd
+                    };
+                    acp_bridge_adapter(provider_id, bridge, cmd)
+                }
+                Ok(None) => acp_status_adapter_acp_command_invalid(
+                    provider_id,
+                    format!("ACP command is not configured for provider '{provider_id}'"),
+                ),
+                Err(err) => acp_status_adapter_acp_command_invalid(
+                    provider_id,
+                    format!("invalid ACP command for provider '{provider_id}': {err}"),
+                ),
+            },
+        };
+        providers.insert(provider_id.to_string(), adapter);
     }
 
     // codex/claude CRP adapters are always registered now (legacy ACP bridge removed).
@@ -552,7 +647,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     if let Err(err) = reconcile_running_turns(&state).await {
         tracing::warn!(err = %err, "failed to reconcile running turns on startup");
     }
-    let settings = settings::load_settings(&state.core.data_root).await;
+    let settings = settings::load_settings(state.global_store()).await?;
     let mut telemetry_cfg = TelemetryConfig::default();
     if let Some(telemetry) = settings.telemetry.as_ref() {
         telemetry_cfg.enabled = telemetry.enabled;

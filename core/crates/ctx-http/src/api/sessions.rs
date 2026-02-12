@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use super::artifacts::persist_blob_bytes;
 use super::errors::ApiErrorResp;
 use super::extractors::extract_model_entries;
-use super::providers::default_agent_server_command;
 use super::redact_json_value;
 use super::shared::{
     env_target_for_worktree, load_and_cache_worktree_files, FileCompletionsQuery, SessionWithEnv,
@@ -73,9 +72,7 @@ async fn ensure_container_for_worktree(
         .get_workspace(worktree.workspace_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
-    let ws_root = StdPath::new(&workspace.root_path);
-    let effective =
-        execution_effective::effective_execution_settings(&state.core.data_root, ws_root).await;
+    let effective = execution_effective::effective_execution_settings(state, workspace.id).await?;
     state
         .execution
         .harness
@@ -421,7 +418,7 @@ pub(super) async fn get_session_diff(
                 }),
             )
         })?;
-    let base_commit_sha = resolve_session_diff_base(&workspace, &worktree, &q).await?;
+    let base_commit_sha = resolve_session_diff_base(&store, &workspace, &worktree, &q).await?;
     let diff = match diff_worktree_for_session(&state, &worktree, &base_commit_sha).await {
         Ok(diff) => diff,
         Err(err) if is_no_vcs_repo_error(&err) => {
@@ -526,7 +523,7 @@ pub(super) async fn get_session_diff_summary(
                 }),
             )
         })?;
-    let base_commit_sha = resolve_session_diff_base(&workspace, &worktree, &q).await?;
+    let base_commit_sha = resolve_session_diff_base(&store, &workspace, &worktree, &q).await?;
     let (file_count, line_additions, line_deletions, available, unavailable_reason) =
         match diff_worktree_summary_for_session(&state, &worktree, &base_commit_sha).await {
             Ok((file_count, line_additions, line_deletions)) => {
@@ -701,6 +698,7 @@ pub(crate) struct WorktreeDiffBaseResolution {
 }
 
 pub(crate) async fn resolve_diff_base_with_meta(
+    store: &ctx_store::Store,
     workspace: &Workspace,
     worktree: &Worktree,
     query: &SessionDiffQuery,
@@ -735,11 +733,7 @@ pub(crate) async fn resolve_diff_base_with_meta(
     };
 
     if target_branch.is_none() {
-        match workspace_config::load_merge_queue_target_branch_override(StdPath::new(
-            &workspace.root_path,
-        ))
-        .await
-        {
+        match workspace_config::load_merge_queue_target_branch_override(store).await {
             Ok(Some(branch)) => {
                 target_branch = Some(branch);
                 target_source = Some(WorktreeVcsTargetSource::MergeQueueOverride);
@@ -753,7 +747,7 @@ pub(crate) async fn resolve_diff_base_with_meta(
     }
 
     if target_branch.is_none() {
-        match workspace_config::load_merge_queue_config(StdPath::new(&workspace.root_path)).await {
+        match workspace_config::load_merge_queue_config(store).await {
             Ok(cfg) if cfg.enabled => {
                 target_branch = Some(cfg.target_branch);
                 target_source = Some(WorktreeVcsTargetSource::MergeQueueConfig);
@@ -835,11 +829,12 @@ pub(crate) async fn resolve_diff_base_with_meta(
 }
 
 pub(super) async fn resolve_session_diff_base(
+    store: &ctx_store::Store,
     workspace: &Workspace,
     worktree: &Worktree,
     query: &SessionDiffQuery,
 ) -> Result<String, (StatusCode, Json<ApiErrorResp>)> {
-    let resolution = resolve_diff_base_with_meta(workspace, worktree, query).await;
+    let resolution = resolve_diff_base_with_meta(store, workspace, worktree, query).await;
     if resolution.explicit_target {
         if let Some(error) = resolution.error.clone() {
             return Err((StatusCode::BAD_REQUEST, Json(ApiErrorResp { error })));
@@ -968,7 +963,8 @@ pub(super) async fn apply_session_diff_patch(
     })?;
 
     let base_commit_sha =
-        resolve_session_diff_base(&workspace, &worktree, &SessionDiffQuery::default()).await?;
+        resolve_session_diff_base(&store, &workspace, &worktree, &SessionDiffQuery::default())
+            .await?;
     let diff = diff_worktree_for_session(&state, &worktree, &base_commit_sha)
         .await
         .map_err(|e| {
@@ -1010,7 +1006,16 @@ pub(super) struct TitleGenerationOutcome {
 pub(super) async fn configured_title_generation_settings(
     state: &AppState,
 ) -> Option<user_settings::TitleGenerationSettings> {
-    let settings = user_settings::load_settings(&state.core.data_root).await;
+    let settings = match user_settings::load_settings(state.global_store()).await {
+        Ok(settings) => settings,
+        Err(err) => {
+            tracing::warn!(
+                "failed to load title-generation settings: {}",
+                logs::redact_sensitive(&err.to_string())
+            );
+            return None;
+        }
+    };
     settings
         .title_generation
         .as_ref()
@@ -1546,6 +1551,55 @@ mod tests {
     fn aggregate_subagent_status_prefers_running_over_unknown() {
         let results = vec![result_with_status("running"), result_with_status("unknown")];
         assert_eq!(aggregate_subagent_status(&results), "running");
+    }
+
+    #[test]
+    fn summarize_context_window_accepts_canonical_metrics() {
+        let metrics = serde_json::json!({
+            "context_tokens_estimate": 40,
+            "context_window_tokens": 100,
+            "remaining_tokens_estimate": 60,
+            "remaining_fraction": 0.6,
+        });
+
+        let summary =
+            summarize_context_window(&metrics).expect("expected canonical metrics to parse");
+        assert_eq!(summary.total, 100);
+        assert_eq!(summary.used, 40);
+        assert_eq!(summary.remaining, 60);
+        assert!((summary.utilization - 0.4).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn summarize_context_window_rejects_legacy_alias_metrics() {
+        let legacy = serde_json::json!({
+            "context_window": 100,
+            "total_tokens": 40,
+            "remaining_tokens": 60,
+        });
+        assert!(summarize_context_window(&legacy).is_none());
+    }
+
+    #[test]
+    fn legacy_context_window_metric_key_detects_first_legacy_key() {
+        let legacy = serde_json::json!({
+            "context_window": 100,
+            "remaining_tokens": 60,
+        });
+        assert_eq!(
+            legacy_context_window_metric_key(&legacy),
+            Some("context_window")
+        );
+    }
+
+    #[test]
+    fn legacy_context_window_metric_key_returns_none_for_canonical_shape() {
+        let canonical = serde_json::json!({
+            "context_tokens_estimate": 40,
+            "context_window_tokens": 100,
+            "remaining_tokens_estimate": 60,
+        });
+        assert_eq!(legacy_context_window_metric_key(&canonical), None);
     }
 }
 
@@ -2845,32 +2899,30 @@ async fn load_provider_model_catalog(
         }
     }
 
-    if provider_id != "codex-crp" && provider_id != "claude-crp" {
+    if provider_id != "codex" && provider_id != "claude-crp" {
         return Ok(None);
     }
 
     let cfg = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
-    let matrix = crate::provider_matrix::load_matrix_cached(
-        &state.core.data_root,
-        &state.providers.matrix_cache,
-    )
-    .await;
-    // Prefer bundled assets (desktop) or user-configured overrides, then fall back to the matrix.
-    // This keeps CRP probing aligned with how sessions will actually spawn providers.
-    let (command, args) = installer::resolve_provider_command(&cfg, provider_id)
-        .map(|c| (c.command, c.args))
-        .or_else(|| default_agent_server_command(&matrix, &state.core.data_root, provider_id))
-        .ok_or_else(|| "unknown provider id".to_string())?;
+    let runtime_command = installer::resolve_runtime_provider_command(&cfg, provider_id)
+        .map_err(|e| format!("runtime_command_invalid: provider={provider_id} error={e}"))?
+        .ok_or_else(|| {
+            format!(
+                "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
+            )
+        })?;
+    let command = runtime_command.command_abs_path;
+    let args = runtime_command.args;
 
     let mut env = std::collections::HashMap::new();
     env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
     if let Some(token) = state.core.auth_token.as_ref() {
         env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
     }
-    if provider_id == "codex-crp" {
-        // Keep probing consistent with real codex-crp sessions (they need CODEX_HOME).
+    if provider_id == "codex" {
+        // Keep probing consistent with real codex sessions (they need CODEX_HOME).
         if let Ok(extra) =
             crate::provider_accounts::codex_env_for_active_account(&state.core.data_root).await
         {
@@ -3034,20 +3086,9 @@ fn parse_f64(value: &serde_json::Value) -> Option<f64> {
 
 fn summarize_context_window(metrics: &serde_json::Value) -> Option<ContextWindowSummary> {
     let obj = metrics.as_object()?;
-    let total = obj
-        .get("context_window_tokens")
-        .and_then(parse_u64)
-        .or_else(|| obj.get("context_window").and_then(parse_u64))
-        .or_else(|| obj.get("window_tokens").and_then(parse_u64))?;
-    let mut used = obj
-        .get("context_tokens_estimate")
-        .and_then(parse_u64)
-        .or_else(|| obj.get("total_tokens").and_then(parse_u64))
-        .or_else(|| obj.get("used_tokens").and_then(parse_u64));
-    let mut remaining = obj
-        .get("remaining_tokens_estimate")
-        .and_then(parse_u64)
-        .or_else(|| obj.get("remaining_tokens").and_then(parse_u64));
+    let total = obj.get("context_window_tokens").and_then(parse_u64)?;
+    let mut used = obj.get("context_tokens_estimate").and_then(parse_u64);
+    let mut remaining = obj.get("remaining_tokens_estimate").and_then(parse_u64);
 
     if used.is_none() {
         if let Some(rem) = remaining {
@@ -3081,6 +3122,26 @@ fn summarize_context_window(metrics: &serde_json::Value) -> Option<ContextWindow
     })
 }
 
+fn legacy_context_window_metric_key(metrics: &serde_json::Value) -> Option<&'static str> {
+    let obj = metrics.as_object()?;
+    if obj.contains_key("context_window") {
+        return Some("context_window");
+    }
+    if obj.contains_key("window_tokens") {
+        return Some("window_tokens");
+    }
+    if obj.contains_key("total_tokens") {
+        return Some("total_tokens");
+    }
+    if obj.contains_key("used_tokens") {
+        return Some("used_tokens");
+    }
+    if obj.contains_key("remaining_tokens") {
+        return Some("remaining_tokens");
+    }
+    None
+}
+
 async fn context_window_for_run(
     state: &Arc<AppState>,
     session_id: SessionId,
@@ -3092,7 +3153,17 @@ async fn context_window_for_run(
         .await
         .ok()
         .flatten()?;
-    summarize_context_window(turn.metrics_json.as_ref()?)
+    let metrics = turn.metrics_json.as_ref()?;
+    if let Some(legacy_key) = legacy_context_window_metric_key(metrics) {
+        state
+            .emit_compat_payload_reject_counter(
+                "sessions.context_window_summary",
+                "legacy_context_window_key",
+                Some(("legacy_key", legacy_key)),
+            )
+            .await;
+    }
+    summarize_context_window(metrics)
 }
 
 async fn context_window_for_session(
@@ -3105,7 +3176,17 @@ async fn context_window_for_session(
         .await
         .ok()
         .flatten()?;
-    summarize_context_window(turn.metrics_json.as_ref()?)
+    let metrics = turn.metrics_json.as_ref()?;
+    if let Some(legacy_key) = legacy_context_window_metric_key(metrics) {
+        state
+            .emit_compat_payload_reject_counter(
+                "sessions.context_window_summary",
+                "legacy_context_window_key",
+                Some(("legacy_key", legacy_key)),
+            )
+            .await;
+    }
+    summarize_context_window(metrics)
 }
 
 fn estimate_context_window_for_prompt_len(
@@ -3398,8 +3479,6 @@ async fn create_subagent_worktree(
         bootstrap_error: None,
         bootstrap_log_path: None,
         bootstrap_log_truncated: None,
-        bootstrap_config_path: None,
-        bootstrap_config_key: None,
         bootstrap_command: None,
         bootstrap_script_path: None,
     };
@@ -3571,7 +3650,16 @@ pub(super) async fn mcp_agent_init(
             }),
         ));
     }
-    let settings = user_settings::load_settings(&state.core.data_root).await;
+    let settings = user_settings::load_settings(state.global_store())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
     let max_subagents = resolve_max_subagents_per_call(&settings);
     if req.agents.len() > max_subagents {
         return Err((
@@ -3968,12 +4056,22 @@ pub(super) async fn mcp_agent_init(
                     }),
                 ));
             }
+            let harness_defaulted = agent.harness.is_none();
             let provider_id = agent
                 .harness
                 .as_deref()
                 .unwrap_or(&parent.provider_id)
                 .trim()
                 .to_string();
+            if harness_defaulted {
+                state
+                    .emit_product_fallback_applied_counter(
+                        "sessions.subagent_init",
+                        "harness_default_parent",
+                        None,
+                    )
+                    .await;
+            }
             let catalog = model_catalogs.get(&provider_id).and_then(|v| v.as_ref());
             let fallback_model = if agent.model.is_none() {
                 if provider_id == parent.provider_id {
@@ -3985,12 +4083,29 @@ pub(super) async fn mcp_agent_init(
                 None
             };
             if agent.model.is_none() && fallback_model.is_none() {
+                state
+                    .emit_compat_payload_reject_counter(
+                        "sessions.subagent_init",
+                        "missing_model_without_default",
+                        Some(("provider_id", &provider_id)),
+                    )
+                    .await;
                 return Err((
                     StatusCode::BAD_REQUEST,
                     Json(ApiErrorResp {
                         error: format!("model is required for harness '{provider_id}'"),
                     }),
                 ));
+            }
+            if agent.model.is_none() {
+                let fallback = if provider_id == parent.provider_id {
+                    "model_default_parent"
+                } else {
+                    "model_default_catalog"
+                };
+                state
+                    .emit_product_fallback_applied_counter("sessions.subagent_init", fallback, None)
+                    .await;
             }
             let resolved = resolve_model_id(
                 agent.model.as_deref(),
@@ -4599,7 +4714,16 @@ pub(super) async fn mcp_oracle(
         ));
     }
 
-    let settings = user_settings::load_settings(&state.core.data_root).await;
+    let settings = user_settings::load_settings(state.global_store())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
     let cfg = settings.oracle.as_ref().ok_or((
         StatusCode::BAD_REQUEST,
         Json(ApiErrorResp {
@@ -5083,9 +5207,17 @@ pub(super) async fn authenticate_session(
         while let Some(ev) = ev_rx.recv().await {
             let mut payload = ev.payload_json.clone();
             if matches!(ev.event_type, SessionEventType::Init) {
+                if payload.get("crp_session_id").is_some() {
+                    state_for_events
+                        .emit_compat_payload_reject_counter(
+                            "sessions.auth_event_init",
+                            "crp_session_id",
+                            None,
+                        )
+                        .await;
+                }
                 if let Some(ps) = payload
                     .get("provider_session_id")
-                    .or_else(|| payload.get("crp_session_id"))
                     .and_then(serde_json::Value::as_str)
                 {
                     let _ = store_for_events

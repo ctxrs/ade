@@ -135,9 +135,16 @@ pub(super) async fn create_workspace_terminal(
             )
         })?;
 
-    let effective =
-        execution_effective::effective_execution_settings(&state.core.data_root, &workspace_root)
-            .await;
+    let effective = execution_effective::effective_execution_settings(&state, workspace_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: "failed to load execution settings".to_string(),
+                }),
+            )
+        })?;
 
     let worktree_root = if let Some(wt_id) = worktree_id {
         let store = state.store_for_worktree(wt_id).await.map_err(|_| {

@@ -86,7 +86,7 @@ const assertBundledProviderTargets = (bundleDir, providerId, targets) => {
     throw new Error(
       `bundle manifest missing ${providerId} targets: ${missing.join(
         ", "
-      )}. Ensure cross-arch codex-crp bundling is configured for release packaging.`
+      )}. Ensure cross-arch codex bundling is configured for release packaging.`
     );
   }
 };
@@ -210,7 +210,7 @@ const syncBundles = () => {
         CTX_BUNDLE_APPEND: "1",
         CTX_BUNDLE_OS: "linux",
         CTX_BUNDLE_ARCH: target.arch,
-        CTX_BUNDLE_ONLY_PROVIDERS: "codex-crp",
+        CTX_BUNDLE_ONLY_PROVIDERS: "codex",
         CTX_BUNDLE_SKIP_RUNTIMES: "1",
         CTX_BUNDLE_SKIP_IMAGES: "1",
         CTX_BUNDLE_INCLUDE_BRIDGE: "0",
@@ -220,7 +220,7 @@ const syncBundles = () => {
         CTX_BUNDLE_PODMAN: "0",
       };
       if (target.buildCodexCrp && !linuxEnv.CTX_BUNDLE_BUILD_CODEX_CRP) {
-        // Managed codex-crp artifacts currently publish linux/x86_64 only.
+        // Managed codex artifacts currently publish linux/x86_64 only.
         // Build linux/aarch64 locally so Apple Silicon container sessions work.
         // Build-time container paths in ensure_bundled_harnesses.sh are Docker-only.
         linuxEnv.CTX_BUNDLE_BUILD_CODEX_CRP = "1";
@@ -235,7 +235,7 @@ const syncBundles = () => {
         );
       }
     }
-    assertBundledProviderTargets(destBundleDir, "codex-crp", [
+    assertBundledProviderTargets(destBundleDir, "codex", [
       { os: "linux", arch: "aarch64" },
       { os: "linux", arch: "x86_64" },
     ]);

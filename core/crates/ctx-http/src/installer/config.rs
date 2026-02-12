@@ -51,6 +51,32 @@ pub struct AgentServerConfigFile {
     pub managed_installs: HashMap<String, ManagedInstallMetadata>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderRuntimeCommandSource {
+    UserOverride,
+    ManagedInstall,
+    BundledSeed,
+}
+
+impl ProviderRuntimeCommandSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UserOverride => "user_override",
+            Self::ManagedInstall => "managed_install",
+            Self::BundledSeed => "bundled_seed",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ProviderRuntimeCommand {
+    pub provider_id: String,
+    pub command_abs_path: String,
+    pub args: Vec<String>,
+    pub dependencies: Vec<String>,
+    pub source: ProviderRuntimeCommandSource,
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct LspServerConfigFile {
     #[serde(default)]
@@ -118,6 +144,9 @@ pub fn resolve_provider_command(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
 ) -> Option<AgentServerCommand> {
+    if let Some(configured) = cfg.providers.get(provider_id) {
+        return Some(configured.clone());
+    }
     if let Some(bundled) = bundled_assets::bundled_provider_command(provider_id) {
         return Some(AgentServerCommand {
             command: bundled.command,
@@ -126,7 +155,80 @@ pub fn resolve_provider_command(
             managed: None,
         });
     }
-    cfg.providers.get(provider_id).cloned()
+    None
+}
+
+fn runtime_command_candidate(
+    cfg: &AgentServerConfigFile,
+    provider_id: &str,
+) -> Option<(AgentServerCommand, ProviderRuntimeCommandSource)> {
+    if let Some(configured) = cfg.providers.get(provider_id) {
+        let source = if configured.managed.is_some() {
+            ProviderRuntimeCommandSource::ManagedInstall
+        } else {
+            ProviderRuntimeCommandSource::UserOverride
+        };
+        return Some((configured.clone(), source));
+    }
+    if let Some(bundled) = bundled_assets::bundled_provider_command(provider_id) {
+        return Some((
+            AgentServerCommand {
+                command: bundled.command,
+                args: bundled.args,
+                dependencies: Vec::new(),
+                managed: None,
+            },
+            ProviderRuntimeCommandSource::BundledSeed,
+        ));
+    }
+    None
+}
+
+pub fn resolve_runtime_provider_command(
+    cfg: &AgentServerConfigFile,
+    provider_id: &str,
+) -> Result<Option<ProviderRuntimeCommand>> {
+    let Some((candidate, source)) = runtime_command_candidate(cfg, provider_id) else {
+        return Ok(None);
+    };
+
+    let raw = candidate.command.trim();
+    if raw.is_empty() {
+        anyhow::bail!(
+            "runtime_command_missing: provider={} source={}",
+            provider_id,
+            source.as_str()
+        );
+    }
+    let path = Path::new(raw);
+    if !path.is_absolute() {
+        anyhow::bail!(
+            "runtime_command_not_absolute: provider={} source={} command={}",
+            provider_id,
+            source.as_str(),
+            raw
+        );
+    }
+    if !path.exists() {
+        anyhow::bail!(
+            "runtime_command_not_found: provider={} source={} command={}",
+            provider_id,
+            source.as_str(),
+            raw
+        );
+    }
+    let command_abs_path = std::fs::canonicalize(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+
+    Ok(Some(ProviderRuntimeCommand {
+        provider_id: provider_id.to_string(),
+        command_abs_path,
+        args: candidate.args,
+        dependencies: candidate.dependencies,
+        source,
+    }))
 }
 
 pub fn agent_server_config_path(data_root: &Path) -> PathBuf {

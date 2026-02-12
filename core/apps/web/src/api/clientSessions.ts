@@ -69,8 +69,13 @@ export const createSession = (
     initial_message_id?: string | null;
     initial_turn_id?: string | null;
   },
-) =>
-  apiAny<Session>(`/api/tasks/${taskId}/sessions`, {
+) => {
+  const hasPrompt = Boolean(opts?.initial_prompt);
+  const hasIds = Boolean(opts?.initial_message_id && opts?.initial_turn_id);
+  if (hasPrompt && !hasIds) {
+    throw new Error("createSession requires initial_message_id and initial_turn_id when initial_prompt is provided");
+  }
+  return apiAny<Session>(`/api/tasks/${taskId}/sessions`, {
     method: "POST",
     body: JSON.stringify({
       ...(opts?.id ? { id: opts.id } : {}),
@@ -86,6 +91,7 @@ export const createSession = (
         : {}),
     }),
   });
+};
 
 export type SessionDiffSummary = {
   base_commit_sha?: string;

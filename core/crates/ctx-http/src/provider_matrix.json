@@ -3,11 +3,11 @@
   "generated_at": "2026-02-02T00:00:00Z",
   "providers": [
     {
-      "id": "codex-crp",
+      "id": "codex",
       "display_name": "Codex",
       "tier": "tier2",
       "command": {
-        "command": "codex-crp",
+        "command": "codex",
         "args": []
       },
       "managed_install": {
@@ -52,7 +52,7 @@
           "version": "0.0.0",
           "status": "blocked",
           "context_min": "0.1.0",
-          "notes": "Local codex-crp development build (not supported for managed installs)"
+          "notes": "Local codex development build (not supported for managed installs)"
         }
       ]
     },

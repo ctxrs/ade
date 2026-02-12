@@ -79,9 +79,7 @@ async fn ensure_container_for_worktree(
         .get_workspace(worktree.workspace_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
-    let ws_root = Path::new(&workspace.root_path);
-    let effective =
-        execution_effective::effective_execution_settings(&state.core.data_root, ws_root).await;
+    let effective = execution_effective::effective_execution_settings(state, workspace.id).await?;
     state
         .execution
         .harness
@@ -462,7 +460,9 @@ async fn build_worktree_vcs_snapshot_from_parts(
                 .get_workspace(worktree.workspace_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
-            resolve_diff_base_with_meta(&workspace, worktree, &SessionDiffQuery::default()).await
+            let store = state.store_for_worktree(worktree.id).await?;
+            resolve_diff_base_with_meta(&store, &workspace, worktree, &SessionDiffQuery::default())
+                .await
         }
     };
     let base_commit_sha = resolution.base_commit_sha.clone();
@@ -662,8 +662,10 @@ async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) 
         .get_workspace(worktree.workspace_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
+    let store = state.store_for_worktree(worktree.id).await?;
     let resolution =
-        resolve_diff_base_with_meta(&workspace, &worktree, &SessionDiffQuery::default()).await;
+        resolve_diff_base_with_meta(&store, &workspace, &worktree, &SessionDiffQuery::default())
+            .await;
     let git_snapshot = match load_git_status_snapshot(&state, &worktree).await {
         Ok(snapshot) => snapshot,
         Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => {
@@ -793,7 +795,8 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
         .await?
         .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
     let resolution =
-        resolve_diff_base_with_meta(&workspace, worktree, &SessionDiffQuery::default()).await;
+        resolve_diff_base_with_meta(&store, &workspace, worktree, &SessionDiffQuery::default())
+            .await;
     let git_snapshot = match load_git_status_snapshot(state, worktree).await {
         Ok(snapshot) => snapshot,
         Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => {

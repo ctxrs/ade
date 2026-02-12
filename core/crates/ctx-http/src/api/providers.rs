@@ -29,13 +29,31 @@ use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
 use ctx_providers::crp::probe_crp_models;
 
 use super::redact_json_value;
+
+fn invalid_provider_id_error(
+    provider_id: &str,
+    canonical_id: &str,
+) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({
+            "error": format!(
+                "provider '{}' is not supported; use '{}'",
+                provider_id, canonical_id
+            ),
+            "code": "invalid_provider_id",
+            "provider_id": provider_id,
+            "canonical_id": canonical_id,
+        })),
+    )
+}
+
 pub(super) async fn list_providers(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ProviderStatus>>, StatusCode> {
     let map = state.providers.statuses.lock().await;
     let mut out: Vec<ProviderStatus> = map.values().cloned().collect();
     drop(map);
-    let has_codex_crp = out.iter().any(|p| p.provider_id == "codex-crp");
 
     let managed = installer::load_agent_server_config(&state.core.data_root)
         .await
@@ -55,13 +73,9 @@ pub(super) async fn list_providers(
                 if show_fake { "false" } else { "true" }.into(),
             );
         }
-        if status.provider_id == "codex" && has_codex_crp {
-            status.details.insert("ui_hidden".into(), "true".into());
-        }
-        let canonical_id = installer::canonical_managed_provider_id(&status.provider_id);
         status.details.insert(
             "install_supported".into(),
-            if installer::is_supported_managed_provider(&matrix, canonical_id) {
+            if installer::is_supported_managed_provider(&matrix, &status.provider_id) {
                 "true".into()
             } else {
                 "false".into()
@@ -82,9 +96,17 @@ pub(super) async fn list_providers(
 pub(super) async fn get_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<ProviderStatus>, StatusCode> {
+) -> Result<Json<ProviderStatus>, (StatusCode, Json<serde_json::Value>)> {
+    if id == "codex-crp" {
+        return Err(invalid_provider_id_error("codex-crp", "codex"));
+    }
     let map = state.providers.statuses.lock().await;
-    let mut status = map.get(&id).cloned().ok_or(StatusCode::NOT_FOUND)?;
+    let mut status = map.get(&id).cloned().ok_or((
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "error": format!("provider not found: {id}")
+        })),
+    ))?;
     drop(map);
 
     let managed = installer::load_agent_server_config(&state.core.data_root)
@@ -96,10 +118,9 @@ pub(super) async fn get_provider(
     )
     .await;
     installer::apply_managed_install_details(&mut status, &managed);
-    let canonical_id = installer::canonical_managed_provider_id(&status.provider_id);
     status.details.insert(
         "install_supported".into(),
-        if installer::is_supported_managed_provider(&matrix, canonical_id) {
+        if installer::is_supported_managed_provider(&matrix, &status.provider_id) {
             "true".into()
         } else {
             "false".into()
@@ -125,7 +146,10 @@ pub(super) async fn get_provider_usage(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Query(query): Query<ProviderUsageQuery>,
-) -> Result<Json<provider_usage::ProviderUsageSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<Json<provider_usage::ProviderUsageSnapshot>, (StatusCode, Json<serde_json::Value>)> {
+    if id == "codex-crp" {
+        return Err(invalid_provider_id_error("codex-crp", "codex"));
+    }
     let refresh = query.refresh.unwrap_or(false);
     let snapshot = if !refresh {
         let cache = state.providers.usage_cache.lock().await;
@@ -142,9 +166,9 @@ pub(super) async fn get_provider_usage(
                     .map_err(|e| {
                         (
                             StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(ApiErrorResp {
-                                error: e.to_string(),
-                            }),
+                            Json(serde_json::json!({
+                                "error": e.to_string()
+                            })),
                         )
                     })?
             } else {
@@ -155,9 +179,9 @@ pub(super) async fn get_provider_usage(
                 .map_err(|e| {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ApiErrorResp {
-                            error: e.to_string(),
-                        }),
+                        Json(serde_json::json!({
+                            "error": e.to_string()
+                        })),
                     )
                 })?
         }
@@ -337,7 +361,7 @@ async fn codex_accounts_response(state: &Arc<AppState>) -> CodexAccountsResponse
 async fn restart_codex_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
     let adapters = {
         let map = state.providers.adapters.lock().await;
-        ["codex", "codex-crp"]
+        ["codex"]
             .iter()
             .filter_map(|provider_id| {
                 map.get(*provider_id)
@@ -987,37 +1011,23 @@ pub(super) struct InstallStartResponse {
     provider_id: String,
     install_id: InstallId,
 }
-
-pub(super) fn default_agent_server_command(
-    matrix: &crate::provider_matrix::ProviderMatrix,
-    data_root: &std::path::Path,
-    provider_id: &str,
-) -> Option<(String, Vec<String>)> {
-    let entry = crate::provider_matrix::get_entry(matrix, provider_id)?;
-    let mut cmd = entry.command.clone()?;
-    if provider_id == "cagent" {
-        cmd.args.push(
-            crate::installer::cagent_config_path(data_root)
-                .to_string_lossy()
-                .to_string(),
-        );
-    }
-    Some((cmd.command, cmd.args))
-}
-
 pub(super) async fn get_provider_options(
     State(state): State<Arc<AppState>>,
     Path((ws_id, provider_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
     const VERIFY_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+    if provider_id == "codex-crp" {
+        return Err(invalid_provider_id_error("codex-crp", "codex"));
+    }
 
     let ws_id = WorkspaceId(uuid::Uuid::parse_str(&ws_id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
+            Json(serde_json::json!({
+                "error": "invalid workspace id",
+            })),
         )
     })?);
 
@@ -1068,6 +1078,15 @@ pub(super) async fn get_provider_options(
         .get(&provider_id)
         .cloned();
 
+    if provider_status.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("unsupported provider id: {provider_id}"),
+            })),
+        ));
+    }
+
     if let Some(st) = provider_status.as_ref() {
         if !st.installed || !matches!(st.health, ctx_providers::adapters::ProviderHealth::Ok) {
             let base_resp = redact_json_value(serde_json::json!({
@@ -1099,7 +1118,7 @@ pub(super) async fn get_provider_options(
         }
     }
 
-    let use_crp_probe = provider_id == "codex-crp" || provider_id == "claude-crp";
+    let use_crp_probe = provider_id == "codex" || provider_id == "claude-crp";
     if !use_crp_probe {
         let mut raw_resp = serde_json::json!({
             "provider_id": provider_id,
@@ -1149,45 +1168,50 @@ pub(super) async fn get_provider_options(
             .map_err(|_| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to load workspace".to_string(),
-                    }),
+                    Json(serde_json::json!({
+                        "error": "failed to load workspace",
+                    })),
                 )
             })?
             .ok_or((
                 StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "workspace not found".to_string(),
-                }),
+                Json(serde_json::json!({
+                    "error": "workspace not found",
+                })),
             ))?;
 
         let cfg = installer::load_agent_server_config(&state.core.data_root)
             .await
             .unwrap_or_default();
-        let matrix = crate::provider_matrix::load_matrix_cached(
-            &state.core.data_root,
-            &state.providers.matrix_cache,
-        )
-        .await;
-        // Prefer bundled assets (desktop) or user-configured overrides, then fall back to the matrix.
-        // This keeps CRP probing aligned with how sessions will actually spawn providers.
-        let (command, args) = installer::resolve_provider_command(&cfg, &provider_id)
-            .map(|c| (c.command, c.args))
-            .or_else(|| default_agent_server_command(&matrix, &state.core.data_root, &provider_id))
+        let runtime_command = installer::resolve_runtime_provider_command(&cfg, &provider_id)
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "runtime_command_invalid: provider={provider_id} error={e}"
+                        ),
+                    })),
+                )
+            })?
             .ok_or((
                 StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "unknown provider id".to_string(),
-                }),
+                Json(serde_json::json!({
+                    "error": format!(
+                        "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
+                    ),
+                })),
             ))?;
+        let command = runtime_command.command_abs_path;
+        let args = runtime_command.args;
 
         let mut env = std::collections::HashMap::new();
         env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
         if let Some(token) = state.core.auth_token.as_ref() {
             env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
         }
-        if provider_id == "codex-crp" {
-            // codex-crp relies on Codex auth material (via CODEX_HOME). Without it, probing can
+        if provider_id == "codex" {
+            // codex relies on Codex auth material (via CODEX_HOME). Without it, probing can
             // return empty models even when Codex is otherwise configured.
             if let Ok(extra) =
                 crate::provider_accounts::codex_env_for_active_account(&state.core.data_root).await
@@ -1264,31 +1288,37 @@ pub(super) async fn get_provider_options(
 
     Err((
         StatusCode::BAD_REQUEST,
-        Json(ApiErrorResp {
-            error: "unsupported provider id".to_string(),
-        }),
+        Json(serde_json::json!({
+            "error": "unsupported provider id",
+        })),
     ))
 }
 
 pub(super) async fn install_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<InstallStartResponse>, StatusCode> {
-    // Some legacy/user-facing provider ids alias to the underlying managed runtime id.
-    let canonical_id = installer::canonical_managed_provider_id(&id).to_string();
+) -> Result<Json<InstallStartResponse>, (StatusCode, Json<serde_json::Value>)> {
+    if id == "codex-crp" {
+        return Err(invalid_provider_id_error("codex-crp", "codex"));
+    }
     let matrix = crate::provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
     )
     .await;
-    if !installer::is_supported_managed_provider(&matrix, &canonical_id) {
-        return Err(StatusCode::BAD_REQUEST);
+    if !installer::is_supported_managed_provider(&matrix, &id) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("unsupported provider for managed install: {id}")
+            })),
+        ));
     }
 
-    let (install_id, started_new) = state.start_install(canonical_id.clone()).await;
+    let (install_id, started_new) = state.start_install(id.clone()).await;
     if started_new {
         let state2 = state.clone();
-        let provider_id = canonical_id.clone();
+        let provider_id = id.clone();
         tokio::spawn(async move {
             if let Err(e) = installer::install_provider_with_progress(
                 state2.clone(),
@@ -1303,7 +1333,6 @@ pub(super) async fn install_provider(
     }
 
     Ok(Json(InstallStartResponse {
-        // Preserve the requested id so the client can attach progress to the provider it asked for.
         provider_id: id,
         install_id,
     }))
@@ -1398,6 +1427,37 @@ pub(super) async fn install_all_providers(
         });
     }
     Ok(Json(out))
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct MatrixRefreshResponse {
+    provider_count: usize,
+    generated_at: Option<String>,
+}
+
+pub(super) async fn refresh_provider_matrix(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<MatrixRefreshResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    crate::provider_matrix::invalidate_matrix_cache(&state.providers.matrix_cache).await;
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
+    installer::refresh_provider_statuses(state.as_ref())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: format!("failed to refresh provider statuses: {e:#}"),
+                }),
+            )
+        })?;
+    Ok(Json(MatrixRefreshResponse {
+        provider_count: matrix.providers.len(),
+        generated_at: matrix.generated_at,
+    }))
 }
 
 pub(super) async fn get_install(

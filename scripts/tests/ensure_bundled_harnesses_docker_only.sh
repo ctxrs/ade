@@ -99,13 +99,13 @@ if [[ "$run_codex_case" == "auto" ]]; then
 fi
 
 if [[ "$run_codex_case" == "1" ]]; then
-  echo "smoke: linux/aarch64 codex-crp container build ignores podman on macOS"
+  echo "smoke: linux/aarch64 codex container build ignores podman on macOS"
   bundle_dir_codex="$tmp_root/bundle-codex"
   PATH="$shim_dir:$PATH" \
   CTX_BUNDLE_DIR="$bundle_dir_codex" \
   CTX_BUNDLE_OS=linux \
   CTX_BUNDLE_ARCH=aarch64 \
-  CTX_BUNDLE_ONLY_PROVIDERS=codex-crp \
+  CTX_BUNDLE_ONLY_PROVIDERS=codex \
   CTX_BUNDLE_SKIP_RUNTIMES=1 \
   CTX_BUNDLE_SKIP_IMAGES=1 \
   CTX_BUNDLE_INCLUDE_BRIDGE=0 \
@@ -123,16 +123,16 @@ manifest_path = Path(sys.argv[1])
 data = json.loads(manifest_path.read_text(encoding="utf-8"))
 providers = data.get("providers") or []
 for provider in providers:
-    if provider.get("id") == "codex-crp" and provider.get("os") == "linux" and provider.get("arch") == "aarch64":
+    if provider.get("id") == "codex" and provider.get("os") == "linux" and provider.get("arch") == "aarch64":
         raise SystemExit(0)
 raise SystemExit(1)
 PY
   then
-    echo "error: manifest missing codex-crp linux/aarch64 entry after local build" >&2
+    echo "error: manifest missing codex linux/aarch64 entry after local build" >&2
     exit 1
   fi
 else
-  echo "skip: codex-crp container build smoke (set CTX_BUNDLE_DOCKER_ONLY_INCLUDE_CODEX_CRP=1 to enable)"
+  echo "skip: codex container build smoke (set CTX_BUNDLE_DOCKER_ONLY_INCLUDE_CODEX_CRP=1 to enable)"
 fi
 
 echo "ok: ensure_bundled_harnesses build-time paths are docker-only"

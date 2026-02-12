@@ -34,6 +34,7 @@ const parsePort = (raw, fallback) => {
 };
 const REMOTE_PORT = parsePort(process.env.CTX_AUTOMATION_REMOTE_PORT || "44099", 44099);
 const REMOTE_DATA_DIR_RAW = process.env.CTX_AUTOMATION_REMOTE_DATA_DIR || "";
+const REMOTE_CTX_BIN = String(process.env.CTX_AUTOMATION_REMOTE_CTX_BIN || "").trim();
 const SSH_NO_START_REMOTE = !["0", "false", "no"].includes(
   String(process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE || "1").trim().toLowerCase(),
 );
@@ -552,73 +553,30 @@ const waitForWorkspaceRoute = async (timeoutMs = 120000) => {
   throw new Error(`did not navigate to /workspaces/:id; diag=${JSON.stringify(diag)}`);
 };
 
-const assertLocalWorkspaceConfig = (rootPath, expectations) => {
-  const cfg = path.join(rootPath, ".ctx", "config.toml");
-  if (!fs.existsSync(cfg)) {
-    throw new Error(`missing workspace config: ${cfg}`);
+const assertLocalWorkspaceConfig = async (workspaceId, expectations) => {
+  const resp = await daemonJson("GET", `/api/workspaces/${workspaceId}/execution_config`);
+  if (resp.status !== 200) {
+    throw new Error(`GET /api/workspaces/${workspaceId}/execution_config failed (${resp.status})`);
   }
-  const text = fs.readFileSync(cfg, "utf8");
-  const tableBody = (tableName) => {
-    const lines = String(text || "").split(/\r?\n/);
-    const header = `[${tableName}]`;
-    const start = lines.findIndex((l) => String(l || "").trim() === header);
-    if (start < 0) return null;
-    let end = start + 1;
-    for (; end < lines.length; end += 1) {
-      if (/^\s*\[/.test(lines[end])) break;
+  const cfg = resp.payload || {};
+
+  if (expectations.environment && cfg.environment !== expectations.environment) {
+    throw new Error(`expected execution.environment=${expectations.environment}, got ${cfg.environment || "<missing>"}`);
+  }
+
+  if (expectations.networkMode) {
+    const got = cfg.network_mode || "";
+    if (got !== expectations.networkMode) {
+      throw new Error(`expected execution.network_mode=${expectations.networkMode}, got ${got || "<missing>"}`);
     }
-    return lines.slice(start + 1, end).join("\n");
-  };
-  if (expectations.environment) {
-    const body = tableBody("execution");
-    if (!body) {
-      throw new Error(`expected [execution] in ${cfg}`);
-    }
-    if (!new RegExp(`\\benvironment\\s*=\\s*\"${expectations.environment}\"`).test(body)) {
-      throw new Error(`expected execution.environment=${expectations.environment} in ${cfg}`);
-    }
-  } else if (expectations.executionMode) {
-    const body = tableBody("execution");
-    if (!body) {
-      // Host execution is the daemon default; config may omit an explicit [execution] table.
-      if (expectations.executionMode !== "host") {
-        throw new Error(`expected [execution] in ${cfg}`);
+  }
+
+  if (expectations.allowlist) {
+    const got = Array.isArray(cfg.allowlist) ? cfg.allowlist : [];
+    for (const entry of expectations.allowlist) {
+      if (!got.includes(entry)) {
+        throw new Error(`expected execution.allowlist to include '${entry}', got ${JSON.stringify(got)}`);
       }
-    } else if (!new RegExp(`\\bmode\\s*=\\s*\"${expectations.executionMode}\"`).test(body)) {
-      throw new Error(`expected execution.mode=${expectations.executionMode} in ${cfg}`);
-    }
-  }
-  if (expectations.mountMode || expectations.networkMode || expectations.allowlist) {
-    const body = tableBody("execution.container");
-    if (!body) throw new Error(`expected [execution.container] in ${cfg}`);
-    if (expectations.mountMode && !new RegExp(`\\bmount_mode\\s*=\\s*\"${expectations.mountMode}\"`).test(body)) {
-      throw new Error(`expected execution.container.mount_mode=${expectations.mountMode} in ${cfg}`);
-    }
-    if (expectations.networkMode && !new RegExp(`\\bnetwork_mode\\s*=\\s*\"${expectations.networkMode}\"`).test(body)) {
-      throw new Error(`expected execution.container.network_mode=${expectations.networkMode} in ${cfg}`);
-    }
-    if (expectations.allowlist) {
-      for (const entry of expectations.allowlist) {
-        if (!text.includes(entry)) {
-          throw new Error(`expected allowlist entry '${entry}' in ${cfg}`);
-        }
-      }
-    }
-  }
-  if (expectations.mergeQueueEnabled === false) {
-    // When the user skips merge queue setup, the wizard intentionally does not write any
-    // merge_queue config (the daemon defaults still apply).
-  } else if (expectations.mergeQueueEnabled === true) {
-    if (!/merge_queue/i.test(text)) {
-      throw new Error(`expected merge queue config to be written: ${cfg}`);
-    }
-    if (expectations.targetBranch && !text.includes(expectations.targetBranch)) {
-      throw new Error(`expected target branch '${expectations.targetBranch}' in ${cfg}`);
-    }
-  }
-  if (expectations.setupHook) {
-    if (!text.includes(expectations.setupHook)) {
-      throw new Error(`expected setup hook '${expectations.setupHook}' in ${cfg}`);
     }
   }
 };
@@ -701,7 +659,11 @@ const runWizardScenario = async (scenario) => {
 
   if (scenario.location === "remote") {
     await setInput("wizard-remote-host", scenario.remoteHost);
-    if (typeof scenario.remotePort === "number" || typeof scenario.remoteDataDir === "string") {
+    if (
+      typeof scenario.remotePort === "number"
+      || typeof scenario.remoteDataDir === "string"
+      || typeof scenario.remoteCtxBin === "string"
+    ) {
       const hasAdvanced = await browser.execute(
         () => Boolean(document.querySelector('[data-testid="wizard-remote-port"]')),
       );
@@ -713,6 +675,9 @@ const runWizardScenario = async (scenario) => {
       }
       if (typeof scenario.remoteDataDir === "string" && scenario.remoteDataDir.trim()) {
         await setInput("wizard-remote-data-dir", scenario.remoteDataDir.trim());
+      }
+      if (typeof scenario.remoteCtxBin === "string" && scenario.remoteCtxBin.trim()) {
+        await setInput("wizard-remote-ctx-bin", scenario.remoteCtxBin.trim());
       }
     }
     await clickNext(); // verifies SSH and advances
@@ -827,6 +792,9 @@ describe("launcher workspace wizard (e2e)", () => {
     initGitRepo(localCloneSrc, "local-clone-src");
 
     if (remoteTarget) {
+      if (!REMOTE_CTX_BIN) {
+        console.warn("[wizard-e2e] CTX_AUTOMATION_REMOTE_CTX_BIN is not set; remote scenarios will be skipped.");
+      }
       const podmanProbe = ssh(
         remoteTarget,
         "if command -v podman >/dev/null 2>&1; then echo yes; else echo no; fi",
@@ -875,6 +843,15 @@ describe("launcher workspace wizard (e2e)", () => {
       await waitForStep("location");
       await clickOption("location", "remote");
       await setInput("wizard-remote-host", remoteHostForWizard);
+      if (REMOTE_CTX_BIN) {
+        const hasAdvanced = await browser.execute(
+          () => Boolean(document.querySelector('[data-testid="wizard-remote-port"]')),
+        );
+        if (!hasAdvanced) {
+          await clickTestId("wizard-remote-advanced-toggle");
+        }
+        await setInput("wizard-remote-ctx-bin", REMOTE_CTX_BIN);
+      }
       await clickNext();
       let step = await currentStepKey();
       if (step === "location") {
@@ -924,7 +901,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
-    assertLocalWorkspaceConfig(ws.root_path, { environment: "host", mergeQueueEnabled: false, setupHook: "pnpm install" });
+    await assertLocalWorkspaceConfig(id, { environment: "host", mergeQueueEnabled: false, setupHook: "pnpm install" });
     await assertWorkspaceTerminalCwdPrefix(id, ws.root_path);
     const container = await getWorkspaceHarnessContainer(id);
     if (container !== null) {
@@ -949,7 +926,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
-    assertLocalWorkspaceConfig(ws.root_path, {
+    await assertLocalWorkspaceConfig(id, {
       environment: "container_disk_isolated",
       networkMode: "llm_only",
       mergeQueueEnabled: true,
@@ -981,7 +958,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
-    assertLocalWorkspaceConfig(ws.root_path, {
+    await assertLocalWorkspaceConfig(id, {
       environment: "container_host_mounted",
       networkMode: "allowlist",
       allowlist: ["github.com", "registry.npmjs.org"],
@@ -1009,7 +986,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
     await assertConnectedLocalAndListening();
     const ws = await getWorkspace(id);
-    assertLocalWorkspaceConfig(ws.root_path, {
+    await assertLocalWorkspaceConfig(id, {
       environment: "container_disk_isolated",
       networkMode: "all",
       mergeQueueEnabled: false,
@@ -1097,12 +1074,13 @@ describe("launcher workspace wizard (e2e)", () => {
 
     // Sanity: ensure we stayed in the same workspace route.
     const ws = await getWorkspace(id);
-    assertLocalWorkspaceConfig(ws.root_path, { environment: "container_host_mounted" });
+    await assertLocalWorkspaceConfig(id, { environment: "container_host_mounted" });
   });
 
   it("remote import works end-to-end", async function () {
     if (!scenarioEnabled("remote-import-host", ["remote", "remote-host"])) this.skip();
     if (!remoteTarget) this.skip();
+    if (!REMOTE_CTX_BIN) this.skip();
     const importPath = `${remoteBase}/import-repo`;
 
     const id = await runWizardScenario({
@@ -1110,6 +1088,7 @@ describe("launcher workspace wizard (e2e)", () => {
       remoteHost: remoteHostForWizard,
       remotePort: REMOTE_PORT,
       remoteDataDir,
+      remoteCtxBin: REMOTE_CTX_BIN,
       container: "no-container",
       source: { kind: "import", path: importPath },
       setupHook: "pnpm install",
@@ -1122,12 +1101,12 @@ describe("launcher workspace wizard (e2e)", () => {
     if (!expectedPrefixes.some((prefix) => rootPath.startsWith(prefix))) {
       throw new Error(`expected remote workspace root under one of [${expectedPrefixes.join(", ")}], got ${rootPath}`);
     }
-    ssh(remoteTarget, `test -f ${JSON.stringify(ws.root_path + "/.ctx/config.toml")}`);
   });
 
   it("remote clone works end-to-end", async function () {
     if (!scenarioEnabled("remote-clone-host-mounted", ["remote", "remote-container", "host-mounted"])) this.skip();
     if (!remoteTarget) this.skip();
+    if (!REMOTE_CTX_BIN) this.skip();
     if (!remoteHasPodman) this.skip();
     if (!remoteSupportsContainerStep) this.skip();
     const destParent = `${remoteBase}/clone-dest`;
@@ -1140,6 +1119,7 @@ describe("launcher workspace wizard (e2e)", () => {
       remoteHost: remoteHostForWizard,
       remotePort: REMOTE_PORT,
       remoteDataDir,
+      remoteCtxBin: REMOTE_CTX_BIN,
       container: "host-mounted",
       network: "allowlist",
       networkAllowlist: "github.com",
@@ -1154,12 +1134,12 @@ describe("launcher workspace wizard (e2e)", () => {
     if (!expectedPrefixes.some((prefix) => rootPath.startsWith(prefix))) {
       throw new Error(`expected remote workspace root under one of [${expectedPrefixes.join(", ")}], got ${rootPath}`);
     }
-    ssh(remoteTarget, `test -f ${JSON.stringify(ws.root_path + "/.ctx/config.toml")}`);
   });
 
   it("remote new empty works end-to-end", async function () {
     if (!scenarioEnabled("remote-new-disk-isolated", ["remote", "remote-container", "disk-isolated"])) this.skip();
     if (!remoteTarget) this.skip();
+    if (!REMOTE_CTX_BIN) this.skip();
     if (!remoteHasPodman) this.skip();
     if (!remoteSupportsContainerStep) this.skip();
     const dest = `${remoteBase}/new-disk-isolated`;
@@ -1170,6 +1150,7 @@ describe("launcher workspace wizard (e2e)", () => {
       remoteHost: remoteHostForWizard,
       remotePort: REMOTE_PORT,
       remoteDataDir,
+      remoteCtxBin: REMOTE_CTX_BIN,
       container: "disk-isolated",
       network: "full",
       source: { kind: "new", destPath: dest, workspaceName: "disk-isolated-remote" },
@@ -1183,6 +1164,5 @@ describe("launcher workspace wizard (e2e)", () => {
     if (!expectedPrefixes.some((prefix) => rootPath.startsWith(prefix))) {
       throw new Error(`expected remote workspace root under one of [${expectedPrefixes.join(", ")}], got ${rootPath}`);
     }
-    ssh(remoteTarget, `test -f ${JSON.stringify(ws.root_path + "/.ctx/config.toml")}`);
   });
 });

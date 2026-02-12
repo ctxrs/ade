@@ -401,12 +401,20 @@ async fn subagent_interrupt_all_includes_context_window() {
 
 #[tokio::test]
 async fn subagent_init_worktree_new_runs_bootstrap() {
-    let repo = common::init_git_repo(&[(
-        ".ctx/config.toml",
-        "[worktree.bootstrap]\nsetup_worktree_unix = [\"sh -c \\\"mkdir -p .ctx && echo bootstrapped > .ctx/bootstrap.txt\\\"\"]\nwait_for_completion = true\n",
-    )])
-    .await;
-    let (_data_dir, _state, server, _store, parent_id) = setup_state(repo.path()).await;
+    let repo = common::init_git_repo(&[("README.md", "ok")]).await;
+    let (_data_dir, _state, server, store, parent_id) = setup_state(repo.path()).await;
+    ctx_http::workspace_config::update_worktree_bootstrap_config(
+        &store,
+        ctx_http::workspace_config::WorktreeBootstrapConfigUpdate {
+            setup_command: Some(
+                "sh -c \"mkdir -p .ctx && echo bootstrapped > .ctx/bootstrap.txt\"".to_string(),
+            ),
+            timeout_sec: None,
+            wait_for_completion: Some(true),
+        },
+    )
+    .await
+    .unwrap();
     let client = &server.client;
     let base = &server.base_url;
 

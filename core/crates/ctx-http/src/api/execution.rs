@@ -1,4 +1,3 @@
-use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
@@ -154,7 +153,7 @@ where
     S: futures::Sink<WsMessage, Error = axum::Error> + Unpin,
 {
     let raw = serde_json::to_string(event)?;
-    sender.send(WsMessage::Text(raw.into())).await?;
+    sender.send(WsMessage::Text(raw)).await?;
     Ok(())
 }
 
@@ -187,11 +186,26 @@ async fn resolve_workspace_execution_settings(
             }),
         ))?;
 
-    let settings = crate::settings::load_settings(&state.core.data_root).await;
-    let mut execution_settings = settings.execution.clone().unwrap_or_default();
-    match workspace_config::load_execution_settings_override(StdPath::new(&workspace.root_path))
+    let settings = crate::settings::load_settings(state.global_store())
         .await
-    {
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let mut execution_settings = settings.execution.clone().unwrap_or_default();
+    let store = state.store_for_workspace(workspace_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    match workspace_config::load_execution_settings_override(&store).await {
         Ok(Some(ov)) => {
             workspace_config::apply_execution_settings_override(&mut execution_settings, &ov)
         }

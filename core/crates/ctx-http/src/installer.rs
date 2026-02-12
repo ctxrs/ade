@@ -25,9 +25,10 @@ pub use config::{
     agent_server_config_path, apply_managed_install_details, apply_managed_lsp_server_config,
     apply_user_lsp_server_config, cagent_config_path, load_agent_server_config,
     load_lsp_server_config, load_user_lsp_config, resolve_provider_command,
-    save_agent_server_config, save_lsp_server_config, AgentServerCommand, AgentServerConfigFile,
-    LspServerConfigFile, ManagedInstallError, ManagedInstallMetadata, UserLspConfigFile,
-    UserLspServerSpec,
+    resolve_runtime_provider_command, save_agent_server_config, save_lsp_server_config,
+    AgentServerCommand, AgentServerConfigFile, LspServerConfigFile, ManagedInstallError,
+    ManagedInstallMetadata, ProviderRuntimeCommand, ProviderRuntimeCommandSource,
+    UserLspConfigFile, UserLspServerSpec,
 };
 
 const NODE_VERSION: &str = "24.12.0";
@@ -66,14 +67,6 @@ pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()>
     install_provider_impl(state, provider_id, None).await
 }
 
-/// Some provider ids are aliases for the underlying managed install id.
-pub fn canonical_managed_provider_id(provider_id: &str) -> &str {
-    match provider_id {
-        "codex" => "codex-crp",
-        _ => provider_id,
-    }
-}
-
 pub fn is_supported_managed_provider(
     matrix: &provider_matrix::ProviderMatrix,
     provider_id: &str,
@@ -93,6 +86,7 @@ pub async fn install_provider_with_progress(
     install_id: InstallId,
     provider_id: String,
 ) -> Result<()> {
+    provider_matrix::invalidate_matrix_cache(&state.providers.matrix_cache).await;
     let res = install_provider_impl(state.as_ref(), &provider_id, Some(install_id)).await;
     match &res {
         Ok(()) => state.finish_install(install_id, true, None).await,
@@ -106,6 +100,7 @@ pub async fn install_provider_with_progress(
                 .await
         }
     }
+    provider_matrix::invalidate_matrix_cache(&state.providers.matrix_cache).await;
     res
 }
 
@@ -1436,19 +1431,6 @@ async fn install_provider_impl(
         {
             let mut map = state.providers.adapters.lock().await;
             map.insert(provider_id.clone(), adapter.clone());
-
-            // Aliases: user-facing provider ids that share the same managed CRP runtime binary.
-            // The daemon registers both ids, so update both in-memory adapters after install.
-            if provider_id == "codex-crp" {
-                map.insert(
-                    "codex".to_string(),
-                    std::sync::Arc::new(Tier1CrpAdapter::from_raw(
-                        "codex",
-                        managed.command.clone(),
-                        managed.args.clone(),
-                    )),
-                );
-            }
         }
 
         stage = "refresh";
