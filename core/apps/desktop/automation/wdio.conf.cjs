@@ -21,8 +21,12 @@ const defaultAppPath = (() => {
   return path.resolve(ROOT, "src-tauri/target/debug/ctx");
 })();
 const APP_PATH = process.env.CTX_DESKTOP_APP_PATH || defaultAppPath;
-const WORKSPACE_PATH = process.env.CTX_AUTOMATION_WORKSPACE_PATH ||
-  "/Users/example-user/code/ctx-monorepo";
+const WORKSPACE_PATH = [
+  String(process.env.CTX_AUTOMATION_WORKSPACE_PATH || "").trim(),
+  String(process.env.GITHUB_WORKSPACE || "").trim(),
+  path.resolve(CORE_ROOT, ".."),
+  CORE_ROOT,
+].find((candidate) => candidate && fs.existsSync(candidate));
 
 const TAURI_DRIVER_PORT = Number(process.env.TAURI_DRIVER_PORT || 4444);
 const TEST_BACKEND_PORT = Number(process.env.TAURI_TEST_BACKEND_PORT || 3000);
@@ -336,8 +340,8 @@ exports.config = {
   runner: "local",
   framework: "mocha",
   reporters: ["spec"],
-  // Run sequentially (Tauri + external daemon are shared global resources).
-  specs: [path.resolve(__dirname, "specs/workspace-wizard.spec.cjs")],
+  // Run sequentially (Tauri + daemon + remote resources are shared global resources).
+  specs: [path.resolve(__dirname, "specs/**/*.spec.cjs")],
   mochaOpts: {
     timeout: MOCHA_TIMEOUT_MS,
   },

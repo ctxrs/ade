@@ -611,3 +611,182 @@ pub(super) fn resolve_worktree_info(state: &ConnectionManager, worktree_id: &str
     })
 }
 
+#[cfg(test)]
+mod deep_link_parse_tests {
+    use super::*;
+
+    #[test]
+    fn parse_deep_link_focus_action() {
+        let url = Url::parse("ctx://focus").expect("valid url");
+        let action = parse_deep_link(&url).expect("focus should parse");
+        assert!(matches!(action, DeepLinkAction::Focus));
+    }
+
+    #[test]
+    fn parse_deep_link_open_path_with_line_col() {
+        let url =
+            Url::parse("ctx://open?path=%2Ftmp%2Fdemo.txt&line=12&col=3").expect("valid url");
+        let action = parse_deep_link(&url).expect("open should parse");
+        match action {
+            DeepLinkAction::Open(req) => {
+                assert!(matches!(req.open_with, DeepLinkOpenWith::Ctx));
+                assert_eq!(req.line, Some(12));
+                assert_eq!(req.col, Some(3));
+                match req.target {
+                    DeepLinkTarget::Path { path } => assert_eq!(path, "/tmp/demo.txt"),
+                    other => panic!("expected path target, got {other:?}"),
+                }
+            }
+            other => panic!("expected open action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_deep_link_open_worktree_target_takes_precedence() {
+        let url = Url::parse(
+            "ctx://open?worktreeId=wt_123&file=src%2Fmain.rs&path=%2Ftmp%2Fignored.txt&openWith=editor",
+        )
+        .expect("valid url");
+        let action = parse_deep_link(&url).expect("open should parse");
+        match action {
+            DeepLinkAction::Open(req) => {
+                assert!(matches!(req.open_with, DeepLinkOpenWith::Editor));
+                match req.target {
+                    DeepLinkTarget::WorktreeFile { worktree_id, file } => {
+                        assert_eq!(worktree_id, "wt_123");
+                        assert_eq!(file, "src/main.rs");
+                    }
+                    other => panic!("expected worktree target, got {other:?}"),
+                }
+            }
+            other => panic!("expected open action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_deep_link_workspace_requires_workspace_id_or_path() {
+        let url = Url::parse("ctx://workspace").expect("valid url");
+        let err = parse_deep_link(&url).expect_err("workspace should fail without params");
+        assert!(
+            err.to_string().contains("workspaceId or path is required"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn parse_deep_link_rejects_invalid_version() {
+        let url = Url::parse("ctx://focus?v=2").expect("valid url");
+        let err = parse_deep_link(&url).expect_err("version mismatch must fail");
+        assert!(
+            err.to_string().contains("unsupported version: 2"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn parse_deep_link_rejects_unknown_action() {
+        let url = Url::parse("ctx://unknown").expect("valid url");
+        let err = parse_deep_link(&url).expect_err("unknown action must fail");
+        assert!(
+            err.to_string().contains("unknown action"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn parse_deep_link_rejects_non_ctx_scheme() {
+        let url = Url::parse("https://example.com").expect("valid url");
+        let err = parse_deep_link(&url).expect_err("non-ctx scheme must fail");
+        assert!(
+            err.to_string().contains("unsupported scheme"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn validate_relative_file_rejects_unsafe_shapes() {
+        let err_parent = validate_relative_file("../x").expect_err("parent dir must fail");
+        assert!(
+            err_parent.to_string().contains("must not contain .."),
+            "unexpected error: {err_parent:#}"
+        );
+
+        let err_abs = validate_relative_file("/tmp/x").expect_err("absolute path must fail");
+        assert!(
+            err_abs.to_string().contains("must be relative"),
+            "unexpected error: {err_abs:#}"
+        );
+
+        let err_drive = validate_relative_file("C:\\demo.txt").expect_err("drive-like path fails");
+        assert!(
+            err_drive.to_string().contains("must be a relative path"),
+            "unexpected error: {err_drive:#}"
+        );
+    }
+
+    #[test]
+    fn validate_absolute_path_requires_non_empty_absolute() {
+        let err_empty = validate_absolute_path(" ").expect_err("empty path must fail");
+        assert!(
+            err_empty.to_string().contains("path is empty"),
+            "unexpected error: {err_empty:#}"
+        );
+
+        let err_rel = validate_absolute_path("tmp/x").expect_err("relative path must fail");
+        assert!(
+            err_rel.to_string().contains("path must be absolute"),
+            "unexpected error: {err_rel:#}"
+        );
+    }
+
+    #[test]
+    fn parse_open_with_values() {
+        assert!(matches!(
+            parse_open_with(None).expect("default open_with should parse"),
+            DeepLinkOpenWith::Ctx
+        ));
+        assert!(matches!(
+            parse_open_with(Some(&"system".to_string())).expect("system should parse"),
+            DeepLinkOpenWith::System
+        ));
+        assert!(matches!(
+            parse_open_with(Some(&"Editor".to_string()))
+                .expect("editor should parse case-insensitively"),
+            DeepLinkOpenWith::Editor
+        ));
+
+        let err =
+            parse_open_with(Some(&"invalid".to_string())).expect_err("invalid openWith must fail");
+        assert!(
+            err.to_string().contains("unsupported openWith"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn parse_editor_target_values() {
+        assert!(matches!(
+            parse_editor_target("cursor").expect("cursor should parse"),
+            DesktopEditorTarget::Cursor
+        ));
+        assert!(matches!(
+            parse_editor_target("SYSTEM").expect("system should parse"),
+            DesktopEditorTarget::System
+        ));
+
+        let err = parse_editor_target("unknown-editor").expect_err("unknown editor must fail");
+        assert!(
+            err.to_string().contains("unknown editor"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn parse_optional_positive_filters_invalid_values() {
+        assert_eq!(parse_optional_positive(Some(&"15".to_string())), Some(15));
+        assert_eq!(parse_optional_positive(Some(&"0".to_string())), None);
+        assert_eq!(parse_optional_positive(Some(&"-4".to_string())), None);
+        assert_eq!(parse_optional_positive(Some(&"abc".to_string())), None);
+        assert_eq!(parse_optional_positive(None), None);
+    }
+}

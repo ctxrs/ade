@@ -2,6 +2,15 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const {
+  waitForTauri,
+  selectorForTestId,
+  waitForTestId,
+  clickTestId,
+  setInputTestId,
+  getConnectionInfo,
+} = require("./helpers/tauri.cjs");
+const { daemonJson, safeDaemonJson } = require("./helpers/daemon.cjs");
 
 const REMOTE_HOST_RAW = process.env.CTX_AUTOMATION_REMOTE_HOST || "";
 const REMOTE_HOST = REMOTE_HOST_RAW.trim();
@@ -68,38 +77,6 @@ const initGitRepo = (dir, name) => {
   run("git", ["-C", dir, "commit", "-m", "init"]);
 };
 
-const waitForTauri = async () => {
-  await browser.waitUntil(
-    async () => {
-      const hasTauri = await browser.execute(() => Boolean(window.__TAURI__));
-      return Boolean(hasTauri);
-    },
-    { timeout: 30000, timeoutMsg: "Tauri bridge not available in time." },
-  );
-};
-
-const selectorForTestId = (id) => `[data-testid="${id}"]`;
-
-const waitForTestId = async (id, timeoutMs = 30000) => {
-  const sel = selectorForTestId(id);
-  await browser.waitUntil(
-    async () => await browser.execute((s) => Boolean(document.querySelector(s)), sel),
-    { timeout: timeoutMs, timeoutMsg: `element not found: ${sel}` },
-  );
-};
-
-const clickTestId = async (id) => {
-  await waitForTestId(id);
-  const sel = selectorForTestId(id);
-  const ok = await browser.execute((s) => {
-    const el = document.querySelector(s);
-    if (!el) return false;
-    el.click();
-    return true;
-  }, sel);
-  if (!ok) throw new Error(`failed to click: ${sel}`);
-};
-
 const waitForSelector = async (selector, timeoutMs = 30000) => {
   await browser.waitUntil(
     async () => await browser.execute((s) => Boolean(document.querySelector(s)), selector),
@@ -133,25 +110,6 @@ const setTextareaSelector = async (selector, value) => {
     return true;
   }, selector, String(value));
   if (!ok) throw new Error(`failed to set textarea for: ${selector}`);
-};
-
-const setInputTestId = async (id, value) => {
-  await waitForTestId(id);
-  const sel = selectorForTestId(id);
-  const ok = await browser.execute((s, v) => {
-    const el = document.querySelector(s);
-    if (!el) return false;
-    const isTextArea = el instanceof HTMLTextAreaElement;
-    const proto = isTextArea ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    const desc = Object.getOwnPropertyDescriptor(proto, "value");
-    const setter = desc && desc.set;
-    if (!setter) return false;
-    setter.call(el, v);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
-  }, sel, String(value));
-  if (!ok) throw new Error(`failed to set value for: ${sel}`);
 };
 
 const setCheckedTestId = async (id, checked) => {
@@ -193,11 +151,56 @@ const waitForStep = async (key) => {
 };
 
 const clickOption = async (stepKey, optionId) => {
-  await clickTestId(`wizard-option-${stepKey}-${optionId}`);
+  const id = `wizard-option-${stepKey}-${optionId}`;
+  try {
+    await clickTestId(id);
+  } catch (error) {
+    if (stepKey !== "source") throw error;
+    const state = await browser.execute(() => {
+      const root = document.querySelector('[data-testid="workspace-setup"]');
+      const step = root ? root.getAttribute("data-step-key") : null;
+      const optionTestIds = Array.from(document.querySelectorAll('[data-testid^="wizard-option-"]'))
+        .map((el) => String(el.getAttribute("data-testid") || ""))
+        .filter(Boolean);
+      return {
+        step,
+        optionTestIds,
+        hasSourcePath: Boolean(document.querySelector('[data-testid="wizard-source-path"]')),
+        hasRepoUrl: Boolean(document.querySelector('[data-testid="wizard-repo-url"]')),
+        hasWorkspaceName: Boolean(document.querySelector('[data-testid="wizard-workspace-name"]')),
+      };
+    });
+    const sourceAlreadySelected =
+      state.step === "source"
+      && (
+        (optionId === "import" && state.hasSourcePath)
+        || (optionId === "clone" && state.hasRepoUrl)
+        || (optionId === "new" && state.hasWorkspaceName)
+      );
+    if (sourceAlreadySelected) return;
+    const errText = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `${errText}; source-step diag=${JSON.stringify(state)}`,
+    );
+  }
 };
 
 const clickNext = async () => {
   await clickTestId("wizard-next");
+};
+
+const clickNextIfEnabled = async () => {
+  return await browser.execute(() => {
+    const el = document.querySelector('[data-testid="wizard-next"]');
+    if (!(el instanceof HTMLButtonElement)) {
+      return { present: false, disabled: null, clicked: false };
+    }
+    if (el.disabled) {
+      return { present: true, disabled: true, clicked: false };
+    }
+    el.click();
+    return { present: true, disabled: false, clicked: true };
+  });
 };
 
 const clickCreate = async () => {
@@ -226,44 +229,6 @@ const setChecked = async (testId, checked) => {
   await setCheckedTestId(testId, checked);
 };
 
-const daemonJson = async (method, apiPath, body) => {
-  const exec = async (m, p, b) => {
-    const invoke = window.__TAURI__?.core?.invoke;
-    if (!invoke) return { error: "Tauri invoke not available" };
-    try {
-      const headers = [["content-type", "application/json"]];
-      const req = {
-        method: m,
-        path: p,
-        // Avoid passing null through the WebDriver arg marshaller (CrabNebula throws).
-        body: typeof b === "undefined" ? null : JSON.stringify(b),
-        headers,
-      };
-      const raw = await invoke("desktop_daemon_request", { req });
-      const payload = JSON.parse(raw.body || "{}");
-      return { status: raw.status, payload };
-    } catch (e) {
-      return { error: String(e) };
-    }
-  };
-
-  // NOTE: CrabNebula WebDriver has stricter argument marshalling; do not pass null as an arg.
-  const resp = typeof body === "undefined"
-    ? await browser.execute(exec, method, apiPath)
-    : await browser.execute(exec, method, apiPath, body);
-  if (resp && typeof resp === "object" && resp.error) {
-    throw new Error(resp.error);
-  }
-  return resp;
-};
-
-const safeDaemonJson = async (method, apiPath, body) => {
-  try {
-    return await daemonJson(method, apiPath, body);
-  } catch (error) {
-    return { error: String(error) };
-  }
-};
 
 const compactEntity = (value) => {
   if (!value || typeof value !== "object") return value;
@@ -376,23 +341,6 @@ const collectCodexSmokeDiagnostics = async (workspaceId) => {
   return diag;
 };
 
-const getConnectionInfo = async () => {
-  const result = await browser.execute(async () => {
-    const invoke = window.__TAURI__?.core?.invoke;
-    if (!invoke) return { error: "Tauri invoke not available" };
-    try {
-      const info = await invoke("desktop_get_connection");
-      return { info };
-    } catch (e) {
-      return { error: String(e) };
-    }
-  });
-  if (result && typeof result === "object" && result.error) {
-    throw new Error(result.error);
-  }
-  return result.info;
-};
-
 const getWorkspace = async (id) => {
   const resp = await daemonJson("GET", `/api/workspaces/${id}`);
   if (resp.status !== 200) throw new Error(`GET /api/workspaces/${id} failed (${resp.status})`);
@@ -479,6 +427,77 @@ const waitForRemoteStepAfterLocation = async (timeoutMs = 60000) => {
     await browser.pause(100);
   }
   throw new Error("remote verification did not advance from location step within timeout");
+};
+
+const clickAuthImportSkip = async () => {
+  const ok = await browser.execute(() => {
+    const step = document.querySelector('[data-testid="wizard-step"][data-step-key="auth-import"]');
+    if (!step) return false;
+    const buttons = Array.from(step.querySelectorAll("button"));
+    const skip = buttons.find((btn) => String(btn.textContent || "").trim() === "Skip for now");
+    if (!skip) return false;
+    skip.click();
+    return true;
+  });
+  if (!ok) throw new Error("failed to skip auth-import step");
+};
+
+const ensureReadyForSourceSelection = async ({ location, container }, timeoutMs = 60000) => {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const key = await currentStepKey();
+    if (key === "source") return;
+    if (key === "auth-import") {
+      await clickAuthImportSkip();
+      await browser.pause(100);
+      continue;
+    }
+    if (key === "container") {
+      if (!container) throw new Error("container step reached but scenario.container is missing");
+      await clickOption("container", container);
+      await browser.pause(100);
+      const afterSelect = await currentStepKey();
+      if (afterSelect === "container") {
+        const next = await clickNextIfEnabled();
+        if (next.clicked) {
+          await browser.pause(100);
+        }
+      }
+      continue;
+    }
+    if (key === "location") {
+      if (!location) throw new Error("location step reached but scenario.location is missing");
+      await clickOption("location", location);
+      await browser.pause(100);
+      continue;
+    }
+    if (key === "network" || key === "setup" || key === "merge-queue" || key === "confirm") {
+      throw new Error(`source step skipped unexpectedly; current step is '${key}'`);
+    }
+    await browser.pause(100);
+  }
+  const finalStep = await currentStepKey();
+  throw new Error(`expected step 'source', got '${finalStep || "unknown"}'`);
+};
+
+const selectSourceOptionWithRetry = async (
+  { location, container, sourceKind },
+  attempts = 6,
+) => {
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await ensureReadyForSourceSelection({ location, container });
+    try {
+      await clickOption("source", sourceKind);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts - 1) break;
+      await browser.pause(150);
+    }
+  }
+  if (lastError instanceof Error) throw lastError;
+  throw new Error("failed to select source option");
 };
 
 const collectWorkspaceRouteDiagnostics = async () => {
@@ -705,8 +724,11 @@ const runWizardScenario = async (scenario) => {
     );
   }
 
-  await waitForStep("source");
-  await clickOption("source", scenario.source.kind);
+  await selectSourceOptionWithRetry({
+    location: scenario.location,
+    container: scenario.container,
+    sourceKind: scenario.source.kind,
+  });
 
   if (scenario.source.kind === "import") {
     await setInput("wizard-source-path", scenario.source.path);

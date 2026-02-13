@@ -1,48 +1,35 @@
 const path = require("path");
+const { waitForTauri, getConnectionInfo } = require("./helpers/tauri.cjs");
+const { daemonJson } = require("./helpers/daemon.cjs");
 
-const WORKSPACE_PATH = process.env.CTX_AUTOMATION_WORKSPACE_PATH ||
-  "/Users/example-user/code/ctx-monorepo";
-
-const waitForTauri = async () => {
-  await browser.waitUntil(
-    async () => {
-      const hasTauri = await browser.execute(() => Boolean(window.__TAURI__));
-      return Boolean(hasTauri);
-    },
-    { timeout: 30000, timeoutMsg: "Tauri bridge not available in time." },
-  );
-};
+const DEFAULT_WORKSPACE_PATH = path.resolve(__dirname, "../../../../../");
+const WORKSPACE_PATH = process.env.CTX_AUTOMATION_WORKSPACE_PATH
+  || process.env.GITHUB_WORKSPACE
+  || DEFAULT_WORKSPACE_PATH;
 
 const createWorkspace = async (rootPath) => {
-  const result = await browser.execute(async (root) => {
+  const connect = await browser.execute(async () => {
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (!invoke) return { error: "Tauri invoke not available" };
     try {
-      const invoke = window.__TAURI__?.core?.invoke;
-      if (!invoke) {
-        return { error: "Tauri invoke not available" };
-      }
-      await invoke("desktop_connect_local");
-      const resp = await invoke("desktop_daemon_request", {
-        req: {
-          method: "POST",
-          path: "/api/workspaces",
-          body: JSON.stringify({ root_path: root }),
-          headers: [["content-type", "application/json"]],
-        },
-      });
-      const payload = JSON.parse(resp.body || "{}");
-      return payload.id || null;
+      const info = await invoke("desktop_connect_local");
+      return { info };
     } catch (err) {
       return { error: String(err) };
     }
-  }, rootPath);
-
-  if (result && typeof result === "object" && result.error) {
-    throw new Error(result.error);
+  });
+  if (connect && typeof connect === "object" && connect.error) {
+    throw new Error(connect.error);
   }
-  if (!result) {
+  const resp = await daemonJson("POST", "/api/workspaces", { root_path: rootPath });
+  if (resp.status !== 200 && resp.status !== 201) {
+    throw new Error(`workspace creation failed: ${JSON.stringify(resp)}`);
+  }
+  const workspaceId = resp.payload?.id || null;
+  if (!workspaceId) {
     throw new Error("No workspace id returned from daemon.");
   }
-  return result;
+  return workspaceId;
 };
 
 describe("desktop automation", () => {
@@ -62,5 +49,10 @@ describe("desktop automation", () => {
       },
       { timeout: 60000, timeoutMsg: "Workbench did not load workspace." },
     );
+
+    const info = await getConnectionInfo();
+    if (!info || info.kind !== "local") {
+      throw new Error(`expected local desktop connection after opening workspace: ${JSON.stringify(info)}`);
+    }
   });
 });

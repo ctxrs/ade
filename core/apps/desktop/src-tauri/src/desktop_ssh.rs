@@ -716,3 +716,46 @@ fn join_remote_path(parent: &str, name: &str) -> String {
     format!("{}/{}", parent.trim_end_matches('/'), name)
 
 }
+
+#[cfg(test)]
+mod remote_path_validation_tests {
+    use super::*;
+
+    #[test]
+    fn normalize_and_validate_remote_ctx_bin_values() {
+        assert_eq!(normalize_remote_ctx_bin(None), None);
+        assert_eq!(normalize_remote_ctx_bin(Some("   ")), None);
+        assert_eq!(
+            normalize_remote_ctx_bin(Some(" /opt/ctx/bin/ctx ")),
+            Some("/opt/ctx/bin/ctx".to_string())
+        );
+
+        let valid = validate_remote_ctx_bin("/opt/ctx/bin/ctx").expect("absolute path is valid");
+        assert_eq!(valid, "/opt/ctx/bin/ctx");
+
+        let err_empty = validate_remote_ctx_bin(" ").expect_err("empty path must fail");
+        assert!(
+            err_empty.to_string().contains("remote_ctx_bin is required"),
+            "unexpected error: {err_empty:#}"
+        );
+        let err_rel = validate_remote_ctx_bin("ctx").expect_err("relative path must fail");
+        assert!(
+            err_rel.to_string().contains("must be an absolute path"),
+            "unexpected error: {err_rel:#}"
+        );
+    }
+
+    #[test]
+    fn remote_prewarm_dedupe_key_normalization() {
+        let key = remote_prewarm_dedupe_key(
+            "EXAMPLE.HOST ",
+            Some(" devuser "),
+            44199,
+            Some(" /tmp/ctx-daemon "),
+        );
+        assert_eq!(key, "devuser@example.host:44199:/tmp/ctx-daemon");
+
+        let key_default_dir = remote_prewarm_dedupe_key("example.host", None, 44199, None);
+        assert_eq!(key_default_dir, "@example.host:44199:~/.ctx");
+    }
+}
