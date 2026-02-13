@@ -13,19 +13,44 @@ import type {
   WorkbenchThreadView,
   WorkbenchTurnHeader,
 } from "./SessionPage.types";
-import { humanToolKind, parseIsoMs } from "./SessionPage.helpers";
+import { humanToolKind } from "./SessionPage.helpers";
+import {
+  buildPendingTurns,
+  filterQueuedMessagesForPanel,
+  filterTurnsForQueuedMessages,
+  mergeMessagesForView,
+  mergeQueuedMessagesForPanel,
+  type PendingMessageEntry,
+} from "./workbenchViewModel/messageMerge";
+import {
+  deriveAuthUi,
+  deriveProviderGuardNotice,
+  deriveSessionError,
+  extractErrorMessage,
+  type AuthUi,
+  type ProviderGuardNotice,
+  type SessionErrorInfo,
+} from "./workbenchViewModel/authDerivations";
+import {
+  buildCustomStatusByTurnId,
+  collectAssistantOrderSeq,
+  collectThoughtBlocks,
+  readEventOrderSeq,
+} from "./workbenchViewModel/timelineProjection";
 import type { ContextWindowInfo } from "../components/WorkbenchComposer";
 import type { SessionViewVerbosity } from "../state/uiStateStore";
 
-type PendingMessageEntry = {
-  clientId: string;
-  message: Message;
+export {
+  buildPendingTurns,
+  filterQueuedMessagesForPanel,
+  filterTurnsForQueuedMessages,
+  mergeMessagesForView,
+  mergeQueuedMessagesForPanel,
 };
+export { deriveAuthUi, deriveProviderGuardNotice, deriveSessionError };
 
 const devInvariantLogKeys = new Set<string>();
 const telemetryInvariantKeys = new Set<string>();
-const SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS =
-  import.meta.env.DEV && import.meta.env.MODE !== "test";
 
 function recordThreadInvariantCounter(reason: string, details: Record<string, string> = {}): void {
   const key = `${reason}:${JSON.stringify(details)}`;
@@ -39,58 +64,13 @@ function recordThreadInvariantCounter(reason: string, details: Record<string, st
 }
 
 function logViewModelInvariant(reason: string, details: Record<string, unknown>): void {
-  if (!SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) return;
+  if (!import.meta.env.DEV) return;
   const key = `${reason}:${JSON.stringify(details)}`;
   if (devInvariantLogKeys.has(key)) return;
   if (devInvariantLogKeys.size > 500) devInvariantLogKeys.clear();
   devInvariantLogKeys.add(key);
   // eslint-disable-next-line no-console
   console.error("[WorkbenchThreadViewModel][contract-violation]", { reason, ...details });
-}
-
-function readEventOrderSeq(ev: SessionEvent): number | null {
-  const parse = (value: unknown): number | null => {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value.trim()) {
-      const parsed = Number.parseFloat(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
-  };
-
-  const payload = ev.payload_json ?? {};
-  return parse((payload as any)?.order_seq ?? (payload as any)?.orderSeq);
-}
-
-type AssistantOrderSeqLookup = {
-  byProviderId: Map<string, number>;
-};
-
-function collectAssistantOrderSeq(events: SessionEvent[]): AssistantOrderSeqLookup {
-  const byProviderId = new Map<string, number>();
-  for (const ev of events) {
-    const payload = ev.payload_json ?? {};
-    if (ev.event_type === "assistant_message_inserted") {
-      const orderSeq = readEventOrderSeq(ev);
-      if (!Number.isFinite(orderSeq)) continue;
-      const providerId = String(payload?.provider_message_id ?? payload?.providerMessageId ?? "").trim();
-      if (providerId) byProviderId.set(providerId, orderSeq as number);
-      continue;
-    }
-    if (ev.event_type === "assistant_chunk" || ev.event_type === "assistant_complete") {
-      const orderSeq = readEventOrderSeq(ev);
-      if (!Number.isFinite(orderSeq)) continue;
-      const providerId = String(
-        payload?.message_id ??
-          payload?.messageId ??
-          payload?.provider_message_id ??
-          payload?.providerMessageId ??
-          "",
-      ).trim();
-      if (providerId) byProviderId.set(providerId, orderSeq as number);
-    }
-  }
-  return { byProviderId };
 }
 
 function appendStreamingFragment(prev: string, fragment: string): string {
@@ -119,27 +99,6 @@ function readTurnStreamingMeta(turn: SessionTurn): TurnStreamingMeta {
   };
 }
 
-function readThoughtFullContent(payload: any): string | null {
-  const full =
-    payload?.full_content ??
-    payload?.fullContent ??
-    payload?.full ??
-    payload?.content ??
-    payload?.content_fragment ??
-    payload?.contentFragment;
-  return typeof full === "string" && full.trim() ? full : null;
-}
-
-function isFinalThoughtPayload(payload: any): boolean {
-  if (!payload || typeof payload !== "object") return false;
-  return (
-    payload?.is_final === true ||
-    payload?.isFinal === true ||
-    typeof payload?.full_content === "string" ||
-    typeof payload?.fullContent === "string"
-  );
-}
-
 function isCrpThoughtEvent(ev: SessionEvent): boolean {
   if (ev.event_type !== "thought_chunk") return false;
   const payload = ev.payload_json ?? {};
@@ -149,344 +108,6 @@ function isCrpThoughtEvent(ev: SessionEvent): boolean {
     payload?.crp_channel != null ||
     payload?.crpChannel != null
   );
-}
-
-function readThoughtBlockKey(ev: SessionEvent): string | null {
-  const turnId = idToString(ev.turn_id);
-  if (!turnId) {
-    logViewModelInvariant("thought_chunk missing turn_id", {
-      event_type: ev.event_type,
-      event_id: idToString(ev.id),
-      created_at: ev.created_at,
-    });
-    return null;
-  }
-  const payload = ev.payload_json ?? {};
-  const rawItemId = String(payload?.item_id ?? payload?.itemId ?? "").trim();
-  if (!rawItemId) {
-    logViewModelInvariant("CRP thought_chunk missing payload.item_id", {
-      turn_id: turnId,
-      event_id: idToString(ev.id),
-      created_at: ev.created_at,
-      crp_seq: payload?.crp_seq ?? payload?.crpSeq ?? null,
-    });
-    return null;
-  }
-  const rawSummary = payload?.summary_index ?? payload?.summaryIndex;
-  const parsedSummary = typeof rawSummary === "number" ? rawSummary : Number(rawSummary);
-  if (!Number.isFinite(parsedSummary)) {
-    logViewModelInvariant("CRP thought_chunk missing/invalid payload.summary_index", {
-      turn_id: turnId,
-      event_id: idToString(ev.id),
-      created_at: ev.created_at,
-      item_id: rawItemId,
-      summary_index: rawSummary ?? null,
-    });
-    return null;
-  }
-  const summaryIndex = parsedSummary as number;
-  return `${turnId}|${rawItemId}|${summaryIndex}`;
-}
-
-function readThoughtItemId(ev: SessionEvent): string | null {
-  const payload = ev.payload_json ?? {};
-  const value = payload?.item_id ?? payload?.itemId;
-  if (typeof value === "string" && value.trim()) return value;
-  return null;
-}
-
-function collectThoughtStream(events: SessionEvent[]): {
-  text: string;
-  orderSeq?: number;
-  createdAt?: string;
-  isCrp: boolean;
-} | null {
-  const thoughtEvents = events
-    .filter((ev) => ev.event_type === "thought_chunk" && shouldRenderThoughtChunk(ev))
-    .map((ev) => ({ ev, orderSeq: readEventOrderSeq(ev) }))
-    .filter((entry) => Number.isFinite(entry.orderSeq));
-  if (thoughtEvents.length === 0) return null;
-
-  const sorted = thoughtEvents.slice().sort((a, b) => {
-    const sa = a.orderSeq as number;
-    const sb = b.orderSeq as number;
-    if (sa !== sb) return sa - sb;
-    return String(a.ev.created_at).localeCompare(String(b.ev.created_at));
-  });
-
-  let text = "";
-  let createdAt: string | undefined;
-  let orderSeq: number | undefined;
-  let isCrp = false;
-
-  let hasFinal = false;
-  for (const { ev, orderSeq: seq } of sorted) {
-    const payload = ev.payload_json ?? {};
-    const finalText = readThoughtFullContent(payload);
-    if (isFinalThoughtPayload(payload) && finalText) {
-      text = finalText;
-      hasFinal = true;
-    } else if (!hasFinal) {
-      const fragment = String(payload?.content_fragment ?? payload?.contentFragment ?? "");
-      if (fragment) {
-        text = appendStreamingFragment(text, fragment);
-      }
-    }
-    createdAt = createdAt ?? ev.created_at;
-    if (orderSeq === undefined) orderSeq = seq as number;
-    if (isCrpThoughtEvent(ev)) isCrp = true;
-  }
-
-  if (!text) return null;
-
-
-  return { text, orderSeq, createdAt, isCrp };
-}
-
-type ThoughtBlock = {
-  idKey: string;
-  text: string;
-  orderSeq?: number;
-  createdAt?: string;
-  isCrp: boolean;
-};
-
-function collectThoughtBlocks(events: SessionEvent[]): ThoughtBlock[] {
-  const thoughtEvents = events.filter(
-    (ev) => ev.event_type === "thought_chunk" && shouldRenderThoughtChunk(ev),
-  );
-  if (thoughtEvents.length === 0) return [];
-
-  const crpThoughtEvents = thoughtEvents.filter(isCrpThoughtEvent);
-  const nonCrpThoughtEvents = thoughtEvents.filter((ev) => !isCrpThoughtEvent(ev));
-
-  const blocks: ThoughtBlock[] = [];
-
-  if (crpThoughtEvents.length > 0) {
-    const groups = new Map<string, SessionEvent[]>();
-    for (const ev of crpThoughtEvents) {
-      const orderSeq = readEventOrderSeq(ev);
-      if (!Number.isFinite(orderSeq)) continue;
-      const key = readThoughtBlockKey(ev);
-      if (!key) continue;
-      const list = groups.get(key) ?? [];
-      list.push(ev);
-      groups.set(key, list);
-    }
-    for (const [key, list] of groups.entries()) {
-      const sorted = list.slice().sort((a, b) => {
-        const sa = readEventOrderSeq(a) as number;
-        const sb = readEventOrderSeq(b) as number;
-        if (sa !== sb) return sa - sb;
-        return String(a.created_at).localeCompare(String(b.created_at));
-      });
-      let text = "";
-      let createdAt: string | undefined;
-      let orderSeq: number | undefined;
-      let hasFinal = false;
-      for (const ev of sorted) {
-        const payload = ev.payload_json ?? {};
-        const finalText = readThoughtFullContent(payload);
-        if (isFinalThoughtPayload(payload) && finalText) {
-          text = finalText;
-          hasFinal = true;
-        } else if (!hasFinal) {
-          const fragment = String(payload?.content_fragment ?? payload?.contentFragment ?? "");
-          if (fragment) {
-            text = appendStreamingFragment(text, fragment);
-          }
-        }
-        createdAt = createdAt ?? ev.created_at;
-        if (orderSeq === undefined) orderSeq = readEventOrderSeq(ev) as number;
-      }
-      if (text.trim() && Number.isFinite(orderSeq)) {
-        blocks.push({ idKey: `crp:${key}`, text, orderSeq, createdAt, isCrp: true });
-      }
-    }
-  }
-
-  if (nonCrpThoughtEvents.length > 0) {
-    const stream = collectThoughtStream(nonCrpThoughtEvents);
-    if (stream) {
-      if (!Number.isFinite(stream.orderSeq)) {
-        logViewModelInvariant("non-CRP thought stream missing order_seq", {
-          count: nonCrpThoughtEvents.length,
-        });
-      } else {
-        blocks.push({
-          idKey: `stream:seq:${stream.orderSeq as number}`,
-          text: stream.text,
-          orderSeq: stream.orderSeq,
-          createdAt: stream.createdAt,
-          isCrp: stream.isCrp,
-        });
-      }
-    }
-  }
-
-  return blocks
-    .slice()
-    .sort((a, b) => {
-      const sa = a.orderSeq;
-      const sb = b.orderSeq;
-      if (Number.isFinite(sa) && Number.isFinite(sb)) {
-        if (sa !== sb) return (sa as number) - (sb as number);
-        return String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? ""));
-      }
-      if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
-      if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
-      return 0;
-    });
-}
-
-function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, string> {
-  const normalize = (value: unknown): string | null => {
-    const t = String(value ?? "").trim();
-    return t ? t : null;
-  };
-
-  const extractNoticeStatusText = (ev: SessionEvent): string | null => {
-    if (ev.event_type !== "notice") return null;
-    const payload = ev.payload_json ?? {};
-    const meta = payload?._meta ?? payload?.meta ?? {};
-    return (
-      normalize(meta?.statusText) ??
-      normalize(meta?.status_text) ??
-      normalize(payload?.statusText) ??
-      normalize(payload?.status_text)
-    );
-  };
-
-  const extractReasoningSummaryText = (ev: SessionEvent): string | null => {
-    if (ev.event_type !== "notice") return null;
-    const payload = ev.payload_json ?? {};
-    if (payload?.kind !== "reasoning_summary") return null;
-    return (
-      normalize(payload?.text) ??
-      normalize(payload?.summary) ??
-      normalize(payload?.content)
-    );
-  };
-
-  const toolStatusVerb = (kind: string): string | null => {
-    const k = String(kind ?? "").trim().toLowerCase();
-    if (k === "search") return "Searching";
-    if (k === "read" || k === "read_file") return "Reading";
-    if (k === "execute" || k === "exec") return "Running";
-    if (k === "write" || k === "edit") return "Writing";
-    return null;
-  };
-
-  const deriveToolStatusText = (update: any): string | null => {
-    const kind = String(update?.kind ?? update?.tool_kind ?? update?.toolKind ?? "").trim();
-    const verb = toolStatusVerb(kind);
-    if (!verb) return null;
-    if (verb === "Searching") {
-      const query = normalize(update?.input?.query ?? update?.input?.q);
-      if (query) return `${verb} ${query}`;
-    }
-    const title = normalize(update?.title);
-    if (title) return `${verb} ${title}`;
-    return verb;
-  };
-
-  const isActiveToolStatus = (status: unknown): boolean => {
-    const s = String(status ?? "").trim().toLowerCase();
-    return s === "pending" || s === "queued" || s === "running" || s === "in_progress" || s === "inprogress";
-  };
-
-  const sorted = events
-    .slice()
-    .sort((a, b) => {
-      const sa = readEventOrderSeq(a) ?? Number.NaN;
-      const sb = readEventOrderSeq(b) ?? Number.NaN;
-      if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
-      if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
-      if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
-      return String(a.created_at).localeCompare(String(b.created_at));
-    });
-
-  // CRP: "reasoning_summary" is expected to be title-only (pre-split by the runtime).
-  // Do not apply UI-side heuristics to parse or truncate it.
-  const summaryByTurn = new Map<string, { order: number; text: string }>();
-  const noticeByTurn = new Map<string, { order: number; text: string }>();
-  const toolsByTurn = new Map<string, Map<string, { order: number; status: string; text: string | null }>>();
-
-  let order = 0;
-  for (const ev of sorted) {
-    order += 1;
-    const turnId = idToString((ev as any).turn_id);
-    if (!turnId) continue;
-
-    const summaryText = extractReasoningSummaryText(ev);
-    if (summaryText) {
-      summaryByTurn.set(turnId, { order, text: summaryText });
-      continue;
-    }
-
-    const noticeText = extractNoticeStatusText(ev);
-    if (noticeText) {
-      noticeByTurn.set(turnId, { order, text: noticeText });
-      continue;
-    }
-
-
-    if (ev.event_type !== "tool_call" && ev.event_type !== "tool_call_update" && ev.event_type !== "tool_result") {
-      continue;
-    }
-
-    const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
-    const toolCallId =
-      normalize(
-        ev.payload_json?.tool_call_id ??
-          update?.toolCallId ??
-          update?.tool_call_id ??
-          update?.rawInput?.call_id ??
-          update?.raw_input?.call_id ??
-          update?.toolCall?.rawInput?.call_id ??
-          "",
-      ) ?? "";
-    if (!toolCallId) continue;
-
-    const status = String(update?.status ?? update?.tool_status ?? update?.toolStatus ?? "").trim();
-    const text = deriveToolStatusText(update);
-    const perTurn = toolsByTurn.get(turnId) ?? new Map<string, { order: number; status: string; text: string | null }>();
-    perTurn.set(toolCallId, { order, status, text });
-    toolsByTurn.set(turnId, perTurn);
-  }
-
-
-  const out = new Map<string, string>();
-  const allTurnIds = new Set<string>([
-    ...summaryByTurn.keys(),
-    ...noticeByTurn.keys(),
-    ...toolsByTurn.keys(),
-  ]);
-  for (const turnId of allTurnIds) {
-    const summary = summaryByTurn.get(turnId);
-    if (summary?.text) {
-      out.set(turnId, summary.text);
-      continue;
-    }
-
-    const perTurnTools = toolsByTurn.get(turnId);
-    let bestTool: { order: number; text: string } | null = null;
-    if (perTurnTools) {
-      for (const tool of perTurnTools.values()) {
-        if (!tool.text) continue;
-        if (!isActiveToolStatus(tool.status)) continue;
-        if (!bestTool || tool.order > bestTool.order) bestTool = { order: tool.order, text: tool.text };
-      }
-    }
-    if (bestTool) {
-      out.set(turnId, bestTool.text);
-      continue;
-    }
-    const notice = noticeByTurn.get(turnId);
-    if (notice?.text) out.set(turnId, notice.text);
-  }
-
-  return out;
 }
 
 function normalizeAskUserQuestionAnswers(raw: unknown): Record<string, string> {
@@ -634,143 +255,6 @@ export function deriveTurnsKey(turns: SessionTurn[]): string {
   return `${turns.length}:${first.start_seq ?? ""}:${last.start_seq ?? ""}:${last.updated_at ?? ""}`;
 }
 
-const compareMessageOrder = (a: Message, b: Message): number => {
-  const c = String(a.created_at).localeCompare(String(b.created_at));
-  if (c !== 0) return c;
-  const sa = Number(a.turn_sequence ?? Number.NaN);
-  const sb = Number(b.turn_sequence ?? Number.NaN);
-  if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
-  if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
-  if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
-  return String(idToString(a.id)).localeCompare(String(idToString(b.id)));
-};
-
-export function mergeMessagesForView(
-  messages: Message[],
-  pending: PendingMessageEntry[],
-  includeQueuedMessageIds: Set<string> = new Set(),
-): Message[] {
-  const shouldInclude = (message: Message) => {
-    if (message.delivery !== "queued") return true;
-    const mid = idToString(message.id);
-    return !!mid && includeQueuedMessageIds.has(mid);
-  };
-  const filteredMessages = messages.filter(shouldInclude);
-  const filteredPending = pending.filter((entry) => shouldInclude(entry.message));
-  if (filteredPending.length === 0) return filteredMessages;
-  const byId = new Map<string, Message>();
-  for (const m of filteredMessages) {
-    const id = idToString(m.id);
-    if (id) byId.set(id, m);
-  }
-  for (const entry of filteredPending) {
-    const id = idToString(entry.message.id);
-    if (!id || byId.has(id)) continue;
-    byId.set(id, entry.message);
-  }
-  return Array.from(byId.values()).sort(compareMessageOrder);
-}
-
-export function mergeQueuedMessagesForPanel(
-  queue: Message[],
-  pending: PendingMessageEntry[],
-): Message[] {
-  if (queue.length === 0 && pending.length === 0) return [];
-  if (pending.length === 0) return queue.slice();
-  const byId = new Map<string, Message>();
-  const pendingNoId: Message[] = [];
-  for (const msg of queue) {
-    const id = idToString(msg.id);
-    if (id) byId.set(id, msg);
-  }
-  for (const entry of pending) {
-    const msg = entry.message;
-    const id = idToString(msg.id);
-    if (!id) {
-      pendingNoId.push(msg);
-      continue;
-    }
-    if (!byId.has(id)) byId.set(id, msg);
-  }
-  const merged = [...byId.values(), ...pendingNoId];
-  merged.sort(compareMessageOrder);
-  return merged;
-}
-
-export function filterQueuedMessagesForPanel(
-  queue: Message[],
-  turns: SessionTurn[],
-): Message[] {
-  if (queue.length === 0 || turns.length === 0) return queue;
-  const statusByUserMessageId = new Map<string, string>();
-  for (const turn of turns) {
-    const mid = turn.user_message_id ? idToString(turn.user_message_id) : "";
-    if (!mid) continue;
-    statusByUserMessageId.set(mid, turn.status);
-  }
-  return queue.filter((message) => {
-    const mid = idToString(message.id);
-    if (!mid) return true;
-    const status = statusByUserMessageId.get(mid);
-    if (!status) return true;
-    return status === "queued";
-  });
-}
-
-export function filterTurnsForQueuedMessages(
-  turns: SessionTurn[],
-  queuedMessageIds: Set<string>,
-): SessionTurn[] {
-  if (queuedMessageIds.size === 0) return turns;
-  return turns.filter((turn) => {
-    const mid = turn.user_message_id ? idToString(turn.user_message_id) : "";
-    if (!mid) return true;
-    return !queuedMessageIds.has(mid);
-  });
-}
-
-export function buildPendingTurns(turns: SessionTurn[], messages: Message[]): SessionTurn[] {
-  if (messages.length === 0) return [];
-  const turnIds = new Set<string>();
-  const userMessageIds = new Set<string>();
-  for (const turn of turns) {
-    const tid = idToString(turn.turn_id);
-    if (tid) turnIds.add(tid);
-    const uid = turn.user_message_id ? idToString(turn.user_message_id) : "";
-    if (uid) userMessageIds.add(uid);
-  }
-  const pending: SessionTurn[] = [];
-  for (const message of messages) {
-    if (message.role !== "user") continue;
-    const mid = idToString(message.id);
-    if (!mid || userMessageIds.has(mid)) continue;
-    const turnId = idToString(message.turn_id);
-    if (!turnId) continue;
-    if (turnIds.has(turnId)) continue;
-    pending.push({
-      turn_id: turnId,
-      session_id: message.session_id,
-      run_id: null,
-      user_message_id: message.id,
-      status: message.delivery === "immediate" ? "running" : "queued",
-      start_seq: null,
-      end_seq: null,
-      started_at: message.created_at,
-      updated_at: message.created_at,
-      assistant_partial: "",
-      thought_partial: "",
-      metrics_json: null,
-      tool_total: 0,
-      tool_pending: 0,
-      tool_running: 0,
-      tool_completed: 0,
-      tool_failed: 0,
-    });
-    turnIds.add(turnId);
-  }
-  return pending;
-}
-
 export function filterThreadItemsForVerbosity(items: ThreadItem[], verbosity: SessionViewVerbosity): ThreadItem[] {
   if (verbosity === "terse") {
     return items.filter((item) => item.kind !== "tool" && item.kind !== "tool_group" && item.kind !== "thought");
@@ -800,7 +284,7 @@ function buildSystemMessageGroups(messages: Message[]): SortableThreadGroup[] {
     const m = entry.message;
     const id = idToString(m.id);
     if (!id) {
-      if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
+      if (import.meta.env.DEV) {
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] system message missing id", {
           created_at: m.created_at ?? null,
@@ -1003,7 +487,7 @@ function buildNoticeMessageItem(
     "Context compacted. Earlier turns were summarized.";
   const eventId = idToString(ev.id);
   if (!eventId) {
-    if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
+    if (import.meta.env.DEV) {
       // eslint-disable-next-line no-console
       console.error("[WorkbenchThreadViewModel] notice event missing id", {
         turnId,
@@ -1035,7 +519,7 @@ function buildTurnActivityTimeline(opts: {
     toolById.set(tool.tool_call_id, tool);
   }
 
-  const thoughtBlocks = collectThoughtBlocks(opts.events);
+  const thoughtBlocks = collectThoughtBlocks(opts.events, { onInvariant: logViewModelInvariant });
 
   const activity: ActivityEntry[] = [];
   const toolInserted = new Set<string>();
@@ -1175,7 +659,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
   for (const turn of sortedTurns) {
     const turnId = idToString(turn.turn_id);
     if (!turnId) {
-      if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
+      if (import.meta.env.DEV) {
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] turn missing turn_id", {
           started_at: turn.started_at ?? null,
@@ -1265,7 +749,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
       const messageId = idToString(m.id);
       if (!messageId) {
         // Missing message ids break MessageList identity invariants; treat this as a bug.
-        if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
+        if (import.meta.env.DEV) {
           // eslint-disable-next-line no-console
           console.error("[WorkbenchThreadViewModel] assistant message missing id", {
             turnId,
@@ -1395,7 +879,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
         : Number.NaN;
     if (!Number.isFinite(groupOrderSeq)) {
       recordThreadInvariantCounter("missing_order_seq_anchor", { turn_id: turnId });
-      if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
+      if (import.meta.env.DEV) {
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] turn missing order_seq anchor", {
           turn_id: turnId,
@@ -1702,7 +1186,7 @@ function buildWorkbenchThreadViewModelFromEvents(
       const userOrderSeq = readEventOrderSeq(u);
       const mid = String(u.payload_json?.message_id ?? "").trim();
       if (!mid) {
-        if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
+        if (import.meta.env.DEV) {
           // eslint-disable-next-line no-console
           console.error("[WorkbenchThreadViewModel] user_message event missing payload.message_id", {
             created_at: u.created_at,
@@ -1712,7 +1196,7 @@ function buildWorkbenchThreadViewModelFromEvents(
         continue;
       }
       if (!mid) {
-        if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
+        if (import.meta.env.DEV) {
           // eslint-disable-next-line no-console
           console.error("[WorkbenchThreadViewModel] user event missing message_id and id", {
             created_at: u.created_at,
@@ -1753,7 +1237,7 @@ function buildWorkbenchThreadViewModelFromEvents(
       for (const ev of evs) {
         const eventId = idToString(ev.id);
         if (!eventId) {
-          if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
+          if (import.meta.env.DEV) {
             // eslint-disable-next-line no-console
             console.error("[WorkbenchThreadViewModel] event missing id (events-only view)", {
               created_at: ev.created_at,
@@ -1961,7 +1445,7 @@ function buildWorkbenchThreadViewModelFromEvents(
 
     const mid = idToString(u.id);
     if (!mid) {
-      if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
+      if (import.meta.env.DEV) {
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] user message missing id (events-only view)", {
           created_at: u.created_at ?? null,
@@ -2009,7 +1493,7 @@ function buildWorkbenchThreadViewModelFromEvents(
     for (const ev of evs) {
       const eventId = idToString(ev.id);
       if (!eventId) {
-        if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
+        if (import.meta.env.DEV) {
           // eslint-disable-next-line no-console
           console.error("[WorkbenchThreadViewModel] event missing id (events-only view)", {
             created_at: ev.created_at,
@@ -2378,7 +1862,7 @@ function mergeEvents(prev: SessionEvent[], incoming: SessionEvent[]): SessionEve
   for (const ev of prev) {
     const id = idToString(ev.id);
     if (!id) {
-      if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
+      if (import.meta.env.DEV) {
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] event missing id (mergeEvents)", {
           created_at: ev.created_at,
@@ -2392,7 +1876,7 @@ function mergeEvents(prev: SessionEvent[], incoming: SessionEvent[]): SessionEve
   for (const ev of incoming) {
     const id = idToString(ev.id);
     if (!id) {
-      if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
+      if (import.meta.env.DEV) {
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] event missing id (mergeEvents)", {
           created_at: ev.created_at,
@@ -2404,235 +1888,4 @@ function mergeEvents(prev: SessionEvent[], incoming: SessionEvent[]): SessionEve
     map.set(id, ev);
   }
   return [...map.values()].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
-}
-
-type AuthMethodOption = { id: string; name: string };
-type SessionErrorInfo = { message: string; provider?: string };
-type ProviderGuardNotice = {
-  kind: "provider_guard_warning" | "provider_guard_kill";
-  stage: string;
-  provider?: string;
-  message?: string;
-  pid?: number;
-  memoryMb?: number | null;
-  limitHighMb?: number | null;
-  limitMaxMb?: number | null;
-  systemTotalMb?: number | null;
-  systemUsedMb?: number | null;
-  gracePeriodMs?: number | null;
-  killAtMs?: number | null;
-  createdAtMs?: number | null;
-};
-
-type AuthUi = {
-  status: "unknown" | "required" | "failed" | "authenticated";
-  provider?: string;
-  message?: string;
-  methods: AuthMethodOption[];
-};
-
-export function deriveAuthUi(events: SessionEvent[]): AuthUi {
-  const fromMethodsValue = (value: any): AuthMethodOption[] => {
-    const list = Array.isArray(value) ? value : [];
-    return list
-      .map((m: any) => ({
-        id: m?.methodId ?? m?.method_id ?? m?.id,
-        name: m?.name ?? m?.label ?? (m?.methodId ?? m?.method_id ?? m?.id),
-      }))
-      .filter((m: any) => typeof m.id === "string" && m.id.length > 0)
-      .map((m: any) => ({ id: String(m.id), name: String(m.name ?? m.id) }));
-  };
-
-  let status: AuthUi["status"] = "unknown";
-  let provider: string | undefined;
-  let message: string | undefined;
-  let methods: AuthMethodOption[] = [];
-
-  const lastInit = [...events].reverse().find((e) => e.event_type === "init");
-  const initMethods =
-    lastInit?.payload_json?.auth_methods ??
-    lastInit?.payload_json?.authMethods ??
-    lastInit?.payload_json?.auth_methods;
-  const initMethodOptions = fromMethodsValue(initMethods);
-
-  for (const ev of events) {
-    if (ev.event_type === "auth_required") {
-      status = "required";
-      provider = ev.payload_json?.provider;
-      message = ev.payload_json?.message;
-      methods = fromMethodsValue(ev.payload_json?.auth_methods ?? ev.payload_json?.authMethods);
-      continue;
-    }
-
-    if (ev.event_type !== "notice") continue;
-    const kind = ev.payload_json?.kind;
-    if (kind === "auth_required") {
-      status = "required";
-      provider = ev.payload_json?.provider;
-      message = ev.payload_json?.message;
-      methods = fromMethodsValue(ev.payload_json?.auth_methods ?? ev.payload_json?.authMethods);
-    }
-    if (kind === "auth_failed") {
-      status = "failed";
-      provider = ev.payload_json?.provider;
-      message = ev.payload_json?.message;
-    }
-    if (kind === "auth_finished") {
-      status = "authenticated";
-      provider = ev.payload_json?.provider;
-      message = undefined;
-      methods = [];
-    }
-  }
-
-  if ((status === "required" || status === "failed") && methods.length === 0) {
-    methods = initMethodOptions;
-  }
-
-  return { status, provider, message, methods };
-}
-
-export function deriveProviderGuardNotice(events: SessionEvent[]): ProviderGuardNotice | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i];
-    if (ev.event_type !== "notice") continue;
-    const payload = ev.payload_json ?? {};
-    const kind = String(payload.kind ?? "").trim();
-    if (kind !== "provider_guard_warning" && kind !== "provider_guard_kill") continue;
-    return {
-      kind,
-      stage: String(payload.stage ?? "").trim(),
-      provider: typeof payload.provider === "string" ? payload.provider : undefined,
-      message: typeof payload.message === "string" ? payload.message : undefined,
-      pid: coerceNumber(payload.pid) ?? undefined,
-      memoryMb: coerceNumber(payload.memory_mb),
-      limitHighMb: coerceNumber(payload.limit_high_mb),
-      limitMaxMb: coerceNumber(payload.limit_max_mb),
-      systemTotalMb: coerceNumber(payload.system_total_mb),
-      systemUsedMb: coerceNumber(payload.system_used_mb),
-      gracePeriodMs: coerceNumber(payload.grace_period_ms),
-      killAtMs: coerceNumber(payload.kill_at_ms),
-      createdAtMs: parseIsoMs(ev.created_at),
-    };
-  }
-  return null;
-}
-
-function readNonEmptyString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const text = value.trim();
-  return text ? text : null;
-}
-
-function extractErrorDetails(payload: any): string | null {
-  if (!payload) return null;
-  const direct =
-    readNonEmptyString(payload.details) ??
-    readNonEmptyString(payload.detail) ??
-    readNonEmptyString(payload.additional_details) ??
-    readNonEmptyString(payload.additionalDetails);
-  if (direct) return direct;
-
-  const codexInfo = payload.codex_error_info ?? payload.codexErrorInfo;
-  const codexText = extractErrorMessageFromObject(codexInfo);
-  if (codexText) return codexText;
-
-  const kind = readNonEmptyString(payload.kind);
-  return kind;
-}
-
-function extractErrorMessage(payload: any): string | null {
-  if (!payload) return null;
-  const details = extractErrorDetails(payload);
-  const direct =
-    readNonEmptyString(payload.message) ??
-    readNonEmptyString(payload.error) ??
-    readNonEmptyString(payload.error_message) ??
-    readNonEmptyString(payload.errorMessage);
-  if (direct) {
-    if (details && !direct.includes(details)) {
-      return `${direct}\nDetails: ${details}`;
-    }
-    return direct;
-  }
-
-  const update = payload.update ?? payload;
-  const updateText = extractErrorMessageFromObject(update);
-  if (updateText) {
-    if (details && !updateText.includes(details)) {
-      return `${updateText}\nDetails: ${details}`;
-    }
-    return updateText;
-  }
-
-  const meta = update?._meta ?? update?.meta ?? payload._meta ?? payload.meta ?? null;
-  const metaText =
-    readNonEmptyString(meta?.statusText) ??
-    readNonEmptyString(meta?.status_text) ??
-    readNonEmptyString(meta?.message) ??
-    readNonEmptyString(meta?.error);
-  if (metaText) {
-    if (details && !metaText.includes(details)) {
-      return `${metaText}\nDetails: ${details}`;
-    }
-    return metaText;
-  }
-  return details;
-}
-
-function extractErrorMessageFromObject(value: any): string | null {
-  if (!value) return null;
-  if (typeof value === "string") return readNonEmptyString(value);
-  if (typeof value !== "object") return null;
-
-  const direct =
-    readNonEmptyString(value.message) ??
-    readNonEmptyString(value.error_message) ??
-    readNonEmptyString(value.errorMessage);
-  if (direct) return direct;
-
-  const data = value.data ?? value.details ?? value.detail;
-  const dataText =
-    readNonEmptyString(data) ??
-    readNonEmptyString(data?.message) ??
-    readNonEmptyString(data?.error);
-  if (dataText) return dataText;
-
-  const nested = value.error ?? value.cause;
-  const nestedText =
-    typeof nested === "object"
-      ? extractErrorMessageFromObject(nested)
-      : readNonEmptyString(nested);
-  if (nestedText) return nestedText;
-
-  const meta = value._meta ?? value.meta;
-  return readNonEmptyString(meta?.statusText) ?? readNonEmptyString(meta?.status_text);
-}
-
-export function deriveSessionError(
-  turns: SessionTurn[],
-  events: SessionEvent[],
-): SessionErrorInfo | null {
-  if (turns.length === 0) return null;
-  const lastTurn = turns[turns.length - 1];
-  if (lastTurn.status !== "failed") return null;
-  const turnId = idToString(lastTurn.turn_id);
-  let errorEvent: SessionEvent | null = null;
-  for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i];
-    if (ev.event_type !== "error") continue;
-    if (turnId && idToString(ev.turn_id) !== turnId) continue;
-    errorEvent = ev;
-    break;
-  }
-  if (!errorEvent) {
-    return { message: "Harness error." };
-  }
-  const message = extractErrorMessage(errorEvent.payload_json) ?? "Harness error.";
-  const provider =
-    readNonEmptyString(errorEvent.payload_json?.provider) ??
-    readNonEmptyString(errorEvent.payload_json?.provider_id) ??
-    readNonEmptyString(errorEvent.payload_json?.providerId) ??
-    undefined;
-  return { message, provider };
 }

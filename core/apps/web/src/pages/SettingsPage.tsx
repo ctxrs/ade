@@ -113,7 +113,11 @@ import {
   SUBAGENT_PROMPT_DEFAULT,
 } from "./SettingsPage.constants";
 import { Card, Metric, Row, Toggle } from "./SettingsPage.components";
-import type { InstallSession, SectionId } from "./SettingsPage.types";
+import { GeneralSection } from "./settings/sections/GeneralSection";
+import { PrivacySection } from "./settings/sections/PrivacySection";
+import { useSettingsActions } from "./settings/useSettingsActions";
+import { useSettingsState } from "./settings/useSettingsState";
+import type { InstallSession } from "./SettingsPage.types";
 import {
   formatAge,
   formatBytes,
@@ -150,8 +154,9 @@ const isAttachmentSyncing = (status?: WorkspaceAttachment["status"]) => status =
 export default function SettingsPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [active, setActive] = useState<SectionId>(() => sectionFromHash(window.location.hash) ?? "general");
-  const [query, setQuery] = useState("");
+  const { active, setActive, query, setQuery } = useSettingsState({
+    initialActive: sectionFromHash(window.location.hash) ?? "general",
+  });
   const supabase = useMemo(() => getSupabaseClient(), []);
   const devToolsEnabled = import.meta.env.DEV;
   const [theme, setTheme] = useState<ThemeMode>(() => resolveThemeMode());
@@ -166,21 +171,12 @@ export default function SettingsPage() {
     return `${location.pathname}${search ? `?${search}` : ""}#billing`;
   }, [location.pathname, location.search]);
 
-  const clearCheckoutStatus = useCallback(() => {
-    const params = new URLSearchParams(location.search);
-    if (!params.has("checkout") && !params.has("session_id")) return;
-    params.delete("checkout");
-    params.delete("session_id");
-    const search = params.toString();
-    navigate(
-      {
-        pathname: location.pathname,
-        search: search ? `?${search}` : "",
-        hash: location.hash,
-      },
-      { replace: true },
-    );
-  }, [location.hash, location.pathname, location.search, navigate]);
+  const { clearCheckoutStatus } = useSettingsActions({
+    pathname: location.pathname,
+    search: location.search,
+    hash: location.hash,
+    navigate,
+  });
 
   type EntitlementsSnapshot = {
     plan_type: "free_local" | "pro" | "team" | "enterprise";
@@ -1910,7 +1906,7 @@ export default function SettingsPage() {
 
     if (active === "general") {
       return (
-        <>
+        <GeneralSection>
           <Card>
             <Row
               title="Theme"
@@ -2002,21 +1998,28 @@ export default function SettingsPage() {
             />
           </Card>
           {clientSettingsError ? <div className="settings-banner settings-banner-error">{clientSettingsError}</div> : null}
-        </>
+        </GeneralSection>
       );
     }
 
     if (active === "privacy") {
       return (
-        <Card>
-          <Row
-            title="Telemetry"
-            description="Share anonymous usage metrics (no code, prompts, or file paths)."
-            control={
-              <Toggle checked={telemetryEnabled} disabled={!loaded} onChange={setTelemetryEnabled} ariaLabel="Telemetry" />
-            }
-          />
-        </Card>
+        <PrivacySection>
+          <Card>
+            <Row
+              title="Telemetry"
+              description="Share anonymous usage metrics (no code, prompts, or file paths)."
+              control={
+                <Toggle
+                  checked={telemetryEnabled}
+                  disabled={!loaded}
+                  onChange={setTelemetryEnabled}
+                  ariaLabel="Telemetry"
+                />
+              }
+            />
+          </Card>
+        </PrivacySection>
       );
     }
 

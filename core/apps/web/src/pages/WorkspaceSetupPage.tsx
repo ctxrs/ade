@@ -16,8 +16,6 @@ import {
   listWorkspaces,
   startExecutionLaunch,
   type ExecutionLaunchLogLine,
-  type ExecutionLaunchPhase,
-  type ExecutionLaunchPhaseStatus,
   type ExecutionLaunchSnapshot,
   type ExecutionLaunchStreamEvent,
   type ProviderAuthImportCandidate,
@@ -49,6 +47,25 @@ import {
   parseCloneDestPath,
   resolveWorkspaceName,
 } from "./WorkspaceSetupPage.logic";
+import {
+  formatLaunchElapsed,
+  formatLaunchTime,
+  launchErrorFromSnapshot,
+  launchPhaseLabel,
+  mergeLaunchLogs,
+  parseUtcMs,
+  phaseEntryForCurrent,
+} from "./workspaceSetup/launchProgress";
+import {
+  loadRemoteProfiles,
+  loadSshRecents,
+  parseUserHost,
+  remoteProfileKey,
+  upsertRemoteProfile,
+  upsertSshRecent,
+  type RemoteProfile,
+  type SshRecent,
+} from "./workspaceSetup/remoteProfiles";
 
 type WizardOption = {
   id: string;
@@ -67,189 +84,8 @@ type WizardStep = {
   info?: string;
 };
 
-type SshRecent = {
-  host: string;
-  user?: string | null;
-  updated_at_ms: number;
-};
-
-type RemoteProfile = {
-  host: string;
-  user?: string | null;
-  remote_port?: number | null;
-  remote_data_dir?: string | null;
-  remote_ctx_bin?: string | null;
-  updated_at_ms: number;
-};
-
 type ImportInitDialogState = {
   path: string;
-};
-
-const SSH_RECENTS_KEY = "contextDesktopSshRecentsV1";
-const REMOTE_PROFILES_KEY = "contextDesktopRemoteProfilesV1";
-
-const loadSshRecents = (): SshRecent[] => {
-  try {
-    const raw = localStorage.getItem(SSH_RECENTS_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return Array.isArray(parsed) ? (parsed as SshRecent[]) : [];
-  } catch {
-    return [];
-  }
-};
-
-const saveSshRecents = (recents: SshRecent[]) => {
-  try {
-    localStorage.setItem(SSH_RECENTS_KEY, JSON.stringify(recents.slice(0, 50)));
-  } catch {
-    // ignore
-  }
-};
-
-const upsertSshRecent = (host: string, user?: string | null): SshRecent[] => {
-  const recents = loadSshRecents();
-  const key = `${user ?? ""}@${host}`;
-  const next = [
-    { host, user: user ?? null, updated_at_ms: Date.now() },
-    ...recents.filter((r) => `${r.user ?? ""}@${r.host}` !== key),
-  ];
-  saveSshRecents(next);
-  return next;
-};
-
-const remoteProfileKey = (host: string, user?: string | null) => `${user ?? ""}@${host}`;
-
-const loadRemoteProfiles = (): RemoteProfile[] => {
-  try {
-    const raw = localStorage.getItem(REMOTE_PROFILES_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return Array.isArray(parsed) ? (parsed as RemoteProfile[]) : [];
-  } catch {
-    return [];
-  }
-};
-
-const saveRemoteProfiles = (profiles: RemoteProfile[]) => {
-  try {
-    localStorage.setItem(REMOTE_PROFILES_KEY, JSON.stringify(profiles.slice(0, 100)));
-  } catch {
-    // ignore
-  }
-};
-
-const upsertRemoteProfile = (
-  host: string,
-  user: string | null | undefined,
-  fields: {
-    remote_port?: number | null;
-    remote_data_dir?: string | null;
-    remote_ctx_bin?: string | null;
-  },
-): RemoteProfile[] => {
-  const profiles = loadRemoteProfiles();
-  const key = remoteProfileKey(host, user ?? null);
-  const nextEntry: RemoteProfile = {
-    host,
-    user: user ?? null,
-    remote_port: fields.remote_port ?? null,
-    remote_data_dir: fields.remote_data_dir ?? null,
-    remote_ctx_bin: fields.remote_ctx_bin ?? null,
-    updated_at_ms: Date.now(),
-  };
-  const next = [nextEntry, ...profiles.filter((entry) => remoteProfileKey(entry.host, entry.user) !== key)];
-  saveRemoteProfiles(next);
-  return next;
-};
-
-const parseUserHost = (raw: string): { host: string; user?: string | null } | null => {
-  const trimmed = String(raw || "").trim();
-  if (!trimmed) return null;
-  const at = trimmed.lastIndexOf("@");
-  if (at > 0) {
-    const user = trimmed.slice(0, at).trim();
-    const host = trimmed.slice(at + 1).trim();
-    if (!host) return null;
-    return { host, user: user || null };
-  }
-  return { host: trimmed };
-};
-
-const LAUNCH_LOG_MAX = 400;
-
-const launchPhaseLabel = (phase?: ExecutionLaunchPhase | null): string => {
-  if (!phase) return "Preparing";
-  switch (phase) {
-    case "machine_check":
-      return "Machine check";
-    case "machine_start_or_init":
-      return "Machine start/init";
-    case "image_check":
-      return "Image check";
-    case "image_load":
-      return "Image load";
-    case "container_check":
-      return "Container check";
-    case "container_start_or_create":
-      return "Container start/create";
-    case "runtime_network_setup":
-      return "Network setup";
-    case "ready":
-      return "Ready";
-    default:
-      return phase;
-  }
-};
-
-const parseUtcMs = (value?: string | null): number | null => {
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-const phaseEntryForCurrent = (snapshot: ExecutionLaunchSnapshot): ExecutionLaunchPhaseStatus | null => {
-  if (!snapshot.current_phase) return null;
-  for (let i = snapshot.phases.length - 1; i >= 0; i -= 1) {
-    if (snapshot.phases[i].phase === snapshot.current_phase) {
-      return snapshot.phases[i];
-    }
-  }
-  return null;
-};
-
-const mergeLaunchLogs = (
-  current: ExecutionLaunchLogLine[],
-  incoming: ExecutionLaunchLogLine[],
-): ExecutionLaunchLogLine[] => {
-  if (!incoming.length) return current.slice(-LAUNCH_LOG_MAX);
-  const bySeq = new Map<number, ExecutionLaunchLogLine>();
-  for (const line of current) bySeq.set(line.seq, line);
-  for (const line of incoming) bySeq.set(line.seq, line);
-  const merged = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
-  return merged.slice(-LAUNCH_LOG_MAX);
-};
-
-const launchErrorFromSnapshot = (snapshot: ExecutionLaunchSnapshot): string => {
-  const phase = launchPhaseLabel(snapshot.current_phase);
-  const message = String(snapshot.error ?? "").trim();
-  if (!message) return `Workspace launch failed during ${phase}.`;
-  return `${phase}: ${message}`;
-};
-
-const formatLaunchElapsed = (ms: number | null): string => {
-  if (ms === null || !Number.isFinite(ms) || ms < 0) return "0s";
-  const rounded = Math.floor(ms / 1000);
-  const minutes = Math.floor(rounded / 60);
-  const seconds = rounded % 60;
-  if (minutes <= 0) return `${seconds}s`;
-  return `${minutes}m ${seconds}s`;
-};
-
-const formatLaunchTime = (ts: string): string => {
-  const value = parseUtcMs(ts);
-  if (value === null) return ts;
-  const date = new Date(value);
-  return date.toLocaleTimeString([], { hour12: false });
 };
 
 export default function WorkspaceSetupPage() {

@@ -3,30 +3,17 @@ import { Virtuoso } from "react-virtuoso";
 import { flushSync } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  ArrowUp,
-  AtSign,
   ChevronDown,
-  Check,
   ChevronsLeft,
   ChevronsRight,
-  Copy,
-  Ellipsis,
-  GitBranch,
-  Image,
-  Laptop,
-  Mic,
   SquarePen,
   Settings,
-  Terminal,
   X,
 } from "lucide-react";
 import {
-  InstallInfo,
   type ArchiveTaskResponse,
   type Message,
   MessageAttachment,
-  ProviderOptions,
-  ProviderStatus,
   type Session,
   type SessionTurn,
   type SessionSnapshotSummary,
@@ -41,14 +28,9 @@ import {
   daemonFetchRaw,
   getHealth,
   getSessionDiff,
-  getInstall,
-  getProviderOptions,
   getWorktree,
   idToString,
-  installAllProviders,
-  installProvider,
   listWebSessions,
-  listProviders,
   markTaskRead as markTaskReadApi,
   markTaskUnread as markTaskUnreadApi,
   postMessage,
@@ -82,10 +64,8 @@ import {
   type DesktopStorageNotice,
   type DesktopTitlebarColor,
 } from "../utils/desktop";
-import { registerDropScope } from "../utils/dragDropScopes";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { pickPreferredSessionId } from "../utils/workbenchSelection";
-import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { parseModelId } from "../utils/modelEffort";
 import { getLoadTestTelemetry } from "../utils/loadTestTelemetry";
 import { useDictationController } from "../utils/useDictationController";
@@ -116,6 +96,12 @@ import { useEnsureArchivedLoaded } from "../state/useEnsureArchivedLoaded";
 import { TaskRow } from "./WorkbenchPage.taskRow";
 import { TASK_LIST_COMPONENTS } from "./WorkbenchPage.taskList";
 import { WorkbenchSessionSlot } from "./WorkbenchPage.sessionSlot";
+import { useWorkbenchDragDropAttachments } from "./workbenchShell/useWorkbenchDragDropAttachments";
+import { getDiffSummaryStats, isDiffSummaryTooLarge } from "./workbenchShell/useWorkbenchDiffPane";
+import { useWorkbenchOptimisticTasks } from "./workbenchShell/useWorkbenchOptimisticTasks";
+import { useWorkbenchProviders } from "./workbenchShell/useWorkbenchProviders";
+import { WorkbenchSessionHeader } from "./workbenchShell/WorkbenchSessionHeader";
+import { useWorkbenchTaskScrollbar } from "./workbenchShell/useWorkbenchTaskScrollbar";
 import type {
   AnchorRect,
   ArchiveConfirmState,
@@ -144,45 +130,6 @@ import {
   spinnerDelayForNow,
 } from "./WorkbenchPage.utils";
 import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
-
-const DIFF_LINE_GUARD_LIMIT = 10000;
-const DIFF_FILE_GUARD_LIMIT = 200;
-
-type TaskScrollbarDragState = {
-  pointerId: number;
-  startY: number;
-  startScrollTop: number;
-  trackHeight: number;
-  thumbHeight: number;
-  scrollHeight: number;
-  clientHeight: number;
-};
-
-const readDiffSummaryNumber = (summary: Record<string, unknown> | null, keys: string[]): number | null => {
-  if (!summary) return null;
-  for (const key of keys) {
-    const raw = (summary as any)[key];
-    const value = Number(raw);
-    if (Number.isFinite(value)) return value;
-  }
-  return null;
-};
-
-const getDiffSummaryStats = (summary: Record<string, unknown> | null) => {
-  const fileCount = readDiffSummaryNumber(summary, ["file_count", "files", "fileCount"]);
-  const additions = readDiffSummaryNumber(summary, ["line_additions", "additions", "lineAdditions"]);
-  const deletions = readDiffSummaryNumber(summary, ["line_deletions", "deletions", "lineDeletions"]);
-  const lineCount =
-    additions !== null && deletions !== null ? additions + deletions : additions ?? deletions ?? null;
-  return { fileCount, additions, deletions, lineCount };
-};
-
-const isDiffSummaryTooLarge = (summary: Record<string, unknown> | null) => {
-  const { fileCount, lineCount } = getDiffSummaryStats(summary);
-  if (lineCount !== null && lineCount > DIFF_LINE_GUARD_LIMIT) return true;
-  if (fileCount !== null && fileCount > DIFF_FILE_GUARD_LIMIT) return true;
-  return false;
-};
 
 const parseCssColor = (value: string): DesktopTitlebarColor | null => {
   const raw = value.trim();
@@ -265,69 +212,21 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [daemonDataRoot, setDaemonDataRoot] = useState<string | null>(null);
-  const [providers, setProviders] = useState<ProviderStatus[]>([]);
-  const [providerInstallsById, setProviderInstallsById] = useState<
-    Record<
-      string,
-      | {
-        installId: string;
-        state: InstallInfo["state"];
-        pct: number | null;
-      }
-      | undefined
-    >
-  >({});
-  const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({});
-  const postInstallHandledRef = useRef<Set<string>>(new Set());
-  const postInstallInFlightRef = useRef<Set<string>>(new Set());
-  const providersById = useMemo(
-    () => Object.fromEntries(providers.map((p) => [p.provider_id, p])),
-    [providers],
-  );
-  const defaultProviderId = useMemo(() => {
-    const installed = providers
-      .filter((p) => p.installed && p.health === "ok" && p.details?.ui_hidden !== "true")
-      .map((p) => p.provider_id);
-    if (installed.includes("codex")) return "codex";
-    if (installed.includes("claude-crp")) return "claude-crp";
-    if (installed.includes("gemini")) return "gemini";
-    if (installed.includes("qwen")) return "qwen";
-    if (installed.includes("opencode")) return "opencode";
-    if (installed.includes("mistral")) return "mistral";
-    if (installed.includes("goose")) return "goose";
-    if (installed.includes("kimi")) return "kimi";
-    if (installed.includes("auggie")) return "auggie";
-    return installed[0] ?? "codex";
-  }, [providers]);
 
   const [taskQuery, setTaskQuery] = useState("");
-  const [optimisticTasks, setOptimisticTasks] = useState<OptimisticTaskSummary[]>([]);
-  // When we switch the Workbench tab to a brand-new optimistic task, the tab/store update can race
-  // the React state update that inserts the optimistic task summary. Keep a synchronous fallback
-  // so the task/session pane never renders blank.
-  const optimisticStartingTaskRef = useRef<OptimisticTaskSummary | null>(null);
-  const optimisticTasksById = useMemo(() => {
-    return Object.fromEntries(optimisticTasks.map((item) => [item.id, item]));
-  }, [optimisticTasks]);
-  const optimisticSessionIdSet = useMemo(() => {
-    const ids = new Set<string>();
-    for (const item of optimisticTasks) {
-      if (item.localStatus === "synced") continue;
-      const sid = String(item.primarySessionId ?? "");
-      if (sid) ids.add(sid);
-    }
-    return ids;
-  }, [optimisticTasks]);
-  const optimisticFailureBySessionId = useMemo(() => {
-    const out: Record<string, { prompt: string; error: string | null }> = {};
-    for (const item of optimisticTasks) {
-      if (item.localStatus !== "failed") continue;
-      const sid = String(item.primarySessionId ?? "");
-      if (!sid) continue;
-      out[sid] = { prompt: item.localPrompt, error: item.localError ?? null };
-    }
-    return out;
-  }, [optimisticTasks]);
+  const {
+    optimisticTasks,
+    setOptimisticTasks,
+    optimisticStartingTaskRef,
+    optimisticTasksById,
+    optimisticSessionIdSet,
+    optimisticFailureBySessionId,
+    activeTaskSummary,
+  } = useWorkbenchOptimisticTasks({
+    activeTaskId,
+    activeTaskIdFromTab,
+    tasksById,
+  });
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [archiveConfirm, setArchiveConfirm] = useState<ArchiveConfirmState | null>(null);
   const [archiveConfirmDontRemind, setArchiveConfirmDontRemind] = useState(false);
@@ -380,11 +279,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   ]);
   const [startBusy, setStartBusy] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
-  const [installAllBusy, setInstallAllBusy] = useState(false);
   const [useMultipleAgents, setUseMultipleAgents] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
-  const [dropActive, setDropActive] = useState(false);
-  const dropHideTimerRef = useRef<number | null>(null);
 
   const {
     dictationRecording,
@@ -396,6 +292,27 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     text: draftPrompt,
     setText: setDraftPrompt,
     appendSegment,
+  });
+
+  const {
+    providersById,
+    defaultProviderId,
+    providerInstallsById,
+    providerOptions,
+    installAllBusy,
+    installProviderFromMenu,
+    installAllProvidersFromMenu,
+    ensureProviderOptions,
+  } = useWorkbenchProviders({
+    workspaceId,
+    setDraftTracks,
+    onStartError: setStartError,
+  });
+
+  const { dropActive } = useWorkbenchDragDropAttachments({
+    scopeRef: newComposerRef,
+    activeTaskId,
+    setDraftAttachments,
   });
 
   const [rightPaneMode, setRightPaneMode] = useState<"diff" | "artifacts" | "sessions" | null>(null);
@@ -652,7 +569,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       setWorkspace(null);
     };
     loadWorkspace().catch(() => setWorkspace(null));
-    listProviders().then(setProviders).catch(() => setProviders([]));
     return () => {
       cancelled = true;
     };
@@ -676,247 +592,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     };
   }, [workspaceId]);
 
-  const attachProviderInstall = useCallback((providerId: string, installId: string) => {
-    setProviderInstallsById((prev) => {
-      if (prev[providerId]?.installId === installId) return prev;
-      return {
-        ...prev,
-        [providerId]: {
-          installId,
-          state: "running",
-          pct: prev[providerId]?.pct ?? 0,
-        },
-      };
-    });
-  }, []);
-
-  useEffect(() => {
-    for (const p of providers) {
-      const installId = p.details?.install_id;
-      const running = p.details?.install_running === "true";
-      if (running && installId && !providerInstallsById[p.provider_id]) {
-        attachProviderInstall(p.provider_id, installId);
-      }
-    }
-  }, [providers, providerInstallsById, attachProviderInstall]);
-
-  const refreshProviderOptions = useCallback(
-    async (providerId: string): Promise<ProviderOptions | undefined> => {
-      if (!workspaceId) return;
-      try {
-        const opts = await getProviderOptions(workspaceId, providerId);
-        setProviderOptions((prev) => ({ ...prev, [providerId]: opts }));
-        return opts;
-      } catch {
-        return;
-      }
-    },
-    [workspaceId],
-  );
-
-  const runPostInstallAuthVerify = useCallback(
-    async (providerId: string) => {
-      if (!workspaceId) return;
-      // Refresh probe status after install; auth actions live under harness subscriptions.
-      await refreshProviderOptions(providerId);
-    },
-    [refreshProviderOptions, workspaceId],
-  );
-
-  useEffect(() => {
-    // Keep polling after success so we can refresh provider status/options and transition the UI
-    // away from the "100%" install pill promptly.
-    const active = Object.entries(providerInstallsById).flatMap(([providerId, s]) =>
-      s && (s.state === "running" || s.state === "succeeded") ? ([[providerId, s]] as const) : [],
-    );
-    if (active.length === 0) return;
-
-    const stagePct: Record<string, number> = {
-      start: 2,
-      download: 10,
-      node: 15,
-      node_download: 18,
-      node_extract: 22,
-      prepare: 25,
-      venv: 35,
-      npm_install: 65,
-      pip_install: 70,
-      extract: 78,
-      entrypoint: 80,
-      inspect: 90,
-      refresh: 95,
-      registry: 98,
-    };
-
-    let cancelled = false;
-    const tick = async () => {
-      if (cancelled) return;
-      let needsProviderRefresh = false;
-      const completedProviders: string[] = [];
-      await Promise.all(
-        active.map(async ([providerId, s]) => {
-          try {
-            const info = await getInstall(s.installId);
-            const last = info.last_event;
-            const pct =
-              typeof last?.bytes === "number" &&
-                typeof last?.total_bytes === "number" &&
-                last.total_bytes > 0
-                ? (() => {
-                  const raw = Math.max(0, Math.min(100, Math.round((last.bytes / last.total_bytes) * 100)));
-                  const stage = typeof last?.stage === "string" ? last.stage : "";
-                  if (stage.includes("download")) {
-                    // Keep room for non-download stages so the UI doesn't hit 100% early.
-                    return Math.round((raw / 100) * 75);
-                  }
-                  return raw;
-                })()
-                : typeof last?.stage === "string"
-                  ? (stagePct[last.stage] ?? s.pct ?? 0)
-                  : (s.pct ?? 0);
-
-            setProviderInstallsById((prev) => {
-              const existing = prev[providerId];
-              if (!existing || existing.installId !== s.installId) return prev;
-              const stablePct =
-                info.state === "succeeded"
-                  ? 100
-                  : typeof pct === "number" && Number.isFinite(pct)
-                    ? Math.max(existing.pct ?? 0, pct)
-                    : (existing.pct ?? 0);
-              return {
-                ...prev,
-                [providerId]: { installId: s.installId, state: info.state, pct: stablePct },
-              };
-            });
-
-            if (info.state !== "running") {
-              needsProviderRefresh = true;
-            }
-
-            if (info.state === "succeeded" && !postInstallHandledRef.current.has(s.installId)) {
-              postInstallHandledRef.current.add(s.installId);
-              completedProviders.push(providerId);
-            }
-          } catch {
-            // ignore poll errors
-          }
-        }),
-      );
-
-      if (needsProviderRefresh) {
-        try {
-          const next = await listProviders();
-          if (!cancelled) setProviders(next);
-
-          if (!cancelled && completedProviders.length > 0) {
-            for (const providerId of completedProviders) {
-              if (postInstallInFlightRef.current.has(providerId)) continue;
-              postInstallInFlightRef.current.add(providerId);
-              runPostInstallAuthVerify(providerId).finally(() => {
-                postInstallInFlightRef.current.delete(providerId);
-              });
-            }
-          }
-        } catch {
-          // ignore
-        }
-      }
-    };
-
-    tick();
-    const t = window.setInterval(tick, 1000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(t);
-    };
-  }, [providerInstallsById, getInstall, listProviders, runPostInstallAuthVerify]);
-
-  const installProviderFromMenu = useCallback(
-    async (providerId: string) => {
-      setStartError(null);
-      try {
-        const { install_id } = await installProvider(providerId);
-        attachProviderInstall(providerId, install_id);
-      } catch (e: any) {
-        setStartError(e?.message ? String(e.message) : String(e));
-      }
-    },
-    [setStartError, installProvider, attachProviderInstall],
-  );
-
-  const installAllProvidersFromMenu = useCallback(async () => {
-    setStartError(null);
-    setInstallAllBusy(true);
-    try {
-      const installs = await installAllProviders();
-      for (const { provider_id, install_id } of installs) {
-        attachProviderInstall(provider_id, install_id);
-      }
-    } catch (e: any) {
-      setStartError(e?.message ? String(e.message) : String(e));
-    } finally {
-      setInstallAllBusy(false);
-    }
-  }, [attachProviderInstall, installAllProviders, setStartError]);
-
-  useEffect(() => {
-    if (Object.keys(providerInstallsById).length === 0) return;
-    setProviderInstallsById((prev) => {
-      let changed = false;
-      const next: typeof prev = { ...prev };
-      for (const [providerId, s] of Object.entries(prev)) {
-        const st = providersById[providerId];
-        const stillRunning = st?.details?.install_running === "true";
-        if (s?.state === "succeeded" && st?.installed && st.health === "ok" && !stillRunning) {
-          delete next[providerId];
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [providerInstallsById, providersById]);
-
-  useEffect(() => {
-    if (!providers.length) return;
-    const codexInstalled =
-      providersById["codex"]?.installed === true &&
-      providersById["codex"]?.health === "ok" &&
-      providersById["codex"]?.details?.ui_hidden !== "true";
-    if (codexInstalled) return;
-    if (defaultProviderId === "codex") return;
-    setDraftTracks((prev) => {
-      const isDefault = prev.every((t) => t.providerId === "codex" && !t.label.trim() && !t.modelId.trim());
-      if (!isDefault) return prev;
-      return prev.map((t) => ({ ...t, providerId: defaultProviderId }));
-    });
-  }, [providers.length, providersById, defaultProviderId]);
-
-  const activeTaskSummary = useMemo(() => {
-    if (!activeTaskId) return null;
-    const optimistic = optimisticTasksById[activeTaskId];
-    if (optimistic && optimistic.localStatus !== "synced") return optimistic;
-    const server = tasksById[activeTaskId] ?? null;
-    if (server) return server;
-    const fallback = optimisticStartingTaskRef.current;
-    if (fallback && fallback.id === activeTaskId && fallback.localStatus !== "synced") {
-      return fallback;
-    }
-    return optimistic ?? null;
-  }, [activeTaskId, optimisticTasksById, tasksById]);
-
-  useEffect(() => {
-    const cur = optimisticStartingTaskRef.current;
-    if (!cur) return;
-    if (optimisticTasksById[cur.id]) {
-      optimisticStartingTaskRef.current = null;
-      return;
-    }
-    if (activeTaskId && activeTaskId !== cur.id && activeTaskIdFromTab) {
-      // Once we have a real active tab selection away from the optimistic task, drop the fallback.
-      optimisticStartingTaskRef.current = null;
-    }
-  }, [activeTaskId, activeTaskIdFromTab, optimisticTasksById]);
   const sessionSummaries = useMemo(() => activeTaskSummary?.sessions ?? [], [activeTaskSummary]);
   const sessions = useMemo(() => sessionSummaries.map((s) => s.session), [sessionSummaries]);
   const sessionIds = useMemo(
@@ -1654,189 +1329,9 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     [activeSectionLastIndex, workspaceSnapshot.fetchState.active, workspaceSnapshot.hasMoreActive, workspaceSnapshotStore],
   );
 
-  const taskScrollerRef = useRef<HTMLDivElement | null>(null);
-  const [taskScrollerNode, setTaskScrollerNode] = useState<HTMLDivElement | null>(null);
-  const [taskScrollbarNeeded, setTaskScrollbarNeeded] = useState(false);
-  const [taskScrollbarActive, setTaskScrollbarActive] = useState(false);
-  const [taskScrollbarDragging, setTaskScrollbarDragging] = useState(false);
-  const taskScrollbarActiveRef = useRef(false);
-  const taskScrollbarNeededRef = useRef(false);
-  const taskScrollbarDraggingRef = useRef(false);
-  const taskScrollbarHideTimerRef = useRef<number | null>(null);
-  const taskScrollbarRafRef = useRef<number | null>(null);
-  const taskScrollbarTrackRef = useRef<HTMLDivElement | null>(null);
-  const taskScrollbarThumbRef = useRef<HTMLDivElement | null>(null);
-  const taskScrollbarThumbHeightRef = useRef(0);
-  const taskScrollbarDragRef = useRef<TaskScrollbarDragState | null>(null);
-
-  const setTaskScrollbarActiveState = useCallback((next: boolean) => {
-    if (taskScrollbarActiveRef.current === next) return;
-    taskScrollbarActiveRef.current = next;
-    setTaskScrollbarActive(next);
-  }, []);
-
-  const setTaskScrollbarNeededState = useCallback((next: boolean) => {
-    if (taskScrollbarNeededRef.current === next) return;
-    taskScrollbarNeededRef.current = next;
-    setTaskScrollbarNeeded(next);
-  }, []);
-
-  const updateTaskScrollbar = useCallback(() => {
-    const scroller = taskScrollerRef.current;
-    if (!scroller) return;
-    const { scrollHeight, clientHeight, scrollTop } = scroller;
-    const needsScrollbar = scrollHeight > clientHeight + 1;
-    setTaskScrollbarNeededState(needsScrollbar);
-    if (!needsScrollbar) return;
-    const track = taskScrollbarTrackRef.current;
-    const thumb = taskScrollbarThumbRef.current;
-    if (!track || !thumb) return;
-    const trackHeight = track.clientHeight;
-    if (trackHeight <= 0 || clientHeight <= 0) return;
-    const thumbHeight = Math.max((clientHeight / scrollHeight) * trackHeight, 24);
-    taskScrollbarThumbHeightRef.current = thumbHeight;
-    const maxThumbTop = Math.max(trackHeight - thumbHeight, 0);
-    const maxScrollTop = Math.max(scrollHeight - clientHeight, 1);
-    const thumbTop = Math.min(maxThumbTop, Math.max(0, (scrollTop / maxScrollTop) * maxThumbTop));
-    thumb.style.height = `${thumbHeight}px`;
-    thumb.style.transform = `translateY(${thumbTop}px)`;
-  }, [setTaskScrollbarNeededState]);
-
-  const scheduleTaskScrollbarUpdate = useCallback(() => {
-    if (taskScrollbarRafRef.current != null) return;
-    taskScrollbarRafRef.current = window.requestAnimationFrame(() => {
-      taskScrollbarRafRef.current = null;
-      updateTaskScrollbar();
-    });
-  }, [updateTaskScrollbar]);
-
-  const showTaskScrollbarTemporarily = useCallback(() => {
-    const scroller = taskScrollerRef.current;
-    if (scroller) {
-      setTaskScrollbarNeededState(scroller.scrollHeight > scroller.clientHeight + 1);
-    }
-    setTaskScrollbarActiveState(true);
-    if (taskScrollbarHideTimerRef.current) window.clearTimeout(taskScrollbarHideTimerRef.current);
-    taskScrollbarHideTimerRef.current = window.setTimeout(() => {
-      setTaskScrollbarActiveState(false);
-    }, 900);
-    updateTaskScrollbar();
-  }, [setTaskScrollbarActiveState, setTaskScrollbarNeededState, updateTaskScrollbar]);
-
-  const handleTaskScrollbarTrackPointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (event.button !== 0) return;
-      if (event.target === taskScrollbarThumbRef.current) return;
-      const scroller = taskScrollerRef.current;
-      const track = taskScrollbarTrackRef.current;
-      if (!scroller || !track) return;
-      event.preventDefault();
-      const rect = track.getBoundingClientRect();
-      const ratio = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
-      const maxScrollTop = Math.max(scroller.scrollHeight - scroller.clientHeight, 0);
-      scroller.scrollTop = ratio * maxScrollTop;
-      scheduleTaskScrollbarUpdate();
-      showTaskScrollbarTemporarily();
-    },
-    [scheduleTaskScrollbarUpdate, showTaskScrollbarTemporarily],
-  );
-
-  const handleTaskScrollbarThumbPointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (event.button !== 0) return;
-      const scroller = taskScrollerRef.current;
-      const track = taskScrollbarTrackRef.current;
-      if (!scroller || !track) return;
-      event.preventDefault();
-      event.stopPropagation();
-      updateTaskScrollbar();
-      const trackHeight = track.clientHeight;
-      const thumbHeight = taskScrollbarThumbHeightRef.current;
-      const maxScrollTop = scroller.scrollHeight - scroller.clientHeight;
-      if (maxScrollTop <= 0 || trackHeight <= thumbHeight) return;
-      if (taskScrollbarHideTimerRef.current) window.clearTimeout(taskScrollbarHideTimerRef.current);
-      setTaskScrollbarActiveState(true);
-      setTaskScrollbarDragging(true);
-      taskScrollbarDraggingRef.current = true;
-      taskScrollbarDragRef.current = {
-        pointerId: event.pointerId,
-        startY: event.clientY,
-        startScrollTop: scroller.scrollTop,
-        trackHeight,
-        thumbHeight,
-        scrollHeight: scroller.scrollHeight,
-        clientHeight: scroller.clientHeight,
-      };
-      taskScrollbarThumbRef.current?.setPointerCapture(event.pointerId);
-    },
-    [setTaskScrollbarActiveState, updateTaskScrollbar],
-  );
-
-  const handleTaskScrollbarThumbPointerMove = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      const drag = taskScrollbarDragRef.current;
-      const scroller = taskScrollerRef.current;
-      if (!drag || !scroller || drag.pointerId !== event.pointerId) return;
-      const maxScrollTop = Math.max(drag.scrollHeight - drag.clientHeight, 0);
-      const maxThumbTop = Math.max(drag.trackHeight - drag.thumbHeight, 1);
-      const delta = event.clientY - drag.startY;
-      const nextScrollTop = drag.startScrollTop + (delta / maxThumbTop) * maxScrollTop;
-      scroller.scrollTop = Math.min(maxScrollTop, Math.max(0, nextScrollTop));
-      scheduleTaskScrollbarUpdate();
-    },
-    [scheduleTaskScrollbarUpdate],
-  );
-
-  const handleTaskScrollbarThumbPointerUp = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      const drag = taskScrollbarDragRef.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      taskScrollbarDragRef.current = null;
-      taskScrollbarThumbRef.current?.releasePointerCapture(event.pointerId);
-      taskScrollbarDraggingRef.current = false;
-      setTaskScrollbarDragging(false);
-      showTaskScrollbarTemporarily();
-    },
-    [showTaskScrollbarTemporarily],
-  );
-
-  const handleTaskScrollbarMouseLeave = useCallback(() => {
-    if (taskScrollbarDraggingRef.current) return;
-    if (taskScrollbarHideTimerRef.current) window.clearTimeout(taskScrollbarHideTimerRef.current);
-    setTaskScrollbarActiveState(false);
-  }, [setTaskScrollbarActiveState]);
-
-  const handleTaskListScrollerChange = useCallback(
-    (node: HTMLDivElement | null) => {
-      taskScrollerRef.current = node;
-      setTaskScrollerNode(node);
-      scheduleTaskScrollbarUpdate();
-    },
-    [scheduleTaskScrollbarUpdate],
-  );
-
-  const handleTaskListScroll = useCallback(() => {
-    showTaskScrollbarTemporarily();
-    scheduleTaskScrollbarUpdate();
-  }, [scheduleTaskScrollbarUpdate, showTaskScrollbarTemporarily]);
-
-  useEffect(() => {
-    if (!taskScrollerNode) return;
-    const observer = new ResizeObserver(() => scheduleTaskScrollbarUpdate());
-    observer.observe(taskScrollerNode);
-    return () => observer.disconnect();
-  }, [scheduleTaskScrollbarUpdate, taskScrollerNode]);
-
-  useEffect(() => {
-    scheduleTaskScrollbarUpdate();
-  }, [scheduleTaskScrollbarUpdate, taskListItems.length]);
-
-  useEffect(() => {
-    return () => {
-      if (taskScrollbarHideTimerRef.current) window.clearTimeout(taskScrollbarHideTimerRef.current);
-      if (taskScrollbarRafRef.current != null) window.cancelAnimationFrame(taskScrollbarRafRef.current);
-    };
-  }, []);
+  const { onTaskListScroll, onTaskListScrollerChange } = useWorkbenchTaskScrollbar({
+    itemCount: taskListItems.length,
+  });
 
   const loadMoreArchived = useCallback(() => {
     workspaceSnapshotStore.loadMoreArchived();
@@ -1848,13 +1343,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       archivedFetchState: workspaceSnapshot.fetchState.archived,
       hasMoreArchived: workspaceSnapshot.hasMoreArchived,
       onLoadMoreArchived: loadMoreArchived,
-      onScroll: handleTaskListScroll,
-      onScrollerChange: handleTaskListScrollerChange,
+      onScroll: onTaskListScroll,
+      onScrollerChange: onTaskListScrollerChange,
     }),
     [
       archivedCollapsed,
-      handleTaskListScroll,
-      handleTaskListScrollerChange,
+      onTaskListScroll,
+      onTaskListScrollerChange,
       loadMoreArchived,
       workspaceSnapshot.fetchState.archived,
       workspaceSnapshot.hasMoreArchived,
@@ -2113,12 +1608,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const diffSummaryStats = useMemo(() => getDiffSummaryStats(diffSummary), [diffSummary]);
   const diffSummaryCount = diffSummaryStats.fileCount;
-  const diffTooLarge = useMemo(() => {
-    const { fileCount, lineCount } = diffSummaryStats;
-    if (lineCount !== null && lineCount > DIFF_LINE_GUARD_LIMIT) return true;
-    if (fileCount !== null && fileCount > DIFF_FILE_GUARD_LIMIT) return true;
-    return false;
-  }, [diffSummaryStats]);
+  const diffTooLarge = useMemo(() => isDiffSummaryTooLarge(diffSummary), [diffSummary]);
   const diffTooLargeLabel = useMemo(() => {
     if (!diffTooLarge) return null;
     const details: string[] = [];
@@ -2394,37 +1884,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const id = window.requestAnimationFrame(() => terminalPanelRef.current?.focusActive());
     return () => window.cancelAnimationFrame(id);
   }, [terminalOpen]);
-
-
-  const providerOptionsInFlightRef = useRef<Record<string, Promise<ProviderOptions | undefined>>>({});
-
-  const ensureProviderOptions = useCallback(
-    async (providerId: string, opts?: { force?: boolean }): Promise<ProviderOptions | undefined> => {
-      if (!workspaceId) return;
-      const installed = providersById[providerId]?.installed === true && providersById[providerId]?.health === "ok";
-      if (!installed) return;
-
-      const force = opts?.force ?? false;
-      const existing = providerOptionsInFlightRef.current[providerId];
-      if (existing && !force) return existing;
-      if (!force && providerOptions[providerId]) return providerOptions[providerId];
-
-      const p = getProviderOptions(workspaceId, providerId)
-        .then((opts) => {
-          setProviderOptions((prev) => ({ ...prev, [providerId]: opts }));
-          return opts;
-        })
-        .finally(() => {
-          if (providerOptionsInFlightRef.current[providerId] === p) {
-            delete providerOptionsInFlightRef.current[providerId];
-          }
-        });
-
-      providerOptionsInFlightRef.current[providerId] = p;
-      return p;
-    },
-    [providerOptions, providersById, workspaceId],
-  );
 
   const slashCommands = useMemo<SlashCommandDescriptor[]>(() => {
     // New sessions don't have ACP "available_commands_update" yet, so use a safe fallback.
@@ -2818,92 +2277,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     window.addEventListener("mouseup", onUp);
   };
 
-  const onDropFiles = useCallback(
-    async (files: File[]) => {
-      if (files.length === 0) return;
-      const next = await imageFilesToInlineAttachments(files);
-      if (next.length === 0) return;
-      setDraftAttachments((prev) => [...prev, ...next]);
-    },
-    [],
-  );
-
-  const showDropOverlay = useCallback(() => {
-    setDropActive(true);
-    if (dropHideTimerRef.current) window.clearTimeout(dropHideTimerRef.current);
-    dropHideTimerRef.current = window.setTimeout(() => setDropActive(false), 140);
-  }, []);
-
-  const hideDropOverlay = useCallback(() => {
-    if (dropHideTimerRef.current) window.clearTimeout(dropHideTimerRef.current);
-    dropHideTimerRef.current = null;
-    setDropActive(false);
-  }, []);
-
-  const extractFilesFromTransfer = useCallback(
-    (dt: DataTransfer | null): File[] => {
-      if (!dt) return [];
-      const out: File[] = [];
-      const files = dt.files ? Array.from(dt.files) : [];
-      out.push(...files);
-      const items = dt.items;
-      if (out.length === 0 && items && items.length > 0) {
-        for (const item of Array.from(items as any) as DataTransferItem[]) {
-          if (item.kind !== "file") continue;
-          const f = item.getAsFile?.();
-          if (f) out.push(f);
-        }
-      }
-      return out;
-    },
-    [],
-  );
-
-  const extractFirstUrlFromTransfer = useCallback((dt: DataTransfer | null): string | null => {
-    if (!dt) return null;
-    const uriRaw = (dt.getData?.("text/uri-list") ?? "").trim();
-    if (uriRaw) {
-      for (const line of uriRaw.split("\n")) {
-        const v = line.trim();
-        if (!v || v.startsWith("#")) continue;
-        return v;
-      }
-    }
-    const html = (dt.getData?.("text/html") ?? "").trim();
-    if (html) {
-      const m = html.match(/<img[^>]*\ssrc=("([^"]+)"|'([^']+)'|([^\s>]+))/i);
-      const src = (m?.[2] ?? m?.[3] ?? m?.[4] ?? "").trim();
-      if (src) return src;
-    }
-    const text = (dt.getData?.("text/plain") ?? "").trim();
-    if (text && /^(https?:|data:image\/|blob:)/i.test(text)) return text;
-    return null;
-  }, []);
-
-  const urlToImageFile = useCallback(async (url: string): Promise<File | null> => {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      const blob = await res.blob();
-      const type = blob.type || "";
-      if (!type.startsWith("image/")) return null;
-      const baseName = (() => {
-        try {
-          const u = new URL(url, window.location.href);
-          const last = u.pathname.split("/").filter(Boolean).pop() || "image";
-          return last.replace(/[?#].*$/, "") || "image";
-        } catch {
-          return "image";
-        }
-      })();
-      const ext = type.split("/")[1] || "";
-      const name = ext && !baseName.toLowerCase().endsWith(`.${ext.toLowerCase()}`) ? `${baseName}.${ext}` : baseName;
-      return new File([blob], name, { type });
-    } catch {
-      return null;
-    }
-  }, []);
-
   const activeTask = activeTaskSummary?.task ?? null;
   const worktreeChip = useMemo(() => {
     const sess = activeEntry?.session ?? null;
@@ -3268,38 +2641,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
   }, [activeSessionId, buildTranscriptExportFromEntry, hydrateTranscriptHistory, supervisor]);
 
-  useEffect(() => {
-    const el = newComposerRef.current;
-    if (!el) return;
-    return registerDropScope({
-      element: el,
-      onDragOver: () => showDropOverlay(),
-      onDrop: (dt) => {
-        hideDropOverlay();
-        void (async () => {
-          const files = extractFilesFromTransfer(dt);
-          if (files.length > 0) {
-            await onDropFiles(files);
-            return;
-          }
-          const url = extractFirstUrlFromTransfer(dt);
-          if (!url) return;
-          const asFile = await urlToImageFile(url);
-          if (!asFile) return;
-          await onDropFiles([asFile]);
-        })();
-      },
-    });
-  }, [
-    activeTaskId,
-    extractFilesFromTransfer,
-    extractFirstUrlFromTransfer,
-    hideDropOverlay,
-    onDropFiles,
-    showDropOverlay,
-    urlToImageFile,
-  ]);
-
   const desktopUi = isDesktopApp();
   const [desktopPlatform, setDesktopPlatform] = useState<DesktopPlatform>(() => {
     if (!desktopUi) return "unknown";
@@ -3579,107 +2920,23 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           <div className="wb-body">
             <div className="wb-convo">
               {showSingleSessionHeader ? (
-                <div className="wb-single-track-header" aria-busy={sessions.length === 0 ? "true" : undefined}>
-                  <div className="wb-single-track-row">
-                    <div className="wb-single-track-title-row">
-                      <div className="wb-single-track-title">{singleSessionHeaderForRender?.title ?? "Conversation"}</div>
-                      {worktreeChip.worktreeLabel && (
-                        <>
-                          <span className="wb-single-track-dot" aria-hidden="true">
-                            ·
-                          </span>
-                          <span className="wb-worktree-actions">
-                            <button
-                              type="button"
-                              className={`wb-worktree-chip ${worktreeCopied ? "wb-worktree-chip-copied" : ""}`}
-                              disabled={!worktreeChip.canCopyWorktree}
-                              onClick={() => void copyWorktreeLocation()}
-                              title="Copy worktree location"
-                              aria-label="Copy worktree location"
-                            >
-                              <span className="wb-worktree-chip-slug">{worktreeChip.worktreeLabel}</span>
-                              <span className="wb-worktree-chip-copy" aria-hidden="true">
-                                {worktreeCopied ? <Check size={12} /> : <Copy size={12} />}
-                              </span>
-                            </button>
-                            <button
-                              type="button"
-                              className="wb-worktree-action"
-                              disabled={!worktreeChip.canOpenTerminal}
-                              onClick={() => void openWorktreeTerminal()}
-                              title="Open worktree terminal"
-                              aria-label="Open worktree terminal"
-                            >
-                              <Terminal size={13} />
-                            </button>
-                          </span>
-                          {worktreeCopied && (
-                            <span className="sr-only" aria-live="polite">
-                              Copied worktree location to clipboard.
-                            </span>
-                          )}
-                        </>
-                      )}
-                    </div>
-                    <div className="wb-icon-row">
-                      <button
-                        type="button"
-                        className={`wb-icon ${showArtifactsPane ? "wb-icon-active" : ""}`}
-                        aria-label="Toggle artifacts"
-                        aria-pressed={showArtifactsPane}
-                        title={showArtifactsPane ? "Hide artifacts" : "Show artifacts"}
-                        onClick={toggleArtifactsPane}
-                      >
-                        <Image size={14} />
-                        {artifactsCount > 0 && <span className="wb-icon-badge">{artifactsCount}</span>}
-                      </button>
-                      <button
-                        type="button"
-                        className={`wb-icon ${showReviewPane ? "wb-icon-active" : ""}`}
-                        aria-label="Toggle diff view"
-                        aria-pressed={showReviewPane}
-                        title={showReviewPane ? "Hide diff view" : "Show diff view"}
-                        onClick={toggleDiffPane}
-                      >
-                        <GitBranch size={14} />
-                        {diffBadgeCount > 0 && <span className="wb-icon-badge">{diffBadgeCount}</span>}
-                      </button>
-                      {/*
-                        <button
-                          type="button"
-                          className={`wb-icon ${showSessionsPane ? "wb-icon-active" : ""}`}
-                          aria-label="Toggle sessions view"
-                          aria-pressed={showSessionsPane}
-                          title={showSessionsPane ? "Hide sessions view" : "Show sessions view"}
-                          onClick={toggleSessionsPane}
-                          disabled={!activeSessionId}
-                        >
-                          <Monitor size={14} />
-                          {sessionsCount > 0 && <span className="wb-icon-badge">{sessionsCount}</span>}
-                        </button>
-                      */}
-                      <button
-                        type="button"
-                        className={`wb-icon ${terminalOpen ? "wb-icon-active" : ""}`}
-                        aria-label="Toggle terminal panel"
-                        aria-pressed={terminalOpen}
-                        title={terminalOpen ? "Hide terminal" : "Show terminal"}
-                        onClick={toggleTerminalPanel}
-                      >
-                        <Terminal size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="wb-icon wb-convo-menu-trigger"
-                        aria-label="Conversation options"
-                        title="Conversation options"
-                        onClick={(e) => openConvoMenu(e.currentTarget)}
-                      >
-                        <Ellipsis size={14} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                <WorkbenchSessionHeader
+                  busy={sessions.length === 0}
+                  title={singleSessionHeaderForRender?.title ?? "Conversation"}
+                  worktreeChip={worktreeChip}
+                  worktreeCopied={worktreeCopied}
+                  showArtifactsPane={showArtifactsPane}
+                  showReviewPane={showReviewPane}
+                  terminalOpen={terminalOpen}
+                  artifactsCount={artifactsCount}
+                  diffBadgeCount={diffBadgeCount}
+                  onCopyWorktreeLocation={() => void copyWorktreeLocation()}
+                  onOpenWorktreeTerminal={() => void openWorktreeTerminal()}
+                  onToggleArtifactsPane={toggleArtifactsPane}
+                  onToggleDiffPane={toggleDiffPane}
+                  onToggleTerminalPanel={toggleTerminalPanel}
+                  onOpenConvoMenu={openConvoMenu}
+                />
               ) : null}
 
               <div className="wb-session">
