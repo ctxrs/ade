@@ -40,7 +40,6 @@ use crate::workspace_config;
 use crate::worktree_bootstrap;
 use ctx_core::ids::*;
 use ctx_core::models::*;
-use ctx_fs::git::git_default_branch;
 use ctx_fs::vcs;
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_providers::events::NormalizedEvent;
@@ -418,7 +417,18 @@ pub(super) async fn get_session_diff(
                 }),
             )
         })?;
-    let base_commit_sha = resolve_session_diff_base(&store, &workspace, &worktree, &q).await?;
+    let resolution = resolve_session_diff_base(&store, &workspace, &worktree, &q).await?;
+    if let Some(unavailable_reason) = resolution.unavailable_reason.clone() {
+        state
+            .emit_compat_payload_reject_counter("sessions.diff", "no_target_branch", None)
+            .await;
+        return Ok(Json(SessionDiffResponse {
+            diff: String::new(),
+            available: false,
+            unavailable_reason: Some(unavailable_reason),
+        }));
+    }
+    let base_commit_sha = resolution.base_commit_sha;
     let diff = match diff_worktree_for_session(&state, &worktree, &base_commit_sha).await {
         Ok(diff) => diff,
         Err(err) if is_no_vcs_repo_error(&err) => {
@@ -523,7 +533,29 @@ pub(super) async fn get_session_diff_summary(
                 }),
             )
         })?;
-    let base_commit_sha = resolve_session_diff_base(&store, &workspace, &worktree, &q).await?;
+    let resolution = resolve_session_diff_base(&store, &workspace, &worktree, &q).await?;
+    if let Some(unavailable_reason) = resolution.unavailable_reason.clone() {
+        state
+            .emit_compat_payload_reject_counter("sessions.diff_summary", "no_target_branch", None)
+            .await;
+        let head_commit_sha = match vcs::driver_for_path(StdPath::new(&worktree.root_path)).await {
+            Ok(vcs) => match vcs.rev_parse_head(StdPath::new(&worktree.root_path)).await {
+                Ok(value) => value,
+                Err(_) => resolution.base_commit_sha.clone(),
+            },
+            Err(_) => resolution.base_commit_sha.clone(),
+        };
+        return Ok(Json(SessionDiffSummaryResponse {
+            base_commit_sha: resolution.base_commit_sha,
+            head_commit_sha,
+            file_count: 0,
+            line_additions: 0,
+            line_deletions: 0,
+            available: false,
+            unavailable_reason: Some(unavailable_reason),
+        }));
+    }
+    let base_commit_sha = resolution.base_commit_sha;
     let (file_count, line_additions, line_deletions, available, unavailable_reason) =
         match diff_worktree_summary_for_session(&state, &worktree, &base_commit_sha).await {
             Ok((file_count, line_additions, line_deletions)) => {
@@ -694,6 +726,7 @@ pub(crate) struct WorktreeDiffBaseResolution {
     pub target_source: Option<WorktreeVcsTargetSource>,
     pub kind: WorktreeVcsBaseResolutionKind,
     pub error: Option<String>,
+    pub unavailable_reason: Option<DiffUnavailableReason>,
     pub explicit_target: bool,
 }
 
@@ -712,6 +745,7 @@ pub(crate) async fn resolve_diff_base_with_meta(
                 target_source: None,
                 kind: WorktreeVcsBaseResolutionKind::ExplicitBase,
                 error: None,
+                unavailable_reason: None,
                 explicit_target: false,
             };
         }
@@ -733,29 +767,25 @@ pub(crate) async fn resolve_diff_base_with_meta(
     };
 
     if target_branch.is_none() {
-        match workspace_config::load_merge_queue_target_branch_override(store).await {
+        match workspace_config::load_primary_branch(store).await {
             Ok(Some(branch)) => {
                 target_branch = Some(branch);
-                target_source = Some(WorktreeVcsTargetSource::MergeQueueOverride);
+                target_source = Some(WorktreeVcsTargetSource::PrimaryBranchConfig);
             }
-            Ok(None) => {}
+            Ok(None) => {
+                return WorktreeDiffBaseResolution {
+                    base_commit_sha: worktree.base_commit_sha.clone(),
+                    target_branch: None,
+                    target_source: None,
+                    kind: WorktreeVcsBaseResolutionKind::WorktreeBase,
+                    error: Some("workspace primary branch is not configured".to_string()),
+                    unavailable_reason: Some(DiffUnavailableReason::NoTargetBranch),
+                    explicit_target,
+                };
+            }
             Err(err) => tracing::warn!(
                 workspace_id = %workspace.id.0,
-                "failed to load merge queue target branch override: {err:#}"
-            ),
-        }
-    }
-
-    if target_branch.is_none() {
-        match workspace_config::load_merge_queue_config(store).await {
-            Ok(cfg) if cfg.enabled => {
-                target_branch = Some(cfg.target_branch);
-                target_source = Some(WorktreeVcsTargetSource::MergeQueueConfig);
-            }
-            Ok(_) => {}
-            Err(err) => tracing::warn!(
-                workspace_id = %workspace.id.0,
-                "failed to load merge queue config: {err:#}"
+                "failed to load workspace primary branch: {err:#}"
             ),
         }
     }
@@ -771,25 +801,8 @@ pub(crate) async fn resolve_diff_base_with_meta(
         }
     };
 
-    if target_branch.is_none() {
-        if let Some(driver) = driver.as_ref() {
-            if driver.kind() == VcsKind::Git {
-                match git_default_branch(&worktree.root_path).await {
-                    Ok(Some(branch)) => {
-                        target_branch = Some(branch);
-                        target_source = Some(WorktreeVcsTargetSource::DefaultBranch);
-                    }
-                    Ok(None) => {}
-                    Err(err) => tracing::warn!(
-                        worktree_id = %worktree.id.0,
-                        "failed to resolve git default branch: {err:#}"
-                    ),
-                }
-            }
-        }
-    }
-
     let mut error: Option<String> = None;
+    let mut unavailable_reason: Option<DiffUnavailableReason> = None;
     if let Some(target_branch) = target_branch.clone() {
         if let Some(driver) = driver {
             match driver
@@ -803,12 +816,14 @@ pub(crate) async fn resolve_diff_base_with_meta(
                         target_source,
                         kind: WorktreeVcsBaseResolutionKind::MergeBase,
                         error: None,
+                        unavailable_reason: None,
                         explicit_target,
                     };
                 }
                 Err(err) => {
                     let redacted = logs::redact_sensitive(&err.to_string());
                     error = Some(redacted);
+                    unavailable_reason = Some(DiffUnavailableReason::NoTargetBranch);
                     tracing::warn!(
                         worktree_id = %worktree.id.0,
                         "merge-base failed for target {target_branch}: {err:#}"
@@ -824,6 +839,7 @@ pub(crate) async fn resolve_diff_base_with_meta(
         target_source,
         kind: WorktreeVcsBaseResolutionKind::WorktreeBase,
         error,
+        unavailable_reason,
         explicit_target,
     }
 }
@@ -833,14 +849,14 @@ pub(super) async fn resolve_session_diff_base(
     workspace: &Workspace,
     worktree: &Worktree,
     query: &SessionDiffQuery,
-) -> Result<String, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<WorktreeDiffBaseResolution, (StatusCode, Json<ApiErrorResp>)> {
     let resolution = resolve_diff_base_with_meta(store, workspace, worktree, query).await;
     if resolution.explicit_target {
         if let Some(error) = resolution.error.clone() {
             return Err((StatusCode::BAD_REQUEST, Json(ApiErrorResp { error })));
         }
     }
-    Ok(resolution.base_commit_sha)
+    Ok(resolution)
 }
 
 pub(super) async fn apply_session_diff_patch(
@@ -962,9 +978,20 @@ pub(super) async fn apply_session_diff_patch(
         )
     })?;
 
-    let base_commit_sha =
+    let resolution =
         resolve_session_diff_base(&store, &workspace, &worktree, &SessionDiffQuery::default())
             .await?;
+    if let Some(unavailable_reason) = resolution.unavailable_reason.clone() {
+        state
+            .emit_compat_payload_reject_counter("sessions.diff_apply", "no_target_branch", None)
+            .await;
+        return Ok(Json(SessionDiffResponse {
+            diff: String::new(),
+            available: false,
+            unavailable_reason: Some(unavailable_reason),
+        }));
+    }
+    let base_commit_sha = resolution.base_commit_sha;
     let diff = diff_worktree_for_session(&state, &worktree, &base_commit_sha)
         .await
         .map_err(|e| {

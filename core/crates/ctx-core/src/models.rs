@@ -128,6 +128,7 @@ pub enum WorktreeVcsComputeState {
 #[serde(rename_all = "snake_case")]
 pub enum DiffUnavailableReason {
     NoRepo,
+    NoTargetBranch,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -143,9 +144,7 @@ pub enum WorktreeVcsBaseResolutionKind {
 #[serde(rename_all = "snake_case")]
 pub enum WorktreeVcsTargetSource {
     Explicit,
-    MergeQueueOverride,
-    MergeQueueConfig,
-    DefaultBranch,
+    PrimaryBranchConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

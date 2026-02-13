@@ -11,14 +11,21 @@ async function createWorkspaceAndStartRun(opts: {
   repo: string;
   workspaceName: string;
   prompt: string;
+  primaryBranch?: string;
 }) {
-  const { page, repo, workspaceName, prompt, request } = opts;
+  const { page, repo, workspaceName, prompt, request, primaryBranch } = opts;
   const workspaceId = await createWorkspaceAndOpenWorkbench({
     page,
     request,
     repo,
     workspaceName,
   });
+  if (primaryBranch) {
+    const resp = await request.post(`/api/workspaces/${workspaceId}/primary_branch`, {
+      data: { primary_branch: primaryBranch },
+    });
+    expect(resp.ok()).toBeTruthy();
+  }
 
   await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
   await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
@@ -100,8 +107,6 @@ test("workbench: merge-base diff badge + pane stay consistent across phases", as
   execSync("git add .", { cwd: repo });
   execSync("git commit -m init", { cwd: repo });
   execSync("git branch merge-target", { cwd: repo });
-  execSync("mkdir -p .ctx", { cwd: repo });
-  writeFileSync(path.join(repo, ".ctx", "config.toml"), `[merge_queue]\ntarget_branch = "merge-target"\n`);
 
   const workspaceName = `ws-${Date.now()}`;
   const taskTitle = "merge-base-diff-test";
@@ -112,6 +117,7 @@ test("workbench: merge-base diff badge + pane stay consistent across phases", as
     repo,
     workspaceName,
     prompt: taskTitle,
+    primaryBranch: "merge-target",
   });
 
   const diffButton = page.getByRole("button", { name: "Toggle diff view" });

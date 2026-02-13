@@ -525,6 +525,23 @@ async fn publish_no_repo_snapshot(
     resolution: crate::api::sessions::WorktreeDiffBaseResolution,
     force_emit: bool,
 ) -> Result<()> {
+    publish_unavailable_snapshot(
+        state,
+        worktree,
+        resolution,
+        force_emit,
+        ctx_core::models::DiffUnavailableReason::NoRepo,
+    )
+    .await
+}
+
+async fn publish_unavailable_snapshot(
+    state: &Arc<AppState>,
+    worktree: &Worktree,
+    resolution: crate::api::sessions::WorktreeDiffBaseResolution,
+    force_emit: bool,
+    reason: ctx_core::models::DiffUnavailableReason,
+) -> Result<()> {
     let snapshot = build_worktree_vcs_snapshot_from_parts(
         state,
         worktree,
@@ -534,7 +551,7 @@ async fn publish_no_repo_snapshot(
         WorktreeVcsComputeState::Ready,
         Some(resolution),
         false,
-        Some(ctx_core::models::DiffUnavailableReason::NoRepo),
+        Some(reason),
     )
     .await?;
     if let Some(snapshot) = upsert_worktree_vcs_snapshot(state, snapshot, force_emit, None).await {
@@ -666,6 +683,9 @@ async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) 
     let resolution =
         resolve_diff_base_with_meta(&store, &workspace, &worktree, &SessionDiffQuery::default())
             .await;
+    if let Some(reason) = resolution.unavailable_reason.clone() {
+        return publish_unavailable_snapshot(&state, &worktree, resolution, false, reason).await;
+    }
     let git_snapshot = match load_git_status_snapshot(&state, &worktree).await {
         Ok(snapshot) => snapshot,
         Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => {
@@ -797,6 +817,9 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
     let resolution =
         resolve_diff_base_with_meta(&store, &workspace, worktree, &SessionDiffQuery::default())
             .await;
+    if let Some(reason) = resolution.unavailable_reason.clone() {
+        return publish_unavailable_snapshot(state, worktree, resolution, force_emit, reason).await;
+    }
     let git_snapshot = match load_git_status_snapshot(state, worktree).await {
         Ok(snapshot) => snapshot,
         Err(err) if crate::api::sessions::is_no_vcs_repo_error(&err) => {

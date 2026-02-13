@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use ctx_store::Store;
 use serde::{Deserialize, Serialize};
 
@@ -109,6 +109,8 @@ struct WorkspaceRuntimeSettingsDoc {
     #[serde(default)]
     subagents: Option<WorkspaceSubagentsConfig>,
     #[serde(default)]
+    vcs: Option<WorkspaceVcsConfig>,
+    #[serde(default)]
     merge_queue: Option<WorkspaceMergeQueueConfig>,
     #[serde(default)]
     execution: Option<WorkspaceExecutionConfig>,
@@ -126,6 +128,12 @@ struct WorkspaceAgentsConfig {
 struct WorkspaceSubagentsConfig {
     #[serde(default)]
     system_prompt_append: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+struct WorkspaceVcsConfig {
+    #[serde(default)]
+    primary_branch: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
@@ -334,6 +342,31 @@ pub async fn load_subagent_system_prompt_append(
         configured_append,
         default_append: DEFAULT_SUBAGENT_SYSTEM_PROMPT_APPEND.to_string(),
     })
+}
+
+pub async fn load_primary_branch(store: &Store) -> Result<Option<String>> {
+    let cfg = load_workspace_settings_doc(store).await?;
+    let configured = cfg.vcs.and_then(|vcs| vcs.primary_branch);
+    let Some(configured) = configured else {
+        return Ok(None);
+    };
+    let trimmed = configured.trim().to_string();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(trimmed))
+}
+
+pub async fn update_primary_branch(store: &Store, primary_branch: &str) -> Result<()> {
+    let mut cfg = load_workspace_settings_doc(store).await?;
+    let trimmed = primary_branch.trim().to_string();
+    if trimmed.is_empty() {
+        bail!("primary_branch is required");
+    }
+    cfg.vcs = Some(WorkspaceVcsConfig {
+        primary_branch: Some(trimmed),
+    });
+    save_workspace_settings_doc(store, &cfg).await
 }
 
 pub async fn load_merge_queue_config(store: &Store) -> Result<MergeQueueConfig> {

@@ -301,15 +301,11 @@ export type SessionState = {
 };
 
 export type WorktreeVcsComputeState = "computing" | "ready" | "error";
-export type DiffUnavailableReason = "no_repo";
+export type DiffUnavailableReason = "no_repo" | "no_target_branch";
 
 export type WorktreeVcsBaseResolutionKind = "explicit_base" | "merge_base" | "worktree_base";
 
-export type WorktreeVcsTargetSource =
-  | "explicit"
-  | "merge_queue_override"
-  | "merge_queue_config"
-  | "default_branch";
+export type WorktreeVcsTargetSource = "explicit" | "primary_branch_config";
 
 export type WorktreeVcsBaseResolution = {
   kind: WorktreeVcsBaseResolutionKind;

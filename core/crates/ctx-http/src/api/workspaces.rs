@@ -2,6 +2,7 @@ use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use anyhow::Context;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
@@ -21,10 +22,10 @@ use crate::vcs_hooks;
 use crate::workspace_config;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    AttachmentMode, AttachmentUpdatePolicy, Workspace, WorkspaceActiveHeadBatch,
+    AttachmentMode, AttachmentUpdatePolicy, VcsKind, Workspace, WorkspaceActiveHeadBatch,
     WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind, Worktree,
 };
-use ctx_fs::git::assert_git_repo;
+use ctx_fs::git::{assert_git_repo, git_default_branch};
 use ctx_fs::vcs;
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +46,16 @@ pub(super) struct UpdateMergeQueueConfigReq {
 #[derive(Debug, Serialize)]
 pub(super) struct UpdateWorkspaceConfigResp {
     ok: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct UpdateWorkspacePrimaryBranchReq {
+    primary_branch: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct WorkspacePrimaryBranchResp {
+    primary_branch: String,
 }
 
 pub(super) async fn get_worktree(
@@ -105,6 +116,33 @@ pub(super) async fn get_worktree_bootstrap_logs(
 pub(super) struct CreateWorkspaceReq {
     root_path: String,
     name: Option<String>,
+}
+
+async fn detect_workspace_primary_branch(
+    vcs_kind: VcsKind,
+    root_path: &StdPath,
+    driver: &dyn vcs::VcsDriver,
+) -> anyhow::Result<String> {
+    match vcs_kind {
+        VcsKind::Git => {
+            let branch = git_default_branch(root_path)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("unable to detect default git branch"))?;
+            let trimmed = branch.trim().to_string();
+            if trimmed.is_empty() {
+                anyhow::bail!("detected default git branch is empty");
+            }
+            Ok(trimmed)
+        }
+        VcsKind::Jj => {
+            driver
+                .rev_parse_ref(root_path, "main")
+                .await
+                .context("resolving jj primary bookmark `main`")?;
+            Ok("main".to_string())
+        }
+        _ => anyhow::bail!("primary branch detection is only supported for git and jj workspaces"),
+    }
 }
 
 pub(super) async fn list_workspaces(
@@ -370,6 +408,17 @@ pub(super) async fn create_workspace(
         )
     })?;
 
+    let primary_branch = detect_workspace_primary_branch(vcs.kind(), &root_path, vcs.as_ref())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
     let root_path_str = root_path.to_string_lossy().to_string();
 
     let name = req.name.unwrap_or_else(|| {
@@ -391,14 +440,24 @@ pub(super) async fn create_workspace(
                 }),
             )
         })?;
-    if let Err(e) = state.store_for_workspace(workspace.id).await {
-        return Err((
+    let store = state.store_for_workspace(workspace.id).await.map_err(|e| {
+        (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp {
                 error: logs::redact_sensitive(&e.to_string()),
             }),
-        ));
-    }
+        )
+    })?;
+    workspace_config::update_primary_branch(&store, &primary_branch)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
     state
         .telemetry
         .telemetry
@@ -868,6 +927,148 @@ pub(super) async fn update_subagent_system_prompt(
     };
 
     Ok(Json(response))
+}
+
+pub(super) async fn get_workspace_primary_branch(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkspacePrimaryBranchResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let _workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let primary_branch = workspace_config::load_primary_branch(&store)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace primary branch is not configured".to_string(),
+            }),
+        ))?;
+    Ok(Json(WorkspacePrimaryBranchResp { primary_branch }))
+}
+
+pub(super) async fn update_workspace_primary_branch(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateWorkspacePrimaryBranchReq>,
+) -> Result<Json<WorkspacePrimaryBranchResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+    let primary_branch = req.primary_branch.trim().to_string();
+    if primary_branch.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "primary_branch is required".to_string(),
+            }),
+        ));
+    }
+    let driver = vcs::driver_for_path(StdPath::new(&workspace.root_path))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    driver
+        .rev_parse_ref(StdPath::new(&workspace.root_path), &primary_branch)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&format!(
+                        "primary_branch `{}` does not resolve: {}",
+                        primary_branch, e
+                    )),
+                }),
+            )
+        })?;
+    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    workspace_config::update_primary_branch(&store, &primary_branch)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    Ok(Json(WorkspacePrimaryBranchResp { primary_branch }))
 }
 
 pub(super) async fn update_merge_queue_config(

@@ -122,6 +122,21 @@ pub async fn git_default_branch(root_path: impl AsRef<Path>) -> Result<Option<St
             return Ok(Some(raw));
         }
     }
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(root_path.as_ref())
+        .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("running git symbolic-ref --short HEAD")?;
+    if head.status.success() {
+        let raw = String::from_utf8_lossy(&head.stdout).trim().to_string();
+        if !raw.trim().is_empty() {
+            return Ok(Some(raw));
+        }
+    }
     let candidates = [
         ("refs/remotes/origin/main", "origin/main"),
         ("refs/remotes/origin/master", "origin/master"),

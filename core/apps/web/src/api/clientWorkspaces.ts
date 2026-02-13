@@ -56,6 +56,19 @@ export type UpdateWorkspaceConfigResponse = {
   ok: boolean;
 };
 
+export type WorkspacePrimaryBranch = {
+  primary_branch: string;
+};
+
+export const getWorkspacePrimaryBranch = (workspaceId: string) =>
+  apiAny<WorkspacePrimaryBranch>(`/api/workspaces/${workspaceId}/primary_branch`);
+
+export const updateWorkspacePrimaryBranch = (workspaceId: string, primary_branch: string) =>
+  apiAny<WorkspacePrimaryBranch>(`/api/workspaces/${workspaceId}/primary_branch`, {
+    method: "POST",
+    body: JSON.stringify({ primary_branch }),
+  });
+
 export const updateWorkspaceMergeQueueConfig = (workspaceId: string, req: UpdateMergeQueueConfigRequest) =>
   apiAny<UpdateWorkspaceConfigResponse>(`/api/workspaces/${workspaceId}/merge_queue_config`, {
     method: "POST",

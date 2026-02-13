@@ -1,6 +1,7 @@
 mod common;
 
 use std::path::Path;
+use std::process::Command;
 
 use axum::http::{Method, StatusCode};
 use ctx_core::models::Worktree;
@@ -82,5 +83,143 @@ async fn session_diff_endpoints_return_no_repo_unavailable() {
     assert_eq!(
         summary.get("line_deletions").and_then(Value::as_i64),
         Some(0)
+    );
+}
+
+#[tokio::test]
+async fn session_diff_endpoints_return_no_target_branch_unavailable() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let ws_store = state
+        .store_for_workspace(ws.id)
+        .await
+        .expect("workspace store should open");
+    ws_store
+        .upsert_runtime_settings_document(1, "{}")
+        .await
+        .expect("clearing runtime settings should succeed");
+
+    let task = common::create_task(&app, ws.id.0, "diff").await;
+    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let session_id = session.id;
+
+    let (diff_status, diff): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::GET,
+        format!("/api/sessions/{}/diff", session_id.0),
+        None,
+    )
+    .await;
+    assert_eq!(diff_status, StatusCode::OK);
+    assert_eq!(diff.get("available").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        diff.get("unavailable_reason").and_then(Value::as_str),
+        Some("no_target_branch")
+    );
+    assert_eq!(diff.get("diff").and_then(Value::as_str), Some(""));
+
+    let (summary_status, summary): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::GET,
+        format!("/api/sessions/{}/diff/summary", session_id.0),
+        None,
+    )
+    .await;
+    assert_eq!(summary_status, StatusCode::OK);
+    assert_eq!(
+        summary.get("available").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        summary.get("unavailable_reason").and_then(Value::as_str),
+        Some("no_target_branch")
+    );
+    assert_eq!(summary.get("file_count").and_then(Value::as_i64), Some(0));
+    assert_eq!(
+        summary.get("line_additions").and_then(Value::as_i64),
+        Some(0)
+    );
+    assert_eq!(
+        summary.get("line_deletions").and_then(Value::as_i64),
+        Some(0)
+    );
+}
+
+#[tokio::test]
+async fn workspace_primary_branch_endpoint_updates_branch() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let branch_status = Command::new("git")
+        .current_dir(repo.path())
+        .args(["branch", "merge-target"])
+        .status()
+        .expect("git branch command should run");
+    assert!(
+        branch_status.success(),
+        "git branch merge-target should succeed"
+    );
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+
+    let (get_status, before): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::GET,
+        format!("/api/workspaces/{}/primary_branch", ws.id.0),
+        None,
+    )
+    .await;
+    assert_eq!(get_status, StatusCode::OK);
+    let before_branch = before
+        .get("primary_branch")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        !before_branch.trim().is_empty(),
+        "workspace primary branch should be auto-detected"
+    );
+
+    let (set_status, set_resp): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/primary_branch", ws.id.0),
+        Some(serde_json::json!({ "primary_branch": "merge-target" })),
+    )
+    .await;
+    assert_eq!(set_status, StatusCode::OK);
+    assert_eq!(
+        set_resp.get("primary_branch").and_then(Value::as_str),
+        Some("merge-target")
+    );
+
+    let (get_status_after, after): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::GET,
+        format!("/api/workspaces/{}/primary_branch", ws.id.0),
+        None,
+    )
+    .await;
+    assert_eq!(get_status_after, StatusCode::OK);
+    assert_eq!(
+        after.get("primary_branch").and_then(Value::as_str),
+        Some("merge-target")
     );
 }

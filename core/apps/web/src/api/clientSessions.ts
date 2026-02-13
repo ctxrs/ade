@@ -106,7 +106,7 @@ export type SessionDiffSummary = {
   unavailable_reason?: DiffUnavailableReason | null;
 };
 
-export type DiffUnavailableReason = "no_repo";
+export type DiffUnavailableReason = "no_repo" | "no_target_branch";
 
 export type SessionDiffResponse = {
   diff: string;

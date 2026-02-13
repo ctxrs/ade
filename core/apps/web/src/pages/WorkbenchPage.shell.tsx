@@ -2134,6 +2134,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       ? null
       : activeWorktreeDiffUnavailableReason === "no_repo"
         ? "No git repo detected for this workspace yet."
+        : activeWorktreeDiffUnavailableReason === "no_target_branch"
+          ? "Primary branch is not configured for this workspace."
         : "Diff unavailable for this workspace.";
   const diffHasChanges =
     diffSummaryCount !== null
