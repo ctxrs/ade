@@ -1,32 +1,44 @@
-export async function parseWsJson(data: unknown): Promise<any | null> {
+type BlobLike = {
+  text?: () => Promise<string>;
+  arrayBuffer?: () => Promise<ArrayBuffer>;
+  slice?: (...args: unknown[]) => unknown;
+  size?: number;
+};
+
+const asBlobLike = (data: unknown): BlobLike | null => {
+  if (!data || typeof data !== "object") return null;
+  const candidate = data as BlobLike;
+  const hasBlobShape =
+    typeof candidate.text === "function" ||
+    typeof candidate.arrayBuffer === "function" ||
+    (typeof candidate.slice === "function" && typeof candidate.size === "number") ||
+    Object.prototype.toString.call(data) === "[object Blob]" ||
+    Object.prototype.toString.call(data) === "[object File]";
+  return hasBlobShape ? candidate : null;
+};
+
+export async function parseWsJson(data: unknown): Promise<unknown | null> {
   let text: string | null = null;
 
   if (typeof data === "string") {
     text = data;
-  } else if (
-    data &&
-    typeof data === "object" &&
-    (typeof (data as any).text === "function" ||
-      typeof (data as any).arrayBuffer === "function" ||
-      (typeof (data as any).slice === "function" && typeof (data as any).size === "number") ||
-      Object.prototype.toString.call(data) === "[object Blob]" ||
-      Object.prototype.toString.call(data) === "[object File]")
-  ) {
+  } else if (asBlobLike(data)) {
     // Blob-like (WebSocket implementations vary; some WebViews deliver text frames as Blob).
-    const anyBlob = data as any;
-    if (typeof anyBlob.text === "function") {
-      text = await anyBlob.text();
-    } else if (typeof anyBlob.arrayBuffer === "function") {
-      const ab = (await anyBlob.arrayBuffer()) as ArrayBuffer;
+    const blobLike = asBlobLike(data);
+    if (!blobLike) return null;
+    if (typeof blobLike.text === "function") {
+      text = await blobLike.text();
+    } else if (typeof blobLike.arrayBuffer === "function") {
+      const ab = await blobLike.arrayBuffer();
       text = new TextDecoder().decode(new Uint8Array(ab));
-    } else if (typeof (globalThis as any).Response === "function") {
-      text = await new (globalThis as any).Response(anyBlob).text();
-    } else if (typeof (globalThis as any).FileReader === "function") {
+    } else if (typeof globalThis.Response === "function") {
+      text = await new globalThis.Response(blobLike as Blob).text();
+    } else if (typeof globalThis.FileReader === "function") {
       text = await new Promise<string>((resolve, reject) => {
-        const reader = new (globalThis as any).FileReader();
+        const reader = new globalThis.FileReader();
         reader.onload = () => resolve(String(reader.result ?? ""));
         reader.onerror = () => reject(reader.error ?? new Error("Failed to read Blob"));
-        reader.readAsText(anyBlob);
+        reader.readAsText(blobLike as Blob);
       });
     } else {
       return null;

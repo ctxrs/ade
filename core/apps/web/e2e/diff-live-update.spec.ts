@@ -3,11 +3,21 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
+import type { APIRequestContext, Page } from "@playwright/test";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+const readId = (value: unknown): string => (typeof value === "string" ? value : "");
+
 async function createWorkspaceAndStartRun(opts: {
-  page: any;
-  request: any;
+  page: Page;
+  request: APIRequestContext;
   repo: string;
   workspaceName: string;
   prompt: string;
@@ -31,8 +41,6 @@ async function createWorkspaceAndStartRun(opts: {
   const sessionComposer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await expect(sessionComposer).toBeVisible({ timeout: 20_000 });
 
-  const readId = (v: any): string => (typeof v === "string" ? v : "");
-
   let taskId = "";
   let sessionId = "";
   await expect
@@ -40,13 +48,15 @@ async function createWorkspaceAndStartRun(opts: {
       async () => {
         const resp = await request.get(`/api/workspaces/${workspaceId}/active_snapshot`);
         if (!resp.ok()) return "";
-        const snapshot = (await resp.json()) as any;
-        const taskSummary = snapshot?.active?.tasks?.[0];
+        const snapshot = asRecord(await resp.json());
+        const active = asRecord(snapshot.active);
+        const taskSummary = asRecord(asArray(active.tasks)[0]);
         if (!taskSummary) return "";
-        taskId = readId(taskSummary?.task?.id);
-        const sessionSummary = taskSummary?.sessions?.[taskSummary?.sessions?.length - 1];
-        const primarySessionId = readId(taskSummary?.task?.primary_session_id);
-        sessionId = readId(sessionSummary?.session?.id) || primarySessionId;
+        taskId = readId(asRecord(taskSummary.task).id);
+        const sessions = asArray(taskSummary.sessions);
+        const sessionSummary = asRecord(sessions[sessions.length - 1]);
+        const primarySessionId = readId(asRecord(taskSummary.task).primary_session_id);
+        sessionId = readId(asRecord(sessionSummary.session).id) || primarySessionId;
         return sessionId;
       },
       { timeout: 20_000 }
@@ -55,33 +65,33 @@ async function createWorkspaceAndStartRun(opts: {
 
   const headResp = await request.get(`/api/sessions/${sessionId}/snapshot?limit=1`);
   expect(headResp.ok()).toBeTruthy();
-  const snapshot = (await headResp.json()) as any;
-  const session = snapshot?.head?.session ?? snapshot?.summary?.session ?? null;
-  const worktreeId = readId(session?.worktree_id);
+  const snapshot = asRecord(await headResp.json());
+  const session = asRecord(asRecord(snapshot.head).session ?? asRecord(snapshot.summary).session);
+  const worktreeId = readId(session.worktree_id);
   expect(worktreeId).toBeTruthy();
   const wtResp = await request.get(`/api/worktrees/${worktreeId}`);
   expect(wtResp.ok()).toBeTruthy();
-  const wt = (await wtResp.json()) as any;
-  const worktreeRoot = String(wt?.root_path ?? "");
+  const wt = asRecord(await wtResp.json());
+  const worktreeRoot = String(wt.root_path ?? "");
   expect(worktreeRoot).toBeTruthy();
 
   return { sessionId, worktreeRoot };
 }
 
-async function waitForSessionCompletion(opts: { request: any; sessionId: string; timeoutMs?: number }) {
+async function waitForSessionCompletion(opts: { request: APIRequestContext; sessionId: string; timeoutMs?: number }) {
   const { request, sessionId, timeoutMs = 30_000 } = opts;
   await expect
     .poll(
       async () => {
         const resp = await request.get(`/api/sessions/${sessionId}/snapshot?include_events=1&limit=60`);
         if (!resp.ok()) return "";
-        const data = (await resp.json()) as any;
-        const summaryStatus = data?.summary?.activity?.last_turn_status ?? null;
+        const data = asRecord(await resp.json());
+        const summaryStatus = asRecord(asRecord(data.summary).activity).last_turn_status ?? null;
         if (summaryStatus && !["running", "queued"].includes(String(summaryStatus))) return "done";
-        const head = data?.head ?? {};
-        const headStatus = head?.activity?.last_turn_status ?? null;
+        const head = asRecord(data.head);
+        const headStatus = asRecord(head.activity).last_turn_status ?? null;
         if (headStatus && !["running", "queued"].includes(String(headStatus))) return "done";
-        const turns = Array.isArray(head.turns) ? head.turns : [];
+        const turns = asArray(head.turns).map((turn) => asRecord(turn));
         const lastTurn = turns[turns.length - 1];
         const lastStatus = lastTurn?.status ?? null;
         if (lastStatus && !["running", "queued"].includes(String(lastStatus))) return "done";

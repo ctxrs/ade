@@ -141,6 +141,16 @@ const hasOwnProperty = (value: unknown, key: string): boolean => {
   return Object.prototype.hasOwnProperty.call(value, key);
 };
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+const readString = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  return value;
+};
+
 const isWorkspaceActiveSnapshot = (value: unknown): value is WorkspaceActiveSnapshot => {
   if (!value || typeof value !== "object") return false;
   const active = (value as WorkspaceActiveSnapshot).active as { tasks?: unknown } | undefined;
@@ -1816,7 +1826,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     return null;
   }
 
-  private applySessionHeadDelta(delta: any): boolean {
+  private applySessionHeadDelta(delta: SessionHeadDelta): boolean {
     const sessionId = idToString(delta?.session_id ?? "");
     if (!sessionId) return false;
     let existing = this.sessionHeadsById.get(sessionId);
@@ -1828,7 +1838,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     }
     let changed = false;
     let turns = existing.turns ?? [];
-    let toolSummaries = Array.isArray((existing as any).tool_summaries) ? (existing as any).tool_summaries : [];
+    let toolSummaries = Array.isArray(existing.tool_summaries) ? existing.tool_summaries : [];
     let messages = existing.messages ?? [];
     let events = existing.events ?? [];
     if (delta.turn) {
@@ -1845,19 +1855,19 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     }
     const incomingToolSummaries = Array.isArray(delta.tool_summaries) ? delta.tool_summaries : [];
     if (incomingToolSummaries.length > 0) {
-      const byId = new Map(toolSummaries.map((s: any) => [String(s?.tool_call_id ?? ""), s]));
+      const byId = new Map(toolSummaries.map((s) => [String(s?.tool_call_id ?? ""), s]));
       for (const s of incomingToolSummaries) {
         const id = String(s?.tool_call_id ?? "").trim();
         if (!id) continue;
         byId.set(id, s);
       }
-      toolSummaries = Array.from(byId.values()).filter((s: any) => String(s?.tool_call_id ?? "").trim());
+      toolSummaries = Array.from(byId.values()).filter((s) => String(s?.tool_call_id ?? "").trim());
       changed = true;
     }
     if (toolSummaries.length > 0 && turns.length > 0) {
       // Keep summaries bounded to the head window turns, matching server-side behavior.
-      const allowed = new Set(turns.map((t) => idToString((t as any)?.turn_id ?? "")));
-      toolSummaries = toolSummaries.filter((s: any) => allowed.has(idToString(s?.turn_id ?? "")));
+      const allowed = new Set(turns.map((t) => idToString(t?.turn_id ?? "")));
+      toolSummaries = toolSummaries.filter((s) => allowed.has(idToString(s?.turn_id ?? "")));
     }
     const next: SessionHeadSnapshot = sanitizeHeadSnapshot({
       ...existing,
@@ -1898,7 +1908,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   private applySessionHeadSeed(head: SessionHeadSnapshot | null | undefined): boolean {
     if (!head) return false;
-    const sessionId = idToString((head as any)?.session?.id ?? "");
+    const sessionId = idToString(head?.session?.id ?? "");
     if (!sessionId) return false;
     const sanitized = sanitizeHeadSnapshot(head);
     const prev = this.sessionHeadsById.get(sessionId);
@@ -1929,24 +1939,28 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private readPrimarySessionHead(summary: unknown): SessionHeadSnapshot | null {
     if (!summary || typeof summary !== "object") return null;
     const rec = summary as Record<string, unknown>;
-    const head = (rec as any).primary_session_head ?? (rec as any).primarySessionHead ?? null;
+    const head = rec.primary_session_head ?? rec.primarySessionHead ?? null;
     if (!head || typeof head !== "object") return null;
     return sanitizeHeadSnapshot(head as SessionHeadSnapshot);
   }
 
   private readPrimarySessionId(summary: unknown): string | null {
-    if (!summary || typeof summary !== "object") return null;
-    const rec = summary as Record<string, any>;
-    const fromPrimary = idToString(rec?.primary_session?.session?.id ?? "");
+    const rec = asRecord(summary);
+    if (Object.keys(rec).length === 0) return null;
+    const fromPrimary = idToString(readString(asRecord(asRecord(rec.primary_session).session).id) ?? "");
     if (fromPrimary) return fromPrimary;
-    const fromHead = idToString(rec?.primary_session_head?.session?.id ?? rec?.primarySessionHead?.session?.id ?? "");
+    const fromHead = idToString(
+      readString(asRecord(asRecord(rec.primary_session_head).session).id) ??
+        readString(asRecord(asRecord(rec.primarySessionHead).session).id) ??
+        "",
+    );
     if (fromHead) return fromHead;
     return null;
   }
 
   private rememberSessionHead(head: SessionHeadSnapshot | null) {
     if (!head) return;
-    const sessionId = idToString((head as any)?.session?.id ?? "");
+    const sessionId = idToString(head?.session?.id ?? "");
     if (!sessionId) return;
     const sanitized = sanitizeHeadSnapshot(head);
     const prev = this.sessionHeadsById.get(sessionId);

@@ -15,6 +15,7 @@ import {
   isDesktopApp,
   type DesktopConnectionInfo,
 } from "../utils/desktop";
+import { errorMessage } from "../utils/errorMessage";
 import LauncherBrand from "../components/LauncherBrand";
 
 type RecentEntry =
@@ -100,7 +101,7 @@ const sleepMs = (ms: number) => new Promise((resolve) => window.setTimeout(resol
 
 const waitForDaemonReady = async (timeoutMs: number) => {
   const started = Date.now();
-  let lastErr: any = null;
+  let lastErr: unknown = null;
   while (Date.now() - started < timeoutMs) {
     try {
       await getHealth();
@@ -116,9 +117,9 @@ const waitForDaemonReady = async (timeoutMs: number) => {
 async function createOrOpenWorkspaceByPath(rootPath: string): Promise<string> {
   const all = await listWorkspaces();
   const hit = all.find((w) => String(w.root_path) === rootPath);
-  if (hit) return idToString((hit as any).id);
+  if (hit) return idToString(hit.id ?? "");
   const created = await createWorkspace(rootPath);
-  return idToString((created as any).id);
+  return idToString(created.id ?? "");
 }
 
 export default function LauncherPage() {
@@ -133,7 +134,7 @@ export default function LauncherPage() {
 
   useEffect(() => {
     if (!isDesktop) {
-      setConnection({ kind: "none" } as any);
+      setConnection({ kind: "none" });
       return;
     }
     desktopGetConnection()
@@ -141,7 +142,7 @@ export default function LauncherPage() {
         setConnection(info);
         applyConnection(info);
       })
-      .catch(() => setConnection({ kind: "none" } as any));
+      .catch(() => setConnection({ kind: "none" }));
   }, [isDesktop, navigate]);
 
   useEffect(() => {
@@ -170,8 +171,8 @@ export default function LauncherPage() {
       } else {
         navigate("/workspaces", { replace: true });
       }
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -200,8 +201,8 @@ export default function LauncherPage() {
       await waitForDaemonReady(15000);
       upsertRecent({ ...r, remote_ctx_bin: resolvedRemoteCtxBin, updated_at_ms: Date.now() });
       navigate("/workspaces", { replace: true });
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     } finally {
       setBusy(false);
     }

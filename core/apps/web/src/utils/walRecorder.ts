@@ -184,6 +184,40 @@ const parseContentLength = (value: string | null): number | undefined => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
+type XhrWalMeta = {
+  method: string;
+  url: string;
+  start: number;
+  request_bytes?: number;
+};
+
+type WalTrackedXmlHttpRequest = XMLHttpRequest & {
+  __ctxWal?: XhrWalMeta;
+};
+
+type PerformanceObserverWithSupportedEntryTypes = typeof PerformanceObserver & {
+  supportedEntryTypes?: string[];
+};
+
+type LayoutShiftEntryLike = PerformanceEntry & {
+  value?: number;
+  hadRecentInput?: boolean;
+};
+
+type LargestContentfulPaintEntryLike = PerformanceEntry & {
+  size?: number;
+  element?: Element | null;
+  url?: string;
+};
+
+type FirstInputEntryLike = PerformanceEntry & {
+  processingStart?: number;
+};
+
+type EventTimingEntryLike = PerformanceEntry & {
+  interactionId?: number;
+};
+
 const installHooks = (recorder: WalRecorder, getMode: () => WalMode) => {
   if (globalAny.__CTX_WAL_HOOKS__) return;
   globalAny.__CTX_WAL_HOOKS__ = true;
@@ -247,12 +281,25 @@ const installHooks = (recorder: WalRecorder, getMode: () => WalMode) => {
   if (typeof XMLHttpRequest !== "undefined") {
     const originalOpen = XMLHttpRequest.prototype.open;
     const originalSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.open = function (method: string, url: string, ...rest: any[]) {
-      (this as any).__ctxWal = { method, url, start: 0, request_bytes: undefined };
-      return (originalOpen as any).call(this, method, url, ...rest);
-    };
-    XMLHttpRequest.prototype.send = function (body?: Document | BodyInit | null) {
-      const meta = (this as any).__ctxWal;
+    // EXCEPTION: Runtime XHR monkey-patching needs untyped passthrough for variadic args and instance metadata.
+    XMLHttpRequest.prototype.open = (function (
+      this: WalTrackedXmlHttpRequest,
+      ...args: [string, string | URL, ...unknown[]]
+    ) {
+      const [method, url] = args;
+      (this as WalTrackedXmlHttpRequest).__ctxWal = {
+        method: String(method ?? "GET"),
+        url: String(url ?? ""),
+        start: 0,
+        request_bytes: undefined,
+      };
+      Reflect.apply(originalOpen as unknown as (...openArgs: unknown[]) => unknown, this, args);
+    } as XMLHttpRequest["open"]);
+    XMLHttpRequest.prototype.send = function (
+      this: WalTrackedXmlHttpRequest,
+      body?: Parameters<XMLHttpRequest["send"]>[0],
+    ) {
+      const meta = (this as WalTrackedXmlHttpRequest).__ctxWal;
       if (meta) {
         meta.start = nowMs();
         if (typeof body === "string") meta.request_bytes = body.length;
@@ -285,7 +332,7 @@ const installHooks = (recorder: WalRecorder, getMode: () => WalMode) => {
         };
         this.addEventListener("loadend", onLoadEnd);
       }
-      return originalSend.call(this, body as any);
+      return originalSend.call(this, body ?? null);
     };
   }
 
@@ -297,8 +344,9 @@ const installHooks = (recorder: WalRecorder, getMode: () => WalMode) => {
     >();
     class WrappedWebSocket extends OriginalWebSocket {
       __ctxWalId: string;
+      // EXCEPTION: WebSocket constructor overload forwarding is not representable precisely across browser runtimes.
       constructor(url: string | URL, protocols?: string | string[]) {
-        super(url, protocols as any);
+        super(url, protocols);
         const id = randomUuid();
         this.__ctxWalId = id;
         const normalizedUrl = normalizeUrl(String(url));
@@ -404,13 +452,14 @@ const installHooks = (recorder: WalRecorder, getMode: () => WalMode) => {
     for (const level of levels) {
       const original = window.console[level];
       if (typeof original !== "function") continue;
+      // EXCEPTION: Console method binding is dynamic; preserve native variadic signature across browsers.
       window.console[level] = (...args: unknown[]) => {
         const mode = getMode();
         recorder.record("console", {
           level,
           args: args.map((arg) => serializeConsoleArg(arg, mode)),
         });
-        return original.apply(window.console, args as any);
+        return Reflect.apply(original, window.console, args);
       };
     }
   }
@@ -462,7 +511,8 @@ const installHooks = (recorder: WalRecorder, getMode: () => WalMode) => {
 
 const initPerformanceObservers = (recorder: WalRecorder, getMode: () => WalMode) => {
   if (typeof performance === "undefined" || typeof PerformanceObserver === "undefined") return;
-  const supported = (PerformanceObserver as any).supportedEntryTypes as string[] | undefined;
+  // EXCEPTION: `supportedEntryTypes` and several entry payload fields are nonstandard/partially typed in lib.dom.
+  const supported = (PerformanceObserver as PerformanceObserverWithSupportedEntryTypes).supportedEntryTypes;
   const supports = new Set(supported ?? []);
   const timeOrigin = performance.timeOrigin ?? Date.now();
 
@@ -511,7 +561,8 @@ const initPerformanceObservers = (recorder: WalRecorder, getMode: () => WalMode)
 
   if (supports.has("layout-shift")) {
     const observer = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries() as any[]) {
+      // EXCEPTION: Browser `PerformanceEntry` subtypes expose dynamic fields not modeled on the base type.
+      for (const entry of list.getEntries() as unknown as LayoutShiftEntryLike[]) {
         if (!entry) continue;
         const value = typeof entry.value === "number" ? entry.value : 0;
         const hadRecentInput = Boolean(entry.hadRecentInput);
@@ -535,7 +586,8 @@ const initPerformanceObservers = (recorder: WalRecorder, getMode: () => WalMode)
       const entries = list.getEntries();
       if (!entries.length) return;
       lcpEntry = entries[entries.length - 1];
-      const entry = lcpEntry as any;
+      // EXCEPTION: LCP entry subtype fields (`size`, `element`, `url`) are not available on the base entry type.
+      const entry = lcpEntry as LargestContentfulPaintEntryLike;
       const mode = getMode();
       recorder.record(
         "perf:lcp",
@@ -549,7 +601,7 @@ const initPerformanceObservers = (recorder: WalRecorder, getMode: () => WalMode)
       );
     });
     try {
-      observer.observe({ type: "largest-contentful-paint", buffered: true } as any);
+      observer.observe({ type: "largest-contentful-paint", buffered: true } as unknown as PerformanceObserverInit);
     } catch {
       // ignore
     }
@@ -557,7 +609,8 @@ const initPerformanceObservers = (recorder: WalRecorder, getMode: () => WalMode)
 
   if (supports.has("first-input")) {
     const observer = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries() as any[]) {
+      // EXCEPTION: FID subtype fields are not represented on `PerformanceEntry`.
+      for (const entry of list.getEntries() as unknown as FirstInputEntryLike[]) {
         recorder.record("perf:first-input", {
           name: entry.name,
           start_ms: Math.round(timeOrigin + entry.startTime),
@@ -575,7 +628,8 @@ const initPerformanceObservers = (recorder: WalRecorder, getMode: () => WalMode)
 
   if (supports.has("event")) {
     const observer = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries() as any[]) {
+      // EXCEPTION: Event timing subtype fields (`interactionId`) are nonstandard in base typings.
+      for (const entry of list.getEntries() as unknown as EventTimingEntryLike[]) {
         if (!entry) continue;
         recorder.record(
           "perf:event",
@@ -590,7 +644,9 @@ const initPerformanceObservers = (recorder: WalRecorder, getMode: () => WalMode)
       }
     });
     try {
-      observer.observe({ type: "event", buffered: true, durationThreshold: 40 } as any);
+      observer.observe(
+        { type: "event", buffered: true, durationThreshold: 40 } as unknown as PerformanceObserverInit,
+      );
     } catch {
       // ignore
     }

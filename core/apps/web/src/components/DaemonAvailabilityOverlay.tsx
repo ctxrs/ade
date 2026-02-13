@@ -35,6 +35,11 @@ const trimError = (value: string): string => {
   return text.length > 220 ? `${text.slice(0, 220)}…` : text;
 };
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
 const extractErrorMessage = (resp: { status: number; body: string }): string => {
   const raw = String(resp.body ?? "").trim();
   if (!raw) return `Daemon responded with ${resp.status}.`;
@@ -129,7 +134,7 @@ export default function DaemonAvailabilityOverlay() {
       const resp = await daemonFetchRaw("/api/health");
       if (requestId !== requestIdRef.current) return;
       if (resp.status >= 200 && resp.status < 300) {
-        let parsed: any = null;
+        let parsed: unknown = null;
         if (resp.body) {
           try {
             parsed = JSON.parse(resp.body);
@@ -137,9 +142,11 @@ export default function DaemonAvailabilityOverlay() {
             parsed = null;
           }
         }
-        const daemonVersion = String(parsed?.daemon_version ?? parsed?.version ?? "").trim();
+        const parsedRecord = asRecord(parsed);
+        const compat = asRecord(parsedRecord.compatibility);
+        const daemonVersion = String(parsedRecord.daemon_version ?? parsedRecord.version ?? "").trim();
         const expectedVersion = String(
-          parsed?.compatibility?.desktop_exact_version ?? daemonVersion ?? "",
+          compat.desktop_exact_version ?? daemonVersion ?? "",
         ).trim();
         const currentDesktopVersion =
           desktopVersion ?? (await refreshDesktopVersion()) ?? "";

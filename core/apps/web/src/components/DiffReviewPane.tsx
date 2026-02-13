@@ -507,19 +507,17 @@ function DecoratedDiffEditor({
       onMount={(editor, monaco) => {
         setEditorInstance(editor);
         const applyDecorations = () => {
-          const decs = file.renderLineKinds
-            .map((kind, idx) => {
-              if (kind === "ctx") return null;
-              const range = new monaco.Range(idx + 1, 1, idx + 1, 1);
-              return {
-                range,
-                options: {
-                  isWholeLine: true,
-                  className: kind === "add" ? "cursor-diff-line-add" : "cursor-diff-line-del",
-                },
-              };
-            })
-            .filter(Boolean) as any[];
+          const decs = file.renderLineKinds.flatMap((kind, idx) => {
+            if (kind === "ctx") return [];
+            const range = new monaco.Range(idx + 1, 1, idx + 1, 1);
+            return [{
+              range,
+              options: {
+                isWholeLine: true,
+                className: kind === "add" ? "cursor-diff-line-add" : "cursor-diff-line-del",
+              },
+            }];
+          });
           decorationIdsRef.current = editor.deltaDecorations(decorationIdsRef.current, decs);
         };
 

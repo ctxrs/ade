@@ -4,6 +4,11 @@ import { stripCitationMarkers } from "../utils/citationMarkers";
 const PLAIN_TEXT_CACHE_LIMIT = 500;
 const plainTextCache = new Map<string, string>();
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
 export function imageAttachmentSrc(a: MessageAttachment): string {
   return a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
 }
@@ -154,11 +159,12 @@ export function humanToolKind(kind: string): string {
   return kind || "Tool";
 }
 
-export function formatToolInput(toolKind: string, input: any): string {
+export function formatToolInput(toolKind: string, input: unknown): string {
   const k = (toolKind || "").toLowerCase();
+  const rec = asRecord(input);
   if (k === "execute" || k === "exec") {
-    const cmd = Array.isArray(input?.command) ? input.command.join(" ") : input?.command;
-    const cwd = input?.cwd;
+    const cmd = Array.isArray(rec.command) ? rec.command.join(" ") : rec.command;
+    const cwd = rec.cwd;
     const out: string[] = [];
     if (cwd) out.push(`cwd: ${cwd}`);
     if (cmd) out.push(`cmd: ${cmd}`);
@@ -174,12 +180,14 @@ type ToolDiffStats = {
   files?: number;
 };
 
-function extractToolDiffStats(input: any): ToolDiffStats | null {
-  const raw = input?.diff_stats;
+function extractToolDiffStats(input: unknown): ToolDiffStats | null {
+  const rec = asRecord(input);
+  const raw = rec.diff_stats;
   if (!raw || typeof raw !== "object") return null;
-  const added = Number((raw as any).added);
-  const removed = Number((raw as any).removed);
-  const files = Number((raw as any).files);
+  const rawRec = asRecord(raw);
+  const added = Number(rawRec.added);
+  const removed = Number(rawRec.removed);
+  const files = Number(rawRec.files);
   const hasAny =
     Number.isFinite(added) || Number.isFinite(removed) || Number.isFinite(files);
   if (!hasAny) return null;
@@ -190,7 +198,7 @@ function extractToolDiffStats(input: any): ToolDiffStats | null {
   };
 }
 
-function formatToolDiffStats(input: any): string {
+function formatToolDiffStats(input: unknown): string {
   const stats = extractToolDiffStats(input);
   if (!stats) return "";
   const parts: string[] = [];
@@ -202,26 +210,27 @@ function formatToolDiffStats(input: any): string {
   return parts.length ? `(${parts.join(" ")})` : "";
 }
 
-function extractToolPaths(input: any): { paths: string[]; total?: number } {
+function extractToolPaths(input: unknown): { paths: string[]; total?: number } {
+  const rec = asRecord(input);
   const paths: string[] = [];
   const push = (value: unknown) => {
     if (typeof value !== "string") return;
     const trimmed = value.trim();
     if (trimmed) paths.push(trimmed);
   };
-  push(input?.path);
-  push(input?.file);
-  push(input?.filename);
-  push(input?.file_path);
-  push(input?.filePath);
-  push(input?.filepath);
-  push(input?.target);
-  if (Array.isArray(input?.paths)) input.paths.forEach(push);
-  if (Array.isArray(input?.files)) input.files.forEach(push);
-  if (Array.isArray(input?.file_paths)) input.file_paths.forEach(push);
-  if (Array.isArray(input?.filePaths)) input.filePaths.forEach(push);
-  if (Array.isArray(input?.parsed_cmd)) {
-    input.parsed_cmd.forEach((cmd: any) => push(cmd?.path));
+  push(rec.path);
+  push(rec.file);
+  push(rec.filename);
+  push(rec.file_path);
+  push(rec.filePath);
+  push(rec.filepath);
+  push(rec.target);
+  if (Array.isArray(rec.paths)) rec.paths.forEach(push);
+  if (Array.isArray(rec.files)) rec.files.forEach(push);
+  if (Array.isArray(rec.file_paths)) rec.file_paths.forEach(push);
+  if (Array.isArray(rec.filePaths)) rec.filePaths.forEach(push);
+  if (Array.isArray(rec.parsed_cmd)) {
+    rec.parsed_cmd.forEach((cmd) => push(asRecord(cmd).path));
   }
   const seen = new Set<string>();
   const unique = paths.filter((p) => {
@@ -229,12 +238,11 @@ function extractToolPaths(input: any): { paths: string[]; total?: number } {
     seen.add(p);
     return true;
   });
-  const total =
-    typeof input?.paths_total === "number" ? input.paths_total : unique.length;
+  const total = typeof rec.paths_total === "number" ? rec.paths_total : unique.length;
   return { paths: unique, total };
 }
 
-function formatToolPathSummary(input: any): string {
+function formatToolPathSummary(input: unknown): string {
   const { paths, total } = extractToolPaths(input);
   if (!paths.length) return "";
   const more = Math.max(0, (total ?? paths.length) - 1);
@@ -242,22 +250,23 @@ function formatToolPathSummary(input: any): string {
   return more > 0 ? `${head} +${more} more` : head;
 }
 
-export function toolSummaryLine(toolKind: string, input: any): string {
+export function toolSummaryLine(toolKind: string, input: unknown): string {
   const k = (toolKind || "").toLowerCase();
+  const rec = asRecord(input);
   if (k.startsWith("mcp.")) {
-    const server = String(input?.server ?? "").trim();
-    const tool = String(input?.tool ?? "").trim();
+    const server = String(rec.server ?? "").trim();
+    const tool = String(rec.tool ?? "").trim();
     if (server && tool) return `${server}/${tool}`;
     if (server) return server;
     const parts = k.split(".").filter(Boolean);
     if (parts.length >= 3) return `${parts[1]}/${parts.slice(2).join(".")}`;
   }
   if (k === "execute" || k === "exec") {
-    const cmd = Array.isArray(input?.command) ? input.command.join(" ") : input?.command;
+    const cmd = Array.isArray(rec.command) ? rec.command.join(" ") : rec.command;
     return cmd ? truncateMiddle(String(cmd), 120) : "";
   }
   if (k === "search" || k === "web_search") {
-    const q = input?.query ?? input?.pattern ?? input?.regex ?? input?.text;
+    const q = rec.query ?? rec.pattern ?? rec.regex ?? rec.text;
     const path = formatToolPathSummary(input);
     const query = q ? truncateMiddle(String(q), 120) : "";
     if (query && path) return truncateMiddle(`${query} in ${path}`, 120);
@@ -276,8 +285,8 @@ export function toolSummaryLine(toolKind: string, input: any): string {
     return path || stats;
   }
   if (k === "fetch" || k === "http" || k === "curl") {
-    const method = String(input?.method ?? "GET").trim().toUpperCase();
-    const url = input?.url ?? input?.uri ?? input?.href;
+    const method = String(rec.method ?? "GET").trim().toUpperCase();
+    const url = rec.url ?? rec.uri ?? rec.href;
     if (url) return truncateMiddle(`${method} ${String(url)}`, 120);
     return method;
   }

@@ -26,6 +26,9 @@ export type AuthUi = {
   methods: AuthMethodOption[];
 };
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
 function coerceNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim().length > 0) {
@@ -36,15 +39,18 @@ function coerceNumber(value: unknown): number | null {
 }
 
 export function deriveAuthUi(events: SessionEvent[]): AuthUi {
-  const fromMethodsValue = (value: any): AuthMethodOption[] => {
+  const fromMethodsValue = (value: unknown): AuthMethodOption[] => {
     const list = Array.isArray(value) ? value : [];
     return list
-      .map((m: any) => ({
-        id: m?.methodId ?? m?.method_id ?? m?.id,
-        name: m?.name ?? m?.label ?? (m?.methodId ?? m?.method_id ?? m?.id),
-      }))
-      .filter((m: any) => typeof m.id === "string" && m.id.length > 0)
-      .map((m: any) => ({ id: String(m.id), name: String(m.name ?? m.id) }));
+      .map((item): AuthMethodOption | null => {
+        const method = asRecord(item);
+        const id = readNonEmptyString(method.methodId ?? method.method_id ?? method.id);
+        if (!id) return null;
+        const name =
+          readNonEmptyString(method.name ?? method.label ?? method.methodId ?? method.method_id ?? method.id) ?? id;
+        return { id, name };
+      })
+      .filter((method): method is AuthMethodOption => method !== null);
   };
 
   let status: AuthUi["status"] = "unknown";
@@ -60,30 +66,31 @@ export function deriveAuthUi(events: SessionEvent[]): AuthUi {
   const initMethodOptions = fromMethodsValue(initMethods);
 
   for (const ev of events) {
+    const payload = asRecord(ev.payload_json);
     if (ev.event_type === "auth_required") {
       status = "required";
-      provider = ev.payload_json?.provider;
-      message = ev.payload_json?.message;
-      methods = fromMethodsValue(ev.payload_json?.auth_methods ?? ev.payload_json?.authMethods);
+      provider = readNonEmptyString(payload.provider) ?? undefined;
+      message = readNonEmptyString(payload.message) ?? undefined;
+      methods = fromMethodsValue(payload.auth_methods ?? payload.authMethods);
       continue;
     }
 
     if (ev.event_type !== "notice") continue;
-    const kind = ev.payload_json?.kind;
+    const kind = payload.kind;
     if (kind === "auth_required") {
       status = "required";
-      provider = ev.payload_json?.provider;
-      message = ev.payload_json?.message;
-      methods = fromMethodsValue(ev.payload_json?.auth_methods ?? ev.payload_json?.authMethods);
+      provider = readNonEmptyString(payload.provider) ?? undefined;
+      message = readNonEmptyString(payload.message) ?? undefined;
+      methods = fromMethodsValue(payload.auth_methods ?? payload.authMethods);
     }
     if (kind === "auth_failed") {
       status = "failed";
-      provider = ev.payload_json?.provider;
-      message = ev.payload_json?.message;
+      provider = readNonEmptyString(payload.provider) ?? undefined;
+      message = readNonEmptyString(payload.message) ?? undefined;
     }
     if (kind === "auth_finished") {
       status = "authenticated";
-      provider = ev.payload_json?.provider;
+      provider = readNonEmptyString(payload.provider) ?? undefined;
       message = undefined;
       methods = [];
     }

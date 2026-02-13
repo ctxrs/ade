@@ -153,7 +153,7 @@ export function useWorkbenchThreadViewModelController(
 
     const byTurnEv = new Map<string, SessionEvent[]>();
     for (const ev of events) {
-      const tid = idToString((ev as any).turn_id);
+      const tid = idToString(ev.turn_id ?? "");
       if (!tid) continue;
       const list = byTurnEv.get(tid) ?? [];
       list.push(ev);
@@ -232,7 +232,7 @@ export function useWorkbenchThreadViewModelController(
     const delta = events.slice(state.eventsLen);
     const dirtyTurnIds = new Set<string>();
     for (const ev of delta) {
-      const tid = idToString((ev as any).turn_id);
+      const tid = idToString(ev.turn_id ?? "");
       if (tid) {
         dirtyTurnIds.add(tid);
         const list = eventsByTurnIdRef.current.get(tid) ?? [];

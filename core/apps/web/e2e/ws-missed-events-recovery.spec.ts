@@ -1,6 +1,15 @@
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
+type E2EWindow = Window & {
+  __ctxE2E?: {
+    workspaceStream?: {
+      getConnectionState?: () => string | null;
+      setDropMessages?: (drop: boolean) => void;
+    };
+  };
+};
+
 test("workbench: recovers when workspace stream misses events", async ({ page }) => {
   // Enable E2E hooks for the workspace stream worker.
   await page.addInitScript(() => {
@@ -17,7 +26,7 @@ test("workbench: recovers when workspace stream misses events", async ({ page })
 
   await expect
     .poll(async () =>
-      page.evaluate(() => typeof (window as any).__ctxE2E?.workspaceStream?.getConnectionState === "function"),
+      page.evaluate(() => typeof (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState === "function"),
     )
     .toBe(true);
 
@@ -47,12 +56,12 @@ test("workbench: recovers when workspace stream misses events", async ({ page })
   await expect(rows).toHaveCount(1, { timeout: 20_000 });
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
 
   // Drop workspace stream messages so the client misses the "task 2" update.
   await page.evaluate(() => {
-    (window as any).__ctxE2E?.workspaceStream?.setDropMessages?.(true);
+    (window as E2EWindow).__ctxE2E?.workspaceStream?.setDropMessages?.(true);
   });
 
   await createTask("fixture task 2");
@@ -60,7 +69,7 @@ test("workbench: recovers when workspace stream misses events", async ({ page })
   // Re-enable message delivery, then create another task so the next received seq reveals a gap and
   // triggers the client's recovery path (snapshot reload).
   await page.evaluate(() => {
-    (window as any).__ctxE2E?.workspaceStream?.setDropMessages?.(false);
+    (window as E2EWindow).__ctxE2E?.workspaceStream?.setDropMessages?.(false);
   });
 
   await createTask("fixture task 3");

@@ -52,6 +52,9 @@ export { deriveAuthUi, deriveProviderGuardNotice, deriveSessionError };
 const devInvariantLogKeys = new Set<string>();
 const telemetryInvariantKeys = new Set<string>();
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
 function recordThreadInvariantCounter(reason: string, details: Record<string, string> = {}): void {
   const key = `${reason}:${JSON.stringify(details)}`;
   if (telemetryInvariantKeys.has(key)) return;
@@ -355,19 +358,20 @@ export function buildWorkbenchThreadViewModel(
 }
 
 function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
-  const payload = ev.payload_json ?? {};
-  const meta = payload?._meta ?? payload?.meta ?? {};
-  if (meta?.heartbeat === true) return false;
+  const payload = asRecord(ev.payload_json);
+  const meta = asRecord(payload._meta ?? payload.meta);
+  if (meta.heartbeat === true) return false;
   if (isStatusUpdateMeta(meta)) return false;
-  const reasoningKind = meta?.codex?.reasoning_kind ?? meta?.codex?.reasoningKind;
+  const codexMeta = asRecord(meta.codex);
+  const reasoningKind = codexMeta.reasoning_kind ?? codexMeta.reasoningKind;
   if (reasoningKind === "summary") return false;
   return true;
 }
 
 function shouldRenderAssistantChunk(ev: SessionEvent): boolean {
-  const payload = ev.payload_json ?? {};
-  const meta = payload?._meta ?? payload?.meta ?? {};
-  if (meta?.heartbeat === true) return false;
+  const payload = asRecord(ev.payload_json);
+  const meta = asRecord(payload._meta ?? payload.meta);
+  if (meta.heartbeat === true) return false;
   if (isStatusUpdateMeta(meta)) return false;
   return true;
 }

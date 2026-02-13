@@ -1,5 +1,19 @@
 import { test, expect } from "./fixtures";
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+type ProviderSummary = {
+  provider_id: string;
+  installed: boolean;
+  health: string;
+  details?: {
+    ui_hidden?: string;
+  };
+};
+
 test("providers: bundled v1 shows ready providers without install controls", async ({ page, request }) => {
   await page.goto("/providers", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Providers" })).toBeVisible();
@@ -8,15 +22,15 @@ test("providers: bundled v1 shows ready providers without install controls", asy
     .poll(async () => {
       const resp = await request.get("/api/providers");
       if (!resp.ok()) return 0;
-      const providers = (await resp.json()) as any[];
+      const providers = (await resp.json()) as ProviderSummary[];
       return providers.length;
     })
     .toBeGreaterThan(0);
 
   const providersResp = await request.get("/api/providers");
   expect(providersResp.ok()).toBeTruthy();
-  const providers = (await providersResp.json()) as any[];
-  const visibleProviders = providers.filter((p) => p.details?.ui_hidden !== "true");
+  const providers = (await providersResp.json()) as ProviderSummary[];
+  const visibleProviders = providers.filter((provider) => asRecord(provider.details).ui_hidden !== "true");
   const readyProviders = visibleProviders.filter((p) => p.installed && p.health === "ok");
   expect(readyProviders.length).toBeGreaterThan(0);
 

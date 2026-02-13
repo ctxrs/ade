@@ -3,6 +3,15 @@ import { seedDummyWorkspace, startStreamingMessages } from "./utils/seedDummyWor
 
 const isLargeScale = process.env.CTX_E2E_SCALE === "large";
 
+type E2EWindow = Window & {
+  __ctxE2E?: {
+    workspaceStream?: {
+      close?: () => void;
+      getConnectionState?: () => string | null;
+    };
+  };
+};
+
 test("ws: recovers from a single stream drop in a large workspace", async ({ page, request }) => {
   test.skip(!isLargeScale, "CTX_E2E_SCALE=large only");
 
@@ -43,25 +52,25 @@ test("ws: recovers from a single stream drop in a large workspace", async ({ pag
 
   await expect
     .poll(async () =>
-      page.evaluate(() => typeof (window as any).__ctxE2E?.workspaceStream?.getConnectionState === "function"),
+      page.evaluate(() => typeof (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState === "function"),
     )
     .toBe(true);
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
 
   const dropTime = Date.now();
   await page.evaluate(() => {
-    (window as any).__ctxE2E?.workspaceStream?.close?.();
+    (window as E2EWindow).__ctxE2E?.workspaceStream?.close?.();
   });
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("disconnected");
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
 
   const sessionView = page.getByTestId("session-view");

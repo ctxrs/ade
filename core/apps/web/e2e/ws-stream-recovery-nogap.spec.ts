@@ -1,6 +1,16 @@
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
+type E2EWindow = Window & {
+  __ctxE2E?: {
+    getSessionHeadMessages?: (sessionId: string) => string[];
+    workspaceStream?: {
+      close?: () => void;
+      getConnectionState?: () => string | null;
+    };
+  };
+};
+
 test("ws: recovery keeps all streamed messages across tasks", async ({ page, request }) => {
   await page.addInitScript(() => {
     window.sessionStorage.setItem("ctxE2E", "1");
@@ -20,20 +30,20 @@ test("ws: recovery keeps all streamed messages across tasks", async ({ page, req
 
   await expect
     .poll(async () =>
-      page.evaluate(() => typeof (window as any).__ctxE2E?.getSessionHeadMessages === "function"),
+      page.evaluate(() => typeof (window as E2EWindow).__ctxE2E?.getSessionHeadMessages === "function"),
     )
     .toBe(true);
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
 
   await page.evaluate(() => {
-    (window as any).__ctxE2E?.workspaceStream?.close?.();
+    (window as E2EWindow).__ctxE2E?.workspaceStream?.close?.();
   });
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("disconnected");
 
   const taskIds = seed.taskIds.slice(0, 3);
@@ -62,7 +72,7 @@ test("ws: recovery keeps all streamed messages across tasks", async ({ page, req
     .poll(async () =>
       page.evaluate(
         ({ sessionIds: ids, expected }) => {
-          const api = (window as any).__ctxE2E;
+          const api = (window as E2EWindow).__ctxE2E;
           if (!api || typeof api.getSessionHeadMessages !== "function") {
             return expected.flat();
           }

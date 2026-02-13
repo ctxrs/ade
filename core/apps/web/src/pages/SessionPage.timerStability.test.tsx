@@ -3,7 +3,7 @@ import { act, render } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionView } from "./SessionPage";
 
-const sessionEntries = vi.hoisted(() => ({ map: {} as Record<string, any> }));
+const sessionEntries = vi.hoisted(() => ({ map: {} as Record<string, unknown> }));
 const focusTaskSpy = vi.hoisted(() => vi.fn());
 const updateSettingsSpy = vi.hoisted(() => vi.fn());
 
@@ -139,9 +139,14 @@ const buildSessionEntry = (sessionId: string, taskId: string, startedAtMs: numbe
 };
 
 beforeAll(() => {
-  if (typeof (globalThis as any).localStorage?.getItem !== "function") {
+  const globalWithMocks = globalThis as typeof globalThis & {
+    localStorage?: Storage;
+    ResizeObserver?: typeof ResizeObserver;
+    IntersectionObserver?: typeof IntersectionObserver;
+  };
+  if (typeof globalWithMocks.localStorage?.getItem !== "function") {
     const store = new Map<string, string>();
-    (globalThis as any).localStorage = {
+    globalWithMocks.localStorage = {
       getItem: (key: string) => (store.has(key) ? store.get(key) ?? null : null),
       setItem: (key: string, value: string) => {
         store.set(key, String(value));
@@ -152,6 +157,10 @@ beforeAll(() => {
       clear: () => {
         store.clear();
       },
+      key: (index: number) => Array.from(store.keys())[index] ?? null,
+      get length() {
+        return store.size;
+      },
     };
   }
   if (!("ResizeObserver" in globalThis)) {
@@ -160,7 +169,7 @@ beforeAll(() => {
       unobserve() {}
       disconnect() {}
     }
-    (globalThis as any).ResizeObserver = ResizeObserver;
+    globalWithMocks.ResizeObserver = ResizeObserver;
   }
   if (!("IntersectionObserver" in globalThis)) {
     class IntersectionObserver {
@@ -168,7 +177,8 @@ beforeAll(() => {
       unobserve() {}
       disconnect() {}
     }
-    (globalThis as any).IntersectionObserver = IntersectionObserver;
+    globalWithMocks.IntersectionObserver =
+      IntersectionObserver as unknown as typeof globalThis.IntersectionObserver;
   }
 });
 

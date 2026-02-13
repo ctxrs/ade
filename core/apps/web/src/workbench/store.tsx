@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore } from "react";
 import { randomUuid } from "../utils/randomUuid";
+import { errorMessage } from "../utils/errorMessage";
 import type { WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { LayoutNode, PersistedWorkbenchWindowV1, WorkbenchDraft, WorkbenchScrollState, WorkbenchTab } from "./types";
 import {
@@ -312,20 +313,20 @@ export class WorkbenchStore {
     const waitMs = Math.max(0, Math.min(5_000, typeof delayMs === "number" ? delayMs : 250));
     if (waitMs === 0) {
       const { workspaceId, windowId, window } = this.snapshot;
-      saveWorkbenchWindowV1Immediate(workspaceId, windowId, window).catch((e: any) => {
+      saveWorkbenchWindowV1Immediate(workspaceId, windowId, window).catch((e: unknown) => {
         this.persistEnabled = false;
         this.snapshot = { ...this.snapshot, persistEnabled: false };
-        this.addWarning(`Workbench persistence disabled: ${e?.message ?? String(e)}`);
+        this.addWarning(`Workbench persistence disabled: ${errorMessage(e)}`);
       });
       return;
     }
     this.persistTimer = window.setTimeout(() => {
       this.persistTimer = null;
       const { workspaceId, windowId, window } = this.snapshot;
-      saveWorkbenchWindowV1Immediate(workspaceId, windowId, window).catch((e: any) => {
+      saveWorkbenchWindowV1Immediate(workspaceId, windowId, window).catch((e: unknown) => {
         this.persistEnabled = false;
         this.snapshot = { ...this.snapshot, persistEnabled: false };
-        this.addWarning(`Workbench persistence disabled: ${e?.message ?? String(e)}`);
+        this.addWarning(`Workbench persistence disabled: ${errorMessage(e)}`);
       });
     }, waitMs);
   }
@@ -352,10 +353,10 @@ export class WorkbenchStore {
         this.snapshot = { ...this.snapshot, window: { ...this.snapshot.window, scrollByKey: normalized } };
         this.schedulePersistWindow(0);
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       this.persistEnabled = false;
       this.snapshot = { ...this.snapshot, persistEnabled: false };
-      this.addWarning(`IndexedDB unavailable: ${e?.message ?? String(e)}`);
+      this.addWarning(`IndexedDB unavailable: ${errorMessage(e)}`);
     } finally {
       this.snapshot = { ...this.snapshot, hydrated: true };
       this.publish();
@@ -565,8 +566,8 @@ export class WorkbenchStore {
           this.snapshot = { ...this.snapshot, drafts: { ...this.snapshot.drafts, loadedKeys: nextLoaded } };
           this.publish();
         }
-      } catch (e: any) {
-        this.addWarning(`Draft persistence error: ${e?.message ?? String(e)}`);
+      } catch (e: unknown) {
+        this.addWarning(`Draft persistence error: ${errorMessage(e)}`);
       } finally {
         this.draftLoadsInFlight.delete(key);
       }
@@ -617,8 +618,8 @@ export class WorkbenchStore {
 
     try {
       await saveWorkbenchDraftV1(this.snapshot.workspaceId, key, draft);
-    } catch (e: any) {
-      this.addWarning(`Draft persistence failed: ${e?.message ?? String(e)}`);
+    } catch (e: unknown) {
+      this.addWarning(`Draft persistence failed: ${errorMessage(e)}`);
     }
   };
 
@@ -628,8 +629,8 @@ export class WorkbenchStore {
     if (existingTimer) window.clearTimeout(existingTimer);
     const timer = window.setTimeout(() => {
       this.draftTimers.delete(key);
-      saveWorkbenchDraftV1(this.snapshot.workspaceId, key, draft).catch((e: any) => {
-        this.addWarning(`Draft persistence failed: ${e?.message ?? String(e)}`);
+      saveWorkbenchDraftV1(this.snapshot.workspaceId, key, draft).catch((e: unknown) => {
+        this.addWarning(`Draft persistence failed: ${errorMessage(e)}`);
       });
     }, 200);
     this.draftTimers.set(key, timer);

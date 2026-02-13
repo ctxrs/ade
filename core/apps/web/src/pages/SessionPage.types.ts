@@ -65,10 +65,10 @@ export type ThreadItem =
       tool_kind: string;
       title: string;
       status: string;
-      locations: Array<{ path?: string; range?: any }>;
-      input: any;
+      locations: Array<{ path?: string; range?: unknown }>;
+      input: unknown;
       output_text: string;
-      raw: any;
+      raw: unknown;
       updates_seen: number;
       has_details?: boolean;
     }
@@ -78,7 +78,7 @@ export type ThreadItem =
       turn_id: string;
       created_at: string;
       tool_call_id: string;
-      input: any;
+      input: unknown;
       answers?: Record<string, string>;
       outcome?: "submitted" | "cancelled";
       answered: boolean;

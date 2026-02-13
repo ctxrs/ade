@@ -5,7 +5,14 @@ import path from "path";
 import { execFileSync, execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
-const readId = (v: any): string => (typeof v === "string" ? v : "");
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+const readId = (value: unknown): string => (typeof value === "string" ? value : "");
 
 test("workbench: refresh keeps selection, even for older sessions", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
@@ -50,44 +57,52 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
 
   const snapshotResp = await page.request.get(`/api/workspaces/${workspaceId}/active_snapshot`);
   expect(snapshotResp.ok()).toBeTruthy();
-  const snapshot = (await snapshotResp.json()) as any;
+  const snapshot = asRecord(await snapshotResp.json());
+  const activeTasks = asArray(asRecord(snapshot.active).tasks).map((task) => asRecord(task));
   const taskSummary =
-    snapshot?.active?.tasks?.find((t: any) => String(t?.task?.title ?? "") === "hello refresh") ??
-    snapshot?.active?.tasks?.[0];
+    activeTasks.find((task) => String(asRecord(task.task).title ?? "") === "hello refresh") ?? activeTasks[0];
   expect(taskSummary).toBeTruthy();
-  const taskId = readId(taskSummary?.task?.id);
-  const sessionSummary = taskSummary?.sessions?.[0];
-  const primarySessionId = readId(taskSummary?.primary_session?.session?.id);
-  let sessionId =
-    readId(sessionSummary?.session?.id) || primarySessionId || readId(taskSummary?.task?.primary_session_id);
+  const taskId = readId(asRecord(taskSummary?.task).id);
+  const sessionSummary = asRecord(asArray(taskSummary?.sessions)[0]);
+  const primarySessionId = readId(asRecord(asRecord(taskSummary?.primary_session).session).id);
+  let sessionId = readId(asRecord(sessionSummary.session).id) || primarySessionId || readId(asRecord(taskSummary?.task).primary_session_id);
   if (!sessionId) {
     const sessionsResp = await page.request.get(`/api/tasks/${taskId}/sessions`);
     if (sessionsResp.ok()) {
-      const sessions = (await sessionsResp.json()) as any[];
-      sessionId = readId(sessions?.[0]?.id);
+      const sessions = asArray(await sessionsResp.json()).map((session) => asRecord(session));
+      sessionId = readId(sessions[0]?.id);
     }
   }
   expect(sessionId).toBeTruthy();
 
   const healthResp = await page.request.get("/api/health");
   expect(healthResp.ok()).toBeTruthy();
-  const health = (await healthResp.json()) as any;
+  const health = asRecord(await healthResp.json());
   const dataRoot = String(health.data_root ?? "");
   expect(dataRoot).toBeTruthy();
 
   const dbPath = path.join(dataRoot, "db", "workspaces", workspaceId!, "db.sqlite");
-  const sqliteJson = (sql: string) => {
+  const sqliteJson = <T extends Record<string, unknown>>(sql: string): T[] => {
     const out = execFileSync("sqlite3", ["-json", dbPath, sql], { encoding: "utf8" }).trim();
-    return out ? (JSON.parse(out) as any[]) : [];
+    const parsed = out ? (JSON.parse(out) as unknown) : [];
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
   };
 
   const shiftMs = 2 * 24 * 60 * 60 * 1000;
   const shift = (iso: string) => new Date(Date.parse(iso) - shiftMs).toISOString();
 
-  const taskRow = sqliteJson(`SELECT created_at, updated_at FROM tasks WHERE id='${taskId}'`)[0];
-  const sessionRow = sqliteJson(`SELECT created_at, updated_at FROM sessions WHERE id='${sessionId}'`)[0];
-  const messageRows = sqliteJson(`SELECT id, created_at FROM messages WHERE session_id='${sessionId}'`);
-  const eventRows = sqliteJson(`SELECT id, created_at FROM session_events WHERE session_id='${sessionId}'`);
+  const taskRow = sqliteJson<{ created_at: string; updated_at: string }>(
+    `SELECT created_at, updated_at FROM tasks WHERE id='${taskId}'`,
+  )[0];
+  const sessionRow = sqliteJson<{ created_at: string; updated_at: string }>(
+    `SELECT created_at, updated_at FROM sessions WHERE id='${sessionId}'`,
+  )[0];
+  const messageRows = sqliteJson<{ id: string; created_at: string }>(
+    `SELECT id, created_at FROM messages WHERE session_id='${sessionId}'`,
+  );
+  const eventRows = sqliteJson<{ id: string; created_at: string }>(
+    `SELECT id, created_at FROM session_events WHERE session_id='${sessionId}'`,
+  );
 
   const sqlUpdates = [
     `PRAGMA busy_timeout=5000;`,

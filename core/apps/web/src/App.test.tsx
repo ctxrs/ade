@@ -8,7 +8,8 @@ vi.mock("./state/uiStateStore", () => ({
 }));
 
 beforeEach(() => {
-  (globalThis as any).fetch = vi.fn(async () => {
+  const globalWithFetch = globalThis as typeof globalThis & { fetch: typeof fetch };
+  globalWithFetch.fetch = vi.fn(async () => {
     return new Response(JSON.stringify([]), {
       status: 200,
       headers: { "Content-Type": "application/json" },

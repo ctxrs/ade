@@ -99,7 +99,7 @@ export async function startMicPcmStream(opts: StartMicPcmStreamOpts): Promise<Mi
       }
       pcmCarry = combined.slice(offset);
       gotAnySamples = true;
-    } catch (e: any) {
+    } catch (e: unknown) {
       opts.onError?.(e instanceof Error ? e : new Error(String(e)));
     }
   };

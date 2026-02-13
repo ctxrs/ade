@@ -21,7 +21,7 @@ type SeedOptions = {
   toolSummaryFixtures?: Array<{
     kind: string;
     title?: string;
-    input?: any;
+    input?: unknown;
     output_text?: string;
   }>;
   awaitTurnCompletion?: boolean;
@@ -45,7 +45,7 @@ type StreamOptions = {
   toolSummaryFixtures?: Array<{
     kind: string;
     title?: string;
-    input?: any;
+    input?: unknown;
     output_text?: string;
   }>;
 };
@@ -110,7 +110,7 @@ function initRepo(): string {
   return repo;
 }
 
-async function apiPost<T>(request: APIRequestContext, url: string, data: any): Promise<T> {
+async function apiPost<T>(request: APIRequestContext, url: string, data: unknown): Promise<T> {
   const resp = await request.post(url, { data });
   if (!resp.ok()) {
     throw new Error(`seed request failed: ${url} (${resp.status()})`);
@@ -185,7 +185,7 @@ export async function seedDummyWorkspace(
             const snapshot = await apiGet<{
               head: {
                 turns: Array<{ status: string; tool_total?: number | null }>;
-                tool_summaries?: any[];
+                tool_summaries?: unknown[];
               };
             }>(request, `/api/sessions/${session.id}/snapshot?limit=1`);
             const head = snapshot?.head;

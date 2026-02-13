@@ -15,6 +15,11 @@ type E2ETerminalClientHandle = {
   getConnectionStatus: () => TerminalConnectionStatus;
 };
 
+type WindowWithE2ETerminalHooks = Window & {
+  __ctxE2ETerminalClients?: Map<string, E2ETerminalClientHandle>;
+  __ctxE2ETerminals?: Map<string, Terminal>;
+};
+
 function getE2ETerminalClientRegistry(): Map<string, E2ETerminalClientHandle> | null {
   if (typeof window === "undefined") return null;
   try {
@@ -22,11 +27,11 @@ function getE2ETerminalClientRegistry(): Map<string, E2ETerminalClientHandle> | 
   } catch {
     return null;
   }
-  const w = window as any;
+  const w = window as WindowWithE2ETerminalHooks;
   if (!w.__ctxE2ETerminalClients) {
     w.__ctxE2ETerminalClients = new Map<string, E2ETerminalClientHandle>();
   }
-  return w.__ctxE2ETerminalClients as Map<string, E2ETerminalClientHandle>;
+  return w.__ctxE2ETerminalClients;
 }
 
 function getE2ETerminalRegistry(): Map<string, Terminal> | null {
@@ -38,11 +43,11 @@ function getE2ETerminalRegistry(): Map<string, Terminal> | null {
   } catch {
     return null;
   }
-  const w = window as any;
+  const w = window as WindowWithE2ETerminalHooks;
   if (!w.__ctxE2ETerminals) {
     w.__ctxE2ETerminals = new Map<string, Terminal>();
   }
-  return w.__ctxE2ETerminals as Map<string, Terminal>;
+  return w.__ctxE2ETerminals;
 }
 
 export type TerminalClient = {

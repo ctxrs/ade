@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { test, expect } from "./fixtures";
+import type { APIRequestContext } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 import { analyzeScrollJankVideo, canUseFfmpeg } from "./utils/videoJankAnalyzer";
 
@@ -11,7 +12,7 @@ test.use({ video: shouldRun ? "on" : "off" });
 const describe = shouldRun ? test.describe : test.describe.skip;
 
 describe("workbench: scrollback jank video", () => {
-  async function addLongMessages(request: any, sessionId: string, count: number) {
+  async function addLongMessages(request: APIRequestContext, sessionId: string, count: number) {
     const longText = Array.from({ length: 220 }, (_, i) => `history line ${i + 1}`).join("\n");
     for (let i = 0; i < count; i += 1) {
       await request.post(`/api/sessions/${sessionId}/messages`, {

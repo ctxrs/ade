@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
+import type { APIRequestContext } from "playwright/test";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 const initRepo = (): string => {
@@ -16,7 +17,7 @@ const initRepo = (): string => {
   return repo;
 };
 
-const enableTauriDictation = async (request: any) => {
+const enableTauriDictation = async (request: APIRequestContext) => {
   const resp = await request.post("/api/settings", {
     data: {
       dictation: {

@@ -5,6 +5,14 @@ import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
+type OptimisticWindow = Window & {
+  __sendClickAt?: number;
+  __optimisticHeaderSeen?: boolean;
+  __optimisticHeaderDisappeared?: boolean;
+  __optimisticHeaderDuplicated?: boolean;
+  __optimisticHeaderItemId?: string | null;
+};
+
 test("workbench: optimistic active-session message does not flash", async ({ page }) => {
   test.setTimeout(120000);
   await page.setViewportSize({ width: 1400, height: 900 });
@@ -58,7 +66,7 @@ test("workbench: optimistic active-session message does not flash", async ({ pag
   await sessionComposer.fill(prompt);
 
   await page.evaluate((promptText: string) => {
-    const w = window as any;
+    const w = window as OptimisticWindow;
     w.__sendClickAt = performance.now();
     w.__optimisticHeaderSeen = false;
     w.__optimisticHeaderDisappeared = false;
@@ -105,7 +113,10 @@ test("workbench: optimistic active-session message does not flash", async ({ pag
 
   await expect(header).toBeVisible({ timeout: 2000 });
   await expect(header).toHaveCount(1);
-  const elapsedMs = await page.evaluate(() => performance.now() - (window as any).__sendClickAt);
+  const elapsedMs = await page.evaluate(() => {
+    const w = window as OptimisticWindow;
+    return performance.now() - Number(w.__sendClickAt ?? 0);
+  });
   expect(elapsedMs).toBeLessThan(500);
   const headerItemId = await header.evaluate((node) =>
     node.closest("[data-thread-item-id]")?.getAttribute("data-thread-item-id"),
@@ -125,7 +136,7 @@ test("workbench: optimistic active-session message does not flash", async ({ pag
   }
 
   const { headerDisappeared, headerDuplicated } = await page.evaluate(() => {
-    const w = window as any;
+    const w = window as OptimisticWindow;
     return {
       headerDisappeared: Boolean(w.__optimisticHeaderDisappeared),
       headerDuplicated: Boolean(w.__optimisticHeaderDuplicated),

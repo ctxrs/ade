@@ -93,10 +93,15 @@ export type DesktopCodexLoginRelayReq = {
   completion_token: string;
 };
 
+type TauriGlobals = {
+  __TAURI_INTERNALS__?: unknown;
+  __TAURI__?: unknown;
+};
+
 export const isDesktopApp = (): boolean => {
   try {
-    const g = globalThis as any;
-    return Boolean(g?.__TAURI_INTERNALS__ || g?.__TAURI__);
+    const g = globalThis as typeof globalThis & TauriGlobals;
+    return Boolean(g.__TAURI_INTERNALS__ || g.__TAURI__);
   } catch {
     return false;
   }
@@ -141,7 +146,7 @@ export const openExternalLink = async (href: string): Promise<boolean> => {
   }
 };
 
-const invoke = async <T>(cmd: string, args?: any): Promise<T> => {
+const invoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
   const mod = await import("@tauri-apps/api/core");
   return mod.invoke<T>(cmd, args);
 };
@@ -255,8 +260,8 @@ export const desktopUploadBlob = async (args: {
   bytes: number[];
   mime_type: string;
   name?: string | null;
-}): Promise<any> =>
-  invoke<any>("desktop_upload_blob", args);
+}): Promise<unknown> =>
+  invoke<unknown>("desktop_upload_blob", args);
 
 export const desktopSetOpenWorkspaces = async (workspace_ids: string[]): Promise<void> =>
   invoke<void>("desktop_set_open_workspaces", { workspace_ids });

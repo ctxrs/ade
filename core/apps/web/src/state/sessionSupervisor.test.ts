@@ -9,7 +9,8 @@ import type {
   SessionTurn,
   WorkspaceActiveSnapshotEvent,
 } from "../api/client";
-import type { WorkspaceActiveSnapshotEventSource } from "./workspaceActiveSnapshotStore";
+import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
+import type { WorkspaceActiveSnapshotEventSource, WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
 
 vi.mock("../api/client", () => {
   const idToString = (id: string | null | undefined): string => {
@@ -66,7 +67,31 @@ const mkSession = (sessionId: string): Session => ({
   status: "active",
 });
 
-const mkWorkspaceSnapshotState = () => ({
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+type TestInternalEntry = {
+  turnsHydrated: boolean;
+  messages: Message[];
+  queue: Message[];
+  lastEventSeq?: number;
+  loadState: "pending_hydration" | "live" | "recovering" | "fatal";
+};
+
+type SessionSupervisorInternals = {
+  entries: Map<string, TestInternalEntry>;
+  ensureEntry: (sessionId: string) => TestInternalEntry;
+  handleReplicaPatches: (patches: SessionReplicaPatch[]) => void;
+};
+
+const asSupervisorInternals = (value: unknown): SessionSupervisorInternals => value as SessionSupervisorInternals;
+
+const getSessionHeadMock = vi.mocked(getSessionHead);
+const getSessionSnapshotMock = vi.mocked(getSessionSnapshot);
+
+const mkWorkspaceSnapshotState = (): WorkspaceActiveSnapshotState => ({
   workspaceId: "ws-1",
   initialized: true,
   connection: "connected" as const,
@@ -105,18 +130,20 @@ describe("SessionSupervisor", () => {
       },
     ];
 
-    (getSessionSnapshot as any).mockResolvedValue({
+    getSessionSnapshotMock.mockResolvedValue({
       summary: {
         session: mkSession(sessionId),
       },
     });
-    (getSessionHead as any).mockResolvedValue({
+    getSessionHeadMock.mockResolvedValue({
       session: mkSession(sessionId),
       turns: [] as SessionTurn[],
       events: [] as SessionEvent[],
       messages: headMessages,
       last_event_seq: 1,
       has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
     });
 
     const sup = new SessionSupervisor();
@@ -133,18 +160,20 @@ describe("SessionSupervisor", () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-2";
-    (getSessionSnapshot as any).mockResolvedValue({
+    getSessionSnapshotMock.mockResolvedValue({
       summary: {
         session: mkSession(sessionId),
       },
     });
-    (getSessionHead as any).mockResolvedValue({
+    getSessionHeadMock.mockResolvedValue({
       session: mkSession(sessionId),
       turns: [] as SessionTurn[],
       events: [] as SessionEvent[],
       messages: [] as Message[],
       last_event_seq: 0,
       has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
     });
 
     const sup = new SessionSupervisor();
@@ -233,7 +262,7 @@ describe("SessionSupervisor", () => {
 
     const sessionId = "session-recovery";
     const now = new Date().toISOString();
-    const activeState = mkWorkspaceSnapshotState() as any;
+    const activeState = mkWorkspaceSnapshotState();
     activeState.activeIds = ["task-recovery"];
     activeState.tasksById = {
       "task-recovery": {
@@ -324,12 +353,12 @@ describe("SessionSupervisor", () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-transient-order";
-    (getSessionSnapshot as any).mockResolvedValue({
+    getSessionSnapshotMock.mockResolvedValue({
       summary: {
         session: mkSession(sessionId),
       },
     });
-    (getSessionHead as any).mockResolvedValue({
+    getSessionHeadMock.mockResolvedValue({
       session: mkSession(sessionId),
       turns: [] as SessionTurn[],
       events: [] as SessionEvent[],
@@ -369,7 +398,7 @@ describe("SessionSupervisor", () => {
         event_type: "assistant_chunk",
         payload_json: { content_fragment: fragment },
         created_at: new Date(t).toISOString(),
-      } as any as SessionEvent;
+      } as unknown as SessionEvent;
       const deltaEvent: WorkspaceActiveSnapshotEvent = {
         type: "session_head_delta",
         workspace_id: "ws-1",
@@ -389,7 +418,7 @@ describe("SessionSupervisor", () => {
     sendChunk("e3", "c", now + 2);
 
     const entry = sup.getSnapshot().sessions[sessionId];
-    const fragments = (entry?.events ?? []).map((e) => String((e as any).payload_json?.content_fragment ?? ""));
+    const fragments = (entry?.events ?? []).map((e) => String(asRecord(e.payload_json).content_fragment ?? ""));
     expect(fragments).toEqual(["a", "b", "c"]);
   });
 
@@ -397,18 +426,20 @@ describe("SessionSupervisor", () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-2b";
-    (getSessionSnapshot as any).mockResolvedValue({
+    getSessionSnapshotMock.mockResolvedValue({
       summary: {
         session: mkSession(sessionId),
       },
     });
-    (getSessionHead as any).mockResolvedValue({
+    getSessionHeadMock.mockResolvedValue({
       session: mkSession(sessionId),
       turns: [] as SessionTurn[],
       events: [] as SessionEvent[],
       messages: [] as Message[],
       last_event_seq: 0,
       has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
     });
 
     const sup = new SessionSupervisor();
@@ -434,14 +465,14 @@ describe("SessionSupervisor", () => {
 
     const now = new Date().toISOString();
     const turnId = "turn-1";
-    const sendDelta = (seq: number, event_type: SessionEvent["event_type"], payload_json: any = {}) => {
+    const sendDelta = (seq: number, event_type: SessionEvent["event_type"], payload_json: unknown = {}) => {
       const event: SessionEvent = {
         seq,
         id: "e" + seq,
         session_id: sessionId,
         turn_id: turnId,
         event_type,
-        payload_json,
+        payload_json: asRecord(payload_json),
         created_at: now,
       };
       const deltaEvent: WorkspaceActiveSnapshotEvent = {
@@ -472,7 +503,7 @@ describe("SessionSupervisor", () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-3";
-    (getSessionSnapshot as any).mockResolvedValue({
+    getSessionSnapshotMock.mockResolvedValue({
       summary: {
         session: mkSession(sessionId),
       },
@@ -483,6 +514,8 @@ describe("SessionSupervisor", () => {
         messages: [] as Message[],
         last_event_seq: 0,
         has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
       },
     });
 
@@ -615,7 +648,9 @@ describe("SessionSupervisor", () => {
     };
     listeners.forEach((listener) => listener(gapEvent));
 
-    const internalEntry = (sup as any).entries.get(sessionId);
+    const internalEntry = asSupervisorInternals(sup).entries.get(sessionId);
+    expect(internalEntry).toBeDefined();
+    if (!internalEntry) throw new Error("Expected internal entry to exist");
     expect(internalEntry.turnsHydrated).toBe(false);
     expect(internalEntry.messages.length).toBe(1);
     expect(internalEntry.lastEventSeq).toBe(priorSeq);
@@ -630,7 +665,7 @@ describe("SessionSupervisor", () => {
 
     const sessionId = "session-replace-local-only";
     const sup = new SessionSupervisor();
-    const internalEntry = (sup as any).ensureEntry(sessionId);
+    const internalEntry = asSupervisorInternals(sup).ensureEntry(sessionId);
     const now = Date.now();
 
     const serverMessage: Message = {
@@ -657,7 +692,7 @@ describe("SessionSupervisor", () => {
     internalEntry.messages = [serverMessage, queuedLocalMessage];
     internalEntry.queue = [queuedLocalMessage];
 
-    (sup as any).handleReplicaPatches([
+    asSupervisorInternals(sup).handleReplicaPatches([
       {
         op: "replace",
         sessionId,
@@ -755,12 +790,12 @@ describe("SessionSupervisor", () => {
     const sessionId = "session-3";
     const turnId = "turn-1";
 
-    (getSessionSnapshot as any).mockResolvedValue({
+    getSessionSnapshotMock.mockResolvedValue({
       summary: {
         session: mkSession(sessionId),
       },
     });
-    (getSessionHead as any).mockResolvedValue({
+    getSessionHeadMock.mockResolvedValue({
       session: mkSession(sessionId),
       turns: [
         {
@@ -800,12 +835,14 @@ describe("SessionSupervisor", () => {
       messages: [] as Message[],
       last_event_seq: 0,
       has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
     });
 
     const sup = new SessionSupervisor();
     sup.openSession(sessionId, { mode: "archived" });
 
-    await waitForCondition(() => (getSessionHead as any).mock.calls.length > 0);
+    await waitForCondition(() => getSessionHeadMock.mock.calls.length > 0);
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.turnToolsByTurnId[turnId]?.length === 1);
 
     const entry = sup.getSnapshot().sessions[sessionId];
@@ -858,11 +895,11 @@ describe("SessionSupervisor", () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-active-no-head";
-    (getSessionHead as any).mockRejectedValue(new Error("Load failed"));
-    (getSessionSnapshot as any).mockRejectedValue(new Error("Load failed"));
+    getSessionHeadMock.mockRejectedValue(new Error("Load failed"));
+    getSessionSnapshotMock.mockRejectedValue(new Error("Load failed"));
 
     const now = new Date().toISOString();
-    const activeState = mkWorkspaceSnapshotState() as any;
+    const activeState = mkWorkspaceSnapshotState();
     activeState.activeIds = ["task-active"];
     activeState.tasksById = {
       "task-active": {
@@ -925,16 +962,18 @@ describe("SessionSupervisor", () => {
       delivery: "immediate",
       created_at: now,
     };
-    (getSessionHead as any).mockResolvedValue({
+    getSessionHeadMock.mockResolvedValue({
       session: { ...mkSession(sessionId), task_id: "task-archived", status: "completed" },
       turns: [] as SessionTurn[],
       events: [] as SessionEvent[],
       messages: [headMessage],
       last_event_seq: 1,
       has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
     });
 
-    const archivedState = mkWorkspaceSnapshotState() as any;
+    const archivedState = mkWorkspaceSnapshotState();
     archivedState.archivedIds = ["task-archived"];
     archivedState.tasksById = {
       "task-archived": {
@@ -982,9 +1021,9 @@ describe("SessionSupervisor", () => {
 
     const sessionId = "session-archived-fatal";
     const now = new Date().toISOString();
-    (getSessionHead as any).mockRejectedValue(new Error("Load failed"));
+    getSessionHeadMock.mockRejectedValue(new Error("Load failed"));
 
-    const archivedState = mkWorkspaceSnapshotState() as any;
+    const archivedState = mkWorkspaceSnapshotState();
     archivedState.archivedIds = ["task-archived-fatal"];
     archivedState.tasksById = {
       "task-archived-fatal": {

@@ -195,7 +195,7 @@ export type SubagentInvocation = {
   parent_session_id: string;
   parent_turn_id?: string | null;
   requested_count: number;
-  request_json?: any;
+  request_json?: Record<string, unknown> | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -682,7 +682,7 @@ export type SessionEvent = {
   run_id?: string | null;
   turn_id?: string | null;
   event_type: SessionEventType;
-  payload_json: any;
+  payload_json: Record<string, unknown> | null;
   transient?: boolean;
   created_at: string;
 };
@@ -706,7 +706,7 @@ export type SessionTurn = {
   updated_at: string;
   assistant_partial?: string | null;
   thought_partial?: string | null;
-  metrics_json?: any;
+  metrics_json?: Record<string, unknown> | null;
   tool_total: number;
   tool_pending: number;
   tool_running: number;
@@ -721,7 +721,7 @@ export type SessionTurnTool = {
   tool_kind?: string | null;
   title?: string | null;
   status?: string | null;
-  input_json?: any;
+  input_json?: Record<string, unknown> | null;
   output_text?: string | null;
   input_truncated?: boolean | null;
   input_original_bytes?: number | null;
@@ -738,7 +738,7 @@ export type SessionTurnToolSummary = {
   tool_kind?: string | null;
   title?: string | null;
   status?: string | null;
-  input_preview?: any;
+  input_preview?: Record<string, unknown> | null;
   output_preview?: string | null;
   input_truncated?: boolean | null;
   input_original_bytes?: number | null;
@@ -789,7 +789,7 @@ export type Diagnostics = {
   platform: { os: string; arch: string };
   logs: { dir: string; files: { name: string; bytes: number; modified_utc?: string | null }[] };
   providers: ProviderStatus[];
-  managed_installs: any;
+  managed_installs: Record<string, unknown>;
 };
 
 export type ResourceProcess = {

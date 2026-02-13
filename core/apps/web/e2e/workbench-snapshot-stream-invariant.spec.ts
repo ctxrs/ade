@@ -4,6 +4,23 @@ import { clearDiagnostics, expectNoUnexpectedDiagnostics, getDiagnostics } from 
 import { expectWsPathOnCanonicalOrigin } from "./utils/wsUrls";
 
 const readId = (value: unknown): string => (typeof value === "string" ? value : "");
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+type E2EWorkspaceStream = {
+  getConnectionState?: () => string;
+  dispatchMessage?: (payload: unknown) => void;
+  close?: () => void;
+};
+
+type E2EWindow = Window & {
+  __ctxE2E?: {
+    workspaceStream?: E2EWorkspaceStream;
+    getSessionHeadMessages?: (sessionId: string) => unknown[];
+    getSessionLastEventSeq?: (sessionId: string) => number;
+  };
+};
 
 test("workbench: snapshot+stream invariant keeps active sessions head-free", async ({ page, request }) => {
   const seed = await seedDummyWorkspace(request, {
@@ -16,16 +33,21 @@ test("workbench: snapshot+stream invariant keeps active sessions head-free", asy
   const sessionIdB = seed.sessionIdsByTask[seed.taskIds[1]][0];
   const snapshotResp = await request.get(`/api/workspaces/${seed.workspaceId}/active_snapshot`);
   expect(snapshotResp.ok()).toBeTruthy();
-  const snapshot = (await snapshotResp.json()) as any;
+  const snapshot = asRecord(await snapshotResp.json());
+  const active = asRecord(snapshot.active);
+  const tasks = asArray(active.tasks).map((task) => asRecord(task));
   const taskB =
-    snapshot?.active?.tasks?.find((task: any) => {
-      const primarySessionId = readId(task?.primary_session?.session?.id) || readId(task?.task?.primary_session_id);
+    tasks.find((task) => {
+      const primarySession = asRecord(task.primary_session);
+      const primarySessionData = asRecord(primarySession.session);
+      const taskData = asRecord(task.task);
+      const primarySessionId = readId(primarySessionData.id) || readId(taskData.primary_session_id);
       return primarySessionId === sessionIdB;
     }) ?? null;
   expect(taskB).toBeTruthy();
-  const fallbackSummary = taskB?.primary_session ?? taskB?.sessions?.[0] ?? null;
+  const fallbackSummary = asRecord(taskB?.primary_session ?? asArray(taskB?.sessions)[0] ?? null);
   const baseHead = (taskB?.primary_session_head ??
-    (fallbackSummary
+    (Object.keys(fallbackSummary).length > 0
       ? {
           session: fallbackSummary.session,
           turns: [],
@@ -38,8 +60,8 @@ test("workbench: snapshot+stream invariant keeps active sessions head-free", asy
           has_more_history: false,
           history_cursor: null,
         }
-      : null)) as any;
-  expect(baseHead?.session).toBeTruthy();
+      : null)) as Record<string, unknown> | null;
+  expect(asRecord(baseHead).session).toBeTruthy();
 
   const headRequests: Array<{ url: string; method: string; ts: number }> = [];
   page.on("request", (req) => {
@@ -58,10 +80,12 @@ test("workbench: snapshot+stream invariant keeps active sessions head-free", asy
   await expect(rowB).toHaveCount(1);
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
   await expect
-    .poll(async () => page.evaluate(() => typeof (window as any).__ctxE2E?.workspaceStream?.dispatchMessage === "function"))
+    .poll(async () =>
+      page.evaluate(() => typeof (window as E2EWindow).__ctxE2E?.workspaceStream?.dispatchMessage === "function"),
+    )
     .toBe(true);
   await clearDiagnostics(page);
 
@@ -91,31 +115,31 @@ test("workbench: snapshot+stream invariant keeps active sessions head-free", asy
   });
 
   await page.evaluate(() => {
-    (window as any).__ctxE2E?.workspaceStream?.close?.();
+    (window as E2EWindow).__ctxE2E?.workspaceStream?.close?.();
   });
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("disconnected");
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()), {
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()), {
       timeout: 30000,
     })
     .toBe("connected");
 
   const baselineMessages = await page.evaluate(
-    (sessionId: string) => (window as any).__ctxE2E?.getSessionHeadMessages?.(sessionId) ?? [],
+    (sessionId: string) => (window as E2EWindow).__ctxE2E?.getSessionHeadMessages?.(sessionId) ?? [],
     sessionIdB,
   );
   expect(Array.isArray(baselineMessages)).toBeTruthy();
   expect(baselineMessages.length).toBeGreaterThan(0);
   const baselineLastEventSeq = await page.evaluate(
-    (sessionId: string) => Number((window as any).__ctxE2E?.getSessionLastEventSeq?.(sessionId) ?? 0),
+    (sessionId: string) => Number((window as E2EWindow).__ctxE2E?.getSessionLastEventSeq?.(sessionId) ?? 0),
     sessionIdB,
   );
 
   await page.evaluate(
     ({ sessionId, workspaceId, afterSeq }) => {
-      const stream = (window as any).__ctxE2E?.workspaceStream;
+      const stream = (window as E2EWindow).__ctxE2E?.workspaceStream;
       if (!stream?.dispatchMessage) return;
       stream.dispatchMessage({
         type: "event",
@@ -134,7 +158,7 @@ test("workbench: snapshot+stream invariant keeps active sessions head-free", asy
     .poll(
       async () =>
         page.evaluate(
-          (sessionId: string) => (window as any).__ctxE2E?.getSessionHeadMessages?.(sessionId) ?? [],
+          (sessionId: string) => (window as E2EWindow).__ctxE2E?.getSessionHeadMessages?.(sessionId) ?? [],
           sessionIdB,
         ),
       { timeout: 20000 },

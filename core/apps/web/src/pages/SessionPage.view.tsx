@@ -86,6 +86,7 @@ import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
 import { SessionThreadPane } from "./sessionThread/SessionThreadPane";
 import { useSessionMessageListController } from "./useSessionMessageListController";
 import { useWorkbenchThreadViewModelController } from "./useWorkbenchThreadViewModelController";
+import { errorMessage } from "../utils/errorMessage";
 
 type PendingMessageEntry = {
   clientId: string;
@@ -489,7 +490,7 @@ export function SessionView({
     setOptimisticQueueRemovalIds((prev) => prev.filter((id) => id !== messageId));
   }, []);
   const shouldKeepQueueRemovalOnError = (error: unknown) => {
-    const msg = String((error as any)?.message ?? "");
+    const msg = errorMessage(error);
     return msg.startsWith("400") || msg.startsWith("404");
   };
   const mergedQueueForPanel = useMemo(
@@ -698,8 +699,8 @@ export function SessionView({
           grace_period_ms: guard.grace_period_ms ?? null,
         };
         await settingsStore.update({ provider_guard: nextGuard });
-      } catch (e: any) {
-        setProviderGuardActionError(e?.message ?? String(e));
+      } catch (e: unknown) {
+        setProviderGuardActionError(errorMessage(e));
       } finally {
         setProviderGuardActionBusy(false);
       }
@@ -949,8 +950,8 @@ export function SessionView({
     let text = "";
     try {
       text = (dictationRecording ? await stopDictation({ awaitFinal: true }) : input).trim();
-    } catch (e: any) {
-      setSendError(e?.message ? String(e.message) : String(e));
+    } catch (e: unknown) {
+      setSendError(errorMessage(e));
       setSendBusySafe(false);
       return;
     }
@@ -999,7 +1000,7 @@ export function SessionView({
       } catch {
         // best-effort
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (shouldQueue) {
         setPendingQueueMessages((prev) => prev.filter((entry) => entry.clientId !== messageId));
       } else {
@@ -1007,7 +1008,7 @@ export function SessionView({
       }
       setInput(text);
       setDraftAttachments(attachmentsToSend);
-      setSendError(e?.message ? String(e.message) : String(e));
+      setSendError(errorMessage(e));
     } finally {
       setSendBusySafe(false);
     }
@@ -1025,11 +1026,11 @@ export function SessionView({
       setPendingQueueMessages((prev) =>
         prev.filter((entry) => idToString(entry.message.id) !== messageId),
       );
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (!shouldKeepQueueRemovalOnError(e)) {
         rollbackOptimisticQueueRemoval(messageId);
       }
-      setSendError(e?.message ? String(e.message) : String(e));
+      setSendError(errorMessage(e));
     } finally {
       setQueueActionBusyId(null);
     }
@@ -1051,11 +1052,11 @@ export function SessionView({
       setPendingQueueMessages((prev) =>
         prev.filter((entry) => idToString(entry.message.id) !== mid),
       );
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (!shouldKeepQueueRemovalOnError(e)) {
         rollbackOptimisticQueueRemoval(mid);
       }
-      setSendError(e?.message ? String(e.message) : String(e));
+      setSendError(errorMessage(e));
     } finally {
       setQueueActionBusyId(null);
     }
@@ -1073,9 +1074,9 @@ export function SessionView({
     setSendError(null);
     try {
       await interruptSession(id);
-    } catch (e: any) {
+    } catch (e: unknown) {
       rollbackOptimisticQueueRemoval(mid);
-      setSendError(e?.message ? String(e.message) : String(e));
+      setSendError(errorMessage(e));
       setQueueActionBusyId(null);
       return;
     }
@@ -1084,11 +1085,11 @@ export function SessionView({
       setPendingQueueMessages((prev) =>
         prev.filter((entry) => idToString(entry.message.id) !== mid),
       );
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (!shouldKeepQueueRemovalOnError(e)) {
         rollbackOptimisticQueueRemoval(mid);
       }
-      setSendError(e?.message ? String(e.message) : String(e));
+      setSendError(errorMessage(e));
       setQueueActionBusyId(null);
       return;
     }
@@ -1116,9 +1117,9 @@ export function SessionView({
       setPendingMessages((prev) =>
         prev.map((entry) => (entry.clientId === messageId ? { ...entry, message: posted } : entry)),
       );
-    } catch (e: any) {
+    } catch (e: unknown) {
       setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== messageId));
-      setSendError(e?.message ? String(e.message) : String(e));
+      setSendError(errorMessage(e));
     } finally {
       setSendBusySafe(false);
       setQueueActionBusyId(null);
@@ -1189,7 +1190,7 @@ export function SessionView({
       out.push(...files);
       const items = dt.items;
       if (out.length === 0 && items && items.length > 0) {
-        for (const item of Array.from(items as any) as DataTransferItem[]) {
+        for (const item of Array.from(items)) {
           if (item.kind !== "file") continue;
           const f = item.getAsFile?.();
           if (f) out.push(f);
@@ -1536,8 +1537,8 @@ export function SessionView({
                     try {
                       await authenticateSession(id, authMethodId);
                       await refreshAll();
-                    } catch (e: any) {
-                      setAuthError(e?.message ?? String(e));
+                    } catch (e: unknown) {
+                      setAuthError(errorMessage(e));
                     } finally {
                       setAuthBusy(false);
                     }

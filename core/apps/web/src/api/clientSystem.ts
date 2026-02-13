@@ -22,7 +22,7 @@ export type UpdateCheck = {
   current_version: string;
   latest_version?: string | null;
   update_available: boolean;
-  manifest?: any;
+  manifest?: unknown;
 };
 
 export type DownloadAppImageUpdateResp = {

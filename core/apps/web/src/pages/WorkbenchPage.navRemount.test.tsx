@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/rea
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { VirtuosoMockContext } from "react-virtuoso";
 import { describe, it, vi, beforeAll, beforeEach, afterEach } from "vitest";
+import type { WorkbenchTab } from "../workbench/types";
 import WorkbenchPage from "./WorkbenchPage";
 
 const workspaceId = "ws-1";
@@ -40,11 +41,8 @@ const buildSessionSnap = () => ({
   },
 });
 
-const buildWorkspaceSnapshotSnap = (): any => ({
-  workspaceId,
-  initialized: true,
-  connection: "connected",
-  tasksById: {
+const buildWorkspaceSnapshotSnap = () => {
+  const tasksById: Record<string, unknown> = {
     [taskId]: {
       id: taskId,
       sortAtMs: Date.parse(baseIso),
@@ -74,7 +72,12 @@ const buildWorkspaceSnapshotSnap = (): any => ({
         },
       ],
     },
-  },
+  };
+  return {
+  workspaceId,
+  initialized: true,
+  connection: "connected",
+  tasksById,
   activeIds: [taskId],
   archivedIds: [],
   totalActive: 1,
@@ -83,12 +86,13 @@ const buildWorkspaceSnapshotSnap = (): any => ({
   hasMoreActive: false,
   hasMoreArchived: false,
   archivedLoaded: true,
-});
+  };
+};
 
 let sessionSnap = buildSessionSnap();
 let workspaceSnapshotSnap = buildWorkspaceSnapshotSnap();
 let navToken = 0;
-let activeTab: any = null;
+let activeTab: WorkbenchTab | null = null;
 let activeTaskId = taskId;
 let activeSessionId: string | null = sessionId;
 const focusNewTaskSpy = vi.fn();
@@ -232,9 +236,13 @@ vi.mock("./SessionPage", () => ({
 }));
 
 beforeAll(() => {
-  if (typeof (globalThis as any).localStorage?.getItem !== "function") {
+  const globalWithMocks = globalThis as typeof globalThis & {
+    localStorage?: Storage;
+    ResizeObserver?: typeof ResizeObserver;
+  };
+  if (typeof globalWithMocks.localStorage?.getItem !== "function") {
     const store = new Map<string, string>();
-    (globalThis as any).localStorage = {
+    globalWithMocks.localStorage = {
       getItem: (key: string) => (store.has(key) ? store.get(key) ?? null : null),
       setItem: (key: string, value: string) => {
         store.set(key, String(value));
@@ -245,6 +253,10 @@ beforeAll(() => {
       clear: () => {
         store.clear();
       },
+      key: (index: number) => Array.from(store.keys())[index] ?? null,
+      get length() {
+        return store.size;
+      },
     };
   }
   if (!("ResizeObserver" in globalThis)) {
@@ -253,7 +265,7 @@ beforeAll(() => {
       unobserve() {}
       disconnect() {}
     }
-    (globalThis as any).ResizeObserver = ResizeObserver;
+    globalWithMocks.ResizeObserver = ResizeObserver;
   }
 });
 
@@ -275,10 +287,7 @@ describe("WorkbenchPage task rename selection", () => {
     const selectSpy = vi.spyOn(HTMLInputElement.prototype, "select");
     const ui = (
       <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
-        <MemoryRouter
-          initialEntries={[`/workspaces/${workspaceId}`]}
-          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-        >
+        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
           <Routes>
             <Route path="/workspaces/:id" element={<WorkbenchPage />} />
           </Routes>
@@ -367,15 +376,12 @@ describe("WorkbenchPage archive navigation", () => {
     };
 
     const { archiveTask } = await import("../api/client");
-    const archiveDeferred = createDeferred<any>();
+    const archiveDeferred = createDeferred<Awaited<ReturnType<typeof archiveTask>>>();
     vi.mocked(archiveTask).mockReturnValueOnce(archiveDeferred.promise);
 
     const ui = (
       <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
-        <MemoryRouter
-          initialEntries={[`/workspaces/${workspaceId}`]}
-          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-        >
+        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
           <Routes>
             <Route path="/workspaces/:id" element={<WorkbenchPage />} />
           </Routes>
@@ -397,7 +403,15 @@ describe("WorkbenchPage archive navigation", () => {
     fireEvent.click(within(getTaskRow("Second task")).getByText("Second task"));
     fireEvent.click(within(getTaskRow("Starter task")).getByText("Starter task"));
 
-    archiveDeferred.resolve({ id: taskId, archived_at: baseIso });
+    archiveDeferred.resolve({
+      id: taskId,
+      workspace_id: workspaceId,
+      title: "Starter task",
+      status: "completed",
+      created_at: baseIso,
+      updated_at: baseIso,
+      archived_at: baseIso,
+    });
 
     await waitFor(() => expect(applyTaskUpdateSpy).toHaveBeenCalledTimes(1));
     expect(focusNewTaskSpy).not.toHaveBeenCalled();

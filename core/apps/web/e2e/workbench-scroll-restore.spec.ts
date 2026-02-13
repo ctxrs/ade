@@ -1,10 +1,13 @@
 import { test, expect } from "./fixtures";
+import type { APIRequestContext } from "@playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 const scrollSelector =
   ".wb-session-slot[aria-hidden=\"false\"] [data-virtuoso-scroller], .wb-session-slot[aria-hidden=\"false\"] [data-viewport-type=\"element\"], .wb-session-slot[aria-hidden=\"false\"] .thread-stack";
 
-async function addLongMessages(request: any, sessionId: string) {
+type ScrollRestoreWindow = Window & { __cls?: number };
+
+async function addLongMessages(request: APIRequestContext, sessionId: string) {
   const longText = Array.from({ length: 120 }, (_, i) => `fixture line ${i + 1}`).join("\n");
   for (let i = 0; i < 6; i++) {
     await request.post(`/api/sessions/${sessionId}/messages`, {
@@ -51,7 +54,7 @@ test("workbench: restores scroll position across session switches", async ({ pag
   await page.mouse.wheel(0, 600);
   await page.waitForTimeout(300);
 
-  const scrollBefore = await scroller.evaluate((el) => ({
+  const scrollBefore = await scroller.evaluate((el): { top: number; height: number; client: number } => ({
     top: el.scrollTop,
     height: el.scrollHeight,
     client: el.clientHeight,
@@ -60,10 +63,14 @@ test("workbench: restores scroll position across session switches", async ({ pag
   await page.waitForTimeout(300);
 
   await page.evaluate(() => {
-    (window as any).__cls = 0;
+    const win = window as ScrollRestoreWindow;
+    win.__cls = 0;
     new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
-        if (!entry.hadRecentInput) (window as any).__cls += entry.value;
+        const layoutShiftEntry = entry as PerformanceEntry & { hadRecentInput?: boolean; value?: number };
+        if (!layoutShiftEntry.hadRecentInput) {
+          win.__cls = (win.__cls ?? 0) + (layoutShiftEntry.value ?? 0);
+        }
       }
     }).observe({ type: "layout-shift", buffered: true });
   });
@@ -71,7 +78,7 @@ test("workbench: restores scroll position across session switches", async ({ pag
   await taskRowB.click();
   await page.waitForTimeout(600);
   await page.evaluate(() => {
-    (window as any).__cls = 0;
+    (window as ScrollRestoreWindow).__cls = 0;
   });
   await taskRowA.click();
   await page.waitForTimeout(600);
@@ -82,8 +89,8 @@ test("workbench: restores scroll position across session switches", async ({ pag
     return el.scrollTop;
   }, scrollSelector);
 
-  const cls = await page.evaluate(() => (window as any).__cls ?? 0);
+  const cls = await page.evaluate(() => (window as ScrollRestoreWindow).__cls ?? 0);
   expect(cls).toBeLessThanOrEqual(0.1);
   expect(scrollAfter).not.toBeNull();
-  expect(Math.abs((scrollAfter as number) - (scrollBefore as any).top)).toBeLessThanOrEqual(32);
+  expect(Math.abs((scrollAfter as number) - scrollBefore.top)).toBeLessThanOrEqual(32);
 });

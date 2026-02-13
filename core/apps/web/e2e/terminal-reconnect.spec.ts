@@ -6,6 +6,14 @@ import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 import { expectWsPathOnCanonicalOrigin } from "./utils/wsUrls";
 
+type E2ETerminalClientHandle = {
+  close?: () => void;
+};
+
+type E2ETerminalWindow = Window & {
+  __ctxE2ETerminalClients?: Map<string, E2ETerminalClientHandle>;
+};
+
 test("terminal reconnects after websocket drop", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
@@ -42,11 +50,11 @@ test("terminal reconnects after websocket drop", async ({ page }) => {
   await expect.poll(() => terminalTabs.count()).toBeGreaterThan(0);
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2ETerminalClients?.size ?? 0))
+    .poll(async () => page.evaluate(() => (window as E2ETerminalWindow).__ctxE2ETerminalClients?.size ?? 0))
     .toBeGreaterThan(0);
 
   await page.evaluate(() => {
-    const reg = (window as any).__ctxE2ETerminalClients as Map<string, any> | undefined;
+    const reg = (window as E2ETerminalWindow).__ctxE2ETerminalClients;
     if (!reg) return;
     for (const handle of reg.values()) {
       try {

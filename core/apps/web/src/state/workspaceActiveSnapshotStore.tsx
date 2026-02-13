@@ -12,6 +12,27 @@ export type { WorkspaceActiveSnapshotEventSource, WorkspaceActiveSnapshotItem, W
 
 const WorkspaceActiveSnapshotContext = createContext<WorkspaceActiveSnapshotStoreImpl | null>(null);
 
+type CtxE2EWorkspaceStream = {
+  getConnectionState?: () => WorkspaceActiveSnapshotState["connection"];
+  close?: () => void;
+  setDropMessages?: (drop: boolean) => void;
+  dispatchMessage?: (payload: unknown) => void;
+  getCanonicalUrl?: () => string | null;
+};
+
+type CtxE2EBridge = {
+  getSessionHeadMessages?: (sessionId: string) => string[];
+  getSessionHeadUserMessages?: (sessionId: string) => string[];
+  getSessionLastEventSeq?: (sessionId: string) => number | null;
+  getDiagnostics?: () => ReturnType<typeof getUiDiagnostics>;
+  clearDiagnostics?: () => void;
+  workspaceStream?: CtxE2EWorkspaceStream;
+};
+
+type WindowWithCtxE2E = Window & {
+  __ctxE2E?: CtxE2EBridge;
+};
+
 const shouldExposeE2E = (): boolean => {
   if (typeof window === "undefined") return false;
   if (window.sessionStorage.getItem("ctxE2E") === "1") return true;
@@ -52,7 +73,7 @@ export function WorkspaceActiveSnapshotProvider({
     storeRef.current?.setE2EEnabled(exposeE2E);
     if (!exposeE2E) return;
     if (!storeRef.current) return;
-    const win = window as any;
+    const win = window as WindowWithCtxE2E;
     win.__ctxE2E ??= {};
     win.__ctxE2E.getSessionHeadMessages = (sessionId: string) => {
       const head = storeRef.current?.getSessionHeadSnapshot(sessionId);

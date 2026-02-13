@@ -1,11 +1,25 @@
 import { test, expect } from "./fixtures";
+import type { APIRequestContext } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 const scrollSelector = ".wb-session-slot[aria-hidden=\"false\"] .wb-thread-scroller";
 
-const readId = (v: any): string => (typeof v === "string" ? v : "");
+const readId = (value: unknown): string => (typeof value === "string" ? value : "");
 
-async function addLongMessages(request: any, sessionId: string) {
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+type E2EWindow = Window & {
+  __ctxE2E?: {
+    getSessionHeadUserMessages?: (sessionId: string) => string[];
+  };
+};
+
+async function addLongMessages(request: APIRequestContext, sessionId: string) {
   const longText = Array.from({ length: 200 }, (_, i) => `fixture line ${i + 1}`).join("\n");
   for (let i = 0; i < 6; i++) {
     await request.post(`/api/sessions/${sessionId}/messages`, {
@@ -43,11 +57,10 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
     .poll(async () => {
       const resp = await request.get(`/api/workspaces/${seed.workspaceId}/active_snapshot`);
       if (!resp.ok()) return "";
-      const snapshot = (await resp.json()) as any;
-      const taskSummary = snapshot?.active?.tasks?.[0];
-      const sessionSummary = taskSummary?.sessions?.[0];
-      const resolved =
-        readId(sessionSummary?.session?.id) || readId(taskSummary?.task?.primary_session_id);
+      const snapshot = asRecord(await resp.json());
+      const taskSummary = asRecord(asArray(asRecord(snapshot.active).tasks)[0]);
+      const sessionSummary = asRecord(asArray(taskSummary.sessions)[0]);
+      const resolved = readId(asRecord(sessionSummary.session).id) || readId(asRecord(taskSummary.task).primary_session_id);
       sessionId = resolved;
       return resolved;
     }, { timeout: 20000 })
@@ -118,7 +131,7 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
     .poll(
       async () =>
         page.evaluate(({ id, text }) => {
-          const api = (window as any).__ctxE2E;
+          const api = (window as E2EWindow).__ctxE2E;
           return api?.getSessionHeadUserMessages?.(id)?.includes(text) ?? false;
         }, { id: sessionId, text: incoming }),
       { timeout: 20000 },

@@ -10,7 +10,7 @@ export type CreateMobileProfileRequest = {
 export type CreateMobileProfileResponse = {
   profile: MobileConnectionProfile;
   token: string;
-  qr_payload: any;
+  qr_payload: Record<string, unknown>;
 };
 
 export type MobileTunnelState = "idle" | "running" | "error";
@@ -27,7 +27,7 @@ export type MobileAccessStatus = {
 
 export type EnableMobileAccessResponse = {
   status: MobileAccessStatus;
-  qr_payload: any;
+  qr_payload: Record<string, unknown>;
   pairing_expires_at: string;
 };
 

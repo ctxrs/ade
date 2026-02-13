@@ -12,6 +12,11 @@ function isWorkbenchModeId(v: unknown): v is WorkbenchModeId {
   return typeof v === "string" && (WORKBENCH_MODES as string[]).includes(v);
 }
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
 export function composerDraftKeyNewTaskV1(workspaceId: string) {
   return `wb.composerDraft.newTask.v1.${workspaceId}`;
 }
@@ -24,11 +29,11 @@ export function loadComposerDraftV1(key: string): PersistedComposerDraftV1 | nul
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as any;
-    if (!parsed || typeof parsed !== "object") return null;
+    const parsed = asRecord(JSON.parse(raw));
+    if (!parsed || Object.keys(parsed).length === 0) return null;
     if (parsed.v !== 1) return null;
     if (typeof parsed.text !== "string") return null;
-    const modeId = isWorkbenchModeId(parsed.modeId) ? (parsed.modeId as WorkbenchModeId) : undefined;
+    const modeId = isWorkbenchModeId(parsed.modeId) ? parsed.modeId : undefined;
     return { v: 1, text: parsed.text, modeId };
   } catch {
     return null;

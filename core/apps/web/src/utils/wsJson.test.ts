@@ -9,7 +9,7 @@ describe("parseWsJson", () => {
 
   it("parses Blob JSON", async () => {
     const blob = new NodeBlob(["{\"type\":\"interim\",\"text\":\"hi\"}"], { type: "application/json" });
-    expect(await parseWsJson(blob as any)).toEqual({ type: "interim", text: "hi" });
+    expect(await parseWsJson(blob)).toEqual({ type: "interim", text: "hi" });
   });
 
   it("returns null on invalid JSON", async () => {

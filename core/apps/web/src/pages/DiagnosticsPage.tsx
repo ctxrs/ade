@@ -15,6 +15,7 @@ import {
   openLogsFolder,
 } from "../api/client";
 import { copyTextToClipboard } from "../utils/clipboard";
+import { errorMessage } from "../utils/errorMessage";
 
 export default function DiagnosticsPage() {
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
@@ -71,8 +72,8 @@ export default function DiagnosticsPage() {
     try {
       await openLogsFolder();
       appendDesktopLog("ui: requested open logs folder").catch(() => {});
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     }
   };
 
@@ -90,8 +91,8 @@ export default function DiagnosticsPage() {
       } else {
         setNotice("No update available.");
       }
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     } finally {
       setUpdateBusy(false);
     }
@@ -106,8 +107,8 @@ export default function DiagnosticsPage() {
       const resp = await downloadAppImageUpdate();
       setDownloadResp(resp);
       setNotice(`Downloaded update to ${resp.downloaded_path}`);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     } finally {
       setUpdateBusy(false);
     }
@@ -121,8 +122,8 @@ export default function DiagnosticsPage() {
       const resp = await applyAppImageUpdate();
       setApplyResp(resp);
       setNotice(resp.message);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     } finally {
       setUpdateBusy(false);
     }

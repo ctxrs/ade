@@ -24,10 +24,13 @@ const loadStatsigClient = async (): Promise<{
 };
 
 type FeatureFlagOverrides = Record<string, boolean>;
+type StatsigGlobals = {
+  __CTX_FEATURE_FLAGS__?: unknown;
+};
 
 const readOverrides = (): FeatureFlagOverrides | null => {
   if (typeof globalThis === "undefined") return null;
-  const overrides = (globalThis as any).__CTX_FEATURE_FLAGS__;
+  const overrides = (globalThis as typeof globalThis & StatsigGlobals).__CTX_FEATURE_FLAGS__;
   if (!overrides || typeof overrides !== "object") return null;
   return overrides as FeatureFlagOverrides;
 };

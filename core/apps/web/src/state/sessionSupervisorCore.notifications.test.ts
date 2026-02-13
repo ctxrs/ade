@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session, SessionEvent } from "../api/client";
-import { SessionSupervisor } from "./sessionSupervisorCore";
+import { SessionSupervisor, type SessionCacheEntry } from "./sessionSupervisorCore";
 
 const sendDesktopNotification = vi.hoisted(() => vi.fn());
 const isAppInForeground = vi.hoisted(() => vi.fn());
@@ -20,9 +20,19 @@ vi.mock("./clientSettings", () => ({
 
 const baseIso = "2024-01-01T00:00:00.000Z";
 
+type SessionSupervisorInternals = {
+  ensureEntry: (sessionId: string) => SessionCacheEntry;
+  ensureTurnFromEvent: (entry: SessionCacheEntry, event: SessionEvent) => boolean;
+  applyEventToTurns: (entry: SessionCacheEntry, event: SessionEvent) => boolean;
+};
+
+const asSupervisorInternals = (supervisor: SessionSupervisor): SessionSupervisorInternals =>
+  supervisor as unknown as SessionSupervisorInternals;
+
 const setupEntry = () => {
   const supervisor = new SessionSupervisor();
-  const entry = (supervisor as any).ensureEntry("session-1");
+  const internals = asSupervisorInternals(supervisor);
+  const entry = internals.ensureEntry("session-1");
   const session: Session = {
     id: "session-1",
     task_id: "task-1",
@@ -46,7 +56,7 @@ const setupEntry = () => {
     payload_json: {},
     created_at: baseIso,
   };
-  (supervisor as any).ensureTurnFromEvent(entry, startEvent);
+  internals.ensureTurnFromEvent(entry, startEvent);
 
   return { supervisor, entry, turnId: "turn-1" };
 };
@@ -73,7 +83,7 @@ describe("SessionSupervisor turn notifications", () => {
       created_at: baseIso,
     };
 
-    const changed = (supervisor as any).applyEventToTurns(entry, finishEvent);
+    const changed = asSupervisorInternals(supervisor).applyEventToTurns(entry, finishEvent);
     expect(changed).toBe(true);
     expect(sendDesktopNotification).toHaveBeenCalledWith({
       title: "Turn completed",
@@ -94,7 +104,7 @@ describe("SessionSupervisor turn notifications", () => {
       created_at: baseIso,
     };
 
-    (supervisor as any).applyEventToTurns(entry, finishEvent);
+    asSupervisorInternals(supervisor).applyEventToTurns(entry, finishEvent);
     expect(sendDesktopNotification).not.toHaveBeenCalled();
   });
 
@@ -114,7 +124,7 @@ describe("SessionSupervisor turn notifications", () => {
       created_at: baseIso,
     };
 
-    (supervisor as any).applyEventToTurns(entry, finishEvent);
+    asSupervisorInternals(supervisor).applyEventToTurns(entry, finishEvent);
     expect(sendDesktopNotification).not.toHaveBeenCalled();
   });
 });

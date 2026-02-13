@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { errorMessage } from "../utils/errorMessage";
 
 type AskUserQuestionOption = { label: string; description?: string };
 type AskUserQuestionItem = {
@@ -8,16 +9,21 @@ type AskUserQuestionItem = {
   multiSelect: boolean;
 };
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
 function normalizeOptions(raw: unknown): AskUserQuestionOption[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .map((o) => {
       if (typeof o === "string") return { label: o };
       if (o && typeof o === "object") {
-        const any = o as any;
-        const label = typeof any.label === "string" ? any.label : "";
+        const rec = asRecord(o);
+        const label = typeof rec.label === "string" ? rec.label : "";
         if (!label.trim()) return null;
-        const description = typeof any.description === "string" ? any.description : undefined;
+        const description = typeof rec.description === "string" ? rec.description : undefined;
         return { label, description };
       }
       return null;
@@ -25,15 +31,17 @@ function normalizeOptions(raw: unknown): AskUserQuestionOption[] {
     .filter((o: AskUserQuestionOption | null): o is AskUserQuestionOption => Boolean(o));
 }
 
-function normalizeQuestions(input: any): AskUserQuestionItem[] {
-  const questions = Array.isArray(input?.questions) ? input.questions : [];
+function normalizeQuestions(input: unknown): AskUserQuestionItem[] {
+  const rec = asRecord(input);
+  const questions = Array.isArray(rec.questions) ? rec.questions : [];
   return questions
-    .map((q: any, idx: number) => {
-      const question = typeof q?.question === "string" ? q.question : "";
+    .map((q, idx: number) => {
+      const qRec = asRecord(q);
+      const question = typeof qRec.question === "string" ? qRec.question : "";
       if (!question.trim()) return null;
-      const header = typeof q?.header === "string" ? q.header : `Question ${idx + 1}`;
-      const options = normalizeOptions(q?.options);
-      const multiSelect = Boolean(q?.multiSelect);
+      const header = typeof qRec.header === "string" ? qRec.header : `Question ${idx + 1}`;
+      const options = normalizeOptions(qRec.options);
+      const multiSelect = Boolean(qRec.multiSelect);
       return { header, question, options, multiSelect };
     })
     .filter((q: AskUserQuestionItem | null): q is AskUserQuestionItem => Boolean(q));
@@ -46,7 +54,7 @@ export function AskUserQuestionModal({
   onCancel,
 }: {
   open: boolean;
-  input: any;
+  input: unknown;
   onSubmit: (answers: Record<string, string>) => Promise<void>;
   onCancel: () => Promise<void>;
 }) {
@@ -57,7 +65,7 @@ export function AskUserQuestionModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const allowOther = input?.request_type !== "permission";
+  const allowOther = asRecord(input).request_type !== "permission";
   const active = questions[Math.max(0, Math.min(activeIdx, questions.length - 1))] ?? null;
 
   const answers = useMemo(() => {
@@ -176,8 +184,8 @@ export function AskUserQuestionModal({
               setError(null);
               try {
                 await onCancel();
-              } catch (e: any) {
-                setError(e?.message ?? String(e));
+              } catch (e: unknown) {
+                setError(errorMessage(e));
                 setBusy(false);
               }
             }}
@@ -197,8 +205,8 @@ export function AskUserQuestionModal({
               setError(null);
               try {
                 await onSubmit(answers);
-              } catch (e: any) {
-                setError(e?.message ?? String(e));
+              } catch (e: unknown) {
+                setError(errorMessage(e));
                 setBusy(false);
               }
             }}

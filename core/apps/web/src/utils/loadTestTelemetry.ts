@@ -70,6 +70,17 @@ const MEMORY_SAMPLE_MS = 2000;
 
 let telemetry: LoadTestTelemetry | null = null;
 
+type WindowWithLoadTest = Window & {
+  __CTX_LOAD_TEST__?: unknown;
+  __ctxLoadTestTelemetry?: {
+    enabled: boolean;
+    getSnapshot: () => LoadTestTelemetrySnapshot;
+    getSummary: () => LoadTestTelemetrySummary;
+    reset: () => void;
+    stop: () => void;
+  };
+};
+
 const summarizePercentiles = (values: number[]): PercentileSummary => {
   if (values.length === 0) return { count: 0 };
   const sorted = values.slice().sort((a, b) => a - b);
@@ -97,7 +108,7 @@ const shouldEnable = (): boolean => {
   if (typeof window === "undefined") return false;
   const query = new URLSearchParams(window.location.search);
   const queryEnabled = query.get("loadtest") === "1";
-  const flagEnabled = Boolean((window as any).__CTX_LOAD_TEST__);
+  const flagEnabled = Boolean((window as WindowWithLoadTest).__CTX_LOAD_TEST__);
   return Boolean(import.meta.env.DEV || import.meta.env.MODE === "test" || queryEnabled || flagEnabled);
 };
 
@@ -148,7 +159,8 @@ export const initLoadTestTelemetry = (): LoadTestTelemetry | null => {
   };
 
   if (typeof PerformanceObserver !== "undefined") {
-    const types = (PerformanceObserver as any).supportedEntryTypes as string[] | undefined;
+    const types = (PerformanceObserver as typeof PerformanceObserver & { supportedEntryTypes?: string[] })
+      .supportedEntryTypes;
     if (types?.includes("longtask")) {
       observer = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
@@ -245,7 +257,7 @@ export const initLoadTestTelemetry = (): LoadTestTelemetry | null => {
   };
 
   if (typeof window !== "undefined") {
-    (window as any).__ctxLoadTestTelemetry = {
+    (window as WindowWithLoadTest).__ctxLoadTestTelemetry = {
       enabled: true,
       getSnapshot: telemetry.getSnapshot,
       getSummary: telemetry.getSummary,

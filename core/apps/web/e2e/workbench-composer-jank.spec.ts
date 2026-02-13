@@ -3,6 +3,27 @@ import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 const scrollSelector = ".wb-session-slot[aria-hidden=\"false\"] .wb-thread-scroller";
 
+type ComposerJankSample = {
+  t: number;
+  top: number;
+  height: number;
+  clientHeight: number;
+};
+
+type ComposerJankShiftEntry = {
+  startTime: number;
+  value: number;
+  hadRecentInput: boolean;
+};
+
+type ComposerJankWindow = Window & {
+  __composerJankSamples?: ComposerJankSample[];
+  __composerJankShiftEntries?: ComposerJankShiftEntry[];
+  __composerJankStart?: number;
+  __composerJankCleanup?: () => void;
+  __composerJankObserver?: PerformanceObserver;
+};
+
 test("workbench: composer jank stays stable on third line", async ({ page, request }, testInfo) => {
   test.setTimeout(120000);
   await page.setViewportSize({ width: 1400, height: 900 });
@@ -80,7 +101,7 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
   await page.waitForTimeout(100);
 
   await page.evaluate(() => {
-    const w = window as any;
+    const w = window as ComposerJankWindow;
     w.__composerJankSamples = [];
     w.__composerJankShiftEntries = [];
     w.__composerJankStart = performance.now();
@@ -110,11 +131,12 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
 
     w.__composerJankObserver?.disconnect?.();
     const shiftObserver = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries() as any[]) {
+      for (const entry of list.getEntries()) {
+        const shiftEntry = entry as PerformanceEntry & { value?: number; hadRecentInput?: boolean };
         w.__composerJankShiftEntries.push({
-          startTime: entry.startTime,
-          value: entry.value ?? 0,
-          hadRecentInput: entry.hadRecentInput ?? false,
+          startTime: shiftEntry.startTime,
+          value: shiftEntry.value ?? 0,
+          hadRecentInput: shiftEntry.hadRecentInput ?? false,
         });
       }
     });
@@ -127,7 +149,7 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
   await page.waitForTimeout(150);
 
   const metrics = await page.evaluate(() => {
-    const w = window as any;
+    const w = window as ComposerJankWindow;
     w.__composerJankCleanup?.();
     w.__composerJankObserver?.disconnect?.();
     const samples = Array.isArray(w.__composerJankSamples) ? w.__composerJankSamples : [];
@@ -140,11 +162,11 @@ test("workbench: composer jank stays stable on third line", async ({ page, reque
       deltas.push(next - prev);
     }
     const clsTotal = entries
-      .filter((entry: any) => Number(entry.startTime) >= startAt)
-      .reduce((sum: number, entry: any) => sum + (Number(entry.value) || 0), 0);
+      .filter((entry) => entry.startTime >= startAt)
+      .reduce((sum, entry) => sum + entry.value, 0);
     const clsNoInput = entries
-      .filter((entry: any) => Number(entry.startTime) >= startAt && !entry.hadRecentInput)
-      .reduce((sum: number, entry: any) => sum + (Number(entry.value) || 0), 0);
+      .filter((entry) => entry.startTime >= startAt && !entry.hadRecentInput)
+      .reduce((sum, entry) => sum + entry.value, 0);
     const maxDelta = deltas.reduce((max: number, value: number) => Math.max(max, Math.abs(value)), 0);
     return {
       samples,

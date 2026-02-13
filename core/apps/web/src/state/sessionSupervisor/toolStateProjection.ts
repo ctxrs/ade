@@ -1,6 +1,9 @@
 import type { SessionEvent, SessionTurn, SessionTurnTool } from "../../api/client";
 import { pickFirstString } from "./eventNormalization";
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
 export const isNonToolStatus = (value: string): boolean => {
   const s = value.trim().toLowerCase();
   return ![
@@ -17,28 +20,28 @@ export const isNonToolStatus = (value: string): boolean => {
   ].includes(s);
 };
 
-export function isStatusUpdateMeta(meta: any): boolean {
-  if (!meta || typeof meta !== "object") return false;
-  const codexMeta = meta?.codex ?? {};
-  const reasoningKind = codexMeta?.reasoning_kind ?? codexMeta?.reasoningKind;
+export function isStatusUpdateMeta(meta: unknown): boolean {
+  const metaRecord = asRecord(meta);
+  const codexMeta = asRecord(metaRecord.codex);
+  const reasoningKind = codexMeta.reasoning_kind ?? codexMeta.reasoningKind;
   if (reasoningKind === "status") return true;
 
   const statusText = pickFirstString(
-    meta?.status_text,
-    meta?.statusText,
-    meta?.status_string,
-    meta?.statusString,
-    codexMeta?.status_text,
-    codexMeta?.statusText,
-    codexMeta?.status_string,
-    codexMeta?.statusString,
+    metaRecord.status_text,
+    metaRecord.statusText,
+    metaRecord.status_string,
+    metaRecord.statusString,
+    codexMeta.status_text,
+    codexMeta.statusText,
+    codexMeta.status_string,
+    codexMeta.statusString,
   );
   if (statusText) return true;
 
   const statusValue =
-    typeof meta?.status === "string"
-      ? meta.status
-      : typeof codexMeta?.status === "string"
+    typeof metaRecord.status === "string"
+      ? metaRecord.status
+      : typeof codexMeta.status === "string"
         ? codexMeta.status
         : null;
   if (statusValue && isNonToolStatus(statusValue)) return true;
@@ -47,38 +50,35 @@ export function isStatusUpdateMeta(meta: any): boolean {
 }
 
 export function shouldRenderThoughtChunk(ev: SessionEvent): boolean {
-  const payload = ev.payload_json ?? {};
-  const meta =
-    payload?.acp_update?._meta ??
-    payload?.acp_update?.meta ??
-    payload?._meta ??
-    payload?.meta ??
-    {};
-  if (meta?.heartbeat === true) return false;
+  const payload = asRecord(ev.payload_json);
+  const acpUpdate = asRecord(payload.acp_update);
+  const meta = asRecord(acpUpdate._meta ?? acpUpdate.meta ?? payload._meta ?? payload.meta);
+  if (meta.heartbeat === true) return false;
   if (isStatusUpdateMeta(meta)) return false;
-  const reasoningKind = meta?.codex?.reasoning_kind ?? meta?.codex?.reasoningKind;
+  const codexMeta = asRecord(meta.codex);
+  const reasoningKind = codexMeta.reasoning_kind ?? codexMeta.reasoningKind;
   if (reasoningKind === "summary") return false;
   return true;
 }
 
 export function shouldRenderAssistantChunk(ev: SessionEvent): boolean {
-  const payload = ev.payload_json ?? {};
-  const meta =
-    payload?.acp_update?._meta ??
-    payload?.acp_update?.meta ??
-    payload?._meta ??
-    payload?.meta ??
-    {};
-  if (meta?.heartbeat === true) return false;
+  const payload = asRecord(ev.payload_json);
+  const acpUpdate = asRecord(payload.acp_update);
+  const meta = asRecord(acpUpdate._meta ?? acpUpdate.meta ?? payload._meta ?? payload.meta);
+  if (meta.heartbeat === true) return false;
   if (isStatusUpdateMeta(meta)) return false;
   return true;
 }
 
 export const extractToolCallId = (event: SessionEvent): string | null => {
-  const payload = event.payload_json ?? {};
-  const direct = payload?.tool_call_id ?? payload?.tool_call?.id ?? payload?.tool?.id;
+  const payload = asRecord(event.payload_json);
+  const toolCall = asRecord(payload.tool_call);
+  const tool = asRecord(payload.tool);
+  const direct = payload.tool_call_id ?? toolCall.id ?? tool.id;
   if (typeof direct === "string" && direct.trim()) return String(direct);
-  const fromUpdate = payload?.acp_update?.tool_call_id ?? payload?.acp_update?.tool_call?.id;
+  const acpUpdate = asRecord(payload.acp_update);
+  const updateToolCall = asRecord(acpUpdate.tool_call);
+  const fromUpdate = acpUpdate.tool_call_id ?? updateToolCall.id;
   if (typeof fromUpdate === "string" && fromUpdate.trim()) return String(fromUpdate);
   return null;
 };
@@ -94,10 +94,13 @@ export const normalizeToolStatus = (raw: string, eventType: string): string => {
 };
 
 export const extractToolStatus = (event: SessionEvent): string | null => {
-  const payload = event.payload_json ?? {};
-  const direct = payload?.tool_status ?? payload?.tool?.status ?? payload?.status;
+  const payload = asRecord(event.payload_json);
+  const tool = asRecord(payload.tool);
+  const direct = payload.tool_status ?? tool.status ?? payload.status;
   if (typeof direct === "string" && direct.trim()) return normalizeToolStatus(direct, String(event.event_type ?? ""));
-  const fromUpdate = payload?.acp_update?.tool_status ?? payload?.acp_update?.tool?.status;
+  const acpUpdate = asRecord(payload.acp_update);
+  const updateTool = asRecord(acpUpdate.tool);
+  const fromUpdate = acpUpdate.tool_status ?? updateTool.status;
   if (typeof fromUpdate === "string" && fromUpdate.trim()) return normalizeToolStatus(fromUpdate, String(event.event_type ?? ""));
   if (event.event_type === "tool_result") return "completed";
   if (event.event_type === "tool_call") return "pending";
@@ -135,7 +138,8 @@ export const applyToolBucketDelta = (turn: SessionTurn, bucket: string | null, d
 };
 
 export const readTurnStatusFromPayload = (event: SessionEvent): SessionTurn["status"] | null => {
-  const raw = event.payload_json?.status;
+  const payload = asRecord(event.payload_json);
+  const raw = payload.status;
   if (typeof raw !== "string") return null;
   const status = raw.trim();
   switch (status) {

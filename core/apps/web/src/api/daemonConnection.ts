@@ -44,10 +44,15 @@ const listeners = new Set<DaemonConnectionListener>();
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object";
 
+type TauriGlobals = {
+  __TAURI_INTERNALS__?: unknown;
+  __TAURI__?: unknown;
+};
+
 const isDesktopWindow = (): boolean => {
   try {
-    const g = globalThis as any;
-    return Boolean(g?.__TAURI_INTERNALS__ || g?.__TAURI__);
+    const g = globalThis as typeof globalThis & TauriGlobals;
+    return Boolean(g.__TAURI_INTERNALS__ || g.__TAURI__);
   } catch {
     return false;
   }

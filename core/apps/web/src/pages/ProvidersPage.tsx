@@ -18,6 +18,7 @@ import {
 } from "../api/client";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { isDesktopApp } from "../utils/desktop";
+import { errorMessage } from "../utils/errorMessage";
 import { PROVIDER_INSTALLS_ENABLED } from "../utils/providerInstallGate";
 import { formatProviderVersionDisplay, getMatrixVersionDisplay } from "../utils/providerVersionLabel";
 
@@ -49,6 +50,11 @@ const fmtBytes = (n: number): string => {
   return `${v.toFixed(u === 0 ? 0 : 1)} ${units[u]}`;
 };
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
 export default function ProvidersPage() {
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -66,7 +72,7 @@ export default function ProvidersPage() {
   const refresh = () =>
     listProviders()
       .then(setProviders)
-      .catch((e) => setError(e.message));
+      .catch((e: unknown) => setError(errorMessage(e)));
 
   useEffect(() => {
     refresh();
@@ -74,7 +80,7 @@ export default function ProvidersPage() {
       .then((ws) => {
         setWorkspaces(ws);
         if (!workspaceId && ws.length > 0) {
-          setWorkspaceId(idToString((ws[0] as any).id));
+          setWorkspaceId(idToString(ws[0]?.id ?? ""));
         }
       })
       .catch(() => {});
@@ -149,7 +155,7 @@ export default function ProvidersPage() {
       }
       eventSource = new EventSource(installStreamUrl(installId));
       eventSourcesRef.current[providerId] = eventSource;
-      eventSource.addEventListener("progress", (evt: any) => {
+      eventSource.addEventListener("progress", (evt: Event) => {
         const data = (evt as MessageEvent).data;
         try {
           const ev = JSON.parse(data) as InstallProgressEvent;
@@ -240,8 +246,8 @@ export default function ProvidersPage() {
     try {
       const { install_id } = await installProvider(id);
       await attachInstall(id, install_id);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -253,8 +259,8 @@ export default function ProvidersPage() {
     try {
       const installs = await installAllProviders();
       for (const i of installs) attachInstall(i.provider_id, i.install_id);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -267,8 +273,8 @@ export default function ProvidersPage() {
     try {
       const opts = await getProviderOptions(workspaceId, providerId);
       setProviderOptions((prev) => ({ ...prev, [providerId]: opts }));
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     } finally {
       setOptsBusy((prev) => ({ ...prev, [providerId]: false }));
     }
@@ -306,7 +312,7 @@ export default function ProvidersPage() {
             disabled={workspaces.length === 0}
           >
             {workspaces.map((ws) => {
-              const id = idToString((ws as any).id);
+              const id = idToString(ws.id ?? "");
               return (
                 <option key={id} value={id}>
                   {ws.name}
@@ -333,7 +339,7 @@ export default function ProvidersPage() {
               <>
                 {(() => {
                   const opts = providerOptions[p.provider_id];
-                  const verifyStatus = String((opts as any)?.verify?.status ?? "");
+                  const verifyStatus = String(asRecord(opts?.verify).status ?? "");
                   const statusLine = opts?.auth_required
                     ? "Auth required"
                     : verifyStatus === "ok"

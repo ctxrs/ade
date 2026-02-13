@@ -1,18 +1,19 @@
 import { test, expect } from "./fixtures";
+import type { Page } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 type ThemeMode = "dark" | "light";
 
 const THEME_STORAGE_KEY = "ctx.theme.mode";
 
-async function setTheme(page: any, mode: ThemeMode) {
+async function setTheme(page: Page, mode: ThemeMode) {
   await page.addInitScript((payload: { theme: ThemeMode; storageKey: string }) => {
     window.localStorage.setItem(payload.storageKey, payload.theme);
     document.documentElement.setAttribute("data-theme", payload.theme);
   }, { theme: mode, storageKey: THEME_STORAGE_KEY });
 }
 
-async function openSettings(page: any, workspaceId: string, mode: ThemeMode) {
+async function openSettings(page: Page, workspaceId: string, mode: ThemeMode) {
   await page.goto(`/settings?ws=${workspaceId}`, { waitUntil: "domcontentloaded" });
   await page.evaluate(
     (payload: { theme: ThemeMode; storageKey: string }) => {

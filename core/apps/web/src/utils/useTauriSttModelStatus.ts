@@ -9,6 +9,7 @@ import {
   loadSttApi,
   normalizeTauriLanguage,
 } from "./tauriStt";
+import { errorMessage } from "./errorMessage";
 
 export type TauriModelStatus = {
   status: "idle" | "checking" | "ready" | "missing" | "downloading" | "error";
@@ -221,9 +222,9 @@ export const useTauriSttModelStatus = ({ provider, language }: UseTauriSttModelS
         continuous: false,
         maxDuration: 5000,
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       cleanupDownload();
-      setModelError(e?.message ?? String(e));
+      setModelError(errorMessage(e));
       return;
     }
 

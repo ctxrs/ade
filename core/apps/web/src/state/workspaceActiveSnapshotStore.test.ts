@@ -51,6 +51,26 @@ vi.mock("./uiStateStore", () => ({
   saveWorkspaceActiveSnapshotV1: vi.fn(async () => {}),
 }));
 
+type MockWs = {
+  readyState: number;
+  send: ReturnType<typeof vi.fn>;
+};
+
+type StoreInternals = {
+  handleStreamMessage: (raw: string) => Promise<void>;
+  ws?: MockWs;
+  connectStream: () => Promise<void>;
+  openWebSocket: (url: string) => Promise<void>;
+  scheduleReconnect: () => void;
+  applySessionSummaryDelta: (delta: unknown) => boolean;
+};
+
+const asStoreInternals = (store: object): StoreInternals =>
+  store as unknown as StoreInternals;
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
 const mkTask = (taskId: string, workspaceId: string, now: string): Task => ({
   id: taskId,
   workspace_id: workspaceId,
@@ -110,9 +130,9 @@ const mkActiveSummary = (
   sort_at: now,
 });
 
-const openWsState = (globalThis.WebSocket as any)?.OPEN ?? 1;
+const openWsState = (globalThis.WebSocket as unknown as { OPEN?: number } | undefined)?.OPEN ?? 1;
 
-const mkOpenWs = () => ({
+const mkOpenWs = (): MockWs => ({
   readyState: openWsState,
   send: vi.fn(),
 });
@@ -147,7 +167,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     };
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
-    await (store as any).handleStreamMessage(
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "snapshot",
         rev: 2,
@@ -172,8 +192,8 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
     const ws = mkOpenWs();
-    (store as any).ws = ws;
-    await (store as any).handleStreamMessage(JSON.stringify({ type: "reset_required", latest_rev: 5 }));
+    asStoreInternals(store).ws = ws;
+    await asStoreInternals(store).handleStreamMessage(JSON.stringify({ type: "reset_required", latest_rev: 5 }));
 
     expect(getWorkspaceActiveSnapshot).not.toHaveBeenCalled();
     expect(ws.send).toHaveBeenCalled();
@@ -185,8 +205,8 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
     const ws = mkOpenWs();
-    (store as any).ws = ws;
-    await (store as any).handleStreamMessage(
+    asStoreInternals(store).ws = ws;
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "event",
         rev: 1,
@@ -201,7 +221,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     );
 
     expect(ws.send).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(String((ws.send as any).mock.calls[0]?.[0] ?? "{}"));
+    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
     expect(payload.type).toBe("subscribe");
     expect(payload.include_active_heads).toBe(false);
   });
@@ -214,12 +234,13 @@ describe("WorkspaceActiveSnapshotStore", () => {
       wsBaseUrl: "ws://daemon.local",
       authToken: "token-1",
       runId: null,
-    } as any);
+    });
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
-    const openSpy = vi.spyOn(store as any, "openWebSocket").mockResolvedValueOnce(undefined);
-    const reconnectSpy = vi.spyOn(store as any, "scheduleReconnect").mockImplementation(() => {});
+    const internals = asStoreInternals(store);
+    const openSpy = vi.spyOn(internals, "openWebSocket").mockResolvedValueOnce(undefined);
+    const reconnectSpy = vi.spyOn(internals, "scheduleReconnect").mockImplementation(() => {});
 
-    await (store as any).connectStream();
+    await internals.connectStream();
 
     expect(openSpy).toHaveBeenCalledTimes(1);
     expect(openSpy).toHaveBeenCalledWith(
@@ -238,18 +259,20 @@ describe("WorkspaceActiveSnapshotStore", () => {
       wsBaseUrl: "ws://daemon.local",
       authToken: null,
       runId: null,
-    } as any);
+    });
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
-    vi.spyOn(store as any, "openWebSocket").mockRejectedValueOnce(new Error("workspace active snapshot ws timeout"));
-    const reconnectSpy = vi.spyOn(store as any, "scheduleReconnect").mockImplementation(() => {});
+    const internals = asStoreInternals(store);
+    vi.spyOn(internals, "openWebSocket").mockRejectedValueOnce(new Error("workspace active snapshot ws timeout"));
+    const reconnectSpy = vi.spyOn(internals, "scheduleReconnect").mockImplementation(() => {});
 
-    await (store as any).connectStream();
+    await internals.connectStream();
 
     expect(reconnectSpy).toHaveBeenCalledTimes(1);
     const diagnostics = getUiDiagnostics().filter((event) => event.code === "workspace.stream_connect_failed");
     expect(diagnostics).toHaveLength(1);
-    expect((diagnostics[0].context as any)?.url).toBe("ws://daemon.local/api/workspaces/ws-1/active_snapshot/stream");
-    expect((diagnostics[0].context as any)?.error).toContain("timeout");
+    const context = asRecord(diagnostics[0]?.context);
+    expect(context.url).toBe("ws://daemon.local/api/workspaces/ws-1/active_snapshot/stream");
+    expect(String(context.error ?? "")).toContain("timeout");
   });
 
   it("applies session_head_seed events", async () => {
@@ -268,7 +291,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     };
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
-    await (store as any).handleStreamMessage(
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "snapshot",
         rev: 1,
@@ -292,7 +315,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
       ],
     };
 
-    await (store as any).handleStreamMessage(
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "event",
         rev: 2,
@@ -315,8 +338,8 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
     const ws = mkOpenWs();
-    (store as any).ws = ws;
-    await (store as any).handleStreamMessage(
+    asStoreInternals(store).ws = ws;
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "event",
         rev: 1,
@@ -326,9 +349,9 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(getWorkspaceActiveSnapshot).not.toHaveBeenCalled();
     expect(ws.send).not.toHaveBeenCalled();
 
-    (getWorkspaceActiveSnapshot as any).mockClear();
+    vi.mocked(getWorkspaceActiveSnapshot).mockClear();
     ws.send.mockClear();
-    await (store as any).handleStreamMessage(
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "event",
         rev: 3,
@@ -367,7 +390,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     };
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
-    await (store as any).handleStreamMessage(
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "snapshot",
         rev: 1,
@@ -377,7 +400,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     await waitForCondition(() => store.getSnapshot().initialized);
 
-    await (store as any).handleStreamMessage(
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "event",
         rev: 2,
@@ -412,7 +435,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     const session = mkSession("session-1", "task-1", "ws-1", now);
     const summary = mkSummary(session, now);
 
-    const turn = {
+    const turn: SessionHeadSnapshot["turns"][number] = {
       turn_id: "turn-1",
       session_id: session.id,
       run_id: null,
@@ -434,7 +457,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     const head: SessionHeadSnapshot = {
       ...mkHead(session),
-      turns: [turn as any],
+      turns: [turn],
       tool_summaries: [],
     };
 
@@ -452,7 +475,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     };
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
-    await (store as any).handleStreamMessage(
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "snapshot",
         rev: 1,
@@ -462,7 +485,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     );
     await waitForCondition(() => store.getSnapshot().initialized);
 
-    await (store as any).handleStreamMessage(
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "event",
         rev: 2,
@@ -519,7 +542,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     };
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
-    await (store as any).handleStreamMessage(
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "snapshot",
         rev: 1,
@@ -529,7 +552,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     await waitForCondition(() => store.getSnapshot().initialized);
 
-    await (store as any).handleStreamMessage(
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "event",
         rev: 2,
@@ -581,7 +604,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     };
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
-    await (store as any).handleStreamMessage(
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "snapshot",
         rev: 1,
@@ -591,7 +614,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     await waitForCondition(() => store.getSnapshot().initialized);
 
-    await (store as any).handleStreamMessage(
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "event",
         rev: 2,
@@ -646,7 +669,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     };
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
-    await (store as any).handleStreamMessage(
+    await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "snapshot",
         rev: 1,
@@ -656,7 +679,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     await waitForCondition(() => store.getSnapshot().initialized);
 
-    const changed = (store as any).applySessionSummaryDelta({
+    const changed = asStoreInternals(store).applySessionSummaryDelta({
       type: "session_summary_delta",
       workspace_id: "ws-1",
       snapshot_rev: 2,

@@ -3,8 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FileBufferEditor } from "./FileBufferEditor";
 import { daemonFetchRaw } from "../api/client";
 
+type MockMonacoEditorProps = {
+  value?: string;
+  onChange?: (value: string) => void;
+};
+
 vi.mock("@monaco-editor/react", () => ({
-  default: (props: any) => {
+  default: (props: MockMonacoEditorProps) => {
     return (
       <textarea
         data-testid="editor"
@@ -101,8 +106,8 @@ describe("FileBufferEditor", () => {
       .mocked(daemonFetchRaw)
       .mock.calls.filter(([p]) => p === "/api/buffers/update")
       .map(([, init]) => (init?.body ? JSON.parse(String(init.body)) : null))
-      .filter(Boolean);
-    const persisted = updateCalls.filter((b: any) => b.persist === true);
+      .filter((body): body is Record<string, unknown> => Boolean(body) && typeof body === "object");
+    const persisted = updateCalls.filter((body) => body.persist === true);
     expect(persisted[persisted.length - 1]?.text).toBe("ab");
   });
 

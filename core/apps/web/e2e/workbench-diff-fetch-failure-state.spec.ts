@@ -4,10 +4,11 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import type { APIRequestContext, Page } from "playwright/test";
 
 async function createWorkspaceAndStartRun(opts: {
-  page: any;
-  request: any;
+  page: Page;
+  request: APIRequestContext;
   repo: string;
   workspaceName: string;
   prompt: string;
@@ -30,7 +31,12 @@ async function createWorkspaceAndStartRun(opts: {
   const sessionComposer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await expect(sessionComposer).toBeVisible({ timeout: 20_000 });
 
-  const readId = (v: any): string => (typeof v === "string" ? v : "");
+  const readId = (v: unknown): string => (typeof v === "string" ? v : "");
+
+  const asRecord = (value: unknown): Record<string, unknown> =>
+    value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+  const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 
   let sessionId = "";
   await expect
@@ -38,12 +44,14 @@ async function createWorkspaceAndStartRun(opts: {
       async () => {
         const resp = await request.get(`/api/workspaces/${workspaceId}/active_snapshot`);
         if (!resp.ok()) return "";
-        const snapshot = (await resp.json()) as any;
-        const taskSummary = snapshot?.active?.tasks?.[0];
+        const snapshot = asRecord(await resp.json());
+        const active = asRecord(snapshot.active);
+        const taskSummary = asRecord(asArray(active.tasks)[0]);
         if (!taskSummary) return "";
-        const sessionSummary = taskSummary?.sessions?.[taskSummary?.sessions?.length - 1];
-        const primarySessionId = readId(taskSummary?.task?.primary_session_id);
-        sessionId = readId(sessionSummary?.session?.id) || primarySessionId;
+        const sessions = asArray(taskSummary.sessions).map((entry) => asRecord(entry));
+        const sessionSummary = sessions.length > 0 ? sessions[sessions.length - 1] : {};
+        const primarySessionId = readId(asRecord(taskSummary.task).primary_session_id);
+        sessionId = readId(asRecord(sessionSummary.session).id) || primarySessionId;
         return sessionId;
       },
       { timeout: 20_000 },
@@ -52,13 +60,15 @@ async function createWorkspaceAndStartRun(opts: {
 
   const headResp = await request.get(`/api/sessions/${sessionId}/snapshot?limit=1`);
   expect(headResp.ok()).toBeTruthy();
-  const snapshot = (await headResp.json()) as any;
-  const session = snapshot?.head?.session ?? snapshot?.summary?.session ?? null;
+  const snapshot = asRecord(await headResp.json());
+  const head = asRecord(snapshot.head);
+  const summary = asRecord(snapshot.summary);
+  const session = asRecord(head.session ?? summary.session);
   const worktreeId = readId(session?.worktree_id);
   expect(worktreeId).toBeTruthy();
   const wtResp = await request.get(`/api/worktrees/${worktreeId}`);
   expect(wtResp.ok()).toBeTruthy();
-  const wt = (await wtResp.json()) as any;
+  const wt = asRecord(await wtResp.json());
   const worktreeRoot = String(wt?.root_path ?? "");
   expect(worktreeRoot).toBeTruthy();
 
@@ -66,7 +76,7 @@ async function createWorkspaceAndStartRun(opts: {
 }
 
 async function waitForWorktreeSummary(opts: {
-  request: any;
+  request: APIRequestContext;
   workspaceId: string;
   worktreeId: string;
   timeoutMs?: number;
@@ -77,8 +87,14 @@ async function waitForWorktreeSummary(opts: {
       async () => {
         const resp = await request.get(`/api/workspaces/${workspaceId}/active_snapshot?limit=5`);
         if (!resp.ok()) return null;
-        const snapshot = (await resp.json()) as any;
-        const entry = snapshot?.worktree_vcs_snapshots?.find((item: any) => item?.worktree_id === worktreeId);
+        const snapshot = (await resp.json()) as {
+          worktree_vcs_snapshots?: Array<{
+            worktree_id?: string;
+            compute_state?: string;
+            summary?: { file_count?: number | null; line_count?: number | null };
+          }>;
+        };
+        const entry = snapshot?.worktree_vcs_snapshots?.find((item) => item?.worktree_id === worktreeId);
         if (!entry) return null;
         if (entry?.compute_state !== "ready") return null;
         const fileCount = entry?.summary?.file_count ?? null;
@@ -92,7 +108,7 @@ async function waitForWorktreeSummary(opts: {
 }
 
 async function waitForNoRepoUnavailable(opts: {
-  request: any;
+  request: APIRequestContext;
   workspaceId: string;
   worktreeId: string;
   timeoutMs?: number;
@@ -103,8 +119,14 @@ async function waitForNoRepoUnavailable(opts: {
       async () => {
         const resp = await request.get(`/api/workspaces/${workspaceId}/active_snapshot?limit=5`);
         if (!resp.ok()) return false;
-        const snapshot = (await resp.json()) as any;
-        const entry = snapshot?.worktree_vcs_snapshots?.find((item: any) => item?.worktree_id === worktreeId);
+        const snapshot = (await resp.json()) as {
+          worktree_vcs_snapshots?: Array<{
+            worktree_id?: string;
+            available?: boolean;
+            unavailable_reason?: string;
+          }>;
+        };
+        const entry = snapshot?.worktree_vcs_snapshots?.find((item) => item?.worktree_id === worktreeId);
         if (!entry) return false;
         return entry?.available === false && entry?.unavailable_reason === "no_repo";
       },
@@ -198,7 +220,7 @@ test("workbench: no-repo diff unavailable is non-fatal and stable", async ({ pag
 
   const diffResp = await request.get(`/api/sessions/${sessionId}/diff`);
   expect(diffResp.ok()).toBeTruthy();
-  const diff = (await diffResp.json()) as any;
+  const diff = (await diffResp.json()) as { available?: boolean; unavailable_reason?: string };
   expect(diff?.available).toBe(false);
   expect(diff?.unavailable_reason).toBe("no_repo");
 });

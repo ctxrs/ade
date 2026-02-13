@@ -49,7 +49,7 @@ describe("uiStateStore", () => {
       ],
       totalCount: 1,
       updatedAtMs: 123,
-    } as any;
+    };
 
     const decoded = decodeWorkspaceActiveSnapshotV1(raw, "ws-1");
     expect(decoded?.active.tasks.length).toBe(1);
@@ -62,7 +62,7 @@ describe("uiStateStore", () => {
       workspaceId: "ws-2",
       active: { tasks: [], totalCount: 0 },
       updatedAtMs: 5,
-    } as any;
+    };
     expect(decodeWorkspaceActiveSnapshotV1(raw, "ws-1")).toBeNull();
   });
 
@@ -119,7 +119,9 @@ describe("uiStateStore", () => {
       events: [],
       last_event_seq: 0,
       has_more_turns: false,
-    } as any;
+      has_more_history: false,
+      history_cursor: null,
+    };
     storageMock.getSnapshot.mockResolvedValue({
       v: 1,
       sessionId: "session-1",

@@ -1,9 +1,12 @@
 import { test, expect } from "./fixtures";
+import type { APIRequestContext } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 const scrollSelector = ".wb-session-slot[aria-hidden=\"false\"] .wb-thread-scroller";
 
-async function addLongMessages(request: any, sessionId: string, count: number) {
+type ScrollAnchor = { id?: string; offset: number };
+
+async function addLongMessages(request: APIRequestContext, sessionId: string, count: number) {
   const longText = Array.from({ length: 200 }, (_, i) => `history line ${i + 1}`).join("\n");
   for (let i = 0; i < count; i++) {
     await request.post(`/api/sessions/${sessionId}/messages`, {
@@ -99,7 +102,7 @@ test("workbench: preserves scroll position when prepending history", async ({ pa
   }
   expect(preTop).toBeGreaterThan(0);
 
-  const captureAnchor = async () => {
+  const captureAnchor = async (): Promise<ScrollAnchor | null> => {
     return page.evaluate((selector) => {
       const scrollerEl = document.querySelector(selector);
       if (!scrollerEl) return null;
@@ -135,7 +138,7 @@ test("workbench: preserves scroll position when prepending history", async ({ pa
   }
   await historyRequestSeen;
   await page.waitForTimeout(50);
-  const anchorBefore = (await captureAnchor()) as { id?: string; offset: number } | null;
+  const anchorBefore = await captureAnchor();
   expect(anchorBefore).not.toBeNull();
   const anchorId = anchorBefore?.id;
   expect(anchorId).toBeTruthy();
@@ -159,5 +162,5 @@ test("workbench: preserves scroll position when prepending history", async ({ pa
     { selector: scrollSelector, itemId: anchorId },
   );
   expect(anchorAfter).not.toBeNull();
-  expect(Math.abs((anchorAfter as number) - (anchorBefore as any).offset)).toBeLessThanOrEqual(24);
+  expect(Math.abs((anchorAfter as number) - anchorBefore.offset)).toBeLessThanOrEqual(24);
 });

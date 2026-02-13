@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { createWorkspace, idToString, listProviders, listWorkspaces, ProviderStatus, Workspace } from "../api/client";
+import { errorMessage } from "../utils/errorMessage";
 import UpdateNoticeBanner from "../components/UpdateNoticeBanner";
 
 export default function WorkspacesPage() {
@@ -28,8 +29,8 @@ export default function WorkspacesPage() {
       setRootPath("");
       setName("");
       refresh();
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     }
   };
 
@@ -88,7 +89,7 @@ export default function WorkspacesPage() {
 
       <ul className="list">
         {workspaces.map((ws) => {
-          const id = idToString((ws as any).id);
+          const id = idToString(ws.id ?? "");
           return (
             <li key={id}>
               <Link to={`/workspaces/${id}`}>{ws.name}</Link>

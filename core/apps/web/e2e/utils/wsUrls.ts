@@ -1,19 +1,30 @@
 import { expect } from "../fixtures";
+import type { Page } from "playwright/test";
 
-export async function clearOpenedWebSocketUrls(page: any): Promise<void> {
+type E2EWindow = Window & {
+  __ctxE2E?: {
+    clearOpenedWebSocketUrls?: () => void;
+    getOpenedWebSocketUrls?: () => unknown[];
+    workspaceStream?: {
+      getCanonicalUrl?: () => string | null;
+    };
+  };
+};
+
+export async function clearOpenedWebSocketUrls(page: Page): Promise<void> {
   await page.evaluate(() => {
-    (window as any).__ctxE2E?.clearOpenedWebSocketUrls?.();
+    (window as E2EWindow).__ctxE2E?.clearOpenedWebSocketUrls?.();
   });
 }
 
-export async function getOpenedWebSocketUrls(page: any): Promise<string[]> {
+export async function getOpenedWebSocketUrls(page: Page): Promise<string[]> {
   return page.evaluate(() => {
-    const urls = (window as any).__ctxE2E?.getOpenedWebSocketUrls?.();
+    const urls = (window as E2EWindow).__ctxE2E?.getOpenedWebSocketUrls?.();
     return Array.isArray(urls) ? urls.map((value) => String(value)) : [];
   });
 }
 
-const readCanonicalWsBaseUrl = async (page: any): Promise<string | null> => {
+const readCanonicalWsBaseUrl = async (page: Page): Promise<string | null> => {
   return page.evaluate(() => {
     try {
       const raw = window.sessionStorage.getItem("ctxDaemonConnectionV1");
@@ -27,7 +38,7 @@ const readCanonicalWsBaseUrl = async (page: any): Promise<string | null> => {
   });
 };
 
-export async function expectWsPathOnCanonicalOrigin(page: any, pathFragment: string): Promise<void> {
+export async function expectWsPathOnCanonicalOrigin(page: Page, pathFragment: string): Promise<void> {
   const canonicalWsBaseUrl = await readCanonicalWsBaseUrl(page);
   expect(canonicalWsBaseUrl, "Missing canonical ws base URL in session storage.").toBeTruthy();
   const expectedOrigin = new URL(String(canonicalWsBaseUrl)).origin;
@@ -35,7 +46,7 @@ export async function expectWsPathOnCanonicalOrigin(page: any, pathFragment: str
   let matching = urls.filter((url) => url.includes(pathFragment));
   if (matching.length === 0 && pathFragment.includes("/api/workspaces/")) {
     const workspaceStreamUrl = await page.evaluate(() => {
-      return (window as any).__ctxE2E?.workspaceStream?.getCanonicalUrl?.() ?? null;
+      return (window as E2EWindow).__ctxE2E?.workspaceStream?.getCanonicalUrl?.() ?? null;
     });
     if (typeof workspaceStreamUrl === "string" && workspaceStreamUrl.includes(pathFragment)) {
       matching = [workspaceStreamUrl];

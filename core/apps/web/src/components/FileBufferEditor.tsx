@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
+import type * as Monaco from "monaco-editor";
 import { useSessionEntry } from "../state/sessionSupervisor";
 import { daemonFetchRaw } from "../api/client";
+import { errorMessage } from "../utils/errorMessage";
 import { guessMonacoLanguage } from "../utils/monacoLanguage";
 import { useThemeVariant } from "../utils/theme";
 
@@ -27,6 +29,11 @@ type ConflictResp = {
 
 type SaveStatus = "loading" | "dirty" | "saving" | "saved" | "conflict" | "error";
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
 export function FileBufferEditor({
   sessionId,
   path,
@@ -43,8 +50,8 @@ export function FileBufferEditor({
   const entry = useSessionEntry(sessionId);
   const diagnostics = entry?.diagnosticsByPath?.[path] ?? [];
 
-  const editorRef = useRef<any>(null);
-  const monacoRef = useRef<any>(null);
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<typeof Monaco | null>(null);
   const saveTimer = useRef<number | null>(null);
   const syncTimer = useRef<number | null>(null);
   const pendingSave = useRef(false);
@@ -80,8 +87,12 @@ export function FileBufferEditor({
     if (!model) return;
 
     const markers = Array.isArray(diagnostics)
-      ? diagnostics.map((d: any) => {
-          const sev = Number(d?.severity ?? 0);
+      ? diagnostics.map((d) => {
+          const diag = asRecord(d);
+          const range = asRecord(diag.range);
+          const start = asRecord(range.start);
+          const end = asRecord(range.end);
+          const sev = Number(diag.severity ?? 0);
           const severity =
             sev === 1
               ? monaco.MarkerSeverity.Error
@@ -90,13 +101,13 @@ export function FileBufferEditor({
                 : sev === 3
                   ? monaco.MarkerSeverity.Info
                   : monaco.MarkerSeverity.Hint;
-          const startLineNumber = Number(d?.range?.start?.line ?? 0) + 1;
-          const startColumn = Number(d?.range?.start?.character ?? 0) + 1;
-          const endLineNumber = Number(d?.range?.end?.line ?? 0) + 1;
-          const endColumn = Number(d?.range?.end?.character ?? 0) + 1;
+          const startLineNumber = Number(start.line ?? 0) + 1;
+          const startColumn = Number(start.character ?? 0) + 1;
+          const endLineNumber = Number(end.line ?? 0) + 1;
+          const endColumn = Number(end.character ?? 0) + 1;
           return {
             severity,
-            message: String(d?.message ?? "Diagnostic"),
+            message: String(diag.message ?? "Diagnostic"),
             startLineNumber,
             startColumn,
             endLineNumber,
@@ -132,8 +143,8 @@ export function FileBufferEditor({
       latestText.current = data.text;
       lastSentVersion.current = data.version;
       setStatus("saved");
-    } catch (e: any) {
-      setLastError(String(e?.message ?? e));
+    } catch (e: unknown) {
+      setLastError(errorMessage(e));
       setStatus("error");
     }
   };
@@ -176,8 +187,8 @@ export function FileBufferEditor({
       else setStatus("dirty");
       pendingSave.current = false;
       if (persist) onSaved?.();
-    } catch (e: any) {
-      setLastError(String(e?.message ?? e));
+    } catch (e: unknown) {
+      setLastError(errorMessage(e));
       setStatus("error");
       pendingSave.current = false;
     }
@@ -304,14 +315,14 @@ export function FileBufferEditor({
 
             // Lightweight LSP-backed completion + hover for this editor only.
             const model = editor.getModel?.();
-            const matchesThisModel = (m: any) => {
-              const p = String(m?.uri?.path ?? "");
+            const matchesThisModel = (m: Monaco.editor.ITextModel) => {
+              const p = String(m.uri.path ?? "");
               return p.endsWith(path) || p === path || p.endsWith(`/${path}`);
             };
             const language = guessMonacoLanguage(path);
             const completion = monaco.languages.registerCompletionItemProvider(language, {
               triggerCharacters: [".", ":", "<", "\"", "'", "/", "@", "#"],
-              provideCompletionItems: async (m: any, pos: any) => {
+              provideCompletionItems: async (m, pos) => {
                 if (!matchesThisModel(m)) return { suggestions: [] };
                 const line = Math.max(0, Number(pos.lineNumber ?? 1) - 1);
                 const character = Math.max(0, Number(pos.column ?? 1) - 1);
@@ -321,19 +332,32 @@ export function FileBufferEditor({
                   body: JSON.stringify({ session_id: sessionId, path, line, character }),
                 });
                 if (res.status < 200 || res.status >= 300) return { suggestions: [] };
-                const v = res.body ? JSON.parse(res.body) : null;
-                const items = Array.isArray(v?.items) ? v.items : Array.isArray(v) ? v : [];
-                const suggestions = items.map((it: any) => ({
-                  label: String(it?.label ?? ""),
-                  kind: monaco.languages.CompletionItemKind.Text,
-                  insertText: String(it?.insertText ?? it?.label ?? ""),
-                  detail: it?.detail ? String(it.detail) : undefined,
-                }));
+                const parsed = res.body ? (JSON.parse(res.body) as unknown) : null;
+                const v = asRecord(parsed);
+                const rawItems = Array.isArray(parsed) ? parsed : v.items;
+                const items = Array.isArray(rawItems) ? rawItems : [];
+                const word = m.getWordUntilPosition(pos);
+                const range = {
+                  startLineNumber: pos.lineNumber,
+                  endLineNumber: pos.lineNumber,
+                  startColumn: word.startColumn,
+                  endColumn: word.endColumn,
+                };
+                const suggestions = items.map((it) => {
+                  const item = asRecord(it);
+                  return {
+                    label: String(item.label ?? ""),
+                    kind: monaco.languages.CompletionItemKind.Text,
+                    insertText: String(item.insertText ?? item.label ?? ""),
+                    detail: typeof item.detail === "string" ? item.detail : undefined,
+                    range,
+                  };
+                });
                 return { suggestions };
               },
             });
             const hover = monaco.languages.registerHoverProvider(language, {
-              provideHover: async (m: any, pos: any) => {
+              provideHover: async (m, pos) => {
                 if (!matchesThisModel(m)) return null;
                 const line = Math.max(0, Number(pos.lineNumber ?? 1) - 1);
                 const character = Math.max(0, Number(pos.column ?? 1) - 1);
@@ -343,16 +367,21 @@ export function FileBufferEditor({
                   body: JSON.stringify({ session_id: sessionId, path, line, character }),
                 });
                 if (res.status < 200 || res.status >= 300) return null;
-                const v = res.body ? JSON.parse(res.body) : null;
-                const contents = v?.contents;
+                const v = asRecord(res.body ? JSON.parse(res.body) : null);
+                const contents = v.contents;
+                const contentsRecord = asRecord(contents);
                 const markdown =
                   typeof contents === "string"
                     ? contents
-                    : typeof contents?.value === "string"
-                      ? contents.value
+                    : typeof contentsRecord.value === "string"
+                      ? contentsRecord.value
                       : Array.isArray(contents)
                         ? contents
-                            .map((c: any) => (typeof c === "string" ? c : typeof c?.value === "string" ? c.value : ""))
+                            .map((c) => {
+                              if (typeof c === "string") return c;
+                              const rec = asRecord(c);
+                              return typeof rec.value === "string" ? rec.value : "";
+                            })
                             .filter(Boolean)
                             .join("\n\n")
                         : "";

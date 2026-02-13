@@ -83,11 +83,23 @@ export type ModelCatalog = {
   fullIdByBaseEffort: Record<string, Record<string, string>>;
 };
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
 export function buildModelCatalog(
   models: Array<{ id: string; name?: string }> | string[],
 ): ModelCatalog {
   const list = Array.isArray(models)
-    ? models.map((m: any) => (typeof m === "string" ? { id: m, name: m } : { id: String(m.id), name: m.name }))
+    ? models.map((m) => {
+      if (typeof m === "string") return { id: m, name: m };
+      const rec = asRecord(m);
+      return {
+        id: String(rec.id ?? ""),
+        name: typeof rec.name === "string" ? rec.name : undefined,
+      };
+    })
     : [];
 
   const baseIdsSet = new Set<string>();

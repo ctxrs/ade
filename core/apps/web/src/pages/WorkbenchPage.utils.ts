@@ -18,6 +18,29 @@ export type WorkspaceTabsState = {
   openWorkspaceIds: string[];
 };
 
+type SaveFilePickerOptions = {
+  suggestedName?: string;
+  types?: Array<{ description: string; accept: Record<string, string[]> }>;
+};
+
+type WritableFileLike = {
+  write: (data: string) => Promise<void>;
+  close: () => Promise<void>;
+};
+
+type FileHandleLike = {
+  createWritable: () => Promise<WritableFileLike>;
+};
+
+type WindowWithSaveFilePicker = Window & {
+  showSaveFilePicker?: (opts: SaveFilePickerOptions) => Promise<FileHandleLike>;
+};
+
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
 export const getOrCreateUiWindowId = (): string => {
   try {
     const existing = sessionStorage.getItem(UI_WINDOW_ID_STORAGE_KEY);
@@ -34,9 +57,9 @@ export const loadWorkspaceTabsState = (storageKey: string): WorkspaceTabsState |
   try {
     const raw = localStorage.getItem(storageKey);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as any;
-    const openWorkspaceIds = Array.isArray(parsed?.openWorkspaceIds)
-      ? parsed.openWorkspaceIds.map((v: any) => String(v)).filter((v: string) => v.trim())
+    const parsed = asRecord(JSON.parse(raw));
+    const openWorkspaceIds = Array.isArray(parsed.openWorkspaceIds)
+      ? parsed.openWorkspaceIds.map((v) => String(v)).filter((v: string) => v.trim())
       : [];
     return { openWorkspaceIds };
   } catch {
@@ -130,10 +153,14 @@ export const deriveManagedWorktreeRoot = (dataRoot: string | null, workspaceId: 
 export function modelIdsFromOptions(opts?: ProviderOptions): string[] {
   const raw = opts?.models;
   if (!raw) return [];
-  const list = (raw as any)?.availableModels ?? (raw as any)?.available_models ?? (raw as any)?.models ?? raw;
+  const rec = asRecord(raw);
+  const list = rec.availableModels ?? rec.available_models ?? rec.models ?? raw;
   if (!Array.isArray(list)) return [];
   return list
-    .map((m: any) => String(m?.modelId ?? m?.model_id ?? m?.id ?? "").trim())
+    .map((m) => {
+      const model = asRecord(m);
+      return String(model.modelId ?? model.model_id ?? model.id ?? "").trim();
+    })
     .filter((s: string) => s.length > 0);
 }
 
@@ -237,7 +264,7 @@ export async function saveMarkdownExport(suggestedName: string, contents: string
     return;
   }
 
-  const picker = (window as any).showSaveFilePicker as undefined | ((opts: any) => Promise<any>);
+  const picker = (window as WindowWithSaveFilePicker).showSaveFilePicker;
   if (typeof picker === "function") {
     const handle = await picker({
       suggestedName: name,

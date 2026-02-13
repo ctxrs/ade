@@ -1,16 +1,22 @@
 import { expect } from "playwright/test";
 import fs from "fs";
 import path from "path";
+import type { APIRequestContext, Page } from "playwright/test";
 
 type CreateWorkspaceArgs = {
-  page: any;
-  request: any;
+  page: Page;
+  request: APIRequestContext;
   repo: string;
   workspaceName: string;
   token?: string;
 };
 
-const readId = (v: any): string => (typeof v === "string" ? v : "");
+const readId = (v: unknown): string => (typeof v === "string" ? v : "");
+
+type WorkspaceSummary = {
+  id?: unknown;
+  root_path?: unknown;
+};
 
 const normalizePath = (value: string): string => {
   if (!value) return "";
@@ -47,7 +53,7 @@ export async function createWorkspaceAndOpenWorkbench(opts: CreateWorkspaceArgs)
           headers: token ? { authorization: `Bearer ${token}` } : undefined,
         });
         if (!workspacesResp.ok()) return "";
-        const workspaces = (await workspacesResp.json()) as any[];
+        const workspaces = (await workspacesResp.json()) as WorkspaceSummary[];
         const ws = workspaces.find(
           (w) => normalizePath(String(w?.root_path ?? "")) === repoPath,
         );

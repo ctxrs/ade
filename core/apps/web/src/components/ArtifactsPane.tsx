@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Copy, Download, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import { artifactUrl, idToString, type Artifact } from "../api/client";
 import { isImageArtifact, isVideoArtifact } from "../utils/artifacts";
+import { errorMessage } from "../utils/errorMessage";
 const DEFAULT_MIN_SCALE = 0.2;
 const MAX_SCALE = 5;
 
@@ -95,8 +96,8 @@ function ArtifactCard({
     setCopying(true);
     try {
       await copyArtifactImage(artifact, url);
-    } catch (err: any) {
-      window.alert(err?.message ?? "Failed to copy image.");
+    } catch (err: unknown) {
+      window.alert(errorMessage(err) || "Failed to copy image.");
     } finally {
       setCopying(false);
     }
@@ -283,8 +284,8 @@ function ArtifactViewer({
     setCopying(true);
     try {
       await copyArtifactImage(artifact, url);
-    } catch (err: any) {
-      window.alert(err?.message ?? "Failed to copy image.");
+    } catch (err: unknown) {
+      window.alert(errorMessage(err) || "Failed to copy image.");
     } finally {
       setCopying(false);
     }

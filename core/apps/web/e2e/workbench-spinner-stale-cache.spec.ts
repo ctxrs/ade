@@ -5,7 +5,14 @@ import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
-const readId = (v: any): string => (typeof v === "string" ? v : "");
+const readId = (value: unknown): string => (typeof value === "string" ? value : "");
+
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 
 test("workbench: stale cached events do not re-show running", async ({ page }) => {
   test.setTimeout(120000);
@@ -48,9 +55,10 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
       async () => {
         const resp = await page.request.get(`/api/workspaces/${workspaceId}/active_snapshot`);
         if (!resp.ok()) return "";
-        const data = await resp.json();
-        const session = data?.active?.tasks?.[0]?.sessions?.[0]?.session?.id;
-        const primary = data?.active?.tasks?.[0]?.task?.primary_session_id;
+        const data = asRecord(await resp.json());
+        const task = asRecord(asArray(asRecord(data.active).tasks)[0]);
+        const session = asRecord(asRecord(asArray(task.sessions)[0]).session).id;
+        const primary = asRecord(task.task).primary_session_id;
         sessionIdValue = readId(session) || readId(primary);
         return sessionIdValue;
       },
@@ -62,28 +70,33 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
   await page.waitForFunction(async (sid) => {
     const resp = await fetch(`/api/sessions/${sid}/snapshot?include_events=1&limit=60`);
     if (!resp.ok) return false;
-    const data = await resp.json();
-    const head = data?.head ?? {};
-    const turns = Array.isArray(head.turns) ? head.turns : [];
+    const asRecordEval = (value: unknown): Record<string, unknown> => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+      return value as Record<string, unknown>;
+    };
+    const asArrayEval = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+    const data = asRecordEval(await resp.json());
+    const head = asRecordEval(data.head);
+    const turns = asArrayEval(head.turns).map((turn) => asRecordEval(turn));
     const lastTurn = turns[turns.length - 1];
     const hasAssistant =
-      Array.isArray(head.messages) && head.messages.some((m: any) => m?.role === "assistant");
+      asArrayEval(head.messages).some((message) => asRecordEval(message).role === "assistant");
     return Boolean(hasAssistant && lastTurn?.status === "completed");
   }, sessionIdValue, { timeout: 20000 });
 
-  const snapshot = await page.evaluate(async (sid) => {
+  const snapshot = asRecord(await page.evaluate(async (sid) => {
     const resp = await fetch(`/api/sessions/${sid}/snapshot?include_events=1&limit=60`);
     if (!resp.ok) return null;
     return resp.json();
-  }, sessionIdValue);
+  }, sessionIdValue));
   expect(snapshot).not.toBeNull();
-  const head = snapshot?.head ?? {};
+  const head = asRecord(snapshot.head);
 
   const doneLike = new Set(["done", "assistant_complete", "turn_finished", "turn_interrupted"]);
   const staleEvents = Array.isArray(head.events)
-    ? head.events.filter((ev: any) => !doneLike.has(String(ev?.event_type ?? "")))
+    ? head.events.filter((event) => !doneLike.has(String(asRecord(event).event_type ?? "")))
     : [];
-  let nextEvents = staleEvents.length > 0 ? staleEvents : head.events ?? [];
+  let nextEvents: unknown[] = staleEvents.length > 0 ? staleEvents : asArray(head.events);
   if (nextEvents.length === 0) {
     nextEvents = [
       {

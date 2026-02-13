@@ -41,7 +41,9 @@ vi.mock("@xterm/addon-fit", () => {
   return { FitAddon: MockFitAddon };
 });
 
-import { useTerminalClients } from "./useTerminalClients";
+import { useTerminalClients, type TerminalClient } from "./useTerminalClients";
+
+type MockWebSocketListener = (event: unknown) => void;
 
 class MockWebSocket {
   static CONNECTING = 0;
@@ -54,14 +56,14 @@ class MockWebSocket {
   binaryType = "arraybuffer";
   url: string;
   sent: unknown[] = [];
-  private listeners: Record<string, Array<(event: any) => void>> = {};
+  private listeners: Record<string, MockWebSocketListener[]> = {};
 
   constructor(url: string) {
     this.url = url;
     MockWebSocket.instances.push(this);
   }
 
-  addEventListener(type: string, cb: (event: any) => void) {
+  addEventListener(type: string, cb: MockWebSocketListener) {
     if (!this.listeners[type]) {
       this.listeners[type] = [];
     }
@@ -86,7 +88,7 @@ class MockWebSocket {
     this.emit("message", { data });
   }
 
-  private emit(type: string, event: any) {
+  private emit(type: string, event: unknown) {
     const handlers = this.listeners[type] ?? [];
     for (const handler of handlers) {
       handler(event);
@@ -94,8 +96,8 @@ class MockWebSocket {
   }
 }
 
-let originalWebSocket: any;
-let lastClient: any = null;
+let originalWebSocket: typeof window.WebSocket | undefined;
+let lastClient: TerminalClient | null = null;
 
 const baseTerminal = (): TerminalSession => ({
   id: "terminal-1",
@@ -125,15 +127,23 @@ beforeEach(() => {
   MockWebSocket.instances = [];
   vi.useFakeTimers();
   vi.spyOn(Math, "random").mockReturnValue(0);
-  originalWebSocket = (window as any).WebSocket;
-  (window as any).WebSocket = MockWebSocket as any;
+  originalWebSocket = window.WebSocket;
+  Object.defineProperty(window, "WebSocket", {
+    value: MockWebSocket,
+    configurable: true,
+    writable: true,
+  });
 });
 
 afterEach(() => {
   lastClient = null;
   vi.restoreAllMocks();
   vi.useRealTimers();
-  (window as any).WebSocket = originalWebSocket;
+  Object.defineProperty(window, "WebSocket", {
+    value: originalWebSocket,
+    configurable: true,
+    writable: true,
+  });
 });
 
 describe("useTerminalClients", () => {
@@ -204,10 +214,14 @@ describe("useTerminalClients", () => {
     const originalRaf = window.requestAnimationFrame;
     // Control rAF so we can reproduce the window where `canFit()` becomes true
     // before the scheduled `fitNow()` has a chance to flush `pendingOutput`.
-    (window as any).requestAnimationFrame = (cb: FrameRequestCallback) => {
-      rafCallbacks.push(cb);
-      return 1;
-    };
+    Object.defineProperty(window, "requestAnimationFrame", {
+      value: (cb: FrameRequestCallback) => {
+        rafCallbacks.push(cb);
+        return 1;
+      },
+      configurable: true,
+      writable: true,
+    });
 
     const el = document.createElement("div");
     Object.defineProperty(el, "clientWidth", { value: 800, configurable: true });
@@ -219,8 +233,10 @@ describe("useTerminalClients", () => {
       expect(MockWebSocket.instances).toHaveLength(1);
       const socket = MockWebSocket.instances[0];
       expect(lastClient).toBeTruthy();
+      if (!lastClient) throw new Error("Expected terminal client");
+      const client = lastClient;
 
-      const term = lastClient.terminal as any;
+      const term = client.terminal as unknown as { writes: Array<string | Uint8Array> };
 
       await act(async () => {
         socket.message("old");
@@ -228,7 +244,7 @@ describe("useTerminalClients", () => {
       expect(term.writes).toEqual([]);
 
       await act(async () => {
-        lastClient.attach(el);
+        client.attach(el);
       });
 
       // If we write "new" while "old" is still buffered, we must flush "old" first.
@@ -245,7 +261,11 @@ describe("useTerminalClients", () => {
       expect(term.writes[1]).toBe("new");
     } finally {
       el.remove();
-      (window as any).requestAnimationFrame = originalRaf;
+      Object.defineProperty(window, "requestAnimationFrame", {
+        value: originalRaf,
+        configurable: true,
+        writable: true,
+      });
     }
   });
 });

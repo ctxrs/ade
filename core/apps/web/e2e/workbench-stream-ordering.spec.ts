@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import type { APIRequestContext, Page } from "playwright/test";
 import { seedDummyWorkspace, startStreamingMessages } from "./utils/seedDummyWorkspace";
 
 const scrollSelector = ".wb-session-slot[aria-hidden=\"false\"] .wb-thread-scroller";
@@ -10,9 +11,15 @@ const extractIndex = (text: string, prefix: string): number | null => {
   return Number.isFinite(value) ? value : null;
 };
 
-const readHeadIndices = async (page: any, sessionId: string, prefix: string): Promise<number[]> => {
+type E2EWindow = Window & {
+  __ctxE2E?: {
+    getSessionHeadUserMessages?: (sessionId: string) => string[];
+  };
+};
+
+const readHeadIndices = async (page: Page, sessionId: string, prefix: string): Promise<number[]> => {
   const texts = await page.evaluate((id) => {
-    const api = (window as any).__ctxE2E;
+    const api = (window as E2EWindow).__ctxE2E;
     if (!api || typeof api.getSessionHeadUserMessages !== "function") return [];
     return api.getSessionHeadUserMessages(id);
   }, sessionId);
@@ -21,7 +28,7 @@ const readHeadIndices = async (page: any, sessionId: string, prefix: string): Pr
     .filter((value): value is number => Number.isFinite(value));
 };
 
-const addLongMessages = async (request: any, sessionId: string, count: number) => {
+const addLongMessages = async (request: APIRequestContext, sessionId: string, count: number) => {
   const longText = Array.from({ length: 220 }, (_, i) => `stream line ${i + 1}`).join("\n");
   for (let i = 0; i < count; i += 1) {
     await request.post(`/api/sessions/${sessionId}/messages`, {
@@ -30,7 +37,7 @@ const addLongMessages = async (request: any, sessionId: string, count: number) =
   }
 };
 
-const captureAnchor = async (page: any): Promise<{ id: string; offset: number } | null> => {
+const captureAnchor = async (page: Page): Promise<{ id: string; offset: number } | null> => {
   return page.evaluate((selector) => {
     const scrollerEl = document.querySelector(selector);
     if (!scrollerEl) return null;

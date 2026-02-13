@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import type { Locator, Page } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 test.describe.serial("workbench: tool summaries stability", () => {
@@ -14,7 +15,7 @@ test.describe.serial("workbench: tool summaries stability", () => {
       },
     ])}\n[[/tool_calls]]`;
 
-  const sendToolSeed = async (page: any, seed: string) => {
+  const sendToolSeed = async (page: Page, seed: string) => {
     const resp = await page.request.post(`/api/sessions/${sessionId}/messages`, {
       data: {
         content: `tool seed ${seed}\n${toolMarkerFor(seed)}`,
@@ -24,7 +25,7 @@ test.describe.serial("workbench: tool summaries stability", () => {
     expect(resp.status(), `tool seed POST failed: ${resp.url()}`).toBe(200);
   };
 
-  const ensureToolRows = async (page: any) => {
+  const ensureToolRows = async (page: Page): Promise<Locator> => {
     const toolRows = page.locator(".wb-tool-row");
     if ((await toolRows.count()) > 0) return toolRows;
     await sendToolSeed(page, `${Date.now()}`);
@@ -34,7 +35,7 @@ test.describe.serial("workbench: tool summaries stability", () => {
     return toolRows;
   };
 
-  const ensureScrollableThread = async (page: any, scroller: any, toolRows: any) => {
+  const ensureScrollableThread = async (page: Page, scroller: Locator, toolRows: Locator) => {
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const overflow = await scroller.evaluate(
         (el: HTMLElement) => el.scrollHeight - el.clientHeight,

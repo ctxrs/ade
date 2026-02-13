@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useSyncExternalStore } from "react";
 import type { Settings } from "../api/client";
 import { getSettings, updateSettings } from "../api/client";
+import { errorMessage } from "../utils/errorMessage";
 import { loadSettingsV1, saveSettingsV1 } from "./uiStateStore";
 
 type SettingsSnapshot = {
@@ -89,11 +90,11 @@ class SettingsStore {
       };
       this.publish();
       await saveSettingsV1(settings);
-    } catch (e: any) {
+    } catch (e: unknown) {
       this.snapshot = {
         ...this.snapshot,
         loading: false,
-        error: e?.message ?? String(e),
+        error: errorMessage(e),
       };
       this.publish();
     }

@@ -1,6 +1,27 @@
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
+type E2EWorkspaceStream = {
+  getConnectionState?: () => string;
+  setDropMessages?: (drop: boolean) => void;
+  close?: () => void;
+  dispatchMessage?: (payload: unknown) => void;
+};
+
+type E2EWindow = Window & {
+  __ctxE2E?: {
+    workspaceStream?: E2EWorkspaceStream;
+    getSessionHeadMessages?: (sessionId: string) => string[];
+  };
+};
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+const readString = (value: unknown): string => (typeof value === "string" ? value : "");
+
 test("workbench: replay restores missed assistant message after stream drop", async ({ page, request }) => {
   test.setTimeout(120000);
   await page.setViewportSize({ width: 1400, height: 900 });
@@ -37,14 +58,19 @@ test("workbench: replay restores missed assistant message after stream drop", as
   });
   const activeSnapshotResp = await request.get(`/api/workspaces/${seed.workspaceId}/active_snapshot`);
   expect(activeSnapshotResp.ok()).toBeTruthy();
-  const activeSnapshot = (await activeSnapshotResp.json()) as any;
-  const activeTaskSummary = activeSnapshot?.active?.tasks?.[0];
-  const primarySessionId = String(activeTaskSummary?.task?.primary_session_id ?? "");
-  const latestSessionId = String(activeTaskSummary?.sessions?.[activeTaskSummary?.sessions?.length - 1]?.session?.id ?? "");
+  const activeSnapshot = asRecord(await activeSnapshotResp.json());
+  const active = asRecord(activeSnapshot.active);
+  const activeTaskSummary = asRecord(asArray(active.tasks)[0]);
+  const task = asRecord(activeTaskSummary.task);
+  const sessions = asArray(activeTaskSummary.sessions).map((entry) => asRecord(entry));
+  const primarySessionId = readString(task.primary_session_id);
+  const latestSession = sessions.length > 0 ? asRecord(sessions[sessions.length - 1]?.session) : {};
+  const latestSessionId = readString(latestSession.id);
   const sessionId = latestSessionId || primarySessionId || seed.sessionIdsByTask[seed.taskIds[0]][0];
   const seedSession =
-    activeTaskSummary?.sessions?.find((summary: any) => String(summary?.session?.id ?? "") === sessionId)?.session ??
-    activeTaskSummary?.primary_session?.session;
+    sessions
+      .find((summary) => readString(asRecord(summary.session).id) === sessionId)
+      ?.session ?? asRecord(asRecord(activeTaskSummary.primary_session).session);
   expect(seedSession).toBeTruthy();
   const prompt = `missed-assistant-${Date.now()}`;
   const assistantText = `done: ${prompt}`;
@@ -58,14 +84,14 @@ test("workbench: replay restores missed assistant message after stream drop", as
 
   await expect
     .poll(async () =>
-      page.evaluate(() => typeof (window as any).__ctxE2E?.workspaceStream?.getConnectionState === "function"),
+      page.evaluate(() => typeof (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState === "function"),
     )
     .toBe(true);
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
   await page.evaluate(() => {
-    (window as any).__ctxE2E?.workspaceStream?.setDropMessages?.(true);
+    (window as E2EWindow).__ctxE2E?.workspaceStream?.setDropMessages?.(true);
   });
 
   const nowIso = new Date().toISOString();
@@ -134,17 +160,17 @@ test("workbench: replay restores missed assistant message after stream drop", as
   };
 
   await page.evaluate((payload) => {
-    (window as any).__ctxE2E?.workspaceStream?.dispatchMessage?.(payload);
+    (window as E2EWindow).__ctxE2E?.workspaceStream?.dispatchMessage?.(payload);
   }, replayEvent);
 
   blockSnapshot = true;
   blockHead = true;
   blockActiveSnapshot = true;
   await page.evaluate(() => {
-    (window as any).__ctxE2E?.workspaceStream?.close?.();
+    (window as E2EWindow).__ctxE2E?.workspaceStream?.close?.();
   });
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("disconnected");
   await page.waitForTimeout(200);
 
@@ -152,14 +178,14 @@ test("workbench: replay restores missed assistant message after stream drop", as
   await expect(assistantEntry).toHaveCount(0);
 
   await page.evaluate(() => {
-    (window as any).__ctxE2E?.workspaceStream?.setDropMessages?.(false);
-    (window as any).__ctxE2E?.workspaceStream?.close?.();
+    (window as E2EWindow).__ctxE2E?.workspaceStream?.setDropMessages?.(false);
+    (window as E2EWindow).__ctxE2E?.workspaceStream?.close?.();
   });
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
   await page.evaluate((payload) => {
-    (window as any).__ctxE2E?.workspaceStream?.dispatchMessage?.(payload);
+    (window as E2EWindow).__ctxE2E?.workspaceStream?.dispatchMessage?.(payload);
   }, replayEvent);
 
   await expect
@@ -167,7 +193,7 @@ test("workbench: replay restores missed assistant message after stream drop", as
       async () =>
         page.evaluate(
           ({ sessionId: id, text }) =>
-            ((window as any).__ctxE2E?.getSessionHeadMessages?.(id) ?? []).some((msg: string) =>
+            ((window as E2EWindow).__ctxE2E?.getSessionHeadMessages?.(id) ?? []).some((msg: string) =>
               String(msg).includes(text),
             ),
           { sessionId, text: assistantText },

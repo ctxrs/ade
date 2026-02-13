@@ -16,7 +16,7 @@ function createStorage(): Storage {
     get length() {
       return map.size;
     },
-  } as any;
+  } as Storage;
 }
 
 describe("entitlementsCache", () => {
@@ -43,4 +43,3 @@ describe("entitlementsCache", () => {
     expect(shouldUseCachedValue(cache!, 500, 1500)).toBe(false);
   });
 });
-

@@ -5,6 +5,25 @@ import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
+type LayoutShiftSample = {
+  startTime: number;
+  value: number;
+  hadRecentInput: boolean;
+};
+
+type OptimisticWindow = Window & {
+  __queuePanelSeen?: boolean;
+  __queuePanelObserver?: MutationObserver;
+  __layoutShiftEntries?: LayoutShiftSample[];
+  __layoutShiftObserver?: PerformanceObserver;
+  __sendClickAt?: number;
+  __optimisticHeaderSeen?: boolean;
+  __optimisticHeaderDisappeared?: boolean;
+  __optimisticHeaderDuplicated?: boolean;
+  __optimisticHeaderItemId?: string | null;
+  __optimisticHeaderAt?: number;
+};
+
 test("workbench: optimistic new task message skips queued UI", async ({ page }) => {
   test.setTimeout(120000);
   await page.setViewportSize({ width: 1400, height: 900 });
@@ -46,7 +65,7 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
   await composer.fill(prompt);
 
   await page.evaluate(() => {
-    const w = window as any;
+    const w = window as OptimisticWindow;
     w.__queuePanelSeen = false;
     w.__queuePanelObserver?.disconnect?.();
     const queueObserver = new MutationObserver(() => {
@@ -60,11 +79,12 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
     w.__layoutShiftEntries = [];
     w.__layoutShiftObserver?.disconnect?.();
     const shiftObserver = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries() as any[]) {
+      for (const entry of list.getEntries()) {
+        const shiftEntry = entry as PerformanceEntry & { value?: number; hadRecentInput?: boolean };
         w.__layoutShiftEntries.push({
-          startTime: entry.startTime,
-          value: entry.value ?? 0,
-          hadRecentInput: entry.hadRecentInput ?? false,
+          startTime: shiftEntry.startTime,
+          value: shiftEntry.value ?? 0,
+          hadRecentInput: shiftEntry.hadRecentInput ?? false,
         });
       }
     });
@@ -73,7 +93,7 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
   });
 
   await page.evaluate((promptText: string) => {
-    const w = window as any;
+    const w = window as OptimisticWindow;
     w.__sendClickAt = performance.now();
     w.__optimisticHeaderSeen = false;
     w.__optimisticHeaderDisappeared = false;
@@ -122,7 +142,10 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
     node.closest("[data-thread-item-id]")?.getAttribute("data-thread-item-id"),
   );
   expect(headerItemId).toBeTruthy();
-  const elapsedMs = await page.evaluate(() => performance.now() - (window as any).__sendClickAt);
+  const elapsedMs = await page.evaluate(() => {
+    const w = window as OptimisticWindow;
+    return performance.now() - Number(w.__sendClickAt ?? 0);
+  });
   // Expect a fast optimistic render, but allow some variance across CI/dev machines.
   expect(elapsedMs).toBeLessThan(500);
 
@@ -130,7 +153,7 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
   allowFirstCreateSession?.();
 
   await page.evaluate(() => {
-    (window as any).__optimisticHeaderAt = performance.now();
+    (window as OptimisticWindow).__optimisticHeaderAt = performance.now();
   });
   await page.waitForTimeout(400);
   if (headerItemId) {
@@ -142,12 +165,10 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
   }
 
   const { queuePanelSeen, shiftAfterHeader, headerDisappeared, headerDuplicated } = await page.evaluate(() => {
-    const w = window as any;
+    const w = window as OptimisticWindow;
     const seenAt = w.__optimisticHeaderAt ?? 0;
     const entries = Array.isArray(w.__layoutShiftEntries) ? w.__layoutShiftEntries : [];
-    const shiftAfterHeader = entries
-      .filter((entry: any) => Number(entry.startTime) >= seenAt)
-      .reduce((sum: number, entry: any) => sum + (Number(entry.value) || 0), 0);
+    const shiftAfterHeader = entries.filter((entry) => entry.startTime >= seenAt).reduce((sum, entry) => sum + entry.value, 0);
     return {
       queuePanelSeen: Boolean(w.__queuePanelSeen),
       shiftAfterHeader,

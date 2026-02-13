@@ -47,8 +47,8 @@ export type SessionReplicaCommand =
 export type SessionReplicaData = {
   session?: Session;
   acpMeta?: {
-    models?: any;
-    modes?: any;
+    models?: unknown;
+    modes?: unknown;
     currentModelId?: string;
   };
   turns?: SessionTurn[];

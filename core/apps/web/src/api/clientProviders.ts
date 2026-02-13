@@ -41,10 +41,10 @@ export type ProviderOptions = {
   probe_error?: string;
   supports_load: boolean;
   auth_required: boolean;
-  auth_methods?: any;
-  modes?: any;
-  models?: any;
-  verify?: any;
+  auth_methods?: unknown;
+  modes?: unknown;
+  models?: unknown;
+  verify?: unknown;
   probed_at: string;
 };
 
@@ -56,7 +56,7 @@ export type ProviderAuthCheck = {
   workspace_id: string;
   status: string;
   auth_required?: boolean;
-  auth_methods?: any;
+  auth_methods?: unknown;
   checked_at?: string;
 };
 
@@ -64,7 +64,7 @@ export type ProviderUsageSnapshot = {
   provider_id: string;
   source: string;
   fetched_at: string;
-  payload?: any;
+  payload?: unknown;
   error?: string;
 };
 

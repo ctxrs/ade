@@ -3,6 +3,19 @@ import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 import { clearDiagnostics, expectNoUnexpectedDiagnostics, getDiagnostics } from "./utils/diagnostics";
 import { expectWsPathOnCanonicalOrigin } from "./utils/wsUrls";
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+type E2EWindow = Window & {
+  __ctxE2E?: {
+    workspaceStream?: {
+      getConnectionState?: () => string | null;
+    };
+  };
+};
+
 test("workbench: first user message renders from stream when head is stale", async ({ page, request }) => {
   test.setTimeout(120000);
   await page.setViewportSize({ width: 1400, height: 900 });
@@ -29,9 +42,10 @@ test("workbench: first user message renders from stream when head is stale", asy
       return;
     }
 
-    const snapshot = (await response.json()) as any;
+    const snapshot = asRecord(await response.json());
+    const snapshotHead = asRecord(snapshot.head);
     const staleHead = {
-      ...(snapshot?.head ?? {}),
+      ...snapshotHead,
       turns: [],
       messages: [],
       events: [],
@@ -56,12 +70,12 @@ test("workbench: first user message renders from stream when head is stale", asy
 
   await expect
     .poll(async () =>
-      page.evaluate(() => typeof (window as any).__ctxE2E?.workspaceStream?.getConnectionState === "function"),
+      page.evaluate(() => typeof (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState === "function"),
     )
     .toBe(true);
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
   await clearDiagnostics(page);
 

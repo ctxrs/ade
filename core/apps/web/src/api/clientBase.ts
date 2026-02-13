@@ -87,7 +87,7 @@ export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
         extraHeaders[key] = value;
       }
     } else {
-      Object.assign(extraHeaders, init.headers as any);
+      Object.assign(extraHeaders, init.headers as Record<string, string>);
     }
   }
   const traceparent = createTraceparent();
@@ -226,7 +226,7 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
         extraHeaders[key] = value;
       }
     } else {
-      Object.assign(extraHeaders, init.headers as any);
+      Object.assign(extraHeaders, init.headers as Record<string, string>);
     }
   }
   const traceparent = createTraceparent();
@@ -535,7 +535,7 @@ export const daemonFetchRaw = async (path: string, init?: RequestInit): Promise<
         extraHeaders[key] = value;
       }
     } else {
-      Object.assign(extraHeaders, init.headers as any);
+      Object.assign(extraHeaders, init.headers as Record<string, string>);
     }
   }
 

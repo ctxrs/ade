@@ -10,11 +10,11 @@ let listenersInstalled = false;
 
 function dataTransferTypes(dt: DataTransfer | null): string[] {
   if (!dt) return [];
-  const types: any = dt.types;
+  const types = dt.types;
   if (!types) return [];
   if (Array.isArray(types)) return types.map(String);
   try {
-    return Array.from(types as any).map(String);
+    return Array.from(types as ArrayLike<string>).map(String);
   } catch {
     return [];
   }
@@ -25,7 +25,7 @@ function hasFileLikeItem(dt: DataTransfer | null): boolean {
   if (dt.files && dt.files.length > 0) return true;
   const items = dt.items;
   if (items && items.length > 0) {
-    for (const item of Array.from(items as any) as DataTransferItem[]) {
+    for (const item of Array.from(items)) {
       if (item.kind === "file") return true;
     }
   }
@@ -53,7 +53,7 @@ function scopeForEvent(ev: DragEvent): DropScope | null {
   const x = typeof ev.clientX === "number" ? ev.clientX : 0;
   const y = typeof ev.clientY === "number" ? ev.clientY : 0;
   const pointEl =
-    x || y ? (doc.elementFromPoint(x, y) as Element | null) : ((ev.target as any) as Element | null);
+    x || y ? (doc.elementFromPoint(x, y) as Element | null) : (ev.target instanceof Element ? ev.target : null);
   if (!pointEl) return null;
 
   let el: Element | null = pointEl;

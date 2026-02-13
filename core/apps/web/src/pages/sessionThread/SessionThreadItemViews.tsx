@@ -31,6 +31,11 @@ import {
 } from "../SessionPage.helpers";
 import type { ThreadItem, WorkbenchTurnHeader } from "../SessionPage.types";
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
 export function ThreadItemView({
   item,
   worktreeId,
@@ -361,24 +366,27 @@ export function WorkbenchToolRow({
       return makeParts(normalizedTitle);
     }
 
-    const parsed = Array.isArray((item.input as any)?.parsed_cmd) ? ((item.input as any).parsed_cmd as any[]) : [];
+    const inputRecord = asRecord(item.input);
+    const parsedCmd = inputRecord.parsed_cmd;
+    const parsed = Array.isArray(parsedCmd) ? parsedCmd.map((cmd) => asRecord(cmd)) : [];
     if (parsed.length > 0) {
       const c0 = parsed[0] ?? {};
-      if (c0.type === "list_files" && c0.path) return makeParts("Explored", shortPath(c0.path));
-      if (c0.type === "read_file" && c0.path) return makeParts("Read", shortPath(c0.path));
+      const c0Path = typeof c0.path === "string" ? c0.path : "";
+      if (c0.type === "list_files" && c0Path) return makeParts("Explored", shortPath(c0Path));
+      if (c0.type === "read_file" && c0Path) return makeParts("Read", shortPath(c0Path));
       if (c0.type === "search") {
         const q = String(c0.query ?? c0.pattern ?? c0.regex ?? c0.text ?? "").trim();
         if (q) return makeParts("Searched", truncateMiddle(q, 90));
-        if (c0.path) return makeParts("Searched", shortPath(c0.path));
+        if (c0Path) return makeParts("Searched", shortPath(c0Path));
         return makeParts("Searched");
       }
     }
     if (kind === "search") {
       const q = String(
-        item.input?.query ??
-          item.input?.pattern ??
-          item.input?.regex ??
-          item.input?.text ??
+        inputRecord.query ??
+          inputRecord.pattern ??
+          inputRecord.regex ??
+          inputRecord.text ??
           summary ??
           titleRest ??
           "",
@@ -386,8 +394,8 @@ export function WorkbenchToolRow({
       return q ? makeParts("Searched", truncateMiddle(q, 90)) : makeParts("Searched");
     }
     if (kind === "execute") {
-      const cmd = Array.isArray(item.input?.command) ? item.input.command.join(" ") : item.input?.command;
-      const short = shortCommand(cmd ?? "");
+      const cmd = Array.isArray(inputRecord.command) ? inputRecord.command.join(" ") : inputRecord.command;
+      const short = shortCommand(String(cmd ?? ""));
       const parsedShort = parsePrefixed(short, ["Read", "Explored", "Searched", "Wrote", "Edited"]);
       if (parsedShort) return parsedShort;
       return short ? makeParts("Run", short) : makeParts("Run");
@@ -449,7 +457,7 @@ export function WorkbenchToolRow({
       </button>
       {hasDetails && expanded && (
         <div className="wb-tool-details">
-          {item.input && (
+          {Boolean(item.input) && (
             <div className="wb-tool-section">
               <div className="wb-tool-section-title">Input</div>
               <pre className="wb-tool-pre">{formatToolInput(item.tool_kind, item.input)}</pre>
@@ -677,7 +685,7 @@ function ToolCard({ item }: { item: Extract<ThreadItem, { kind: "tool" }> }) {
 
       {isOpen && (
         <div id={`tool-${item.id}`} className="tool-body">
-          {item.input && (
+          {Boolean(item.input) && (
             <div className="tool-section">
               <div className="tool-section-title">Input</div>
               <pre className="tool-pre">{formatToolInput(item.tool_kind, item.input)}</pre>

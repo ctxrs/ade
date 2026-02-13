@@ -4,11 +4,67 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import WebSocket from "ws";
+import type { RawData } from "ws";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import type { Page } from "playwright/test";
 
 const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
 const LINK_TEXT = "https://example.com";
 const TERMINAL_DONE = "TERM_LINK_DONE";
+
+type TerminalCellDimensions = {
+  width: number;
+  height: number;
+};
+
+type TerminalBufferLine = {
+  translateToString?: (trimRight?: boolean) => string;
+};
+
+type TerminalBufferActive = {
+  length?: number;
+  ydisp?: number;
+  getLine?: (index: number) => TerminalBufferLine | undefined;
+};
+
+type TerminalLinkState = {
+  decorations?: {
+    underline?: boolean;
+  };
+};
+
+type TerminalCurrentLink = {
+  link?: {
+    text?: string;
+  };
+  state?: TerminalLinkState;
+};
+
+type TerminalEntry = {
+  element?: HTMLElement;
+  rows?: number;
+  _core?: {
+    screenElement?: HTMLElement;
+    linkifier?: { currentLink?: TerminalCurrentLink };
+    _renderService?: { dimensions?: { css?: { cell?: TerminalCellDimensions } } };
+  };
+  buffer?: { active?: TerminalBufferActive };
+};
+
+type TerminalRegistryWindow = Window & {
+  __ctxE2ETerminals?: Map<string, TerminalEntry>;
+};
+
+const toBuffer = (data: RawData): Buffer => {
+  if (typeof data === "string") return Buffer.from(data);
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (Array.isArray(data)) {
+    return Buffer.concat(
+      data.map((chunk) => (typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk))),
+    );
+  }
+  return Buffer.from(data);
+};
 
 test("terminal links underline on modifier hover", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-terminal-"));
@@ -59,7 +115,7 @@ test("terminal links underline on modifier hover", async ({ page }) => {
   await page.keyboard.up(modifierKey);
 });
 
-async function openTerminalPanel(page: any) {
+async function openTerminalPanel(page: Page) {
   const terminalToggle = page.getByRole("button", { name: "Toggle terminal panel" }).first();
   await expect(terminalToggle).toBeVisible({ timeout: 20_000 });
   const panel = page.locator(".wb-terminal-panel-inner");
@@ -73,7 +129,7 @@ async function openTerminalPanel(page: any) {
     .catch(() => {});
 }
 
-async function ensureTerminalVisible(page: any) {
+async function ensureTerminalVisible(page: Page) {
   const panel = page.locator(".wb-terminal-panel-inner");
   const xterm = page.locator(".xterm");
   if (await xterm.count()) {
@@ -92,13 +148,13 @@ async function ensureTerminalVisible(page: any) {
   await expect(xterm.first()).toBeVisible({ timeout: 30_000 });
 }
 
-async function waitForVisibleTerminalId(page: any): Promise<string> {
+async function waitForVisibleTerminalId(page: Page): Promise<string> {
   let terminalId = "";
   await expect
     .poll(
       async () => {
         terminalId = await page.evaluate(() => {
-          const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+          const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
           if (!reg) return "";
           for (const [id, term] of reg.entries()) {
             const el = term?.element as HTMLElement | undefined;
@@ -159,8 +215,8 @@ async function seedTerminalOutput(baseURL: string, token: string, terminalId: st
       ws.send(`${command}\n`);
     });
 
-    ws.on("message", (data) => {
-      const buf = typeof data === "string" ? Buffer.from(data) : Buffer.from(data as any);
+    ws.on("message", (data: RawData) => {
+      const buf = toBuffer(data);
       if (buf.includes(Buffer.from(TERMINAL_DONE))) {
         finish();
       }
@@ -174,7 +230,7 @@ async function seedTerminalOutput(baseURL: string, token: string, terminalId: st
 }
 
 async function getTerminalMetrics(
-  page: any,
+  page: Page,
   terminalId: string,
 ): Promise<{
   left: number;
@@ -183,7 +239,7 @@ async function getTerminalMetrics(
   cellHeight: number;
 }> {
   await page.waitForFunction((id: string) => {
-    const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+    const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
     if (!reg) return false;
     const term = reg.get(id);
     const screen = term?._core?.screenElement ?? term?.element?.querySelector?.(".xterm-screen");
@@ -194,7 +250,7 @@ async function getTerminalMetrics(
   }, terminalId);
 
   const metrics = await page.evaluate((id: string) => {
-    const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+    const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
     if (!reg) return null;
     const term = reg.get(id);
     const screen = term?._core?.screenElement ?? term?.element?.querySelector?.(".xterm-screen");
@@ -218,7 +274,7 @@ async function getTerminalMetrics(
   return metrics;
 }
 
-async function hoverLinkAndConfirm(page: any, terminalId: string, linkText: string) {
+async function hoverLinkAndConfirm(page: Page, terminalId: string, linkText: string) {
   const metrics = await getTerminalMetrics(page, terminalId);
   const modifierKey = process.platform === "darwin" ? "Meta" : "Control";
   await page.keyboard.up(modifierKey).catch(() => {});
@@ -245,7 +301,7 @@ async function hoverLinkAndConfirm(page: any, terminalId: string, linkText: stri
 }
 
 async function getHoveredLinkState(
-  page: any,
+  page: Page,
   terminalId: string,
 ): Promise<{
   present: boolean;
@@ -254,7 +310,7 @@ async function getHoveredLinkState(
   underline: boolean | null;
 }> {
   return await page.evaluate((id: string) => {
-    const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+    const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
     const term = reg?.get(id);
     const linkifier = term?._core?.linkifier;
     const current = linkifier?.currentLink;
@@ -272,13 +328,13 @@ async function getHoveredLinkState(
 }
 
 async function getLinkCellPosition(
-  page: any,
+  page: Page,
   terminalId: string,
   text: string,
 ): Promise<{ row: number; col: number } | null> {
   return await page.evaluate(
     ({ id, needle }: { id: string; needle: string }) => {
-      const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+      const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
       const term = reg?.get(id);
       const buf = term?.buffer?.active;
       if (!term || !buf || typeof buf.length !== "number") return null;
@@ -301,7 +357,7 @@ async function getLinkCellPosition(
 }
 
 async function waitForLinkCell(
-  page: any,
+  page: Page,
   terminalId: string,
   text: string,
 ): Promise<{ row: number; col: number }> {

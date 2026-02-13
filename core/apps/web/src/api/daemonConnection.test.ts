@@ -10,7 +10,7 @@ describe("daemonConnection", () => {
     sessionStorage.clear();
     localStorage.clear();
     window.history.replaceState({}, "", "/");
-    const g = globalThis as any;
+    const g = globalThis as typeof globalThis & { __TAURI_INTERNALS__?: unknown; __TAURI__?: unknown };
     delete g.__TAURI_INTERNALS__;
     delete g.__TAURI__;
   });

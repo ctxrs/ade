@@ -187,8 +187,8 @@ export async function saveSessionHeadV1(
 export type PersistedSessionAcpMetaV1 = {
   v: 1;
   sessionId: string;
-  models?: any;
-  modes?: any;
+  models?: unknown;
+  modes?: unknown;
   currentModelId?: string;
   updatedAtMs: number;
 };

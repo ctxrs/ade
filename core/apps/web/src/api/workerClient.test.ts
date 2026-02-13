@@ -5,6 +5,10 @@ describe("workerClient", () => {
   const fetchMock = vi.fn();
   const originalCryptoDesc = Object.getOwnPropertyDescriptor(globalThis, "crypto");
   const originalFetchDesc = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+  const mutableGlobal = globalThis as {
+    fetch?: typeof fetch;
+    crypto?: Crypto;
+  };
   let didStubCrypto = false;
 
   beforeEach(() => {
@@ -39,7 +43,7 @@ describe("workerClient", () => {
     } else {
       // Best-effort cleanup for environments where fetch isn't a real global.
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-      delete (globalThis as any).fetch;
+      delete mutableGlobal.fetch;
     }
 
     if (didStubCrypto) {
@@ -47,7 +51,7 @@ describe("workerClient", () => {
         Object.defineProperty(globalThis, "crypto", originalCryptoDesc);
       } else {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-        delete (globalThis as any).crypto;
+        delete mutableGlobal.crypto;
       }
     }
   });

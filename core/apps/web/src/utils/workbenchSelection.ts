@@ -1,16 +1,22 @@
 import { idToString } from "../api/client";
 
+type SessionCandidate = {
+  id?: string | null;
+  relationship?: string | null;
+  status?: string | null;
+};
+
 export function pickPreferredSession(
-  sessions: any[] | undefined | null,
+  sessions: Array<SessionCandidate | null | undefined> | undefined | null,
   preferredSessionId?: string | null,
-): any | null {
-  const list = sessions ?? [];
+): SessionCandidate | null {
+  const list = (sessions ?? []).filter((s): s is SessionCandidate => Boolean(s));
   if (!Array.isArray(list) || list.length === 0) return null;
-  const isSubagent = (s: any) => s?.relationship === "sub_agent";
+  const isSubagent = (s: SessionCandidate) => s?.relationship === "sub_agent";
   const nonSubagents = list.filter((s) => !isSubagent(s));
   const candidates = nonSubagents.length > 0 ? nonSubagents : list;
   if (preferredSessionId) {
-    const preferred = candidates.find((s) => idToString((s as any)?.id) === preferredSessionId);
+    const preferred = candidates.find((s) => idToString(s?.id ?? "") === preferredSessionId);
     if (preferred) return preferred;
   }
   for (let i = candidates.length - 1; i >= 0; i--) {
@@ -21,10 +27,10 @@ export function pickPreferredSession(
 }
 
 export function pickPreferredSessionId(
-  sessions: any[] | undefined | null,
+  sessions: Array<SessionCandidate | null | undefined> | undefined | null,
   preferredSessionId?: string | null,
 ): string | null {
   const s = pickPreferredSession(sessions, preferredSessionId);
-  const id = s ? idToString((s as any).id) : "";
+  const id = s ? idToString(s.id ?? "") : "";
   return id ? String(id) : null;
 }

@@ -1,4 +1,5 @@
 import { expect } from "../fixtures";
+import type { Page } from "playwright/test";
 
 type E2EDiagnosticEvent = {
   id: number;
@@ -16,21 +17,28 @@ type NoUnexpectedDiagnosticsOptions = {
   allowedCodes?: string[];
 };
 
-export async function clearDiagnostics(page: any): Promise<void> {
+type E2EWindow = Window & {
+  __ctxE2E?: {
+    clearDiagnostics?: () => void;
+    getDiagnostics?: () => E2EDiagnosticEvent[] | unknown;
+  };
+};
+
+export async function clearDiagnostics(page: Page): Promise<void> {
   await page.evaluate(() => {
-    (window as any).__ctxE2E?.clearDiagnostics?.();
+    (window as E2EWindow).__ctxE2E?.clearDiagnostics?.();
   });
 }
 
-export async function getDiagnostics(page: any): Promise<E2EDiagnosticEvent[]> {
+export async function getDiagnostics(page: Page): Promise<E2EDiagnosticEvent[]> {
   return page.evaluate(() => {
-    const events = (window as any).__ctxE2E?.getDiagnostics?.();
+    const events = (window as E2EWindow).__ctxE2E?.getDiagnostics?.();
     return Array.isArray(events) ? events : [];
   });
 }
 
 export async function expectNoUnexpectedDiagnostics(
-  page: any,
+  page: Page,
   opts?: NoUnexpectedDiagnosticsOptions,
 ): Promise<void> {
   const events = await getDiagnostics(page);

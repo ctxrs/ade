@@ -287,12 +287,13 @@ function remarkNormalizeCursorMarkdown() {
         // Normalize that to a single inlineCode row.
         if (node.children.length === 2) {
           const [p, codeNode] = node.children as MdastNode[];
-          if (p?.type === "paragraph" && Array.isArray((p as any).children)) {
-            const kids = (p as any).children as MdastNode[];
+          const pChildren = (p as MdastNode & { children?: MdastNode[] })?.children;
+          if (p?.type === "paragraph" && Array.isArray(pChildren)) {
+            const kids = pChildren;
             if (
               kids.length === 1 &&
               kids[0]?.type === "text" &&
-              String((kids[0] as any).value ?? "").trim().toLowerCase() === "code"
+              String((kids[0] as MdastNode & { value?: unknown }).value ?? "").trim().toLowerCase() === "code"
             ) {
               const trimmed = maybeInlineFromCode(codeNode);
               if (trimmed) {
@@ -315,9 +316,9 @@ function remarkNormalizeCursorMarkdown() {
           child?.type === "paragraph" &&
           Array.isArray(child.children) &&
           child.children.length === 1 &&
-          (child.children[0] as any)?.type === "text"
+          (child.children[0] as MdastNode | undefined)?.type === "text"
         ) {
-          const raw = String((child.children[0] as any)?.value ?? "");
+          const raw = String((child.children[0] as MdastNode & { value?: unknown } | undefined)?.value ?? "");
           const trimmed = raw.trim();
           if (/^(⸻|—{3,}|-{3,}|_{3,}|\*{3,})$/.test(trimmed)) {
             node.children[i] = { type: "thematicBreak" };
@@ -343,7 +344,7 @@ export function Markdown({
   worktreeId?: string | null;
   onFileOpenError?: (message: string | null) => void;
 }) {
-  const remarkPlugins: any[] = [remarkGfm, remarkNormalizeCursorMarkdown];
+  const remarkPlugins = [remarkGfm, remarkNormalizeCursorMarkdown];
   // Models/providers sometimes emit citations using private-use unicode wrappers. Those IDs are not
   // resolvable links in ctx today (we don't store the underlying sources table), so hide them.
   const normalized = stripCitationMarkers(content);

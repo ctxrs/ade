@@ -5,7 +5,11 @@ vi.mock("./daemonConnection", async (importOriginal) => {
   return {
     ...actual,
     getDaemonConnection: vi.fn(() => ({
+      baseUrl: null,
+      wsBaseUrl: null,
       authToken: null,
+      runId: null,
+      source: null,
     })),
     getDaemonWsUrl: vi.fn((path: string, query?: URLSearchParams) => {
       const qs = query?.toString();
@@ -24,8 +28,12 @@ describe("clientWorkspaces websocket urls", () => {
 
   it("builds execution launch stream URL on canonical daemon host with token", () => {
     vi.mocked(getDaemonConnection).mockReturnValueOnce({
+      baseUrl: null,
+      wsBaseUrl: null,
       authToken: "token-1",
-    } as any);
+      runId: null,
+      source: null,
+    });
 
     const url = buildExecutionLaunchWsUrl("job-1");
     expect(url).toContain("ws://daemon.test/api/execution/launch/stream");
@@ -36,8 +44,12 @@ describe("clientWorkspaces websocket urls", () => {
 
   it("builds execution launch stream URL without token when auth is absent", () => {
     vi.mocked(getDaemonConnection).mockReturnValueOnce({
+      baseUrl: null,
+      wsBaseUrl: null,
       authToken: null,
-    } as any);
+      runId: null,
+      source: null,
+    });
 
     const url = buildExecutionLaunchWsUrl("job-2");
     expect(url).toContain("ws://daemon.test/api/execution/launch/stream");

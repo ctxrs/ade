@@ -3,6 +3,7 @@ import type { WorktreeBootstrapNotice, WorkspaceActiveSnapshotEvent } from "@ctx
 import { getWorktreeBootstrapLogs, idToString } from "../api/client";
 import { useWorkspaceActiveSnapshotEvents } from "../state/workspaceActiveSnapshotStore";
 import { desktopSaveTextFile, isDesktopApp } from "../utils/desktop";
+import { errorMessage } from "../utils/errorMessage";
 
 const buildNoticeKey = (notice: WorktreeBootstrapNotice): string =>
   `${idToString(notice.worktree_id)}:${notice.finished_at}`;
@@ -78,8 +79,8 @@ export function WorktreeBootstrapSnackbar() {
       const contents = await getWorktreeBootstrapLogs(worktreeId);
       const name = `worktree-bootstrap-${worktreeId}.log`;
       await saveTextFile(name, contents);
-    } catch (err: any) {
-      setDownloadError(err?.message ?? "Failed to download logs.");
+    } catch (err: unknown) {
+      setDownloadError(errorMessage(err) || "Failed to download logs.");
     } finally {
       setDownloading(false);
     }

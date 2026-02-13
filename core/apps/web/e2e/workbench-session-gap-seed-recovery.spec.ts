@@ -1,6 +1,15 @@
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
+type E2EWindow = Window & {
+  __ctxE2E?: {
+    workspaceStream?: {
+      getConnectionState?: () => string | null;
+      dispatchMessage?: (payload: unknown) => void;
+    };
+  };
+};
+
 test("workbench: session_gap recovers without active /head refetch", async ({ page, request }) => {
   const seed = await seedDummyWorkspace(request, {
     tasks: 2,
@@ -39,10 +48,10 @@ test("workbench: session_gap recovers without active /head refetch", async ({ pa
   });
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
   await expect
-    .poll(async () => page.evaluate(() => typeof (window as any).__ctxE2E?.workspaceStream?.dispatchMessage === "function"))
+    .poll(async () => page.evaluate(() => typeof (window as E2EWindow).__ctxE2E?.workspaceStream?.dispatchMessage === "function"))
     .toBe(true);
 
   requests.length = 0;
@@ -50,7 +59,7 @@ test("workbench: session_gap recovers without active /head refetch", async ({ pa
 
   await page.evaluate(
     ({ sessionId, workspaceId }) => {
-      const stream = (window as any).__ctxE2E?.workspaceStream;
+      const stream = (window as E2EWindow).__ctxE2E?.workspaceStream;
       if (!stream?.dispatchMessage) return;
       const payload = {
         type: "event",

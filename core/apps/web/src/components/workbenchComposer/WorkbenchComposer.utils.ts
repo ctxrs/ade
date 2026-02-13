@@ -16,6 +16,11 @@ export function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
 export function imageAttachmentSrc(a: MessageAttachment): string {
   return a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
 }
@@ -71,13 +76,17 @@ export function formatUsedTokenCount(value: number): string {
 export function buildModelsFromProviderOptions(opts?: ProviderOptions): Array<{ id: string; name?: string }> {
   const raw = opts?.models;
   if (!raw) return [];
-  const list = (raw as any)?.availableModels ?? (raw as any)?.available_models ?? (raw as any)?.models ?? raw;
+  const rec = asRecord(raw);
+  const list = rec.availableModels ?? rec.available_models ?? rec.models ?? raw;
   if (!Array.isArray(list)) return [];
   return list
-    .map((m: any) => ({
-      id: String(m?.modelId ?? m?.model_id ?? m?.id ?? m?.name ?? "").trim(),
-      name: typeof m?.name === "string" ? m.name : undefined,
-    }))
+    .map((m) => {
+      const model = asRecord(m);
+      return {
+        id: String(model.modelId ?? model.model_id ?? model.id ?? model.name ?? "").trim(),
+        name: typeof model.name === "string" ? model.name : undefined,
+      };
+    })
     .filter((m) => m.id.length > 0);
 }
 
@@ -118,13 +127,13 @@ export function deriveFullModelIdForBase(
 }
 
 export function modelIdFromProviderOptions(opts?: ProviderOptions): string | null {
-  const raw = opts?.models as any;
-  if (!raw || typeof raw !== "object") return null;
+  const raw = asRecord(opts?.models);
+  if (!raw || Object.keys(raw).length === 0) return null;
   const current = raw.currentModelId ?? raw.current_model_id;
   if (typeof current === "string" && current.trim().length > 0) return current.trim();
   const list = raw.availableModels ?? raw.available_models ?? raw.models ?? [];
   if (!Array.isArray(list) || list.length === 0) return null;
-  const first = list[0] as any;
-  const id = first?.modelId ?? first?.model_id ?? first?.id ?? first?.name;
+  const first = asRecord(list[0]);
+  const id = first.modelId ?? first.model_id ?? first.id ?? first.name;
   return typeof id === "string" && id.trim().length > 0 ? id.trim() : null;
 }

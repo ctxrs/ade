@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Message, SessionEvent, SessionTurn } from "../api/client";
+import type { ThreadItem } from "./SessionPage.types";
 
 vi.mock("react-syntax-highlighter", () => ({ Prism: () => null }));
 vi.mock("react-syntax-highlighter/dist/esm/styles/prism", () => ({ oneDark: {} }));
+
+const isTurnStatusItem = (item: ThreadItem): item is Extract<ThreadItem, { kind: "turn_status" }> =>
+  item.kind === "turn_status";
+
+const isToolItem = (item: ThreadItem): item is Extract<ThreadItem, { kind: "tool" }> =>
+  item.kind === "tool";
 
 describe("buildWorkbenchThreadViewModel", () => {
   it("requires explicit degraded mode for events-only rendering", async () => {
@@ -28,21 +36,21 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const strict = buildWorkbenchThreadViewModel([], [] as any, {}, events as any);
+    const strict = buildWorkbenchThreadViewModel([], [] as unknown as Message[], {}, events as unknown as SessionEvent[]);
     expect(strict.groups.length).toBe(0);
 
     const degraded = buildWorkbenchThreadViewModel(
       [],
-      [] as any,
+      [] as unknown as Message[],
       {},
-      events as any,
+      events as unknown as SessionEvent[],
       undefined,
       { mode: "events_only_degraded" },
     );
     expect(degraded.groups.length).toBe(1);
     expect(degraded.groups[0]?.header?.content).toBe("hello");
     expect(
-      degraded.groups[0]?.items.some((it: any) => it.kind === "assistant" && String(it.content).includes("Hi")),
+      degraded.groups[0]?.items.some((it) => it.kind === "assistant" && String(it.content).includes("Hi")),
     ).toBe(true);
   }, 10000);
 
@@ -90,7 +98,7 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
+    const out = buildWorkbenchThreadViewModel(turns as unknown as SessionTurn[], messages as unknown as Message[], {}, events as unknown as SessionEvent[]);
     expect(out.groups.length).toBe(1);
     expect(out.groups[0]?.header).toBeNull();
   }, 10000);
@@ -149,7 +157,7 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
+    const out = buildWorkbenchThreadViewModel(turns as unknown as SessionTurn[], messages as unknown as Message[], {}, events as unknown as SessionEvent[]);
     expect(out.groups.length).toBe(0);
   }, 10000);
 
@@ -219,9 +227,9 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
+    const out = buildWorkbenchThreadViewModel(turns as unknown as SessionTurn[], messages as unknown as Message[], {}, events as unknown as SessionEvent[]);
     const items = out.groups[0]?.items ?? [];
-    expect(items.map((it: any) => it.kind)).toEqual(["tool", "thought", "tool", "turn_status"]);
+    expect(items.map((it) => it.kind)).toEqual(["tool", "thought", "tool", "turn_status"]);
   }, 10000);
 
   it("uses CRP reasoning summaries for status and keeps trace chunks in thought rows", async () => {
@@ -287,15 +295,15 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
+    const out = buildWorkbenchThreadViewModel(turns as unknown as SessionTurn[], messages as unknown as Message[], {}, events as unknown as SessionEvent[]);
     const items = out.groups[0]?.items ?? [];
     type ThoughtItem = { kind: "thought"; id: string; turn_id: string; created_at: string; content: string };
-    const thoughtItems = items.filter((it): it is ThoughtItem => (it as any).kind === "thought");
+    const thoughtItems = items.filter((it): it is ThoughtItem => it.kind === "thought");
     expect(thoughtItems.length).toBe(1);
     expect(String(thoughtItems[0]?.content)).toContain("Thinking about bar");
     expect(String(thoughtItems[0]?.content)).not.toContain("Reading foo");
 
-    const statusItem = items.find((it: any) => it.kind === "turn_status") as any;
+    const statusItem = items.find(isTurnStatusItem);
     expect(statusItem?.custom_status).toBe("Reading foo");
   }, 10000);
 
@@ -379,9 +387,9 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
+    const out = buildWorkbenchThreadViewModel(turns as unknown as SessionTurn[], messages as unknown as Message[], {}, events as unknown as SessionEvent[]);
     const items = out.groups[0]?.items ?? [];
-    const kinds = items.map((it: any) => it.kind);
+    const kinds = items.map((it) => it.kind);
     expect(kinds).toEqual(["thought", "tool", "thought", "turn_status"]);
   }, 10000);
 
@@ -438,9 +446,9 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
-    const tools = (out.groups[0]?.items ?? []).filter((it: any) => it.kind === "tool");
-    expect(tools.map((it: any) => it.tool_call_id)).toEqual(["tool-1", "tool-2"]);
+    const out = buildWorkbenchThreadViewModel(turns as unknown as SessionTurn[], messages as unknown as Message[], {}, events as unknown as SessionEvent[]);
+    const tools = (out.groups[0]?.items ?? []).filter(isToolItem);
+    expect(tools.map((it) => it.tool_call_id)).toEqual(["tool-1", "tool-2"]);
   }, 10000);
 
   it("keeps thought ordering stable when final chunks arrive", async () => {
@@ -508,9 +516,9 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
+    const out = buildWorkbenchThreadViewModel(turns as unknown as SessionTurn[], messages as unknown as Message[], {}, events as unknown as SessionEvent[]);
     const items = out.groups[0]?.items ?? [];
-    expect(items.map((it: any) => it.kind)).toEqual(["thought", "tool", "turn_status"]);
+    expect(items.map((it) => it.kind)).toEqual(["thought", "tool", "turn_status"]);
   }, 10000);
 
   it("keeps tool interleaving stable across tool updates", async () => {
@@ -588,9 +596,9 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
+    const out = buildWorkbenchThreadViewModel(turns as unknown as SessionTurn[], messages as unknown as Message[], {}, events as unknown as SessionEvent[]);
     const items = out.groups[0]?.items ?? [];
-    expect(items.map((it: any) => it.kind)).toEqual(["tool", "thought", "turn_status"]);
+    expect(items.map((it) => it.kind)).toEqual(["tool", "thought", "turn_status"]);
   }, 10000);
 
   it("uses the latest status update text per turn", async () => {
@@ -649,8 +657,8 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
-    const statusItem = out.groups[0]?.items.find((it: any) => it.kind === "turn_status") as any;
+    const out = buildWorkbenchThreadViewModel(turns as unknown as SessionTurn[], messages as unknown as Message[], {}, events as unknown as SessionEvent[]);
+    const statusItem = out.groups[0]?.items.find(isTurnStatusItem);
     expect(statusItem?.custom_status).toBe("Preparing specs");
   }, 10000);
 
@@ -715,8 +723,8 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const out = buildWorkbenchThreadViewModel(turns as any, messages as any, {}, events as any);
-    const statusItem = out.groups[0]?.items.find((it: any) => it.kind === "turn_status") as any;
+    const out = buildWorkbenchThreadViewModel(turns as unknown as SessionTurn[], messages as unknown as Message[], {}, events as unknown as SessionEvent[]);
+    const statusItem = out.groups[0]?.items.find(isTurnStatusItem);
     expect(statusItem?.custom_status).toBe("Searching alpha");
   }, 10000);
 
@@ -756,8 +764,8 @@ describe("buildWorkbenchThreadViewModel", () => {
       created_at: "2025-12-15T00:00:00.000Z",
     };
 
-    const k1 = deriveMessagesKey([{ ...base, content: "hello" }] as any);
-    const k2 = deriveMessagesKey([{ ...base, content: "world" }] as any);
+    const k1 = deriveMessagesKey([{ ...base, content: "hello" }] as unknown as Message[]);
+    const k2 = deriveMessagesKey([{ ...base, content: "world" }] as unknown as Message[]);
     expect(k1).not.toBe(k2);
   }, 10000);
 
@@ -779,7 +787,10 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const merged = mergeQueuedMessagesForPanel([] as any, pending as any);
+    const merged = mergeQueuedMessagesForPanel(
+      [] as unknown as Message[],
+      pending as Array<{ clientId: string; message: Message }>,
+    );
     expect(merged).toHaveLength(1);
     expect(String(merged[0]?.id)).toBe("m-pending-1");
   }, 10000);
@@ -815,7 +826,7 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const filtered = filterQueuedMessagesForPanel(queue as any, turns as any);
+    const filtered = filterQueuedMessagesForPanel(queue as unknown as Message[], turns as unknown as SessionTurn[]);
     expect(filtered).toEqual([]);
   }, 10000);
 
@@ -866,8 +877,8 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
     ];
 
-    const filteredTurns = filterTurnsForQueuedMessages(turns as any, new Set(["m-queued"]));
-    const out = buildWorkbenchThreadViewModelFromTurns(filteredTurns as any, messages as any, {}, [], new Map());
+    const filteredTurns = filterTurnsForQueuedMessages(turns as unknown as SessionTurn[], new Set(["m-queued"]));
+    const out = buildWorkbenchThreadViewModelFromTurns(filteredTurns, messages as unknown as Message[], {}, [], new Map());
     expect(out.groups.length).toBe(1);
     expect(out.groups[0]?.header?.id).toBe("t-live");
   }, 10000);

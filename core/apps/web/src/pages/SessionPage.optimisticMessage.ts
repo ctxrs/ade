@@ -45,6 +45,6 @@ export function buildOptimisticUserMessage(input: BuildOptimisticUserMessageInpu
     created_at: input.createdAt ?? new Date().toISOString(),
   };
   // `order_seq` exists at runtime but is not yet reflected in the generated web client type.
-  (message as any).order_seq = orderSeq;
+  (message as Message & { order_seq?: number }).order_seq = orderSeq;
   return message;
 }

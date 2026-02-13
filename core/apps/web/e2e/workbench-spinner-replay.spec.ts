@@ -5,6 +5,16 @@ import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
+type E2EWindow = Window & {
+  __ctxE2E?: {
+    workspaceStream?: {
+      close?: () => void;
+      setDropMessages?: (drop: boolean) => void;
+      getConnectionState?: () => string | null;
+    };
+  };
+};
+
 test("workbench: spinner clears after replayed completion", async ({ page }) => {
   test.setTimeout(120000);
   await page.setViewportSize({ width: 1400, height: 900 });
@@ -46,12 +56,12 @@ test("workbench: spinner clears after replayed completion", async ({ page }) => 
 
   await expect
     .poll(async () =>
-      page.evaluate(() => typeof (window as any).__ctxE2E?.workspaceStream?.getConnectionState === "function"),
+      page.evaluate(() => typeof (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState === "function"),
     )
     .toBe(true);
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
 
   const prompt = `slow-diff-test spinner replay
@@ -81,7 +91,7 @@ test("workbench: spinner clears after replayed completion", async ({ page }) => 
   await expect(toolSummary).toBeVisible({ timeout: 20000 });
 
   await page.evaluate(() => {
-    const stream = (window as any).__ctxE2E?.workspaceStream;
+    const stream = (window as E2EWindow).__ctxE2E?.workspaceStream;
     stream?.setDropMessages?.(true);
     stream?.close?.();
   });
@@ -89,13 +99,13 @@ test("workbench: spinner clears after replayed completion", async ({ page }) => 
   await page.waitForTimeout(3000);
 
   await page.evaluate(() => {
-    const stream = (window as any).__ctxE2E?.workspaceStream;
+    const stream = (window as E2EWindow).__ctxE2E?.workspaceStream;
     stream?.setDropMessages?.(false);
     stream?.close?.();
   });
 
   await expect
-    .poll(async () => page.evaluate(() => (window as any).__ctxE2E?.workspaceStream?.getConnectionState?.()))
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
 
   await expect(activeSpinners).toHaveCount(0, { timeout: 12000 });

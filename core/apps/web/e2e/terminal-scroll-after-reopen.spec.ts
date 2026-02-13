@@ -4,8 +4,41 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import type { Page } from "playwright/test";
 
 const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
+
+type TerminalBufferSnapshot = {
+  baseY?: number;
+  viewportY?: number;
+  ydisp?: number;
+  length?: number;
+};
+
+type TerminalEntry = {
+  element?: HTMLElement;
+  textarea?: HTMLTextAreaElement;
+  focus?: () => void;
+  scrollToBottom?: () => void;
+  buffer?: { active?: TerminalBufferSnapshot };
+};
+
+type TerminalRegistryWindow = Window & {
+  __ctxE2ETerminals?: Map<string, TerminalEntry>;
+};
+
+type TerminalSession = {
+  id: unknown;
+  created_at: string;
+  status: string;
+  task_id?: unknown;
+};
+
+const readTerminalId = (value: unknown): string | undefined => {
+  if (typeof value === "string" && value) return value;
+  if (Array.isArray(value) && typeof value[0] === "string" && value[0]) return value[0];
+  return undefined;
+};
 
 test("terminal scroll stays consistent after closing and reopening panel while output streams", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-terminal-scroll-"));
@@ -120,7 +153,7 @@ function makeStreamingCommand() {
   return `i=0; while [ $i -lt 2500 ]; do i=$((i+1)); echo line $i; if [ $((i % 200)) -eq 0 ]; then sleep 1; fi; done`;
 }
 
-async function openTerminalPanel(page: any) {
+async function openTerminalPanel(page: Page) {
   const terminalToggle = page.getByRole("button", { name: "Toggle terminal panel" }).first();
   await expect(terminalToggle).toBeVisible({ timeout: 20_000 });
   const panel = page.locator(".wb-terminal-panel-inner");
@@ -130,7 +163,7 @@ async function openTerminalPanel(page: any) {
   await expect(panel).toBeVisible({ timeout: 20_000 });
 }
 
-async function closeTerminalPanel(page: any) {
+async function closeTerminalPanel(page: Page) {
   const terminalToggle = page.getByRole("button", { name: "Toggle terminal panel" }).first();
   const panel = page.locator(".wb-terminal-panel-inner");
   if (await panel.isVisible()) {
@@ -140,7 +173,7 @@ async function closeTerminalPanel(page: any) {
 }
 
 async function getScrollState(
-  page: any,
+  page: Page,
   terminalId: string,
 ): Promise<{
   present: boolean;
@@ -150,7 +183,7 @@ async function getScrollState(
   length: number;
 }> {
   return await page.evaluate((id: string) => {
-    const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+    const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
     const term = reg?.get(id);
     const buf = term?.buffer?.active;
     return {
@@ -163,9 +196,9 @@ async function getScrollState(
   }, terminalId);
 }
 
-async function isTerminalVisibleById(page: any, terminalId: string): Promise<boolean> {
+async function isTerminalVisibleById(page: Page, terminalId: string): Promise<boolean> {
   return await page.evaluate((id: string) => {
-    const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+    const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
     const term = reg?.get(id);
     const el = term?.element as HTMLElement | undefined;
     if (!el || !el.isConnected) return false;
@@ -180,12 +213,11 @@ async function isTerminalVisibleById(page: any, terminalId: string): Promise<boo
 }
 
 async function waitForNewestWorkspaceTerminalId(
-  page: any,
+  page: Page,
   workspaceId: string,
   createdAfterMs: number,
   opts?: { requireTaskId?: boolean },
 ): Promise<string> {
-  type TerminalSession = { id: any; created_at: string; status: string; task_id?: any | null };
   let terminalId = "";
   await expect
     .poll(
@@ -197,7 +229,7 @@ async function waitForNewestWorkspaceTerminalId(
         const terminals = (await resp.json()) as TerminalSession[];
         const newest = terminals
           .map((t) => ({
-            id: (typeof t.id === "string" ? t.id : (t.id as any)?.[0]) as string | undefined,
+            id: readTerminalId(t.id),
             createdAtMs: Date.parse(t.created_at),
             status: t.status,
             taskId: t.task_id,
@@ -218,15 +250,15 @@ async function waitForNewestWorkspaceTerminalId(
   return terminalId;
 }
 
-async function typeCommandInTerminal(page: any, terminalId: string, command: string) {
+async function typeCommandInTerminal(page: Page, terminalId: string, command: string) {
   await focusTerminalById(page, terminalId);
   await page.keyboard.type(command);
   await page.keyboard.press("Enter");
 }
 
-async function focusTerminalById(page: any, terminalId: string) {
+async function focusTerminalById(page: Page, terminalId: string) {
   await page.evaluate((id: string) => {
-    const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+    const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
     const term = reg?.get(id);
     if (!term) return;
     // xterm Terminal has a public focus() method; also try focusing the internal textarea.
@@ -242,7 +274,7 @@ async function focusTerminalById(page: any, terminalId: string) {
     .poll(
       async () =>
         page.evaluate((id: string) => {
-          const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+          const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
           const term = reg?.get(id);
           const root = term?.element as HTMLElement | undefined;
           const active = document.activeElement as HTMLElement | null;
@@ -254,9 +286,9 @@ async function focusTerminalById(page: any, terminalId: string) {
     .toBe(true);
 }
 
-async function scrollTerminalViewportToBottom(page: any, terminalId: string) {
+async function scrollTerminalViewportToBottom(page: Page, terminalId: string) {
   await page.evaluate((id: string) => {
-    const reg = (window as any).__ctxE2ETerminals as Map<string, any> | undefined;
+    const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
     const term = reg?.get(id);
     term?.scrollToBottom?.();
     const root = term?.element as HTMLElement | undefined;

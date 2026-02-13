@@ -73,6 +73,17 @@ import {
   toolStatusBucket,
 } from "./sessionSupervisor/toolStateProjection";
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+const readPayloadObject = (
+  payload: SessionEvent["payload_json"],
+  key: string,
+): Record<string, unknown> | null => {
+  const value = asRecord(payload)[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+};
+
 const readTunableInt = (key: string, fallback: number) => {
   try {
     const raw = window.localStorage.getItem(key);
@@ -1848,11 +1859,12 @@ export class SessionSupervisor {
     if (existing) return existing;
     const createdAt = event.created_at ?? new Date().toISOString();
     const status = deriveTurnStatusFromEvent(event);
+    const payload = asRecord(event.payload_json);
     const turn: SessionTurn = {
       turn_id: event.turn_id ?? turnId,
       session_id: event.session_id,
       run_id: event.run_id ?? null,
-      user_message_id: event.payload_json?.user_message_id ?? event.payload_json?.message_id ?? null,
+      user_message_id: readPayloadString(payload, ["user_message_id", "message_id"]) ?? null,
       status,
       start_seq: event.seq ?? null,
       end_seq: null,
@@ -1982,8 +1994,9 @@ export class SessionSupervisor {
         if (turn.status !== "interrupted" && turn.status !== "failed") {
           turn.status = "completed";
         }
-        if (event.payload_json?.context_window) {
-          turn.metrics_json = event.payload_json.context_window;
+        const contextWindow = readPayloadObject(event.payload_json, "context_window");
+        if (contextWindow) {
+          turn.metrics_json = contextWindow;
         }
         changed = true;
         break;
@@ -2000,8 +2013,9 @@ export class SessionSupervisor {
         break;
     }
 
-    if (event.payload_json?.context_window) {
-      turn.metrics_json = event.payload_json.context_window;
+    const contextWindow = readPayloadObject(event.payload_json, "context_window");
+    if (contextWindow) {
+      turn.metrics_json = contextWindow;
       changed = true;
     }
 
@@ -2023,7 +2037,7 @@ export class SessionSupervisor {
   }
 
   private applyQueueEvent(entry: InternalEntry, event: SessionEvent): boolean {
-    const messageId = idToString(event.payload_json?.message_id ?? "");
+    const messageId = idToString(readPayloadString(event.payload_json, ["message_id"]) ?? "");
     if (!messageId) return false;
     switch (String(event.event_type)) {
       case "message_queue_added": {
@@ -2240,4 +2254,3 @@ export class SessionSupervisor {
     }
   }
 }
-

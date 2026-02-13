@@ -3,17 +3,18 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
+import type { Page, Response } from "@playwright/test";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    (window as any).__CTX_FEATURE_FLAGS__ = {
+    (window as Window & { __CTX_FEATURE_FLAGS__?: Record<string, unknown> }).__CTX_FEATURE_FLAGS__ = {
       queued_messages_enabled: true,
     };
   });
 });
 
-const setupRunningSession = async (page: any) => {
+const setupRunningSession = async (page: Page) => {
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
   execSync("git init", { cwd: repo });
   execSync("git config user.email test@example.com", { cwd: repo });
@@ -40,7 +41,7 @@ const setupRunningSession = async (page: any) => {
 [[/tool_calls]]`;
 
   await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(slowMessage);
-  const createSessionResp = page.waitForResponse((resp: any) => {
+  const createSessionResp = page.waitForResponse((resp: Response) => {
     if (resp.request().method() !== "POST") return false;
     return /\/api\/tasks\/[^/]+\/sessions$/.test(resp.url()) && resp.status() === 200;
   });
@@ -51,10 +52,10 @@ const setupRunningSession = async (page: any) => {
   await expect(page.locator(".wb-session button[aria-label=\"Stop\"]")).toBeVisible({ timeout: 20_000 });
 };
 
-const queueMessage = async (page: any, text: string) => {
+const queueMessage = async (page: Page, text: string) => {
   const sessionComposer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await sessionComposer.fill(text);
-  const sendResp = page.waitForResponse((resp: any) => {
+  const sendResp = page.waitForResponse((resp: Response) => {
     if (resp.request().method() !== "POST") return false;
     if (!/\/api\/sessions\/[^/]+\/messages$/.test(resp.url())) return false;
     const body = resp.request().postData() ?? "";
@@ -65,7 +66,7 @@ const queueMessage = async (page: any, text: string) => {
   expect(resp.status(), `queue message POST failed: ${resp.url()}`).toBe(200);
 };
 
-const delayDeleteMessage = async (page: any, delayMs: number) => {
+const delayDeleteMessage = async (page: Page, delayMs: number) => {
   await page.route("**/api/messages/*", async (route) => {
     const req = route.request();
     if (req.method() !== "DELETE") return route.continue();
@@ -199,8 +200,16 @@ test("workbench: send now renders optimistic header before message POST resolves
     await route.continue();
   });
 
+  type SendNowWindow = Window & {
+    __sendNowClickAt?: number;
+    __sendNowHeaderSeen?: boolean;
+    __sendNowHeaderDisappeared?: boolean;
+    __sendNowHeaderDuplicated?: boolean;
+    __sendNowHeaderItemId?: string | null;
+  };
+
   await page.evaluate((promptText: string) => {
-    const w = window as any;
+    const w = window as SendNowWindow;
     w.__sendNowClickAt = performance.now();
     w.__sendNowHeaderSeen = false;
     w.__sendNowHeaderDisappeared = false;
@@ -247,7 +256,10 @@ test("workbench: send now renders optimistic header before message POST resolves
     .filter({ hasText: queuedText })
     .first();
   await expect(header).toBeVisible({ timeout: 2000 });
-  const elapsedMs = await page.evaluate(() => performance.now() - (window as any).__sendNowClickAt);
+  const elapsedMs = await page.evaluate(() => {
+    const w = window as SendNowWindow;
+    return performance.now() - Number(w.__sendNowClickAt ?? 0);
+  });
   expect(elapsedMs).toBeLessThan(500);
 
   const headerItemId = await header.evaluate((node) =>
@@ -264,7 +276,7 @@ test("workbench: send now renders optimistic header before message POST resolves
   }
 
   const { headerDisappeared, headerDuplicated } = await page.evaluate(() => {
-    const w = window as any;
+    const w = window as SendNowWindow;
     return {
       headerDisappeared: Boolean(w.__sendNowHeaderDisappeared),
       headerDuplicated: Boolean(w.__sendNowHeaderDuplicated),

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { errorMessage } from "../utils/errorMessage";
 
 type AskUserQuestionOption = { label: string; description?: string; isOther?: boolean };
 type AskUserQuestionItem = {
@@ -10,6 +11,11 @@ type AskUserQuestionItem = {
 };
 
 const DEFAULT_OTHER_LABEL = "Type something.";
+
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
 
 function readNonEmptyString(...values: Array<unknown>): string | null {
   for (const value of values) {
@@ -24,10 +30,10 @@ function normalizeOptions(raw: unknown): AskUserQuestionOption[] {
     .map((o) => {
       if (typeof o === "string") return { label: o };
       if (o && typeof o === "object") {
-        const any = o as any;
-        const label = typeof any.label === "string" ? any.label : "";
+        const rec = asRecord(o);
+        const label = typeof rec.label === "string" ? rec.label : "";
         if (!label.trim()) return null;
-        const description = typeof any.description === "string" ? any.description : undefined;
+        const description = typeof rec.description === "string" ? rec.description : undefined;
         return { label, description };
       }
       return null;
@@ -36,7 +42,7 @@ function normalizeOptions(raw: unknown): AskUserQuestionOption[] {
 }
 
 function extractOtherLabel(
-  question: any,
+  question: Record<string, unknown>,
   options: AskUserQuestionOption[],
 ): {
   options: AskUserQuestionOption[];
@@ -65,24 +71,28 @@ function extractOtherLabel(
   return { options: nextOptions, otherLabel };
 }
 
-function normalizeQuestions(input: any): AskUserQuestionItem[] {
-  const rawQuestions =
-    (Array.isArray(input?.questions) && input.questions) ||
-    (Array.isArray(input?.input?.questions) && input.input.questions) ||
-    (Array.isArray(input) && input) ||
-    [];
-
-  return rawQuestions
-    .map((q: any, idx: number) => {
-      const question = typeof q?.question === "string" ? q.question : "";
-      if (!question.trim()) return null;
-      const header = typeof q?.header === "string" ? q.header : `Question ${idx + 1}`;
-      const baseOptions = normalizeOptions(q?.options);
-      const multiSelect = Boolean(q?.multiSelect ?? q?.multi_select);
-      const { options, otherLabel } = extractOtherLabel(q, baseOptions);
-      return { header, question, options, multiSelect, otherLabel };
-    })
-    .filter((q: AskUserQuestionItem | null): q is AskUserQuestionItem => Boolean(q));
+function normalizeQuestions(input: unknown): AskUserQuestionItem[] {
+  const rec = asRecord(input);
+  const nested = asRecord(rec.input);
+  const rawQuestions: unknown[] = Array.isArray(rec.questions)
+    ? rec.questions
+    : Array.isArray(nested.questions)
+      ? nested.questions
+      : Array.isArray(input)
+        ? input
+        : [];
+  const out: AskUserQuestionItem[] = [];
+  rawQuestions.forEach((q, idx) => {
+    const qRec = asRecord(q);
+    const question = typeof qRec.question === "string" ? qRec.question : "";
+    if (!question.trim()) return;
+    const header = typeof qRec.header === "string" ? qRec.header : `Question ${idx + 1}`;
+    const baseOptions = normalizeOptions(qRec.options);
+    const multiSelect = Boolean(qRec.multiSelect ?? qRec.multi_select);
+    const { options, otherLabel } = extractOtherLabel(qRec, baseOptions);
+    out.push({ header, question, options, multiSelect, otherLabel });
+  });
+  return out;
 }
 
 function splitAnswerParts(answer: string, multiSelect: boolean): string[] {
@@ -165,7 +175,7 @@ export function AskUserQuestionCard({
   onSubmit,
   onCancel,
 }: {
-  input: any;
+  input: unknown;
   answers?: Record<string, string>;
   outcome?: "submitted" | "cancelled";
   readOnly: boolean;
@@ -346,7 +356,7 @@ export function AskUserQuestionCard({
           setBusy(true);
           setError(null);
           void onSubmit(draftAnswers)
-            .catch((e: any) => setError(e?.message ?? String(e)))
+            .catch((e: unknown) => setError(errorMessage(e)))
             .finally(() => setBusy(false));
           return;
         }
@@ -514,7 +524,7 @@ export function AskUserQuestionCard({
               setBusy(true);
               setError(null);
               void onCancel()
-                .catch((e: any) => setError(e?.message ?? String(e)))
+                .catch((e: unknown) => setError(errorMessage(e)))
                 .finally(() => setBusy(false));
             }}
           >
@@ -532,7 +542,7 @@ export function AskUserQuestionCard({
               setBusy(true);
               setError(null);
               void onSubmit(draftAnswers)
-                .catch((e: any) => setError(e?.message ?? String(e)))
+                .catch((e: unknown) => setError(errorMessage(e)))
                 .finally(() => setBusy(false));
             }}
           >

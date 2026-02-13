@@ -21,13 +21,22 @@ export const saveTextFile = async (name: string, contents: string) => {
   }
 };
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+const readFiniteNumber = (value: unknown): number | null => {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+};
+
 export function sectionFromHash(hash: string): SectionId | null {
   const raw = String(hash || "").replace(/^#/, "").trim();
   if (!raw) return null;
   const match = SECTIONS.find((s) => s.id === raw);
   if (!match) return null;
   if (match.id === "dev_tools" && !import.meta.env.DEV) return null;
-  return (match.id ?? null) as any;
+  return match.id;
 }
 
 export function clampPct(n: number): number {
@@ -69,25 +78,35 @@ export function isLinuxPlatform(): boolean {
   return platform.includes("linux") || agent.includes("linux");
 }
 
-export function codexResetAtMs(window?: any): number | null {
-  if (!window) return null;
-  if (Number.isFinite(window.reset_at)) return (window.reset_at as number) * 1000;
-  if (Number.isFinite(window.resetAt)) return (window.resetAt as number) * 1000;
-  if (Number.isFinite(window.reset_after_seconds)) {
-    return Date.now() + (window.reset_after_seconds as number) * 1000;
+export function codexResetAtMs(window?: unknown): number | null {
+  const rec = asRecord(window);
+  if (Object.keys(rec).length === 0) return null;
+  const resetAt = readFiniteNumber(rec.reset_at);
+  if (resetAt !== null) return resetAt * 1000;
+  const resetAtCamel = readFiniteNumber(rec.resetAt);
+  if (resetAtCamel !== null) return resetAtCamel * 1000;
+  const resetAfter = readFiniteNumber(rec.reset_after_seconds);
+  if (resetAfter !== null) {
+    return Date.now() + resetAfter * 1000;
   }
-  if (Number.isFinite(window.resetAfterSeconds)) {
-    return Date.now() + (window.resetAfterSeconds as number) * 1000;
+  const resetAfterCamel = readFiniteNumber(rec.resetAfterSeconds);
+  if (resetAfterCamel !== null) {
+    return Date.now() + resetAfterCamel * 1000;
   }
   return null;
 }
 
-export function codexRemainingPct(window?: any): number | null {
-  if (!window) return null;
-  if (Number.isFinite(window.remaining_percent)) return clampPct(window.remaining_percent as number);
-  if (Number.isFinite(window.remainingPercent)) return clampPct(window.remainingPercent as number);
-  if (Number.isFinite(window.used_percent)) return clampPct(100 - (window.used_percent as number));
-  if (Number.isFinite(window.usedPercent)) return clampPct(100 - (window.usedPercent as number));
+export function codexRemainingPct(window?: unknown): number | null {
+  const rec = asRecord(window);
+  if (Object.keys(rec).length === 0) return null;
+  const remaining = readFiniteNumber(rec.remaining_percent);
+  if (remaining !== null) return clampPct(remaining);
+  const remainingCamel = readFiniteNumber(rec.remainingPercent);
+  if (remainingCamel !== null) return clampPct(remainingCamel);
+  const used = readFiniteNumber(rec.used_percent);
+  if (used !== null) return clampPct(100 - used);
+  const usedCamel = readFiniteNumber(rec.usedPercent);
+  if (usedCamel !== null) return clampPct(100 - usedCamel);
   return null;
 }
 
@@ -122,18 +141,19 @@ type CodexUsageSummary = {
 };
 
 export function summarizeCodexUsage(snapshot?: ProviderUsageSnapshot | null): CodexUsageSummary {
-  const payload = (snapshot?.payload ?? null) as any;
-  const planType = payload?.plan_type ?? payload?.planType ?? null;
-  const rateLimit = payload?.rate_limit ?? payload?.rateLimit ?? null;
-  const primaryWindow = rateLimit?.primary_window ?? rateLimit?.primaryWindow ?? null;
-  const secondaryWindow = rateLimit?.secondary_window ?? rateLimit?.secondaryWindow ?? null;
-  const credits = payload?.credits ?? null;
+  const payload = asRecord(snapshot?.payload ?? null);
+  const planTypeRaw = payload.plan_type ?? payload.planType;
+  const planType = typeof planTypeRaw === "string" ? planTypeRaw : null;
+  const rateLimit = asRecord(payload.rate_limit ?? payload.rateLimit ?? null);
+  const primaryWindow = rateLimit.primary_window ?? rateLimit.primaryWindow ?? null;
+  const secondaryWindow = rateLimit.secondary_window ?? rateLimit.secondaryWindow ?? null;
+  const credits = asRecord(payload.credits ?? null);
   const primaryRemaining = codexRemainingPct(primaryWindow);
   const secondaryRemaining = codexRemainingPct(secondaryWindow);
   const primaryResetAt = codexResetAtMs(primaryWindow);
   const secondaryResetAt = codexResetAtMs(secondaryWindow);
   const creditsValue = (() => {
-    if (!credits) return "—";
+    if (Object.keys(credits).length === 0) return "—";
     if (credits.unlimited) return "Unlimited";
     if (credits.balance !== undefined && credits.balance !== null) {
       return String(credits.balance);
@@ -142,7 +162,7 @@ export function summarizeCodexUsage(snapshot?: ProviderUsageSnapshot | null): Co
     return "—";
   })();
   const creditsSub = (() => {
-    if (!credits) return "Credits unavailable";
+    if (Object.keys(credits).length === 0) return "Credits unavailable";
     if (credits.unlimited) return "No spend cap";
     if (credits.has_credits === false) return "Credits exhausted";
     return "Credits balance";

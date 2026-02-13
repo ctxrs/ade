@@ -15,6 +15,7 @@ import {
   normalizeTauriLanguage,
 } from "./tauriStt";
 import { parseWsJson } from "./wsJson";
+import { errorMessage } from "./errorMessage";
 
 type DictationProvider = DictationSettings["provider"];
 
@@ -30,6 +31,11 @@ type DictationController = {
   dictationDebugText: string | null;
   startDictation: () => Promise<void>;
   stopDictation: (opts?: { awaitFinal?: boolean }) => Promise<string>;
+};
+
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
 };
 
 export const useDictationController = (opts: DictationControllerOptions): DictationController => {
@@ -221,9 +227,9 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
       const s = await getSettings();
       settings = s.dictation ?? null;
       setDictationSettings(settings);
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (!settings) {
-        setDictationError(e?.message ?? "Failed to load dictation settings.");
+        setDictationError(errorMessage(e) || "Failed to load dictation settings.");
         return;
       }
     }
@@ -304,10 +310,10 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
         await stt.startListening({ language, interimResults: true, continuous: true });
         dictationReadyRef.current = true;
         setDictationRecording(true);
-      } catch (e: any) {
+      } catch (e: unknown) {
         cleanupTauriListeners();
         dictationProviderRef.current = null;
-        setDictationError(e?.message ?? String(e));
+        setDictationError(errorMessage(e));
         setDictationRecording(false);
       }
       return;
@@ -328,8 +334,8 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
     let wsUrl = "";
     try {
       wsUrl = getDaemonWsUrl("/api/dictation/livekit/stream", query);
-    } catch (err: any) {
-      setDictationError(err?.message ?? String(err));
+    } catch (err: unknown) {
+      setDictationError(errorMessage(err));
       return;
     }
     const ws = new WebSocket(wsUrl);
@@ -349,7 +355,8 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
     ws.addEventListener("message", (ev) => {
       void parseWsJson((ev as MessageEvent).data).then((data) => {
         if (!data) return;
-        const t = String(data.type ?? "");
+        const payload = asRecord(data);
+        const t = String(payload.type ?? "");
         if (t === "ready") {
           dictationReadyRef.current = true;
           return;
@@ -358,10 +365,10 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
           return;
         } else if (t === "interim") {
           dictationTranscriptMsgsRef.current += 1;
-          dictationInterimRef.current = String(data.text ?? "");
+          dictationInterimRef.current = String(payload.text ?? "");
         } else if (t === "final") {
           dictationTranscriptMsgsRef.current += 1;
-          dictationCommittedRef.current = appendSegment(dictationCommittedRef.current, String(data.text ?? ""));
+          dictationCommittedRef.current = appendSegment(dictationCommittedRef.current, String(payload.text ?? ""));
           dictationInterimRef.current = "";
         } else if (t === "done") {
           dictationFinalizeWaiterRef.current?.resolve();
@@ -373,7 +380,7 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
           }
           return;
         } else if (t === "error") {
-          setDictationError(String(data.message ?? "Dictation error"));
+          setDictationError(String(payload.message ?? "Dictation error"));
           dictationFinalizeWaiterRef.current?.resolve();
           dictationFinalizeWaiterRef.current = null;
           stopDictationRef.current().catch(() => { });
@@ -408,8 +415,8 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
           stopDictationRef.current().catch(() => { });
         },
       });
-    } catch (e: any) {
-      setDictationError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setDictationError(errorMessage(e));
       try {
         ws.close();
       } catch {

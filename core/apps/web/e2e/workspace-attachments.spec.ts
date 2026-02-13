@@ -5,6 +5,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import http from "http";
+import type { AddressInfo } from "node:net";
 
 const initRepo = (prefix: string) => {
   const repo = mkdtempSync(path.join(tmpdir(), prefix));
@@ -25,7 +26,7 @@ const startDocsServer = async () => {
       return;
     }
     if (req.url === "/llms.txt" || req.url === "/docs/llms.txt") {
-      const baseUrl = `http://127.0.0.1:${(server.address() as any).port}`;
+      const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
       const urls = [`${baseUrl}/docs/intro.md`, `${baseUrl}/docs/guide.md`];
       res.writeHead(200, { "content-type": "text/plain" });
       res.end(urls.join("\n"));
@@ -48,7 +49,7 @@ const startDocsServer = async () => {
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", () => resolve());
   });
-  const port = (server.address() as any).port;
+  const port = (server.address() as AddressInfo).port;
   return {
     server,
     docsUrl: `http://127.0.0.1:${port}/docs/`,

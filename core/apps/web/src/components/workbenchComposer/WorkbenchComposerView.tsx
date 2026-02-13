@@ -34,6 +34,11 @@ type OpenMenuId = "harness" | "model" | "effort" | "verbosity";
 const logoClasses = (base: string, invertInDark?: boolean, invertInLight?: boolean) =>
   [base, invertInDark ? "wb-invert" : "", invertInLight ? "wb-invert-light" : ""].filter(Boolean).join(" ");
 
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
 export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const {
     variant,
@@ -284,7 +289,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     window.addEventListener("resize", recomputeMenuPosition);
     const onAnyScroll = (e: Event) => {
       const target = e.target as Element | null;
-      if (target && typeof (target as any).closest === "function" && target.closest(".wb-menu")) return;
+      if (target && typeof target.closest === "function" && target.closest(".wb-menu")) return;
       recomputeMenuPosition();
     };
     window.addEventListener("scroll", onAnyScroll, true);
@@ -693,17 +698,18 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             const catalog = ns.harnessCatalog.filter(
               (h) => ns.providersById[h.id]?.details?.ui_hidden !== "true",
             );
+            type HarnessOption = NewSessionProps["harnessCatalog"][number];
             const order = new Map<string, number>(catalog.map((h, idx) => [h.id, idx]));
             const extras = Object.keys(ns.providersById)
               .filter((id) => !order.has(id) && ns.providersById[id]?.details?.ui_hidden !== "true")
-              .map((id) => ({ id, label: id, logoSrc: "" } as any))
+              .map((id): HarnessOption => ({ id, label: id, logoSrc: "" }))
               .sort((a, b) => String(a.id).localeCompare(String(b.id)));
 
             const all = [...catalog, ...extras];
             const actionableIds = !installControlsEnabled
               ? new Set(
                   all
-                    .map((entry: any) => String(entry.id))
+                    .map((entry) => String(entry.id))
                     .filter((id) => {
                       const status = ns.providersById[id];
                       return status?.installed === true && status?.health === "ok";
@@ -716,19 +722,19 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             }
             const filtered = q
               ? all.filter(
-                  (h: any) =>
+                  (h) =>
                     String(h.id).toLowerCase().includes(q) || String(h.label).toLowerCase().includes(q),
                 )
               : all;
             const visible = actionableIds
-              ? filtered.filter((h: any) => actionableIds.has(String(h.id)))
+              ? filtered.filter((h) => actionableIds.has(String(h.id)))
               : filtered;
             if (visible.length === 0) return <div className="wb-menu-empty">No matching agents.</div>;
 
             const counts: Record<string, number> = {};
             for (const t of ns.draftTracks) counts[t.providerId] = (counts[t.providerId] ?? 0) + 1;
 
-            return visible.map((h: any) => {
+            return visible.map((h) => {
               const id = String(h.id);
               const label = String(h.label ?? id);
               const providerStatus = ns.providersById[id];
@@ -754,7 +760,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               const opts = ns.providerOptions[id];
               const models = buildModelsForProvider(id, opts);
               const catalog = buildModelCatalog(models);
-              const verifyStatus = String((opts as any)?.verify?.status ?? "");
+              const verifyStatus = String(asRecord(opts?.verify).status ?? "");
 
               const statusUi = (() => {
                 if (!opts) return null;
@@ -815,7 +821,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                           title={!installSupported ? "Install not supported yet" : "Install this harness"}
                           style={
                             installBusy && installPct !== null
-                              ? ({ ["--wb-install-pct" as any]: `${Math.max(0, Math.min(100, installPct))}%` } as any)
+                              ? ({ "--wb-install-pct": `${Math.max(0, Math.min(100, installPct))}%` } as React.CSSProperties)
                               : undefined
                           }
                         >

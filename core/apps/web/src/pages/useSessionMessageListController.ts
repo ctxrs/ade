@@ -13,59 +13,67 @@ type RenderedItemContractViolation = {
   kind: string;
   reason: string;
   id: string;
-  details?: Record<string, any>;
+  details?: Record<string, unknown>;
+};
+
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
 };
 
 function debugStableKey(item: WorkbenchListItem): string {
   // Best-effort "identity" key independent of `item.id` to detect id churn.
   // This is DEV-only diagnostics; collisions are possible but still useful.
-  const kind = (item as any)?.kind ?? "unknown";
+  const rec = asRecord(item);
+  const kind = String(rec.kind ?? "unknown");
+  const header = asRecord(rec.header);
   switch (kind) {
     case "turn_header":
-      return `turn_header:${(item as any)?.header?.id ?? ""}`;
+      return `turn_header:${String(header.id ?? "")}`;
     case "tool":
-      return `tool:${(item as any)?.tool_call_id ?? ""}`;
+      return `tool:${String(rec.tool_call_id ?? "")}`;
     case "ask_user_question":
-      return `askq:${(item as any)?.tool_call_id ?? ""}`;
+      return `askq:${String(rec.tool_call_id ?? "")}`;
     case "turn_status":
-      return `turn_status:${(item as any)?.turn_id ?? ""}`;
+      return `turn_status:${String(rec.turn_id ?? "")}`;
     case "thought":
-      return `thought:${(item as any)?.turn_id ?? ""}:${(item as any)?.created_at ?? ""}`;
+      return `thought:${String(rec.turn_id ?? "")}:${String(rec.created_at ?? "")}`;
     case "assistant":
       // Prefer turn_id + created_at, but also include the item id prefix if it encodes a domain id (e.g. assistant-msg-<messageId>).
       // This is intentionally "best effort"; we also log direct missing/added ids during reconcile.
-      return `assistant:${(item as any)?.turn_id ?? ""}:${(item as any)?.created_at ?? ""}:${String(
-        (item as any)?.is_complete ?? "",
-      )}:${String((item as any)?.id ?? "").slice(0, 40)}`;
+      return `assistant:${String(rec.turn_id ?? "")}:${String(rec.created_at ?? "")}:${String(
+        rec.is_complete ?? "",
+      )}:${String(rec.id ?? "").slice(0, 40)}`;
     case "message":
-      return `message:${(item as any)?.role ?? ""}:${(item as any)?.created_at ?? ""}`;
+      return `message:${String(rec.role ?? "")}:${String(rec.created_at ?? "")}`;
     case "spacer":
-      return `spacer:${(item as any)?.created_at ?? ""}`;
+      return `spacer:${String(rec.created_at ?? "")}`;
     default:
-      return `${kind}:${(item as any)?.created_at ?? ""}`;
+      return `${kind}:${String(rec.created_at ?? "")}`;
   }
 }
 
-function debugItemSummary(item: WorkbenchListItem): Record<string, any> {
-  const anyItem: any = item as any;
-  const kind = anyItem?.kind ?? "unknown";
-  const base: Record<string, any> = {
-    id: String(anyItem?.id ?? ""),
+function debugItemSummary(item: WorkbenchListItem | { id: string }): Record<string, unknown> {
+  const rec = asRecord(item);
+  const header = asRecord(rec.header);
+  const kind = String(rec.kind ?? "unknown");
+  const base: Record<string, unknown> = {
+    id: String(rec.id ?? ""),
     kind,
-    created_at: anyItem?.created_at ?? anyItem?.header?.created_at ?? null,
+    created_at: rec.created_at ?? header.created_at ?? null,
   };
 
   if (kind === "turn_header") {
-    base.turn_id = anyItem?.header?.id ?? null;
+    base.turn_id = header.id ?? null;
     return base;
   }
-  if (typeof anyItem?.turn_id === "string") base.turn_id = anyItem.turn_id;
-  if (typeof anyItem?.tool_call_id === "string") base.tool_call_id = anyItem.tool_call_id;
-  if (typeof anyItem?.event_id === "string") base.event_id = anyItem.event_id;
-  if (typeof anyItem?.status === "string") base.status = anyItem.status;
-  if (typeof anyItem?.role === "string") base.role = anyItem.role;
-  if (typeof anyItem?.is_complete === "boolean") base.is_complete = anyItem.is_complete;
-  if (typeof anyItem?.content === "string") base.content_len = anyItem.content.length;
+  if (typeof rec.turn_id === "string") base.turn_id = rec.turn_id;
+  if (typeof rec.tool_call_id === "string") base.tool_call_id = rec.tool_call_id;
+  if (typeof rec.event_id === "string") base.event_id = rec.event_id;
+  if (typeof rec.status === "string") base.status = rec.status;
+  if (typeof rec.role === "string") base.role = rec.role;
+  if (typeof rec.is_complete === "boolean") base.is_complete = rec.is_complete;
+  if (typeof rec.content === "string") base.content_len = rec.content.length;
   return base;
 }
 
@@ -73,9 +81,9 @@ function findFirstRenderedItemContractViolation(items: WorkbenchListItem[]): Ren
   // The whole point is to avoid "fallback ids" like `ts:` and `idx:` which cause identity churn.
   // These invariants are intentionally strict; if they fire, it's a bug we should fix upstream.
   for (const it of items) {
-    const anyIt: any = it as any;
-    const kind = String(anyIt?.kind ?? "unknown");
-    const id = String(anyIt?.id ?? "");
+    const anyIt = asRecord(it);
+    const kind = String(anyIt.kind ?? "unknown");
+    const id = String(anyIt.id ?? "");
     if (!id) return { kind, reason: "missing id", id: "" };
 
     if (kind === "thought") {
@@ -84,15 +92,15 @@ function findFirstRenderedItemContractViolation(items: WorkbenchListItem[]): Ren
       }
     }
     if (kind === "turn_header") {
-      const turnId = String(anyIt?.header?.id ?? "");
+      const turnId = String(asRecord(anyIt.header).id ?? "");
       if (!turnId) return { kind, reason: "turn_header missing header.id", id };
     }
     if (kind === "tool" || kind === "ask_user_question") {
-      const toolCallId = String(anyIt?.tool_call_id ?? "");
+      const toolCallId = String(anyIt.tool_call_id ?? "");
       if (!toolCallId) return { kind, reason: "missing tool_call_id", id };
     }
     if (kind === "assistant") {
-      const turnId = String(anyIt?.turn_id ?? "");
+      const turnId = String(anyIt.turn_id ?? "");
       if (!turnId) return { kind, reason: "assistant missing turn_id", id };
       // We currently allow a deliberate streaming placeholder id.
       const isPending = id.endsWith("-pending");
@@ -517,7 +525,7 @@ export function useSessionMessageListController(params: Params): Result {
       const stableKeyCollisions: Array<{ stableKey: string; ids: string[] }> = [];
       for (const it of current) {
         const stableKey = debugStableKey(it);
-        const id = String((it as any)?.id ?? "");
+        const id = String(it.id ?? "");
         if (!stableKey || !id) continue;
         const prev = currentByStable.get(stableKey);
         if (prev && prev !== id) {
@@ -530,7 +538,7 @@ export function useSessionMessageListController(params: Params): Result {
       const stableIdChanges: Array<{ stableKey: string; from: string; to: string }> = [];
       for (const it of next) {
         const stableKey = debugStableKey(it);
-        const id = String((it as any)?.id ?? "");
+        const id = String(it.id ?? "");
         if (!stableKey || !id) continue;
         const prev = nextByStable.get(stableKey);
         if (prev && prev !== id) {
@@ -548,8 +556,8 @@ export function useSessionMessageListController(params: Params): Result {
         const nextById = new Map(next.map((it) => [it.id, it] as const));
         const sample = stableIdChanges.slice(0, 10).map((c) => ({
           ...c,
-          fromItem: debugItemSummary(currentById.get(c.from) ?? ({ id: c.from } as any)),
-          toItem: debugItemSummary(nextById.get(c.to) ?? ({ id: c.to } as any)),
+          fromItem: debugItemSummary(currentById.get(c.from) ?? { id: c.from }),
+          toItem: debugItemSummary(nextById.get(c.to) ?? { id: c.to }),
         }));
         // eslint-disable-next-line no-console
         console.warn("[MessageList] possible unstable WorkbenchListItem.id detected (stableKey id changed)", {
@@ -657,7 +665,7 @@ export function useSessionMessageListController(params: Params): Result {
               sessionId,
               count: missingFromNext.length,
               sample: missingFromNext.slice(0, 12).map((id) =>
-                debugItemSummary(currentById.get(id) ?? ({ id } as any)),
+                debugItemSummary(currentById.get(id) ?? { id }),
               ),
             });
           }
@@ -888,7 +896,7 @@ export function useSessionMessageListController(params: Params): Result {
         console.warn("[MessageList][ids:missing-from-next]", {
           sessionId,
           count: missingFromNext.length,
-          sample: missingFromNext.slice(0, 12).map((id) => debugItemSummary(currentById.get(id) ?? ({ id } as any))),
+          sample: missingFromNext.slice(0, 12).map((id) => debugItemSummary(currentById.get(id) ?? { id })),
         });
       }
       if (!suppressIdDiffLogs && addedInNext.length > 0) {
@@ -897,7 +905,7 @@ export function useSessionMessageListController(params: Params): Result {
         console.debug("[MessageList][ids:added-in-next]", {
           sessionId,
           count: addedInNext.length,
-          sample: addedInNext.slice(0, 8).map((id) => debugItemSummary(nextByIdLocal.get(id) ?? ({ id } as any))),
+          sample: addedInNext.slice(0, 8).map((id) => debugItemSummary(nextByIdLocal.get(id) ?? { id })),
         });
       }
 
