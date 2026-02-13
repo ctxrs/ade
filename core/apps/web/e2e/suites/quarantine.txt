@@ -1,0 +1,5 @@
+# Quarantined specs are explicitly excluded from premerge_required.
+# Keep entries sorted and include a short reason + date.
+#
+# Format:
+# e2e/<spec-file>.spec.ts  # YYYY-MM-DD reason

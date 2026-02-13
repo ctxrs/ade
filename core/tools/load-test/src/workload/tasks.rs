@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use rand::rngs::StdRng;
 use rand::Rng;
 
-use ctx_client::{Client, CreateSessionRequest, CreateTaskRequest};
+use ctx_client::{Client, CreateSessionRequest, CreateTaskRequest, EnvTarget};
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 
 use crate::scenario::{Cli, ScenarioSpec};
@@ -56,7 +56,9 @@ pub(crate) async fn setup_tasks_and_sessions(
                         model_id: cli.model_id.clone(),
                         parent_session_id: None,
                         relationship: None,
-                        env_target: None,
+                        // Tasks are created without a default session, so first session must
+                        // request a managed worktree explicitly.
+                        env_target: Some(EnvTarget::Worktree),
                         worktree_id: None,
                         initial_prompt: None,
                         initial_message_id: None,

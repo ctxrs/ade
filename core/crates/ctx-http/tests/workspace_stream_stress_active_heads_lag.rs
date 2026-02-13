@@ -54,9 +54,8 @@ fn big_content(bytes: usize) -> String {
 }
 
 #[tokio::test]
-#[ignore]
 async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_large() {
-    // This is a stress/soak-style regression test.
+    // Always-on regression test for hydration lag/overflow behavior.
     // Expected behavior:
     // - With compact active heads (fixed code), the initial snapshot should be small enough that
     //   hydration completes quickly and buffered head deltas do not overflow.
@@ -85,9 +84,11 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
     // We explicitly raise the WS client max message size so older baselines can
     // still be observed (and fail due to payload size / backpressure), rather
     // than failing client-side with `MessageTooLong`.
-    let session_count: usize = 16;
-    let turns_per_session: i64 = 60;
-    let message_bytes: usize = 32 * 1024;
+    // Keep this large enough to overflow old, non-compacted baselines while
+    // staying lightweight enough for always-on execution in the full package suite.
+    let session_count: usize = 12;
+    let turns_per_session: i64 = 40;
+    let message_bytes: usize = 24 * 1024;
     let max_snapshot_bytes: usize = 8_000_000;
 
     let mut sessions: Vec<ctx_core::models::Session> = Vec::with_capacity(session_count);

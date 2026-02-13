@@ -7,6 +7,10 @@
     "test:agent": "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} cargo test -q -p ctx-core -p ctx-providers -p ctx-http -p ctx-mcp -p ctx-lsp && pnpm -C apps/web test:quiet",
     "test:e2e": "pnpm -C apps/web test:e2e",
     "test:e2e:list": "pnpm -C apps/web test:e2e:list",
+    "test:e2e:premerge": "pnpm -C apps/web test:e2e:premerge",
+    "test:e2e:cross-platform": "pnpm -C apps/web test:e2e:cross-platform",
+    "test:e2e:soak": "pnpm -C apps/web test:e2e:soak",
+    "test:e2e:load": "pnpm -C apps/web test:e2e:load",
     "test:providers:e2e": "bash -lc 'scripts/providers_e2e.sh e2e'",
     "test:providers:e2e:runner": "bash -lc 'scripts/providers_e2e.sh runner'",
     "test:providers:tokens": "bash -lc 'scripts/providers_e2e.sh tokens'",
@@ -29,8 +33,15 @@
     "crp:codex:test": "bash -lc 'cd ../external-harnesses/codex/codex-rs && cargo test -q -p codex-crp replay_golden_tests && cargo test -q -p codex-crp reasoning_summary_state_tests'",
     "crp:claude": "bash -lc '../scripts/build_claude_crp.sh'",
     "verify:quick": "turbo run rust:fmt rust:panic-traps rust:clippy rust:test crp:codex:test supabase:migrations:check supabase:functions:check typecheck --filter=ctx-monorepo --filter=ctx-web --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only --log-order=grouped --concurrency=4 --ui=stream --cache=local:rw",
-    "verify:e2e": "pnpm test:e2e",
-    "verify:nightly": "pnpm verify:e2e && pnpm test:providers:e2e && pnpm test:providers:e2e:runner"
+    "verify:e2e": "pnpm test:e2e:premerge",
+    "verify:e2e:cross-platform": "pnpm test:e2e:cross-platform && bash -lc 'scripts/run-rust-suite.sh cross_platform'",
+    "verify:e2e:soak": "pnpm test:e2e:soak && bash -lc 'scripts/run-rust-suite.sh soak'",
+    "verify:e2e:load": "pnpm test:e2e:load && bash -lc 'scripts/run-rust-suite.sh load'",
+    "verify:anomaly": "bash -lc 'scripts/run-anomaly-suite.sh'",
+    "verify:fuzz:regression": "bash -lc 'scripts/run-fuzz-regression.sh'",
+    "verify:agent:fast": "bash -lc 'scripts/affected_tests.sh'",
+    "verify:e2e:all": "pnpm verify:e2e && pnpm verify:e2e:cross-platform && pnpm verify:e2e:soak && pnpm verify:e2e:load",
+    "verify:nightly": "pnpm verify:anomaly && pnpm verify:fuzz:regression && pnpm verify:e2e:soak && pnpm verify:e2e:load && pnpm test:providers:e2e && pnpm test:providers:e2e:runner"
   },
   "devDependencies": {
     "@supabase/supabase-js": "2.49.1",

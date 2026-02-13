@@ -1,0 +1,25 @@
+# Functional coverage suite intended for explicit cross-platform matrix runs.
+e2e/dictation-tauri-stt.spec.ts
+e2e/diff-editor-no-inner-scroll.spec.ts
+e2e/diff-live-update.spec.ts
+e2e/providers-bundled-v1.spec.ts
+e2e/settings-resource-utilization.spec.ts
+e2e/terminal-link-hover.spec.ts
+e2e/terminal-scroll-after-reopen.spec.ts
+e2e/workbench-archived-pagination.spec.ts
+e2e/workbench-archived-reload.spec.ts
+e2e/workbench-diff-badge-merge-base.spec.ts
+e2e/workbench-diff-fetch-failure-state.spec.ts
+e2e/workbench-diff-pane-no-overflow.spec.ts
+e2e/workbench-dummy-workspace.spec.ts
+e2e/workbench-harness-menu-prod-availability.spec.ts
+e2e/workbench-inline-command-wrap.spec.ts
+e2e/workbench-new-task-drag-drop-image.spec.ts
+e2e/workbench-optimistic-active-message.spec.ts
+e2e/workbench-optimistic-new-task.spec.ts
+e2e/workbench-queued-message-ux.spec.ts
+e2e/workbench-refresh-old-session.spec.ts
+e2e/workbench-rename-task.spec.ts
+e2e/workbench-replay-user-message.spec.ts
+e2e/workbench-session-gap-seed-recovery.spec.ts
+e2e/workspace-attachments.spec.ts

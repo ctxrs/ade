@@ -14,8 +14,7 @@ use ctx_core::models::{
 
 mod common;
 
-#[tokio::test]
-async fn hot_endpoints_use_cache_when_db_unavailable() {
+async fn assert_hot_endpoints_with_failpoints(failpoints: &[&'static str]) {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
@@ -132,13 +131,9 @@ async fn hot_endpoints_use_cache_when_db_unavailable() {
         .await;
 
     ctx_store::fault_injection::clear_failpoints();
-    ctx_store::fault_injection::set_failpoint("ctx_store.get_workspace_active_snapshot_state", 10);
-    ctx_store::fault_injection::set_failpoint(
-        "ctx_store.list_workspace_active_page_read_model",
-        10,
-    );
-    ctx_store::fault_injection::set_failpoint("ctx_store.list_workspace_active_head_snapshots", 10);
-    ctx_store::fault_injection::set_failpoint("ctx_store.get_session_head_snapshot", 10);
+    for point in failpoints {
+        ctx_store::fault_injection::set_failpoint(point, 10);
+    }
 
     let snapshot: WorkspaceActiveSnapshot = client
         .get(format!(
@@ -239,4 +234,35 @@ async fn hot_endpoints_use_cache_when_db_unavailable() {
         }
         other => panic!("expected snapshot payload, got {other:?}"),
     }
+
+    ctx_store::fault_injection::clear_failpoints();
+}
+
+#[tokio::test]
+async fn hot_endpoints_use_cache_when_db_unavailable() {
+    assert_hot_endpoints_with_failpoints(&[
+        "ctx_store.get_workspace_active_snapshot_state",
+        "ctx_store.list_workspace_active_page_read_model",
+        "ctx_store.list_workspace_active_head_snapshots",
+        "ctx_store.get_session_head_snapshot",
+    ])
+    .await;
+}
+
+#[tokio::test]
+async fn hot_endpoints_snapshot_cache_handles_active_snapshot_failpoints() {
+    assert_hot_endpoints_with_failpoints(&[
+        "ctx_store.get_workspace_active_snapshot_state",
+        "ctx_store.list_workspace_active_page_read_model",
+    ])
+    .await;
+}
+
+#[tokio::test]
+async fn hot_endpoints_heads_cache_handles_head_failpoints() {
+    assert_hot_endpoints_with_failpoints(&[
+        "ctx_store.list_workspace_active_head_snapshots",
+        "ctx_store.get_session_head_snapshot",
+    ])
+    .await;
 }

@@ -353,4 +353,140 @@ mod tests {
         assert_eq!(summary.sessions.len(), 1);
         assert_eq!(summary.sessions[0].session.id, subagent.id);
     }
+
+    #[cfg(feature = "fault_injection")]
+    async fn setup_fault_fixture() -> (
+        tempfile::TempDir,
+        Store,
+        ctx_core::ids::WorkspaceId,
+        ctx_core::ids::TaskId,
+        ctx_core::ids::WorktreeId,
+        ctx_core::ids::SessionId,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("db.sqlite");
+        let store = Store::open(&db_path).await.unwrap();
+        let ws = store
+            .create_workspace("fault".into(), "/tmp/fault".into(), VcsKind::Git)
+            .await
+            .unwrap();
+        let task = store
+            .create_task(ws.id, "fault task".into(), None)
+            .await
+            .unwrap();
+        let worktree = store
+            .create_worktree(ws.id, "/tmp/fault".into(), "deadbeef".into(), None)
+            .await
+            .unwrap();
+        let session = store
+            .create_session(
+                task.id,
+                ws.id,
+                worktree.id,
+                "fake".into(),
+                "fake".into(),
+                "implementer".into(),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        (dir, store, ws.id, task.id, worktree.id, session.id)
+    }
+
+    #[cfg(feature = "fault_injection")]
+    #[tokio::test]
+    async fn fault_injection_append_session_event_fails_once_then_recovers() {
+        let (_dir, store, _ws_id, _task_id, _worktree_id, session_id) = setup_fault_fixture().await;
+        crate::fault_injection::clear_failpoints();
+        crate::fault_injection::set_failpoint("ctx_store.append_session_event", 1);
+
+        let first = store
+            .append_session_event(
+                session_id,
+                None,
+                None,
+                SessionEventType::Notice,
+                serde_json::json!({"msg":"first"}),
+            )
+            .await;
+        assert!(first.is_err(), "expected injected failure for first append");
+
+        let second = store
+            .append_session_event(
+                session_id,
+                None,
+                None,
+                SessionEventType::Notice,
+                serde_json::json!({"msg":"second"}),
+            )
+            .await;
+        assert!(second.is_ok(), "expected recovery after one-shot failpoint");
+        crate::fault_injection::clear_failpoints();
+    }
+
+    #[cfg(feature = "fault_injection")]
+    #[tokio::test]
+    async fn fault_injection_list_session_events_page_fails_once_then_recovers() {
+        let (_dir, store, _ws_id, _task_id, _worktree_id, session_id) = setup_fault_fixture().await;
+        crate::fault_injection::clear_failpoints();
+        store
+            .append_session_event(
+                session_id,
+                None,
+                None,
+                SessionEventType::Notice,
+                serde_json::json!({"msg":"seed"}),
+            )
+            .await
+            .unwrap();
+
+        crate::fault_injection::set_failpoint("ctx_store.list_session_events_page_by_seq", 1);
+        let first = store
+            .list_session_events_page_by_seq(session_id, None, None, false)
+            .await;
+        assert!(first.is_err(), "expected injected failure for first list");
+
+        let second = store
+            .list_session_events_page_by_seq(session_id, None, None, false)
+            .await
+            .unwrap();
+        assert_eq!(second.len(), 1);
+        crate::fault_injection::clear_failpoints();
+    }
+
+    #[cfg(feature = "fault_injection")]
+    #[tokio::test]
+    async fn fault_injection_session_head_snapshot_fails_once_then_recovers() {
+        let (_dir, store, _ws_id, _task_id, _worktree_id, session_id) = setup_fault_fixture().await;
+        crate::fault_injection::clear_failpoints();
+        store
+            .append_session_event(
+                session_id,
+                None,
+                None,
+                SessionEventType::Notice,
+                serde_json::json!({"msg":"seed"}),
+            )
+            .await
+            .unwrap();
+
+        crate::fault_injection::set_failpoint("ctx_store.get_session_head_snapshot", 1);
+        let first = store.get_session_head_snapshot(session_id, 10, true).await;
+        assert!(
+            first.is_err(),
+            "expected injected failure for session head snapshot"
+        );
+
+        let second = store
+            .get_session_head_snapshot(session_id, 10, true)
+            .await
+            .unwrap();
+        assert!(
+            second.is_some(),
+            "expected session head snapshot after recovery"
+        );
+        crate::fault_injection::clear_failpoints();
+    }
 }

@@ -10,6 +10,13 @@ attempts="${CI_RETRY_ATTEMPTS:-2}"
 delay="${CI_RETRY_DELAY_SEC:-5}"
 log_file="${CI_FLAKE_LOG:-ci-flake-stats.jsonl}"
 job_name="${CI_JOB_NAME:-${GITHUB_JOB:-unknown}}"
+fail_on_flake_raw="${CI_FAIL_ON_FLAKE:-0}"
+fail_on_flake_norm="$(printf '%s' "$fail_on_flake_raw" | tr '[:upper:]' '[:lower:]')"
+
+case "$fail_on_flake_norm" in
+  1|true|yes|on) fail_on_flake=1 ;;
+  *) fail_on_flake=0 ;;
+esac
 
 if ! [[ "$attempts" =~ ^[0-9]+$ ]] || [ "$attempts" -lt 1 ]; then
   echo "CI_RETRY_ATTEMPTS must be a positive integer" >&2
@@ -46,6 +53,11 @@ attempt=1
 while true; do
   if "${command[@]}"; then
     if [ "$attempt" -gt 1 ]; then
+      if [ "$fail_on_flake" -eq 1 ]; then
+        record_event "flake_failed" "$last_exit" "$attempt"
+        echo "command succeeded after retry, but CI_FAIL_ON_FLAKE=1 is set; failing job" >&2
+        exit 86
+      fi
       record_event "flake" "$last_exit" "$attempt"
     fi
     exit 0

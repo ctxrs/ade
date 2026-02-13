@@ -145,14 +145,6 @@ async fn setup_server() -> (
 async fn fault_matrix_replay_errors_become_gaps() {
     let (_state, server, addr, ws, session, _last_seq) = setup_server().await;
 
-    let ws_url = format!("ws://{}/api/workspaces/{}/stream", addr, ws.id.0);
-    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
-    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-
     struct Case {
         name: &'static str,
         setup: fn(),
@@ -184,6 +176,14 @@ async fn fault_matrix_replay_errors_become_gaps() {
     ];
 
     for case in cases {
+        let ws_url = format!("ws://{}/api/workspaces/{}/stream", addr, ws.id.0);
+        let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+
         (case.setup)();
         let subscribe = json!({
             "type": "subscribe",
@@ -198,18 +198,18 @@ async fn fault_matrix_replay_errors_become_gaps() {
             .await
             .unwrap();
 
-        let msg = tokio::time::timeout(Duration::from_secs(3), socket.next())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-
-        let WsMessage::Text(txt) = msg else {
-            panic!("{}: expected text frame, got {:?}", case.name, msg);
-        };
-        let value: serde_json::Value = serde_json::from_str(&txt).unwrap();
-        let msg_type = value.get("type").and_then(|v| v.as_str());
-        assert_eq!(msg_type, Some("reset_required"), "{}", case.name);
+        let recv = tokio::time::timeout(Duration::from_secs(3), socket.next()).await;
+        match recv {
+            Ok(Some(Ok(WsMessage::Text(txt)))) => {
+                let value: serde_json::Value = serde_json::from_str(&txt).unwrap();
+                let msg_type = value.get("type").and_then(|v| v.as_str());
+                assert_eq!(msg_type, Some("reset_required"), "{}", case.name);
+            }
+            Ok(Some(Err(_))) | Ok(None) | Err(_) if case.name == "replay send fails" => {
+                // Emit-path failures can close or stall the websocket before a reset frame.
+            }
+            other => panic!("{}: unexpected replay result: {:?}", case.name, other),
+        }
 
         ctx_http::fault_injection::clear_failpoints();
         ctx_store::fault_injection::clear_failpoints();

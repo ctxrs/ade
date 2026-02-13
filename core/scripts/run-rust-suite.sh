@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+suite="${1:-}"
+if [[ -z "${suite}" ]]; then
+  echo "usage: $0 {required_integration|cross_platform|soak|load|anomaly|infra_opt_in}" >&2
+  exit 2
+fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+core_root="$(cd "${script_dir}/.." && pwd)"
+cd "${core_root}"
+
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename "$(git rev-parse --git-dir)")}"
+
+run() {
+  echo "+ $*"
+  "$@"
+}
+
+case "${suite}" in
+  required_integration)
+    run cargo test -q -p ctx-core -p ctx-providers -p ctx-http -p ctx-mcp -p ctx-lsp -p ctx-store
+    ;;
+  cross_platform)
+    run cargo test -q -p ctx-http --test terminal_ws_reconnect
+    run cargo test -q -p ctx-http --test workspace_active_snapshot_http
+    run cargo test -q -p ctx-http --test workspace_stream_no_gaps_under_activity
+    run cargo test -q -p ctx-http --test worktree_archive_http
+    ;;
+  soak)
+    run cargo test -p ctx-http --test workspace_stream_stress_active_heads_lag -- --ignored --nocapture --test-threads=1
+    if [[ "$(uname -s)" == "Linux" ]]; then
+      run cargo test -p ctx-http --test memory_leak_e2e -- --ignored --nocapture --test-threads=1
+    else
+      echo "skipping memory_leak_e2e: linux-only"
+    fi
+    ;;
+  load)
+    run "${script_dir}/load_smoke.sh"
+    ;;
+  anomaly)
+    run "${script_dir}/run-anomaly-suite.sh"
+    ;;
+  infra_opt_in)
+    run pnpm test:providers:e2e
+    run pnpm test:providers:e2e:runner
+    ;;
+  *)
+    echo "usage: $0 {required_integration|cross_platform|soak|load|anomaly|infra_opt_in}" >&2
+    exit 2
+    ;;
+esac

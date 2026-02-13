@@ -1,3 +1,3 @@
 import { createCtxPlaywrightConfig } from "./playwright.shared";
 
-export default await createCtxPlaywrightConfig("all");
+export default await createCtxPlaywrightConfig("load");
