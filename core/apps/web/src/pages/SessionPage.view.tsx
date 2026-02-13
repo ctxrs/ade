@@ -82,6 +82,7 @@ import {
   mergeQueuedMessagesForPanel,
   normalizeContextWindowMetrics,
 } from "./SessionPage.workbenchViewModel";
+import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
 import { SessionThreadPane } from "./sessionThread/SessionThreadPane";
 import { useSessionMessageListController } from "./useSessionMessageListController";
 import { useWorkbenchThreadViewModelController } from "./useWorkbenchThreadViewModelController";
@@ -961,18 +962,15 @@ export function SessionView({
     const shouldQueue = hasActiveTurn && queuedMessagesEnabled;
     const messageId = randomUuid();
     const turnId = randomUuid();
-    const optimisticMessage: Message = {
-      id: messageId,
-      session_id: id,
-      task_id: session?.task_id ?? "",
-      turn_id: turnId,
-      turn_sequence: null,
-      role: "user",
+    const optimisticMessage: Message = buildOptimisticUserMessage({
+      messageId,
+      sessionId: id,
+      taskId: String(session?.task_id ?? ""),
+      turnId,
       content: text,
       attachments: attachmentsToSend,
       delivery: shouldQueue ? "queued" : "immediate",
-      created_at: new Date().toISOString(),
-    };
+    });
     setSendError(null);
     if (shouldQueue) {
       setPendingQueueMessages((prev) => [...prev, { clientId: messageId, message: optimisticMessage }]);
@@ -1098,18 +1096,15 @@ export function SessionView({
 
     const messageId = randomUuid();
     const turnId = randomUuid();
-    const optimisticMessage: Message = {
-      id: messageId,
-      session_id: id,
-      task_id: session?.task_id ?? "",
-      turn_id: turnId,
-      turn_sequence: null,
-      role: "user",
+    const optimisticMessage: Message = buildOptimisticUserMessage({
+      messageId,
+      sessionId: id,
+      taskId: String(session?.task_id ?? ""),
+      turnId,
       content,
       attachments,
       delivery: "immediate",
-      created_at: new Date().toISOString(),
-    };
+    });
     setPendingMessages((prev) => [...prev, { clientId: messageId, message: optimisticMessage }]);
     setAtBottom(true);
 

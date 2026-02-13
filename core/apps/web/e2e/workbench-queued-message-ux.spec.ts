@@ -172,3 +172,105 @@ test("workbench: send now removes queued message immediately", async ({ page }) 
   await queuePanel.getByRole("button", { name: "Send now" }).click();
   await expect(queuePanel).toHaveCount(0, { timeout: 800 });
 });
+
+test("workbench: send now renders optimistic header before message POST resolves", async ({ page }) => {
+  await setupRunningSession(page);
+
+  const queuedText = `queued-send-now-optimistic-${Date.now()}`;
+  await queueMessage(page, queuedText);
+
+  const queuePanel = page.locator(".wb-session .queue-panel");
+  await expect(queuePanel).toBeVisible({ timeout: 20_000 });
+  await expect(queuePanel).toContainText(queuedText, { timeout: 20_000 });
+
+  let allowSendNowPost: (() => void) | null = null;
+  const sendNowPostGate = new Promise<void>((resolve) => {
+    allowSendNowPost = resolve;
+  });
+  let stalledSendNowPost = true;
+  await page.route("**/api/sessions/*/messages", async (route) => {
+    if (stalledSendNowPost && route.request().method() === "POST") {
+      const body = route.request().postData() ?? "";
+      if (body.includes(queuedText)) {
+        stalledSendNowPost = false;
+        await sendNowPostGate;
+      }
+    }
+    await route.continue();
+  });
+
+  await page.evaluate((promptText: string) => {
+    const w = window as any;
+    w.__sendNowClickAt = performance.now();
+    w.__sendNowHeaderSeen = false;
+    w.__sendNowHeaderDisappeared = false;
+    w.__sendNowHeaderDuplicated = false;
+    w.__sendNowHeaderItemId = null;
+
+    const selector = '.wb-session-slot[aria-hidden="false"] .wb-turn-header-content';
+    const monitorWindowMs = 1500;
+    const startAt = w.__sendNowClickAt;
+
+    const getMatches = () =>
+      Array.from(document.querySelectorAll(selector))
+        .filter((node) => (node.textContent ?? "").includes(promptText))
+        .map((node) => ({
+          node,
+          itemId: node.closest("[data-thread-item-id]")?.getAttribute("data-thread-item-id") ?? null,
+        }));
+
+    const tick = () => {
+      const elapsed = performance.now() - startAt;
+      const matches = getMatches();
+      const itemIds = matches.map((match) => match.itemId).filter(Boolean) as string[];
+      if (!w.__sendNowHeaderSeen && itemIds.length > 0) {
+        w.__sendNowHeaderSeen = true;
+        w.__sendNowHeaderItemId = itemIds[0];
+      }
+      if (w.__sendNowHeaderSeen && w.__sendNowHeaderItemId) {
+        if (!itemIds.includes(w.__sendNowHeaderItemId)) {
+          w.__sendNowHeaderDisappeared = true;
+        }
+      }
+      if (new Set(itemIds).size > 1) w.__sendNowHeaderDuplicated = true;
+      if (elapsed < monitorWindowMs) requestAnimationFrame(tick);
+    };
+
+    requestAnimationFrame(tick);
+  }, queuedText);
+
+  await queuePanel.getByRole("button", { name: "Send now" }).click();
+  await expect(queuePanel).toHaveCount(0, { timeout: 800 });
+
+  const header = page
+    .locator('.wb-session-slot[aria-hidden="false"] .wb-turn-header-content')
+    .filter({ hasText: queuedText })
+    .first();
+  await expect(header).toBeVisible({ timeout: 2000 });
+  const elapsedMs = await page.evaluate(() => performance.now() - (window as any).__sendNowClickAt);
+  expect(elapsedMs).toBeLessThan(500);
+
+  const headerItemId = await header.evaluate((node) =>
+    node.closest("[data-thread-item-id]")?.getAttribute("data-thread-item-id"),
+  );
+  expect(headerItemId).toBeTruthy();
+  allowSendNowPost?.();
+
+  await page.waitForTimeout(400);
+  if (headerItemId) {
+    await expect(
+      page.locator(`[data-thread-item-id="${headerItemId}"] .wb-turn-header-content`),
+    ).toBeVisible();
+  }
+
+  const { headerDisappeared, headerDuplicated } = await page.evaluate(() => {
+    const w = window as any;
+    return {
+      headerDisappeared: Boolean(w.__sendNowHeaderDisappeared),
+      headerDuplicated: Boolean(w.__sendNowHeaderDuplicated),
+    };
+  });
+
+  expect(headerDisappeared).toBe(false);
+  expect(headerDuplicated).toBe(false);
+});

@@ -38,11 +38,18 @@ test("workbench: optimistic active-session message does not flash", async ({ pag
   await expect(initialStatus).toBeVisible({ timeout: 20000 });
   await expect(initialStatus).toHaveText(/completed|failed|interrupted/i, { timeout: 20000 });
 
-  let delaySecondMessage = true;
+  let allowSecondMessagePost: (() => void) | null = null;
+  const secondMessagePostGate = new Promise<void>((resolve) => {
+    allowSecondMessagePost = resolve;
+  });
+  let stalledSecondMessage = true;
   await page.route("**/api/sessions/*/messages", async (route) => {
-    if (delaySecondMessage && route.request().method() === "POST") {
-      delaySecondMessage = false;
-      await new Promise((resolve) => setTimeout(resolve, 900));
+    if (stalledSecondMessage && route.request().method() === "POST") {
+      const body = route.request().postData() ?? "";
+      if (body.includes(prompt)) {
+        stalledSecondMessage = false;
+        await secondMessagePostGate;
+      }
     }
     await route.continue();
   });
@@ -98,6 +105,8 @@ test("workbench: optimistic active-session message does not flash", async ({ pag
 
   await expect(header).toBeVisible({ timeout: 2000 });
   await expect(header).toHaveCount(1);
+  const elapsedMs = await page.evaluate(() => performance.now() - (window as any).__sendClickAt);
+  expect(elapsedMs).toBeLessThan(500);
   const headerItemId = await header.evaluate((node) =>
     node.closest("[data-thread-item-id]")?.getAttribute("data-thread-item-id"),
   );
@@ -105,6 +114,7 @@ test("workbench: optimistic active-session message does not flash", async ({ pag
   expect(headerItemId).not.toContain("client-");
   const headerId = (headerItemId ?? "").replace("turn-header-", "");
   expect(headerId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  allowSecondMessagePost?.();
   await page.waitForTimeout(400);
   if (headerItemId) {
     await expect(

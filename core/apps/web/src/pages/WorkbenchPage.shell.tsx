@@ -143,6 +143,7 @@ import {
   saveMarkdownExport,
   spinnerDelayForNow,
 } from "./WorkbenchPage.utils";
+import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
 
 const DIFF_LINE_GUARD_LIMIT = 10000;
 const DIFF_FILE_GUARD_LIMIT = 200;
@@ -2473,7 +2474,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const optimisticSessionId = randomUuid();
     const optimisticMessageId = randomUuid();
     const optimisticTurnId = randomUuid();
-    const optimisticOrderSeq = Date.now();
     const optimisticModelId =
       primaryTrack.modelId ||
       modelIdsFromOptions(providerOptions[primaryTrack.providerId])[0] ||
@@ -2528,19 +2528,16 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       localMessageId: optimisticMessageId,
     };
 
-    const optimisticMessage: Message = {
-      id: optimisticMessageId,
-      session_id: optimisticSessionId,
-      task_id: optimisticTaskId,
-      turn_id: optimisticTurnId,
-      // Keep optimistic turns renderable under strict order_seq/thread-anchor rules.
-      turn_sequence: optimisticOrderSeq,
-      role: "user",
+    const optimisticMessage: Message = buildOptimisticUserMessage({
+      messageId: optimisticMessageId,
+      sessionId: optimisticSessionId,
+      taskId: optimisticTaskId,
+      turnId: optimisticTurnId,
       content: prompt,
       attachments: attachmentsToSend,
       delivery: "immediate",
-      created_at: nowIso,
-    };
+      createdAt: nowIso,
+    });
     const optimisticTurn: SessionTurn = {
       turn_id: optimisticTurnId,
       session_id: optimisticSessionId,
