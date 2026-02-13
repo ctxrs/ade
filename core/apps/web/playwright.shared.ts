@@ -79,14 +79,7 @@ export async function createCtxPlaywrightConfig(
   process.env.CTX_E2E_DATA_DIR ??= dataDir;
   process.env.CTX_E2E_AUTH_TOKEN ??= AUTH_TOKEN;
 
-  const authSetupCommand = `node -e 'const fs = require(\\"fs\\"); const path = require(\\"path\\"); const dir = ${JSON.stringify(
-    dataDir,
-  ).replace(/"/g, '\\"')}; fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, \\\"daemon_auth.json\\\"), JSON.stringify({ token: ${JSON.stringify(
-    AUTH_TOKEN,
-  ).replace(/"/g, '\\"')} }, null, 2)); fs.writeFileSync(path.join(dir, \\\"settings.json\\\"), JSON.stringify({ execution: { mode: \\\"host\\\" } }, null, 2));'`;
-
   const docsMirrorBin = path.resolve(__dirname, "e2e/fixtures/ctx-docs-mirror-fixture.sh");
-  const docsMirrorBinEscaped = docsMirrorBin.replace(/"/g, '\\"');
   const cargoTargetDir =
     process.env.CTX_E2E_CARGO_TARGET_DIR ??
     path.join(
@@ -97,13 +90,20 @@ export async function createCtxPlaywrightConfig(
   const outputDir = path.resolve(__dirname, `e2e/test-results/${profileSlug}`);
   const reportDir = path.resolve(__dirname, `e2e/playwright-report/${profileSlug}`);
   const primaryReporter = process.env.CTX_E2E_REPORTER ?? "dot";
-
-  const webBuildCommand = skipWebBuild ? "true" : "pnpm -C apps/web build";
-  const webServerCommand =
-    `bash -lc "rm -rf ${dataDir} && ${authSetupCommand} && ${webBuildCommand} && ` +
-    `CTX_DOCS_MIRROR_BIN=\\"${docsMirrorBinEscaped}\\" CARGO_TARGET_DIR=${cargoTargetDir} ` +
-    `CTX_EXECUTION_MODE=host CTX_SHOW_FAKE_PROVIDER=1 CTX_STORAGE_BACKEND=sqlite ` +
-    `cargo run -p ctx-http --bin ctx -- serve --bind ${HOST}:${PORT} --data-dir ${dataDir}"`;
+  const webServerEnv = {
+    ...process.env,
+    CTX_E2E_DATA_DIR: dataDir,
+    CTX_E2E_AUTH_TOKEN: AUTH_TOKEN,
+    CTX_E2E_SKIP_WEB_BUILD: skipWebBuild ? "1" : "0",
+    CTX_E2E_HOST: HOST,
+    CTX_E2E_PORT: String(PORT),
+    CTX_DOCS_MIRROR_BIN: docsMirrorBin,
+    CTX_E2E_CARGO_TARGET_DIR: cargoTargetDir,
+    CARGO_TARGET_DIR: cargoTargetDir,
+    CTX_EXECUTION_MODE: "host",
+    CTX_SHOW_FAKE_PROVIDER: "1",
+    CTX_STORAGE_BACKEND: "sqlite",
+  };
 
   return defineConfig({
     testDir: "./e2e",
@@ -126,8 +126,9 @@ export async function createCtxPlaywrightConfig(
     },
     webServer: {
       url: baseURL,
-      command: webServerCommand,
+      command: "node apps/web/scripts/start-e2e-server.mjs",
       cwd: "../..",
+      env: webServerEnv,
       reuseExistingServer,
       timeout: 1_200_000,
       ...resolveWebServerStdio(),
