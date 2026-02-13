@@ -404,7 +404,13 @@ async fn try_llms_urls(
     candidates.sort();
     candidates.dedup();
 
-    let url_re = Regex::new("https?://[^\\s)\\\"'>]+").expect("llms url regex should compile");
+    let url_re = match Regex::new("https?://[^\\s)\\\"'>]+") {
+        Ok(re) => re,
+        Err(err) => {
+            eprintln!("failed to compile llms url regex: {err}");
+            return Ok(None);
+        }
+    };
     for llms_url in candidates {
         let text = match crate::http::fetch_text(client, &llms_url).await {
             Ok(txt) => txt,
@@ -496,7 +502,13 @@ async fn try_edit_link_urls(
 }
 
 fn extract_raw_url_from_edit_link(html: &str) -> Option<String> {
-    let href_re = Regex::new("href=\"([^\"]+)\"").unwrap();
+    let href_re = match Regex::new("href=\"([^\"]+)\"") {
+        Ok(re) => re,
+        Err(err) => {
+            eprintln!("failed to compile edit link regex: {err}");
+            return None;
+        }
+    };
     let mut links = Vec::new();
     for cap in href_re.captures_iter(html) {
         links.push(cap[1].to_string());

@@ -227,9 +227,13 @@ async fn handle_limits(
             .await;
         }
 
-        let entry = over_high
-            .get(&provider_id)
-            .expect("entry exists after update");
+        let Some(entry) = over_high.get(&provider_id) else {
+            tracing::warn!(
+                provider_id,
+                "over-limit state missing after update; skipping restart check"
+            );
+            continue;
+        };
         if now.duration_since(entry.first_seen) >= limits.grace_period {
             notify_sessions(
                 state,

@@ -33,6 +33,16 @@ const DEFAULT_TRACE_SAMPLE_RATE: f64 = 0.01;
 const DEFAULT_TRACE_SLOW_MS: u64 = 2000;
 const DEFAULT_RETENTION_DAYS: u64 = 14;
 
+fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>, name: &str) -> std::sync::MutexGuard<'a, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!(mutex = name, "mutex poisoned; recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
 pub fn perf_log_path_for_date(data_root: &std::path::Path, date: &str) -> std::path::PathBuf {
     logs::logs_dir(data_root).join(format!("{}{}{}", PERF_LOG_PREFIX, date, PERF_LOG_SUFFIX))
 }
@@ -186,7 +196,7 @@ impl PerfTelemetry {
 
     pub async fn update_remote_enabled(&self, enabled: bool) {
         {
-            let mut cfg = self.config.lock().unwrap();
+            let mut cfg = lock_or_recover(self.config.as_ref(), "perf config");
             cfg.remote_enabled = enabled;
         }
         let _ = timeout(
@@ -221,11 +231,11 @@ impl PerfTelemetry {
     }
 
     pub fn export_remote_metric(&self, metric: PerfMetric) {
-        let cfg = self.config.lock().unwrap().clone();
+        let cfg = lock_or_recover(self.config.as_ref(), "perf config").clone();
         if !cfg.effective_remote_enabled() {
             return;
         }
-        let otel = self.otel.lock().unwrap().clone();
+        let otel = lock_or_recover(self.otel.as_ref(), "perf otel").clone();
         let Some(otel) = otel else {
             return;
         };
@@ -239,11 +249,11 @@ impl PerfTelemetry {
         parent: Option<OtelContext>,
         attributes: Vec<KeyValue>,
     ) -> PerfSpan {
-        let cfg = self.config.lock().unwrap().clone();
+        let cfg = lock_or_recover(self.config.as_ref(), "perf config").clone();
         if !cfg.effective_remote_enabled() {
             return PerfSpan::empty();
         }
-        let otel = self.otel.lock().unwrap().clone();
+        let otel = lock_or_recover(self.otel.as_ref(), "perf otel").clone();
         let Some(otel) = otel else {
             return PerfSpan::empty();
         };
@@ -280,7 +290,7 @@ impl PerfTelemetry {
         success: Option<bool>,
         extra_attributes: Vec<KeyValue>,
     ) -> (Option<String>, Option<String>) {
-        let cfg = self.config.lock().unwrap().clone();
+        let cfg = lock_or_recover(self.config.as_ref(), "perf config").clone();
         let duration_ms = span.started_at.elapsed().as_millis() as u64;
         let mut trace_id = None;
         let mut span_id = None;
@@ -306,7 +316,7 @@ impl PerfTelemetry {
 
         let should_force = duration_ms >= cfg.traces_slow_ms || success == Some(false);
         if should_force && cfg.effective_remote_enabled() {
-            if let Some(otel) = self.otel.lock().unwrap().clone() {
+            if let Some(otel) = lock_or_recover(self.otel.as_ref(), "perf otel").clone() {
                 let tracer = otel.slow_tracer();
                 let mut builder = SpanBuilder::from_name("slow_trace".to_string());
                 builder.span_kind = Some(SpanKind::Internal);
@@ -353,7 +363,7 @@ impl PerfTelemetry {
     }
 
     pub fn stats(&self) -> PerfTelemetryStats {
-        let agg = self.aggregator.lock().unwrap();
+        let agg = lock_or_recover(self.aggregator.as_ref(), "perf aggregator");
         let mut total_samples = 0;
         let mut max_samples = 0;
         for window in agg.metrics.values() {
@@ -599,7 +609,7 @@ async fn perf_worker(
     while let Some(cmd) = rx.recv().await {
         match cmd {
             PerfCommand::Event(event) => {
-                let cfg = config.lock().unwrap().clone();
+                let cfg = lock_or_recover(config.as_ref(), "perf config").clone();
                 if let Err(err) = append_local_log(&data_root, &event).await {
                     tracing::warn!("failed to append perf telemetry log: {err}");
                 }
@@ -611,7 +621,7 @@ async fn perf_worker(
                     }
                 }
                 if cfg.effective_remote_enabled() {
-                    if let Some(runtime) = otel.lock().unwrap().clone() {
+                    if let Some(runtime) = lock_or_recover(otel.as_ref(), "perf otel").clone() {
                         export_metric(&runtime, &event.metric, &cfg);
                     }
                 }
@@ -632,7 +642,7 @@ fn export_metric(runtime: &OtelRuntime, metric: &PerfMetric, cfg: &PerfTelemetry
     }
     let labels = filter_labels(&metric.labels, cfg);
     let attrs = labels_to_kvs(&labels);
-    let mut registry = runtime.registry.lock().unwrap();
+    let mut registry = lock_or_recover(&runtime.registry, "perf registry");
     match metric.kind {
         PerfMetricKind::Histogram => {
             let hist = registry.histogram(&runtime.meter, &metric.name, &metric.unit);

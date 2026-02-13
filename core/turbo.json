@@ -31,9 +31,23 @@
       ],
       "outputs": []
     },
-    "rust:clippy": {
+    "rust:panic-traps": {
       "dependsOn": [
         "rust:fmt"
+      ],
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "crates/**",
+        "apps/desktop/src-tauri/src/main.rs",
+        "apps/tauri-mobile/src-tauri/src/lib.rs",
+        "scripts/check_rust_runtime_panic_traps.mjs"
+      ],
+      "outputs": []
+    },
+    "rust:clippy": {
+      "dependsOn": [
+        "rust:panic-traps"
       ],
       "inputs": [
         "Cargo.toml",
@@ -71,7 +85,9 @@
         "../external-harnesses/codex/codex-rs/**",
         "!../external-harnesses/codex/codex-rs/target/**"
       ],
-      "outputs": []
+      "outputs": [
+        "../external-harnesses/codex/codex-rs/target/**/codex-crp"
+      ]
     },
     "crp:codex:test": {
       "dependsOn": [

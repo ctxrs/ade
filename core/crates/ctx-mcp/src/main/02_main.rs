@@ -30,15 +30,13 @@ async fn main() -> Result<()> {
         };
 
         let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
-        let id = msg.get("id").cloned();
-
         // Notifications have no response.
-        if id.is_none() {
+        let Some(id) = msg.get("id").cloned() else {
             continue;
-        }
+        };
 
         let response = match method {
-            "ping" => ok(id.unwrap(), json!({})),
+            "ping" => ok(id.clone(), json!({})),
             "initialize" => {
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
                 let protocol_version = params
@@ -46,7 +44,7 @@ async fn main() -> Result<()> {
                     .cloned()
                     .unwrap_or_else(|| json!("2025-11-25"));
                 ok(
-                    id.unwrap(),
+                    id.clone(),
                     json!({
                         "protocolVersion": protocol_version,
                         "capabilities": { "tools": { "listChanged": false } },
@@ -1029,7 +1027,7 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                ok(id.unwrap(), resp)
+                ok(id.clone(), resp)
             }
             "tools/call" => {
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
@@ -1047,14 +1045,14 @@ async fn main() -> Result<()> {
 
                 if !dev_tools_enabled() && name.as_str() == "ping" {
                     ok(
-                        id.unwrap(),
+                        id.clone(),
                         tool_err(anyhow::anyhow!(
                             "tool disabled: {name} (ping is dev-only; set CTX_MCP_DEV_MODE=1 to enable)"
                         )),
                     )
                 } else if !lsp_tools_enabled() && is_lsp_related_tool(name.as_str()) {
                     ok(
-                        id.unwrap(),
+                        id.clone(),
                         tool_err(anyhow::anyhow!(
                             "tool disabled: {name} (LSP/edit-plan MCP tools are disabled; set CTX_MCP_ENABLE_LSP_TOOLS=1 to enable)"
                         )),
@@ -1070,7 +1068,7 @@ async fn main() -> Result<()> {
                     }
                     match name.as_str() {
                         "ping" => ok(
-                            id.unwrap(),
+                            id.clone(),
                             json!({
                                 "content": [{"type":"text","text": "{\"ok\":true}"}],
                                 "isError": false
@@ -1080,14 +1078,14 @@ async fn main() -> Result<()> {
                             let _ = arguments; // currently unused
                             match list_workspaces(&client, &daemon_url).await {
                                 Ok(val) => ok(
-                                    id.unwrap(),
+                                    id.clone(),
                                     json!({
                                         "content": [{"type":"text","text": serde_json::to_string_pretty(&val).unwrap_or_else(|_| "[]".into())}],
                                         "isError": false
                                     }),
                                 ),
                                 Err(e) => ok(
-                                    id.unwrap(),
+                                    id.clone(),
                                     json!({
                                         "content": [{"type":"text","text": format!("error: {e}")}],
                                         "isError": true
@@ -1097,38 +1095,38 @@ async fn main() -> Result<()> {
                         }
                         "merge_queue_submit" => {
                             match merge_queue_submit_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "subagent_init" => {
                             match agent_init_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "subagent_reply" => {
                             match agent_reply_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "subagent_wait" => {
                             match subagent_wait_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "subagent_interrupt" => {
                             match subagent_interrupt_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "subagent_list" => {
                             match subagent_list_call(&client, &daemon_url).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "artifacts_set" => {
@@ -1137,7 +1135,7 @@ async fn main() -> Result<()> {
                                     let session_id =
                                         ctx_env_opt("SESSION_ID").ok_or_else(|| {
                                             error(
-                                                id.clone().unwrap(),
+                                                id.clone(),
                                                 -32602,
                                                 "Invalid params",
                                                 Some(json!({"missing":"session_context"})),
@@ -1148,7 +1146,7 @@ async fn main() -> Result<()> {
                                         .and_then(|v| v.as_array())
                                         .ok_or_else(|| {
                                             error(
-                                                id.clone().unwrap(),
+                                                id.clone(),
                                                 -32602,
                                                 "Invalid params",
                                                 Some(json!({"missing":"artifacts"})),
@@ -1159,7 +1157,7 @@ async fn main() -> Result<()> {
                                     for (idx, item) in items.iter().enumerate() {
                                         let obj = item.as_object().ok_or_else(|| {
                                         error(
-                                            id.clone().unwrap(),
+                                            id.clone(),
                                             -32602,
                                             "Invalid params",
                                             Some(json!({"index": idx, "message": "artifact must be an object"})),
@@ -1174,7 +1172,7 @@ async fn main() -> Result<()> {
                                         .filter(|s| !s.trim().is_empty())
                                         .ok_or_else(|| {
                                         error(
-                                            id.clone().unwrap(),
+                                            id.clone(),
                                             -32602,
                                             "Invalid params",
                                             Some(
@@ -1212,22 +1210,22 @@ async fn main() -> Result<()> {
                                     )
                                     .await
                                     {
-                                        Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                        Err(e) => ok(id.unwrap(), tool_err(e)),
+                                        Ok(val) => ok(id.clone(), tool_ok(val)),
+                                        Err(e) => ok(id.clone(), tool_err(e)),
                                     }
                                 }
                                 Err(err) => err,
                             }
                         }
                         "oracle" => match oracle_call(&client, &daemon_url, &arguments).await {
-                            Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                            Err(e) => ok(id.unwrap(), tool_err(e)),
+                            Ok(val) => ok(id.clone(), tool_ok(val)),
+                            Err(e) => ok(id.clone(), tool_err(e)),
                         },
                         "lsp_status" => {
                             let _ = arguments;
                             match lsp_status(&client, &daemon_url).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_install_server" => {
@@ -1238,23 +1236,23 @@ async fn main() -> Result<()> {
                                 .to_string();
                             if server_id.is_empty() {
                                 error(
-                                    id.unwrap(),
+                                    id.clone(),
                                     -32602,
                                     "Invalid params",
                                     Some(json!({"missing":"server_id"})),
                                 )
                             } else {
                                 match lsp_install_server(&client, &daemon_url, &server_id).await {
-                                    Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                    Err(e) => ok(id.unwrap(), tool_err(e)),
+                                    Ok(val) => ok(id.clone(), tool_ok(val)),
+                                    Err(e) => ok(id.clone(), tool_err(e)),
                                 }
                             }
                         }
                         "lsp_catalog_list" => {
                             let _ = arguments;
                             match lsp_catalog_list(&client, &daemon_url).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_catalog_install" => {
@@ -1265,15 +1263,15 @@ async fn main() -> Result<()> {
                                 .to_string();
                             if catalog_id.is_empty() {
                                 error(
-                                    id.unwrap(),
+                                    id.clone(),
                                     -32602,
                                     "Invalid params",
                                     Some(json!({"missing":"catalog_id"})),
                                 )
                             } else {
                                 match lsp_catalog_install(&client, &daemon_url, &catalog_id).await {
-                                    Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                    Err(e) => ok(id.unwrap(), tool_err(e)),
+                                    Ok(val) => ok(id.clone(), tool_ok(val)),
+                                    Err(e) => ok(id.clone(), tool_err(e)),
                                 }
                             }
                         }
@@ -1285,7 +1283,7 @@ async fn main() -> Result<()> {
                                 .to_string();
                             if path.is_empty() {
                                 error(
-                                    id.unwrap(),
+                                    id.clone(),
                                     -32602,
                                     "Invalid params",
                                     Some(json!({"missing":"path"})),
@@ -1305,8 +1303,8 @@ async fn main() -> Result<()> {
                                 )
                                 .await
                                 {
-                                    Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                    Err(e) => ok(id.unwrap(), tool_err(e)),
+                                    Ok(val) => ok(id.clone(), tool_ok(val)),
+                                    Err(e) => ok(id.clone(), tool_err(e)),
                                 }
                             }
                         }
@@ -1319,8 +1317,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_type_definition" => {
@@ -1332,8 +1330,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_implementation" => {
@@ -1345,8 +1343,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_references" => {
@@ -1358,16 +1356,16 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_hover" => {
                             match lsp_pos_call(&client, &daemon_url, "/api/lsp/hover", &arguments)
                                 .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_signature_help" => {
@@ -1379,8 +1377,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_completion" => {
@@ -1392,8 +1390,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_completion_resolve" => {
@@ -1405,8 +1403,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_code_action_resolve" => {
@@ -1418,8 +1416,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_inlay_hints" => {
@@ -1431,8 +1429,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_document_highlight" => {
@@ -1444,8 +1442,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_selection_ranges" => {
@@ -1457,8 +1455,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_call_hierarchy_prepare" => {
@@ -1470,8 +1468,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_call_hierarchy_incoming" => {
@@ -1483,8 +1481,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_call_hierarchy_outgoing" => {
@@ -1496,8 +1494,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_code_lens" => {
@@ -1509,8 +1507,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_code_lens_resolve" => {
@@ -1522,8 +1520,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_prepare_rename" => {
@@ -1535,8 +1533,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_document_links" => {
@@ -1548,8 +1546,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_document_link_resolve" => {
@@ -1561,8 +1559,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_semantic_tokens_full" => {
@@ -1574,16 +1572,16 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_semantic_tokens_delta" => {
                             match lsp_semantic_tokens_delta_call(&client, &daemon_url, &arguments)
                                 .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_folding_ranges" => {
@@ -1595,8 +1593,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_linked_editing_range" => {
@@ -1608,8 +1606,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_type_hierarchy_prepare" => {
@@ -1621,8 +1619,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_type_hierarchy_supertypes" => {
@@ -1634,8 +1632,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_type_hierarchy_subtypes" => {
@@ -1647,8 +1645,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_code_actions_by_diagnostic_plan" => {
@@ -1659,8 +1657,8 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_execute_command" => {
@@ -1672,16 +1670,16 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_execute_command_plan" => {
                             match lsp_execute_command_plan_call(&client, &daemon_url, &arguments)
                                 .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_document_symbols" => {
@@ -1693,15 +1691,15 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_workspace_symbols" => {
                             match lsp_workspace_symbols_call(&client, &daemon_url, &arguments).await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_workspace_symbol_resolve" => {
@@ -1712,108 +1710,108 @@ async fn main() -> Result<()> {
                             )
                             .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_code_actions" => {
                             match lsp_code_actions_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_rename_plan" => {
                             match lsp_rename_plan_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_format_plan" => {
                             match lsp_format_plan_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_organize_imports_plan" => {
                             match lsp_organize_imports_plan_call(&client, &daemon_url, &arguments)
                                 .await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "lsp_code_action_plan" => {
                             match lsp_code_action_plan_call(&client, &daemon_url, &arguments).await
                             {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "list_edit_plans" => {
                             match list_edit_plans_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "get_edit_plan" => {
                             match get_edit_plan_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "apply_edit_plan" => {
                             match apply_edit_plan_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "discard_edit_plan" => {
                             match discard_edit_plan_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         // TODO: Re-enable web session MCP tool handlers.
                         /*
                         "session_create" => {
                             match session_create_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "session_list" => {
                             match session_list_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "session_info" => {
                             match session_info_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "session_run" => {
                             match session_run_call(&client, &daemon_url, &arguments, false).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "session_eval" => {
                             match session_run_call(&client, &daemon_url, &arguments, true).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "session_close" => {
                             match session_close_call(&client, &daemon_url, &arguments).await {
-                                Ok(val) => ok(id.unwrap(), tool_ok(val)),
-                                Err(e) => ok(id.unwrap(), tool_err(e)),
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         */
                         _ => error(
-                            id.unwrap(),
+                            id.clone(),
                             -32601,
                             "Method not found",
                             Some(json!({"tool": name})),
@@ -1822,7 +1820,7 @@ async fn main() -> Result<()> {
                 }
             }
             _ => error(
-                id.unwrap(),
+                id.clone(),
                 -32601,
                 "Method not found",
                 Some(json!({"method": method})),

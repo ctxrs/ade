@@ -297,7 +297,13 @@ fn is_asset_path(path: &str) -> bool {
 }
 
 fn extract_links(html: &str) -> Vec<String> {
-    let href_re = Regex::new("href=[\"']([^\"']+)[\"']").unwrap();
+    let href_re = match Regex::new("href=[\"']([^\"']+)[\"']") {
+        Ok(re) => re,
+        Err(err) => {
+            eprintln!("failed to compile href regex: {err}");
+            return Vec::new();
+        }
+    };
     let mut links = Vec::new();
     for cap in href_re.captures_iter(html) {
         links.push(cap[1].to_string());
@@ -306,9 +312,27 @@ fn extract_links(html: &str) -> Vec<String> {
 }
 
 fn extract_markdown_links(text: &str) -> Vec<String> {
-    let inline_re = Regex::new(r"\[[^\]]+\]\(([^)\s]+)").unwrap();
-    let ref_re = Regex::new(r"(?m)^\s*\[[^\]]+\]:\s*(\S+)").unwrap();
-    let auto_re = Regex::new(r"<(https?://[^>]+)>").unwrap();
+    let inline_re = match Regex::new(r"\[[^\]]+\]\(([^)\s]+)") {
+        Ok(re) => re,
+        Err(err) => {
+            eprintln!("failed to compile markdown inline link regex: {err}");
+            return Vec::new();
+        }
+    };
+    let ref_re = match Regex::new(r"(?m)^\s*\[[^\]]+\]:\s*(\S+)") {
+        Ok(re) => re,
+        Err(err) => {
+            eprintln!("failed to compile markdown ref link regex: {err}");
+            return Vec::new();
+        }
+    };
+    let auto_re = match Regex::new(r"<(https?://[^>]+)>") {
+        Ok(re) => re,
+        Err(err) => {
+            eprintln!("failed to compile markdown autolink regex: {err}");
+            return Vec::new();
+        }
+    };
     let mut links = Vec::new();
     for cap in inline_re.captures_iter(text) {
         links.push(cap[1].to_string());

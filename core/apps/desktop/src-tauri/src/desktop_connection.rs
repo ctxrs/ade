@@ -127,7 +127,13 @@ impl ConnectionManager {
     }
 
     pub(super) fn set_local(&self, base_url: String, token: String, child: Child, systemd_scope: bool) {
-        let mut guard = self.0.lock().expect("connection manager lock");
+        let mut guard = match self.0.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                let _ = try_kill_child(child);
+                return;
+            }
+        };
         guard.active = Some(ActiveConnection::Local(LocalConnection {
             base_url,
             token,
@@ -137,7 +143,10 @@ impl ConnectionManager {
     }
 
     pub(super) fn set_local_external(&self, base_url: String, token: String) {
-        let mut guard = self.0.lock().expect("connection manager lock");
+        let mut guard = match self.0.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
         guard.active = Some(ActiveConnection::LocalExternal(LocalExternalConnection {
             base_url,
             token,
@@ -145,7 +154,13 @@ impl ConnectionManager {
     }
 
     pub(super) fn set_ssh(&self, base_url: String, token: Option<String>, tunnel: Child) {
-        let mut guard = self.0.lock().expect("connection manager lock");
+        let mut guard = match self.0.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                let _ = try_kill_child(tunnel);
+                return;
+            }
+        };
         guard.active = Some(ActiveConnection::Ssh(SshConnection {
             base_url,
             token,

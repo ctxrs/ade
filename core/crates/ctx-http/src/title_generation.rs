@@ -161,7 +161,8 @@ async fn generate_remote_title(cfg: &TitleGenerationSettings, prompt: &str) -> R
     let client = OpenAiClient::new(
         cfg.remote.base_url.trim().to_string(),
         cfg.remote.api_key.trim().to_string(),
-    );
+    )
+    .context("creating remote title generation client")?;
     let req = build_request(&cfg.remote.model, cfg.remote.use_json, prompt);
 
     let resp = client
@@ -218,7 +219,8 @@ async fn generate_local_once(
     let mut server = spawn_llama_server(runtime, model_path, cfg.local.use_json, data_root).await?;
     let base_url = format!("{}/v1", server.base_url);
 
-    let client = OpenAiClient::new_with_timeout(base_url, String::new(), LOCAL_REQUEST_TIMEOUT);
+    let client = OpenAiClient::new_with_timeout(base_url, String::new(), LOCAL_REQUEST_TIMEOUT)
+        .context("creating local title generation client")?;
     let req = build_request(&cfg.local.model_id, cfg.local.use_json, prompt);
     let result = async {
         let resp = client

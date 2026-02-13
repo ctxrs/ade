@@ -140,7 +140,13 @@ async fn fetch_sitemap_text(client: &reqwest::Client, url: &str) -> Result<Strin
 
 fn parse_sitemap_locs(xml: &str) -> Vec<String> {
     let mut urls = Vec::new();
-    let re = Regex::new(r"<loc>([^<]+)</loc>").unwrap();
+    let re = match Regex::new(r"<loc>([^<]+)</loc>") {
+        Ok(re) => re,
+        Err(err) => {
+            eprintln!("failed to compile sitemap <loc> regex: {err}");
+            return Vec::new();
+        }
+    };
     for cap in re.captures_iter(xml) {
         urls.push(cap[1].trim().to_string());
     }
@@ -149,7 +155,13 @@ fn parse_sitemap_locs(xml: &str) -> Vec<String> {
 
 fn parse_robots_sitemaps(text: &str) -> Vec<String> {
     let mut urls = Vec::new();
-    let re = Regex::new(r"(?i)^sitemap:\s*(\S+)").unwrap();
+    let re = match Regex::new(r"(?i)^sitemap:\s*(\S+)") {
+        Ok(re) => re,
+        Err(err) => {
+            eprintln!("failed to compile robots sitemap regex: {err}");
+            return Vec::new();
+        }
+    };
     for line in text.lines() {
         let line = line.trim();
         if let Some(cap) = re.captures(line) {

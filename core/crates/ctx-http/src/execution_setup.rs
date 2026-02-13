@@ -23,6 +23,16 @@ const JOB_LOG_CAP: usize = 400;
 const JOB_HISTORY_CAP: usize = 128;
 const LAUNCH_EVENT_CHANNEL_CAP: usize = 256;
 
+fn lock_or_recover<'a, T>(mutex: &'a StdMutex<T>, name: &str) -> std::sync::MutexGuard<'a, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!(mutex = name, "mutex poisoned; recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionSetupJobKind {
@@ -254,18 +264,18 @@ impl LaunchJob {
     }
 
     fn snapshot(&self) -> ExecutionLaunchSnapshot {
-        let inner = self.inner.lock().expect("launch job lock poisoned");
+        let inner = lock_or_recover(&self.inner, "launch job");
         inner.snapshot(&self.job_id, self.workspace_id)
     }
 
     fn current_phase(&self) -> Option<HarnessSetupPhase> {
-        let inner = self.inner.lock().expect("launch job lock poisoned");
+        let inner = lock_or_recover(&self.inner, "launch job");
         inner.current_phase
     }
 
     fn transition_phase(&self, phase: HarnessSetupPhase, message: &str) -> LaunchMutation {
         let now = Utc::now();
-        let mut inner = self.inner.lock().expect("launch job lock poisoned");
+        let mut inner = lock_or_recover(&self.inner, "launch job");
         let mut completed_phase = None;
         let mut phase_changed = false;
         if inner.current_phase != Some(phase) {
@@ -296,7 +306,7 @@ impl LaunchJob {
         message: &str,
     ) -> LaunchMutation {
         let now = Utc::now();
-        let mut inner = self.inner.lock().expect("launch job lock poisoned");
+        let mut inner = lock_or_recover(&self.inner, "launch job");
         let line = inner.push_log(phase, level, message, now);
         let snapshot = inner.snapshot(&self.job_id, self.workspace_id);
         LaunchMutation {
@@ -313,7 +323,7 @@ impl LaunchJob {
         error: Option<String>,
     ) -> LaunchTerminalMutation {
         let now = Utc::now();
-        let mut inner = self.inner.lock().expect("launch job lock poisoned");
+        let mut inner = lock_or_recover(&self.inner, "launch job");
         let completed_phase = inner.close_current_phase(now);
         inner.state = state;
         inner.finished_at = Some(now);

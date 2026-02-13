@@ -12,20 +12,20 @@ pub struct OpenAiClient {
 }
 
 impl OpenAiClient {
-    pub fn new(base_url: String, api_key: String) -> Self {
+    pub fn new(base_url: String, api_key: String) -> Result<Self> {
         Self::new_with_timeout(base_url, api_key, Duration::from_secs(30))
     }
 
-    pub fn new_with_timeout(base_url: String, api_key: String, timeout: Duration) -> Self {
+    pub fn new_with_timeout(base_url: String, api_key: String, timeout: Duration) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(timeout)
             .build()
-            .expect("reqwest client");
-        Self {
+            .context("building reqwest client")?;
+        Ok(Self {
             base_url,
             api_key,
             client,
-        }
+        })
     }
 
     pub async fn chat_completion(
@@ -79,16 +79,16 @@ pub struct OpenAiResponsesClient {
 }
 
 impl OpenAiResponsesClient {
-    pub fn new(base_url: String, api_key: String, timeout: Duration) -> Self {
+    pub fn new(base_url: String, api_key: String, timeout: Duration) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(timeout)
             .build()
-            .expect("reqwest client");
-        Self {
+            .context("building reqwest client")?;
+        Ok(Self {
             base_url,
             api_key,
             client,
-        }
+        })
     }
 
     pub async fn create_response(&self, req: &ResponsesRequest) -> Result<serde_json::Value> {

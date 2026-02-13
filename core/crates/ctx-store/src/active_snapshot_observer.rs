@@ -19,8 +19,12 @@ fn observers() -> &'static Mutex<Vec<Weak<dyn ActiveSnapshotObserver>>> {
 }
 
 pub fn register_active_snapshot_observer(observer: Arc<dyn ActiveSnapshotObserver>) {
-    let mut guard = observers()
-        .lock()
-        .expect("active snapshot observers mutex poisoned");
+    let mut guard = match observers().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!("active snapshot observers mutex poisoned; recovering lock");
+            poisoned.into_inner()
+        }
+    };
     guard.push(Arc::downgrade(&observer));
 }

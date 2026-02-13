@@ -82,13 +82,23 @@ fn edit_plan_refs() -> &'static Mutex<EditPlanRefMap> {
     EDIT_PLAN_REFS.get_or_init(|| Mutex::new(EditPlanRefMap::default()))
 }
 
+fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>, name: &str) -> std::sync::MutexGuard<'a, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!(mutex = name, "mutex poisoned; recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
 fn edit_plan_id_for_internal(plan_id: &str) -> String {
-    let mut map = edit_plan_refs().lock().expect("edit plan ref map poisoned");
+    let mut map = lock_or_recover(edit_plan_refs(), "edit plan ref map");
     map.edit_plan_id_for_internal(plan_id)
 }
 
 fn internal_plan_id_for_edit_plan(edit_plan_id: &str) -> Option<String> {
-    let map = edit_plan_refs().lock().expect("edit plan ref map poisoned");
+    let map = lock_or_recover(edit_plan_refs(), "edit plan ref map");
     map.internal_plan_id_for_edit_plan(edit_plan_id)
 }
 
@@ -123,16 +133,12 @@ fn interactive_session_refs() -> &'static Mutex<InteractiveSessionRefMap> {
 }
 
 fn session_ref_for_session_id(session_id: &str) -> String {
-    let mut map = interactive_session_refs()
-        .lock()
-        .expect("interactive session ref map poisoned");
+    let mut map = lock_or_recover(interactive_session_refs(), "interactive session ref map");
     map.session_ref_for_session_id(session_id)
 }
 
 fn session_id_for_ref(session_ref: &str) -> Option<String> {
-    let map = interactive_session_refs()
-        .lock()
-        .expect("interactive session ref map poisoned");
+    let map = lock_or_recover(interactive_session_refs(), "interactive session ref map");
     map.session_id_for_ref(session_ref)
 }
 

@@ -1233,7 +1233,10 @@ impl Store {
                 primary_idx = Some(0);
             }
 
-            let primary_summary = task_sessions.remove(primary_idx.unwrap());
+            let Some(primary_idx) = primary_idx else {
+                continue;
+            };
+            let primary_summary = task_sessions.remove(primary_idx);
             let primary_id = primary_summary.session.id;
             let mut sessions = Vec::new();
             for summary in task_sessions {

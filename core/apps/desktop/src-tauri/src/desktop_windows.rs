@@ -120,8 +120,13 @@ extern "C" fn settings_button_clicked(_this: &AnyObject, _cmd: Sel, _sender: *mu
 #[cfg(target_os = "macos")]
 pub(super) fn emit_settings_inplace(app: &tauri::AppHandle, target: &AnyObject) {
     const WINDOW_LABEL_IVAR: &[u8] = b"ctxWindowLabel\0";
-    let ivar = settings_button_target_class()
-        .instance_variable(CStr::from_bytes_with_nul(WINDOW_LABEL_IVAR).unwrap());
+    let Some(class) = settings_button_target_class() else {
+        return;
+    };
+    let Some(ivar_name) = CStr::from_bytes_with_nul(WINDOW_LABEL_IVAR).ok() else {
+        return;
+    };
+    let ivar = class.instance_variable(ivar_name);
     if let Some(ivar) = ivar {
         let label_ptr = unsafe { *ivar.load::<*const std::ffi::c_char>(target) };
         if !label_ptr.is_null() {
@@ -146,16 +151,22 @@ pub(super) fn emit_settings_inplace(app: &tauri::AppHandle, target: &AnyObject) 
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn settings_button_target_class() -> &'static AnyClass {
+pub(super) fn settings_button_target_class() -> Option<&'static AnyClass> {
     const CLASS_NAME: &[u8] = b"CtxSettingsButtonTarget\0";
     const WINDOW_LABEL_IVAR: &[u8] = b"ctxWindowLabel\0";
     SETTINGS_BUTTON_CLASS.call_once(|| {
-        let class_name = CStr::from_bytes_with_nul(CLASS_NAME)
-            .expect("settings button class name should be valid");
-        let mut builder = ClassBuilder::new(class_name, NSObject::class())
-            .expect("settings button class should be registerable");
-        let ivar_name = CStr::from_bytes_with_nul(WINDOW_LABEL_IVAR)
-            .expect("settings button ivar name should be valid");
+        let Some(class_name) = CStr::from_bytes_with_nul(CLASS_NAME).ok() else {
+            eprintln!("failed to parse settings button class name");
+            return;
+        };
+        let Some(mut builder) = ClassBuilder::new(class_name, NSObject::class()) else {
+            eprintln!("failed to register settings button class");
+            return;
+        };
+        let Some(ivar_name) = CStr::from_bytes_with_nul(WINDOW_LABEL_IVAR).ok() else {
+            eprintln!("failed to parse settings button ivar name");
+            return;
+        };
         builder.add_ivar::<*const std::ffi::c_char>(ivar_name);
         unsafe {
             let open_settings: extern "C" fn(&'static AnyObject, Sel, *mut AnyObject) =
@@ -164,9 +175,8 @@ pub(super) fn settings_button_target_class() -> &'static AnyClass {
         }
         builder.register();
     });
-    let class_name =
-        CStr::from_bytes_with_nul(CLASS_NAME).expect("settings button class name should be valid");
-    AnyClass::get(class_name).expect("settings button class should be registered")
+    let class_name = CStr::from_bytes_with_nul(CLASS_NAME).ok()?;
+    AnyClass::get(class_name)
 }
 
 #[cfg(target_os = "macos")]
@@ -182,7 +192,9 @@ pub(super) fn install_macos_settings_button(
             .map(str::to_string)
     });
     window.with_webview(move |webview| unsafe {
-        let mtm = MainThreadMarker::new().expect("titlebar button should be on main thread");
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
         let ns_window: &NSWindow = &*webview.ns_window().cast();
         let image = icon_path
             .as_deref()
@@ -191,15 +203,21 @@ pub(super) fn install_macos_settings_button(
         let Some(image) = image else {
             return;
         };
-        let cls = settings_button_target_class();
+        let Some(cls) = settings_button_target_class() else {
+            return;
+        };
         let target: Retained<AnyObject> = msg_send![cls, new];
         let target = &*Retained::into_raw(target);
-        let label_ptr = CString::new(window_label.as_str())
-            .expect("window label should be valid")
-            .into_raw();
-        let ivar = settings_button_target_class()
-            .instance_variable(CStr::from_bytes_with_nul(b"ctxWindowLabel\0").unwrap())
-            .expect("settings button ivar should exist");
+        let Ok(label_cstr) = CString::new(window_label.as_str()) else {
+            return;
+        };
+        let label_ptr = label_cstr.into_raw();
+        let Some(ivar_name) = CStr::from_bytes_with_nul(b"ctxWindowLabel\0").ok() else {
+            return;
+        };
+        let Some(ivar) = cls.instance_variable(ivar_name) else {
+            return;
+        };
         ivar.load_ptr::<*const std::ffi::c_char>(target)
             .write(label_ptr as *const std::ffi::c_char);
         let button = NSButton::buttonWithImage_target_action(

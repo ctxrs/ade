@@ -1132,7 +1132,14 @@ pub(super) async fn create_task(
         return Ok(Json(task));
     }
 
-    let vcs = vcs.expect("vcs is set for default session");
+    let Some(vcs) = vcs else {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: "missing vcs driver for default session".to_string(),
+            }),
+        ));
+    };
     let base_commit_sha = vcs.rev_parse_head(ws_root).await.map_err(|e| {
         let msg = e.to_string().to_lowercase();
         if msg.contains("ambiguous argument 'head'")

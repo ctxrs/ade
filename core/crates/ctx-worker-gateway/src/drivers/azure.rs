@@ -257,14 +257,16 @@ impl AzureDriver {
             }
         });
         if let Some(public_ip_name) = public_ip_name {
-            ip_config
+            let Some(props) = ip_config
                 .get_mut("properties")
                 .and_then(|v| v.as_object_mut())
-                .expect("ipconfig props")
-                .insert(
-                    "publicIPAddress".to_string(),
-                    json!({ "id": self.public_ip_id(public_ip_name) }),
-                );
+            else {
+                return Err(anyhow::anyhow!("invalid azure ip config shape"));
+            };
+            props.insert(
+                "publicIPAddress".to_string(),
+                json!({ "id": self.public_ip_id(public_ip_name) }),
+            );
         }
 
         let body = json!({

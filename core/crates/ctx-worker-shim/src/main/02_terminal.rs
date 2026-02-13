@@ -6,6 +6,19 @@ const TERMINAL_PING_INTERVAL: Duration = Duration::from_secs(25);
 const TERMINAL_RECONNECT_BASE_MS: u64 = 500;
 const TERMINAL_RECONNECT_MAX_MS: u64 = 10_000;
 
+fn lock_or_recover<'a, T>(
+    mutex: &'a std::sync::Mutex<T>,
+    name: &str,
+) -> std::sync::MutexGuard<'a, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            warn!(mutex = name, "mutex poisoned; recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum TerminalClientMessage {
@@ -215,13 +228,13 @@ async fn run_terminal_session(
     let exited_status = exited.clone();
     std::thread::spawn(move || loop {
         let exit: Option<portable_pty::ExitStatus> = {
-            let mut child = child_for_status.lock().expect("terminal child lock");
+            let mut child = lock_or_recover(child_for_status.as_ref(), "terminal child");
             child.try_wait().ok().flatten()
         };
         if let Some(status) = exit {
             let exit_code = i32::try_from(status.exit_code()).ok();
             {
-                let mut guard = exit_code_status.lock().expect("exit code lock");
+                let mut guard = lock_or_recover(exit_code_status.as_ref(), "exit code");
                 *guard = exit_code;
             }
             exited_status.store(true, Ordering::Relaxed);
@@ -275,7 +288,7 @@ async fn run_terminal_session(
         let (mut ws_write, mut ws_read) = ws_stream.split();
 
         let (status, exit_code) = if exited.load(Ordering::Relaxed) {
-            let guard = exit_code.lock().expect("exit code lock");
+            let guard = lock_or_recover(exit_code.as_ref(), "exit code");
             ("exited".to_string(), *guard)
         } else {
             ("running".to_string(), None)
@@ -316,7 +329,7 @@ async fn run_terminal_session(
                             {
                                 match parsed {
                                     TerminalClientMessage::Resize { cols, rows } => {
-                                        let master = master.lock().expect("terminal master lock");
+                                        let master = lock_or_recover(master.as_ref(), "terminal master");
                                         let _ = master.resize(PtySize {
                                             rows,
                                             cols,
@@ -359,7 +372,7 @@ async fn run_terminal_session(
     }
 
     {
-        let mut child = child_arc.lock().expect("terminal child lock");
+        let mut child = lock_or_recover(child_arc.as_ref(), "terminal child");
         let _ = child.kill();
     }
 

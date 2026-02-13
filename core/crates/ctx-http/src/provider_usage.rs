@@ -280,10 +280,11 @@ async fn persist_codex_auth_tokens(
     if json.get("tokens").and_then(|v| v.as_object()).is_none() {
         json["tokens"] = serde_json::Value::Object(serde_json::Map::new());
     }
-    let tokens = json
-        .get_mut("tokens")
-        .and_then(|v| v.as_object_mut())
-        .expect("tokens object");
+    let Some(tokens) = json.get_mut("tokens").and_then(|v| v.as_object_mut()) else {
+        return Err(anyhow!(
+            "failed to persist codex auth tokens: tokens object missing"
+        ));
+    };
     tokens.insert(
         "access_token".to_string(),
         serde_json::Value::String(refreshed.access_token.clone()),

@@ -61,7 +61,8 @@ pub async fn oracle_one_shot(cfg: &OracleSettings, req: OracleRequest) -> Result
     let api_key = cfg.api_key.clone();
 
     // Prefer the Responses API to enable explicit reasoning controls.
-    let responses_client = OpenAiResponsesClient::new(base_url.clone(), api_key.clone(), timeout);
+    let responses_client = OpenAiResponsesClient::new(base_url.clone(), api_key.clone(), timeout)
+        .context("creating responses client")?;
     let responses_req = ResponsesRequest {
         model: model.clone(),
         input: req.prompt.clone(),
@@ -91,7 +92,8 @@ pub async fn oracle_one_shot(cfg: &OracleSettings, req: OracleRequest) -> Result
         Err(err) => {
             // Fallback to chat completions for OpenAI-compatible endpoints that don't support
             // `/responses` yet.
-            let fallback_client = OpenAiClient::new_with_timeout(base_url, api_key, timeout);
+            let fallback_client = OpenAiClient::new_with_timeout(base_url, api_key, timeout)
+                .context("creating chat fallback client")?;
             let system = "You are Oracle GPT, a very high-reasoning model. You do not have access to any repository or tools. You must reason only from the text provided. Think through tradeoffs, failure modes, and alternative architectures. Provide an opinionated recommendation and a short validation plan.";
             let chat_req = ChatCompletionRequest {
                 model: model.clone(),

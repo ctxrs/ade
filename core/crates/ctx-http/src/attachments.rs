@@ -78,7 +78,9 @@ pub async fn sync_workspace_attachments(
         }
         return Ok(vec![]);
     }
-    let cfg = cfg.expect("attachments config missing");
+    let Some(cfg) = cfg else {
+        return Ok(vec![]);
+    };
 
     let mut existing_map: HashMap<(WorkspaceAttachmentKind, String), WorkspaceAttachment> =
         HashMap::new();

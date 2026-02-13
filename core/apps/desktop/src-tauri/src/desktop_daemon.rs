@@ -91,7 +91,9 @@ pub(super) fn ensure_local_connection(app: &tauri::AppHandle, state: &Connection
     static LOCAL_CONNECT_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> =
         std::sync::OnceLock::new();
     let mutex = LOCAL_CONNECT_MUTEX.get_or_init(|| std::sync::Mutex::new(()));
-    let _guard = mutex.lock().expect("local connect mutex poisoned");
+    let _guard = mutex
+        .lock()
+        .map_err(|err| anyhow!("local connect mutex poisoned: {err}"))?;
     if !matches!(state.info().kind, DesktopConnectionKind::None) {
         return Ok(());
     }

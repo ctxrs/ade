@@ -235,7 +235,10 @@ impl GcpDriver {
             "type": self.disk_type_url(),
         });
         if let Some(snapshot) = source_snapshot {
-            body.as_object_mut().expect("body object").insert(
+            let Some(obj) = body.as_object_mut() else {
+                return Err(anyhow::anyhow!("invalid gcp disk body shape"));
+            };
+            obj.insert(
                 "sourceSnapshot".to_string(),
                 Value::String(snapshot.to_string()),
             );
@@ -341,10 +344,10 @@ impl GcpDriver {
             }]
         });
         if let Some(subnetwork) = self.subnetwork_url() {
-            network_interface
-                .as_object_mut()
-                .expect("network interface")
-                .insert("subnetwork".to_string(), Value::String(subnetwork));
+            let Some(obj) = network_interface.as_object_mut() else {
+                return Err(anyhow::anyhow!("invalid gcp network interface shape"));
+            };
+            obj.insert("subnetwork".to_string(), Value::String(subnetwork));
         }
 
         let mut instance = json!({
@@ -382,7 +385,10 @@ impl GcpDriver {
             } else {
                 self.config.scopes.clone()
             };
-            instance.as_object_mut().expect("instance").insert(
+            let Some(obj) = instance.as_object_mut() else {
+                return Err(anyhow::anyhow!("invalid gcp instance body shape"));
+            };
+            obj.insert(
                 "serviceAccounts".to_string(),
                 json!([{
                     "email": service_account,

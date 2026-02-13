@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{FromRequestParts, Path, Query, State};
@@ -192,7 +192,13 @@ async fn handle_desktop_socket(
     {
         let mut inner = tunnel.inner.lock().await;
         if let Some(master) = state.master_secret.as_ref() {
-            let expected = derive_secret(master, &tunnel_id);
+            let expected = match derive_secret(master, &tunnel_id) {
+                Ok(value) => value,
+                Err(err) => {
+                    warn!("rejecting desktop connect for tunnel {tunnel_id}: unable to derive secret: {err:#}");
+                    return Ok(());
+                }
+            };
             if secret.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1 {
                 warn!("rejecting desktop connect for tunnel {tunnel_id}: secret mismatch");
                 return Ok(());
@@ -657,8 +663,7 @@ fn extract_ws_forward_headers(headers: &HeaderMap) -> Vec<(String, String)> {
 fn build_http_response(resp: HttpResponse) -> Response {
     let status = StatusCode::from_u16(resp.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let mut builder = Response::builder().status(status);
-    {
-        let headers = builder.headers_mut().unwrap();
+    if let Some(headers) = builder.headers_mut() {
         for (k, v) in resp.headers {
             if let (Ok(name), Ok(value)) = (
                 axum::http::header::HeaderName::from_bytes(k.as_bytes()),
@@ -667,18 +672,22 @@ fn build_http_response(resp: HttpResponse) -> Response {
                 headers.insert(name, value);
             }
         }
+    } else {
+        tracing::warn!(
+            "response builder headers unavailable; returning response without forwarded headers"
+        );
     }
     builder
         .body(axum::body::Body::from(resp.body))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
-fn derive_secret(master_secret: &[u8], tunnel_id: &str) -> String {
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(master_secret).expect("hmac can take any key size");
+fn derive_secret(master_secret: &[u8], tunnel_id: &str) -> Result<String> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(master_secret)
+        .map_err(|err| anyhow!("failed to initialize hmac for tunnel secret derivation: {err}"))?;
     mac.update(tunnel_id.as_bytes());
     let bytes = mac.finalize().into_bytes();
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
 }
 
 static BASE64: base64::engine::general_purpose::GeneralPurpose =

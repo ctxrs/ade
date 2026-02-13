@@ -31,6 +31,16 @@ const TERMINAL_RECONNECT_BASE_MS: u64 = 500;
 const TERMINAL_RECONNECT_MAX_MS: u64 = 10_000;
 const TERMINAL_REAPER_INTERVAL: Duration = Duration::from_secs(60);
 
+fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>, name: &str) -> std::sync::MutexGuard<'a, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!(mutex = name, "mutex poisoned; recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
 fn terminal_idle_timeout() -> Option<Duration> {
     let raw = std::env::var("CTX_TERMINAL_IDLE_TIMEOUT_SECS").ok()?;
     let trimmed = raw.trim();
@@ -144,7 +154,7 @@ pub struct TerminalManagerStats {
 
 impl TerminalSessionHandle {
     pub fn snapshot(&self) -> TerminalSession {
-        let runtime = self.runtime.lock().expect("terminal runtime lock");
+        let runtime = lock_or_recover(self.runtime.as_ref(), "terminal runtime");
         TerminalSession {
             status: runtime.status.clone(),
             exit_code: runtime.exit_code,
@@ -154,20 +164,20 @@ impl TerminalSessionHandle {
     }
 
     fn touch_activity(&self) {
-        let mut runtime = self.runtime.lock().expect("terminal runtime lock");
+        let mut runtime = lock_or_recover(self.runtime.as_ref(), "terminal runtime");
         runtime.last_activity = Utc::now();
         runtime.updated_at = runtime.last_activity;
     }
 
     pub fn mark_client_connected(&self) {
-        let mut runtime = self.runtime.lock().expect("terminal runtime lock");
+        let mut runtime = lock_or_recover(self.runtime.as_ref(), "terminal runtime");
         runtime.connected_clients = runtime.connected_clients.saturating_add(1);
         runtime.last_activity = Utc::now();
         runtime.updated_at = runtime.last_activity;
     }
 
     pub fn mark_client_disconnected(&self) {
-        let mut runtime = self.runtime.lock().expect("terminal runtime lock");
+        let mut runtime = lock_or_recover(self.runtime.as_ref(), "terminal runtime");
         runtime.connected_clients = runtime.connected_clients.saturating_sub(1);
         runtime.updated_at = Utc::now();
     }
@@ -181,12 +191,12 @@ impl TerminalSessionHandle {
     }
 
     pub fn output_snapshot(&self) -> Vec<u8> {
-        let buffer = self.output_buffer.lock().expect("terminal buffer lock");
+        let buffer = lock_or_recover(self.output_buffer.as_ref(), "terminal buffer");
         buffer.iter().copied().collect()
     }
 
     pub fn output_snapshot_tail(&self, tail: usize) -> Vec<u8> {
-        let buffer = self.output_buffer.lock().expect("terminal buffer lock");
+        let buffer = lock_or_recover(self.output_buffer.as_ref(), "terminal buffer");
         let len = buffer.len();
         if len == 0 || tail == 0 {
             return Vec::new();
@@ -211,7 +221,7 @@ impl TerminalSessionHandle {
         self.touch_activity();
         match &self.backend {
             TerminalBackend::Local { master, .. } => {
-                let master = master.lock().expect("terminal master lock");
+                let master = lock_or_recover(master.as_ref(), "terminal master");
                 master
                     .resize(PtySize {
                         rows,
@@ -233,7 +243,7 @@ impl TerminalSessionHandle {
     pub fn kill(&self) -> Result<()> {
         match &self.backend {
             TerminalBackend::Local { child, .. } => {
-                let mut child = child.lock().expect("terminal child lock");
+                let mut child = lock_or_recover(child.as_ref(), "terminal child");
                 child.kill().context("kill terminal")?;
             }
             TerminalBackend::Remote { outbound_tx } => {
@@ -244,7 +254,7 @@ impl TerminalSessionHandle {
     }
 
     pub fn mark_exited(&self, exit_code: Option<i32>) {
-        let mut runtime = self.runtime.lock().expect("terminal runtime lock");
+        let mut runtime = lock_or_recover(self.runtime.as_ref(), "terminal runtime");
         runtime.status = TerminalStatus::Exited;
         runtime.exit_code = exit_code;
         runtime.updated_at = Utc::now();
@@ -277,16 +287,15 @@ impl TerminalManager {
         let mut max_output_buffer_bytes = 0;
         let mut connected_clients = 0;
         for handle in sessions.values() {
-            let buffer_len = handle
-                .output_buffer
-                .lock()
-                .expect("terminal buffer lock")
-                .len();
+            let buffer_len = {
+                let buffer = lock_or_recover(handle.output_buffer.as_ref(), "terminal buffer");
+                buffer.len()
+            };
             output_buffer_bytes += buffer_len;
             if buffer_len > max_output_buffer_bytes {
                 max_output_buffer_bytes = buffer_len;
             }
-            let runtime = handle.runtime.lock().expect("terminal runtime lock");
+            let runtime = lock_or_recover(handle.runtime.as_ref(), "terminal runtime");
             connected_clients += runtime.connected_clients;
         }
         TerminalManagerStats {
@@ -424,12 +433,12 @@ impl TerminalManager {
 
         std::thread::spawn(move || loop {
             let exit: Option<portable_pty::ExitStatus> = {
-                let mut child = child_arc_clone.lock().expect("terminal child lock");
+                let mut child = lock_or_recover(child_arc_clone.as_ref(), "terminal child");
                 child.try_wait().ok().flatten()
             };
             if let Some(status) = exit {
                 let exit_code = i32::try_from(status.exit_code()).ok();
-                let mut runtime = runtime_clone.lock().expect("terminal runtime lock");
+                let mut runtime = lock_or_recover(runtime_clone.as_ref(), "terminal runtime");
                 runtime.status = TerminalStatus::Exited;
                 runtime.exit_code = exit_code;
                 runtime.updated_at = Utc::now();
@@ -598,7 +607,7 @@ impl TerminalManager {
                                         match parsed {
                                             TerminalServerMessage::Status { status, exit_code } => {
                                                 let mut runtime =
-                                                    runtime_clone.lock().expect("terminal runtime lock");
+                                                    lock_or_recover(runtime_clone.as_ref(), "terminal runtime");
                                                 runtime.status = status.clone();
                                                 runtime.exit_code = exit_code;
                                                 runtime.updated_at = Utc::now();
@@ -653,7 +662,7 @@ impl TerminalManager {
         };
         let mut to_close = Vec::new();
         for (id, handle) in handles {
-            let runtime = handle.runtime.lock().expect("terminal runtime lock");
+            let runtime = lock_or_recover(handle.runtime.as_ref(), "terminal runtime");
             if !matches!(runtime.status, TerminalStatus::Running) {
                 continue;
             }
@@ -682,7 +691,7 @@ fn push_output(
     bytes: &[u8],
 ) {
     {
-        let mut buffer = output_buffer.lock().expect("terminal output buffer lock");
+        let mut buffer = lock_or_recover(output_buffer.as_ref(), "terminal output buffer");
         for b in bytes {
             buffer.push_back(*b);
         }
@@ -691,7 +700,7 @@ fn push_output(
         }
     }
     {
-        let mut runtime = runtime.lock().expect("terminal runtime lock");
+        let mut runtime = lock_or_recover(runtime.as_ref(), "terminal runtime");
         runtime.last_activity = Utc::now();
         runtime.updated_at = runtime.last_activity;
     }

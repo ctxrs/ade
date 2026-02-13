@@ -139,9 +139,9 @@ fn main() {
         builder = builder.plugin(tauri_plugin_stt::init());
     }
 
-    builder
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    if let Err(err) = builder.run(tauri::generate_context!()) {
+        eprintln!("error while running tauri application: {err}");
+    }
 }
 
 #[cfg(all(target_os = "windows", feature = "stt"))]
@@ -344,14 +344,17 @@ const DAEMON_AUTH_RETRY_DELAY: Duration = Duration::from_millis(200);
 impl DeepLinkTokenStore {
     fn mint(&self) -> DesktopDeepLinkToken {
         let token = uuid::Uuid::new_v4().to_string();
-        let mut tokens = self.tokens.lock().expect("deep link token lock");
-        tokens.insert(token.clone(), Instant::now() + DEEP_LINK_TOKEN_TTL);
         let expires_at_ms = SystemTime::now()
             .checked_add(DEEP_LINK_TOKEN_TTL)
             .unwrap_or_else(SystemTime::now)
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
+        if let Ok(mut tokens) = self.tokens.lock() {
+            tokens.insert(token.clone(), Instant::now() + DEEP_LINK_TOKEN_TTL);
+        } else {
+            eprintln!("failed to acquire deep link token lock; token will not be persisted");
+        }
         DesktopDeepLinkToken {
             token,
             expires_at_ms,
@@ -359,7 +362,10 @@ impl DeepLinkTokenStore {
     }
 
     fn is_valid(&self, token: &str) -> bool {
-        let mut tokens = self.tokens.lock().expect("deep link token lock");
+        let mut tokens = match self.tokens.lock() {
+            Ok(tokens) => tokens,
+            Err(_) => return false,
+        };
         let now = Instant::now();
         tokens.retain(|_, expiry| *expiry > now);
         tokens
@@ -371,19 +377,28 @@ impl DeepLinkTokenStore {
 
 impl WorkspaceWindowRegistry {
     fn register(&self, window_label: &str, workspace_id: &str) {
-        let mut map = self.by_window.lock().expect("workspace registry lock");
+        let mut map = match self.by_window.lock() {
+            Ok(map) => map,
+            Err(_) => return,
+        };
         map.entry(window_label.to_string())
             .or_default()
             .insert(workspace_id.to_string());
     }
 
     fn unregister_window(&self, window_label: &str) {
-        let mut map = self.by_window.lock().expect("workspace registry lock");
+        let mut map = match self.by_window.lock() {
+            Ok(map) => map,
+            Err(_) => return,
+        };
         map.remove(window_label);
     }
 
     fn set_window_workspaces(&self, window_label: &str, workspace_ids: Vec<String>) {
-        let mut map = self.by_window.lock().expect("workspace registry lock");
+        let mut map = match self.by_window.lock() {
+            Ok(map) => map,
+            Err(_) => return,
+        };
         let mut set = HashSet::new();
         for id in workspace_ids {
             let trimmed = id.trim();
@@ -400,7 +415,7 @@ impl WorkspaceWindowRegistry {
     }
 
     fn window_for_workspace(&self, workspace_id: &str) -> Option<String> {
-        let map = self.by_window.lock().expect("workspace registry lock");
+        let map = self.by_window.lock().ok()?;
         map.iter().find_map(|(label, ids)| {
             if ids.contains(workspace_id) {
                 Some(label.clone())
@@ -411,7 +426,10 @@ impl WorkspaceWindowRegistry {
     }
 
     fn workspace_ids(&self) -> Vec<String> {
-        let map = self.by_window.lock().expect("workspace registry lock");
+        let map = match self.by_window.lock() {
+            Ok(map) => map,
+            Err(_) => return Vec::new(),
+        };
         let mut out = HashSet::new();
         for ids in map.values() {
             for id in ids {
@@ -494,7 +512,9 @@ fn desktop_set_titlebar_color(
         let b = clamp_unit(color.b);
         window
             .with_webview(move |webview| unsafe {
-                let _mtm = MainThreadMarker::new().expect("titlebar color must be on main thread");
+                let Some(_mtm) = MainThreadMarker::new() else {
+                    return;
+                };
                 let ns_window: &NSWindow = &*webview.ns_window().cast();
                 ns_window.setTitlebarAppearsTransparent(false);
                 let bg = NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, alpha);

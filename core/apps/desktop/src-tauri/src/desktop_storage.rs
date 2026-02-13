@@ -212,7 +212,9 @@ async fn consume_desktop_storage_notice(pool: &SqlitePool) -> Result<Option<Desk
         .await
         .context("committing desktop storage notice transaction")?;
 
-    let (raw_value,) = row.expect("notice row checked");
+    let Some((raw_value,)) = row else {
+        return Ok(None);
+    };
     match serde_json::from_str::<DesktopStorageNotice>(&raw_value) {
         Ok(notice) => Ok(Some(notice)),
         Err(err) => {
