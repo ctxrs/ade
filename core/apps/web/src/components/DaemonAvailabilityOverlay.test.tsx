@@ -24,7 +24,10 @@ vi.mock("../utils/desktop", () => ({
 
 const renderOverlay = (path = "/workspaces") =>
   render(
-    <MemoryRouter initialEntries={[path]}>
+    <MemoryRouter
+      initialEntries={[path]}
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+    >
       <DaemonAvailabilityOverlay />
     </MemoryRouter>,
   );

@@ -24,6 +24,8 @@ type PendingMessageEntry = {
 
 const devInvariantLogKeys = new Set<string>();
 const telemetryInvariantKeys = new Set<string>();
+const SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS =
+  import.meta.env.DEV && import.meta.env.MODE !== "test";
 
 function recordThreadInvariantCounter(reason: string, details: Record<string, string> = {}): void {
   const key = `${reason}:${JSON.stringify(details)}`;
@@ -37,7 +39,7 @@ function recordThreadInvariantCounter(reason: string, details: Record<string, st
 }
 
 function logViewModelInvariant(reason: string, details: Record<string, unknown>): void {
-  if (!import.meta.env.DEV) return;
+  if (!SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) return;
   const key = `${reason}:${JSON.stringify(details)}`;
   if (devInvariantLogKeys.has(key)) return;
   if (devInvariantLogKeys.size > 500) devInvariantLogKeys.clear();
@@ -798,7 +800,7 @@ function buildSystemMessageGroups(messages: Message[]): SortableThreadGroup[] {
     const m = entry.message;
     const id = idToString(m.id);
     if (!id) {
-      if (import.meta.env.DEV) {
+      if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] system message missing id", {
           created_at: m.created_at ?? null,
@@ -1001,7 +1003,7 @@ function buildNoticeMessageItem(
     "Context compacted. Earlier turns were summarized.";
   const eventId = idToString(ev.id);
   if (!eventId) {
-    if (import.meta.env.DEV) {
+    if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
       // eslint-disable-next-line no-console
       console.error("[WorkbenchThreadViewModel] notice event missing id", {
         turnId,
@@ -1173,7 +1175,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
   for (const turn of sortedTurns) {
     const turnId = idToString(turn.turn_id);
     if (!turnId) {
-      if (import.meta.env.DEV) {
+      if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] turn missing turn_id", {
           started_at: turn.started_at ?? null,
@@ -1263,7 +1265,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
       const messageId = idToString(m.id);
       if (!messageId) {
         // Missing message ids break MessageList identity invariants; treat this as a bug.
-        if (import.meta.env.DEV) {
+        if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
           // eslint-disable-next-line no-console
           console.error("[WorkbenchThreadViewModel] assistant message missing id", {
             turnId,
@@ -1393,7 +1395,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
         : Number.NaN;
     if (!Number.isFinite(groupOrderSeq)) {
       recordThreadInvariantCounter("missing_order_seq_anchor", { turn_id: turnId });
-      if (import.meta.env.DEV) {
+      if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] turn missing order_seq anchor", {
           turn_id: turnId,
@@ -1700,7 +1702,7 @@ function buildWorkbenchThreadViewModelFromEvents(
       const userOrderSeq = readEventOrderSeq(u);
       const mid = String(u.payload_json?.message_id ?? "").trim();
       if (!mid) {
-        if (import.meta.env.DEV) {
+        if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
           // eslint-disable-next-line no-console
           console.error("[WorkbenchThreadViewModel] user_message event missing payload.message_id", {
             created_at: u.created_at,
@@ -1710,7 +1712,7 @@ function buildWorkbenchThreadViewModelFromEvents(
         continue;
       }
       if (!mid) {
-        if (import.meta.env.DEV) {
+        if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
           // eslint-disable-next-line no-console
           console.error("[WorkbenchThreadViewModel] user event missing message_id and id", {
             created_at: u.created_at,
@@ -1751,7 +1753,7 @@ function buildWorkbenchThreadViewModelFromEvents(
       for (const ev of evs) {
         const eventId = idToString(ev.id);
         if (!eventId) {
-          if (import.meta.env.DEV) {
+          if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
             // eslint-disable-next-line no-console
             console.error("[WorkbenchThreadViewModel] event missing id (events-only view)", {
               created_at: ev.created_at,
@@ -1959,7 +1961,7 @@ function buildWorkbenchThreadViewModelFromEvents(
 
     const mid = idToString(u.id);
     if (!mid) {
-      if (import.meta.env.DEV) {
+      if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] user message missing id (events-only view)", {
           created_at: u.created_at ?? null,
@@ -2007,7 +2009,7 @@ function buildWorkbenchThreadViewModelFromEvents(
     for (const ev of evs) {
       const eventId = idToString(ev.id);
       if (!eventId) {
-        if (import.meta.env.DEV) {
+        if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
           // eslint-disable-next-line no-console
           console.error("[WorkbenchThreadViewModel] event missing id (events-only view)", {
             created_at: ev.created_at,
@@ -2376,7 +2378,7 @@ function mergeEvents(prev: SessionEvent[], incoming: SessionEvent[]): SessionEve
   for (const ev of prev) {
     const id = idToString(ev.id);
     if (!id) {
-      if (import.meta.env.DEV) {
+      if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] event missing id (mergeEvents)", {
           created_at: ev.created_at,
@@ -2390,7 +2392,7 @@ function mergeEvents(prev: SessionEvent[], incoming: SessionEvent[]): SessionEve
   for (const ev of incoming) {
     const id = idToString(ev.id);
     if (!id) {
-      if (import.meta.env.DEV) {
+      if (SHOULD_LOG_DEV_VIEWMODEL_DIAGNOSTICS) {
         // eslint-disable-next-line no-console
         console.error("[WorkbenchThreadViewModel] event missing id (mergeEvents)", {
           created_at: ev.created_at,

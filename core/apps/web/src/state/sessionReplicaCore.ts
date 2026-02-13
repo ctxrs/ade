@@ -49,6 +49,8 @@ const normalizeId = (value: unknown): string => {
   return "";
 };
 
+const SHOULD_EMIT_DEV_DIAGNOSTICS = import.meta.env.DEV && import.meta.env.MODE !== "test";
+
 const isFinalThoughtEvent = (event: SessionEvent | null | undefined): boolean => {
   if (!event) return false;
   if (String(event.event_type ?? "") !== "thought_chunk") return false;
@@ -488,7 +490,7 @@ export class SessionReplicaCore {
       const sessionId = normalizeId((evt as { session_id?: unknown }).session_id);
       const afterSeq = typeof (evt as { after_seq?: number }).after_seq === "number" ? (evt as { after_seq?: number }).after_seq : undefined;
       if (!sessionId) return;
-      if (typeof window !== "undefined" && import.meta.env.DEV) {
+      if (typeof window !== "undefined" && SHOULD_EMIT_DEV_DIAGNOSTICS) {
         const prevSeq = this.entries.get(sessionId)?.lastEventSeq;
         const message = [
           "ctx session_gap detected.",

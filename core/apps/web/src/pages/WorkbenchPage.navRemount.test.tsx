@@ -275,7 +275,10 @@ describe("WorkbenchPage task rename selection", () => {
     const selectSpy = vi.spyOn(HTMLInputElement.prototype, "select");
     const ui = (
       <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
-        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
+        <MemoryRouter
+          initialEntries={[`/workspaces/${workspaceId}`]}
+          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        >
           <Routes>
             <Route path="/workspaces/:id" element={<WorkbenchPage />} />
           </Routes>
@@ -369,7 +372,10 @@ describe("WorkbenchPage archive navigation", () => {
 
     const ui = (
       <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
-        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
+        <MemoryRouter
+          initialEntries={[`/workspaces/${workspaceId}`]}
+          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        >
           <Routes>
             <Route path="/workspaces/:id" element={<WorkbenchPage />} />
           </Routes>

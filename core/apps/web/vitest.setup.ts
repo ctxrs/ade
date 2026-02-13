@@ -25,21 +25,7 @@ function createMemoryStorage(): Storage {
   };
 }
 
-function hasValidStorageApi(value: unknown): value is Storage {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<Storage>;
-  return (
-    typeof candidate.getItem === "function" &&
-    typeof candidate.setItem === "function" &&
-    typeof candidate.removeItem === "function" &&
-    typeof candidate.clear === "function" &&
-    typeof candidate.key === "function"
-  );
-}
-
 function ensureStorage(name: "localStorage" | "sessionStorage"): void {
-  const current = (globalThis as Record<string, unknown>)[name];
-  if (hasValidStorageApi(current)) return;
   const replacement = createMemoryStorage();
   Object.defineProperty(globalThis, name, {
     configurable: true,
@@ -60,19 +46,24 @@ function ensureStorage(name: "localStorage" | "sessionStorage"): void {
 ensureStorage("localStorage");
 ensureStorage("sessionStorage");
 
+function createCanvasContextStub(): RenderingContext {
+  const ctx = {
+    fillStyle: "",
+    fillRect: () => {},
+    clearRect: () => {},
+    getImageData: () => ({ data: new Uint8ClampedArray([0, 0, 0, 255]) }),
+    putImageData: () => {},
+    measureText: () => ({ width: 0 }),
+  };
+  return ctx as unknown as RenderingContext;
+}
+
 // Some UI dependencies (notably xterm) probe canvas APIs at import time.
 // JSDOM doesn't implement canvas, so provide a small stub to keep unit tests
 // focused on app behavior.
 if (typeof HTMLCanvasElement !== "undefined") {
-  // eslint-disable-next-line no-extend-native
-  (HTMLCanvasElement.prototype as any).getContext ??= () => {
-    return {
-      fillStyle: "",
-      fillRect: () => {},
-      clearRect: () => {},
-      getImageData: () => ({ data: new Uint8ClampedArray([0, 0, 0, 255]) }),
-      putImageData: () => {},
-      measureText: () => ({ width: 0 }),
-    };
-  };
+  Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+    configurable: true,
+    value: () => createCanvasContextStub(),
+  });
 }

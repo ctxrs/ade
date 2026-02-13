@@ -216,6 +216,11 @@ export default defineConfig(({ command }) => {
         reportsDirectory: path.resolve(__dirname, "../../coverage/web"),
       },
     },
+    build: {
+      // Web shipping is not a current product priority; keep warning output quiet
+      // while we focus optimization work on desktop/mobile flows.
+      chunkSizeWarningLimit: 2000,
+    },
     server: {
       host: "0.0.0.0",
       port: Number.isFinite(devPort) ? devPort : 5173,

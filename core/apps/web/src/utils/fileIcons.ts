@@ -3,7 +3,8 @@
 
 const FILE_ICON_SVGS = import.meta.glob("../assets/file-icons/*.svg", {
   eager: true,
-  as: "raw",
+  query: "?raw",
+  import: "default",
 }) as Record<string, string>;
 
 const svgToDataUrl = (svg: string) => `data:image/svg+xml,${encodeURIComponent(svg)}`;

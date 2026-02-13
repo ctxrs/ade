@@ -80,7 +80,7 @@ export default function App() {
   return (
     <SessionSupervisorProvider>
       <SettingsStoreProvider>
-        <BrowserRouter>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <DesktopSettingsListener />
           <Routes>
             <Route path="/" element={<LauncherPage />} />

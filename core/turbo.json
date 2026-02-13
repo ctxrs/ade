@@ -71,9 +71,7 @@
         "../external-harnesses/codex/codex-rs/**",
         "!../external-harnesses/codex/codex-rs/target/**"
       ],
-      "outputs": [
-        "../external-harnesses/codex/codex-rs/target/**/codex-crp"
-      ]
+      "outputs": []
     },
     "crp:codex:test": {
       "dependsOn": [
