@@ -3,6 +3,12 @@ import { desktopSaveTextFile, isDesktopApp } from "../utils/desktop";
 import { SECTIONS } from "./SettingsPage.constants";
 import type { SectionId } from "./SettingsPage.types";
 
+export type WorkspaceExecutionEnvironment = "host" | "container_host_mounted" | "container_disk_isolated";
+
+export function isContainerizedEnvironment(environment?: WorkspaceExecutionEnvironment | null): boolean {
+  return environment === "container_host_mounted" || environment === "container_disk_isolated";
+}
+
 export const saveTextFile = async (name: string, contents: string) => {
   if (isDesktopApp()) {
     await desktopSaveTextFile({ suggested_name: name, contents });

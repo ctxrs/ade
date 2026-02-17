@@ -33,7 +33,7 @@ export function Row({
   control: ReactNode;
 }) {
   return (
-    <div className="settings-row">
+    <div className={`settings-row ${description ? "" : "settings-row-single"}`}>
       <div className="settings-row-left">
         <div className="settings-row-title">{title}</div>
         {description ? <div className="settings-row-desc">{description}</div> : null}

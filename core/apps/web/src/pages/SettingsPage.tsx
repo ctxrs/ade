@@ -134,6 +134,7 @@ import {
   sectionFromHash,
   summarizeCodexUsage,
   truncateText,
+  isContainerizedEnvironment,
 } from "./SettingsPage.utils";
 import {
   buildHarnessAuthRows,
@@ -175,6 +176,8 @@ type MergeQueueFormState = {
   push_remote: string;
   push_branch: string;
 };
+
+type WorkspaceNetworkMode = NonNullable<WorkspaceExecutionConfig["network_mode"]>;
 
 const mergeQueueFormFromConfig = (cfg: WorkspaceMergeQueueConfig): MergeQueueFormState => {
   const targetBranch = (cfg.target_branch || "main").trim() || "main";
@@ -359,6 +362,7 @@ export default function SettingsPage() {
   const [workspaceAllowlistText, setWorkspaceAllowlistText] = useState("");
   const [workspaceAllowlistDirty, setWorkspaceAllowlistDirty] = useState(false);
   const [workspaceAllowlistSaving, setWorkspaceAllowlistSaving] = useState(false);
+  const [workspaceNetworkPolicySaving, setWorkspaceNetworkPolicySaving] = useState(false);
   const [mergeQueueConfigLoading, setMergeQueueConfigLoading] = useState(false);
   const [mergeQueueConfigSaving, setMergeQueueConfigSaving] = useState(false);
   const [mergeQueueConfigError, setMergeQueueConfigError] = useState<string | null>(null);
@@ -1068,6 +1072,44 @@ export default function SettingsPage() {
     workspaceExecution,
     workspaceId,
   ]);
+
+  const handleUpdateWorkspaceNetworkPolicy = useCallback(
+    async (nextMode: WorkspaceNetworkMode) => {
+      if (!workspaceId) return;
+      if (!workspaceExecution) return;
+      if (!isContainerizedEnvironment(workspaceExecution.environment)) return;
+      if ((workspaceExecution.network_mode ?? "llm_only") === nextMode) return;
+      if (workspaceNetworkPolicySaving) return;
+
+      const previous = workspaceExecution;
+      setWorkspaceExecution({
+        ...workspaceExecution,
+        network_mode: nextMode,
+      });
+      setWorkspaceExecutionError(null);
+      setWorkspaceNetworkPolicySaving(true);
+      try {
+        await updateWorkspaceExecutionConfig(workspaceId, {
+          environment: workspaceExecution.environment,
+          network_mode: nextMode,
+          allowlist: Array.isArray(workspaceExecution.allowlist) ? workspaceExecution.allowlist : null,
+        });
+        await refreshWorkspaceExecutionConfig();
+      } catch (e: any) {
+        setWorkspaceExecution(previous);
+        setWorkspaceExecutionError(e?.message ?? String(e));
+      } finally {
+        setWorkspaceNetworkPolicySaving(false);
+      }
+    },
+    [
+      refreshWorkspaceExecutionConfig,
+      updateWorkspaceExecutionConfig,
+      workspaceExecution,
+      workspaceId,
+      workspaceNetworkPolicySaving,
+    ],
+  );
 
   const handleSaveMergeQueueConfig = useCallback(async () => {
     if (!workspaceId) return;
@@ -2214,96 +2256,110 @@ export default function SettingsPage() {
     if (active === "general") {
       return (
         <GeneralSection>
-          <Card>
-            <Row
-              title="Theme"
-              description="Match your system setting or force a mode."
-              control={
-                <select
-                  className="settings-control settings-select"
-                  value={theme}
-                  onChange={(event) => onThemeChange(event.target.value as ThemeMode)}
-                  aria-label="Theme mode"
-                >
-                  <option value="system">System</option>
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                </select>
-              }
-            />
-            <Row
-              title="Default IDE"
-              description={isDesktopApp() ? "Used for open-in-editor links." : "Available in the desktop app."}
-              control={
-                <select
-                  className="settings-control settings-select"
-                  value={editorSettings.target}
-                  onChange={(e) =>
-                    setEditorSettings((prev) => ({
-                      ...prev,
-                      target: e.target.value as DesktopEditorSettings["target"],
-                    }))
+          <div className="settings-preferences-flat">
+            <div className="settings-preferences-group settings-preferences-group-center-controls">
+              <Row
+                title="Theme"
+                control={
+                  <select
+                    className="settings-control settings-select"
+                    value={theme}
+                    onChange={(event) => onThemeChange(event.target.value as ThemeMode)}
+                    aria-label="Theme mode"
+                  >
+                    <option value="system">System</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                }
+              />
+            </div>
+
+            <div className="settings-preferences-group">
+              <Row
+                title="Default IDE"
+                description={isDesktopApp() ? "Used for open-in-editor links." : "Available in the desktop app."}
+                control={
+                  <select
+                    className="settings-control settings-select"
+                    value={editorSettings.target}
+                    onChange={(e) =>
+                      setEditorSettings((prev) => ({
+                        ...prev,
+                        target: e.target.value as DesktopEditorSettings["target"],
+                      }))
+                    }
+                    disabled={!isDesktopApp() || !editorLoaded}
+                  >
+                    {EDITOR_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
+              {editorSettings.target === "custom" ? (
+                <Row
+                  title="Custom IDE command"
+                  description="Command to run when opening files."
+                  control={
+                    <input
+                      className="settings-control settings-control-wide"
+                      value={editorSettings.custom_command ?? ""}
+                      onChange={(e) => setEditorSettings((prev) => ({ ...prev, custom_command: e.target.value }))}
+                      disabled={!isDesktopApp() || !editorLoaded}
+                      placeholder="code --goto {path}:{line}:{col}"
+                    />
                   }
-                  disabled={!isDesktopApp() || !editorLoaded}
-                >
-                  {EDITOR_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              }
-            />
-            {editorSettings.target === "custom" ? (
-              <Row
-                title="Custom IDE command"
-                description="Command to run when opening files."
-                control={
-                  <input
-                    className="settings-control settings-control-wide"
-                    value={editorSettings.custom_command ?? ""}
-                    onChange={(e) => setEditorSettings((prev) => ({ ...prev, custom_command: e.target.value }))}
-                    disabled={!isDesktopApp() || !editorLoaded}
-                    placeholder="code --goto {path}:{line}:{col}"
-                  />
-                }
-              />
-            ) : null}
-            {showRemoteAuthority ? (
-              <Row
-                title="VS Code Remote Authority"
-                description="Optional: ssh-remote+my-host for remote worktrees."
-                control={
-                  <input
-                    className="settings-control settings-control-wide"
-                    value={editorSettings.remote_authority ?? ""}
-                    onChange={(e) => setEditorSettings((prev) => ({ ...prev, remote_authority: e.target.value }))}
-                    disabled={!isDesktopApp() || !editorLoaded}
-                    placeholder="ssh-remote+my-host"
-                  />
-                }
-              />
-            ) : null}
-          </Card>
-          {editorError ? <div className="settings-banner settings-banner-error">{editorError}</div> : null}
-          <Card title="Notifications">
-            <Row
-              title="Turn completed"
-              description={
-                isDesktopApp()
-                  ? "Send a system notification when a turn completes and the app is not focused."
-                  : "Available in the desktop app."
-              }
-              control={
-                <Toggle
-                  checked={desktopTurnNotifications}
-                  disabled={!isDesktopApp() || !clientSettingsState.loaded || clientSettingsSaving}
-                  onChange={handleToggleTurnNotifications}
-                  ariaLabel="Turn completed notifications"
                 />
-              }
-            />
-          </Card>
+              ) : null}
+              {showRemoteAuthority ? (
+                <Row
+                  title="VS Code Remote Authority"
+                  description="Optional: ssh-remote+my-host for remote worktrees."
+                  control={
+                    <input
+                      className="settings-control settings-control-wide"
+                      value={editorSettings.remote_authority ?? ""}
+                      onChange={(e) => setEditorSettings((prev) => ({ ...prev, remote_authority: e.target.value }))}
+                      disabled={!isDesktopApp() || !editorLoaded}
+                      placeholder="ssh-remote+my-host"
+                    />
+                  }
+                />
+              ) : null}
+            </div>
+          </div>
+          {editorError ? <div className="settings-banner settings-banner-error">{editorError}</div> : null}
+          {clientSettingsError ? <div className="settings-banner settings-banner-error">{clientSettingsError}</div> : null}
+        </GeneralSection>
+      );
+    }
+
+    if (active === "notifications") {
+      return (
+        <GeneralSection>
+          <div className="settings-preferences-flat">
+            <div className="settings-preferences-group">
+              <Row
+                title="Turn completed"
+                description={
+                  isDesktopApp()
+                    ? "Send a system notification when a turn completes and the app is not focused."
+                    : "Available in the desktop app."
+                }
+                control={
+                  <Toggle
+                    checked={desktopTurnNotifications}
+                    disabled={!isDesktopApp() || !clientSettingsState.loaded || clientSettingsSaving}
+                    onChange={handleToggleTurnNotifications}
+                    ariaLabel="Turn completed notifications"
+                  />
+                }
+              />
+            </div>
+          </div>
           {clientSettingsError ? <div className="settings-banner settings-banner-error">{clientSettingsError}</div> : null}
         </GeneralSection>
       );
@@ -2605,83 +2661,100 @@ export default function SettingsPage() {
 
     if (active === "container_network") {
       const exec = workspaceExecution;
-      const modeLabel =
-        exec?.environment === "container_disk_isolated"
-          ? "Container"
-          : exec?.environment === "container_host_mounted"
-            ? "Container"
-            : "Host";
-      const mountLabel =
-        exec?.environment === "container_disk_isolated"
-          ? "Disk-isolated"
-          : exec?.environment === "container_host_mounted"
-            ? "Host-mounted"
-            : "";
-      const netLabel =
-        exec?.environment === "host"
-          ? "Not applicable (host mode)"
-          : exec?.network_mode === "all"
-          ? "Full access"
-          : exec?.network_mode === "allowlist"
-            ? "Allowlist"
-            : "LLM providers only";
-      const allowlistActive = exec?.environment !== "host" && exec?.network_mode === "allowlist";
+      const allowlistActive = isContainerizedEnvironment(exec?.environment) && exec?.network_mode === "allowlist";
 
       return (
-        <>
-          <Card title="Container & Network">
-            <Row
-              title="Environment"
-              description="This is set during workspace creation. Editing it in the UI is not supported yet."
-              control={
-                <span className="settings-pill">
-                  {workspaceExecutionLoading ? "Loading…" : exec ? modeLabel : "—"}
-                  {exec?.environment !== "host" ? ` (${mountLabel})` : ""}
-                </span>
-              }
-            />
-            <Row
-              title="Network policy"
-              description="Enforced only for container-mode execution. Editing the policy in the UI is not supported yet."
-              control={<span className="settings-pill">{workspaceExecutionLoading ? "Loading…" : exec ? netLabel : "—"}</span>}
-            />
-          </Card>
-
-          <Card title="Network Allowlist">
-            <div className="settings-card-block">
-              <div className="settings-subtle">
-                Edit the allowlist entries (one per line). Changes apply to future container runs for this workspace.
-              </div>
-              <textarea
-                className="settings-control wb-mono"
-                style={{ width: "100%", minHeight: 160, marginTop: 12 }}
-                value={workspaceAllowlistText}
-                onChange={(e) => {
-                  setWorkspaceAllowlistText(e.target.value);
-                  setWorkspaceAllowlistDirty(true);
-                }}
-                disabled={!allowlistActive || workspaceExecutionLoading}
-                placeholder="github.com"
+        <GeneralSection>
+          <div className="settings-preferences-flat">
+            <div className="settings-preferences-group">
+              <Row
+                title="Container Environment"
+                description="Container environment is set during workspace creation. To use a different container environment, launch your project in a new workspace."
+                control={
+                  <select
+                    className="settings-control settings-select"
+                    value={exec?.environment ?? "host"}
+                    disabled
+                    aria-label="Container environment"
+                  >
+                    <option value="host">Host</option>
+                    <option value="container_host_mounted">Container (Host-mounted)</option>
+                    <option value="container_disk_isolated">Container (Disk-isolated)</option>
+                  </select>
+                }
               />
-              {!allowlistActive ? (
-                <div className="settings-subtle" style={{ marginTop: 8 }}>
-                  The allowlist is only active when Network policy is set to Allowlist for this workspace.
+              <Row
+                title="Network Policy"
+                description="Network policy allows you to restrict what outbound network access your agents have, such as blocking all access or only allowing certain hostnames. Network policy is only available for containerized workspaces."
+                control={
+                  isContainerizedEnvironment(exec?.environment) ? (
+                    <select
+                      className="settings-control settings-select"
+                      value={exec?.network_mode ?? "llm_only"}
+                      onChange={(e) =>
+                        handleUpdateWorkspaceNetworkPolicy(e.target.value as WorkspaceNetworkMode).catch(() => {})
+                      }
+                      disabled={workspaceExecutionLoading || workspaceNetworkPolicySaving}
+                      aria-label="Network policy"
+                    >
+                      <option value="llm_only">LLM providers only</option>
+                      <option value="allowlist">Allowlist</option>
+                      <option value="all">Full access</option>
+                    </select>
+                  ) : (
+                    <select
+                      className="settings-control settings-select"
+                      value="host_all_outbound_allowed"
+                      disabled
+                      aria-label="Network policy"
+                    >
+                      <option value="host_all_outbound_allowed">All outbound allowed</option>
+                    </select>
+                  )
+                }
+              />
+            </div>
+
+            <div className="settings-preferences-group">
+              <div className="settings-row settings-row-stack">
+                <div className="settings-row-left">
+                  <div className="settings-row-title">Network allowlist</div>
+                  <div className="settings-row-desc">
+                    Edit allowlist entries (one per line). Changes apply to future container runs for this workspace.
+                  </div>
                 </div>
-              ) : null}
-              <div className="settings-row-right" style={{ marginTop: 12 }}>
-                <button
-                  type="button"
-                  className="settings-btn"
-                  onClick={() => handleSaveWorkspaceAllowlist().catch(() => {})}
-                  disabled={!allowlistActive || !workspaceAllowlistDirty || workspaceAllowlistSaving || workspaceExecutionLoading}
-                >
-                  {workspaceAllowlistSaving ? "Saving…" : "Save allowlist"}
-                </button>
+              </div>
+              <div className="settings-allowlist-block">
+                <textarea
+                  className="settings-control settings-allowlist-textarea wb-mono"
+                  value={workspaceAllowlistText}
+                  onChange={(e) => {
+                    setWorkspaceAllowlistText(e.target.value);
+                    setWorkspaceAllowlistDirty(true);
+                  }}
+                  disabled={!allowlistActive || workspaceExecutionLoading}
+                  placeholder="github.com"
+                />
+                {!allowlistActive ? (
+                  <div className="settings-subtle">
+                    The allowlist is only active when Network policy is set to Allowlist for this workspace.
+                  </div>
+                ) : null}
+                <div className="settings-row-right">
+                  <button
+                    type="button"
+                    className="settings-btn"
+                    onClick={() => handleSaveWorkspaceAllowlist().catch(() => {})}
+                    disabled={!allowlistActive || !workspaceAllowlistDirty || workspaceAllowlistSaving || workspaceExecutionLoading}
+                  >
+                    {workspaceAllowlistSaving ? "Saving…" : "Save allowlist"}
+                  </button>
+                </div>
               </div>
             </div>
-          </Card>
+          </div>
           {workspaceExecutionError ? <div className="settings-banner settings-banner-error">{workspaceExecutionError}</div> : null}
-        </>
+        </GeneralSection>
       );
     }
 
