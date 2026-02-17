@@ -127,7 +127,6 @@
 .settings-main-sub {
   font-size: 12px;
   color: var(--text-dim);
-  min-height: 16px;
 }
 
 .settings-card {
@@ -571,6 +570,12 @@
   color: var(--error-contrast);
 }
 
+.settings-harness-intro {
+  margin: 0 0 14px;
+  color: var(--text-muted);
+  max-width: 820px;
+}
+
 .settings-harness-modal {
   width: min(640px, 92vw);
   display: grid;
@@ -607,17 +612,27 @@
 
 .settings-harness-modal-choice-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, 170px);
+  justify-content: center;
   gap: 10px;
 }
 
 .settings-harness-modal-choice-btn {
-  height: 120px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  width: 170px;
+  height: 80px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0;
+  padding: 14px 16px 12px;
+  text-align: left;
   font-size: 14px;
   font-weight: 400;
+}
+
+.settings-harness-modal-choice-icon {
+  color: var(--text-faint);
 }
 
 .settings-harness-modal-status {
@@ -652,7 +667,8 @@
 
 @media (max-width: 700px) {
   .settings-harness-modal-choice-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: 170px;
+    justify-content: center;
   }
 }
 

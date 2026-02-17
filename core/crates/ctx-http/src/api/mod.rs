@@ -515,7 +515,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route(
             "/api/workspaces/:id/merge_queue_config",
-            post(update_merge_queue_config),
+            get(get_merge_queue_config).post(update_merge_queue_config),
         )
         .route(
             "/api/workspaces/:id/execution_config",

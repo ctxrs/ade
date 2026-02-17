@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import type { User } from "@supabase/supabase-js";
-import { Ellipsis, X } from "lucide-react";
+import { Ellipsis, KeyRound, User as UserIcon, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   DictationSettings,
@@ -22,9 +22,7 @@ import {
   TelemetrySettings,
   TitleGenerationSettings,
   TitleGenerationLocalStatus,
-  MergeQueueEntry,
   WorkspaceAttachment,
-  cancelMergeQueueEntry,
   CodexAccountsResponse,
   CodexHostImportProbe,
   CodexAccountUsageResponse,
@@ -38,7 +36,6 @@ import {
   authenticateProviderForWorkspace,
   getAgentSystemPrompt,
   getSubagentSystemPrompt,
-  getMergeQueueEntryLogs,
   getMobileAccessStatus,
   getCodexAccountUsage,
   getCodexLogin,
@@ -47,8 +44,10 @@ import {
   getTitleGenerationLocalStatus,
   HarnessProviderSourceConfig,
   Workspace,
+  WorkspaceMergeQueueConfig,
   WorkspaceExecutionConfig,
   getInstall,
+  getWorkspaceMergeQueueConfig,
   getWorkspaceExecutionConfig,
   getResourceUtilization,
   getSettings,
@@ -57,14 +56,12 @@ import {
   installTitleGenerationLocal,
   installProvider,
   installStreamUrl,
-  listMergeQueueEntries,
   listCodexAccounts,
   probeCodexHostImport,
   listWorkspaceAttachments,
   listInstallEvents,
   listProviders,
   listWorkspaces,
-  retryMergeQueueEntry,
   selectProviderHarnessSource,
   setCodexActiveAccount,
   startCodexLogin,
@@ -74,6 +71,7 @@ import {
   updateAgentSystemPrompt,
   updateSubagentSystemPrompt,
   updateWorkspaceExecutionConfig,
+  updateWorkspaceMergeQueueConfig,
   deleteProviderHarnessEndpoint,
 } from "../api/client";
 import {
@@ -133,7 +131,6 @@ import {
   isLinuxPlatform,
   clampPct,
   parseGiB,
-  saveTextFile,
   sectionFromHash,
   summarizeCodexUsage,
   truncateText,
@@ -170,6 +167,27 @@ const supportsHarnessEndpointConfig = (providerId: string): boolean =>
   providerId === "codex" || providerId === "claude-crp";
 
 const isAttachmentSyncing = (status?: WorkspaceAttachment["status"]) => status === "pending" || status === "syncing";
+
+type MergeQueueFormState = {
+  target_branch: string;
+  verify_command: string;
+  push_on_success: boolean;
+  push_remote: string;
+  push_branch: string;
+};
+
+const mergeQueueFormFromConfig = (cfg: WorkspaceMergeQueueConfig): MergeQueueFormState => {
+  const targetBranch = (cfg.target_branch || "main").trim() || "main";
+  const pushRemote = (cfg.push_remote || "origin").trim() || "origin";
+  const pushBranch = (cfg.push_branch || targetBranch).trim() || targetBranch;
+  return {
+    target_branch: targetBranch,
+    verify_command: (cfg.verify_command || "").trim(),
+    push_on_success: Boolean(cfg.push_on_success),
+    push_remote: pushRemote,
+    push_branch: pushBranch,
+  };
+};
 
 export default function SettingsPage() {
   const location = useLocation();
@@ -335,18 +353,23 @@ export default function SettingsPage() {
   const [attachmentSyncBusy, setAttachmentSyncBusy] = useState(false);
   const [attachmentDeleteBusy, setAttachmentDeleteBusy] = useState<Record<string, boolean>>({});
 
-  const [mergeQueueEntries, setMergeQueueEntries] = useState<MergeQueueEntry[]>([]);
-  const [mergeQueueLoading, setMergeQueueLoading] = useState(false);
-  const [mergeQueueError, setMergeQueueError] = useState<string | null>(null);
-  const [mergeQueueActionBusy, setMergeQueueActionBusy] = useState<Record<string, boolean>>({});
-  const [mergeQueueLogBusy, setMergeQueueLogBusy] = useState<Record<string, boolean>>({});
-
   const [workspaceExecution, setWorkspaceExecution] = useState<WorkspaceExecutionConfig | null>(null);
   const [workspaceExecutionLoading, setWorkspaceExecutionLoading] = useState(false);
   const [workspaceExecutionError, setWorkspaceExecutionError] = useState<string | null>(null);
   const [workspaceAllowlistText, setWorkspaceAllowlistText] = useState("");
   const [workspaceAllowlistDirty, setWorkspaceAllowlistDirty] = useState(false);
   const [workspaceAllowlistSaving, setWorkspaceAllowlistSaving] = useState(false);
+  const [mergeQueueConfigLoading, setMergeQueueConfigLoading] = useState(false);
+  const [mergeQueueConfigSaving, setMergeQueueConfigSaving] = useState(false);
+  const [mergeQueueConfigError, setMergeQueueConfigError] = useState<string | null>(null);
+  const [mergeQueueForm, setMergeQueueForm] = useState<MergeQueueFormState>({
+    target_branch: "main",
+    verify_command: "",
+    push_on_success: false,
+    push_remote: "origin",
+    push_branch: "main",
+  });
+  const [mergeQueueInitialForm, setMergeQueueInitialForm] = useState<MergeQueueFormState | null>(null);
   const [codexAccounts, setCodexAccounts] = useState<CodexAccountsResponse | null>(null);
   const [codexAccountsBusy, setCodexAccountsBusy] = useState(false);
   const [codexAccountsError, setCodexAccountsError] = useState<string | null>(null);
@@ -966,20 +989,6 @@ export default function SettingsPage() {
     [workspaceId],
   );
 
-  const refreshMergeQueueEntries = useCallback(async () => {
-    if (!workspaceId) return;
-    setMergeQueueLoading(true);
-    setMergeQueueError(null);
-    try {
-      const next = await listMergeQueueEntries(workspaceId);
-      setMergeQueueEntries(next);
-    } catch (e: any) {
-      setMergeQueueError(e?.message ?? String(e));
-    } finally {
-      setMergeQueueLoading(false);
-    }
-  }, [workspaceId]);
-
   const refreshWorkspaceExecutionConfig = useCallback(async () => {
     if (!workspaceId) return;
     setWorkspaceExecutionLoading(true);
@@ -998,50 +1007,21 @@ export default function SettingsPage() {
     }
   }, [workspaceId]);
 
-  const handleMergeQueueCancel = useCallback(
-    async (entryId: string) => {
-      setMergeQueueActionBusy((prev) => ({ ...prev, [entryId]: true }));
-      setMergeQueueError(null);
-      try {
-        await cancelMergeQueueEntry(entryId);
-        await refreshMergeQueueEntries();
-      } catch (e: any) {
-        setMergeQueueError(e?.message ?? String(e));
-      } finally {
-        setMergeQueueActionBusy((prev) => ({ ...prev, [entryId]: false }));
-      }
-    },
-    [refreshMergeQueueEntries],
-  );
-
-  const handleMergeQueueRetry = useCallback(
-    async (entryId: string) => {
-      setMergeQueueActionBusy((prev) => ({ ...prev, [entryId]: true }));
-      setMergeQueueError(null);
-      try {
-        await retryMergeQueueEntry(entryId);
-        await refreshMergeQueueEntries();
-      } catch (e: any) {
-        setMergeQueueError(e?.message ?? String(e));
-      } finally {
-        setMergeQueueActionBusy((prev) => ({ ...prev, [entryId]: false }));
-      }
-    },
-    [refreshMergeQueueEntries],
-  );
-
-  const handleMergeQueueLogs = useCallback(async (entryId: string) => {
-    setMergeQueueLogBusy((prev) => ({ ...prev, [entryId]: true }));
-    setMergeQueueError(null);
+  const refreshMergeQueueConfig = useCallback(async () => {
+    if (!workspaceId) return;
+    setMergeQueueConfigLoading(true);
+    setMergeQueueConfigError(null);
     try {
-      const contents = await getMergeQueueEntryLogs(entryId);
-      await saveTextFile(`merge-queue-${entryId}.log`, contents);
+      const cfg = await getWorkspaceMergeQueueConfig(workspaceId);
+      const nextForm = mergeQueueFormFromConfig(cfg);
+      setMergeQueueForm(nextForm);
+      setMergeQueueInitialForm(nextForm);
     } catch (e: any) {
-      setMergeQueueError(e?.message ?? String(e));
+      setMergeQueueConfigError(e?.message ?? String(e));
     } finally {
-      setMergeQueueLogBusy((prev) => ({ ...prev, [entryId]: false }));
+      setMergeQueueConfigLoading(false);
     }
-  }, []);
+  }, [workspaceId]);
 
   const handleSaveWorkspaceAllowlist = useCallback(async () => {
     if (!workspaceId) return;
@@ -1088,6 +1068,47 @@ export default function SettingsPage() {
     workspaceExecution,
     workspaceId,
   ]);
+
+  const handleSaveMergeQueueConfig = useCallback(async () => {
+    if (!workspaceId) return;
+    if (mergeQueueConfigSaving) return;
+
+    const targetBranch = mergeQueueForm.target_branch.trim();
+    if (!targetBranch) {
+      setMergeQueueConfigError("Target branch is required.");
+      return;
+    }
+    const verifyCommand = mergeQueueForm.verify_command.trim();
+    const pushRemote = mergeQueueForm.push_remote.trim();
+    const pushBranch = mergeQueueForm.push_branch.trim();
+
+    if (mergeQueueForm.push_on_success && !pushRemote) {
+      setMergeQueueConfigError("Push remote is required when push-on-success is enabled.");
+      return;
+    }
+    if (mergeQueueForm.push_on_success && !pushBranch) {
+      setMergeQueueConfigError("Push branch is required when push-on-success is enabled.");
+      return;
+    }
+
+    setMergeQueueConfigSaving(true);
+    setMergeQueueConfigError(null);
+    try {
+      await updateWorkspaceMergeQueueConfig(workspaceId, {
+        enabled: true,
+        target_branch: targetBranch,
+        verify_command: verifyCommand || null,
+        push_on_success: mergeQueueForm.push_on_success,
+        push_remote: mergeQueueForm.push_on_success ? pushRemote : null,
+        push_branch: mergeQueueForm.push_on_success ? pushBranch : null,
+      });
+      await refreshMergeQueueConfig();
+    } catch (e: any) {
+      setMergeQueueConfigError(e?.message ?? String(e));
+    } finally {
+      setMergeQueueConfigSaving(false);
+    }
+  }, [workspaceId, mergeQueueConfigSaving, mergeQueueForm, refreshMergeQueueConfig]);
 
   const refreshAgentSystemPrompt = useCallback(async () => {
     if (!workspaceId) return;
@@ -1336,6 +1357,10 @@ export default function SettingsPage() {
   }, [workspaceId]);
 
   useEffect(() => {
+    setMergeQueueConfigError(null);
+  }, [workspaceId]);
+
+  useEffect(() => {
     if (active !== "workspace_attachments") {
       const existing = pollTimeoutsRef.current.attachments;
       if (existing) {
@@ -1370,11 +1395,11 @@ export default function SettingsPage() {
   useEffect(() => {
     if (active !== "merge_queue") return;
     if (!workspaceId) return;
-    refreshMergeQueueEntries().catch(() => {});
-  }, [active, workspaceId, refreshMergeQueueEntries]);
+    refreshMergeQueueConfig().catch(() => {});
+  }, [active, workspaceId, refreshMergeQueueConfig]);
 
   useEffect(() => {
-    if (active !== "execution") return;
+    if (active !== "container_network") return;
     if (!workspaceId) return;
     refreshWorkspaceExecutionConfig().catch(() => {});
   }, [active, workspaceId, refreshWorkspaceExecutionConfig]);
@@ -2078,6 +2103,20 @@ export default function SettingsPage() {
     () => (subagentPromptConfig ? subagentPromptText.trim() !== subagentPromptBase.trim() : false),
     [subagentPromptConfig, subagentPromptText, subagentPromptBase],
   );
+  const mergeQueueDirty = useMemo(() => {
+    if (!mergeQueueInitialForm) return false;
+    const targetBranch = mergeQueueForm.target_branch.trim();
+    const verifyCommand = mergeQueueForm.verify_command.trim();
+    const pushRemote = mergeQueueForm.push_remote.trim();
+    const pushBranch = mergeQueueForm.push_branch.trim();
+    return (
+      targetBranch !== mergeQueueInitialForm.target_branch.trim()
+      || verifyCommand !== mergeQueueInitialForm.verify_command.trim()
+      || mergeQueueForm.push_on_success !== mergeQueueInitialForm.push_on_success
+      || pushRemote !== mergeQueueInitialForm.push_remote.trim()
+      || pushBranch !== mergeQueueInitialForm.push_branch.trim()
+    );
+  }, [mergeQueueForm, mergeQueueInitialForm]);
 
   const handleSavePromptAppends = useCallback(async () => {
     if (!workspaceId) return;
@@ -2270,19 +2309,19 @@ export default function SettingsPage() {
       );
     }
 
-    if (active === "privacy") {
+    if (active === "analytics") {
       return (
         <PrivacySection>
           <Card>
             <Row
-              title="Telemetry"
-              description="Share anonymous usage metrics (no code, prompts, or file paths)."
+              title="Health and Usage Metrics"
+              description="Share anonymous health and usage metrics with ctx. Does not include PII, code, or prompts."
               control={
                 <Toggle
                   checked={telemetryEnabled}
                   disabled={!loaded}
                   onChange={setTelemetryEnabled}
-                  ariaLabel="Telemetry"
+                  ariaLabel="Health and Usage Metrics"
                 />
               }
             />
@@ -2292,33 +2331,11 @@ export default function SettingsPage() {
     }
 
     if (active === "worktree_bootstrap") {
-      const anyWorkspace = workspaces.length > 0;
       const example = `setup_command: \"pnpm install\"\ntimeout_sec: 60\nwait_for_completion: false`;
 
       return (
         <>
           <Card title="Worktree Bootstrap">
-            <Row
-              title="Workspace"
-              description="Choose the repo to edit."
-              control={
-                <select
-                  className="settings-control settings-select"
-                  value={workspaceId ?? ""}
-                  onChange={(e) => setWorkspaceId(e.target.value || null)}
-                  disabled={!anyWorkspace}
-                >
-                  {workspaces.map((ws) => {
-                    const id = idToString((ws as any).id);
-                    return (
-                      <option key={id} value={id}>
-                        {ws.name}
-                      </option>
-                    );
-                  })}
-                </select>
-              }
-            />
             <Row
               title="Example"
               description="Bootstrap settings are stored per-workspace in your local daemon."
@@ -2330,7 +2347,6 @@ export default function SettingsPage() {
     }
 
     if (active === "agent_system_prompt") {
-      const anyWorkspace = workspaces.length > 0;
       const statusLabel = agentPromptConfig?.source === "config" ? "Custom" : "Default";
       const promptDirty = agentPromptDirty;
       const subagentDirty = subagentPromptDirty;
@@ -2340,27 +2356,6 @@ export default function SettingsPage() {
       return (
         <>
           <Card title="Agent System Prompt">
-            <Row
-              title="Workspace"
-              description="Choose the repo to configure."
-              control={
-                <select
-                  className="settings-control settings-select"
-                  value={workspaceId ?? ""}
-                  onChange={(e) => setWorkspaceId(e.target.value || null)}
-                  disabled={!anyWorkspace}
-                >
-                  {workspaces.map((ws) => {
-                    const id = idToString((ws as any).id);
-                    return (
-                      <option key={id} value={id}>
-                        {ws.name}
-                      </option>
-                    );
-                  })}
-                </select>
-              }
-            />
             <Row
               title="Prompt append"
               description="Saved in local per-workspace settings. Pre-filled with the default; edit to override."
@@ -2412,7 +2407,6 @@ export default function SettingsPage() {
     }
 
     if (active === "workspace_attachments") {
-      const anyWorkspace = workspaces.length > 0;
       const selectedWorkspace = workspaces.find((ws) => idToString((ws as any).id) === workspaceId) ?? null;
       const configPath = selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/attachments.toml` : ".ctx/attachments.toml";
       const canAdd = Boolean(workspaceId && attachmentSource.trim());
@@ -2421,27 +2415,6 @@ export default function SettingsPage() {
       return (
         <>
           <Card title="Workspace Attachments">
-            <Row
-              title="Workspace"
-              description="Choose the repo to configure."
-              control={
-                <select
-                  className="settings-control settings-select"
-                  value={workspaceId ?? ""}
-                  onChange={(e) => setWorkspaceId(e.target.value || null)}
-                  disabled={!anyWorkspace}
-                >
-                  {workspaces.map((ws) => {
-                    const id = idToString((ws as any).id);
-                    return (
-                      <option key={id} value={id}>
-                        {ws.name}
-                      </option>
-                    );
-                  })}
-                </select>
-              }
-            />
             <Row
               title="Config file"
               description="Repo-scoped attachments configuration."
@@ -2630,8 +2603,7 @@ export default function SettingsPage() {
       );
     }
 
-    if (active === "execution") {
-      const anyWorkspace = workspaces.length > 0;
+    if (active === "container_network") {
       const exec = workspaceExecution;
       const modeLabel =
         exec?.environment === "container_disk_isolated"
@@ -2657,28 +2629,7 @@ export default function SettingsPage() {
 
       return (
         <>
-          <Card title="Execution">
-            <Row
-              title="Workspace"
-              description="Choose the repo to inspect."
-              control={
-                <select
-                  className="settings-control settings-select"
-                  value={workspaceId ?? ""}
-                  onChange={(e) => setWorkspaceId(e.target.value || null)}
-                  disabled={!anyWorkspace}
-                >
-                  {workspaces.map((ws) => {
-                    const id = idToString((ws as any).id);
-                    return (
-                      <option key={id} value={id}>
-                        {ws.name}
-                      </option>
-                    );
-                  })}
-                </select>
-              }
-            />
+          <Card title="Container & Network">
             <Row
               title="Environment"
               description="This is set during workspace creation. Editing it in the UI is not supported yet."
@@ -2735,122 +2686,113 @@ export default function SettingsPage() {
     }
 
     if (active === "merge_queue") {
-      const anyWorkspace = workspaces.length > 0;
-
+      const mergeQueueDisabled = !workspaceId || mergeQueueConfigLoading || mergeQueueConfigSaving;
       return (
         <>
-          <Card title="Merge Queue">
+          <Card title="Merge Queue Configuration">
             <Row
-              title="Workspace"
-              description="Choose the repo to inspect."
+              title="Target branch"
               control={
-                <select
-                  className="settings-control settings-select"
-                  value={workspaceId ?? ""}
-                  onChange={(e) => setWorkspaceId(e.target.value || null)}
-                  disabled={!anyWorkspace}
-                >
-                  {workspaces.map((ws) => {
-                    const id = idToString((ws as any).id);
-                    return (
-                      <option key={id} value={id}>
-                        {ws.name}
-                      </option>
-                    );
-                  })}
-                </select>
+                <input
+                  className="settings-control"
+                  value={mergeQueueForm.target_branch}
+                  onChange={(e) =>
+                    setMergeQueueForm((prev) => ({
+                      ...prev,
+                      target_branch: e.target.value,
+                    }))}
+                  disabled={mergeQueueDisabled}
+                  placeholder="main"
+                />
               }
             />
+            <Row
+              title="Verification command (optional)"
+              control={
+                <input
+                  className="settings-control"
+                  value={mergeQueueForm.verify_command}
+                  onChange={(e) =>
+                    setMergeQueueForm((prev) => ({
+                      ...prev,
+                      verify_command: e.target.value,
+                    }))}
+                  disabled={mergeQueueDisabled}
+                  placeholder="pnpm test"
+                />
+              }
+            />
+          </Card>
+
+          <Card title="Advanced">
+            <Row
+              title="Push to remote on success"
+              control={
+                <Toggle
+                  checked={mergeQueueForm.push_on_success}
+                  disabled={mergeQueueDisabled}
+                  onChange={(value) =>
+                    setMergeQueueForm((prev) => ({
+                      ...prev,
+                      push_on_success: value,
+                      push_remote: value ? (prev.push_remote.trim() || "origin") : prev.push_remote,
+                      push_branch: value ? (prev.push_branch.trim() || prev.target_branch.trim() || "main") : prev.push_branch,
+                    }))}
+                  ariaLabel="Push to remote on success"
+                />
+              }
+            />
+            {mergeQueueForm.push_on_success ? (
+              <>
+                <Row
+                  title="Push remote"
+                  control={
+                    <input
+                      className="settings-control"
+                      value={mergeQueueForm.push_remote}
+                      onChange={(e) =>
+                        setMergeQueueForm((prev) => ({
+                          ...prev,
+                          push_remote: e.target.value,
+                        }))}
+                      disabled={mergeQueueDisabled}
+                      placeholder="origin"
+                    />
+                  }
+                />
+                <Row
+                  title="Push branch"
+                  control={
+                    <input
+                      className="settings-control"
+                      value={mergeQueueForm.push_branch}
+                      onChange={(e) =>
+                        setMergeQueueForm((prev) => ({
+                          ...prev,
+                          push_branch: e.target.value,
+                        }))}
+                      disabled={mergeQueueDisabled}
+                      placeholder={mergeQueueForm.target_branch.trim() || "main"}
+                    />
+                  }
+                />
+              </>
+            ) : null}
             <Row
               title="Actions"
               control={
                 <button
                   type="button"
                   className="settings-btn"
-                  onClick={() => refreshMergeQueueEntries().catch(() => {})}
-                  disabled={!workspaceId || mergeQueueLoading}
+                  onClick={() => handleSaveMergeQueueConfig().catch(() => {})}
+                  disabled={!workspaceId || mergeQueueConfigLoading || mergeQueueConfigSaving || !mergeQueueDirty}
                 >
-                  {mergeQueueLoading ? "Refreshing…" : "Refresh"}
+                  {mergeQueueConfigSaving ? "Saving…" : "Save"}
                 </button>
               }
             />
           </Card>
-
-          <Card title="Queue Entries">
-            <div className="settings-card-block">
-              {mergeQueueLoading ? <div className="settings-empty-compact">Loading merge queue…</div> : null}
-              {!mergeQueueLoading && mergeQueueEntries.length === 0 ? (
-                <div className="settings-empty-compact">No merge queue entries.</div>
-              ) : null}
-              {!mergeQueueLoading && mergeQueueEntries.length > 0 ? (
-                <div className="settings-table">
-                  <div className="settings-table-head">
-                    <div>Entry</div>
-                    <div>Status</div>
-                    <div>Target</div>
-                    <div>Updated</div>
-                    <div />
-                  </div>
-                  {mergeQueueEntries.map((entry) => {
-                    const entryId = idToString(entry.id as any);
-                    const updatedMs = Date.parse(entry.updated_at);
-                    const updatedLabel = Number.isFinite(updatedMs)
-                      ? `${formatAge(Date.now() - updatedMs)} ago`
-                      : "—";
-                    const actionBusy = mergeQueueActionBusy[entryId] ?? false;
-                    const logBusy = mergeQueueLogBusy[entryId] ?? false;
-                    const canCancel = entry.status === "queued";
-                    const canRetry = entry.status === "failed" || entry.status === "conflict";
-                    const subtitle = entry.error_message
-                      ? truncateText(entry.error_message, 64)
-                      : entry.result_commit_sha
-                        ? `commit ${entry.result_commit_sha.slice(0, 8)}`
-                        : entryId;
-                    return (
-                      <div key={entryId} className="settings-table-row">
-                        <div>
-                          <div className="settings-table-title">
-                            {entry.message?.trim() ? truncateText(entry.message, 48) : "Merge queue entry"}
-                          </div>
-                          <div className="settings-table-sub">{subtitle}</div>
-                        </div>
-                        <div className="settings-table-sub">{entry.status}</div>
-                        <div className="settings-table-mono">{entry.target_branch}</div>
-                        <div className="settings-table-sub">{updatedLabel}</div>
-                        <div className="settings-row-right">
-                          <button
-                            type="button"
-                            className="settings-btn settings-btn-secondary settings-btn-compact"
-                            onClick={() => handleMergeQueueRetry(entryId).catch(() => {})}
-                            disabled={!canRetry || actionBusy}
-                          >
-                            {actionBusy && canRetry ? "Retrying…" : "Retry"}
-                          </button>
-                          <button
-                            type="button"
-                            className="settings-btn settings-btn-secondary settings-btn-compact"
-                            onClick={() => handleMergeQueueCancel(entryId).catch(() => {})}
-                            disabled={!canCancel || actionBusy}
-                          >
-                            {actionBusy && canCancel ? "Cancelling…" : "Cancel"}
-                          </button>
-                          <button
-                            type="button"
-                            className="settings-btn settings-btn-secondary settings-btn-compact"
-                            onClick={() => handleMergeQueueLogs(entryId).catch(() => {})}
-                            disabled={logBusy}
-                          >
-                            {logBusy ? "Downloading…" : "Logs"}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-          </Card>
-          {mergeQueueError ? <div className="settings-banner settings-banner-error">{mergeQueueError}</div> : null}
+          {mergeQueueConfigError ? <div className="settings-banner settings-banner-error">{mergeQueueConfigError}</div> : null}
         </>
       );
     }
@@ -3896,6 +3838,9 @@ export default function SettingsPage() {
 
       return (
         <>
+          <p className="settings-harness-intro">
+            Authenticate each agent harness with the provider&apos;s subscription or API key.
+          </p>
           {installControlsEnabled ? (
             <Card>
               <Row
@@ -4171,7 +4116,8 @@ export default function SettingsPage() {
                         }}
                         disabled={harnessAuthModal.subscription_busy || harnessAuthModal.api_key_busy}
                       >
-                        Subscription
+                        <UserIcon size={18} className="settings-harness-modal-choice-icon" aria-hidden="true" />
+                        <span>Subscription</span>
                       </button>
                       <button
                         type="button"
@@ -4190,7 +4136,8 @@ export default function SettingsPage() {
                             : "API key auth not supported for this harness yet"
                         }
                       >
-                        API Key
+                        <KeyRound size={18} className="settings-harness-modal-choice-icon" aria-hidden="true" />
+                        <span>API Key</span>
                       </button>
                     </div>
                   </div>
@@ -4765,7 +4712,9 @@ export default function SettingsPage() {
           <div className="settings-main-inner">
             <div className="settings-main-header">
               <div className="settings-main-title">{headerLabel}</div>
-              <div className="settings-main-sub">{anySaving ? "Saving…" : saveError ? "Not saved" : " "}</div>
+              {anySaving || saveError ? (
+                <div className="settings-main-sub">{anySaving ? "Saving…" : "Not saved"}</div>
+              ) : null}
             </div>
 
             {saveError ? <div className="settings-banner settings-banner-error">{saveError}</div> : null}
