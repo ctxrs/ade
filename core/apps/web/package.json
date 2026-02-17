@@ -32,6 +32,7 @@
     "@ctx/design": "workspace:*",
     "@ctx/types": "workspace:*",
     "@monaco-editor/react": "^4.6.0",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-select": "^2.2.6",
     "@radix-ui/react-switch": "^1.2.6",
     "@statsig/js-client": "^3.31.2",

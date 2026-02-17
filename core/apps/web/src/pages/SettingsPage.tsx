@@ -116,6 +116,19 @@ import {
   SUBAGENT_PROMPT_DEFAULT,
 } from "./SettingsPage.constants";
 import { Card, Metric, Row, Toggle } from "./SettingsPage.components";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
 import { GeneralSection } from "./settings/sections/GeneralSection";
 import { PrivacySection } from "./settings/sections/PrivacySection";
 import { useSettingsActions } from "./settings/useSettingsActions";
@@ -329,7 +342,6 @@ export default function SettingsPage() {
     Record<string, HarnessProviderSourceConfig | undefined>
   >({});
   const [providerHarnessBusy, setProviderHarnessBusy] = useState<Record<string, boolean>>({});
-  const [harnessAuthMenuKey, setHarnessAuthMenuKey] = useState<string | null>(null);
   const [harnessAuthModal, setHarnessAuthModal] = useState<{
     provider_id: string;
     stage: "choose" | "subscription" | "api_key";
@@ -1614,21 +1626,6 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, titleGenMode]);
 
-  useEffect(() => {
-    if (!harnessAuthMenuKey) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      if (target.closest(".settings-harness-auth-menu")) return;
-      if (target.closest(".settings-harness-auth-menu-trigger")) return;
-      setHarnessAuthMenuKey(null);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-    };
-  }, [harnessAuthMenuKey]);
-
   const ensureProviderHarnessConfig = async (providerId: string, opts?: { force?: boolean }) => {
     if (providerHarnessBusy[providerId]) return;
     if (!opts?.force && providerHarnessConfig[providerId]) return;
@@ -1644,7 +1641,6 @@ export default function SettingsPage() {
   };
 
   const onDeleteProviderEndpoint = async (providerId: string, endpointId: string) => {
-    setHarnessAuthMenuKey(null);
     setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: true }));
     setProviderError(null);
     try {
@@ -1675,7 +1671,6 @@ export default function SettingsPage() {
   };
 
   const openHarnessAuthModal = (providerId: string) => {
-    setHarnessAuthMenuKey(null);
     const defaultPresetId = defaultEndpointProviderPresetForHarness(providerId);
     const defaultPreset = getHarnessEndpointProviderPreset(defaultPresetId);
     setProviderError(null);
@@ -1693,7 +1688,6 @@ export default function SettingsPage() {
   };
 
   const closeHarnessAuthModal = () => {
-    setHarnessAuthMenuKey(null);
     setHarnessAuthModal(null);
   };
 
@@ -1843,7 +1837,6 @@ export default function SettingsPage() {
   };
 
   const onSelectHarnessAuthRow = async (providerId: string, row: HarnessAuthRow) => {
-    setHarnessAuthMenuKey(null);
     if (!row.selectable) return;
     if (row.kind === "api_key" && row.endpoint_id) {
       await onSelectProviderSource(providerId, "endpoint", row.endpoint_id);
@@ -2261,16 +2254,16 @@ export default function SettingsPage() {
               <Row
                 title="Theme"
                 control={
-                  <select
-                    className="settings-control settings-select"
-                    value={theme}
-                    onChange={(event) => onThemeChange(event.target.value as ThemeMode)}
-                    aria-label="Theme mode"
-                  >
-                    <option value="system">System</option>
-                    <option value="light">Light</option>
-                    <option value="dark">Dark</option>
-                  </select>
+                  <Select value={theme} onValueChange={(value) => onThemeChange(value as ThemeMode)}>
+                    <SelectTrigger className="settings-control settings-select tw-min-w-[10rem]" aria-label="Theme mode">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="system">System</SelectItem>
+                      <SelectItem value="light">Light</SelectItem>
+                      <SelectItem value="dark">Dark</SelectItem>
+                    </SelectContent>
+                  </Select>
                 }
               />
             </div>
@@ -2280,23 +2273,27 @@ export default function SettingsPage() {
                 title="Default IDE"
                 description={isDesktopApp() ? "Used for open-in-editor links." : "Available in the desktop app."}
                 control={
-                  <select
-                    className="settings-control settings-select"
+                  <Select
                     value={editorSettings.target}
-                    onChange={(e) =>
+                    onValueChange={(value) =>
                       setEditorSettings((prev) => ({
                         ...prev,
-                        target: e.target.value as DesktopEditorSettings["target"],
+                        target: value as DesktopEditorSettings["target"],
                       }))
                     }
                     disabled={!isDesktopApp() || !editorLoaded}
                   >
-                    {EDITOR_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="settings-control settings-select tw-min-w-[10rem]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {EDITOR_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 }
               />
               {editorSettings.target === "custom" ? (
@@ -2666,21 +2663,21 @@ export default function SettingsPage() {
       return (
         <GeneralSection>
           <div className="settings-preferences-flat">
-            <div className="settings-preferences-group">
+            <div className="settings-preferences-group settings-preferences-group-center-controls">
               <Row
                 title="Container Environment"
                 description="Container environment is set during workspace creation. To use a different container environment, launch your project in a new workspace."
                 control={
-                  <select
-                    className="settings-control settings-select"
-                    value={exec?.environment ?? "host"}
-                    disabled
-                    aria-label="Container environment"
-                  >
-                    <option value="host">Host</option>
-                    <option value="container_host_mounted">Container (Host-mounted)</option>
-                    <option value="container_disk_isolated">Container (Disk-isolated)</option>
-                  </select>
+                  <Select value={exec?.environment ?? "host"} disabled>
+                    <SelectTrigger className="settings-control settings-select tw-min-w-[16rem]" aria-label="Container environment">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="host">Host</SelectItem>
+                      <SelectItem value="container_host_mounted">Container (Host-mounted)</SelectItem>
+                      <SelectItem value="container_disk_isolated">Container (Disk-isolated)</SelectItem>
+                    </SelectContent>
+                  </Select>
                 }
               />
               <Row
@@ -2688,28 +2685,29 @@ export default function SettingsPage() {
                 description="Network policy allows you to restrict what outbound network access your agents have, such as blocking all access or only allowing certain hostnames. Network policy is only available for containerized workspaces."
                 control={
                   isContainerizedEnvironment(exec?.environment) ? (
-                    <select
-                      className="settings-control settings-select"
+                    <Select
                       value={exec?.network_mode ?? "llm_only"}
-                      onChange={(e) =>
-                        handleUpdateWorkspaceNetworkPolicy(e.target.value as WorkspaceNetworkMode).catch(() => {})
-                      }
+                      onValueChange={(value) => handleUpdateWorkspaceNetworkPolicy(value as WorkspaceNetworkMode).catch(() => {})}
                       disabled={workspaceExecutionLoading || workspaceNetworkPolicySaving}
-                      aria-label="Network policy"
                     >
-                      <option value="llm_only">LLM providers only</option>
-                      <option value="allowlist">Allowlist</option>
-                      <option value="all">Full access</option>
-                    </select>
+                      <SelectTrigger className="settings-control settings-select tw-min-w-[16rem]" aria-label="Network policy">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="llm_only">LLM providers only</SelectItem>
+                        <SelectItem value="allowlist">Allowlist</SelectItem>
+                        <SelectItem value="all">Full access</SelectItem>
+                      </SelectContent>
+                    </Select>
                   ) : (
-                    <select
-                      className="settings-control settings-select"
-                      value="host_all_outbound_allowed"
-                      disabled
-                      aria-label="Network policy"
-                    >
-                      <option value="host_all_outbound_allowed">All outbound allowed</option>
-                    </select>
+                    <Select value="host_all_outbound_allowed" disabled>
+                      <SelectTrigger className="settings-control settings-select tw-min-w-[16rem]" aria-label="Network policy">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="host_all_outbound_allowed">All outbound allowed</SelectItem>
+                      </SelectContent>
+                    </Select>
                   )
                 }
               />
@@ -2908,15 +2906,21 @@ export default function SettingsPage() {
               title="Mode"
               description="Auto picks safe limits for this machine."
               control={
-                <select
-                  className="settings-control settings-select"
+                <Select
                   value={resourceGovernanceMode}
-                  onChange={(e) => setResourceGovernanceMode(e.target.value as ResourceGovernanceSettings["mode"])}
+                  onValueChange={(value) =>
+                    setResourceGovernanceMode(value as ResourceGovernanceSettings["mode"])
+                  }
                   disabled={!resourceGovernanceEnabled}
                 >
-                  <option value="auto">Auto (recommended)</option>
-                  <option value="custom">Custom</option>
-                </select>
+                  <SelectTrigger className="tw-min-w-[10rem]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto (recommended)</SelectItem>
+                    <SelectItem value="custom">Custom</SelectItem>
+                  </SelectContent>
+                </Select>
               }
             />
             {resourceGovernanceMode === "custom" ? (
@@ -3410,15 +3414,19 @@ export default function SettingsPage() {
               title="Provider"
               description="Choose the dictation backend."
               control={
-                <select
-                  className="settings-control settings-select"
+                <Select
                   value={dictationProvider}
-                  onChange={(e) => setDictationProvider(e.target.value as DictationSettings["provider"])}
+                  onValueChange={(value) => setDictationProvider(value as DictationSettings["provider"])}
                   disabled={!dictationEnabled}
                 >
-                  <option value="livekit_inference">LiveKit Inference (cloud)</option>
-                  <option value="tauri_stt">Desktop STT (Tauri)</option>
-                </select>
+                  <SelectTrigger className="tw-min-w-[10rem]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="livekit_inference">LiveKit Inference (cloud)</SelectItem>
+                    <SelectItem value="tauri_stt">Desktop STT (Tauri)</SelectItem>
+                  </SelectContent>
+                </Select>
               }
             />
             {dictationProvider === "tauri_stt" && !isDesktopApp() ? (
@@ -3429,18 +3437,18 @@ export default function SettingsPage() {
                 title="Model"
                 description="Transcription model used by LiveKit."
                 control={
-                  <select
-                    className="settings-control settings-select"
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    disabled={!dictationEnabled}
-                  >
-                    {MODEL_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
+                  <Select value={model} onValueChange={setModel} disabled={!dictationEnabled}>
+                    <SelectTrigger className="tw-min-w-[10rem]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MODEL_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 }
               />
             ) : null}
@@ -3579,14 +3587,18 @@ export default function SettingsPage() {
               title="Mode"
               description="Choose between remote API or local model for session titles."
               control={
-                <select
-                  className="settings-control settings-select"
+                <Select
                   value={titleGenMode}
-                  onChange={(e) => setTitleGenMode(e.target.value as TitleGenerationSettings["mode"])}
+                  onValueChange={(value) => setTitleGenMode(value as TitleGenerationSettings["mode"])}
                 >
-                  <option value="remote">Remote</option>
-                  <option value="local">Local</option>
-                </select>
+                  <SelectTrigger className="tw-min-w-[10rem]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="remote">Remote</SelectItem>
+                    <SelectItem value="local">Local</SelectItem>
+                  </SelectContent>
+                </Select>
               }
             />
             {titleGenMode === "remote" ? (
@@ -3996,8 +4008,6 @@ export default function SettingsPage() {
                       {installed && authRows.length > 0 ? (
                         <div className="settings-harness-auth-list" style={{ marginTop: 10 }}>
                           {authRows.map((row) => {
-                            const menuKey = `${id}:${row.key}`;
-                            const menuOpen = harnessAuthMenuKey === menuKey;
                             const verificationLabel =
                               row.verification_status && row.verification_status !== "unknown"
                                 ? row.verification_status
@@ -4038,78 +4048,55 @@ export default function SettingsPage() {
                                     </span>
                                   ) : null}
                                   {row.active ? <span className="settings-pill settings-pill-ok">Active</span> : null}
-                                  <div className="settings-harness-auth-menu-wrap">
-                                    <button
-                                      type="button"
-                                      className="settings-harness-auth-menu-trigger"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        setHarnessAuthMenuKey((prev) => (prev === menuKey ? null : menuKey));
-                                      }}
-                                      disabled={rowBusy}
-                                      aria-haspopup="menu"
-                                      aria-expanded={menuOpen}
-                                      aria-label="More actions"
-                                      title="More actions"
-                                    >
-                                      <Ellipsis size={14} aria-hidden="true" />
-                                    </button>
-                                    {menuOpen ? (
-                                      <div className="settings-harness-auth-menu" role="menu">
-                                        {row.active ? (
-                                          <button
-                                            type="button"
-                                            className="settings-harness-auth-menu-item"
-                                            role="menuitem"
-                                            disabled
-                                          >
-                                            Active source
-                                          </button>
-                                        ) : null}
-                                        {row.selectable && !row.active ? (
-                                          <button
-                                            type="button"
-                                            className="settings-harness-auth-menu-item"
-                                            role="menuitem"
-                                            onClick={() => {
-                                              setHarnessAuthMenuKey(null);
-                                              void onSelectHarnessAuthRow(id, row);
-                                            }}
-                                          >
-                                            Set active
-                                          </button>
-                                        ) : null}
-                                        {row.endpoint_id && row.can_delete ? (
-                                          <button
-                                            type="button"
-                                            className="settings-harness-auth-menu-item settings-harness-auth-menu-item-danger"
-                                            role="menuitem"
-                                            onClick={() => {
-                                              setHarnessAuthMenuKey(null);
-                                              void onDeleteProviderEndpoint(id, row.endpoint_id!);
-                                            }}
-                                          >
-                                            Delete
-                                          </button>
-                                        ) : null}
-                                        {row.kind === "subscription" && id === "codex" && row.account_id && row.can_delete ? (
-                                          <button
-                                            type="button"
-                                            className="settings-harness-auth-menu-item settings-harness-auth-menu-item-danger"
-                                            role="menuitem"
-                                            onClick={() => {
-                                              setHarnessAuthMenuKey(null);
-                                              const accountId = row.account_id;
-                                              if (!accountId) return;
-                                              void onCodexDelete(accountId);
-                                            }}
-                                          >
-                                            Delete
-                                          </button>
-                                        ) : null}
-                                      </div>
-                                    ) : null}
-                                  </div>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <button
+                                        type="button"
+                                        className="settings-harness-auth-menu-trigger"
+                                        disabled={rowBusy}
+                                        aria-label="More actions"
+                                        title="More actions"
+                                      >
+                                        <Ellipsis size={14} aria-hidden="true" />
+                                      </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      {row.active ? (
+                                        <DropdownMenuItem disabled>Active source</DropdownMenuItem>
+                                      ) : null}
+                                      {row.selectable && !row.active ? (
+                                        <DropdownMenuItem
+                                          onSelect={() => {
+                                            void onSelectHarnessAuthRow(id, row);
+                                          }}
+                                        >
+                                          Set active
+                                        </DropdownMenuItem>
+                                      ) : null}
+                                      {row.endpoint_id && row.can_delete ? (
+                                        <DropdownMenuItem
+                                          className="tw-text-[var(--error-contrast)] focus:tw-bg-[var(--error-soft)]"
+                                          onSelect={() => {
+                                            void onDeleteProviderEndpoint(id, row.endpoint_id!);
+                                          }}
+                                        >
+                                          Delete
+                                        </DropdownMenuItem>
+                                      ) : null}
+                                      {row.kind === "subscription" && id === "codex" && row.account_id && row.can_delete ? (
+                                        <DropdownMenuItem
+                                          className="tw-text-[var(--error-contrast)] focus:tw-bg-[var(--error-soft)]"
+                                          onSelect={() => {
+                                            const accountId = row.account_id;
+                                            if (!accountId) return;
+                                            void onCodexDelete(accountId);
+                                          }}
+                                        >
+                                          Delete
+                                        </DropdownMenuItem>
+                                      ) : null}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 </div>
                               </div>
                             );
@@ -4257,11 +4244,9 @@ export default function SettingsPage() {
                   <div className="settings-harness-modal-fields">
                     <label className="settings-harness-modal-label">
                       Provider
-                      <select
-                        className="settings-control settings-select"
+                      <Select
                         value={harnessAuthModal.endpoint_provider_id}
-                        onChange={(e) => {
-                          const nextProviderId = e.target.value;
+                        onValueChange={(nextProviderId) => {
                           const preset = getHarnessEndpointProviderPreset(nextProviderId);
                           patchHarnessAuthModal({
                             endpoint_provider_id: nextProviderId,
@@ -4269,12 +4254,17 @@ export default function SettingsPage() {
                           });
                         }}
                       >
-                        {HARNESS_ENDPOINT_PROVIDER_PRESETS.map((preset) => (
-                          <option key={preset.id} value={preset.id}>
-                            {preset.label}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger className="tw-min-w-[10rem]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {HARNESS_ENDPOINT_PROVIDER_PRESETS.map((preset) => (
+                            <SelectItem key={preset.id} value={preset.id}>
+                              {preset.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </label>
                     <label className="settings-harness-modal-label">
                       API key
@@ -4474,22 +4464,25 @@ export default function SettingsPage() {
                 title="Active account"
                 description="All Codex sessions use this account until changed."
                 control={
-                  <select
-                    className="settings-control settings-select"
-                    value={codexActiveId ?? ""}
-                    onChange={(e) => onCodexSetActive(e.target.value || null)}
+                  <Select
+                    value={codexActiveId ?? undefined}
+                    onValueChange={(value) => onCodexSetActive(value || null)}
                     disabled={codexAccountsBusy || codexAccountsList.length === 0}
                   >
-                    <option value="" disabled>
-                      {codexAccountsList.length ? "Select an account" : "No accounts connected"}
-                    </option>
-                    {codexAccountsList.map((account) => (
-                      <option key={account.id} value={account.id}>
-                        {account.label}
-                        {account.email ? ` · ${account.email}` : ""}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="tw-min-w-[10rem]">
+                      <SelectValue
+                        placeholder={codexAccountsList.length ? "Select an account" : "No accounts connected"}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {codexAccountsList.map((account) => (
+                        <SelectItem key={account.id} value={account.id}>
+                          {account.label}
+                          {account.email ? ` · ${account.email}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 }
               />
               <Row
@@ -4691,16 +4684,20 @@ export default function SettingsPage() {
               title="Provider control"
               description="Default is full capability. Switch to honor the harness's native permission settings."
               control={
-                <select
-                  className="settings-control settings-select"
+                <Select
                   value={providerControlMode}
-                  onChange={(e) => setProviderControlMode(e.target.value as SandboxingSettings["provider_control_mode"])}
+                  onValueChange={(value) => setProviderControlMode(value as SandboxingSettings["provider_control_mode"])}
                   disabled={!loaded}
                 >
-                  <option value="full">Full capability</option>
-                  <option value="harness_native">Harness-native permissions</option>
-                  <option value="ctx_enforced">ctx-enforced (coming soon)</option>
-                </select>
+                  <SelectTrigger className="tw-min-w-[10rem]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="full">Full capability</SelectItem>
+                    <SelectItem value="harness_native">Harness-native permissions</SelectItem>
+                    <SelectItem value="ctx_enforced">ctx-enforced (coming soon)</SelectItem>
+                  </SelectContent>
+                </Select>
               }
             />
           </Card>

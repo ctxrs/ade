@@ -312,10 +312,6 @@
   width: min(460px, 48vw);
 }
 
-.settings-select {
-  padding-right: 30px;
-}
-
 .settings-btn {
   height: 30px;
   padding: 0 12px;
@@ -551,11 +547,6 @@
   justify-content: flex-end;
 }
 
-.settings-harness-auth-menu-wrap {
-  position: relative;
-  display: inline-flex;
-}
-
 .settings-harness-auth-menu-trigger {
   padding: 0 2px;
   border: none;
@@ -575,49 +566,6 @@
 .settings-harness-auth-menu-trigger:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-.settings-harness-auth-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  min-width: 130px;
-  border: 1px solid var(--surface-active);
-  border-radius: 8px;
-  background: var(--surface);
-  padding: 4px;
-  z-index: 20;
-  display: grid;
-  gap: 2px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
-}
-
-.settings-harness-auth-menu-item {
-  height: 28px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  padding: 0 8px;
-  cursor: pointer;
-}
-
-.settings-harness-auth-menu-item:hover {
-  background: var(--surface-hover);
-}
-
-.settings-harness-auth-menu-item:disabled {
-  color: var(--text-faint);
-  cursor: default;
-}
-
-.settings-harness-auth-menu-item:disabled:hover {
-  background: transparent;
-}
-
-.settings-harness-auth-menu-item-danger {
-  color: var(--error-contrast);
 }
 
 .settings-harness-intro {
