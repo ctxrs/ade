@@ -223,3 +223,81 @@ async fn workspace_primary_branch_endpoint_updates_branch() {
         Some("merge-target")
     );
 }
+
+#[tokio::test]
+async fn workspace_merge_queue_config_endpoint_supports_get_and_post() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state);
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+
+    let (get_status_before, before): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::GET,
+        format!("/api/workspaces/{}/merge_queue_config", ws.id.0),
+        None,
+    )
+    .await;
+    assert_eq!(get_status_before, StatusCode::OK);
+    assert_eq!(
+        before.get("target_branch").and_then(Value::as_str),
+        Some("main")
+    );
+    assert_eq!(
+        before.get("push_on_success").and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let (set_status, set_resp): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/merge_queue_config", ws.id.0),
+        Some(serde_json::json!({
+            "enabled": true,
+            "target_branch": "merge-target",
+            "verify_command": "pnpm test",
+            "push_on_success": true,
+            "push_remote": "origin",
+            "push_branch": "merge-target"
+        })),
+    )
+    .await;
+    assert_eq!(set_status, StatusCode::OK);
+    assert_eq!(set_resp.get("ok").and_then(Value::as_bool), Some(true));
+
+    let (get_status_after, after): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::GET,
+        format!("/api/workspaces/{}/merge_queue_config", ws.id.0),
+        None,
+    )
+    .await;
+    assert_eq!(get_status_after, StatusCode::OK);
+    assert_eq!(
+        after.get("target_branch").and_then(Value::as_str),
+        Some("merge-target")
+    );
+    assert_eq!(
+        after.get("verify_command").and_then(Value::as_str),
+        Some("pnpm test")
+    );
+    assert_eq!(
+        after.get("push_on_success").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        after.get("push_remote").and_then(Value::as_str),
+        Some("origin")
+    );
+    assert_eq!(
+        after.get("push_branch").and_then(Value::as_str),
+        Some("merge-target")
+    );
+}

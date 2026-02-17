@@ -52,6 +52,15 @@ export type UpdateMergeQueueConfigRequest = {
   push_branch?: string | null;
 };
 
+export type WorkspaceMergeQueueConfig = {
+  enabled: boolean;
+  target_branch: string;
+  verify_command?: string | null;
+  push_on_success: boolean;
+  push_remote: string;
+  push_branch: string;
+};
+
 export type UpdateWorkspaceConfigResponse = {
   ok: boolean;
 };
@@ -74,6 +83,9 @@ export const updateWorkspaceMergeQueueConfig = (workspaceId: string, req: Update
     method: "POST",
     body: JSON.stringify(req),
   });
+
+export const getWorkspaceMergeQueueConfig = (workspaceId: string) =>
+  apiAny<WorkspaceMergeQueueConfig>(`/api/workspaces/${workspaceId}/merge_queue_config`);
 
 export type UpdateExecutionConfigRequest = {
   environment: "host" | "container_host_mounted" | "container_disk_isolated";

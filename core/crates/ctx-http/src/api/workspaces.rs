@@ -48,6 +48,17 @@ pub(super) struct UpdateWorkspaceConfigResp {
     ok: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub(super) struct WorkspaceMergeQueueConfigResp {
+    enabled: bool,
+    target_branch: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verify_command: Option<String>,
+    push_on_success: bool,
+    push_remote: String,
+    push_branch: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateWorkspacePrimaryBranchReq {
     primary_branch: String,
@@ -1142,6 +1153,67 @@ pub(super) async fn update_merge_queue_config(
     })?;
 
     Ok(Json(UpdateWorkspaceConfigResp { ok: true }))
+}
+
+pub(super) async fn get_merge_queue_config(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkspaceMergeQueueConfigResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let _workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let cfg = workspace_config::load_merge_queue_config(&store)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    let verify_command = cfg.verify_commands.into_iter().next();
+    Ok(Json(WorkspaceMergeQueueConfigResp {
+        enabled: cfg.enabled,
+        target_branch: cfg.target_branch,
+        verify_command,
+        push_on_success: cfg.push_on_success,
+        push_remote: cfg.push_remote,
+        push_branch: cfg.push_branch,
+    }))
 }
 
 #[derive(Debug, Deserialize)]

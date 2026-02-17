@@ -2,12 +2,12 @@ import type { InstallInfo } from "../api/client";
 
 export type SectionId =
   | "general"
-  | "privacy"
+  | "analytics"
   | "agent_harnesses"
   | "harness_subscriptions"
   | "models_routing"
   | "sandboxing"
-  | "execution"
+  | "container_network"
   | "worktree_bootstrap"
   | "agent_system_prompt"
   | "workspace_attachments"
