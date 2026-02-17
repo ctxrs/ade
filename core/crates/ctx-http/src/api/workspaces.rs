@@ -1226,6 +1226,73 @@ pub(super) struct UpdateWorktreeBootstrapReq {
     wait_for_completion: Option<bool>,
 }
 
+#[derive(Debug, Serialize)]
+pub(super) struct WorkspaceWorktreeBootstrapConfigResp {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    setup_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timeout_sec: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wait_for_completion: Option<bool>,
+}
+
+pub(super) async fn get_worktree_bootstrap_config(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkspaceWorktreeBootstrapConfigResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "invalid workspace id".to_string(),
+            }),
+        )
+    })?);
+    let _workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ))?;
+
+    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    let cfg = workspace_config::load_worktree_bootstrap_config(&store)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+
+    Ok(Json(WorkspaceWorktreeBootstrapConfigResp {
+        setup_command: cfg.as_ref().and_then(|value| value.setup_command.clone()),
+        timeout_sec: cfg.as_ref().and_then(|value| value.timeout_sec),
+        wait_for_completion: cfg.as_ref().and_then(|value| value.wait_for_completion),
+    }))
+}
+
 pub(super) async fn update_worktree_bootstrap_config(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,

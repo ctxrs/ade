@@ -197,6 +197,92 @@
   padding: 12px 0 8px;
 }
 
+.settings-row-field {
+  width: 100%;
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.settings-row-inline-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 12px;
+  width: 100%;
+}
+
+.settings-flat-textarea.settings-control {
+  width: 100%;
+  height: auto;
+  min-height: 108px;
+  padding: 10px 12px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.settings-monaco-wrap {
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid var(--surface-active);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-hover);
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.settings-monaco-wrap .monaco-editor,
+.settings-monaco-wrap .overflow-guard,
+.settings-monaco-wrap .monaco-scrollable-element {
+  max-width: 100% !important;
+  box-sizing: border-box;
+}
+
+.settings-monaco-wrap-disabled {
+  opacity: 0.6;
+}
+
+.settings-autosave-status {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 120px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.settings-autosave-status-placeholder {
+  visibility: hidden;
+}
+
+.settings-row-inline-head .settings-autosave-status {
+  margin-top: 0;
+  align-self: start;
+}
+
+.settings-autosave-status-saved {
+  color: var(--success-contrast);
+}
+
+.settings-autosave-status-error {
+  color: var(--error-contrast);
+}
+
+.settings-autosave-spin {
+  animation: settings-spin 1s linear infinite;
+}
+
+@keyframes settings-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .settings-allowlist-block {
   display: grid;
   gap: 10px;
@@ -268,6 +354,52 @@
   line-height: 1.2;
 }
 
+.settings-row-title-with-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-inline-info-btn {
+  all: unset;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.settings-inline-info-btn:hover {
+  color: var(--text);
+}
+
+.settings-inline-info-btn:focus-visible {
+  outline: 1px solid var(--surface-strong);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.settings-info-modal {
+  max-width: 560px;
+}
+
+.settings-info-modal-title {
+  font-size: 18px;
+}
+
+.settings-info-modal-body {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+  color: var(--text);
+}
+
+.settings-info-modal-body p {
+  margin: 0;
+  line-height: 1.4;
+}
+
 .settings-row-desc {
   font-size: 12px;
   color: var(--text-faint);
@@ -306,6 +438,11 @@
 
 .settings-control:disabled {
   opacity: 0.5;
+}
+
+.settings-control-block {
+  width: 100%;
+  max-width: 100%;
 }
 
 .settings-control-wide {
@@ -439,6 +576,7 @@
 .settings-harness-name {
   flex: 1 1 auto;
   min-width: 0;
+  font-weight: 400;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -667,6 +805,66 @@
   .settings-harness-modal-choice-grid {
     grid-template-columns: 170px;
     justify-content: center;
+  }
+}
+
+@media (max-width: 900px) {
+  .settings-shell {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .settings-main-inner {
+    padding: 18px 18px;
+  }
+
+  .settings-row-right {
+    margin-left: 24px;
+  }
+}
+
+@media (max-width: 760px) {
+  .settings-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--surface-hover);
+    padding: 14px 12px;
+  }
+
+  .settings-main {
+    justify-content: stretch;
+  }
+
+  .settings-main-inner {
+    width: 100%;
+    padding: 16px 14px;
+  }
+
+  .settings-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .settings-row-right {
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+
+  .settings-control-wide {
+    width: 100%;
+    max-width: none;
+  }
+
+  .settings-row-inline-head {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .settings-row-inline-head .settings-autosave-status {
+    justify-content: flex-start;
+    min-width: 0;
   }
 }
 

@@ -4,9 +4,51 @@ import { SECTIONS } from "./SettingsPage.constants";
 import type { SectionId } from "./SettingsPage.types";
 
 export type WorkspaceExecutionEnvironment = "host" | "container_host_mounted" | "container_disk_isolated";
+export type PromptAutosaveStatus = "idle" | "pending" | "saving" | "saved" | "error";
+export type WorktreeBootstrapConfigLike = {
+  setup_command?: string | null;
+  timeout_sec?: number | null;
+  wait_for_completion?: boolean | null;
+};
+export type WorktreeBootstrapFormState = {
+  setup_command: string;
+  timeout_sec: string;
+  wait_for_completion: boolean;
+};
 
 export function isContainerizedEnvironment(environment?: WorkspaceExecutionEnvironment | null): boolean {
   return environment === "container_host_mounted" || environment === "container_disk_isolated";
+}
+
+export function promptAutosaveStatusLabel(status: PromptAutosaveStatus): string {
+  switch (status) {
+    case "pending":
+      return "Pending changes";
+    case "saving":
+      return "Saving...";
+    case "saved":
+      return "Saved";
+    case "error":
+      return "Save failed";
+    default:
+      return "";
+  }
+}
+
+export function worktreeBootstrapFormFromConfig(
+  cfg: WorktreeBootstrapConfigLike | null | undefined,
+): WorktreeBootstrapFormState {
+  const setupCommand = typeof cfg?.setup_command === "string" ? cfg.setup_command : "";
+  const timeoutRaw = cfg?.timeout_sec;
+  const timeoutSec =
+    typeof timeoutRaw === "number" && Number.isFinite(timeoutRaw) && timeoutRaw > 0
+      ? String(Math.round(timeoutRaw))
+      : "";
+  return {
+    setup_command: setupCommand,
+    timeout_sec: timeoutSec,
+    wait_for_completion: Boolean(cfg?.wait_for_completion),
+  };
 }
 
 export const saveTextFile = async (name: string, contents: string) => {

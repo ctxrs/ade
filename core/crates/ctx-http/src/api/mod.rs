@@ -523,7 +523,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route(
             "/api/workspaces/:id/worktree_bootstrap_config",
-            post(update_worktree_bootstrap_config),
+            get(get_worktree_bootstrap_config).post(update_worktree_bootstrap_config),
         )
         .route(
             "/api/workspaces/:id/tasks",

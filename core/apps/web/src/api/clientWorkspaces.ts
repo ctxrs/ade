@@ -188,6 +188,15 @@ export type UpdateWorktreeBootstrapConfigRequest = {
   wait_for_completion?: boolean | null;
 };
 
+export type WorkspaceWorktreeBootstrapConfig = {
+  setup_command?: string | null;
+  timeout_sec?: number | null;
+  wait_for_completion?: boolean | null;
+};
+
+export const getWorkspaceWorktreeBootstrapConfig = (workspaceId: string) =>
+  apiAny<WorkspaceWorktreeBootstrapConfig>(`/api/workspaces/${workspaceId}/worktree_bootstrap_config`);
+
 export const updateWorkspaceWorktreeBootstrapConfig = (workspaceId: string, req: UpdateWorktreeBootstrapConfigRequest) =>
   apiAny<UpdateWorkspaceConfigResponse>(`/api/workspaces/${workspaceId}/worktree_bootstrap_config`, {
     method: "POST",

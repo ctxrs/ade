@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import Editor from "@monaco-editor/react";
 import type { User } from "@supabase/supabase-js";
-import { Ellipsis, KeyRound, User as UserIcon, X } from "lucide-react";
+import { Check, Ellipsis, Info, KeyRound, Loader2, User as UserIcon, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   DictationSettings,
@@ -49,6 +50,7 @@ import {
   getInstall,
   getWorkspaceMergeQueueConfig,
   getWorkspaceExecutionConfig,
+  getWorkspaceWorktreeBootstrapConfig,
   getResourceUtilization,
   getSettings,
   idToString,
@@ -71,6 +73,7 @@ import {
   updateAgentSystemPrompt,
   updateSubagentSystemPrompt,
   updateWorkspaceExecutionConfig,
+  updateWorkspaceWorktreeBootstrapConfig,
   updateWorkspaceMergeQueueConfig,
   deleteProviderHarnessEndpoint,
 } from "../api/client";
@@ -130,10 +133,9 @@ import {
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
 import { GeneralSection } from "./settings/sections/GeneralSection";
-import { PrivacySection } from "./settings/sections/PrivacySection";
 import { useSettingsActions } from "./settings/useSettingsActions";
 import { useSettingsState } from "./settings/useSettingsState";
-import type { InstallSession } from "./SettingsPage.types";
+import type { InstallSession, SectionId } from "./SettingsPage.types";
 import {
   formatAge,
   formatBytes,
@@ -144,10 +146,14 @@ import {
   isLinuxPlatform,
   clampPct,
   parseGiB,
+  promptAutosaveStatusLabel,
   sectionFromHash,
   summarizeCodexUsage,
   truncateText,
+  worktreeBootstrapFormFromConfig,
   isContainerizedEnvironment,
+  type PromptAutosaveStatus,
+  type WorktreeBootstrapFormState,
 } from "./SettingsPage.utils";
 import {
   buildHarnessAuthRows,
@@ -374,7 +380,19 @@ export default function SettingsPage() {
   const [workspaceAllowlistText, setWorkspaceAllowlistText] = useState("");
   const [workspaceAllowlistDirty, setWorkspaceAllowlistDirty] = useState(false);
   const [workspaceAllowlistSaving, setWorkspaceAllowlistSaving] = useState(false);
+  const [workspaceAllowlistAutosaveState, setWorkspaceAllowlistAutosaveState] = useState<PromptAutosaveStatus>("idle");
   const [workspaceNetworkPolicySaving, setWorkspaceNetworkPolicySaving] = useState(false);
+  const [worktreeBootstrapLoading, setWorktreeBootstrapLoading] = useState(false);
+  const [worktreeBootstrapSaving, setWorktreeBootstrapSaving] = useState(false);
+  const [worktreeBootstrapError, setWorktreeBootstrapError] = useState<string | null>(null);
+  const [worktreeBootstrapAutosaveState, setWorktreeBootstrapAutosaveState] = useState<PromptAutosaveStatus>("idle");
+  const [worktreeBootstrapForm, setWorktreeBootstrapForm] = useState<WorktreeBootstrapFormState>(() =>
+    worktreeBootstrapFormFromConfig(null),
+  );
+  const [worktreeBootstrapInitialForm, setWorktreeBootstrapInitialForm] = useState<WorktreeBootstrapFormState>(() =>
+    worktreeBootstrapFormFromConfig(null),
+  );
+  const [worktreeWaitInfoOpen, setWorktreeWaitInfoOpen] = useState(false);
   const [mergeQueueConfigLoading, setMergeQueueConfigLoading] = useState(false);
   const [mergeQueueConfigSaving, setMergeQueueConfigSaving] = useState(false);
   const [mergeQueueConfigError, setMergeQueueConfigError] = useState<string | null>(null);
@@ -403,11 +421,13 @@ export default function SettingsPage() {
   const [agentPromptError, setAgentPromptError] = useState<string | null>(null);
   const [agentPromptSaving, setAgentPromptSaving] = useState(false);
   const [agentPromptText, setAgentPromptText] = useState("");
+  const [agentPromptAutosaveState, setAgentPromptAutosaveState] = useState<PromptAutosaveStatus>("idle");
   const [subagentPromptConfig, setSubagentPromptConfig] = useState<SubagentSystemPromptConfig | null>(null);
   const [subagentPromptLoading, setSubagentPromptLoading] = useState(false);
   const [subagentPromptError, setSubagentPromptError] = useState<string | null>(null);
   const [subagentPromptSaving, setSubagentPromptSaving] = useState(false);
   const [subagentPromptText, setSubagentPromptText] = useState("");
+  const [subagentPromptAutosaveState, setSubagentPromptAutosaveState] = useState<PromptAutosaveStatus>("idle");
 
   const [resourceSnapshot, setResourceSnapshot] = useState<ResourceUtilization | null>(null);
   const [resourceLoading, setResourceLoading] = useState(false);
@@ -417,6 +437,16 @@ export default function SettingsPage() {
 
   const eventSourcesRef = useRef<Record<string, EventSource>>({});
   const pollTimeoutsRef = useRef<Record<string, number>>({});
+  const promptAutosaveDebounceRef = useRef<number | null>(null);
+  const promptAutosaveResetRef = useRef<number | null>(null);
+  const subagentPromptAutosaveDebounceRef = useRef<number | null>(null);
+  const subagentPromptAutosaveResetRef = useRef<number | null>(null);
+  const allowlistAutosaveDebounceRef = useRef<number | null>(null);
+  const allowlistAutosaveResetRef = useRef<number | null>(null);
+  const worktreeBootstrapAutosaveDebounceRef = useRef<number | null>(null);
+  const worktreeBootstrapAutosaveResetRef = useRef<number | null>(null);
+  const mergeQueueAutosaveDebounceRef = useRef<number | null>(null);
+  const previousActiveRef = useRef<SectionId>(active);
 
   useEffect(() => {
     if (!supabase) return;
@@ -1015,9 +1045,11 @@ export default function SettingsPage() {
       const initialAllowlist = Array.isArray(next.allowlist) ? next.allowlist : [];
       setWorkspaceAllowlistText(initialAllowlist.join("\n"));
       setWorkspaceAllowlistDirty(false);
+      setWorkspaceAllowlistAutosaveState("idle");
     } catch (e: any) {
       setWorkspaceExecutionError(e?.message ?? String(e));
       setWorkspaceExecution(null);
+      setWorkspaceAllowlistAutosaveState("idle");
     } finally {
       setWorkspaceExecutionLoading(false);
     }
@@ -1039,10 +1071,31 @@ export default function SettingsPage() {
     }
   }, [workspaceId]);
 
-  const handleSaveWorkspaceAllowlist = useCallback(async () => {
+  const refreshWorktreeBootstrapConfig = useCallback(async () => {
     if (!workspaceId) return;
-    if (!workspaceExecution) return;
-    if (workspaceAllowlistSaving) return;
+    setWorktreeBootstrapLoading(true);
+    setWorktreeBootstrapError(null);
+    try {
+      const cfg = await getWorkspaceWorktreeBootstrapConfig(workspaceId);
+      const nextForm = worktreeBootstrapFormFromConfig(cfg);
+      setWorktreeBootstrapForm(nextForm);
+      setWorktreeBootstrapInitialForm(nextForm);
+      setWorktreeBootstrapAutosaveState("idle");
+    } catch (e: any) {
+      setWorktreeBootstrapError(e?.message ?? String(e));
+      const blankForm = worktreeBootstrapFormFromConfig(null);
+      setWorktreeBootstrapForm(blankForm);
+      setWorktreeBootstrapInitialForm(blankForm);
+      setWorktreeBootstrapAutosaveState("idle");
+    } finally {
+      setWorktreeBootstrapLoading(false);
+    }
+  }, [workspaceId]);
+
+  const handleSaveWorkspaceAllowlist = useCallback(async (): Promise<boolean> => {
+    if (!workspaceId) return false;
+    if (!workspaceExecution) return false;
+    if (workspaceAllowlistSaving) return false;
 
     const allowlist = workspaceAllowlistText
       .split(/\r?\n/)
@@ -1051,15 +1104,15 @@ export default function SettingsPage() {
 
     if (workspaceExecution.environment === "host") {
       setWorkspaceExecutionError("Allowlist only applies in container mode.");
-      return;
+      return false;
     }
     if (workspaceExecution.network_mode !== "allowlist") {
       setWorkspaceExecutionError("Allowlist is only active when the network policy is set to Allowlist.");
-      return;
+      return false;
     }
     if (allowlist.length === 0) {
       setWorkspaceExecutionError("Allowlist must include at least one host.");
-      return;
+      return false;
     }
 
     setWorkspaceAllowlistSaving(true);
@@ -1071,8 +1124,10 @@ export default function SettingsPage() {
         allowlist,
       });
       await refreshWorkspaceExecutionConfig();
+      return true;
     } catch (e: any) {
       setWorkspaceExecutionError(e?.message ?? String(e));
+      return false;
     } finally {
       setWorkspaceAllowlistSaving(false);
     }
@@ -1084,6 +1139,46 @@ export default function SettingsPage() {
     workspaceExecution,
     workspaceId,
   ]);
+
+  const handleSaveWorktreeBootstrapConfig = useCallback(async (): Promise<boolean> => {
+    if (!workspaceId) return false;
+    if (worktreeBootstrapSaving) return false;
+
+    const setupCommand = worktreeBootstrapForm.setup_command.trim();
+    const timeoutRaw = worktreeBootstrapForm.timeout_sec.trim();
+    const hasCommand = setupCommand.length > 0;
+
+    let timeoutSec: number | null = null;
+    if (hasCommand && timeoutRaw.length > 0) {
+      if (!/^\d+$/.test(timeoutRaw)) {
+        setWorktreeBootstrapError("Timeout must be a whole number of seconds.");
+        return false;
+      }
+      const parsed = Number(timeoutRaw);
+      if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+        setWorktreeBootstrapError("Timeout must be greater than 0.");
+        return false;
+      }
+      timeoutSec = parsed;
+    }
+
+    setWorktreeBootstrapSaving(true);
+    setWorktreeBootstrapError(null);
+    try {
+      await updateWorkspaceWorktreeBootstrapConfig(workspaceId, {
+        setup_command: hasCommand ? setupCommand : null,
+        timeout_sec: hasCommand ? timeoutSec : null,
+        wait_for_completion: hasCommand ? worktreeBootstrapForm.wait_for_completion : null,
+      });
+      await refreshWorktreeBootstrapConfig();
+      return true;
+    } catch (e: any) {
+      setWorktreeBootstrapError(e?.message ?? String(e));
+      return false;
+    } finally {
+      setWorktreeBootstrapSaving(false);
+    }
+  }, [refreshWorktreeBootstrapConfig, workspaceId, worktreeBootstrapForm, worktreeBootstrapSaving]);
 
   const handleUpdateWorkspaceNetworkPolicy = useCallback(
     async (nextMode: WorkspaceNetworkMode) => {
@@ -1123,46 +1218,58 @@ export default function SettingsPage() {
     ],
   );
 
-  const handleSaveMergeQueueConfig = useCallback(async () => {
-    if (!workspaceId) return;
-    if (mergeQueueConfigSaving) return;
+  const handleSaveMergeQueueConfig = useCallback(
+    async (opts?: { showValidationErrors?: boolean }): Promise<boolean> => {
+      const showValidationErrors = opts?.showValidationErrors ?? true;
+      if (!workspaceId) return false;
+      if (mergeQueueConfigSaving) return false;
 
-    const targetBranch = mergeQueueForm.target_branch.trim();
-    if (!targetBranch) {
-      setMergeQueueConfigError("Target branch is required.");
-      return;
-    }
-    const verifyCommand = mergeQueueForm.verify_command.trim();
-    const pushRemote = mergeQueueForm.push_remote.trim();
-    const pushBranch = mergeQueueForm.push_branch.trim();
+      const targetBranch = mergeQueueForm.target_branch.trim();
+      if (!targetBranch) {
+        if (showValidationErrors) {
+          setMergeQueueConfigError("Target branch is required.");
+        }
+        return false;
+      }
+      const verifyCommand = mergeQueueForm.verify_command.trim();
+      const pushRemote = mergeQueueForm.push_remote.trim();
+      const pushBranch = mergeQueueForm.push_branch.trim();
 
-    if (mergeQueueForm.push_on_success && !pushRemote) {
-      setMergeQueueConfigError("Push remote is required when push-on-success is enabled.");
-      return;
-    }
-    if (mergeQueueForm.push_on_success && !pushBranch) {
-      setMergeQueueConfigError("Push branch is required when push-on-success is enabled.");
-      return;
-    }
+      if (mergeQueueForm.push_on_success && !pushRemote) {
+        if (showValidationErrors) {
+          setMergeQueueConfigError("Push remote is required when push-on-success is enabled.");
+        }
+        return false;
+      }
+      if (mergeQueueForm.push_on_success && !pushBranch) {
+        if (showValidationErrors) {
+          setMergeQueueConfigError("Push branch is required when push-on-success is enabled.");
+        }
+        return false;
+      }
 
-    setMergeQueueConfigSaving(true);
-    setMergeQueueConfigError(null);
-    try {
-      await updateWorkspaceMergeQueueConfig(workspaceId, {
-        enabled: true,
-        target_branch: targetBranch,
-        verify_command: verifyCommand || null,
-        push_on_success: mergeQueueForm.push_on_success,
-        push_remote: mergeQueueForm.push_on_success ? pushRemote : null,
-        push_branch: mergeQueueForm.push_on_success ? pushBranch : null,
-      });
-      await refreshMergeQueueConfig();
-    } catch (e: any) {
-      setMergeQueueConfigError(e?.message ?? String(e));
-    } finally {
-      setMergeQueueConfigSaving(false);
-    }
-  }, [workspaceId, mergeQueueConfigSaving, mergeQueueForm, refreshMergeQueueConfig]);
+      setMergeQueueConfigSaving(true);
+      setMergeQueueConfigError(null);
+      try {
+        await updateWorkspaceMergeQueueConfig(workspaceId, {
+          enabled: true,
+          target_branch: targetBranch,
+          verify_command: verifyCommand || null,
+          push_on_success: mergeQueueForm.push_on_success,
+          push_remote: mergeQueueForm.push_on_success ? pushRemote : null,
+          push_branch: mergeQueueForm.push_on_success ? pushBranch : null,
+        });
+        await refreshMergeQueueConfig();
+        return true;
+      } catch (e: any) {
+        setMergeQueueConfigError(e?.message ?? String(e));
+        return false;
+      } finally {
+        setMergeQueueConfigSaving(false);
+      }
+    },
+    [workspaceId, mergeQueueConfigSaving, mergeQueueForm, refreshMergeQueueConfig],
+  );
 
   const refreshAgentSystemPrompt = useCallback(async () => {
     if (!workspaceId) return;
@@ -1174,6 +1281,7 @@ export default function SettingsPage() {
       setAgentPromptConfig(next);
       const baseText = next.configured_append ?? next.default_append ?? AGENT_PROMPT_DEFAULT;
       setAgentPromptText(baseText);
+      setAgentPromptAutosaveState("idle");
     } catch (e: any) {
       const message = e?.message ?? String(e);
       const lower = message.toLowerCase();
@@ -1197,6 +1305,7 @@ export default function SettingsPage() {
         });
         setAgentPromptText(AGENT_PROMPT_DEFAULT);
         setAgentPromptError(null);
+        setAgentPromptAutosaveState("idle");
       } else {
         setAgentPromptError(message);
       }
@@ -1215,6 +1324,7 @@ export default function SettingsPage() {
       setSubagentPromptConfig(next);
       const baseText = next.configured_append ?? next.default_append ?? SUBAGENT_PROMPT_DEFAULT;
       setSubagentPromptText(baseText);
+      setSubagentPromptAutosaveState("idle");
     } catch (e: any) {
       const message = e?.message ?? String(e);
       const lower = message.toLowerCase();
@@ -1238,6 +1348,7 @@ export default function SettingsPage() {
         });
         setSubagentPromptText(SUBAGENT_PROMPT_DEFAULT);
         setSubagentPromptError(null);
+        setSubagentPromptAutosaveState("idle");
       } else {
         setSubagentPromptError(message);
       }
@@ -1246,8 +1357,9 @@ export default function SettingsPage() {
     }
   }, [workspaceId, workspaces]);
 
-  const handleSaveAgentPrompt = useCallback(async () => {
-    if (!workspaceId) return;
+  const handleSaveAgentPrompt = useCallback(async (): Promise<boolean> => {
+    if (!workspaceId) return false;
+    if (agentPromptSaving) return false;
     setAgentPromptSaving(true);
     setAgentPromptError(null);
     try {
@@ -1256,16 +1368,21 @@ export default function SettingsPage() {
       const next = await updateAgentSystemPrompt(workspaceId, { system_prompt_append: payload });
       setAgentPromptConfig(next);
       const baseText = next.configured_append ?? next.default_append ?? "";
-      setAgentPromptText(baseText);
+      if (agentPromptText.trim() !== baseText.trim()) {
+        setAgentPromptText(baseText);
+      }
+      return true;
     } catch (e: any) {
       setAgentPromptError(e?.message ?? String(e));
+      return false;
     } finally {
       setAgentPromptSaving(false);
     }
-  }, [workspaceId, agentPromptText]);
+  }, [workspaceId, agentPromptSaving, agentPromptText]);
 
-  const handleSaveSubagentPrompt = useCallback(async () => {
-    if (!workspaceId) return;
+  const handleSaveSubagentPrompt = useCallback(async (): Promise<boolean> => {
+    if (!workspaceId) return false;
+    if (subagentPromptSaving) return false;
     setSubagentPromptSaving(true);
     setSubagentPromptError(null);
     try {
@@ -1274,13 +1391,17 @@ export default function SettingsPage() {
       const next = await updateSubagentSystemPrompt(workspaceId, { system_prompt_append: payload });
       setSubagentPromptConfig(next);
       const baseText = next.configured_append ?? next.default_append ?? "";
-      setSubagentPromptText(baseText);
+      if (subagentPromptText.trim() !== baseText.trim()) {
+        setSubagentPromptText(baseText);
+      }
+      return true;
     } catch (e: any) {
       setSubagentPromptError(e?.message ?? String(e));
+      return false;
     } finally {
       setSubagentPromptSaving(false);
     }
-  }, [workspaceId, subagentPromptText]);
+  }, [workspaceId, subagentPromptSaving, subagentPromptText]);
 
   const syncWorkspaceAttachmentsNow = useCallback(async () => {
     if (!workspaceId) return;
@@ -1415,6 +1536,10 @@ export default function SettingsPage() {
   }, [workspaceId]);
 
   useEffect(() => {
+    setWorktreeBootstrapError(null);
+  }, [workspaceId]);
+
+  useEffect(() => {
     if (active !== "workspace_attachments") {
       const existing = pollTimeoutsRef.current.attachments;
       if (existing) {
@@ -1459,9 +1584,29 @@ export default function SettingsPage() {
   }, [active, workspaceId, refreshWorkspaceExecutionConfig]);
 
   useEffect(() => {
+    if (active !== "worktree_bootstrap") return;
+    if (!workspaceId) return;
+    refreshWorktreeBootstrapConfig().catch(() => {});
+  }, [active, workspaceId, refreshWorktreeBootstrapConfig]);
+
+  useEffect(() => {
+    if (active === "worktree_bootstrap") return;
+    setWorktreeWaitInfoOpen(false);
+  }, [active]);
+
+  useEffect(() => {
     return () => {
       for (const key of Object.keys(eventSourcesRef.current)) eventSourcesRef.current[key].close();
       for (const key of Object.keys(pollTimeoutsRef.current)) window.clearTimeout(pollTimeoutsRef.current[key]);
+      if (promptAutosaveDebounceRef.current) window.clearTimeout(promptAutosaveDebounceRef.current);
+      if (promptAutosaveResetRef.current) window.clearTimeout(promptAutosaveResetRef.current);
+      if (subagentPromptAutosaveDebounceRef.current) window.clearTimeout(subagentPromptAutosaveDebounceRef.current);
+      if (subagentPromptAutosaveResetRef.current) window.clearTimeout(subagentPromptAutosaveResetRef.current);
+      if (allowlistAutosaveDebounceRef.current) window.clearTimeout(allowlistAutosaveDebounceRef.current);
+      if (allowlistAutosaveResetRef.current) window.clearTimeout(allowlistAutosaveResetRef.current);
+      if (worktreeBootstrapAutosaveDebounceRef.current) window.clearTimeout(worktreeBootstrapAutosaveDebounceRef.current);
+      if (worktreeBootstrapAutosaveResetRef.current) window.clearTimeout(worktreeBootstrapAutosaveResetRef.current);
+      if (mergeQueueAutosaveDebounceRef.current) window.clearTimeout(mergeQueueAutosaveDebounceRef.current);
       eventSourcesRef.current = {};
       pollTimeoutsRef.current = {};
     };
@@ -2152,17 +2297,155 @@ export default function SettingsPage() {
       || pushBranch !== mergeQueueInitialForm.push_branch.trim()
     );
   }, [mergeQueueForm, mergeQueueInitialForm]);
+  const worktreeBootstrapDirty = useMemo(() => {
+    return (
+      worktreeBootstrapForm.setup_command.trim() !== worktreeBootstrapInitialForm.setup_command.trim()
+      || worktreeBootstrapForm.timeout_sec.trim() !== worktreeBootstrapInitialForm.timeout_sec.trim()
+      || worktreeBootstrapForm.wait_for_completion !== worktreeBootstrapInitialForm.wait_for_completion
+    );
+  }, [worktreeBootstrapForm, worktreeBootstrapInitialForm]);
 
-  const handleSavePromptAppends = useCallback(async () => {
-    if (!workspaceId) return;
-    if (!agentPromptDirty && !subagentPromptDirty) return;
-    if (agentPromptDirty) {
-      await handleSaveAgentPrompt();
+  const flushAgentPromptAutosave = useCallback(async () => {
+    if (promptAutosaveDebounceRef.current) {
+      window.clearTimeout(promptAutosaveDebounceRef.current);
+      promptAutosaveDebounceRef.current = null;
     }
-    if (subagentPromptDirty) {
-      await handleSaveSubagentPrompt();
+    if (promptAutosaveResetRef.current) {
+      window.clearTimeout(promptAutosaveResetRef.current);
+      promptAutosaveResetRef.current = null;
     }
-  }, [workspaceId, agentPromptDirty, subagentPromptDirty, handleSaveAgentPrompt, handleSaveSubagentPrompt]);
+    if (!agentPromptDirty || !workspaceId) return;
+    setAgentPromptAutosaveState("saving");
+    const ok = await handleSaveAgentPrompt();
+    if (ok) {
+      setAgentPromptAutosaveState("saved");
+      promptAutosaveResetRef.current = window.setTimeout(() => {
+        setAgentPromptAutosaveState("idle");
+        promptAutosaveResetRef.current = null;
+      }, 1200);
+      return;
+    }
+    setAgentPromptAutosaveState("error");
+  }, [agentPromptDirty, workspaceId, handleSaveAgentPrompt]);
+
+  const flushSubagentPromptAutosave = useCallback(async () => {
+    if (subagentPromptAutosaveDebounceRef.current) {
+      window.clearTimeout(subagentPromptAutosaveDebounceRef.current);
+      subagentPromptAutosaveDebounceRef.current = null;
+    }
+    if (subagentPromptAutosaveResetRef.current) {
+      window.clearTimeout(subagentPromptAutosaveResetRef.current);
+      subagentPromptAutosaveResetRef.current = null;
+    }
+    if (!subagentPromptDirty || !workspaceId) return;
+    setSubagentPromptAutosaveState("saving");
+    const ok = await handleSaveSubagentPrompt();
+    if (ok) {
+      setSubagentPromptAutosaveState("saved");
+      subagentPromptAutosaveResetRef.current = window.setTimeout(() => {
+        setSubagentPromptAutosaveState("idle");
+        subagentPromptAutosaveResetRef.current = null;
+      }, 1200);
+      return;
+    }
+    setSubagentPromptAutosaveState("error");
+  }, [subagentPromptDirty, workspaceId, handleSaveSubagentPrompt]);
+
+  const flushWorkspaceAllowlistAutosave = useCallback(async () => {
+    if (allowlistAutosaveDebounceRef.current) {
+      window.clearTimeout(allowlistAutosaveDebounceRef.current);
+      allowlistAutosaveDebounceRef.current = null;
+    }
+    if (allowlistAutosaveResetRef.current) {
+      window.clearTimeout(allowlistAutosaveResetRef.current);
+      allowlistAutosaveResetRef.current = null;
+    }
+    if (!workspaceId || !workspaceExecution || !workspaceAllowlistDirty) return;
+    if (!isContainerizedEnvironment(workspaceExecution.environment) || workspaceExecution.network_mode !== "allowlist") {
+      return;
+    }
+    setWorkspaceAllowlistAutosaveState("saving");
+    const ok = await handleSaveWorkspaceAllowlist();
+    if (ok) {
+      setWorkspaceAllowlistAutosaveState("saved");
+      allowlistAutosaveResetRef.current = window.setTimeout(() => {
+        setWorkspaceAllowlistAutosaveState("idle");
+        allowlistAutosaveResetRef.current = null;
+      }, 1200);
+      return;
+    }
+    setWorkspaceAllowlistAutosaveState("error");
+  }, [workspaceId, workspaceExecution, workspaceAllowlistDirty, handleSaveWorkspaceAllowlist]);
+
+  const flushWorktreeBootstrapAutosave = useCallback(async () => {
+    if (worktreeBootstrapAutosaveDebounceRef.current) {
+      window.clearTimeout(worktreeBootstrapAutosaveDebounceRef.current);
+      worktreeBootstrapAutosaveDebounceRef.current = null;
+    }
+    if (worktreeBootstrapAutosaveResetRef.current) {
+      window.clearTimeout(worktreeBootstrapAutosaveResetRef.current);
+      worktreeBootstrapAutosaveResetRef.current = null;
+    }
+    if (!workspaceId || !worktreeBootstrapDirty) return;
+    setWorktreeBootstrapAutosaveState("saving");
+    const ok = await handleSaveWorktreeBootstrapConfig();
+    if (ok) {
+      setWorktreeBootstrapAutosaveState("saved");
+      worktreeBootstrapAutosaveResetRef.current = window.setTimeout(() => {
+        setWorktreeBootstrapAutosaveState("idle");
+        worktreeBootstrapAutosaveResetRef.current = null;
+      }, 1200);
+      return;
+    }
+    setWorktreeBootstrapAutosaveState("error");
+  }, [workspaceId, worktreeBootstrapDirty, handleSaveWorktreeBootstrapConfig]);
+
+  const flushMergeQueueAutosave = useCallback(async () => {
+    if (mergeQueueAutosaveDebounceRef.current) {
+      window.clearTimeout(mergeQueueAutosaveDebounceRef.current);
+      mergeQueueAutosaveDebounceRef.current = null;
+    }
+    if (!workspaceId || !mergeQueueDirty) return;
+    await handleSaveMergeQueueConfig({ showValidationErrors: false });
+  }, [workspaceId, mergeQueueDirty, handleSaveMergeQueueConfig]);
+
+  const flushSectionAutosaves = useCallback(
+    async (section: SectionId) => {
+      if (section === "agent_system_prompt") {
+        await flushAgentPromptAutosave();
+        await flushSubagentPromptAutosave();
+        return;
+      }
+      if (section === "container_network") {
+        await flushWorkspaceAllowlistAutosave();
+        return;
+      }
+      if (section === "worktree_bootstrap") {
+        await flushWorktreeBootstrapAutosave();
+        return;
+      }
+      if (section === "merge_queue") {
+        await flushMergeQueueAutosave();
+      }
+    },
+    [
+      flushAgentPromptAutosave,
+      flushSubagentPromptAutosave,
+      flushWorkspaceAllowlistAutosave,
+      flushWorktreeBootstrapAutosave,
+      flushMergeQueueAutosave,
+    ],
+  );
+
+  const handleSectionChange = useCallback(
+    async (nextSection: SectionId) => {
+      if (nextSection === active) return;
+      await flushSectionAutosaves(active);
+      setActive(nextSection);
+      window.location.hash = nextSection;
+    },
+    [active, flushSectionAutosaves, setActive],
+  );
 
   const handleDevRestart = useCallback(
     async (mode: "drain" | "immediate") => {
@@ -2202,7 +2485,292 @@ export default function SettingsPage() {
     }
   }, [workspaceFromQuery, workspaceId]);
 
-  const anySaving = saving || editorSaving || agentPromptSaving || subagentPromptSaving || clientSettingsSaving;
+  useEffect(() => {
+    if (active !== "agent_system_prompt") return;
+    if (!workspaceId || !agentPromptConfig) return;
+    if (!agentPromptDirty || agentPromptSaving) return;
+    if (promptAutosaveResetRef.current) {
+      window.clearTimeout(promptAutosaveResetRef.current);
+      promptAutosaveResetRef.current = null;
+    }
+    setAgentPromptAutosaveState("pending");
+    if (promptAutosaveDebounceRef.current) {
+      window.clearTimeout(promptAutosaveDebounceRef.current);
+    }
+    promptAutosaveDebounceRef.current = window.setTimeout(() => {
+      promptAutosaveDebounceRef.current = null;
+      flushAgentPromptAutosave().catch(() => {});
+    }, 1000);
+  }, [
+    active,
+    workspaceId,
+    agentPromptConfig,
+    agentPromptDirty,
+    agentPromptSaving,
+    agentPromptText,
+    flushAgentPromptAutosave,
+  ]);
+
+  useEffect(() => {
+    if (active !== "agent_system_prompt") return;
+    if (agentPromptDirty) return;
+    if (promptAutosaveDebounceRef.current) {
+      window.clearTimeout(promptAutosaveDebounceRef.current);
+      promptAutosaveDebounceRef.current = null;
+    }
+    if (agentPromptAutosaveState === "pending") {
+      setAgentPromptAutosaveState("idle");
+    }
+  }, [active, agentPromptDirty, agentPromptAutosaveState]);
+
+  useEffect(() => {
+    if (active !== "agent_system_prompt") return;
+    if (!workspaceId || !subagentPromptConfig) return;
+    if (!subagentPromptDirty || subagentPromptSaving) return;
+    if (subagentPromptAutosaveResetRef.current) {
+      window.clearTimeout(subagentPromptAutosaveResetRef.current);
+      subagentPromptAutosaveResetRef.current = null;
+    }
+    setSubagentPromptAutosaveState("pending");
+    if (subagentPromptAutosaveDebounceRef.current) {
+      window.clearTimeout(subagentPromptAutosaveDebounceRef.current);
+    }
+    subagentPromptAutosaveDebounceRef.current = window.setTimeout(() => {
+      subagentPromptAutosaveDebounceRef.current = null;
+      flushSubagentPromptAutosave().catch(() => {});
+    }, 1000);
+  }, [
+    active,
+    workspaceId,
+    subagentPromptConfig,
+    subagentPromptDirty,
+    subagentPromptSaving,
+    subagentPromptText,
+    flushSubagentPromptAutosave,
+  ]);
+
+  useEffect(() => {
+    if (active !== "agent_system_prompt") return;
+    if (subagentPromptDirty) return;
+    if (subagentPromptAutosaveDebounceRef.current) {
+      window.clearTimeout(subagentPromptAutosaveDebounceRef.current);
+      subagentPromptAutosaveDebounceRef.current = null;
+    }
+    if (subagentPromptAutosaveState === "pending") {
+      setSubagentPromptAutosaveState("idle");
+    }
+  }, [active, subagentPromptDirty, subagentPromptAutosaveState]);
+
+  useEffect(() => {
+    if (active !== "container_network") return;
+    if (!workspaceId || !workspaceExecution) return;
+    if (!isContainerizedEnvironment(workspaceExecution.environment) || workspaceExecution.network_mode !== "allowlist") {
+      if (allowlistAutosaveDebounceRef.current) {
+        window.clearTimeout(allowlistAutosaveDebounceRef.current);
+        allowlistAutosaveDebounceRef.current = null;
+      }
+      setWorkspaceAllowlistAutosaveState("idle");
+      return;
+    }
+  }, [active, workspaceId, workspaceExecution]);
+
+  useEffect(() => {
+    if (active !== "container_network") return;
+    if (!workspaceId || !workspaceExecution) return;
+    if (!workspaceAllowlistDirty || workspaceAllowlistSaving) return;
+    if (!isContainerizedEnvironment(workspaceExecution.environment) || workspaceExecution.network_mode !== "allowlist") {
+      return;
+    }
+    if (allowlistAutosaveResetRef.current) {
+      window.clearTimeout(allowlistAutosaveResetRef.current);
+      allowlistAutosaveResetRef.current = null;
+    }
+    setWorkspaceAllowlistAutosaveState("pending");
+    if (allowlistAutosaveDebounceRef.current) {
+      window.clearTimeout(allowlistAutosaveDebounceRef.current);
+    }
+    allowlistAutosaveDebounceRef.current = window.setTimeout(() => {
+      allowlistAutosaveDebounceRef.current = null;
+      flushWorkspaceAllowlistAutosave().catch(() => {});
+    }, 1000);
+  }, [
+    active,
+    workspaceId,
+    workspaceExecution,
+    workspaceAllowlistDirty,
+    workspaceAllowlistSaving,
+    workspaceAllowlistText,
+    flushWorkspaceAllowlistAutosave,
+  ]);
+
+  useEffect(() => {
+    if (active !== "container_network") return;
+    if (workspaceAllowlistDirty) return;
+    if (allowlistAutosaveDebounceRef.current) {
+      window.clearTimeout(allowlistAutosaveDebounceRef.current);
+      allowlistAutosaveDebounceRef.current = null;
+    }
+    if (workspaceAllowlistAutosaveState === "pending") {
+      setWorkspaceAllowlistAutosaveState("idle");
+    }
+  }, [active, workspaceAllowlistDirty, workspaceAllowlistAutosaveState]);
+
+  useEffect(() => {
+    if (active !== "worktree_bootstrap") return;
+    if (!workspaceId) return;
+    if (!worktreeBootstrapDirty || worktreeBootstrapSaving || worktreeBootstrapLoading) return;
+    if (worktreeBootstrapAutosaveResetRef.current) {
+      window.clearTimeout(worktreeBootstrapAutosaveResetRef.current);
+      worktreeBootstrapAutosaveResetRef.current = null;
+    }
+    setWorktreeBootstrapAutosaveState("pending");
+    if (worktreeBootstrapAutosaveDebounceRef.current) {
+      window.clearTimeout(worktreeBootstrapAutosaveDebounceRef.current);
+    }
+    worktreeBootstrapAutosaveDebounceRef.current = window.setTimeout(() => {
+      worktreeBootstrapAutosaveDebounceRef.current = null;
+      flushWorktreeBootstrapAutosave().catch(() => {});
+    }, 1000);
+  }, [
+    active,
+    workspaceId,
+    worktreeBootstrapDirty,
+    worktreeBootstrapSaving,
+    worktreeBootstrapLoading,
+    worktreeBootstrapForm,
+    flushWorktreeBootstrapAutosave,
+  ]);
+
+  useEffect(() => {
+    if (active !== "worktree_bootstrap") return;
+    if (worktreeBootstrapDirty) return;
+    if (worktreeBootstrapAutosaveDebounceRef.current) {
+      window.clearTimeout(worktreeBootstrapAutosaveDebounceRef.current);
+      worktreeBootstrapAutosaveDebounceRef.current = null;
+    }
+    if (worktreeBootstrapAutosaveState === "pending") {
+      setWorktreeBootstrapAutosaveState("idle");
+    }
+  }, [active, worktreeBootstrapDirty, worktreeBootstrapAutosaveState]);
+
+  useEffect(() => {
+    if (active !== "merge_queue") return;
+    if (!workspaceId) return;
+    if (!mergeQueueDirty || mergeQueueConfigSaving || mergeQueueConfigLoading) return;
+    const targetBranch = mergeQueueForm.target_branch.trim();
+    if (!targetBranch) return;
+    if (mergeQueueForm.push_on_success && (!mergeQueueForm.push_remote.trim() || !mergeQueueForm.push_branch.trim())) {
+      return;
+    }
+    if (mergeQueueAutosaveDebounceRef.current) {
+      window.clearTimeout(mergeQueueAutosaveDebounceRef.current);
+    }
+    mergeQueueAutosaveDebounceRef.current = window.setTimeout(() => {
+      mergeQueueAutosaveDebounceRef.current = null;
+      handleSaveMergeQueueConfig({ showValidationErrors: false }).catch(() => {});
+    }, 1000);
+  }, [
+    active,
+    workspaceId,
+    mergeQueueDirty,
+    mergeQueueConfigSaving,
+    mergeQueueConfigLoading,
+    mergeQueueForm,
+    handleSaveMergeQueueConfig,
+  ]);
+
+  useEffect(() => {
+    if (active !== "merge_queue") return;
+    if (mergeQueueDirty) return;
+    if (mergeQueueAutosaveDebounceRef.current) {
+      window.clearTimeout(mergeQueueAutosaveDebounceRef.current);
+      mergeQueueAutosaveDebounceRef.current = null;
+    }
+  }, [active, mergeQueueDirty]);
+
+  useEffect(() => {
+    const previousActive = previousActiveRef.current;
+    if (previousActive !== active) {
+      flushSectionAutosaves(previousActive).catch(() => {});
+    }
+    previousActiveRef.current = active;
+  }, [active, flushSectionAutosaves]);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (active === "agent_system_prompt") {
+        if (promptAutosaveDebounceRef.current) {
+          window.clearTimeout(promptAutosaveDebounceRef.current);
+          promptAutosaveDebounceRef.current = null;
+        }
+        if (subagentPromptAutosaveDebounceRef.current) {
+          window.clearTimeout(subagentPromptAutosaveDebounceRef.current);
+          subagentPromptAutosaveDebounceRef.current = null;
+        }
+        if (agentPromptDirty) {
+          handleSaveAgentPrompt().catch(() => {});
+        }
+        if (subagentPromptDirty) {
+          handleSaveSubagentPrompt().catch(() => {});
+        }
+        return;
+      }
+      if (active === "container_network") {
+        if (allowlistAutosaveDebounceRef.current) {
+          window.clearTimeout(allowlistAutosaveDebounceRef.current);
+          allowlistAutosaveDebounceRef.current = null;
+        }
+        if (workspaceAllowlistDirty) {
+          handleSaveWorkspaceAllowlist().catch(() => {});
+        }
+        return;
+      }
+      if (active === "worktree_bootstrap") {
+        if (worktreeBootstrapAutosaveDebounceRef.current) {
+          window.clearTimeout(worktreeBootstrapAutosaveDebounceRef.current);
+          worktreeBootstrapAutosaveDebounceRef.current = null;
+        }
+        if (worktreeBootstrapDirty) {
+          handleSaveWorktreeBootstrapConfig().catch(() => {});
+        }
+        return;
+      }
+      if (active === "merge_queue") {
+        if (mergeQueueAutosaveDebounceRef.current) {
+          window.clearTimeout(mergeQueueAutosaveDebounceRef.current);
+          mergeQueueAutosaveDebounceRef.current = null;
+        }
+        if (mergeQueueDirty) {
+          handleSaveMergeQueueConfig({ showValidationErrors: false }).catch(() => {});
+        }
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [
+    active,
+    agentPromptDirty,
+    handleSaveAgentPrompt,
+    subagentPromptDirty,
+    handleSaveSubagentPrompt,
+    workspaceAllowlistDirty,
+    handleSaveWorkspaceAllowlist,
+    worktreeBootstrapDirty,
+    handleSaveWorktreeBootstrapConfig,
+    mergeQueueDirty,
+    handleSaveMergeQueueConfig,
+  ]);
+
+  const anySaving =
+    saving
+    || editorSaving
+    || agentPromptSaving
+    || subagentPromptSaving
+    || worktreeBootstrapSaving
+    || mergeQueueConfigSaving
+    || workspaceAllowlistSaving
+    || workspaceNetworkPolicySaving
+    || clientSettingsSaving;
 
   const vscodeRemoteTargets: DesktopEditorSettings["target"][] = [
     "vscode",
@@ -2364,98 +2932,233 @@ export default function SettingsPage() {
 
     if (active === "analytics") {
       return (
-        <PrivacySection>
-          <Card>
-            <Row
-              title="Health and Usage Metrics"
-              description="Share anonymous health and usage metrics with ctx. Does not include PII, code, or prompts."
-              control={
-                <Toggle
-                  checked={telemetryEnabled}
-                  disabled={!loaded}
-                  onChange={setTelemetryEnabled}
-                  ariaLabel="Health and Usage Metrics"
-                />
-              }
-            />
-          </Card>
-        </PrivacySection>
+        <GeneralSection>
+          <div className="settings-preferences-flat">
+            <div className="settings-preferences-group">
+              <Row
+                title="Health and Usage Metrics"
+                description="Share anonymous health and usage metrics with ctx. Does not include PII, code, or prompts."
+                control={
+                  <Toggle
+                    checked={telemetryEnabled}
+                    disabled={!loaded}
+                    onChange={setTelemetryEnabled}
+                    ariaLabel="Health and Usage Metrics"
+                  />
+                }
+              />
+            </div>
+          </div>
+        </GeneralSection>
       );
     }
 
     if (active === "worktree_bootstrap") {
-      const example = `setup_command: \"pnpm install\"\ntimeout_sec: 60\nwait_for_completion: false`;
+      const bootstrapDisabled = !workspaceId || worktreeBootstrapLoading || worktreeBootstrapSaving;
+      const hasSetupCommand = worktreeBootstrapForm.setup_command.trim().length > 0;
+      const bootstrapDerivedControlsDisabled = bootstrapDisabled || !hasSetupCommand;
+      const bootstrapAutosaveStatusLabel = promptAutosaveStatusLabel(worktreeBootstrapAutosaveState);
+      const bootstrapAutosaveActive = worktreeBootstrapAutosaveState !== "idle";
 
       return (
-        <>
-          <Card title="Worktree Bootstrap">
-            <Row
-              title="Example"
-              description="Bootstrap settings are stored per-workspace in your local daemon."
-              control={<pre className="settings-code-block">{example}</pre>}
-            />
-          </Card>
-        </>
+        <GeneralSection>
+          <div className="settings-preferences-flat">
+            <div className="settings-preferences-group">
+              <div className="settings-row settings-row-stack">
+                <div className="settings-row-inline-head">
+                  <div className="settings-row-left">
+                    <div className="settings-row-title">Setup command</div>
+                    <div className="settings-row-desc">
+                      Shell command to run when a new worktree starts (for example, install dependencies).
+                    </div>
+                  </div>
+                  <div
+                    className={`settings-autosave-status settings-autosave-status-${worktreeBootstrapAutosaveState} ${bootstrapAutosaveActive ? "" : "settings-autosave-status-placeholder"}`}
+                  >
+                    {worktreeBootstrapAutosaveState === "pending" || worktreeBootstrapAutosaveState === "saving" ? (
+                      <Loader2 size={14} className="settings-autosave-spin" aria-hidden="true" />
+                    ) : null}
+                    {worktreeBootstrapAutosaveState === "saved" ? <Check size={14} aria-hidden="true" /> : null}
+                    <span>{bootstrapAutosaveStatusLabel}</span>
+                  </div>
+                </div>
+                <div className="settings-row-field">
+                  <input
+                    className="settings-control settings-control-block wb-mono"
+                    value={worktreeBootstrapForm.setup_command}
+                    onChange={(e) =>
+                      setWorktreeBootstrapForm((prev) => ({
+                        ...prev,
+                        setup_command: e.target.value,
+                        timeout_sec: e.target.value.trim().length > 0 ? prev.timeout_sec : "",
+                        wait_for_completion: e.target.value.trim().length > 0 ? prev.wait_for_completion : false,
+                      }))}
+                    disabled={bootstrapDisabled}
+                    placeholder="./prepare-worktree.sh"
+                    aria-label="Worktree bootstrap setup command"
+                  />
+                </div>
+              </div>
+              <Row
+                title="Timeout (seconds)"
+                description="Timeout for the worktree bootstrap command."
+                control={
+                  <input
+                    className="settings-control"
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={worktreeBootstrapForm.timeout_sec}
+                    onChange={(e) =>
+                      setWorktreeBootstrapForm((prev) => ({
+                        ...prev,
+                        timeout_sec: e.target.value,
+                      }))}
+                    disabled={bootstrapDerivedControlsDisabled}
+                    placeholder="60"
+                    inputMode="numeric"
+                    aria-label="Worktree bootstrap timeout seconds"
+                  />
+                }
+              />
+              <div className="settings-row">
+                <div className="settings-row-left">
+                  <div className="settings-row-title settings-row-title-with-info">
+                    <span>Delay agent start until completion</span>
+                    <button
+                      type="button"
+                      className="settings-inline-info-btn"
+                      onClick={() => setWorktreeWaitInfoOpen(true)}
+                      aria-label="Learn about wait for completion"
+                      title="Learn more"
+                    >
+                      <Info size={14} aria-hidden="true" />
+                    </button>
+                  </div>
+                  <div className="settings-row-desc">
+                    If enabled, agents will wait for worktree to finish bootstrapping before starting.
+                  </div>
+                </div>
+                <div className="settings-row-right">
+                  <Toggle
+                    checked={worktreeBootstrapForm.wait_for_completion}
+                    onChange={(value) =>
+                      setWorktreeBootstrapForm((prev) => ({
+                        ...prev,
+                        wait_for_completion: value,
+                      }))}
+                    disabled={bootstrapDerivedControlsDisabled}
+                    ariaLabel="Wait for worktree bootstrap completion"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          {worktreeBootstrapError ? <div className="settings-banner settings-banner-error">{worktreeBootstrapError}</div> : null}
+        </GeneralSection>
       );
     }
 
     if (active === "agent_system_prompt") {
-      const statusLabel = agentPromptConfig?.source === "config" ? "Custom" : "Default";
       const promptDirty = agentPromptDirty;
-      const subagentDirty = subagentPromptDirty;
-      const canSave = Boolean(workspaceId) && !agentPromptSaving && !subagentPromptSaving && (promptDirty || subagentDirty);
-      const promptSaving = agentPromptSaving || subagentPromptSaving;
+      const autosaveStatusLabel = promptAutosaveStatusLabel(agentPromptAutosaveState);
+      const autosaveActive = agentPromptAutosaveState !== "idle";
+      const subagentAutosaveStatusLabel = promptAutosaveStatusLabel(subagentPromptAutosaveState);
+      const subagentAutosaveActive = subagentPromptAutosaveState !== "idle";
 
       return (
-        <>
-          <Card title="Agent System Prompt">
-            <Row
-              title="Prompt append"
-              description="Saved in local per-workspace settings. Pre-filled with the default; edit to override."
-              control={
-                <textarea
-                  className="settings-control settings-control-wide"
-                  rows={6}
-                  value={agentPromptText}
-                  onChange={(e) => setAgentPromptText(e.target.value)}
-                  disabled={!workspaceId || agentPromptLoading}
-                  placeholder="Add a custom system prompt append."
-                />
-              }
-            />
-            <Row
-              title="Subagent prompt append"
-              description="Saved in local per-workspace settings. Pre-filled with the default; edit to override."
-              control={
-                <textarea
-                  className="settings-control settings-control-wide"
-                  rows={4}
-                  value={subagentPromptText}
-                  onChange={(e) => setSubagentPromptText(e.target.value)}
-                  disabled={!workspaceId || subagentPromptLoading}
-                  placeholder="Add a custom subagent system prompt append."
-                />
-              }
-            />
-            <Row
-              title="Actions"
-              control={
-                <button
-                  type="button"
-                  className="settings-btn"
-                  onClick={() => handleSavePromptAppends().catch(() => {})}
-                  disabled={!canSave}
-                >
-                  {promptSaving ? "Saving…" : "Save"}
-                </button>
-              }
-            />
-          </Card>
+        <GeneralSection>
+          <div className="settings-preferences-flat">
+            <div className="settings-preferences-group">
+              <div className="settings-row settings-row-stack">
+                <div className="settings-row-inline-head">
+                  <div className="settings-row-left">
+                    <div className="settings-row-title">Prompt Append</div>
+                    <div className="settings-row-desc">
+                      In addition to the default prompt managed by your agent harness and any other prompts you provide directly or in AGENTS.md, this is an additional prompt that relates specifically to informing agents about their environment - specifically being run inside ctx, the container and network policies, and the tools available. We recommend keeping this as the default value as we have optimized it accordingly.
+                    </div>
+                  </div>
+                  <div
+                    className={`settings-autosave-status settings-autosave-status-${agentPromptAutosaveState} ${autosaveActive ? "" : "settings-autosave-status-placeholder"}`}
+                  >
+                    {agentPromptAutosaveState === "pending" || agentPromptAutosaveState === "saving" ? (
+                      <Loader2 size={14} className="settings-autosave-spin" aria-hidden="true" />
+                    ) : null}
+                    {agentPromptAutosaveState === "saved" ? <Check size={14} aria-hidden="true" /> : null}
+                    <span>{autosaveStatusLabel}</span>
+                  </div>
+                </div>
+                <div className="settings-row-field">
+                  <div className="settings-monaco-wrap">
+                    <Editor
+                      width="100%"
+                      height="220px"
+                      defaultLanguage="markdown"
+                      theme={themeVariant === "dark" ? "vs-dark" : "vs"}
+                      value={agentPromptText}
+                      onChange={(value) => setAgentPromptText(value ?? "")}
+                      options={{
+                        minimap: { enabled: false },
+                        lineNumbers: "off",
+                        wordWrap: "on",
+                        scrollBeyondLastLine: false,
+                        automaticLayout: true,
+                        readOnly: !workspaceId || agentPromptLoading || agentPromptSaving,
+                        padding: { top: 10, bottom: 10 },
+                      }}
+                      loading="Loading editor..."
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="settings-row settings-row-stack">
+                <div className="settings-row-inline-head">
+                  <div className="settings-row-left">
+                    <div className="settings-row-title">Subagent prompt append</div>
+                    <div className="settings-row-desc">
+                      Saved in local per-workspace settings. Pre-filled with the default; edit to override.
+                    </div>
+                  </div>
+                  <div
+                    className={`settings-autosave-status settings-autosave-status-${subagentPromptAutosaveState} ${subagentAutosaveActive ? "" : "settings-autosave-status-placeholder"}`}
+                  >
+                    {subagentPromptAutosaveState === "pending" || subagentPromptAutosaveState === "saving" ? (
+                      <Loader2 size={14} className="settings-autosave-spin" aria-hidden="true" />
+                    ) : null}
+                    {subagentPromptAutosaveState === "saved" ? <Check size={14} aria-hidden="true" /> : null}
+                    <span>{subagentAutosaveStatusLabel}</span>
+                  </div>
+                </div>
+                <div className="settings-row-field">
+                  <div className="settings-monaco-wrap">
+                    <Editor
+                      width="100%"
+                      height="170px"
+                      defaultLanguage="markdown"
+                      theme={themeVariant === "dark" ? "vs-dark" : "vs"}
+                      value={subagentPromptText}
+                      onChange={(value) => setSubagentPromptText(value ?? "")}
+                      options={{
+                        minimap: { enabled: false },
+                        lineNumbers: "off",
+                        wordWrap: "on",
+                        scrollBeyondLastLine: false,
+                        automaticLayout: true,
+                        readOnly: !workspaceId || subagentPromptLoading || subagentPromptSaving,
+                        padding: { top: 10, bottom: 10 },
+                      }}
+                      loading="Loading editor..."
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
           {agentPromptLoading ? <div className="settings-banner">Loading agent prompt…</div> : null}
           {agentPromptError ? <div className="settings-banner settings-banner-error">{agentPromptError}</div> : null}
           {subagentPromptLoading ? <div className="settings-banner">Loading subagent prompt…</div> : null}
           {subagentPromptError ? <div className="settings-banner settings-banner-error">{subagentPromptError}</div> : null}
-        </>
+        </GeneralSection>
       );
     }
 
@@ -2659,6 +3362,10 @@ export default function SettingsPage() {
     if (active === "container_network") {
       const exec = workspaceExecution;
       const allowlistActive = isContainerizedEnvironment(exec?.environment) && exec?.network_mode === "allowlist";
+      const allowlistEditorDisabled =
+        workspaceExecutionLoading || workspaceAllowlistSaving || !allowlistActive;
+      const allowlistAutosaveStatusLabel = promptAutosaveStatusLabel(workspaceAllowlistAutosaveState);
+      const allowlistAutosaveActive = workspaceAllowlistAutosaveState !== "idle";
 
       return (
         <GeneralSection>
@@ -2715,38 +3422,52 @@ export default function SettingsPage() {
 
             <div className="settings-preferences-group">
               <div className="settings-row settings-row-stack">
-                <div className="settings-row-left">
-                  <div className="settings-row-title">Network allowlist</div>
-                  <div className="settings-row-desc">
-                    Edit allowlist entries (one per line). Changes apply to future container runs for this workspace.
+                <div className="settings-row-inline-head">
+                  <div className="settings-row-left">
+                    <div className="settings-row-title">Network allowlist</div>
+                    <div className="settings-row-desc">
+                      Edit allowlist entries (one per line). Changes apply to future container runs for this workspace.
+                    </div>
+                  </div>
+                  <div
+                    className={`settings-autosave-status settings-autosave-status-${workspaceAllowlistAutosaveState} ${allowlistAutosaveActive ? "" : "settings-autosave-status-placeholder"}`}
+                  >
+                    {workspaceAllowlistAutosaveState === "pending" || workspaceAllowlistAutosaveState === "saving" ? (
+                      <Loader2 size={14} className="settings-autosave-spin" aria-hidden="true" />
+                    ) : null}
+                    {workspaceAllowlistAutosaveState === "saved" ? <Check size={14} aria-hidden="true" /> : null}
+                    <span>{allowlistAutosaveStatusLabel}</span>
                   </div>
                 </div>
               </div>
               <div className="settings-allowlist-block">
-                <textarea
-                  className="settings-control settings-allowlist-textarea wb-mono"
-                  value={workspaceAllowlistText}
-                  onChange={(e) => {
-                    setWorkspaceAllowlistText(e.target.value);
-                    setWorkspaceAllowlistDirty(true);
-                  }}
-                  disabled={!allowlistActive || workspaceExecutionLoading}
-                  placeholder="github.com"
-                />
-                {!allowlistActive ? (
-                  <div className="settings-subtle">
-                    The allowlist is only active when Network policy is set to Allowlist for this workspace.
-                  </div>
-                ) : null}
-                <div className="settings-row-right">
-                  <button
-                    type="button"
-                    className="settings-btn"
-                    onClick={() => handleSaveWorkspaceAllowlist().catch(() => {})}
-                    disabled={!allowlistActive || !workspaceAllowlistDirty || workspaceAllowlistSaving || workspaceExecutionLoading}
-                  >
-                    {workspaceAllowlistSaving ? "Saving…" : "Save allowlist"}
-                  </button>
+                <div
+                  className={`settings-monaco-wrap ${allowlistEditorDisabled ? "settings-monaco-wrap-disabled" : ""}`}
+                  aria-disabled={allowlistEditorDisabled}
+                >
+                  <Editor
+                    width="100%"
+                    height="170px"
+                    defaultLanguage="plaintext"
+                    theme={themeVariant === "dark" ? "vs-dark" : "vs"}
+                    value={workspaceAllowlistText}
+                    onChange={(value) => {
+                      if (allowlistEditorDisabled) return;
+                      setWorkspaceAllowlistText(value ?? "");
+                      setWorkspaceAllowlistDirty(true);
+                    }}
+                    options={{
+                      minimap: { enabled: false },
+                      lineNumbers: "off",
+                      wordWrap: "off",
+                      scrollBeyondLastLine: false,
+                      automaticLayout: true,
+                      readOnly: allowlistEditorDisabled,
+                      domReadOnly: allowlistEditorDisabled,
+                      padding: { top: 10, bottom: 10 },
+                    }}
+                    loading="Loading editor..."
+                  />
                 </div>
               </div>
             </div>
@@ -2759,112 +3480,105 @@ export default function SettingsPage() {
     if (active === "merge_queue") {
       const mergeQueueDisabled = !workspaceId || mergeQueueConfigLoading || mergeQueueConfigSaving;
       return (
-        <>
-          <Card title="Merge Queue Configuration">
-            <Row
-              title="Target branch"
-              control={
-                <input
-                  className="settings-control"
-                  value={mergeQueueForm.target_branch}
-                  onChange={(e) =>
-                    setMergeQueueForm((prev) => ({
-                      ...prev,
-                      target_branch: e.target.value,
-                    }))}
-                  disabled={mergeQueueDisabled}
-                  placeholder="main"
-                />
-              }
-            />
-            <Row
-              title="Verification command (optional)"
-              control={
-                <input
-                  className="settings-control"
-                  value={mergeQueueForm.verify_command}
-                  onChange={(e) =>
-                    setMergeQueueForm((prev) => ({
-                      ...prev,
-                      verify_command: e.target.value,
-                    }))}
-                  disabled={mergeQueueDisabled}
-                  placeholder="pnpm test"
-                />
-              }
-            />
-          </Card>
+        <GeneralSection>
+          <div className="settings-preferences-flat">
+            <div className="settings-preferences-group">
+              <Row
+                title="Target branch"
+                control={
+                  <input
+                    className="settings-control"
+                    value={mergeQueueForm.target_branch}
+                    onChange={(e) =>
+                      setMergeQueueForm((prev) => ({
+                        ...prev,
+                        target_branch: e.target.value,
+                      }))}
+                    disabled={mergeQueueDisabled}
+                    placeholder="main"
+                  />
+                }
+              />
+              <div className="settings-row settings-row-stack">
+                <div className="settings-row-left">
+                  <div className="settings-row-title">Verification command (optional)</div>
+                </div>
+                <div className="settings-row-field">
+                  <input
+                    className="settings-control settings-control-block wb-mono"
+                    value={mergeQueueForm.verify_command}
+                    onChange={(e) =>
+                      setMergeQueueForm((prev) => ({
+                        ...prev,
+                        verify_command: e.target.value,
+                      }))}
+                    disabled={mergeQueueDisabled}
+                    placeholder="pnpm test"
+                    aria-label="Merge queue verification command"
+                  />
+                </div>
+              </div>
+            </div>
 
-          <Card title="Advanced">
-            <Row
-              title="Push to remote on success"
-              control={
-                <Toggle
-                  checked={mergeQueueForm.push_on_success}
-                  disabled={mergeQueueDisabled}
-                  onChange={(value) =>
-                    setMergeQueueForm((prev) => ({
-                      ...prev,
-                      push_on_success: value,
-                      push_remote: value ? (prev.push_remote.trim() || "origin") : prev.push_remote,
-                      push_branch: value ? (prev.push_branch.trim() || prev.target_branch.trim() || "main") : prev.push_branch,
-                    }))}
-                  ariaLabel="Push to remote on success"
-                />
-              }
-            />
-            {mergeQueueForm.push_on_success ? (
-              <>
-                <Row
-                  title="Push remote"
-                  control={
-                    <input
-                      className="settings-control"
-                      value={mergeQueueForm.push_remote}
-                      onChange={(e) =>
-                        setMergeQueueForm((prev) => ({
-                          ...prev,
-                          push_remote: e.target.value,
-                        }))}
-                      disabled={mergeQueueDisabled}
-                      placeholder="origin"
-                    />
-                  }
-                />
-                <Row
-                  title="Push branch"
-                  control={
-                    <input
-                      className="settings-control"
-                      value={mergeQueueForm.push_branch}
-                      onChange={(e) =>
-                        setMergeQueueForm((prev) => ({
-                          ...prev,
-                          push_branch: e.target.value,
-                        }))}
-                      disabled={mergeQueueDisabled}
-                      placeholder={mergeQueueForm.target_branch.trim() || "main"}
-                    />
-                  }
-                />
-              </>
-            ) : null}
-            <Row
-              title="Actions"
-              control={
-                <button
-                  type="button"
-                  className="settings-btn"
-                  onClick={() => handleSaveMergeQueueConfig().catch(() => {})}
-                  disabled={!workspaceId || mergeQueueConfigLoading || mergeQueueConfigSaving || !mergeQueueDirty}
-                >
-                  {mergeQueueConfigSaving ? "Saving…" : "Save"}
-                </button>
-              }
-            />
-          </Card>
+            <div className="settings-preferences-group">
+              <Row
+                title="Push to remote on success"
+                control={
+                  <Toggle
+                    checked={mergeQueueForm.push_on_success}
+                    disabled={mergeQueueDisabled}
+                    onChange={(value) =>
+                      setMergeQueueForm((prev) => ({
+                        ...prev,
+                        push_on_success: value,
+                        push_remote: value ? (prev.push_remote.trim() || "origin") : prev.push_remote,
+                        push_branch: value ? (prev.push_branch.trim() || prev.target_branch.trim() || "main") : prev.push_branch,
+                      }))}
+                    ariaLabel="Push to remote on success"
+                  />
+                }
+              />
+              {mergeQueueForm.push_on_success ? (
+                <>
+                  <Row
+                    title="Push remote"
+                    control={
+                      <input
+                        className="settings-control"
+                        value={mergeQueueForm.push_remote}
+                        onChange={(e) =>
+                          setMergeQueueForm((prev) => ({
+                            ...prev,
+                            push_remote: e.target.value,
+                          }))}
+                        disabled={mergeQueueDisabled}
+                        placeholder="origin"
+                      />
+                    }
+                  />
+                  <Row
+                    title="Push branch"
+                    control={
+                      <input
+                        className="settings-control"
+                        value={mergeQueueForm.push_branch}
+                        onChange={(e) =>
+                          setMergeQueueForm((prev) => ({
+                            ...prev,
+                            push_branch: e.target.value,
+                          }))}
+                        disabled={mergeQueueDisabled}
+                        placeholder={mergeQueueForm.target_branch.trim() || "main"}
+                      />
+                    }
+                  />
+                </>
+              ) : null}
+            </div>
+
+          </div>
           {mergeQueueConfigError ? <div className="settings-banner settings-banner-error">{mergeQueueConfigError}</div> : null}
-        </>
+        </GeneralSection>
       );
     }
 
@@ -3396,158 +4110,167 @@ export default function SettingsPage() {
       const tauriStatusTitle = tauriModelStatus.error ?? tauriModelStatus.detail ?? undefined;
 
       return (
-        <>
-          <Card>
-            <Row
-              title="Enable dictation"
-              description="Enable speech-to-text dictation in the composer."
-              control={
-                <Toggle
-                  checked={dictationEnabled}
-                  disabled={!loaded}
-                  onChange={setDictationEnabled}
-                  ariaLabel="Enable dictation"
-                />
-              }
-            />
-            <Row
-              title="Provider"
-              description="Choose the dictation backend."
-              control={
-                <Select
-                  value={dictationProvider}
-                  onValueChange={(value) => setDictationProvider(value as DictationSettings["provider"])}
-                  disabled={!dictationEnabled}
-                >
-                  <SelectTrigger className="tw-min-w-[10rem]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="livekit_inference">LiveKit Inference (cloud)</SelectItem>
-                    <SelectItem value="tauri_stt">Desktop STT (Tauri)</SelectItem>
-                  </SelectContent>
-                </Select>
-              }
-            />
-            {dictationProvider === "tauri_stt" && !isDesktopApp() ? (
-              <div className="settings-banner">Desktop STT requires the ctx desktop app.</div>
-            ) : null}
-            {dictationProvider === "livekit_inference" ? (
+        <GeneralSection>
+          <div className="settings-preferences-flat">
+            <div className="settings-preferences-group">
               <Row
-                title="Model"
-                description="Transcription model used by LiveKit."
+                title="Enable dictation"
+                description="Enable speech-to-text dictation in the composer."
                 control={
-                  <Select value={model} onValueChange={setModel} disabled={!dictationEnabled}>
-                    <SelectTrigger className="tw-min-w-[10rem]">
+                  <Toggle
+                    checked={dictationEnabled}
+                    disabled={!loaded}
+                    onChange={setDictationEnabled}
+                    ariaLabel="Enable dictation"
+                  />
+                }
+              />
+              <Row
+                title="Provider"
+                description="Choose the dictation backend."
+                control={
+                  <Select
+                    value={dictationProvider}
+                    onValueChange={(value) => setDictationProvider(value as DictationSettings["provider"])}
+                    disabled={!dictationEnabled}
+                  >
+                    <SelectTrigger className="settings-control settings-select tw-min-w-[10rem]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {MODEL_OPTIONS.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>
-                          {o.label}
-                        </SelectItem>
-                      ))}
+                      <SelectItem value="livekit_inference">LiveKit Inference (cloud)</SelectItem>
+                      <SelectItem value="tauri_stt">Desktop STT (Tauri)</SelectItem>
                     </SelectContent>
                   </Select>
                 }
               />
-            ) : null}
-            <Row
-              title="Language"
-              description={
-                dictationProvider === "tauri_stt"
-                  ? "Locale code for desktop dictation (e.g. en-US, es-ES)."
-                  : "BCP-47 code (e.g. en, es, multi)."
-              }
-              control={
-                <input
-                  className="settings-control"
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
-                  disabled={!dictationEnabled}
-                  placeholder="en"
-                />
-              }
-            />
-            {dictationProvider === "livekit_inference" ? (
-              <>
+              {dictationProvider === "livekit_inference" ? (
                 <Row
-                  title="Inference base URL"
-                  description="LiveKit Agent Gateway endpoint."
+                  title="Model"
+                  description="Transcription model used by LiveKit."
                   control={
-                    <input
-                      className="settings-control settings-control-wide"
-                      value={baseUrl}
-                      onChange={(e) => setBaseUrl(e.target.value)}
+                    <Select
+                      value={model}
+                      onValueChange={setModel}
                       disabled={!dictationEnabled}
-                      placeholder="https://agent-gateway.livekit.cloud/v1"
-                    />
+                    >
+                      <SelectTrigger className="settings-control settings-select tw-min-w-[10rem]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {MODEL_OPTIONS.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   }
                 />
-                <Row
-                  title="LiveKit API key"
-                  description="Stored locally in your ctx data dir."
-                  control={
-                    <input
-                      className="settings-control settings-control-wide"
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      disabled={!dictationEnabled}
-                      placeholder="APIK…"
-                    />
-                  }
-                />
-                <Row
-                  title="LiveKit API secret"
-                  description={apiSecretSet ? "Secret is stored; enter a new value to rotate." : "Required."}
-                  control={
-                    <input
-                      className="settings-control settings-control-wide"
-                      value={apiSecret}
-                      onChange={(e) => setApiSecret(e.target.value)}
-                      disabled={!dictationEnabled}
-                      placeholder={apiSecretSet ? "(set)" : "MAB…"}
-                      type="password"
-                    />
-                  }
-                />
-              </>
-            ) : (
+              ) : null}
               <Row
-                title="Desktop models"
-                description="Download the Vosk model for the selected language."
+                title="Language"
+                description={
+                  dictationProvider === "tauri_stt"
+                    ? "Locale code for desktop dictation (e.g. en-US, es-ES)."
+                    : "BCP-47 code (e.g. en, es, multi)."
+                }
                 control={
-                  <div className="row" style={{ gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    <span className={`settings-pill ${tauriStatusClass}`} title={tauriStatusTitle}>
-                      {tauriStatusLabel}
-                    </span>
-                    {showTauriDownload ? (
-                      <button
-                        type="button"
-                        className="settings-btn settings-btn-secondary"
-                        onClick={() => startTauriModelDownload().catch(() => {})}
-                        disabled={tauriDownloadDisabled}
-                        style={
-                          tauriDownloadPct !== null
-                            ? ({ ["--settings-install-pct" as any]: `${tauriDownloadPct}%` } as any)
-                            : undefined
-                        }
-                      >
-                        {tauriDownloadLabel}
-                      </button>
-                    ) : null}
-                  </div>
+                  <input
+                    className="settings-control"
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value)}
+                    disabled={!dictationEnabled}
+                    placeholder="en"
+                  />
                 }
               />
-            )}
-          </Card>
+            </div>
+
+            <div className="settings-preferences-group">
+              {dictationProvider === "livekit_inference" ? (
+                <>
+                  <Row
+                    title="Inference base URL"
+                    description="LiveKit Agent Gateway endpoint."
+                    control={
+                      <input
+                        className="settings-control settings-control-wide"
+                        value={baseUrl}
+                        onChange={(e) => setBaseUrl(e.target.value)}
+                        disabled={!dictationEnabled}
+                        placeholder="https://agent-gateway.livekit.cloud/v1"
+                      />
+                    }
+                  />
+                  <Row
+                    title="LiveKit API key"
+                    description="Stored locally in your ctx data dir."
+                    control={
+                      <input
+                        className="settings-control settings-control-wide"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        disabled={!dictationEnabled}
+                        placeholder="APIK…"
+                      />
+                    }
+                  />
+                  <Row
+                    title="LiveKit API secret"
+                    description={apiSecretSet ? "Secret is stored; enter a new value to rotate." : "Required."}
+                    control={
+                      <input
+                        className="settings-control settings-control-wide"
+                        value={apiSecret}
+                        onChange={(e) => setApiSecret(e.target.value)}
+                        disabled={!dictationEnabled}
+                        placeholder={apiSecretSet ? "(set)" : "MAB…"}
+                        type="password"
+                      />
+                    }
+                  />
+                </>
+              ) : (
+                <Row
+                  title="Desktop models"
+                  description="Download the Vosk model for the selected language."
+                  control={
+                    <div className="row" style={{ gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      <span className={`settings-pill ${tauriStatusClass}`} title={tauriStatusTitle}>
+                        {tauriStatusLabel}
+                      </span>
+                      {showTauriDownload ? (
+                        <button
+                          type="button"
+                          className="settings-btn settings-btn-secondary"
+                          onClick={() => startTauriModelDownload().catch(() => {})}
+                          disabled={tauriDownloadDisabled}
+                          style={
+                            tauriDownloadPct !== null
+                              ? ({ ["--settings-install-pct" as any]: `${tauriDownloadPct}%` } as any)
+                              : undefined
+                          }
+                        >
+                          {tauriDownloadLabel}
+                        </button>
+                      ) : null}
+                    </div>
+                  }
+                />
+              )}
+            </div>
+          </div>
+          {dictationProvider === "tauri_stt" && !isDesktopApp() ? (
+            <div className="settings-banner">Desktop STT requires the ctx desktop app.</div>
+          ) : null}
           {dictationProvider === "tauri_stt" && tauriModelStatus.error ? (
             <div className="settings-banner settings-banner-error">{tauriModelStatus.error}</div>
           ) : null}
           {!dictationCanSave && dictationEnabled && dictationProvider === "livekit_inference" ? (
             <div className="settings-banner settings-banner-error">Enter an API key and secret to enable dictation.</div>
           ) : null}
-        </>
+        </GeneralSection>
       );
     }
 
@@ -3582,123 +4305,129 @@ export default function SettingsPage() {
               : "Install";
       return (
         <>
-          <Card>
-            <Row
-              title="Mode"
-              description="Choose between remote API or local model for session titles."
-              control={
-                <Select
-                  value={titleGenMode}
-                  onValueChange={(value) => setTitleGenMode(value as TitleGenerationSettings["mode"])}
-                >
-                  <SelectTrigger className="tw-min-w-[10rem]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="remote">Remote</SelectItem>
-                    <SelectItem value="local">Local</SelectItem>
-                  </SelectContent>
-                </Select>
-              }
-            />
-            {titleGenMode === "remote" ? (
-              <>
+          <GeneralSection>
+            <div className="settings-preferences-flat">
+              <div className="settings-preferences-group">
                 <Row
-                  title="Base URL"
-                  description="OpenAI-compatible endpoint for title generation (best-effort; falls back to truncating the prompt)."
+                  title="Mode"
+                  description="Choose between remote API or local model for session titles."
                   control={
-                    <input
-                      className="settings-control settings-control-wide"
-                      value={titleGenBaseUrl}
-                      onChange={(e) => setTitleGenBaseUrl(e.target.value)}
-                      placeholder="https://openrouter.ai/api/v1"
+                    <Select
+                      value={titleGenMode}
+                      onValueChange={(value) => setTitleGenMode(value as TitleGenerationSettings["mode"])}
+                    >
+                      <SelectTrigger className="settings-control settings-select tw-min-w-[10rem]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="remote">Remote</SelectItem>
+                        <SelectItem value="local">Local</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  }
+                />
+              </div>
+              <div className="settings-preferences-group">
+                {titleGenMode === "remote" ? (
+                  <>
+                    <Row
+                      title="Base URL"
+                      description="OpenAI-compatible endpoint for title generation (best-effort; falls back to truncating the prompt)."
+                      control={
+                        <input
+                          className="settings-control settings-control-wide"
+                          value={titleGenBaseUrl}
+                          onChange={(e) => setTitleGenBaseUrl(e.target.value)}
+                          placeholder="https://openrouter.ai/api/v1"
+                        />
+                      }
                     />
-                  }
-                />
-                <Row
-                  title="API key"
-                  description="Stored locally in your ctx data dir."
-                  control={
-                    <input
-                      className="settings-control settings-control-wide"
-                      value={titleGenApiKey}
-                      onChange={(e) => setTitleGenApiKey(e.target.value)}
-                      placeholder="sk-..."
-                      type="password"
+                    <Row
+                      title="API key"
+                      description="Stored locally in your ctx data dir."
+                      control={
+                        <input
+                          className="settings-control settings-control-wide"
+                          value={titleGenApiKey}
+                          onChange={(e) => setTitleGenApiKey(e.target.value)}
+                          placeholder="sk-..."
+                          type="password"
+                        />
+                      }
                     />
-                  }
-                />
-                <Row
-                  title="Model"
-                  description="Model used for generating session titles."
-                  control={
-                    <input
-                      className="settings-control settings-control-wide"
-                      value={titleGenModel}
-                      onChange={(e) => setTitleGenModel(e.target.value)}
-                      placeholder="google/gemini-3-flash-preview"
+                    <Row
+                      title="Model"
+                      description="Model used for generating session titles."
+                      control={
+                        <input
+                          className="settings-control settings-control-wide"
+                          value={titleGenModel}
+                          onChange={(e) => setTitleGenModel(e.target.value)}
+                          placeholder="google/gemini-3-flash-preview"
+                        />
+                      }
                     />
-                  }
-                />
-                <Row
-                  title="Structured output (JSON)"
-                  description="Enable when the model supports JSON schema output."
-                  control={
-                    <Toggle
-                      checked={titleGenUseJson}
-                      disabled={!loaded}
-                      onChange={setTitleGenUseJson}
-                      ariaLabel="Structured output"
+                    <Row
+                      title="Structured output (JSON)"
+                      description="Enable when the model supports JSON schema output."
+                      control={
+                        <Toggle
+                          checked={titleGenUseJson}
+                          disabled={!loaded}
+                          onChange={setTitleGenUseJson}
+                          ariaLabel="Structured output"
+                        />
+                      }
                     />
-                  }
-                />
-              </>
-            ) : (
-              <>
-                <Row
-                  title="Local model id"
-                  description="Model id for the local title generator."
-                  control={
-                    <input
-                      className="settings-control settings-control-wide"
-                      value={titleGenLocalModelId}
-                      onChange={(e) => setTitleGenLocalModelId(e.target.value)}
-                      placeholder="ggml-org/Qwen3-1.7B-GGUF"
+                  </>
+                ) : (
+                  <>
+                    <Row
+                      title="Local model id"
+                      description="Model id for the local title generator."
+                      control={
+                        <input
+                          className="settings-control settings-control-wide"
+                          value={titleGenLocalModelId}
+                          onChange={(e) => setTitleGenLocalModelId(e.target.value)}
+                          placeholder="ggml-org/Qwen3-1.7B-GGUF"
+                        />
+                      }
                     />
-                  }
-                />
-                <Row
-                  title="Structured output (JSON)"
-                  description="Enable when the model supports JSON schema output."
-                  control={
-                    <Toggle
-                      checked={titleGenLocalUseJson}
-                      disabled={!loaded}
-                      onChange={setTitleGenLocalUseJson}
-                      ariaLabel="Structured output"
+                    <Row
+                      title="Structured output (JSON)"
+                      description="Enable when the model supports JSON schema output."
+                      control={
+                        <Toggle
+                          checked={titleGenLocalUseJson}
+                          disabled={!loaded}
+                          onChange={setTitleGenLocalUseJson}
+                          ariaLabel="Structured output"
+                        />
+                      }
                     />
-                  }
-                />
-                <Row
-                  title="Local install"
-                  description="Downloads the llama.cpp runtime and Qwen3 1.7B model to the daemon host."
-                  control={
-                    <>
-                      <div className={localStatusClass}>{localStatusLabel}</div>
-                      <button
-                        type="button"
-                        className="settings-btn"
-                        onClick={onInstallTitleGenerationLocal}
-                        disabled={titleGenLocalInstallBusy || localInstallRunning || localInstalled}
-                      >
-                        {installLabel}
-                      </button>
-                    </>
-                  }
-                />
-              </>
-            )}
-          </Card>
+                    <Row
+                      title="Local install"
+                      description="Downloads the llama.cpp runtime and Qwen3 1.7B model to the daemon host."
+                      control={
+                        <div className="row" style={{ gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
+                          <span className={localStatusClass}>{localStatusLabel}</span>
+                          <button
+                            type="button"
+                            className="settings-btn"
+                            onClick={onInstallTitleGenerationLocal}
+                            disabled={titleGenLocalInstallBusy || localInstallRunning || localInstalled}
+                          >
+                            {installLabel}
+                          </button>
+                        </div>
+                      }
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+          </GeneralSection>
           {titleGenMode === "local" && titleGenLocalStatusError ? (
             <div className="settings-banner settings-banner-error">{titleGenLocalStatusError}</div>
           ) : null}
@@ -4629,36 +5358,40 @@ export default function SettingsPage() {
       }
       return (
         <>
-          <Card title="Provider Restart">
-            <Row
-              title="Drain all providers"
-              description="Let active turns finish, then restart provider processes."
-              control={
-                <button
-                  type="button"
-                  className="settings-btn settings-btn-secondary"
-                  onClick={() => handleDevRestart("drain")}
-                  disabled={devRestartBusy}
-                >
-                  {devRestartBusy ? "Draining..." : "Drain"}
-                </button>
-              }
-            />
-            <Row
-              title="Immediate restart"
-              description="Interrupt running turns and restart provider processes immediately."
-              control={
-                <button
-                  type="button"
-                  className="settings-btn"
-                  onClick={() => handleDevRestart("immediate")}
-                  disabled={devRestartBusy}
-                >
-                  {devRestartBusy ? "Restarting..." : "Restart now"}
-                </button>
-              }
-            />
-          </Card>
+          <GeneralSection>
+            <div className="settings-preferences-flat">
+              <div className="settings-preferences-group">
+                <Row
+                  title="Drain all providers"
+                  description="Let active turns finish, then restart provider processes."
+                  control={
+                    <button
+                      type="button"
+                      className="settings-btn settings-btn-secondary"
+                      onClick={() => handleDevRestart("drain")}
+                      disabled={devRestartBusy}
+                    >
+                      {devRestartBusy ? "Draining..." : "Drain"}
+                    </button>
+                  }
+                />
+                <Row
+                  title="Immediate restart"
+                  description="Interrupt running turns and restart provider processes immediately."
+                  control={
+                    <button
+                      type="button"
+                      className="settings-btn"
+                      onClick={() => handleDevRestart("immediate")}
+                      disabled={devRestartBusy}
+                    >
+                      {devRestartBusy ? "Restarting..." : "Restart now"}
+                    </button>
+                  }
+                />
+              </div>
+            </div>
+          </GeneralSection>
           {devRestartError ? (
             <div className="settings-banner settings-banner-error">{devRestartError}</div>
           ) : null}
@@ -4749,8 +5482,7 @@ export default function SettingsPage() {
                     type="button"
                     className={`settings-nav-item ${active === s.id ? "settings-nav-item-active" : ""}`}
                     onClick={() => {
-                      setActive(s.id);
-                      window.location.hash = s.id;
+                      handleSectionChange(s.id).catch(() => {});
                     }}
                   >
                     {s.label}
@@ -4767,8 +5499,7 @@ export default function SettingsPage() {
                     type="button"
                     className={`settings-nav-item ${active === s.id ? "settings-nav-item-active" : ""}`}
                     onClick={() => {
-                      setActive(s.id);
-                      window.location.hash = s.id;
+                      handleSectionChange(s.id).catch(() => {});
                     }}
                   >
                     {s.label}
@@ -4792,6 +5523,49 @@ export default function SettingsPage() {
           </div>
         </main>
       </div>
+      {worktreeWaitInfoOpen ? (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Wait for completion information"
+          onClick={() => setWorktreeWaitInfoOpen(false)}
+        >
+            <div className="modal settings-info-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="settings-harness-modal-header">
+                <div className="settings-main-title settings-info-modal-title">
+                  Should agents wait for worktree bootstrap completion?
+                </div>
+                <button
+                  type="button"
+                  className="settings-harness-modal-close"
+                  onClick={() => setWorktreeWaitInfoOpen(false)}
+                  aria-label="Close"
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="settings-info-modal-body">
+              <p>
+                Whether to wait depends on what your worktree bootstrap command does.
+              </p>
+              <p>
+                If bootstrap prepares immediate agent inputs, such as generating AGENTS.md, enable this so agents
+                start only after setup completes.
+              </p>
+              <p>
+                If bootstrap does longer-running setup, such as installing dependencies, you can disable this and let
+                agents start immediately. Agents usually begin with repository discovery and can often recover if
+                dependencies are not ready yet.
+              </p>
+              <p>
+                When disabled, bootstrap still runs in the background while agents start. You will still be notified
+                if your setup script fails or times out.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
