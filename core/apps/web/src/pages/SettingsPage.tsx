@@ -118,6 +118,13 @@ import {
   SUBAGENT_PROMPT_DEFAULT,
 } from "./SettingsPage.constants";
 import { Card, Metric, Row, Toggle } from "./SettingsPage.components";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { GeneralSection } from "./settings/sections/GeneralSection";
 import { PrivacySection } from "./settings/sections/PrivacySection";
 import { useSettingsActions } from "./settings/useSettingsActions";
@@ -2180,39 +2187,43 @@ export default function SettingsPage() {
               title="Theme"
               description="Match your system setting or force a mode."
               control={
-                <select
-                  className="settings-control settings-select"
-                  value={theme}
-                  onChange={(event) => onThemeChange(event.target.value as ThemeMode)}
-                  aria-label="Theme mode"
-                >
-                  <option value="system">System</option>
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                </select>
+                <Select value={theme} onValueChange={(value) => onThemeChange(value as ThemeMode)}>
+                  <SelectTrigger className="settings-control settings-select" aria-label="Theme mode">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="system">System</SelectItem>
+                    <SelectItem value="light">Light</SelectItem>
+                    <SelectItem value="dark">Dark</SelectItem>
+                  </SelectContent>
+                </Select>
               }
             />
             <Row
               title="Default IDE"
               description={isDesktopApp() ? "Used for open-in-editor links." : "Available in the desktop app."}
               control={
-                <select
-                  className="settings-control settings-select"
+                <Select
                   value={editorSettings.target}
-                  onChange={(e) =>
+                  onValueChange={(value) =>
                     setEditorSettings((prev) => ({
                       ...prev,
-                      target: e.target.value as DesktopEditorSettings["target"],
+                      target: value as DesktopEditorSettings["target"],
                     }))
                   }
                   disabled={!isDesktopApp() || !editorLoaded}
                 >
-                  {EDITOR_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger className="settings-control settings-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EDITOR_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               }
             />
             {editorSettings.target === "custom" ? (
@@ -2302,21 +2313,25 @@ export default function SettingsPage() {
               title="Workspace"
               description="Choose the repo to edit."
               control={
-                <select
-                  className="settings-control settings-select"
-                  value={workspaceId ?? ""}
-                  onChange={(e) => setWorkspaceId(e.target.value || null)}
+                <Select
+                  value={workspaceId ?? undefined}
+                  onValueChange={(value) => setWorkspaceId(value || null)}
                   disabled={!anyWorkspace}
                 >
-                  {workspaces.map((ws) => {
-                    const id = idToString((ws as any).id);
-                    return (
-                      <option key={id} value={id}>
-                        {ws.name}
-                      </option>
-                    );
-                  })}
-                </select>
+                  <SelectTrigger className="settings-control settings-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {workspaces.map((ws) => {
+                      const id = idToString((ws as any).id);
+                      return (
+                        <SelectItem key={id} value={id}>
+                          {ws.name}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
               }
             />
             <Row
@@ -2344,21 +2359,25 @@ export default function SettingsPage() {
               title="Workspace"
               description="Choose the repo to configure."
               control={
-                <select
-                  className="settings-control settings-select"
-                  value={workspaceId ?? ""}
-                  onChange={(e) => setWorkspaceId(e.target.value || null)}
+                <Select
+                  value={workspaceId ?? undefined}
+                  onValueChange={(value) => setWorkspaceId(value || null)}
                   disabled={!anyWorkspace}
                 >
-                  {workspaces.map((ws) => {
-                    const id = idToString((ws as any).id);
-                    return (
-                      <option key={id} value={id}>
-                        {ws.name}
-                      </option>
-                    );
-                  })}
-                </select>
+                  <SelectTrigger className="settings-control settings-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {workspaces.map((ws) => {
+                      const id = idToString((ws as any).id);
+                      return (
+                        <SelectItem key={id} value={id}>
+                          {ws.name}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
               }
             />
             <Row
@@ -2425,21 +2444,25 @@ export default function SettingsPage() {
               title="Workspace"
               description="Choose the repo to configure."
               control={
-                <select
-                  className="settings-control settings-select"
-                  value={workspaceId ?? ""}
-                  onChange={(e) => setWorkspaceId(e.target.value || null)}
+                <Select
+                  value={workspaceId ?? undefined}
+                  onValueChange={(value) => setWorkspaceId(value || null)}
                   disabled={!anyWorkspace}
                 >
-                  {workspaces.map((ws) => {
-                    const id = idToString((ws as any).id);
-                    return (
-                      <option key={id} value={id}>
-                        {ws.name}
-                      </option>
-                    );
-                  })}
-                </select>
+                  <SelectTrigger className="settings-control settings-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {workspaces.map((ws) => {
+                      const id = idToString((ws as any).id);
+                      return (
+                        <SelectItem key={id} value={id}>
+                          {ws.name}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
               }
             />
             <Row
@@ -2662,21 +2685,25 @@ export default function SettingsPage() {
               title="Workspace"
               description="Choose the repo to inspect."
               control={
-                <select
-                  className="settings-control settings-select"
-                  value={workspaceId ?? ""}
-                  onChange={(e) => setWorkspaceId(e.target.value || null)}
+                <Select
+                  value={workspaceId ?? undefined}
+                  onValueChange={(value) => setWorkspaceId(value || null)}
                   disabled={!anyWorkspace}
                 >
-                  {workspaces.map((ws) => {
-                    const id = idToString((ws as any).id);
-                    return (
-                      <option key={id} value={id}>
-                        {ws.name}
-                      </option>
-                    );
-                  })}
-                </select>
+                  <SelectTrigger className="settings-control settings-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {workspaces.map((ws) => {
+                      const id = idToString((ws as any).id);
+                      return (
+                        <SelectItem key={id} value={id}>
+                          {ws.name}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
               }
             />
             <Row
@@ -2744,21 +2771,25 @@ export default function SettingsPage() {
               title="Workspace"
               description="Choose the repo to inspect."
               control={
-                <select
-                  className="settings-control settings-select"
-                  value={workspaceId ?? ""}
-                  onChange={(e) => setWorkspaceId(e.target.value || null)}
+                <Select
+                  value={workspaceId ?? undefined}
+                  onValueChange={(value) => setWorkspaceId(value || null)}
                   disabled={!anyWorkspace}
                 >
-                  {workspaces.map((ws) => {
-                    const id = idToString((ws as any).id);
-                    return (
-                      <option key={id} value={id}>
-                        {ws.name}
-                      </option>
-                    );
-                  })}
-                </select>
+                  <SelectTrigger className="settings-control settings-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {workspaces.map((ws) => {
+                      const id = idToString((ws as any).id);
+                      return (
+                        <SelectItem key={id} value={id}>
+                          {ws.name}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
               }
             />
             <Row
@@ -2893,15 +2924,21 @@ export default function SettingsPage() {
               title="Mode"
               description="Auto picks safe limits for this machine."
               control={
-                <select
-                  className="settings-control settings-select"
+                <Select
                   value={resourceGovernanceMode}
-                  onChange={(e) => setResourceGovernanceMode(e.target.value as ResourceGovernanceSettings["mode"])}
+                  onValueChange={(value) =>
+                    setResourceGovernanceMode(value as ResourceGovernanceSettings["mode"])
+                  }
                   disabled={!resourceGovernanceEnabled}
                 >
-                  <option value="auto">Auto (recommended)</option>
-                  <option value="custom">Custom</option>
-                </select>
+                  <SelectTrigger className="settings-control settings-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto (recommended)</SelectItem>
+                    <SelectItem value="custom">Custom</SelectItem>
+                  </SelectContent>
+                </Select>
               }
             />
             {resourceGovernanceMode === "custom" ? (
@@ -3395,15 +3432,19 @@ export default function SettingsPage() {
               title="Provider"
               description="Choose the dictation backend."
               control={
-                <select
-                  className="settings-control settings-select"
+                <Select
                   value={dictationProvider}
-                  onChange={(e) => setDictationProvider(e.target.value as DictationSettings["provider"])}
+                  onValueChange={(value) => setDictationProvider(value as DictationSettings["provider"])}
                   disabled={!dictationEnabled}
                 >
-                  <option value="livekit_inference">LiveKit Inference (cloud)</option>
-                  <option value="tauri_stt">Desktop STT (Tauri)</option>
-                </select>
+                  <SelectTrigger className="settings-control settings-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="livekit_inference">LiveKit Inference (cloud)</SelectItem>
+                    <SelectItem value="tauri_stt">Desktop STT (Tauri)</SelectItem>
+                  </SelectContent>
+                </Select>
               }
             />
             {dictationProvider === "tauri_stt" && !isDesktopApp() ? (
@@ -3414,18 +3455,18 @@ export default function SettingsPage() {
                 title="Model"
                 description="Transcription model used by LiveKit."
                 control={
-                  <select
-                    className="settings-control settings-select"
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    disabled={!dictationEnabled}
-                  >
-                    {MODEL_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
+                  <Select value={model} onValueChange={setModel} disabled={!dictationEnabled}>
+                    <SelectTrigger className="settings-control settings-select">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MODEL_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 }
               />
             ) : null}
@@ -3564,14 +3605,18 @@ export default function SettingsPage() {
               title="Mode"
               description="Choose between remote API or local model for session titles."
               control={
-                <select
-                  className="settings-control settings-select"
+                <Select
                   value={titleGenMode}
-                  onChange={(e) => setTitleGenMode(e.target.value as TitleGenerationSettings["mode"])}
+                  onValueChange={(value) => setTitleGenMode(value as TitleGenerationSettings["mode"])}
                 >
-                  <option value="remote">Remote</option>
-                  <option value="local">Local</option>
-                </select>
+                  <SelectTrigger className="settings-control settings-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="remote">Remote</SelectItem>
+                    <SelectItem value="local">Local</SelectItem>
+                  </SelectContent>
+                </Select>
               }
             />
             {titleGenMode === "remote" ? (
@@ -4454,22 +4499,25 @@ export default function SettingsPage() {
                 title="Active account"
                 description="All Codex sessions use this account until changed."
                 control={
-                  <select
-                    className="settings-control settings-select"
-                    value={codexActiveId ?? ""}
-                    onChange={(e) => onCodexSetActive(e.target.value || null)}
+                  <Select
+                    value={codexActiveId ?? undefined}
+                    onValueChange={(value) => onCodexSetActive(value || null)}
                     disabled={codexAccountsBusy || codexAccountsList.length === 0}
                   >
-                    <option value="" disabled>
-                      {codexAccountsList.length ? "Select an account" : "No accounts connected"}
-                    </option>
-                    {codexAccountsList.map((account) => (
-                      <option key={account.id} value={account.id}>
-                        {account.label}
-                        {account.email ? ` · ${account.email}` : ""}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="settings-control settings-select">
+                      <SelectValue
+                        placeholder={codexAccountsList.length ? "Select an account" : "No accounts connected"}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {codexAccountsList.map((account) => (
+                        <SelectItem key={account.id} value={account.id}>
+                          {account.label}
+                          {account.email ? ` · ${account.email}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 }
               />
               <Row
@@ -4671,16 +4719,20 @@ export default function SettingsPage() {
               title="Provider control"
               description="Default is full capability. Switch to honor the harness's native permission settings."
               control={
-                <select
-                  className="settings-control settings-select"
+                <Select
                   value={providerControlMode}
-                  onChange={(e) => setProviderControlMode(e.target.value as SandboxingSettings["provider_control_mode"])}
+                  onValueChange={(value) => setProviderControlMode(value as SandboxingSettings["provider_control_mode"])}
                   disabled={!loaded}
                 >
-                  <option value="full">Full capability</option>
-                  <option value="harness_native">Harness-native permissions</option>
-                  <option value="ctx_enforced">ctx-enforced (coming soon)</option>
-                </select>
+                  <SelectTrigger className="settings-control settings-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="full">Full capability</SelectItem>
+                    <SelectItem value="harness_native">Harness-native permissions</SelectItem>
+                    <SelectItem value="ctx_enforced">ctx-enforced (coming soon)</SelectItem>
+                  </SelectContent>
+                </Select>
               }
             />
           </Card>

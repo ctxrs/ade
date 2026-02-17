@@ -272,42 +272,6 @@
   opacity: 1;
 }
 
-.settings-toggle {
-  width: 40px;
-  height: 22px;
-  border-radius: 999px;
-  border: 1px solid var(--surface-strong);
-  background: var(--surface-active);
-  padding: 0;
-  position: relative;
-}
-
-.settings-toggle:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.settings-toggle-thumb {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
-  background: var(--text-muted);
-  transition: transform 160ms ease, background 160ms ease;
-}
-
-.settings-toggle-on {
-  background: var(--success-strong);
-  border-color: var(--success-stronger);
-}
-
-.settings-toggle-on .settings-toggle-thumb {
-  transform: translateX(18px);
-  background: var(--text-strong);
-}
-
 .settings-banner {
   border: 1px solid var(--surface-active);
   background: var(--surface-soft);

@@ -67,3 +67,31 @@ if (typeof HTMLCanvasElement !== "undefined") {
     value: () => createCanvasContextStub(),
   });
 }
+
+if (typeof HTMLElement !== "undefined") {
+  if (typeof HTMLElement.prototype.hasPointerCapture !== "function") {
+    Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+      configurable: true,
+      value: () => false,
+    });
+  }
+  if (typeof HTMLElement.prototype.setPointerCapture !== "function") {
+    Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+      configurable: true,
+      value: () => {},
+    });
+  }
+  if (typeof HTMLElement.prototype.releasePointerCapture !== "function") {
+    Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+      configurable: true,
+      value: () => {},
+    });
+  }
+}
+
+if (typeof Element !== "undefined" && typeof Element.prototype.scrollIntoView !== "function") {
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: () => {},
+  });
+}

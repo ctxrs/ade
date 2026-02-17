@@ -27,6 +27,13 @@ import {
 import { useOpenSession, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { loadSessionViewPrefsV1, saveSessionViewPrefsV1, type SessionViewVerbosity } from "../state/uiStateStore";
 import { AskUserQuestionCard } from "../components/AskUserQuestionCard";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { useSettingsSnapshot, useSettingsStore } from "../state/settingsStore";
@@ -1522,16 +1529,18 @@ export function SessionView({
                 {authUi.methods.length > 1 && (
                   <label>
                     Method
-                    <select
-                      value={authMethodId}
-                      onChange={(e) => setAuthMethodId(e.target.value)}
-                    >
-                      {authUi.methods.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
+                    <Select value={authMethodId} onValueChange={setAuthMethodId}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {authUi.methods.map((m) => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </label>
                 )}
                 <button

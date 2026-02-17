@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-02-13T15:56:51Z",
+  "generated_at": "2026-02-17T16:22:00Z",
   "providers": [
     {
       "id": "acp-crp-bridge",
@@ -8,7 +8,7 @@
       "version": "local",
       "os": "macos",
       "arch": "aarch64",
-      "sha256": "084baf6d82df276c8bac9c2d704cfe5b2aeefdd1e70a6f011b6fdff802a925b4",
+      "sha256": "8ef18e735e3211ce4191277475b972f0719ea40fd84dc916bc860cb5f282b315",
       "command": "providers/acp-crp-bridge/macos/aarch64/acp-crp-bridge",
       "args": []
     },
@@ -38,7 +38,7 @@
       "version": "0.0.0-ctx.3",
       "os": "macos",
       "arch": "aarch64",
-      "sha256": "843813015b7a39a3cb99fded23e4308826ee11c5dc2b6fd506c0eebfca272163",
+      "sha256": "72ce70c55b060f8a71ffeb716975b4a6099a83ee6a3251c86a2b52ee95737a18",
       "command": "providers/codex/macos/aarch64/codex-crp",
       "args": []
     }
@@ -79,8 +79,17 @@
       "version": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04",
       "os": "linux",
       "arch": "aarch64",
-      "sha256": "c254fba8356fff09ad93296c475dbba12fed6f53ffe9a94f2f8e43edd6bb348d",
+      "sha256": "56f53e6ede9cbc8fec5efcc37245d2d444838253d4df874b701d8ef67fab2551",
       "tar": "images/ctx-harness-linux-aarch64.tar",
+      "image": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04"
+    },
+    {
+      "id": "ctx-harness",
+      "version": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04",
+      "os": "linux",
+      "arch": "x86_64",
+      "sha256": "9832b6ca9b50717fd47b9fd813deaba48ea28d757140945d2a8e058ec460c906",
+      "tar": "images/ctx-harness-linux-x86_64.tar",
       "image": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04"
     }
   ]

@@ -16,6 +16,13 @@ import {
   listInstallEvents,
   listWorkspaces,
 } from "../api/client";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { isDesktopApp } from "../utils/desktop";
 import { errorMessage } from "../utils/errorMessage";
@@ -306,20 +313,25 @@ export default function ProvidersPage() {
       <div className="card">
         <div className="row">
           <strong>Provider status</strong>
-          <select
-            value={workspaceId ?? ""}
-            onChange={(e) => setWorkspaceId(e.target.value || null)}
+          <Select
+            value={workspaceId ?? undefined}
+            onValueChange={(value) => setWorkspaceId(value || null)}
             disabled={workspaces.length === 0}
           >
-            {workspaces.map((ws) => {
-              const id = idToString(ws.id ?? "");
-              return (
-                <option key={id} value={id}>
-                  {ws.name}
-                </option>
-              );
-            })}
-          </select>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {workspaces.map((ws) => {
+                const id = idToString(ws.id ?? "");
+                return (
+                  <SelectItem key={id} value={id}>
+                    {ws.name}
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
         </div>
         <div className="muted">Provider probes run against the selected workspace root.</div>
       </div>

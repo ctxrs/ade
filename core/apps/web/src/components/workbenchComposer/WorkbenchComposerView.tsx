@@ -4,6 +4,13 @@ import { shouldSendOnEnter } from "../../utils/keyboard";
 import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
 import { PROVIDER_INSTALLS_ENABLED } from "../../utils/providerInstallGate";
 import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToInlineAttachments } from "../../utils/messageAttachments";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
@@ -921,38 +928,46 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                               <div className="wb-harness-track-title">Track</div>
                               {catalog.baseIds.length > 0 ? (
                                 <>
-                                  <select
-                                    className="wb-harness-model-select"
+                                  <Select
                                     value={base}
-                                    onFocus={() => ns.ensureProviderOptions(id).catch(() => {})}
-                                    onChange={(e) => {
-                                      const nextBase = e.target.value;
+                                    onValueChange={(nextBase) => {
                                       const next = deriveFullModelIdForBase(catalog, nextBase, eff);
                                       updateTrackModel(t.key, next);
                                     }}
                                   >
-                                    {catalog.baseIds.map((b) => (
-                                      <option key={b} value={b}>
-                                        {catalog.displayNameByBase[b] ?? b}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  {efforts.length > 0 && (
-                                    <select
+                                    <SelectTrigger
                                       className="wb-harness-model-select"
+                                      onFocus={() => ns.ensureProviderOptions(id).catch(() => {})}
+                                    >
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {catalog.baseIds.map((b) => (
+                                        <SelectItem key={b} value={b}>
+                                          {catalog.displayNameByBase[b] ?? b}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  {efforts.length > 0 && (
+                                    <Select
                                       value={eff ?? pickDefaultEffort(efforts) ?? ""}
-                                      onChange={(e) => {
-                                        const nextEff = e.target.value || "";
+                                      onValueChange={(nextEff) => {
                                         const next = deriveFullModelIdForBase(catalog, base, nextEff || null);
                                         updateTrackModel(t.key, next);
                                       }}
                                     >
-                                      {efforts.map((x) => (
-                                        <option key={x} value={x}>
-                                          {formatEffortLabel(x)}
-                                        </option>
-                                      ))}
-                                    </select>
+                                      <SelectTrigger className="wb-harness-model-select">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {efforts.map((x) => (
+                                          <SelectItem key={x} value={x}>
+                                            {formatEffortLabel(x)}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
                                   )}
                                 </>
                               ) : (

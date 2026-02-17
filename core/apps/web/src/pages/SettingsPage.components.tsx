@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Switch } from "../components/ui/switch";
 import { clampPct } from "./SettingsPage.utils";
 
 export function Toggle({
@@ -13,17 +14,12 @@ export function Toggle({
   ariaLabel: string;
 }) {
   return (
-    <button
-      type="button"
-      className={`settings-toggle ${checked ? "settings-toggle-on" : ""}`}
-      role="switch"
-      aria-checked={checked}
-      aria-label={ariaLabel}
+    <Switch
+      checked={checked}
       disabled={disabled}
-      onClick={() => onChange(!checked)}
-    >
-      <span className="settings-toggle-thumb" aria-hidden="true" />
-    </button>
+      aria-label={ariaLabel}
+      onCheckedChange={onChange}
+    />
   );
 }
 
