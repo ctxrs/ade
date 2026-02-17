@@ -1,3 +1,4 @@
+use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
@@ -87,6 +88,8 @@ pub struct CrpSessionConfig {
     pub approval_policy: Option<AskForApproval>,
     pub sandbox_mode: Option<SandboxMode>,
     pub reasoning_trace_enabled: Option<bool>,
+    #[serde(default)]
+    pub personality: Option<Personality>,
     pub mcp_servers: Option<HashMap<String, CrpMcpServerConfig>>,
 }
 

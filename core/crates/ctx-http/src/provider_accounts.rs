@@ -606,6 +606,22 @@ pub async fn import_host_codex_auth_to_secret_store(
         )
     })?;
 
+    let registry = load_codex_registry(data_root).await;
+    for existing in &registry.accounts {
+        // Secret-backed accounts may not have a materialized auth.json in account dirs.
+        // Hydrate first so host imports dedupe across both storage modes.
+        let _ = hydrate_codex_account_home_from_secret(data_root, &existing.id).await;
+        let existing_auth_path = codex_account_dir(data_root, &existing.id).join("auth.json");
+        if let Ok(existing_payload) = tokio::fs::read_to_string(&existing_auth_path).await {
+            if let Ok(existing_auth) = serde_json::from_str::<serde_json::Value>(&existing_payload)
+            {
+                if existing_auth == auth {
+                    return set_active_codex_account(data_root, Some(existing.id.clone())).await;
+                }
+            }
+        }
+    }
+
     let account_id = uuid::Uuid::new_v4().to_string();
     let secret_ref = write_codex_secret_for_account(data_root, &account_id, &auth).await?;
     let entry = CodexAccountEntry {
@@ -1145,6 +1161,38 @@ mod tests {
         let env = codex_env_for_active_account(root).await.unwrap();
         let home = env.get("CODEX_HOME").unwrap();
         ensure_codex_auth_ready(Path::new(home)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn import_host_auth_dedupes_existing_account() {
+        let _env_lock = lock_env().await;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let host_dir = tempfile::tempdir().unwrap();
+        let auth_path = host_dir.path().join("auth.json");
+        tokio::fs::write(
+            &auth_path,
+            br#"{"tokens":{"access_token":"a","refresh_token":"b"}}"#,
+        )
+        .await
+        .unwrap();
+        let _path_guard = EnvGuard::set(
+            CTX_CODEX_HOST_AUTH_PATH_ENV,
+            auth_path.to_string_lossy().as_ref(),
+        );
+
+        let first = import_host_codex_auth_to_secret_store(root, Some("First".to_string()))
+            .await
+            .unwrap();
+        let first_active = first.active_account_id.clone().expect("active account");
+        assert_eq!(first.accounts.len(), 1);
+
+        let second = import_host_codex_auth_to_secret_store(root, Some("Second".to_string()))
+            .await
+            .unwrap();
+        let second_active = second.active_account_id.clone().expect("active account");
+        assert_eq!(second.accounts.len(), 1);
+        assert_eq!(second_active, first_active);
     }
 
     #[tokio::test]

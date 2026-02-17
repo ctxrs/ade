@@ -45,6 +45,7 @@ export type ProviderOptions = {
   modes?: unknown;
   models?: unknown;
   verify?: unknown;
+  source?: HarnessProviderSourceConfig;
   probed_at: string;
 };
 
@@ -58,6 +59,43 @@ export type ProviderAuthCheck = {
   auth_required?: boolean;
   auth_methods?: unknown;
   checked_at?: string;
+  message?: string;
+};
+
+export type HarnessSourceKind = "subscription" | "endpoint";
+export type HarnessApiShape = "openai_responses" | "anthropic_messages";
+export type HarnessEndpointVerificationStatus = "unknown" | "valid" | "invalid" | "error";
+
+export type HarnessEndpointRecord = {
+  id: string;
+  provider_id: string;
+  name: string;
+  base_url: string;
+  api_shape: HarnessApiShape;
+  auth_type: string;
+  model_override?: string | null;
+  created_at: string;
+  updated_at: string;
+  last_verification_status: HarnessEndpointVerificationStatus;
+  last_verification_at?: string | null;
+  last_error?: string | null;
+  has_api_key: boolean;
+};
+
+export type HarnessProviderSourceConfig = {
+  provider_id: string;
+  selected_source_kind: HarnessSourceKind;
+  selected_endpoint_id?: string | null;
+  endpoints: HarnessEndpointRecord[];
+};
+
+export type UpsertHarnessEndpointRequest = {
+  endpoint_id?: string | null;
+  name: string;
+  base_url: string;
+  api_shape: HarnessApiShape;
+  model_override?: string | null;
+  api_key?: string | null;
 };
 
 export type ProviderUsageSnapshot = {
@@ -72,6 +110,49 @@ export const getProviderUsage = (providerId: string, refresh?: boolean) => {
   const params = refresh ? "?refresh=true" : "";
   return apiAny<ProviderUsageSnapshot>(`/api/providers/${providerId}/usage${params}`);
 };
+
+export const getProviderHarnessConfig = (providerId: string) =>
+  apiAny<HarnessProviderSourceConfig>(`/api/providers/${providerId}/harness_config`);
+
+export const selectProviderHarnessSource = (
+  providerId: string,
+  sourceKind: HarnessSourceKind,
+  endpointId?: string | null,
+) =>
+  apiAny<HarnessProviderSourceConfig>(`/api/providers/${providerId}/harness_config/select`, {
+    method: "POST",
+    body: JSON.stringify({
+      source_kind: sourceKind,
+      endpoint_id: endpointId ?? null,
+    }),
+  });
+
+export const upsertProviderHarnessEndpoint = (providerId: string, req: UpsertHarnessEndpointRequest) =>
+  apiAny<HarnessProviderSourceConfig>(`/api/providers/${providerId}/harness_config/endpoints`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+
+export const deleteProviderHarnessEndpoint = (providerId: string, endpointId: string) =>
+  apiAny<HarnessProviderSourceConfig>(`/api/providers/${providerId}/harness_config/endpoints/${endpointId}`, {
+    method: "DELETE",
+  });
+
+export const authenticateProviderForWorkspace = (
+  workspaceId: string,
+  providerId: string,
+  methodId?: string,
+) =>
+  apiAny<ProviderAuthCheck>(`/api/workspaces/${workspaceId}/providers/${providerId}/authenticate`, {
+    method: "POST",
+    body: JSON.stringify(methodId ? { method_id: methodId } : {}),
+  });
+
+export const verifyProviderForWorkspace = (workspaceId: string, providerId: string) =>
+  apiAny<ProviderAuthCheck>(`/api/workspaces/${workspaceId}/providers/${providerId}/verify`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 
 export type CodexAccountEntry = {
   id: string;

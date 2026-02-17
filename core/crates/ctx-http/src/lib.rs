@@ -13,6 +13,7 @@ pub mod execution_effective;
 pub mod execution_setup;
 pub mod git_status;
 pub mod harness_runtime;
+pub mod harness_sources;
 pub mod installer;
 pub mod installs;
 pub mod llm;

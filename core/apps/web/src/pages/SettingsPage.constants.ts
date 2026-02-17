@@ -40,8 +40,8 @@ export const SECTIONS: Array<{
   navHidden?: boolean;
 }> = [
   { id: "general", label: "General", group: "main" },
-  { id: "agent_harnesses", label: "Agent Harnesses", group: "main" },
-  { id: "harness_subscriptions", label: "Harness Subscriptions", group: "main" },
+  { id: "agent_harnesses", label: "Harness Authentication", group: "main" },
+  { id: "harness_subscriptions", label: "Harness Subscriptions", group: "main", navHidden: true },
   { id: "models_routing", label: "Models & Routing", group: "main", navHidden: true },
   { id: "sandboxing", label: "Sandboxing", group: "main", navHidden: true },
   { id: "execution", label: "Execution", group: "main" },
@@ -50,7 +50,7 @@ export const SECTIONS: Array<{
   { id: "workspace_attachments", label: "Workspace Attachments", group: "main" },
   { id: "merge_queue", label: "Merge Queue", group: "main" },
   { id: "context_pack", label: "ctx pack", group: "main", navHidden: true },
-  { id: "resource_governance", label: "Resource Limits", group: "main" },
+  { id: "resource_governance", label: "Resource Limits", group: "main", navHidden: true },
   { id: "mobile_access", label: "Mobile Access", group: "main", navHidden: true },
   { id: "resource_utilization", label: "Resource Utilization", group: "main", navHidden: true },
   { id: "privacy", label: "Privacy", group: "main" },

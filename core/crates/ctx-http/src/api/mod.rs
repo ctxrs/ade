@@ -229,6 +229,22 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/providers/:id", get(get_provider))
         .route("/api/providers/:id/usage", get(get_provider_usage))
         .route(
+            "/api/providers/:id/harness_config",
+            get(get_provider_harness_config),
+        )
+        .route(
+            "/api/providers/:id/harness_config/select",
+            post(select_provider_harness_source),
+        )
+        .route(
+            "/api/providers/:id/harness_config/endpoints",
+            post(upsert_provider_harness_endpoint),
+        )
+        .route(
+            "/api/providers/:id/harness_config/endpoints/:endpoint_id",
+            delete(delete_provider_harness_endpoint),
+        )
+        .route(
             "/api/providers/auth/import/candidates",
             get(list_provider_auth_import_candidates),
         )
@@ -466,6 +482,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/workspaces/:id/providers/:provider_id/options",
             get(get_provider_options),
+        )
+        .route(
+            "/api/workspaces/:id/providers/:provider_id/authenticate",
+            post(authenticate_provider_for_workspace),
+        )
+        .route(
+            "/api/workspaces/:id/providers/:provider_id/verify",
+            post(verify_provider_for_workspace),
         )
         .route(
             "/api/workspaces/:id/attachments",

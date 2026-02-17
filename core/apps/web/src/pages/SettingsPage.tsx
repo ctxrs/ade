@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import type { User } from "@supabase/supabase-js";
+import { Ellipsis, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   DictationSettings,
@@ -8,7 +9,6 @@ import {
   InstallInfo,
   MobileAccessStatus,
   EnableMobileAccessResponse,
-  ProviderOptions,
   ProviderStatus,
   ProviderUsageSnapshot,
   ResourceGovernanceLimits,
@@ -35,18 +35,21 @@ import {
   devRestartProviders,
   disableMobileAccess,
   enableMobileAccess,
+  authenticateProviderForWorkspace,
   getAgentSystemPrompt,
   getSubagentSystemPrompt,
   getMergeQueueEntryLogs,
   getMobileAccessStatus,
   getCodexAccountUsage,
+  getCodexLogin,
+  getProviderHarnessConfig,
   importCodexHostAuth,
   getTitleGenerationLocalStatus,
+  HarnessProviderSourceConfig,
   Workspace,
   WorkspaceExecutionConfig,
   getInstall,
   getWorkspaceExecutionConfig,
-  getProviderOptions,
   getResourceUtilization,
   getSettings,
   idToString,
@@ -62,13 +65,16 @@ import {
   listProviders,
   listWorkspaces,
   retryMergeQueueEntry,
+  selectProviderHarnessSource,
   setCodexActiveAccount,
   startCodexLogin,
   syncWorkspaceAttachments,
+  upsertProviderHarnessEndpoint,
   updateSettings,
   updateAgentSystemPrompt,
   updateSubagentSystemPrompt,
   updateWorkspaceExecutionConfig,
+  deleteProviderHarnessEndpoint,
 } from "../api/client";
 import {
   type DesktopEditorSettings,
@@ -90,7 +96,6 @@ import {
 import { useTauriSttModelStatus } from "../utils/useTauriSttModelStatus";
 import { HARNESS_CATALOG, type HarnessCatalogEntry } from "../utils/harnessCatalog";
 import { PROVIDER_INSTALLS_ENABLED } from "../utils/providerInstallGate";
-import { formatProviderVersionDisplay } from "../utils/providerVersionLabel";
 import {
   ENTITLEMENTS_CACHE_KEY,
   ENTITLEMENTS_CACHE_TTL_MS,
@@ -133,6 +138,18 @@ import {
   summarizeCodexUsage,
   truncateText,
 } from "./SettingsPage.utils";
+import {
+  buildHarnessAuthRows,
+  defaultEndpointBaseUrlForProvider,
+  type HarnessAuthRow,
+} from "./settings/harnessAuthRows";
+import {
+  defaultEndpointProviderPresetForHarness,
+  defaultShapeForHarnessProvider,
+  getHarnessEndpointProviderPreset,
+  HARNESS_ENDPOINT_PROVIDER_PRESETS,
+  nextDefaultEndpointName,
+} from "./settings/harnessEndpointProviders";
 
 const formatAttachmentStatus = (status?: WorkspaceAttachment["status"]) => {
   switch (status) {
@@ -148,6 +165,9 @@ const formatAttachmentStatus = (status?: WorkspaceAttachment["status"]) => {
       return "Pending";
   }
 };
+
+const supportsHarnessEndpointConfig = (providerId: string): boolean =>
+  providerId === "codex" || providerId === "claude-crp";
 
 const isAttachmentSyncing = (status?: WorkspaceAttachment["status"]) => status === "pending" || status === "syncing";
 
@@ -283,9 +303,23 @@ export default function SettingsPage() {
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({});
-  const [optsBusy, setOptsBusy] = useState<Record<string, boolean>>({});
   const [providerError, setProviderError] = useState<string | null>(null);
+  const [providerHarnessConfig, setProviderHarnessConfig] = useState<
+    Record<string, HarnessProviderSourceConfig | undefined>
+  >({});
+  const [providerHarnessBusy, setProviderHarnessBusy] = useState<Record<string, boolean>>({});
+  const [harnessAuthMenuKey, setHarnessAuthMenuKey] = useState<string | null>(null);
+  const [harnessAuthModal, setHarnessAuthModal] = useState<{
+    provider_id: string;
+    stage: "choose" | "subscription" | "api_key";
+    endpoint_provider_id: string;
+    endpoint_name: string;
+    base_url: string;
+    api_key: string;
+    subscription_status: string | null;
+    subscription_busy: boolean;
+    api_key_busy: boolean;
+  } | null>(null);
   const [installBusy, setInstallBusy] = useState<string | null>(null);
   const [installs, setInstalls] = useState<Record<string, InstallSession>>({});
   const [attachments, setAttachments] = useState<WorkspaceAttachment[]>([]);
@@ -853,18 +887,24 @@ export default function SettingsPage() {
       .then(setProviders)
       .catch((e: any) => setProviderError(e?.message ?? String(e)));
 
-  const refreshCodexAccounts = useCallback(async () => {
-    setCodexAccountsBusy(true);
-    setCodexAccountsError(null);
+  const refreshCodexAccounts = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setCodexAccountsBusy(true);
+      setCodexAccountsError(null);
+    }
     try {
       const next = await listCodexAccounts();
       setCodexAccounts(next);
       return next;
     } catch (e: any) {
-      setCodexAccountsError(e?.message ?? String(e));
+      if (!opts?.silent) {
+        setCodexAccountsError(e?.message ?? String(e));
+      }
       return null;
     } finally {
-      setCodexAccountsBusy(false);
+      if (!opts?.silent) {
+        setCodexAccountsBusy(false);
+      }
     }
   }, []);
 
@@ -1196,7 +1236,7 @@ export default function SettingsPage() {
     const pending = codexAccounts?.logins?.some((login) => login.status === "pending");
     if (!pending) return;
     const t = window.setInterval(() => {
-      refreshCodexAccounts();
+      refreshCodexAccounts({ silent: true });
     }, 2000);
     return () => window.clearInterval(t);
   }, [codexAccounts, refreshCodexAccounts]);
@@ -1205,10 +1245,6 @@ export default function SettingsPage() {
     if (!codexAccounts) return;
     refreshCodexUsage({ refresh: true, silent: true });
   }, [codexAccounts?.active_account_id, codexAccounts?.accounts?.length, refreshCodexUsage]);
-
-  useEffect(() => {
-    setProviderOptions({});
-  }, [workspaceId, workspaces]);
 
   useEffect(() => {
     if (!workspaces.length) return;
@@ -1230,12 +1266,15 @@ export default function SettingsPage() {
   useEffect(() => {
     if (active !== "agent_harnesses") return;
     if (!workspaceId) return;
+    refreshCodexAccounts({ silent: true }).catch(() => {});
     for (const p of providers) {
       if (p.details?.ui_hidden === "true") continue;
-      ensureProviderOpts(p.provider_id).catch(() => {});
+      if (supportsHarnessEndpointConfig(p.provider_id)) {
+        ensureProviderHarnessConfig(p.provider_id).catch(() => {});
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, workspaceId, providers]);
+  }, [active, workspaceId, providers, refreshCodexAccounts]);
 
   useEffect(() => {
     for (const p of providers) {
@@ -1508,18 +1547,247 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, titleGenMode]);
 
-  const ensureProviderOpts = async (providerId: string, opts?: { force?: boolean }) => {
-    if (!workspaceId) return;
-    if (optsBusy[providerId]) return;
-    if (!opts?.force && providerOptions[providerId]) return;
-    setOptsBusy((prev) => ({ ...prev, [providerId]: true }));
+  useEffect(() => {
+    if (!harnessAuthMenuKey) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest(".settings-harness-auth-menu")) return;
+      if (target.closest(".settings-harness-auth-menu-trigger")) return;
+      setHarnessAuthMenuKey(null);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [harnessAuthMenuKey]);
+
+  const ensureProviderHarnessConfig = async (providerId: string, opts?: { force?: boolean }) => {
+    if (providerHarnessBusy[providerId]) return;
+    if (!opts?.force && providerHarnessConfig[providerId]) return;
+    setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: true }));
     try {
-      const o = await getProviderOptions(workspaceId, providerId);
-      setProviderOptions((prev) => ({ ...prev, [providerId]: o }));
+      const cfg = await getProviderHarnessConfig(providerId);
+      setProviderHarnessConfig((prev) => ({ ...prev, [providerId]: cfg }));
     } catch (e: any) {
       setProviderError(e?.message ?? String(e));
     } finally {
-      setOptsBusy((prev) => ({ ...prev, [providerId]: false }));
+      setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: false }));
+    }
+  };
+
+  const onDeleteProviderEndpoint = async (providerId: string, endpointId: string) => {
+    setHarnessAuthMenuKey(null);
+    setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: true }));
+    setProviderError(null);
+    try {
+      const next = await deleteProviderHarnessEndpoint(providerId, endpointId);
+      setProviderHarnessConfig((prev) => ({ ...prev, [providerId]: next }));
+    } catch (e: any) {
+      setProviderError(e?.message ?? String(e));
+    } finally {
+      setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: false }));
+    }
+  };
+
+  const onSelectProviderSource = async (
+    providerId: string,
+    sourceKind: "subscription" | "endpoint",
+    endpointId?: string | null,
+  ) => {
+    setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: true }));
+    setProviderError(null);
+    try {
+      const next = await selectProviderHarnessSource(providerId, sourceKind, endpointId ?? null);
+      setProviderHarnessConfig((prev) => ({ ...prev, [providerId]: next }));
+    } catch (e: any) {
+      setProviderError(e?.message ?? String(e));
+    } finally {
+      setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: false }));
+    }
+  };
+
+  const openHarnessAuthModal = (providerId: string) => {
+    setHarnessAuthMenuKey(null);
+    const defaultPresetId = defaultEndpointProviderPresetForHarness(providerId);
+    const defaultPreset = getHarnessEndpointProviderPreset(defaultPresetId);
+    setProviderError(null);
+    setHarnessAuthModal({
+      provider_id: providerId,
+      stage: "choose",
+      endpoint_provider_id: defaultPresetId,
+      endpoint_name: "",
+      base_url: defaultPreset.base_url ?? defaultEndpointBaseUrlForProvider(providerId),
+      api_key: "",
+      subscription_status: null,
+      subscription_busy: false,
+      api_key_busy: false,
+    });
+  };
+
+  const closeHarnessAuthModal = () => {
+    setHarnessAuthMenuKey(null);
+    setHarnessAuthModal(null);
+  };
+
+  const patchHarnessAuthModal = (patch: Partial<NonNullable<typeof harnessAuthModal>>) => {
+    setHarnessAuthModal((prev) => (prev ? { ...prev, ...patch } : prev));
+  };
+
+  const submitHarnessApiKeyModal = async () => {
+    const modal = harnessAuthModal;
+    if (!modal) return;
+    if (modal.stage !== "api_key") {
+      return;
+    }
+
+    if (!supportsHarnessEndpointConfig(modal.provider_id)) {
+      setProviderError("API key auth is not configurable for this harness yet.");
+      return;
+    }
+
+    const nameInput = modal.endpoint_name.trim();
+    const existingNames = (providerHarnessConfig[modal.provider_id]?.endpoints ?? []).map((endpoint) => endpoint.name);
+    const name = nameInput || nextDefaultEndpointName(modal.endpoint_provider_id, existingNames);
+    const base = modal.base_url.trim();
+    const key = modal.api_key.trim();
+    if (!base) {
+      setProviderError("Endpoint base URL is required.");
+      return;
+    }
+    if (!key) {
+      setProviderError("API key is required.");
+      return;
+    }
+
+    setHarnessAuthModal((prev) => (prev ? { ...prev, api_key_busy: true } : prev));
+    setProviderError(null);
+    try {
+      const next = await upsertProviderHarnessEndpoint(modal.provider_id, {
+        endpoint_id: null,
+        name,
+        base_url: base,
+        api_shape: defaultShapeForHarnessProvider(modal.provider_id),
+        api_key: key,
+      });
+      const createdEndpoint =
+        next.endpoints.find((ep) => ep.name === name && ep.base_url === base) ??
+        next.endpoints[next.endpoints.length - 1] ??
+        null;
+      const selected = createdEndpoint?.id ?? next.selected_endpoint_id ?? null;
+      const selectedNext = await selectProviderHarnessSource(modal.provider_id, "endpoint", selected);
+      setProviderHarnessConfig((prev) => ({ ...prev, [modal.provider_id]: selectedNext }));
+      closeHarnessAuthModal();
+    } catch (e: any) {
+      setProviderError(e?.message ?? String(e));
+    } finally {
+      setHarnessAuthModal((prev) => (prev ? { ...prev, api_key_busy: false } : prev));
+    }
+  };
+
+  const waitForCodexLoginOutcome = async (accountId: string): Promise<"success" | "failed" | "timeout"> => {
+    const attempts = 75;
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        const status = await getCodexLogin(accountId);
+        if (status.status === "success") return "success";
+        if (status.status === "failed") return "failed";
+      } catch {
+        // keep polling; temporary API errors should not abort the login flow
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1600));
+    }
+    return "timeout";
+  };
+
+  const submitHarnessSubscriptionModal = async () => {
+    const modal = harnessAuthModal;
+    if (!modal) return;
+    if (modal.stage !== "subscription") {
+      setHarnessAuthModal((prev) => (prev ? { ...prev, stage: "subscription" } : prev));
+    }
+
+    setHarnessAuthModal((prev) =>
+      prev ? { ...prev, subscription_busy: true, subscription_status: "Starting subscription flow..." } : prev
+    );
+    setProviderError(null);
+    setCodexAccountsError(null);
+    try {
+      if (modal.provider_id === "codex") {
+        const res = await startCodexLogin();
+        await openCodexAuthUrl(res.auth_url, {
+          accountId: res.account_id,
+          expectedCallbackUrl: res.expected_callback_url ?? null,
+          completionToken: res.completion_token,
+        });
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status: "Waiting for browser sign-in to complete. You can close this dialog after finishing auth.",
+              }
+            : prev
+        );
+        const outcome = await waitForCodexLoginOutcome(res.account_id);
+        await refreshCodexAccounts();
+        if (outcome === "success") {
+          await onSelectProviderSource("codex", "subscription", null);
+          closeHarnessAuthModal();
+          return;
+        }
+        if (outcome === "failed") {
+          setHarnessAuthModal((prev) =>
+            prev ? { ...prev, subscription_status: "Sign-in failed. Please retry or use the callback completion flow." } : prev
+          );
+          return;
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status:
+                  "Still waiting for callback completion. Continue in Harness Subscriptions if needed.",
+              }
+            : prev
+        );
+        return;
+      } else {
+        if (!workspaceId) {
+          throw new Error("Select a workspace first.");
+        }
+        await authenticateProviderForWorkspace(workspaceId, modal.provider_id);
+        if (supportsHarnessEndpointConfig(modal.provider_id)) {
+          await onSelectProviderSource(modal.provider_id, "subscription", null);
+        }
+        closeHarnessAuthModal();
+      }
+    } catch (e: any) {
+      const msg = e?.message ?? String(e);
+      setProviderError(msg);
+      if (modal.provider_id === "codex") {
+        setCodexAccountsError(msg);
+      }
+      setHarnessAuthModal((prev) =>
+        prev ? { ...prev, subscription_status: "Subscription flow failed. Check error details below." } : prev
+      );
+    } finally {
+      setHarnessAuthModal((prev) => (prev ? { ...prev, subscription_busy: false } : prev));
+    }
+  };
+
+  const onSelectHarnessAuthRow = async (providerId: string, row: HarnessAuthRow) => {
+    setHarnessAuthMenuKey(null);
+    if (!row.selectable) return;
+    if (row.kind === "api_key" && row.endpoint_id) {
+      await onSelectProviderSource(providerId, "endpoint", row.endpoint_id);
+      return;
+    }
+
+    if (providerId === "codex" && row.account_id) {
+      await onCodexSetActive(row.account_id);
+    }
+    if (supportsHarnessEndpointConfig(providerId)) {
+      await onSelectProviderSource(providerId, "subscription", null);
     }
   };
 
@@ -3599,7 +3867,6 @@ export default function SettingsPage() {
     }
 
     if (active === "agent_harnesses") {
-      const anyWorkspace = workspaces.length > 0;
       const visibleProviders = providers.filter((p) => p.details?.ui_hidden !== "true").slice();
       const installControlsEnabled = PROVIDER_INSTALLS_ENABLED;
       const scopedVisibleProviders = installControlsEnabled
@@ -3615,11 +3882,22 @@ export default function SettingsPage() {
         .sort((a, b) => a.id.localeCompare(b.id));
 
       const harnesses = [...curated, ...extras];
+      const harnessDisplayById = new Map<
+        string,
+        { label: string; logoSrc: string; invertInDark?: boolean; invertInLight?: boolean }
+      >(harnesses.map((entry) => [entry.id, entry]));
+      const activeModalHarness = harnessAuthModal
+        ? harnessDisplayById.get(harnessAuthModal.provider_id)
+        : undefined;
+      const activeModalEndpointPreset = harnessAuthModal
+        ? getHarnessEndpointProviderPreset(harnessAuthModal.endpoint_provider_id)
+        : null;
+      const modalAllowsCustomBaseUrl = activeModalEndpointPreset?.id === "other";
 
       return (
         <>
-          <Card>
-            {installControlsEnabled ? (
+          {installControlsEnabled ? (
+            <Card>
               <Row
                 title="Install all"
                 description="Installs supported harnesses to ~/.ctx/providers/agent-servers."
@@ -3629,29 +3907,8 @@ export default function SettingsPage() {
                   </button>
                 }
               />
-            ) : null}
-            <Row
-              title="Workspace"
-              description="Used for provider status probes."
-              control={
-                <select
-                  className="settings-control settings-select"
-                  value={workspaceId ?? ""}
-                  onChange={(e) => setWorkspaceId(e.target.value || null)}
-                  disabled={!anyWorkspace}
-                >
-                  {workspaces.map((ws) => {
-                    const id = idToString((ws as any).id);
-                    return (
-                      <option key={id} value={id}>
-                        {ws.name}
-                      </option>
-                    );
-                  })}
-                </select>
-              }
-            />
-          </Card>
+            </Card>
+          ) : null}
 
           <div className="settings-card settings-harness-list">
             <div className="settings-card-rows">
@@ -3665,7 +3922,6 @@ export default function SettingsPage() {
                 const installUi = installs[id];
                 const installRunning = installUi?.state === "running" || p.details?.install_running === "true";
                 const installBusyLocal = installBusy !== null || installRunning;
-                const versionLabel = formatProviderVersionDisplay(p);
                 const installLabel =
                   installBusyLocal && installUi?.pct !== null
                     ? `${clampPct(installUi.pct)}%`
@@ -3675,20 +3931,20 @@ export default function SettingsPage() {
                         ? "Update"
                         : "Install";
 
-                const opts = providerOptions[id];
-                const verifyStatus = String((opts as any)?.verify?.status ?? "");
-
-                const statusPill = (() => {
-                  if (!opts) return null;
-                  if (opts.auth_required || verifyStatus === "auth_required") {
-                    return <span className="settings-pill settings-pill-warn">Auth required</span>;
-                  }
-                  if (verifyStatus === "network_error") return <span className="settings-pill settings-pill-warn">Offline</span>;
-                  if (verifyStatus === "error") return <span className="settings-pill settings-pill-err">Error</span>;
-                  if (opts.probe_ok === false) return <span className="settings-pill settings-pill-err">Unhealthy</span>;
-                  if (verifyStatus === "ok") return <span className="settings-pill settings-pill-ok">Verified</span>;
-                  return null;
-                })();
+                const harnessCfg = providerHarnessConfig[id];
+                const sourceBusy = providerHarnessBusy[id] || false;
+                const authRows = buildHarnessAuthRows({
+                  provider_id: id,
+                  selected_source_kind: harnessCfg?.selected_source_kind ?? "subscription",
+                  selected_endpoint_id: harnessCfg?.selected_endpoint_id ?? null,
+                  endpoints: harnessCfg?.endpoints ?? [],
+                  codex_accounts: id === "codex" ? (codexAccounts?.accounts ?? []) : [],
+                  codex_active_account_id: id === "codex" ? (codexAccounts?.active_account_id ?? null) : null,
+                });
+                const addBusy = harnessAuthModal?.provider_id === id
+                  ? harnessAuthModal.api_key_busy || harnessAuthModal.subscription_busy
+                  : false;
+                const rowBusy = sourceBusy || (id === "codex" && codexAccountsBusy);
 
                 return (
                   <div key={id} className={`settings-row settings-harness-row ${installed ? "" : "settings-harness-row-disabled"}`}>
@@ -3706,15 +3962,145 @@ export default function SettingsPage() {
                           <span className="settings-harness-logo-fallback" aria-hidden="true" />
                         )}
                         <span className="settings-harness-name">{h.label}</span>
-                        {statusPill ? <span className="settings-harness-status">{statusPill}</span> : null}
+                        {installed ? (
+                          <button
+                            type="button"
+                            className="settings-harness-add"
+                            onClick={() => openHarnessAuthModal(id)}
+                            disabled={addBusy}
+                            title="Add authentication method"
+                            aria-label={`Add auth for ${h.label}`}
+                          >
+                            +
+                          </button>
+                        ) : null}
                       </div>
-                      <div className="settings-row-desc">
-                        {installed ? "Installed" : "Not installed"}
-                        {versionLabel ? ` · ${versionLabel}` : ""}
-                      </div>
+                      {installed && authRows.length > 0 ? (
+                        <div className="settings-harness-auth-list" style={{ marginTop: 10 }}>
+                          {authRows.map((row) => {
+                            const menuKey = `${id}:${row.key}`;
+                            const menuOpen = harnessAuthMenuKey === menuKey;
+                            const verificationLabel =
+                              row.verification_status && row.verification_status !== "unknown"
+                                ? row.verification_status
+                                : null;
+                            const verificationClass =
+                              verificationLabel === "valid"
+                                ? "settings-pill-ok"
+                                : verificationLabel === "invalid" || verificationLabel === "error"
+                                  ? "settings-pill-err"
+                                  : "";
+
+                            return (
+                              <div
+                                key={row.key}
+                                className={`settings-harness-auth-row ${row.active ? "settings-harness-auth-row-active" : ""}`}
+                              >
+                                <button
+                                  type="button"
+                                  className="settings-harness-auth-main"
+                                  onClick={() => void onSelectHarnessAuthRow(id, row)}
+                                  disabled={rowBusy || !row.selectable}
+                                >
+                                  <span className="settings-harness-auth-kind">
+                                    {row.kind === "subscription" ? "Subscription" : "API Key"}
+                                  </span>
+                                  <span className="settings-harness-auth-primary">
+                                    <span className="settings-harness-auth-label">{row.label}</span>
+                                    {row.detail ? <span className="settings-harness-auth-detail">{row.detail}</span> : null}
+                                  </span>
+                                </button>
+                                <div className="settings-harness-auth-actions">
+                                  {verificationLabel ? (
+                                    <span className={`settings-pill ${verificationClass}`}>{verificationLabel}</span>
+                                  ) : null}
+                                  {row.last_error ? (
+                                    <span className="settings-pill settings-pill-err" title={row.last_error}>
+                                      Error
+                                    </span>
+                                  ) : null}
+                                  {row.active ? <span className="settings-pill settings-pill-ok">Active</span> : null}
+                                  <div className="settings-harness-auth-menu-wrap">
+                                    <button
+                                      type="button"
+                                      className="settings-harness-auth-menu-trigger"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        setHarnessAuthMenuKey((prev) => (prev === menuKey ? null : menuKey));
+                                      }}
+                                      disabled={rowBusy}
+                                      aria-haspopup="menu"
+                                      aria-expanded={menuOpen}
+                                      aria-label="More actions"
+                                      title="More actions"
+                                    >
+                                      <Ellipsis size={14} aria-hidden="true" />
+                                    </button>
+                                    {menuOpen ? (
+                                      <div className="settings-harness-auth-menu" role="menu">
+                                        {row.active ? (
+                                          <button
+                                            type="button"
+                                            className="settings-harness-auth-menu-item"
+                                            role="menuitem"
+                                            disabled
+                                          >
+                                            Active source
+                                          </button>
+                                        ) : null}
+                                        {row.selectable && !row.active ? (
+                                          <button
+                                            type="button"
+                                            className="settings-harness-auth-menu-item"
+                                            role="menuitem"
+                                            onClick={() => {
+                                              setHarnessAuthMenuKey(null);
+                                              void onSelectHarnessAuthRow(id, row);
+                                            }}
+                                          >
+                                            Set active
+                                          </button>
+                                        ) : null}
+                                        {row.endpoint_id && row.can_delete ? (
+                                          <button
+                                            type="button"
+                                            className="settings-harness-auth-menu-item settings-harness-auth-menu-item-danger"
+                                            role="menuitem"
+                                            onClick={() => {
+                                              setHarnessAuthMenuKey(null);
+                                              void onDeleteProviderEndpoint(id, row.endpoint_id!);
+                                            }}
+                                          >
+                                            Delete
+                                          </button>
+                                        ) : null}
+                                        {row.kind === "subscription" && id === "codex" && row.account_id && row.can_delete ? (
+                                          <button
+                                            type="button"
+                                            className="settings-harness-auth-menu-item settings-harness-auth-menu-item-danger"
+                                            role="menuitem"
+                                            onClick={() => {
+                                              setHarnessAuthMenuKey(null);
+                                              const accountId = row.account_id;
+                                              if (!accountId) return;
+                                              void onCodexDelete(accountId);
+                                            }}
+                                          >
+                                            Delete
+                                          </button>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                     </div>
-                    <div className="settings-row-right settings-harness-actions">
-                      {!installed ? (
+                    {!installed ? (
+                      <div className="settings-row-right settings-harness-actions">
                         installControlsEnabled ? (
                           <button
                             type="button"
@@ -3731,26 +4117,201 @@ export default function SettingsPage() {
                             {installLabel}
                           </button>
                         ) : null
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            className="settings-btn settings-btn-secondary"
-                            onClick={() => ensureProviderOpts(id, { force: true }).catch(() => {})}
-                            disabled={!anyWorkspace || optsBusy[id]}
-                            title="Probe to refresh status"
-                          >
-                            {optsBusy[id] ? "Checking…" : "Check"}
-                          </button>
-                        </>
-                      )}
-                    </div>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
               {harnesses.length === 0 ? <div className="settings-empty">No harnesses.</div> : null}
             </div>
           </div>
+
+          {harnessAuthModal ? (
+            <div className="modal-overlay" role="dialog" aria-modal="true" onClick={closeHarnessAuthModal}>
+              <div className="modal settings-harness-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="settings-harness-modal-header">
+                  <div className="settings-harness-title">
+                    {activeModalHarness?.logoSrc ? (
+                      <img
+                        className={`settings-harness-logo ${activeModalHarness.invertInDark ? "wb-invert" : ""} ${
+                          activeModalHarness.invertInLight ? "wb-invert-light" : ""
+                        }`}
+                        src={activeModalHarness.logoSrc}
+                        alt=""
+                      />
+                    ) : (
+                      <span className="settings-harness-logo-fallback" aria-hidden="true" />
+                    )}
+                    <span className="settings-harness-name">
+                      {activeModalHarness?.label ?? harnessAuthModal.provider_id}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="settings-harness-modal-close"
+                    onClick={closeHarnessAuthModal}
+                    aria-label="Close"
+                  >
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                </div>
+
+                {harnessAuthModal.stage === "choose" ? (
+                  <div className="settings-harness-modal-choice-stack">
+                    <div className="settings-harness-modal-choice-grid">
+                      <button
+                        type="button"
+                        className="settings-btn settings-harness-modal-choice-btn"
+                        onClick={() => {
+                          patchHarnessAuthModal({
+                            stage: "subscription",
+                            subscription_status: null,
+                          });
+                          void submitHarnessSubscriptionModal();
+                        }}
+                        disabled={harnessAuthModal.subscription_busy || harnessAuthModal.api_key_busy}
+                      >
+                        Subscription
+                      </button>
+                      <button
+                        type="button"
+                        className="settings-btn settings-harness-modal-choice-btn"
+                        onClick={() =>
+                          patchHarnessAuthModal({
+                            stage: "api_key",
+                            subscription_status: null,
+                            base_url: getHarnessEndpointProviderPreset(harnessAuthModal.endpoint_provider_id).base_url ??
+                              harnessAuthModal.base_url,
+                          })}
+                        disabled={!supportsHarnessEndpointConfig(harnessAuthModal.provider_id)}
+                        title={
+                          supportsHarnessEndpointConfig(harnessAuthModal.provider_id)
+                            ? "Add API key auth"
+                            : "API key auth not supported for this harness yet"
+                        }
+                      >
+                        API Key
+                      </button>
+                    </div>
+                  </div>
+                ) : harnessAuthModal.stage === "subscription" ? (
+                  <div className="settings-harness-modal-fields">
+                    <div className="settings-row-desc">
+                      {harnessAuthModal.provider_id === "codex"
+                        ? "Sign in with your Codex subscription in a browser window."
+                        : "Authenticate this harness for the selected workspace."}
+                    </div>
+                    {harnessAuthModal.subscription_status ? (
+                      <div className="settings-row-desc settings-harness-modal-status">
+                        {harnessAuthModal.subscription_status}
+                      </div>
+                    ) : null}
+                    <div className="modal-actions settings-harness-modal-actions">
+                      <button
+                        type="button"
+                        className="settings-btn settings-btn-secondary"
+                        onClick={() =>
+                          patchHarnessAuthModal({
+                            stage: "choose",
+                            subscription_status: null,
+                          })}
+                        disabled={harnessAuthModal.subscription_busy}
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        className="settings-btn"
+                        onClick={() => void submitHarnessSubscriptionModal()}
+                        disabled={harnessAuthModal.subscription_busy || harnessAuthModal.api_key_busy}
+                      >
+                        {harnessAuthModal.subscription_busy
+                          ? "Starting..."
+                          : harnessAuthModal.provider_id === "codex"
+                            ? "Start sign-in"
+                            : "Authenticate"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="settings-harness-modal-fields">
+                    <label className="settings-harness-modal-label">
+                      Provider
+                      <select
+                        className="settings-control settings-select"
+                        value={harnessAuthModal.endpoint_provider_id}
+                        onChange={(e) => {
+                          const nextProviderId = e.target.value;
+                          const preset = getHarnessEndpointProviderPreset(nextProviderId);
+                          patchHarnessAuthModal({
+                            endpoint_provider_id: nextProviderId,
+                            base_url: preset.base_url ?? "",
+                          });
+                        }}
+                      >
+                        {HARNESS_ENDPOINT_PROVIDER_PRESETS.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="settings-harness-modal-label">
+                      API key
+                      <input
+                        className="settings-control settings-control-wide"
+                        type="password"
+                        placeholder="sk-..."
+                        value={harnessAuthModal.api_key}
+                        onChange={(e) => patchHarnessAuthModal({ api_key: e.target.value })}
+                      />
+                    </label>
+                    <label className="settings-harness-modal-label">
+                      Name (optional)
+                      <input
+                        className="settings-control settings-control-wide"
+                        value={harnessAuthModal.endpoint_name}
+                        onChange={(e) => patchHarnessAuthModal({ endpoint_name: e.target.value })}
+                      />
+                    </label>
+                    {modalAllowsCustomBaseUrl ? (
+                      <label className="settings-harness-modal-label">
+                        Base URL
+                        <input
+                          className="settings-control settings-control-wide"
+                          placeholder="https://api.example.com/v1"
+                          value={harnessAuthModal.base_url}
+                          onChange={(e) => patchHarnessAuthModal({ base_url: e.target.value })}
+                        />
+                      </label>
+                    ) : null}
+                    <div className="modal-actions settings-harness-modal-actions">
+                      <button
+                        type="button"
+                        className="settings-btn settings-btn-secondary"
+                        onClick={() =>
+                          patchHarnessAuthModal({
+                            stage: "choose",
+                            api_key: "",
+                            subscription_status: null,
+                          })}
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        className="settings-btn"
+                        onClick={() => void submitHarnessApiKeyModal()}
+                        disabled={harnessAuthModal.api_key_busy || harnessAuthModal.subscription_busy}
+                      >
+                        {harnessAuthModal.api_key_busy ? "Saving..." : "Add API key"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : null}
 
           {providerError ? <div className="settings-banner settings-banner-error">{providerError}</div> : null}
         </>

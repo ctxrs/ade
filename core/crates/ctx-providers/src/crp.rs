@@ -1171,6 +1171,8 @@ struct CrpSessionConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_trace_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    personality: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     mcp_servers: Option<HashMap<String, CrpMcpServerConfig>>,
 }
 
@@ -1938,6 +1940,11 @@ fn build_crp_session_config(env: &HashMap<String, String>, workdir: &Path) -> Cr
         reasoning_effort,
         model_provider: None,
         reasoning_trace_enabled: Some(true),
+        personality: env
+            .get("CTX_PROVIDER_ID")
+            .map(|provider_id| provider_id.as_str())
+            .filter(|provider_id| *provider_id == "codex")
+            .map(|_| "pragmatic".to_string()),
         mcp_servers,
     }
 }
@@ -1953,6 +1960,7 @@ fn build_crp_model_probe_config(env: &HashMap<String, String>, workdir: &Path) -
         reasoning_effort,
         model_provider: None,
         reasoning_trace_enabled: None,
+        personality: None,
         mcp_servers: None,
     }
 }
@@ -2188,6 +2196,27 @@ mod tests {
         let payload = &completed.events[0].payload_json;
         assert_eq!(payload.get("input_preview"), Some(&started_preview));
         assert_eq!(payload.get("rawInput"), Some(&started_preview));
+    }
+
+    #[test]
+    fn build_crp_session_config_sets_pragmatic_personality_for_codex() {
+        let mut env = HashMap::new();
+        env.insert("CTX_PROVIDER_ID".to_string(), "codex".to_string());
+        let workdir = PathBuf::from("/tmp/workdir");
+
+        let cfg = build_crp_session_config(&env, &workdir);
+        assert_eq!(cfg.reasoning_trace_enabled, Some(true));
+        assert_eq!(cfg.personality.as_deref(), Some("pragmatic"));
+    }
+
+    #[test]
+    fn build_crp_session_config_omits_personality_for_non_codex() {
+        let mut env = HashMap::new();
+        env.insert("CTX_PROVIDER_ID".to_string(), "claude-crp".to_string());
+        let workdir = PathBuf::from("/tmp/workdir");
+
+        let cfg = build_crp_session_config(&env, &workdir);
+        assert_eq!(cfg.personality, None);
     }
 
     #[cfg(feature = "fuzz_tests")]

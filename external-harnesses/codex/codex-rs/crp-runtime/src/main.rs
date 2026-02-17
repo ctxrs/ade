@@ -1027,6 +1027,7 @@ async fn handle_command(
                 approval_policy: None,
                 sandbox_mode: None,
                 reasoning_trace_enabled: None,
+                personality: None,
                 mcp_servers: None,
             });
 
@@ -1282,6 +1283,7 @@ async fn handle_command(
                 approval_policy: None,
                 sandbox_mode: None,
                 reasoning_trace_enabled: None,
+                personality: None,
                 mcp_servers: None,
             });
 
@@ -1364,7 +1366,7 @@ async fn load_config_from_crp(
         codex_linux_sandbox_exe,
         base_instructions: None,
         developer_instructions: None,
-        personality: None,
+        personality: session_config.personality,
         compact_prompt: None,
         include_apply_patch_tool: None,
         show_raw_agent_reasoning: session_config.reasoning_trace_enabled,

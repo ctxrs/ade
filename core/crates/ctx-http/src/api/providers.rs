@@ -14,10 +14,15 @@ use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::mpsc;
 use url::Url;
 
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
+use crate::harness_sources;
+use crate::harness_sources::{
+    HarnessApiShape, HarnessEndpointUpsert, HarnessEndpointVerificationStatus, HarnessSourceKind,
+};
 use crate::installer;
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
 use crate::logs;
@@ -1011,6 +1016,165 @@ pub(super) struct InstallStartResponse {
     provider_id: String,
     install_id: InstallId,
 }
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AuthenticateProviderReq {
+    #[serde(default)]
+    method_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SelectHarnessSourceReq {
+    source_kind: HarnessSourceKind,
+    #[serde(default)]
+    endpoint_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct UpsertHarnessEndpointReq {
+    #[serde(default)]
+    endpoint_id: Option<String>,
+    name: String,
+    base_url: String,
+    api_shape: HarnessApiShape,
+    #[serde(default)]
+    model_override: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ProviderAuthCheckResp {
+    provider_id: String,
+    workspace_id: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_required: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checked_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+fn parse_workspace_id(ws_id: &str) -> Result<WorkspaceId, (StatusCode, Json<serde_json::Value>)> {
+    Ok(WorkspaceId(uuid::Uuid::parse_str(ws_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "invalid workspace id",
+            })),
+        )
+    })?))
+}
+
+fn classify_probe_error(
+    message: &str,
+) -> (
+    &'static str,
+    Option<bool>,
+    HarnessEndpointVerificationStatus,
+) {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("401")
+        || lower.contains("403")
+        || lower.contains("unauthorized")
+        || lower.contains("auth")
+        || lower.contains("api key")
+        || lower.contains("token")
+    {
+        return (
+            "auth_required",
+            Some(true),
+            HarnessEndpointVerificationStatus::Invalid,
+        );
+    }
+    if lower.contains("timeout")
+        || lower.contains("connection refused")
+        || lower.contains("network")
+        || lower.contains("econn")
+        || lower.contains("dns")
+        || lower.contains("tls")
+    {
+        return (
+            "network_error",
+            Some(false),
+            HarnessEndpointVerificationStatus::Error,
+        );
+    }
+    (
+        "error",
+        Some(false),
+        HarnessEndpointVerificationStatus::Error,
+    )
+}
+
+async fn provider_probe_env(
+    state: &Arc<AppState>,
+    provider_id: &str,
+) -> Result<
+    (
+        harness_sources::ResolvedHarnessSource,
+        HashMap<String, String>,
+    ),
+    String,
+> {
+    let source =
+        harness_sources::resolve_provider_source_for_probe(&state.core.data_root, provider_id)
+            .await
+            .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
+    let mut env = HashMap::new();
+    env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+    if let Some(token) = state.core.auth_token.as_ref() {
+        env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
+    }
+    if source.source_kind == HarnessSourceKind::Subscription && provider_id == "codex" {
+        if let Ok(extra) =
+            crate::provider_accounts::codex_env_for_active_account(&state.core.data_root).await
+        {
+            for (key, value) in extra {
+                env.insert(key, value);
+            }
+        }
+    }
+    for (key, value) in source.env.iter() {
+        env.insert(key.clone(), value.clone());
+    }
+    Ok((source, env))
+}
+
+fn cache_key_matches_provider(cache_key: &str, provider_id: &str) -> bool {
+    cache_key
+        .rsplit_once('/')
+        .is_some_and(|(_, key_provider)| key_provider == provider_id)
+}
+
+async fn invalidate_provider_probe_caches(state: &Arc<AppState>, provider_id: &str) {
+    state
+        .providers
+        .options_cache
+        .lock()
+        .await
+        .retain(|cache_key, _| !cache_key_matches_provider(cache_key, provider_id));
+    state
+        .providers
+        .verify_cache
+        .lock()
+        .await
+        .retain(|cache_key, _| !cache_key_matches_provider(cache_key, provider_id));
+}
+
+fn selected_endpoint_from_harness_config(
+    config: Option<harness_sources::HarnessProviderSourceConfig>,
+) -> Option<String> {
+    config.and_then(|cfg| {
+        if cfg.selected_source_kind == HarnessSourceKind::Endpoint {
+            cfg.selected_endpoint_id
+        } else {
+            None
+        }
+    })
+}
+
 pub(super) async fn get_provider_options(
     State(state): State<Arc<AppState>>,
     Path((ws_id, provider_id)): Path<(String, String)>,
@@ -1022,14 +1186,7 @@ pub(super) async fn get_provider_options(
         return Err(invalid_provider_id_error("codex-crp", "codex"));
     }
 
-    let ws_id = WorkspaceId(uuid::Uuid::parse_str(&ws_id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "invalid workspace id",
-            })),
-        )
-    })?);
+    let ws_id = parse_workspace_id(&ws_id)?;
 
     let cache_key = format!("{}/{}", ws_id.0, provider_id);
     let verify_entry: Option<(std::time::Instant, serde_json::Value)> = state
@@ -1077,6 +1234,10 @@ pub(super) async fn get_provider_options(
         .await
         .get(&provider_id)
         .cloned();
+    let source_config =
+        harness_sources::get_provider_source_config(&state.core.data_root, &provider_id)
+            .await
+            .ok();
 
     if provider_status.is_none() {
         return Err((
@@ -1089,7 +1250,7 @@ pub(super) async fn get_provider_options(
 
     if let Some(st) = provider_status.as_ref() {
         if !st.installed || !matches!(st.health, ctx_providers::adapters::ProviderHealth::Ok) {
-            let base_resp = redact_json_value(serde_json::json!({
+            let mut raw_base_resp = serde_json::json!({
                 "provider_id": provider_id,
                 "workspace_id": ws_id.0,
                 "installed": st.installed,
@@ -1098,7 +1259,12 @@ pub(super) async fn get_provider_options(
                 "probe_ok": false,
                 "probe_error": "provider not installed or unhealthy",
                 "probed_at": chrono::Utc::now().to_rfc3339(),
-            }));
+            });
+            if let Some(source) = source_config.as_ref() {
+                raw_base_resp["source"] =
+                    serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+            }
+            let base_resp = redact_json_value(raw_base_resp);
             state.providers.options_cache.lock().await.insert(
                 cache_key,
                 crate::daemon::CachedProviderOptions {
@@ -1129,6 +1295,9 @@ pub(super) async fn get_provider_options(
             "auth_required": false,
             "probed_at": chrono::Utc::now().to_rfc3339(),
         });
+        if let Some(source) = source_config.as_ref() {
+            raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+        }
         if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
             if let Some(models) = cached_models {
                 raw_resp["models"] = models;
@@ -1205,31 +1374,19 @@ pub(super) async fn get_provider_options(
         let command = runtime_command.command_abs_path;
         let args = runtime_command.args;
 
-        let mut env = std::collections::HashMap::new();
-        env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
-        if let Some(token) = state.core.auth_token.as_ref() {
-            env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
-        }
-        if provider_id == "codex" {
-            // codex relies on Codex auth material (via CODEX_HOME). Without it, probing can
-            // return empty models even when Codex is otherwise configured.
-            if let Ok(extra) =
-                crate::provider_accounts::codex_env_for_active_account(&state.core.data_root).await
-            {
-                for (key, value) in extra {
-                    env.insert(key, value);
-                }
+        let probe = match provider_probe_env(&state, &provider_id).await {
+            Ok((_source, env)) => {
+                probe_crp_models(
+                    &provider_id,
+                    command,
+                    args,
+                    PathBuf::from(&ws.root_path),
+                    env,
+                )
+                .await
             }
-        }
-
-        let probe = probe_crp_models(
-            &provider_id,
-            command,
-            args,
-            PathBuf::from(&ws.root_path),
-            env,
-        )
-        .await;
+            Err(err) => Err(anyhow::anyhow!(err)),
+        };
 
         let mut raw_resp = match probe {
             Ok(probe) => serde_json::json!({
@@ -1254,6 +1411,9 @@ pub(super) async fn get_provider_options(
                 "probed_at": chrono::Utc::now().to_rfc3339(),
             }),
         };
+        if let Some(source) = source_config.as_ref() {
+            raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+        }
 
         if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
             if let Some(models) = cached_models {
@@ -1292,6 +1452,395 @@ pub(super) async fn get_provider_options(
             "error": "unsupported provider id",
         })),
     ))
+}
+
+pub(super) async fn get_provider_harness_config(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<harness_sources::HarnessProviderSourceConfig>, (StatusCode, Json<serde_json::Value>)>
+{
+    if id == "codex-crp" {
+        return Err(invalid_provider_id_error("codex-crp", "codex"));
+    }
+    let config = harness_sources::get_provider_source_config(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": logs::redact_sensitive(&e.to_string()),
+                })),
+            )
+        })?;
+    Ok(Json(config))
+}
+
+pub(super) async fn select_provider_harness_source(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<SelectHarnessSourceReq>,
+) -> Result<Json<harness_sources::HarnessProviderSourceConfig>, (StatusCode, Json<serde_json::Value>)>
+{
+    if id == "codex-crp" {
+        return Err(invalid_provider_id_error("codex-crp", "codex"));
+    }
+    let config = harness_sources::set_provider_source_selection(
+        &state.core.data_root,
+        &id,
+        req.source_kind,
+        req.endpoint_id,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": logs::redact_sensitive(&e.to_string()),
+            })),
+        )
+    })?;
+    invalidate_provider_probe_caches(&state, &id).await;
+    Ok(Json(config))
+}
+
+pub(super) async fn upsert_provider_harness_endpoint(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<UpsertHarnessEndpointReq>,
+) -> Result<Json<harness_sources::HarnessProviderSourceConfig>, (StatusCode, Json<serde_json::Value>)>
+{
+    if id == "codex-crp" {
+        return Err(invalid_provider_id_error("codex-crp", "codex"));
+    }
+    harness_sources::upsert_provider_endpoint(
+        &state.core.data_root,
+        &id,
+        HarnessEndpointUpsert {
+            endpoint_id: req.endpoint_id,
+            name: req.name,
+            base_url: req.base_url,
+            api_shape: req.api_shape,
+            model_override: req.model_override,
+            api_key: req.api_key,
+        },
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": logs::redact_sensitive(&e.to_string()),
+            })),
+        )
+    })?;
+    invalidate_provider_probe_caches(&state, &id).await;
+    let config = harness_sources::get_provider_source_config(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": logs::redact_sensitive(&e.to_string()),
+                })),
+            )
+        })?;
+    Ok(Json(config))
+}
+
+pub(super) async fn delete_provider_harness_endpoint(
+    State(state): State<Arc<AppState>>,
+    Path((id, endpoint_id)): Path<(String, String)>,
+) -> Result<Json<harness_sources::HarnessProviderSourceConfig>, (StatusCode, Json<serde_json::Value>)>
+{
+    if id == "codex-crp" {
+        return Err(invalid_provider_id_error("codex-crp", "codex"));
+    }
+    let config =
+        harness_sources::delete_provider_endpoint(&state.core.data_root, &id, &endpoint_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": logs::redact_sensitive(&e.to_string()),
+                    })),
+                )
+            })?;
+    invalidate_provider_probe_caches(&state, &id).await;
+    Ok(Json(config))
+}
+
+pub(super) async fn verify_provider_for_workspace(
+    State(state): State<Arc<AppState>>,
+    Path((ws_id, provider_id)): Path<(String, String)>,
+) -> Result<Json<ProviderAuthCheckResp>, (StatusCode, Json<serde_json::Value>)> {
+    if provider_id == "codex-crp" {
+        return Err(invalid_provider_id_error("codex-crp", "codex"));
+    }
+    let ws_id = parse_workspace_id(&ws_id)?;
+
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "failed to load workspace",
+                })),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "workspace not found",
+            })),
+        ))?;
+
+    let provider_status = state
+        .providers
+        .statuses
+        .lock()
+        .await
+        .get(&provider_id)
+        .cloned()
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("unsupported provider id: {provider_id}"),
+            })),
+        ))?;
+
+    let checked_at = Utc::now().to_rfc3339();
+    let mut status = "ok".to_string();
+    let mut auth_required = Some(false);
+    let mut message: Option<String> = None;
+    let mut endpoint_status = HarnessEndpointVerificationStatus::Valid;
+    let mut selected_endpoint_id: Option<String> = selected_endpoint_from_harness_config(
+        harness_sources::get_provider_source_config(&state.core.data_root, &provider_id)
+            .await
+            .ok(),
+    );
+
+    if !provider_status.installed
+        || !matches!(
+            provider_status.health,
+            ctx_providers::adapters::ProviderHealth::Ok
+        )
+    {
+        status = "error".to_string();
+        auth_required = Some(false);
+        message = Some("provider not installed or unhealthy".to_string());
+        endpoint_status = HarnessEndpointVerificationStatus::Error;
+    } else {
+        let cfg = installer::load_agent_server_config(&state.core.data_root)
+            .await
+            .unwrap_or_default();
+        let runtime_command = installer::resolve_runtime_provider_command(&cfg, &provider_id)
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "runtime_command_invalid: provider={provider_id} error={e}"
+                        ),
+                    })),
+                )
+            })?
+            .ok_or((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
+                    ),
+                })),
+            ))?;
+        let command = runtime_command.command_abs_path;
+        let args = runtime_command.args;
+
+        match provider_probe_env(&state, &provider_id).await {
+            Ok((source, env)) => {
+                if source.source_kind == HarnessSourceKind::Endpoint {
+                    selected_endpoint_id = source
+                        .endpoint
+                        .as_ref()
+                        .map(|ep| ep.id.clone())
+                        .or(selected_endpoint_id);
+                } else {
+                    selected_endpoint_id = None;
+                }
+                let probe = probe_crp_models(
+                    &provider_id,
+                    command,
+                    args,
+                    PathBuf::from(&workspace.root_path),
+                    env,
+                )
+                .await;
+                if let Err(err) = probe {
+                    let msg = logs::redact_sensitive(&err.to_string());
+                    let (classified, auth, endpoint_verify) = classify_probe_error(&msg);
+                    status = classified.to_string();
+                    auth_required = auth;
+                    message = Some(msg);
+                    endpoint_status = endpoint_verify;
+                }
+            }
+            Err(err) => {
+                let msg = logs::redact_sensitive(&err);
+                let (classified, auth, endpoint_verify) = classify_probe_error(&msg);
+                status = classified.to_string();
+                auth_required = auth;
+                message = Some(msg);
+                endpoint_status = endpoint_verify;
+            }
+        }
+    }
+
+    if let Some(endpoint_id) = selected_endpoint_id.as_ref() {
+        let _ = harness_sources::mark_endpoint_verification(
+            &state.core.data_root,
+            &provider_id,
+            endpoint_id,
+            endpoint_status,
+            message.clone(),
+        )
+        .await;
+    }
+
+    let resp = ProviderAuthCheckResp {
+        provider_id: provider_id.clone(),
+        workspace_id: ws_id.0.to_string(),
+        status: status.clone(),
+        auth_required,
+        checked_at: Some(checked_at),
+        message: message.clone(),
+    };
+
+    let verify_value =
+        redact_json_value(serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null));
+    let cache_key = format!("{}/{}", ws_id.0, provider_id);
+    state.providers.verify_cache.lock().await.insert(
+        cache_key,
+        crate::daemon::CachedProviderVerify {
+            cached_at: std::time::Instant::now(),
+            value: verify_value,
+        },
+    );
+
+    Ok(Json(resp))
+}
+
+pub(super) async fn authenticate_provider_for_workspace(
+    State(state): State<Arc<AppState>>,
+    Path((ws_id, provider_id)): Path<(String, String)>,
+    req: Option<Json<AuthenticateProviderReq>>,
+) -> Result<Json<ProviderAuthCheckResp>, (StatusCode, Json<serde_json::Value>)> {
+    if provider_id == "codex-crp" {
+        return Err(invalid_provider_id_error("codex-crp", "codex"));
+    }
+    let ws_id = parse_workspace_id(&ws_id)?;
+    let method_id = req.and_then(|value| value.0.method_id);
+
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "failed to load workspace",
+                })),
+            )
+        })?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "workspace not found",
+            })),
+        ))?;
+
+    let (source, provider_env) = provider_probe_env(&state, &provider_id)
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": err,
+                })),
+            )
+        })?;
+    if source.source_kind == HarnessSourceKind::Endpoint {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "selected source is endpoint; update endpoint key/config directly instead of interactive authenticate",
+            })),
+        ));
+    }
+
+    let adapter = {
+        let map = state.providers.adapters.lock().await;
+        map.get(&provider_id).cloned()
+    }
+    .ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({
+            "error": "provider adapter not available",
+        })),
+    ))?;
+
+    let (event_tx, mut event_rx) = mpsc::channel(32);
+    tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
+
+    let checked_at = Utc::now().to_rfc3339();
+    let result = adapter
+        .authenticate_session(
+            format!("auth-{}", uuid::Uuid::new_v4()),
+            PathBuf::from(workspace.root_path),
+            provider_env,
+            method_id,
+            event_tx,
+        )
+        .await;
+
+    let resp = match result {
+        Ok(()) => ProviderAuthCheckResp {
+            provider_id: provider_id.clone(),
+            workspace_id: ws_id.0.to_string(),
+            status: "ok".to_string(),
+            auth_required: Some(false),
+            checked_at: Some(checked_at),
+            message: None,
+        },
+        Err(err) => {
+            let msg = logs::redact_sensitive(&err.to_string());
+            let (status, auth_required, _) = classify_probe_error(&msg);
+            ProviderAuthCheckResp {
+                provider_id: provider_id.clone(),
+                workspace_id: ws_id.0.to_string(),
+                status: status.to_string(),
+                auth_required,
+                checked_at: Some(checked_at),
+                message: Some(msg),
+            }
+        }
+    };
+
+    let verify_value =
+        redact_json_value(serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null));
+    let cache_key = format!("{}/{}", ws_id.0, provider_id);
+    state.providers.verify_cache.lock().await.insert(
+        cache_key,
+        crate::daemon::CachedProviderVerify {
+            cached_at: std::time::Instant::now(),
+            value: verify_value,
+        },
+    );
+
+    Ok(Json(resp))
 }
 
 pub(super) async fn install_provider(
@@ -1656,5 +2205,41 @@ mod tests {
             Some("http://localhost:4321/auth/callback"),
         )
         .expect("callback URL should validate");
+    }
+
+    #[test]
+    fn cache_key_provider_matcher_works() {
+        assert!(cache_key_matches_provider(
+            "7f72430e-4c43-499f-b54d-6ce2deaed4a0/codex",
+            "codex"
+        ));
+        assert!(!cache_key_matches_provider(
+            "7f72430e-4c43-499f-b54d-6ce2deaed4a0/claude-crp",
+            "codex"
+        ));
+        assert!(!cache_key_matches_provider("not-a-key", "codex"));
+    }
+
+    #[test]
+    fn selected_endpoint_from_harness_config_prefers_endpoint_selection() {
+        let endpoint = selected_endpoint_from_harness_config(Some(
+            harness_sources::HarnessProviderSourceConfig {
+                provider_id: "codex".to_string(),
+                selected_source_kind: HarnessSourceKind::Endpoint,
+                selected_endpoint_id: Some("ep-123".to_string()),
+                endpoints: Vec::new(),
+            },
+        ));
+        assert_eq!(endpoint.as_deref(), Some("ep-123"));
+
+        let subscription = selected_endpoint_from_harness_config(Some(
+            harness_sources::HarnessProviderSourceConfig {
+                provider_id: "codex".to_string(),
+                selected_source_kind: HarnessSourceKind::Subscription,
+                selected_endpoint_id: Some("ep-123".to_string()),
+                endpoints: Vec::new(),
+            },
+        ));
+        assert!(subscription.is_none());
     }
 }

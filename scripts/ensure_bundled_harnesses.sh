@@ -380,6 +380,113 @@ BUILD_LOCAL_ADAPTERS="${CTX_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
 # The bridge is required for bundles; build it when missing unless explicitly disabled.
 BUILD_LOCAL_BRIDGE="${CTX_BUNDLE_BUILD_LOCAL_BRIDGE:-1}"
 INCLUDE_BRIDGE="${CTX_BUNDLE_INCLUDE_BRIDGE:-1}"
+ACP_PROVIDER_IDS=(
+  gemini
+  qwen
+  opencode
+  mistral
+  goose
+  kimi
+  cagent
+  auggie
+  continue
+  cline
+  openhands
+  swe-agent
+  amp
+  droid
+  copilot
+  kiro
+  rovo
+  cody
+)
+
+acp_provider_command_candidates() {
+  case "${1:-}" in
+    gemini) printf '%s' "gemini" ;;
+    qwen) printf '%s' "qwen qwen-code" ;;
+    opencode) printf '%s' "opencode" ;;
+    mistral) printf '%s' "vibe-acp mistral mistral-vibe" ;;
+    goose) printf '%s' "goose" ;;
+    kimi) printf '%s' "kimi" ;;
+    cagent) printf '%s' "cagent" ;;
+    auggie) printf '%s' "auggie" ;;
+    continue) printf '%s' "cn continue" ;;
+    cline) printf '%s' "cline-acp cline" ;;
+    openhands) printf '%s' "openhands openhands-cli" ;;
+    swe-agent) printf '%s' "swe-agent sweagent" ;;
+    amp) printf '%s' "amp-acp amp" ;;
+    droid) printf '%s' "droid-acp droid" ;;
+    copilot) printf '%s' "copilot-cli-acp github-copilot-cli copilot" ;;
+    kiro) printf '%s' "kiro-acp kiro" ;;
+    rovo) printf '%s' "rovo-dev-acp rovodev rovo" ;;
+    cody) printf '%s' "cody-acp cody" ;;
+    *) printf '%s' "${1:-}" ;;
+  esac
+}
+
+acp_provider_default_args() {
+  case "${1:-}" in
+    gemini|qwen) printf '%s' "--experimental-acp" ;;
+    opencode|goose|cagent|continue|swe-agent|openhands) printf '%s' "acp" ;;
+    kimi|auggie) printf '%s' "--acp" ;;
+    *) printf '%s' "" ;;
+  esac
+}
+
+generate_acp_provider_shim() {
+  local provider_id="$1"
+  local candidates
+  candidates="$(acp_provider_command_candidates "$provider_id")"
+  local default_args
+  default_args="$(acp_provider_default_args "$provider_id")"
+  local upper="${provider_id^^}"
+  upper="${upper//-/_}"
+  local cmd_var="CTX_ACP_${upper}_COMMAND"
+  local args_var="CTX_ACP_${upper}_ARGS"
+  local shim_dir="$bundle_build_dir/acp-shims/${os}/${arch}"
+  local shim_path="$shim_dir/${provider_id}-acp.sh"
+  mkdir -p "$shim_dir"
+  cat > "$shim_path" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+command_path=""
+if [[ -n "\${$cmd_var:-}" ]]; then
+  command_path="\${$cmd_var}"
+fi
+
+if [[ -z "\$command_path" ]]; then
+  for candidate in $candidates; do
+    if command -v "\$candidate" >/dev/null 2>&1; then
+      command_path="\$(command -v "\$candidate")"
+      break
+    fi
+  done
+fi
+
+if [[ -z "\$command_path" ]]; then
+  echo "ctx: no ACP runtime command found for provider '$provider_id'" >&2
+  echo "Set $cmd_var (absolute path or executable name) to configure it." >&2
+  exit 127
+fi
+
+default_args="$default_args"
+extra_args=()
+if [[ -n "\$default_args" ]]; then
+  # shellcheck disable=SC2206
+  extra_args=(\$default_args)
+fi
+if [[ -n "\${$args_var:-}" ]]; then
+  # shellcheck disable=SC2206
+  extra_args=(\${$args_var})
+fi
+
+exec "\$command_path" "\${extra_args[@]}"
+EOF
+  chmod +x "$shim_path"
+  printf '%s' "$shim_path"
+}
 
 local_adapter_dir() {
   case "${1:-}" in
@@ -1032,12 +1139,28 @@ add_local_provider() {
   local source_path="$4"
   local bin_path="$5"
   local args_json="${6:-[]}"
+  if [[ -s "$local_providers_src" ]]; then
+    local filtered
+    filtered="$(mktemp /tmp/ctx-bundle-local-providers-filtered.XXXXXX)"
+    awk -F $'\x1f' -v id="$provider_id" '$1 != id' "$local_providers_src" > "$filtered"
+    mv "$filtered" "$local_providers_src"
+  fi
   local sep=$'\x1f'
   printf '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
     "$provider_id" "$sep" "$kind" "$sep" "$version" "$sep" \
     "$source_path" "$sep" "" "$sep" "$bin_path" "$sep" "" "$sep" "" "$sep" \
     "$args_json" >> "$local_providers_src"
-  local_ids+=("$provider_id")
+  local found=0
+  local existing
+  for existing in "${local_ids[@]}"; do
+    if [[ "$existing" == "$provider_id" ]]; then
+      found=1
+      break
+    fi
+  done
+  if [[ "$found" == "0" ]]; then
+    local_ids+=("$provider_id")
+  fi
 }
 
 if ! is_falsy "$INCLUDE_BRIDGE"; then
@@ -1151,6 +1274,15 @@ if should_build_codex_crp; then
     exit 5
   fi
 fi
+
+for id in "${ACP_PROVIDER_IDS[@]}"; do
+  version="$(get_matrix_version "$id")"
+  if [[ -z "$version" ]]; then
+    version="local"
+  fi
+  src="$(generate_acp_provider_shim "$id")"
+  add_local_provider "$id" "local-bin" "$version" "$src" "$(basename "$src")" "[]"
+done
 
 if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   local_adapter_required=0

@@ -21,6 +21,7 @@ use ctx_store::store::SessionTurnToolCountDeltas;
 
 use crate::daemon::AppState;
 use crate::harness_runtime::HarnessRuntimeKind;
+use crate::harness_sources::{self, HarnessSourceKind};
 use crate::installer;
 use crate::ops_events::OpsEvent;
 use crate::order_seq::{attach_order_seq, OrderSeqState};
@@ -599,7 +600,67 @@ async fn start_turn(
     for (key, value) in runtime_plan.env_overrides.iter() {
         provider_env.insert(key.clone(), value.clone());
     }
-    if session.provider_id == "codex" && !provider_env.contains_key("CODEX_HOME") {
+    let resolved_source = match harness_sources::resolve_provider_source_for_run(
+        &state.core.data_root,
+        &session.provider_id,
+    )
+    .await
+    {
+        Ok(source) => source,
+        Err(err) => {
+            let err = anyhow!(
+                "provider source resolution failed for {}: {}",
+                session.provider_id,
+                err
+            );
+            emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err).await;
+            return Err(err);
+        }
+    };
+    let using_endpoint_source = resolved_source.source_kind == HarnessSourceKind::Endpoint;
+    provider_env.insert(
+        "CTX_PROVIDER_SOURCE_KIND".to_string(),
+        match resolved_source.source_kind {
+            HarnessSourceKind::Subscription => "subscription".to_string(),
+            HarnessSourceKind::Endpoint => "endpoint".to_string(),
+        },
+    );
+    if let Some(endpoint) = resolved_source.endpoint.as_ref() {
+        provider_env.insert("CTX_PROVIDER_ENDPOINT_ID".to_string(), endpoint.id.clone());
+        provider_env.insert(
+            "CTX_PROVIDER_ENDPOINT_SHAPE".to_string(),
+            endpoint.api_shape.as_str().to_string(),
+        );
+    }
+    for (key, value) in resolved_source.env.iter() {
+        provider_env.insert(key.clone(), value.clone());
+    }
+
+    if session.provider_id == "codex" && is_container && using_endpoint_source {
+        if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
+            if let Some(api_key) = provider_env.get("OPENAI_API_KEY").cloned() {
+                let codex_home = provider_accounts::codex_runtime_home(std::path::Path::new(root));
+                tokio::fs::create_dir_all(&codex_home).await.ok();
+                let auth_payload = serde_json::to_vec_pretty(&serde_json::json!({
+                    "OPENAI_API_KEY": api_key,
+                }))
+                .unwrap_or_default();
+                if !auth_payload.is_empty() {
+                    let auth_path = codex_home.join("auth.json");
+                    let _ = tokio::fs::write(&auth_path, auth_payload).await;
+                    provider_env.insert(
+                        "CODEX_HOME".to_string(),
+                        codex_home.to_string_lossy().to_string(),
+                    );
+                }
+            }
+        }
+    }
+
+    if session.provider_id == "codex"
+        && !provider_env.contains_key("CODEX_HOME")
+        && !using_endpoint_source
+    {
         if is_container {
             // Container runtimes must not rely on the host's ~/.codex directory being available.
             // We always use the ctx-managed runtime home under the container's CTX_DATA_ROOT.
@@ -630,9 +691,15 @@ async fn start_turn(
         provider_accounts::ensure_codex_auth_ready(Path::new(&codex_home))
             .await
             .map_err(|err| {
-                anyhow!(
-                    "Codex authentication is not configured. Open Settings -> Codex and add a subscription login or API key. Details: {err}"
-                )
+                if using_endpoint_source {
+                    anyhow!(
+                        "Codex endpoint credentials are not configured correctly. Open Settings -> Agent Harnesses and verify the selected endpoint. Details: {err}"
+                    )
+                } else {
+                    anyhow!(
+                        "Codex authentication is not configured. Open Settings -> Codex and add a subscription login or API key. Details: {err}"
+                    )
+                }
             })?;
     }
 

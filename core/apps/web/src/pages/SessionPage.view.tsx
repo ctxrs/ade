@@ -87,6 +87,7 @@ import { SessionThreadPane } from "./sessionThread/SessionThreadPane";
 import { useSessionMessageListController } from "./useSessionMessageListController";
 import { useWorkbenchThreadViewModelController } from "./useWorkbenchThreadViewModelController";
 import { errorMessage } from "../utils/errorMessage";
+import { defaultSessionVerbosityForProvider } from "./sessionVerbosity";
 
 type PendingMessageEntry = {
   clientId: string;
@@ -371,19 +372,6 @@ export function SessionView({
   const [providerGuardActionBusy, setProviderGuardActionBusy] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-    loadSessionViewPrefsV1()
-      .then((prefs) => {
-        if (!cancelled && prefs?.verbosity) setVerbosity(prefs.verbosity);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-
-  useEffect(() => {
     const update = (event: KeyboardEvent) => {
       setModifierDown(event.metaKey || event.ctrlKey);
     };
@@ -453,6 +441,25 @@ export function SessionView({
 
   const entry = useSessionEntry(id ?? "");
   const session: Session | null = entry?.session ?? null;
+  useEffect(() => {
+    let cancelled = false;
+    loadSessionViewPrefsV1()
+      .then((prefs) => {
+        if (cancelled) return;
+        if (prefs?.verbosity) {
+          setVerbosity(prefs.verbosity);
+          return;
+        }
+        setVerbosity(defaultSessionVerbosityForProvider(session?.provider_id));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setVerbosity(defaultSessionVerbosityForProvider(session?.provider_id));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, session?.provider_id]);
   const openChildSession = useCallback(
     (childSessionId: string) => {
       if (!session) return;
