@@ -66,17 +66,30 @@ pub async fn sync_workspace_attachments(
     let mut out = Vec::with_capacity(existing.len());
     let mut sync_plans = Vec::new();
     for mut attachment in existing {
+        let now = Utc::now();
         let should_refresh = refresh || attachment.update_policy != AttachmentUpdatePolicy::Manual;
-        let should_materialize = should_refresh
-            || !materialized_path_for_attachment(state.as_ref(), &attachment).exists();
+        let materialized_exists =
+            materialized_path_for_attachment(state.as_ref(), &attachment).exists();
+        let should_materialize = should_refresh || !materialized_exists;
         if should_materialize && attachment.status != WorkspaceAttachmentStatus::Syncing {
             attachment.status = WorkspaceAttachmentStatus::Pending;
             attachment.error_message = None;
-            attachment.updated_at = Utc::now();
+            attachment.updated_at = now;
             sync_plans.push(AttachmentSyncPlan {
                 id: attachment.id,
                 refresh: should_refresh,
             });
+        } else if !should_materialize
+            && attachment.status != WorkspaceAttachmentStatus::Ready
+        {
+            // Heal stale pending/error states when the materialized content already exists
+            // and no refresh is required (e.g. manual-policy attachments after daemon restarts).
+            attachment.status = WorkspaceAttachmentStatus::Ready;
+            attachment.error_message = None;
+            if attachment.last_sync_at.is_none() {
+                attachment.last_sync_at = Some(now);
+            }
+            attachment.updated_at = now;
         }
         store.upsert_workspace_attachment(&attachment).await?;
         out.push(attachment);

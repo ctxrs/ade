@@ -79,18 +79,20 @@ test("workspace attachments show pending then ready", async ({ page, request }) 
     await page.goto(`/settings?ws=${workspace.id}#workspace_attachments`);
     await page.getByRole("main").getByText(/Reference repos/i).waitFor();
 
+    await page.getByRole("button", { name: "Add reference repo" }).click();
     await page.locator("#attachments-source").fill(refRepoRoot);
     await page.locator("#attachments-name").fill("ref-fixture");
     await page.getByRole("button", { name: "Add repo" }).click();
 
-    const repoRow = page.locator(".settings-table-row", { hasText: "ref-fixture" });
+    const repoRow = page.locator(".settings-attachments-list-row", { hasText: "ref-fixture" });
     await waitForPending(repoRow);
 
+    await page.getByRole("button", { name: "Add docs mirror" }).click();
     await page.locator("#attachments-docs-source").fill(docsUrl);
     await page.locator("#attachments-docs-name").fill("docs-fixture");
     await page.getByRole("button", { name: "Add docs" }).click();
 
-    const docsRow = page.locator(".settings-table-row", { hasText: "docs-fixture" });
+    const docsRow = page.locator(".settings-attachments-list-row", { hasText: "docs-fixture" });
     await waitForPending(docsRow);
 
     await waitForReady(repoRow);

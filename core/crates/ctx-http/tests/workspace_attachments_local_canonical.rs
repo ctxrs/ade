@@ -1,7 +1,11 @@
 mod common;
 
 use axum::http::{Method, StatusCode};
-use ctx_core::models::{WorkspaceAttachment, WorkspaceAttachmentKind};
+use ctx_core::models::{
+    AttachmentMode, AttachmentUpdatePolicy, WorkspaceAttachment,
+    WorkspaceAttachmentKind, WorkspaceAttachmentStatus,
+};
+use ctx_http::attachments;
 use serde_json::json;
 
 #[tokio::test]
@@ -86,4 +90,73 @@ async fn workspace_attachments_are_db_canonical_and_ignore_repo_file() {
 
     let after_delete = tokio::fs::read_to_string(&cfg_path).await.unwrap();
     assert_eq!(after_delete, before);
+}
+
+#[tokio::test]
+async fn workspace_attachments_sync_heals_stale_pending_when_materialized_exists() {
+    let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
+
+    let data_root = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_root.path()).await;
+    let state = common::build_state(
+        data_root.path(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let workspace = common::create_workspace(&app, repo.path(), "ws").await;
+    let attachment = attachments::upsert_workspace_attachment(
+        state.as_ref(),
+        workspace.id,
+        attachments::AttachmentConfig {
+            kind: WorkspaceAttachmentKind::ReferenceRepo,
+            name: "ref-fixture".to_string(),
+            source: repo.path().to_string_lossy().to_string(),
+            revision: None,
+            subpath: None,
+            mount_relpath: None,
+            mode: Some(AttachmentMode::Ro),
+            update_policy: Some(AttachmentUpdatePolicy::Manual),
+        },
+    )
+    .await
+    .unwrap();
+
+    let materialized = data_root
+        .path()
+        .join("attachments")
+        .join("reference-repos")
+        .join("checkouts")
+        .join(attachment.id.0.to_string())
+        .join("default");
+    tokio::fs::create_dir_all(&materialized).await.unwrap();
+    tokio::fs::write(materialized.join("README.md"), "cached\n")
+        .await
+        .unwrap();
+
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    store
+        .update_workspace_attachment_status(
+            attachment.id,
+            WorkspaceAttachmentStatus::Pending,
+            None,
+            None,
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+
+    let (sync_status, synced): (StatusCode, Vec<WorkspaceAttachment>) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/attachments/sync", workspace.id.0),
+        Some(json!({ "refresh": false })),
+    )
+    .await;
+    assert_eq!(sync_status, StatusCode::OK);
+    assert_eq!(synced.len(), 1);
+    assert_eq!(synced[0].status, WorkspaceAttachmentStatus::Ready);
+    assert!(synced[0].last_sync_at.is_some());
 }

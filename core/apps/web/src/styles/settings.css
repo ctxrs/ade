@@ -406,6 +406,10 @@
   line-height: 1.2;
 }
 
+.settings-row-desc-balance {
+  text-wrap: balance;
+}
+
 .settings-row-right {
   display: flex;
   justify-content: flex-end;
@@ -793,6 +797,11 @@
 
 .settings-harness-modal-fields .settings-control {
   width: 100%;
+  font-weight: 400;
+}
+
+.settings-harness-modal-fields .settings-control::placeholder {
+  font-weight: 400;
 }
 
 .settings-harness-modal-actions {
@@ -998,6 +1007,34 @@
   gap: 12px;
 }
 
+.settings-attachments-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-attachments-icon-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.settings-attachments-icon-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.settings-attachments-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .settings-attachments-actions {
   display: flex;
   gap: 8px;
@@ -1008,6 +1045,124 @@
 .settings-attachments-hint {
   font-size: 12px;
   color: var(--text-faint);
+}
+
+.settings-attachments-list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-attachments-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--surface-active);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 10px 10px;
+}
+
+.settings-attachments-list-main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.settings-attachments-list-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-attachments-title-truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-attachments-source {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-attachments-source-link {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.settings-attachments-source-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.settings-attachments-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--text-faint);
+  flex: 0 0 auto;
+}
+
+.settings-attachments-status-dot-ready {
+  background: var(--success-bar);
+}
+
+.settings-attachments-status-dot-syncing {
+  background: var(--accent-strong);
+}
+
+.settings-attachments-status-dot-pending {
+  background: var(--warning-contrast);
+}
+
+.settings-attachments-status-dot-error {
+  background: var(--error-contrast);
+}
+
+.settings-attachments-list-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  align-self: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.settings-attachments-indexed-label {
+  white-space: nowrap;
+}
+
+.settings-attachments-row-menu-trigger {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.settings-attachments-row-menu-trigger:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.settings-attachments-row-menu-trigger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-attachments-modal {
+  width: min(560px, 92vw);
 }
 
 .settings-table-attachments .settings-table-head,

@@ -3,7 +3,6 @@ import {
   createWorkspaceAttachment,
   deleteWorkspaceAttachment,
   idToString,
-  listWorkspaceAttachments,
   syncWorkspaceAttachments,
   type WorkspaceAttachment,
 } from "../../../api/client";
@@ -21,7 +20,7 @@ type WorkspaceAttachmentsController = {
   setAttachmentName: (value: string) => void;
   attachmentRevision: string;
   setAttachmentRevision: (value: string) => void;
-  handleAddAttachment: () => Promise<void>;
+  handleAddAttachment: () => Promise<boolean>;
   attachmentBusy: boolean;
   syncWorkspaceAttachmentsNow: () => Promise<void>;
   attachmentSyncBusy: boolean;
@@ -33,7 +32,7 @@ type WorkspaceAttachmentsController = {
   setDocsAttachmentSource: (value: string) => void;
   docsAttachmentName: string;
   setDocsAttachmentName: (value: string) => void;
-  handleAddDocsAttachment: () => Promise<void>;
+  handleAddDocsAttachment: () => Promise<boolean>;
   docsAttachmentBusy: boolean;
   attachmentsError: string | null;
 };
@@ -77,9 +76,7 @@ export function useWorkspaceAttachmentsController({
         setAttachmentsError(null);
       }
       try {
-        const next = opts?.refresh
-          ? await syncWorkspaceAttachments(workspaceId, true)
-          : await listWorkspaceAttachments(workspaceId);
+        const next = await syncWorkspaceAttachments(workspaceId, Boolean(opts?.refresh));
         setAttachments(next);
       } catch (error) {
         if (!opts?.silent) {
@@ -97,22 +94,25 @@ export function useWorkspaceAttachmentsController({
   const syncWorkspaceAttachmentsNow = useCallback(async () => {
     if (!workspaceId) return;
     setAttachmentSyncBusy(true);
-    await refreshWorkspaceAttachments({ refresh: true });
-    setAttachmentSyncBusy(false);
+    try {
+      await refreshWorkspaceAttachments({ refresh: true });
+    } finally {
+      setAttachmentSyncBusy(false);
+    }
   }, [refreshWorkspaceAttachments, workspaceId]);
 
   const handleAddAttachment = useCallback(async () => {
-    if (!workspaceId) return;
+    if (!workspaceId) return false;
     const source = attachmentSource.trim();
     const revision = attachmentRevision.trim();
     const name = attachmentName.trim() || guessAttachmentName(source);
     if (!source) {
       setAttachmentsError("Repository URL is required.");
-      return;
+      return false;
     }
     if (!name) {
       setAttachmentsError("Attachment name is required.");
-      return;
+      return false;
     }
     setAttachmentBusy(true);
     setAttachmentsError(null);
@@ -127,24 +127,26 @@ export function useWorkspaceAttachmentsController({
       setAttachmentName("");
       setAttachmentSource("");
       setAttachmentRevision("");
+      return true;
     } catch (error) {
       setAttachmentsError(messageFromError(error));
+      return false;
     } finally {
       setAttachmentBusy(false);
     }
   }, [workspaceId, attachmentSource, attachmentRevision, attachmentName]);
 
   const handleAddDocsAttachment = useCallback(async () => {
-    if (!workspaceId) return;
+    if (!workspaceId) return false;
     const source = docsAttachmentSource.trim();
     const name = docsAttachmentName.trim() || guessAttachmentName(source);
     if (!source) {
       setAttachmentsError("Docs URL is required.");
-      return;
+      return false;
     }
     if (!name) {
       setAttachmentsError("Attachment name is required.");
-      return;
+      return false;
     }
     setDocsAttachmentBusy(true);
     setAttachmentsError(null);
@@ -157,8 +159,10 @@ export function useWorkspaceAttachmentsController({
       setAttachments(next);
       setDocsAttachmentName("");
       setDocsAttachmentSource("");
+      return true;
     } catch (error) {
       setAttachmentsError(messageFromError(error));
+      return false;
     } finally {
       setDocsAttachmentBusy(false);
     }
@@ -167,8 +171,6 @@ export function useWorkspaceAttachmentsController({
   const handleRemoveAttachment = useCallback(
     async (attachment: WorkspaceAttachment) => {
       if (!workspaceId) return;
-      const confirmed = window.confirm(`Remove "${attachment.name}" from workspace attachments?`);
-      if (!confirmed) return;
       const id = idToString(attachment.id);
       setAttachmentDeleteBusy((prev) => ({ ...prev, [id]: true }));
       setAttachmentsError(null);
