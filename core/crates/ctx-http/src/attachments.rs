@@ -79,9 +79,7 @@ pub async fn sync_workspace_attachments(
                 id: attachment.id,
                 refresh: should_refresh,
             });
-        } else if !should_materialize
-            && attachment.status != WorkspaceAttachmentStatus::Ready
-        {
+        } else if !should_materialize && attachment.status != WorkspaceAttachmentStatus::Ready {
             // Heal stale pending/error states when the materialized content already exists
             // and no refresh is required (e.g. manual-policy attachments after daemon restarts).
             attachment.status = WorkspaceAttachmentStatus::Ready;

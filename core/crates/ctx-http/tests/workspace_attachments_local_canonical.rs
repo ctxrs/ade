@@ -2,8 +2,8 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use ctx_core::models::{
-    AttachmentMode, AttachmentUpdatePolicy, WorkspaceAttachment,
-    WorkspaceAttachmentKind, WorkspaceAttachmentStatus,
+    AttachmentMode, AttachmentUpdatePolicy, WorkspaceAttachment, WorkspaceAttachmentKind,
+    WorkspaceAttachmentStatus,
 };
 use ctx_http::attachments;
 use serde_json::json;

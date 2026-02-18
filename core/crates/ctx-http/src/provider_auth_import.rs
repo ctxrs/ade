@@ -224,7 +224,9 @@ fn build_catalog(roots: &HostRoots) -> Vec<PathSpec> {
             signal_strength: "weak",
             confidence: "low-medium",
             importable: false,
-            unsupported_reason: Some("Amp auth is often keychain-backed; no canonical importable auth file was found."),
+            unsupported_reason: Some(
+                "Amp auth is often keychain-backed; no canonical importable auth file was found.",
+            ),
             path: roots.xdg_config.join("amp").join("settings.json"),
         },
         PathSpec {
@@ -234,7 +236,9 @@ fn build_catalog(roots: &HostRoots) -> Vec<PathSpec> {
             signal_strength: "weak",
             confidence: "low-medium",
             importable: false,
-            unsupported_reason: Some("Copilot auth storage is not a stable canonical file path in available docs."),
+            unsupported_reason: Some(
+                "Copilot auth storage is not a stable canonical file path in available docs.",
+            ),
             path: roots.home.join(".copilot").join("lsp-config.json"),
         },
         PathSpec {
@@ -254,7 +258,9 @@ fn build_catalog(roots: &HostRoots) -> Vec<PathSpec> {
             signal_strength: "weak",
             confidence: "low-medium",
             importable: false,
-            unsupported_reason: Some("Droid account auth is documented as encrypted/keychain-backed storage."),
+            unsupported_reason: Some(
+                "Droid account auth is documented as encrypted/keychain-backed storage.",
+            ),
             path: roots.home.join(".factory").join("settings.json"),
         },
         PathSpec {
