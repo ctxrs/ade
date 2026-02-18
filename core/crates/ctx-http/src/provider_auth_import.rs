@@ -244,7 +244,7 @@ fn build_catalog(roots: &HostRoots) -> Vec<PathSpec> {
             signal_strength: "weak",
             confidence: "low-medium",
             importable: false,
-            unsupported_reason: Some("Cursor credentials are documented as secure local storage without a canonical import file path."),
+            unsupported_reason: None,
             path: roots.home.join(".cursor").join("cli-config.json"),
         },
         PathSpec {
@@ -526,7 +526,7 @@ fn summarize_json_candidate(provider_id: &str, value: &serde_json::Value) -> Opt
         if let Some(email) = find_string(&["email", "user_email"]) {
             return Some(format!("Codex account {email}"));
         }
-        return Some("Codex auth session".to_string());
+        return None;
     }
     if let Some(email) = find_string(&["email", "user_email", "username"]) {
         return Some(email);
@@ -952,7 +952,7 @@ mod tests {
                 confidence: "high".to_string(),
                 parse_status: "parsed".to_string(),
                 unsupported_reason: None,
-                summary: Some("Codex auth session".to_string()),
+                summary: None,
                 account_identity: None,
                 endpoint: None,
                 auth_type: Some("subscription".to_string()),

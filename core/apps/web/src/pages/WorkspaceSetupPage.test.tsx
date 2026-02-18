@@ -19,7 +19,7 @@ import {
   updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig,
 } from "../api/client";
-import { desktopListSshHosts, desktopTestSsh, isDesktopApp } from "../utils/desktop";
+import { desktopConnectLocal, desktopListSshHosts, desktopTestSsh, isDesktopApp } from "../utils/desktop";
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
@@ -109,6 +109,11 @@ describe("WorkspaceSetupPage", () => {
       error: null,
     } as never);
     vi.mocked(importProviderAuthCandidates).mockResolvedValue({ results: [] } as never);
+    vi.mocked(desktopConnectLocal).mockResolvedValue({
+      kind: "local",
+      base_url: "http://127.0.0.1:4402",
+      token: "test-token",
+    } as never);
     vi.mocked(desktopListSshHosts).mockResolvedValue([]);
     vi.mocked(desktopTestSsh).mockResolvedValue();
   });
@@ -169,5 +174,62 @@ describe("WorkspaceSetupPage", () => {
       ),
     ).toBeInTheDocument();
     expect(desktopTestSsh).not.toHaveBeenCalled();
+  });
+
+  it("renders import auth rows with parsed harnesses preselected", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
+      candidates: [
+        {
+          id: "cand-claude",
+          provider_id: "claude-crp",
+          provider_label: "Claude Code",
+          kind: "auth_file",
+          path: "/Users/example-user/.claude.json",
+          signal_strength: "strong",
+          confidence: "medium",
+          parse_status: "parsed",
+        },
+        {
+          id: "cand-codex",
+          provider_id: "codex",
+          provider_label: "Codex",
+          kind: "auth_file",
+          path: "/Users/example-user/.codex/auth.json",
+          signal_strength: "strong",
+          confidence: "high",
+          parse_status: "parsed",
+        },
+        {
+          id: "cand-cursor",
+          provider_id: "cursor",
+          provider_label: "Cursor",
+          kind: "config_file",
+          path: "/Users/example-user/.cursor/cli-config.json",
+          signal_strength: "weak",
+          confidence: "low-medium",
+          parse_status: "unsupported",
+          unsupported_reason: "Unsupported in this flow.",
+        },
+      ],
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("auth-import");
+    });
+
+    const claudeCheckbox = screen.getByRole("checkbox", { name: /claude code/i }) as HTMLInputElement;
+    const codexCheckbox = screen.getByRole("checkbox", { name: /codex/i }) as HTMLInputElement;
+    const cursorCheckbox = screen.getByRole("checkbox", { name: /cursor/i }) as HTMLInputElement;
+
+    expect(claudeCheckbox.checked).toBe(true);
+    expect(codexCheckbox.checked).toBe(true);
+    expect(cursorCheckbox.checked).toBe(false);
+    expect(cursorCheckbox.disabled).toBe(true);
+    expect(screen.getByText("Source: /Users/example-user/.codex/auth.json")).toBeInTheDocument();
   });
 });

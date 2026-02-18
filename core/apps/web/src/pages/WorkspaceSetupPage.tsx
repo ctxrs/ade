@@ -66,6 +66,7 @@ import {
   type RemoteProfile,
   type SshRecent,
 } from "./workspaceSetup/remoteProfiles";
+import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 
 type WizardOption = {
   id: string;
@@ -138,6 +139,14 @@ export default function WorkspaceSetupPage() {
   const [authImportScannedKey, setAuthImportScannedKey] = useState<string | null>(null);
   const importInitResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
   const remoteProfileAutoAppliedKeyRef = useRef<string | null>(null);
+  const harnessByProviderId = useMemo(() => {
+    return new Map(HARNESS_CATALOG.map((entry) => [entry.id, entry]));
+  }, []);
+
+  const logoClasses = (base: string, invertInDark?: boolean, invertInLight?: boolean): string =>
+    [base, invertInDark ? "wb-invert" : "", invertInLight ? "wb-invert-light" : ""]
+      .filter(Boolean)
+      .join(" ");
 
   const containerMode = selections.container;
   const authImportStepVisible = authImportCandidates.length > 0;
@@ -1567,27 +1576,51 @@ export default function WorkspaceSetupPage() {
                       <div className="wizard-note">No import candidates found on this host.</div>
                     ) : null}
                     {authImportCandidates.length > 0 && (
-                      <div className="wizard-option-grid">
+                      <div className="wizard-auth-import-list">
                         {authImportCandidates.map((candidate) => {
                           const checked = Boolean(authImportSelected[candidate.id]);
                           const importable = candidate.parse_status === "parsed";
+                          const harness = harnessByProviderId.get(candidate.provider_id);
+                          const showSummary = candidate.summary
+                            && !(candidate.provider_id === "codex" && candidate.summary === "Codex auth session");
+                          const showUnsupportedReason = candidate.unsupported_reason
+                            && !(
+                              candidate.provider_id === "cursor"
+                              && candidate.unsupported_reason.includes("secure local storage without a canonical import file path")
+                            );
                           return (
-                            <label key={candidate.id} className="wizard-option" style={{ cursor: importable ? "pointer" : "not-allowed" }}>
-                              <div className="wizard-option-title">
+                            <label
+                              key={candidate.id}
+                              className={`wizard-auth-import-row ${importable ? "" : "wizard-auth-import-row--disabled"}`}
+                            >
+                              <div className="wizard-auth-import-title">
                                 <input
                                   type="checkbox"
+                                  className="wizard-auth-import-checkbox"
                                   checked={checked}
                                   disabled={!importable || authImportBusy}
                                   onChange={(e) =>
                                     setAuthImportSelected((prev) => ({ ...prev, [candidate.id]: e.target.checked }))
                                   }
                                 />
-                                <span className="wizard-option-title-text">{candidate.provider_label}</span>
-                                <span className="wizard-option-badge">{candidate.parse_status}</span>
+                                {harness?.logoSrc ? (
+                                  <img
+                                    className={logoClasses(
+                                      "wizard-auth-import-logo",
+                                      harness.invertInDark,
+                                      harness.invertInLight,
+                                    )}
+                                    src={harness.logoSrc}
+                                    alt=""
+                                  />
+                                ) : (
+                                  <span className="wizard-auth-import-logo-fallback" aria-hidden="true" />
+                                )}
+                                <span className="wizard-auth-import-name">{candidate.provider_label}</span>
                               </div>
-                              <div className="wizard-option-desc">{candidate.path}</div>
-                              {candidate.summary ? <div className="wizard-note wizard-note--tight">{candidate.summary}</div> : null}
-                              {candidate.unsupported_reason ? (
+                              <div className="wizard-auth-import-path">Source: {candidate.path}</div>
+                              {showSummary ? <div className="wizard-note wizard-note--tight">{candidate.summary}</div> : null}
+                              {showUnsupportedReason ? (
                                 <div className="wizard-note wizard-note--tight">{candidate.unsupported_reason}</div>
                               ) : null}
                             </label>

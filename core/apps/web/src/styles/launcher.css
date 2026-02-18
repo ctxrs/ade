@@ -864,6 +864,66 @@
   margin-left: auto;
 }
 
+.wizard-auth-import-list {
+  display: grid;
+  gap: 8px;
+}
+
+.wizard-auth-import-row {
+  border: 1px solid rgba(231, 231, 231, 0.14);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.07);
+  display: grid;
+  gap: 4px;
+}
+
+.wizard-auth-import-row--disabled {
+  opacity: 0.8;
+}
+
+.wizard-auth-import-title {
+  display: grid;
+  grid-template-columns: auto 16px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+}
+
+.wizard-auth-import-checkbox {
+  margin: 0;
+  accent-color: var(--phosphor-green);
+}
+
+.wizard-auth-import-logo,
+.wizard-auth-import-logo-fallback {
+  width: 16px;
+  height: 16px;
+  border-radius: 0;
+  object-fit: contain;
+}
+
+.wizard-auth-import-logo-fallback {
+  background: rgba(231, 231, 231, 0.18);
+  display: inline-block;
+}
+
+.wizard-auth-import-name {
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wizard-auth-import-path {
+  padding-left: 24px;
+  color: rgba(231, 231, 231, 0.70);
+  font-size: 11px;
+  word-break: break-all;
+}
+
 .wizard-skip {
   appearance: none;
   border: none;
