@@ -68,6 +68,20 @@ pub(super) struct DesktopSshHost {
     port: Option<u16>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct DesktopRemoteDaemonUpdateReq {
+    #[serde(default)]
+    confirm: bool,
+    #[serde(default)]
+    channel: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DesktopRemoteDaemonUpdateResp {
+    updated: bool,
+    message: String,
+}
+
 #[tauri::command]
 pub(super) fn desktop_list_ssh_hosts() -> Result<Vec<DesktopSshHost>, String> {
     let mut out = Vec::new();
@@ -189,7 +203,9 @@ pub(super) async fn desktop_test_ssh(req: DesktopSshTestReq) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub(super) async fn desktop_get_git_branch(req: DesktopGitBranchReq) -> Result<Option<String>, String> {
+pub(super) async fn desktop_get_git_branch(
+    req: DesktopGitBranchReq,
+) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let raw = req.path.trim();
         if raw.is_empty() {
@@ -240,6 +256,8 @@ pub(super) async fn desktop_connect_ssh(
     let remote_port = req.remote_port.unwrap_or(4399);
 
     let user = req.user.clone();
+    let host_for_connect = host.clone();
+    let user_for_connect = user.clone();
     let remote_data_dir_for_connect = req.remote_data_dir.clone();
     let remote_ctx_bin = normalize_remote_ctx_bin(req.remote_ctx_bin.as_deref())
         .map(|path| validate_remote_ctx_bin(&path))
@@ -254,7 +272,7 @@ pub(super) async fn desktop_connect_ssh(
         // the remote daemon when users (or tests) already have it running on the target port.
         let mut local_port = pick_unused_local_port()?;
         let (mut tunnel, tunnel_stderr) =
-            start_ssh_tunnel(&host, user.as_deref(), local_port, remote_port)?;
+            start_ssh_tunnel(&host_for_connect, user_for_connect.as_deref(), local_port, remote_port)?;
         let mut base_url = format!("http://127.0.0.1:{local_port}");
 
         let mut health =
@@ -267,8 +285,8 @@ pub(super) async fn desktop_connect_ssh(
                 )
             })?;
             start_remote_daemon_over_ssh(
-                &host,
-                user.as_deref(),
+                &host_for_connect,
+                user_for_connect.as_deref(),
                 remote_port,
                 remote_data_dir_for_connect.as_deref(),
                 ctx_bin,
@@ -276,7 +294,7 @@ pub(super) async fn desktop_connect_ssh(
 
             local_port = pick_unused_local_port()?;
             let (mut tunnel2, tunnel_stderr2) =
-                start_ssh_tunnel(&host, user.as_deref(), local_port, remote_port)?;
+                start_ssh_tunnel(&host_for_connect, user_for_connect.as_deref(), local_port, remote_port)?;
             base_url = format!("http://127.0.0.1:{local_port}");
             health = probe_daemon_health_with_retry(
                 &base_url,
@@ -297,8 +315,8 @@ pub(super) async fn desktop_connect_ssh(
         }
 
         let auth = read_remote_daemon_auth_with_retry(
-            &host,
-            user.as_deref(),
+            &host_for_connect,
+            user_for_connect.as_deref(),
             remote_data_dir_for_connect.as_deref(),
         )?;
         Ok((base_url, auth.token, tunnel))
@@ -307,8 +325,62 @@ pub(super) async fn desktop_connect_ssh(
     .map_err(|e| format!("failed to reach remote daemon: {e}"))?
     .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?;
 
-    state.set_ssh(base_url, Some(token), tunnel);
+    state.set_ssh(
+        base_url,
+        Some(token),
+        tunnel,
+        host,
+        req.user.clone(),
+        remote_port,
+        req.remote_data_dir.clone(),
+        remote_ctx_bin,
+    );
     Ok(state.info())
+}
+
+#[tauri::command]
+pub(super) async fn desktop_update_remote_daemon(
+    state: tauri::State<'_, ConnectionManager>,
+    req: DesktopRemoteDaemonUpdateReq,
+) -> Result<DesktopRemoteDaemonUpdateResp, String> {
+    if !req.confirm {
+        return Err("confirm required".to_string());
+    }
+    let channel = normalize_update_channel(req.channel.as_deref())?;
+    let target = state.ssh_target().map_err(to_err)?;
+    let remote_ctx_bin = target
+        .remote_ctx_bin
+        .ok_or_else(|| {
+            "remote daemon update requires `remote_ctx_bin`; reconnect in launcher/workspace setup with an absolute path".to_string()
+        })?;
+    let host = target.host;
+    let user = target.user;
+    let remote_port = target.remote_port;
+    let remote_data_dir = target.remote_data_dir;
+    let channel_for_update = channel.clone();
+
+    let new_token = tauri::async_runtime::spawn_blocking(move || {
+        run_remote_daemon_self_update(
+            &host,
+            user.as_deref(),
+            remote_port,
+            remote_data_dir.as_deref(),
+            &remote_ctx_bin,
+            &channel_for_update,
+        )?;
+        let auth =
+            read_remote_daemon_auth_with_retry(&host, user.as_deref(), remote_data_dir.as_deref())?;
+        Ok::<String, anyhow::Error>(auth.token)
+    })
+    .await
+    .map_err(|e| format!("remote daemon update task failed: {e}"))?
+    .map_err(to_err)?;
+
+    state.update_ssh_token(new_token).map_err(to_err)?;
+    Ok(DesktopRemoteDaemonUpdateResp {
+        updated: true,
+        message: format!("Remote daemon updated on channel `{channel}` and restarted."),
+    })
 }
 
 #[tauri::command]
@@ -388,11 +460,11 @@ fn parse_ssh_config(text: &str) -> Vec<DesktopSshHost> {
     let mut current_host_name: Option<String> = None;
     let mut current_port: Option<u16> = None;
 
-    let mut flush = |hosts: &Vec<String>,
-                     user: &Option<String>,
-                     host_name: &Option<String>,
-                     port: &Option<u16>,
-                     out: &mut Vec<DesktopSshHost>| {
+    let flush = |hosts: &Vec<String>,
+                 user: &Option<String>,
+                 host_name: &Option<String>,
+                 port: &Option<u16>,
+                 out: &mut Vec<DesktopSshHost>| {
         if hosts.is_empty() {
             return;
         }
@@ -480,9 +552,7 @@ fn validate_remote_ctx_bin(value: &str) -> Result<String> {
         anyhow::bail!("remote_ctx_bin is required");
     }
     if !trimmed.starts_with('/') {
-        anyhow::bail!(
-            "remote_ctx_bin must be an absolute path (for example /opt/ctx/bin/ctx)"
-        );
+        anyhow::bail!("remote_ctx_bin must be an absolute path (for example /opt/ctx/bin/ctx)");
     }
     Ok(trimmed.to_string())
 }
@@ -507,6 +577,89 @@ fn remote_prewarm_inflight() -> &'static std::sync::Mutex<HashSet<String>> {
     static REMOTE_PREWARM_INFLIGHT: std::sync::OnceLock<std::sync::Mutex<HashSet<String>>> =
         std::sync::OnceLock::new();
     REMOTE_PREWARM_INFLIGHT.get_or_init(|| std::sync::Mutex::new(HashSet::new()))
+}
+
+pub(super) fn normalize_update_channel(raw: Option<&str>) -> Result<String, String> {
+    let channel = raw
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("stable");
+    let valid = channel
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.');
+    if !valid {
+        return Err("invalid channel (expected [A-Za-z0-9._-])".to_string());
+    }
+    Ok(channel.to_string())
+}
+
+fn run_remote_daemon_self_update(
+    host: &str,
+    user: Option<&str>,
+    remote_port: u16,
+    remote_data_dir: Option<&str>,
+    remote_ctx_bin: &str,
+    channel: &str,
+) -> Result<()> {
+    let ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
+    let update_cmd = format!(
+        "if [ -x {ctx_bin} ]; then {ctx_bin} self-update --yes --channel {channel}; else echo 'ctx not executable at configured remote path' >&2; exit 127; fi",
+        ctx_bin = remote_path_expr(&ctx_bin),
+        channel = shell_escape(channel),
+    );
+    let output =
+        run_remote_ssh_shell(host, user, &update_cmd).context("running remote self-update")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        anyhow::bail!("remote self-update failed: {detail}");
+    }
+
+    // Always restart to ensure the running daemon process picks up the new binary.
+    stop_remote_daemon_over_ssh(host, user, remote_port)
+        .context("stopping remote daemon after self-update")?;
+    start_remote_daemon_over_ssh(host, user, remote_port, remote_data_dir, &ctx_bin)
+        .context("starting remote daemon after self-update")?;
+    Ok(())
+}
+
+fn stop_remote_daemon_over_ssh(host: &str, user: Option<&str>, remote_port: u16) -> Result<()> {
+    let bind_pattern = format!("serve --bind 127.0.0.1:{remote_port}");
+    let cmd = format!(
+        "pkill -f -- {pattern} >/dev/null 2>&1 || true; sleep 1",
+        pattern = shell_escape(&bind_pattern),
+    );
+    let output = run_remote_ssh_shell(host, user, &cmd).context("stopping remote daemon")?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    anyhow::bail!("remote stop command failed: {stderr}");
+}
+
+fn run_remote_ssh_shell(host: &str, user: Option<&str>, cmd: &str) -> Result<std::process::Output> {
+    let target = match user {
+        Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
+        _ => host.to_string(),
+    };
+    let remote_cmd = format!("sh -lc {}", shell_escape(cmd));
+    Command::new("ssh")
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=15")
+        .arg("-o")
+        .arg("ServerAliveInterval=15")
+        .arg("-o")
+        .arg("ServerAliveCountMax=2")
+        .arg(target)
+        .arg(remote_cmd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("running ssh remote command")
 }
 
 fn start_ssh_tunnel(
@@ -714,7 +867,6 @@ fn join_remote_path(parent: &str, name: &str) -> String {
         return format!("/{name}");
     }
     format!("{}/{}", parent.trim_end_matches('/'), name)
-
 }
 
 #[cfg(test)]
@@ -757,5 +909,30 @@ mod remote_path_validation_tests {
 
         let key_default_dir = remote_prewarm_dedupe_key("example.host", None, 44199, None);
         assert_eq!(key_default_dir, "@example.host:44199:~/.ctx");
+    }
+
+    #[test]
+    fn update_channel_validation() {
+        assert_eq!(
+            normalize_update_channel(None).expect("default channel should be accepted"),
+            "stable"
+        );
+        assert_eq!(
+            normalize_update_channel(Some(" stable ")).expect("trimmed stable should be valid"),
+            "stable"
+        );
+        assert_eq!(
+            normalize_update_channel(Some("rc-2026.02.17"))
+                .expect("alphanumeric + dot + dash should be valid"),
+            "rc-2026.02.17"
+        );
+        assert!(
+            normalize_update_channel(Some("bad channel")).is_err(),
+            "spaces should be rejected"
+        );
+        assert!(
+            normalize_update_channel(Some("bad/channel")).is_err(),
+            "slashes should be rejected"
+        );
     }
 }

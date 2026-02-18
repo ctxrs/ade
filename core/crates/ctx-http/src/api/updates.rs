@@ -7,6 +7,7 @@ pub(super) struct UpdateCheckResp {
     platform: Option<String>,
     current_version: String,
     latest_version: Option<String>,
+    platform_supported: bool,
     update_available: bool,
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     manifest: serde_json::Value,
@@ -47,11 +48,20 @@ pub(super) async fn check_updates(
             })?;
 
     let latest_version = manifest.latest_version.clone();
+    let platform_supported = platform
+        .as_deref()
+        .and_then(|key| manifest.platforms.get(key))
+        .map(|entry| {
+            entry
+                .preferred_desktop_artifact(platform.as_deref().unwrap_or_default())
+                .is_some()
+        })
+        .unwrap_or(true);
     let update_available = match (
         crate::updates::normalize_version_str(&current_version),
         crate::updates::normalize_version_str(&latest_version),
     ) {
-        (Some(cur), Some(lat)) => lat > cur,
+        (Some(cur), Some(lat)) => platform_supported && lat > cur,
         _ => false,
     };
 
@@ -61,6 +71,7 @@ pub(super) async fn check_updates(
         platform,
         current_version,
         latest_version: Some(latest_version),
+        platform_supported,
         update_available,
         manifest: serde_json::to_value(manifest).unwrap_or(serde_json::Value::Null),
     }))

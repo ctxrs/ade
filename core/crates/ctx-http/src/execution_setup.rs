@@ -433,8 +433,8 @@ impl ExecutionSetupCoordinator {
             inner
                 .running_launch_by_workspace
                 .insert(workspace.id, job_id.clone());
-            inner.launch_history.push_back(job_id.clone());
             inner.launch_jobs.insert(job_id, Arc::clone(&job));
+            inner.launch_history.push_back(job.job_id.clone());
             while inner.launch_history.len() > JOB_HISTORY_CAP {
                 let Some(old_id) = inner.launch_history.pop_front() else {
                     break;
@@ -460,6 +460,49 @@ impl ExecutionSetupCoordinator {
             coordinator
                 .run_workspace_launch(job, workspace, settings, daemon_url)
                 .await;
+        });
+
+        snapshot
+    }
+
+    pub async fn start_runtime_prewarm(
+        self: &Arc<Self>,
+        settings: ExecutionSettings,
+    ) -> ExecutionLaunchSnapshot {
+        let workspace_id = WorkspaceId(uuid::Uuid::nil());
+        let (job, snapshot) = {
+            let mut inner = self.inner.lock().await;
+            let job_id = uuid::Uuid::new_v4().to_string();
+            let job = Arc::new(LaunchJob::new(job_id.clone(), workspace_id));
+            {
+                let mut job_inner = lock_or_recover(&job.inner, "launch_job_inner");
+                job_inner.kind = ExecutionSetupJobKind::StartupPrewarm;
+            }
+            let snapshot = job.snapshot();
+            inner.launch_jobs.insert(job_id, Arc::clone(&job));
+            inner.launch_history.push_back(job.job_id.clone());
+            while inner.launch_history.len() > JOB_HISTORY_CAP {
+                let Some(old_id) = inner.launch_history.pop_front() else {
+                    break;
+                };
+                let still_running = inner
+                    .running_launch_by_workspace
+                    .values()
+                    .any(|active_id| active_id == &old_id);
+                if !still_running {
+                    inner.launch_jobs.remove(&old_id);
+                }
+            }
+            (job, snapshot)
+        };
+
+        let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchSnapshot {
+            snapshot: snapshot.clone(),
+        });
+
+        let coordinator = Arc::clone(self);
+        tokio::spawn(async move {
+            coordinator.run_runtime_prewarm(job, settings).await;
         });
 
         snapshot
@@ -506,24 +549,41 @@ impl ExecutionSetupCoordinator {
             coordinator: Arc::clone(&self),
             job: Arc::clone(&job),
         };
-
-        let run_result = if matches!(settings.mode, ExecutionMode::Host) {
-            self.emit_phase(
-                &job,
-                HarnessSetupPhase::Ready,
-                "host execution mode selected; container launch skipped",
-            );
-            Ok(())
-        } else {
-            self.harness
-                .ensure_workspace_container_with_observer(
-                    &workspace,
-                    &settings,
-                    &daemon_url,
-                    Some(&observer),
-                )
-                .await
-                .context("container runtime failed")
+        let is_host_mode = matches!(settings.mode, ExecutionMode::Host);
+        let mut attempt = 0usize;
+        let run_result = loop {
+            attempt += 1;
+            let attempt_result = if is_host_mode {
+                self.emit_phase(
+                    &job,
+                    HarnessSetupPhase::Ready,
+                    "host execution mode selected; container launch skipped",
+                );
+                Ok(())
+            } else {
+                self.harness
+                    .ensure_workspace_container_with_observer(
+                        &workspace,
+                        &settings,
+                        &daemon_url,
+                        Some(&observer),
+                    )
+                    .await
+                    .context("container runtime failed")
+            };
+            match attempt_result {
+                Ok(()) => break Ok(()),
+                Err(_err) if should_retry_machine_start_failure(&job, attempt, is_host_mode) => {
+                    self.emit_log(
+                        &job,
+                        HarnessSetupPhase::MachineStartOrInit,
+                        HarnessSetupLogLevel::Warn,
+                        "container runtime machine startup failed; retrying once",
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                }
+                Err(err) => break Err(err),
+            }
         };
 
         match run_result {
@@ -568,6 +628,93 @@ impl ExecutionSetupCoordinator {
         }
 
         self.clear_running_launch(workspace.id, &job.job_id).await;
+    }
+
+    async fn run_runtime_prewarm(
+        self: Arc<Self>,
+        job: Arc<LaunchJob>,
+        settings: ExecutionSettings,
+    ) {
+        let launch_started = std::time::Instant::now();
+        let observer = LaunchObserver {
+            coordinator: Arc::clone(&self),
+            job: Arc::clone(&job),
+        };
+        let is_host_mode = matches!(settings.mode, ExecutionMode::Host);
+        let mut attempt = 0usize;
+        let run_result = loop {
+            attempt += 1;
+            let attempt_result = if is_host_mode {
+                self.emit_phase(
+                    &job,
+                    HarnessSetupPhase::Ready,
+                    "host execution mode selected; runtime prewarm skipped",
+                );
+                Ok(())
+            } else if !harness_runtime::container_runtime_available() {
+                Err(anyhow::anyhow!("container runtime unavailable"))
+            } else {
+                let image = harness_runtime::resolve_container_image(&settings.container);
+                harness_runtime::prefetch_container_image_with_observer(
+                    &self.data_root,
+                    &image,
+                    Some(&observer),
+                )
+                .await
+                .context("container runtime failed")
+            };
+            match attempt_result {
+                Ok(()) => break Ok(()),
+                Err(_err) if should_retry_machine_start_failure(&job, attempt, is_host_mode) => {
+                    self.emit_log(
+                        &job,
+                        HarnessSetupPhase::MachineStartOrInit,
+                        HarnessSetupLogLevel::Warn,
+                        "container runtime machine startup failed; retrying once",
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                }
+                Err(err) => break Err(err),
+            }
+        };
+
+        match run_result {
+            Ok(()) => {
+                if !matches!(settings.mode, ExecutionMode::Host) {
+                    self.emit_phase(&job, HarnessSetupPhase::Ready, "container runtime is ready");
+                }
+                let terminal = job.mark_terminal(ExecutionLaunchState::Ready, None);
+                if let Some(completed) = terminal.completed_phase {
+                    self.record_phase_metric(completed.phase, completed.elapsed_ms, "ready");
+                }
+                let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchComplete {
+                    snapshot: terminal.snapshot.clone(),
+                });
+                self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "ready");
+            }
+            Err(err) => {
+                let message = err.to_string();
+                let phase = job.current_phase().unwrap_or(HarnessSetupPhase::ImageLoad);
+                self.emit_log(&job, phase, HarnessSetupLogLevel::Error, &message);
+                let terminal =
+                    job.mark_terminal(ExecutionLaunchState::Error, Some(message.clone()));
+                if let Some(completed) = terminal.completed_phase {
+                    self.record_phase_metric(completed.phase, completed.elapsed_ms, "error");
+                }
+                let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchError {
+                    snapshot: terminal.snapshot.clone(),
+                });
+                self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "error");
+
+                let mut event = OpsEvent::new("error", "execution.runtime_prewarm_error");
+                event.meta = Some(json!({
+                    "job_id": terminal.snapshot.job_id,
+                    "phase": terminal.snapshot.current_phase,
+                    "error": message,
+                }));
+                self.ops_events.emit(event);
+            }
+        }
     }
 
     fn emit_phase(&self, job: &Arc<LaunchJob>, phase: HarnessSetupPhase, message: &str) {
@@ -894,6 +1041,19 @@ fn phase_label(phase: HarnessSetupPhase) -> &'static str {
     }
 }
 
+fn should_retry_machine_start_failure(
+    job: &Arc<LaunchJob>,
+    attempt: usize,
+    is_host_mode: bool,
+) -> bool {
+    !is_host_mode
+        && attempt == 1
+        && matches!(
+            job.current_phase(),
+            Some(HarnessSetupPhase::MachineStartOrInit)
+        )
+}
+
 fn format_ts(ts: DateTime<Utc>) -> String {
     ts.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
@@ -1036,6 +1196,38 @@ mod tests {
         assert!(snapshot.phases[0].finished_at.is_some());
         assert!(snapshot.phases[0].elapsed_ms.is_some());
         assert!(snapshot.phases[1].finished_at.is_none());
+    }
+
+    #[test]
+    fn machine_start_retry_predicate_only_retries_first_container_attempt() {
+        let job = Arc::new(LaunchJob::new(
+            uuid::Uuid::new_v4().to_string(),
+            WorkspaceId::new(),
+        ));
+        let _ = job.transition_phase(HarnessSetupPhase::MachineStartOrInit, "starting machine");
+
+        assert!(should_retry_machine_start_failure(&job, 1, false));
+        assert!(!should_retry_machine_start_failure(&job, 2, false));
+        assert!(!should_retry_machine_start_failure(&job, 1, true));
+    }
+
+    #[test]
+    fn machine_start_retry_predicate_disables_retry_for_host_mode() {
+        let job = Arc::new(LaunchJob::new(
+            uuid::Uuid::new_v4().to_string(),
+            WorkspaceId::new(),
+        ));
+        assert!(!should_retry_machine_start_failure(&job, 1, true));
+    }
+
+    #[test]
+    fn machine_start_retry_predicate_requires_machine_start_phase() {
+        let job = Arc::new(LaunchJob::new(
+            uuid::Uuid::new_v4().to_string(),
+            WorkspaceId::new(),
+        ));
+        let _ = job.transition_phase(HarnessSetupPhase::ImageCheck, "checking image");
+        assert!(!should_retry_machine_start_failure(&job, 1, false));
     }
 
     #[tokio::test]

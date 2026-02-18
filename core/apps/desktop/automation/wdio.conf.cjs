@@ -21,6 +21,7 @@ const defaultAppPath = (() => {
   return path.resolve(ROOT, "src-tauri/target/debug/ctx");
 })();
 const APP_PATH = process.env.CTX_DESKTOP_APP_PATH || defaultAppPath;
+const BUNDLES_DIR = path.resolve(ROOT, "src-tauri/bundles");
 const WORKSPACE_PATH = [
   String(process.env.CTX_AUTOMATION_WORKSPACE_PATH || "").trim(),
   String(process.env.GITHUB_WORKSPACE || "").trim(),
@@ -35,7 +36,7 @@ const CTX_BIN = process.env.CTX_AUTOMATION_CTX_BIN ||
   path.resolve(ROOT, "src-tauri/bin/ctx");
 
 const USE_EXTERNAL_DAEMON = !["0", "false", "no"].includes(
-  String(process.env.CTX_AUTOMATION_USE_EXTERNAL_DAEMON || "1").trim().toLowerCase(),
+  String(process.env.CTX_AUTOMATION_USE_EXTERNAL_DAEMON || "0").trim().toLowerCase(),
 );
 const SSH_NO_START_REMOTE = !["0", "false", "no"].includes(
   String(process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE || "1").trim().toLowerCase(),
@@ -54,6 +55,25 @@ const parsePositiveInt = (raw, fallback) => {
   return n;
 };
 const MOCHA_TIMEOUT_MS = parsePositiveInt(process.env.CTX_AUTOMATION_MOCHA_TIMEOUT_MS || "300000", 300000);
+const SCENARIO_FILTER = String(process.env.CTX_AUTOMATION_SCENARIOS || "")
+  .split(",")
+  .map((token) => token.trim().toLowerCase())
+  .filter(Boolean);
+const CONTAINER_SCENARIO_TOKENS = new Set([
+  "local",
+  "container",
+  "host-mounted",
+  "disk-isolated",
+  "provider",
+  "remote-container",
+  "local-clone-disk-isolated",
+  "local-new-host-mounted",
+  "local-new-disk-isolated",
+  "local-codex-smoke",
+  "remote-container-import",
+]);
+const RUNS_CONTAINER_SCENARIOS = SCENARIO_FILTER.length === 0
+  || SCENARIO_FILTER.some((token) => CONTAINER_SCENARIO_TOKENS.has(token));
 
 let daemonProcess = null;
 let daemonDataDir = null;
@@ -260,6 +280,78 @@ const pickUnusedPort = () => {
 
 const readJson = (p) => JSON.parse(fs.readFileSync(p, "utf8"));
 
+const desktopOs = () => {
+  if (process.platform === "darwin") return "macos";
+  if (process.platform === "win32") return "windows";
+  return "linux";
+};
+
+const desktopArch = () => {
+  if (process.arch === "arm64") return "aarch64";
+  if (process.arch === "x64") return "x86_64";
+  return process.arch;
+};
+
+const ensureBundledContainerAssets = () => {
+  const manifestPath = path.join(BUNDLES_DIR, "manifest.json");
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(
+      `bundled manifest missing at ${manifestPath}; run pnpm -C core desktop:prep:release`,
+    );
+  }
+  const manifest = readJson(manifestPath);
+  const runtimes = Array.isArray(manifest?.runtimes) ? manifest.runtimes : [];
+  const images = Array.isArray(manifest?.images)
+    ? manifest.images
+    : Array.isArray(manifest?.harness_images)
+      ? manifest.harness_images
+      : [];
+
+  const hostOs = desktopOs();
+  const hostArch = desktopArch();
+  const podmanRuntime = runtimes.find((entry) =>
+    entry
+    && entry.id === "podman"
+    && entry.os === hostOs
+    && entry.arch === hostArch
+    && typeof entry.root === "string"
+    && entry.root.trim().length > 0
+    && typeof entry.bin === "string"
+    && entry.bin.trim().length > 0
+  );
+  if (!podmanRuntime) {
+    throw new Error(
+      `bundled podman runtime missing for ${hostOs}/${hostArch} in ${manifestPath}`,
+    );
+  }
+  const podmanBinPath = path.join(BUNDLES_DIR, podmanRuntime.root, podmanRuntime.bin);
+  if (!fs.existsSync(podmanBinPath)) {
+    throw new Error(
+      `bundled podman binary missing at ${podmanBinPath}; run pnpm -C core desktop:prep:release`,
+    );
+  }
+
+  const harnessImage = images.find((entry) =>
+    entry
+    && entry.id === "ctx-harness"
+    && entry.os === "linux"
+    && entry.arch === hostArch
+    && typeof entry.tar === "string"
+    && entry.tar.trim().length > 0
+  );
+  if (!harnessImage) {
+    throw new Error(
+      `bundled harness image metadata missing for linux/${hostArch} in ${manifestPath}`,
+    );
+  }
+  const harnessImageTar = path.join(BUNDLES_DIR, harnessImage.tar);
+  if (!fs.existsSync(harnessImageTar)) {
+    throw new Error(
+      `bundled harness image tar missing at ${harnessImageTar}; run pnpm -C core desktop:prep:release`,
+    );
+  }
+};
+
 const waitForHealth = async (baseUrl, timeoutMs) => {
   const started = Date.now();
   // Use curl when available to keep behavior close to shell scripts in this repo.
@@ -368,7 +460,10 @@ exports.config = {
     );
     const isDarwin = process.platform === "darwin";
     if (isDarwin && !process.env.CN_API_KEY) {
-      throw new Error("CN_API_KEY is required for CrabNebula WebDriver on macOS.");
+      throw new Error(
+        "CN_API_KEY is required for CrabNebula WebDriver on macOS. " +
+          "Load it from Infisical in core/ (see core/.infisical.json and core/apps/desktop/README_AUTOMATION.md).",
+      );
     }
     // Ensure we don't hit the single-instance path (which can forward to a stale app instance
     // without the automation plugin enabled).
@@ -388,6 +483,12 @@ exports.config = {
       if (prepRelease.status !== 0) {
         throw new Error("pnpm -C core desktop:prep:release failed");
       }
+    }
+    if (!process.env.CTX_BUNDLE_DIR) {
+      process.env.CTX_BUNDLE_DIR = BUNDLES_DIR;
+    }
+    if (RUNS_CONTAINER_SCENARIOS) {
+      ensureBundledContainerAssets();
     }
 
     // Launch the app directly into the wizard route to reduce test flakiness.
@@ -487,7 +588,9 @@ exports.config = {
     });
     await waitTauriDriverReady();
   },
-  onComplete: () => {
+  onComplete: (exitCode) => {
+    const runFailed = Number(exitCode || 0) !== 0;
+    const preserveDaemonArtifacts = runFailed;
     killExistingAppProcesses();
     if (driverProcess) {
       driverProcess.kill();
@@ -503,20 +606,34 @@ exports.config = {
     }
     if (daemonDataDir) {
       try {
-        fs.rmSync(daemonDataDir, { recursive: true, force: true });
+        if (!preserveDaemonArtifacts) {
+          fs.rmSync(daemonDataDir, { recursive: true, force: true });
+        } else {
+          console.error(`[wdio] preserving daemonDataDir (test failure): ${daemonDataDir}`);
+        }
       } catch {
         // ignore
       }
-      daemonDataDir = null;
-      daemonLogPath = null;
+      if (!preserveDaemonArtifacts) {
+        daemonDataDir = null;
+        daemonLogPath = null;
+      }
     }
     if (internalDaemonDataDir) {
       try {
-        fs.rmSync(internalDaemonDataDir, { recursive: true, force: true });
+        if (!preserveDaemonArtifacts) {
+          fs.rmSync(internalDaemonDataDir, { recursive: true, force: true });
+        } else {
+          console.error(
+            `[wdio] preserving internalDaemonDataDir (test failure): ${internalDaemonDataDir}`,
+          );
+        }
       } catch {
         // ignore
       }
-      internalDaemonDataDir = null;
+      if (!preserveDaemonArtifacts) {
+        internalDaemonDataDir = null;
+      }
     }
   },
 };

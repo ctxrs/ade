@@ -3,10 +3,11 @@ import { Link, useLocation } from "react-router-dom";
 import { applyDaemonDesktopConnection, daemonFetchRaw } from "../api/client";
 import { useDaemonBaseUrl } from "../api/useDaemonConnection";
 import {
-  desktopConnectLocal,
   desktopGetConnection,
   desktopGetVersion,
   isDesktopApp,
+  desktopRestartLocalDaemon,
+  desktopUpdateRemoteDaemon,
   type DesktopConnectionKind,
   type DesktopConnectionInfo,
 } from "../utils/desktop";
@@ -91,6 +92,7 @@ export default function DaemonAvailabilityOverlay() {
   const [status, setStatus] = useState<DaemonStatus>("unknown");
   const [checking, setChecking] = useState(false);
   const [restartBusy, setRestartBusy] = useState(false);
+  const [remoteUpdateBusy, setRemoteUpdateBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [desktopKind, setDesktopKind] = useState<DesktopConnectionKind | null>(null);
   const [desktopVersion, setDesktopVersion] = useState<string | null>(null);
@@ -229,7 +231,7 @@ export default function DaemonAvailabilityOverlay() {
     setRestartBusy(true);
     setError(null);
     try {
-      const info = await desktopConnectLocal();
+      const info = await desktopRestartLocalDaemon();
       applyConnection(info);
       setDesktopKind(info.kind);
       await checkNow();
@@ -240,6 +242,36 @@ export default function DaemonAvailabilityOverlay() {
       setRestartBusy(false);
     }
   }, [checkNow, isDesktop, restartBusy]);
+
+  const confirmInterruptingAction = (action: "restart" | "update"): boolean => {
+    if (typeof window === "undefined") return true;
+    const label = action === "update" ? "update the remote daemon" : "restart the daemon";
+    return window.confirm(
+      `This will ${label} and may interrupt active agent activity. Continue?`,
+    );
+  };
+
+  const onMismatchRestartLocal = useCallback(async () => {
+    if (!isDesktop || restartBusy) return;
+    if (!confirmInterruptingAction("restart")) return;
+    await restartDaemon();
+  }, [isDesktop, restartBusy, restartDaemon]);
+
+  const onMismatchUpdateRemote = useCallback(async () => {
+    if (!isDesktop || remoteUpdateBusy) return;
+    if (!confirmInterruptingAction("update")) return;
+    setRemoteUpdateBusy(true);
+    setError(null);
+    try {
+      await desktopUpdateRemoteDaemon("stable");
+      await checkNow();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(trimError(message || "Unable to update the remote daemon."));
+    } finally {
+      setRemoteUpdateBusy(false);
+    }
+  }, [checkNow, isDesktop, remoteUpdateBusy]);
 
   const target = useMemo(() => {
     return daemonBaseUrl ?? "";
@@ -269,11 +301,11 @@ export default function DaemonAvailabilityOverlay() {
     if (!mismatch) return null;
     if (mismatch.kind === "daemon_older") {
       return desktopKind === "ssh"
-        ? "The daemon is older than this desktop app. Run ctx self-update on the remote host, then retry."
-        : "The daemon is older than this desktop app. Run ctx self-update or use Diagnostics > Updates, then retry.";
+        ? "The remote daemon is older than this desktop app. Update and restart it from this dialog."
+        : "The local daemon is older than this desktop app. Restart it from this dialog.";
     }
     if (mismatch.kind === "desktop_older") {
-      return "The desktop app is older than the daemon. Update the desktop app, then retry.";
+      return "The desktop app is older than the daemon. Update the desktop app from Diagnostics, then retry.";
     }
     return "The desktop app and daemon versions do not match. Update both to the same version, then retry.";
   })();
@@ -298,14 +330,39 @@ export default function DaemonAvailabilityOverlay() {
           )}
           {error && <div className="daemon-overlay-error">{error}</div>}
           <div className="daemon-overlay-actions">
+            {mismatch.kind === "daemon_older" && isDesktop && desktopKind !== "ssh" && (
+              <button
+                type="button"
+                className="daemon-overlay-button"
+                onClick={onMismatchRestartLocal}
+                disabled={checking || restartBusy || remoteUpdateBusy}
+              >
+                {restartBusy ? "Restarting..." : "Restart local daemon"}
+              </button>
+            )}
+            {mismatch.kind === "daemon_older" && isDesktop && desktopKind === "ssh" && (
+              <button
+                type="button"
+                className="daemon-overlay-button"
+                onClick={onMismatchUpdateRemote}
+                disabled={checking || restartBusy || remoteUpdateBusy}
+              >
+                {remoteUpdateBusy ? "Updating..." : "Update remote daemon"}
+              </button>
+            )}
             <button
               type="button"
               className="daemon-overlay-button"
               onClick={checkNow}
-              disabled={checking}
+              disabled={checking || restartBusy || remoteUpdateBusy}
             >
               {checking ? "Retrying..." : "Retry"}
             </button>
+            {mismatch.kind === "desktop_older" && (
+              <Link className="daemon-overlay-secondary" to="/diagnostics">
+                Open diagnostics
+              </Link>
+            )}
             {isDesktop && (
               <Link className="daemon-overlay-secondary" to="/">
                 Open launcher

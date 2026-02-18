@@ -13,6 +13,11 @@ export type DesktopConnectionInfo = {
   kind: DesktopConnectionKind;
   base_url?: string | null;
   token?: string | null;
+  host?: string | null;
+  user?: string | null;
+  remote_port?: number | null;
+  remote_data_dir?: string | null;
+  remote_ctx_bin?: string | null;
 };
 
 export type SshConnectReq = {
@@ -28,6 +33,28 @@ export type DesktopHttpResponse = {
   status: number;
   body: string;
   content_type?: string | null;
+};
+
+export type DesktopRemoteDaemonUpdateResp = {
+  updated: boolean;
+  message: string;
+};
+
+export type DesktopAppUpdateCheckResp = {
+  configured: boolean;
+  available: boolean;
+  current_version: string;
+  latest_version?: string | null;
+  target: string;
+  endpoint: string;
+  message?: string | null;
+};
+
+export type DesktopAppUpdateApplyResp = {
+  applied: boolean;
+  needs_restart: boolean;
+  latest_version?: string | null;
+  message: string;
 };
 
 export type DesktopStorageBatchOp =
@@ -178,8 +205,32 @@ export const desktopDisconnect = async (): Promise<void> =>
 export const desktopConnectLocal = async (): Promise<DesktopConnectionInfo> =>
   invoke<DesktopConnectionInfo>("desktop_connect_local");
 
+export const desktopRestartLocalDaemon = async (): Promise<DesktopConnectionInfo> =>
+  invoke<DesktopConnectionInfo>("desktop_restart_local_daemon", { req: { confirm: true } });
+
 export const desktopConnectSsh = async (req: SshConnectReq): Promise<DesktopConnectionInfo> =>
   invoke<DesktopConnectionInfo>("desktop_connect_ssh", { req });
+
+export const desktopUpdateRemoteDaemon = async (channel?: string): Promise<DesktopRemoteDaemonUpdateResp> =>
+  invoke<DesktopRemoteDaemonUpdateResp>("desktop_update_remote_daemon", {
+    req: {
+      confirm: true,
+      ...(channel ? { channel } : {}),
+    },
+  });
+
+export const desktopCheckAppUpdate = async (channel?: string): Promise<DesktopAppUpdateCheckResp> =>
+  invoke<DesktopAppUpdateCheckResp>("desktop_check_app_update", {
+    req: channel ? { channel } : {},
+  });
+
+export const desktopApplyAppUpdate = async (channel?: string): Promise<DesktopAppUpdateApplyResp> =>
+  invoke<DesktopAppUpdateApplyResp>("desktop_apply_app_update", {
+    req: {
+      confirm: true,
+      ...(channel ? { channel } : {}),
+    },
+  });
 
 export const desktopListSshHosts = async (): Promise<DesktopSshHost[]> =>
   invoke<DesktopSshHost[]>("desktop_list_ssh_hosts");

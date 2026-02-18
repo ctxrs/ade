@@ -84,7 +84,9 @@ mod tests {
 
     use crate::api;
     use crate::daemon::AppState;
-    use crate::execution_setup::{ExecutionLaunchSnapshot, ExecutionLaunchState};
+    use crate::execution_setup::{
+        ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionSetupJobKind,
+    };
 
     async fn run_git(root: &Path, args: &[&str]) {
         let output = Command::new("git")
@@ -112,6 +114,29 @@ mod tests {
         run_git(root, &["add", "."]).await;
         run_git(root, &["commit", "-m", "init"]).await;
         dir
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(v) = self.prev.take() {
+                std::env::set_var(self.key, v);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
     }
 
     #[tokio::test]
@@ -566,5 +591,71 @@ mod tests {
         }
         assert_eq!(status_snapshot.job_id, snapshot.job_id);
         assert_eq!(status_snapshot.state, ExecutionLaunchState::Ready);
+    }
+
+    #[tokio::test]
+    async fn execution_launch_startup_prewarm_kind_supported() {
+        let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+
+        let data_dir = tempfile::tempdir().unwrap();
+        let stores = StoreManager::open(data_dir.path()).await.unwrap();
+
+        let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+            HashMap::new();
+        providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+
+        let state = Arc::new(AppState::new(
+            data_dir.path().to_path_buf(),
+            stores,
+            providers,
+            "http://127.0.0.1:4399".to_string(),
+            None,
+        ));
+        let app = api::router(state.clone());
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/execution/launch/start")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "kind": "startup_prewarm",
+                })
+                .to_string(),
+            ))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let snapshot: ExecutionLaunchSnapshot = serde_json::from_slice(&body).unwrap();
+        assert_eq!(snapshot.kind, ExecutionSetupJobKind::StartupPrewarm);
+        assert!(!snapshot.job_id.trim().is_empty());
+        assert!(matches!(
+            snapshot.state,
+            ExecutionLaunchState::Running | ExecutionLaunchState::Error
+        ));
+
+        let mut terminal = snapshot.clone();
+        for _ in 0..20 {
+            let req = Request::builder()
+                .method("GET")
+                .uri(format!(
+                    "/api/execution/launch/status?job_id={}",
+                    snapshot.job_id
+                ))
+                .body(Body::empty())
+                .unwrap();
+            let res = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+            let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            terminal = serde_json::from_slice(&body).unwrap();
+            if terminal.state != ExecutionLaunchState::Running {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_ne!(terminal.state, ExecutionLaunchState::Running);
     }
 }

@@ -14,39 +14,78 @@ use ctx_core::ids::WorkspaceId;
 use crate::daemon::AppState;
 use crate::execution_setup::{
     ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionLaunchStreamEvent,
+    ExecutionSetupJobKind,
 };
 use crate::logs;
+use crate::settings::ExecutionMode;
 use crate::workspace_config;
 
 use super::errors::ApiErrorResp;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ExecutionLaunchStartReq {
-    workspace_id: String,
+    #[serde(default)]
+    kind: Option<ExecutionSetupJobKind>,
+    #[serde(default)]
+    workspace_id: Option<String>,
 }
 
 pub(super) async fn launch_start(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ExecutionLaunchStartReq>,
 ) -> Result<Json<ExecutionLaunchSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
-    let workspace_id =
-        WorkspaceId(uuid::Uuid::parse_str(req.workspace_id.trim()).map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "invalid workspace id".to_string(),
-                }),
-            )
-        })?);
-
-    let (workspace, execution_settings) =
-        resolve_workspace_execution_settings(&state, workspace_id).await?;
-
-    let snapshot = state
-        .execution
-        .setup
-        .start_workspace_launch(workspace, execution_settings, state.core.daemon_url.clone())
-        .await;
+    let kind = req.kind.unwrap_or(ExecutionSetupJobKind::WorkspaceLaunch);
+    let snapshot = match kind {
+        ExecutionSetupJobKind::WorkspaceLaunch => {
+            let Some(raw_workspace_id) = req.workspace_id.as_deref() else {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: "workspace_id is required for workspace_launch".to_string(),
+                    }),
+                ));
+            };
+            let workspace_id =
+                WorkspaceId(uuid::Uuid::parse_str(raw_workspace_id.trim()).map_err(|_| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ApiErrorResp {
+                            error: "invalid workspace id".to_string(),
+                        }),
+                    )
+                })?);
+            let (workspace, execution_settings) =
+                resolve_workspace_execution_settings(&state, workspace_id).await?;
+            state
+                .execution
+                .setup
+                .start_workspace_launch(
+                    workspace,
+                    execution_settings,
+                    state.core.daemon_url.clone(),
+                )
+                .await
+        }
+        ExecutionSetupJobKind::StartupPrewarm => {
+            let settings = crate::settings::load_settings(state.global_store())
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&e.to_string()),
+                        }),
+                    )
+                })?;
+            let mut execution_settings = settings.execution.unwrap_or_default();
+            execution_settings.mode = ExecutionMode::Container;
+            state
+                .execution
+                .setup
+                .start_runtime_prewarm(execution_settings)
+                .await
+        }
+    };
     Ok(Json(snapshot))
 }
 

@@ -19,6 +19,7 @@ import {
   listProviderAuthImportCandidates,
   listWorkspaces,
   startExecutionLaunch,
+  startExecutionRuntimePrewarm,
   type ExecutionLaunchLogLine,
   type ExecutionLaunchSnapshot,
   type ExecutionLaunchStreamEvent,
@@ -486,6 +487,11 @@ export default function WorkspaceSetupPage() {
     : launchCopyState === "failed"
       ? "Copy failed"
       : "Copy diagnostics";
+  const createButtonLabel = creating && launchSnapshot?.kind === "startup_prewarm"
+    ? "Preparing runtime…"
+    : creating
+      ? "Creating…"
+      : "Create workspace";
 
   function applyConnection(info: DesktopConnectionInfo) {
     applyDaemonDesktopConnection(info);
@@ -1616,8 +1622,7 @@ export default function WorkspaceSetupPage() {
     setLaunchLogs((prev) => mergeLaunchLogs(prev, [line]));
   };
 
-  const waitForLaunchCompletion = async (workspaceId: string) => {
-    const initial = await startExecutionLaunch(workspaceId);
+  const waitForLaunchTerminal = async (initial: ExecutionLaunchSnapshot) => {
     applyLaunchSnapshot(initial);
 
     if (initial.state === "ready") return;
@@ -1686,6 +1691,16 @@ export default function WorkspaceSetupPage() {
     });
   };
 
+  const waitForLaunchCompletion = async (workspaceId: string) => {
+    const initial = await startExecutionLaunch(workspaceId);
+    await waitForLaunchTerminal(initial);
+  };
+
+  const waitForRuntimePrewarm = async () => {
+    const initial = await startExecutionRuntimePrewarm();
+    await waitForLaunchTerminal(initial);
+  };
+
   const onCopyLaunchDiagnostics = async () => {
     if (!launchSnapshot) return;
     const payload = {
@@ -1749,6 +1764,13 @@ export default function WorkspaceSetupPage() {
       // Ensure the daemon is reachable before we navigate away from the wizard.
       // This avoids landing on the workbench too early on cold start.
       await waitForDaemonReady(15000);
+      const containerEnabled = selections.container !== "no-container";
+
+      // Strict UX gate: if container mode is selected, ensure runtime+image readiness
+      // before repository/workspace provisioning starts.
+      if (containerEnabled) {
+        await waitForRuntimePrewarm();
+      }
 
       if (titlingStepVisible && titlingMode !== "skip") {
         if (titlingMode !== "remote" && titlingMode !== "local") {
@@ -1891,7 +1913,6 @@ export default function WorkspaceSetupPage() {
         : selections.container === "host-mounted"
           ? "container_host_mounted"
           : "container_disk_isolated";
-      const containerEnabled = environment !== "host";
       const allowlist = networkAllowlist
         .split(/\r?\n/)
         .map((line) => line.trim())
@@ -2973,7 +2994,7 @@ export default function WorkspaceSetupPage() {
 	                disabled={!canAdvance || creating}
 	                onClick={onCreate}
 	              >
-	                {creating ? "Creating…" : "Create workspace"}
+	                {createButtonLabel}
 	              </button>
 	            ) : (
 	              <button
