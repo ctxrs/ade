@@ -51,6 +51,7 @@ import { SessionsPane } from "../components/SessionsPane";
 import { TerminalPanel, type TerminalPanelHandle } from "../components/TerminalPanel";
 import { WorktreeBootstrapSnackbar } from "../components/WorktreeBootstrapSnackbar";
 import UpdateNoticeBanner from "../components/UpdateNoticeBanner";
+import { DictationOnboardingModal } from "../components/dictation/DictationOnboardingModal";
 import { buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchModeId } from "../components/WorkbenchComposer";
@@ -286,6 +287,14 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     dictationRecording,
     dictationError,
     dictationDebugText,
+    dictationOnboarding,
+    dismissDictationOnboarding,
+    backDictationOnboarding,
+    chooseDictationOnboardingLocal,
+    chooseDictationOnboardingCloud,
+    updateDictationOnboardingCloud,
+    submitDictationOnboardingLocal,
+    submitDictationOnboardingCloud,
     startDictation,
     stopDictation,
   } = useDictationController({
@@ -2912,6 +2921,20 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
               {dictationError && <div className="wb-banner">{dictationError}</div>}
               {startError && <div className="wb-banner">{startError}</div>}
+              <DictationOnboardingModal
+                state={dictationOnboarding}
+                onClose={dismissDictationOnboarding}
+                onBack={backDictationOnboarding}
+                onChooseLocal={chooseDictationOnboardingLocal}
+                onChooseCloud={chooseDictationOnboardingCloud}
+                onCloudChange={updateDictationOnboardingCloud}
+                onSubmitCloud={() => {
+                  void submitDictationOnboardingCloud();
+                }}
+                onSubmitLocal={() => {
+                  void submitDictationOnboardingLocal();
+                }}
+              />
             </div>
           </div>
         ) : null}

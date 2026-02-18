@@ -27,6 +27,7 @@ import {
 import { useOpenSession, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { loadSessionViewPrefsV1, saveSessionViewPrefsV1, type SessionViewVerbosity } from "../state/uiStateStore";
 import { AskUserQuestionCard } from "../components/AskUserQuestionCard";
+import { DictationOnboardingModal } from "../components/dictation/DictationOnboardingModal";
 import {
   Select,
   SelectContent,
@@ -438,6 +439,14 @@ export function SessionView({
     dictationRecording,
     dictationError,
     dictationDebugText,
+    dictationOnboarding,
+    dismissDictationOnboarding,
+    backDictationOnboarding,
+    chooseDictationOnboardingLocal,
+    chooseDictationOnboardingCloud,
+    updateDictationOnboardingCloud,
+    submitDictationOnboardingLocal,
+    submitDictationOnboardingCloud,
     startDictation,
     stopDictation,
   } = useDictationController({
@@ -1766,6 +1775,20 @@ export function SessionView({
           {fileOpenError && <div className="wb-banner">{fileOpenError}</div>}
           {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
           {dictationError && <div className="wb-banner">{dictationError}</div>}
+          <DictationOnboardingModal
+            state={dictationOnboarding}
+            onClose={dismissDictationOnboarding}
+            onBack={backDictationOnboarding}
+            onChooseLocal={chooseDictationOnboardingLocal}
+            onChooseCloud={chooseDictationOnboardingCloud}
+            onCloudChange={updateDictationOnboardingCloud}
+            onSubmitCloud={() => {
+              void submitDictationOnboardingCloud();
+            }}
+            onSubmitLocal={() => {
+              void submitDictationOnboardingLocal();
+            }}
+          />
         </SessionThreadPane>
 
         <div className="sr-only" aria-live="polite">
