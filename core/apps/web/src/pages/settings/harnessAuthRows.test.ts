@@ -17,6 +17,16 @@ describe("buildHarnessAuthRows", () => {
       selected_endpoint_id: null,
       endpoints: [],
       codex_active_account_id: "b",
+      claude_accounts: [],
+      claude_active_account_id: null,
+      gemini_accounts: [],
+      gemini_active_account_id: null,
+      kimi_accounts: [],
+      kimi_active_account_id: null,
+      copilot_accounts: [],
+      copilot_active_account_id: null,
+      kiro_accounts: [],
+      kiro_active_account_id: null,
       codex_accounts: [
         {
           id: "a",
@@ -49,6 +59,16 @@ describe("buildHarnessAuthRows", () => {
       selected_endpoint_id: "ep-2",
       codex_accounts: [],
       codex_active_account_id: null,
+      claude_accounts: [],
+      claude_active_account_id: null,
+      gemini_accounts: [],
+      gemini_active_account_id: null,
+      kimi_accounts: [],
+      kimi_active_account_id: null,
+      copilot_accounts: [],
+      copilot_active_account_id: null,
+      kiro_accounts: [],
+      kiro_active_account_id: null,
       endpoints: [
         {
           id: "ep-1",
@@ -98,9 +118,168 @@ describe("buildHarnessAuthRows", () => {
       selected_endpoint_id: null,
       codex_accounts: [],
       codex_active_account_id: null,
+      claude_accounts: [],
+      claude_active_account_id: null,
+      gemini_accounts: [],
+      gemini_active_account_id: null,
+      kimi_accounts: [],
+      kimi_active_account_id: null,
+      copilot_accounts: [],
+      copilot_active_account_id: null,
+      kiro_accounts: [],
+      kiro_active_account_id: null,
       endpoints: [],
     });
 
     expect(rows).toHaveLength(0);
+  });
+
+  it("builds claude subscription rows per account and marks active", () => {
+    const rows = buildHarnessAuthRows({
+      provider_id: "claude-crp",
+      selected_source_kind: "subscription",
+      selected_endpoint_id: null,
+      endpoints: [],
+      codex_accounts: [],
+      codex_active_account_id: null,
+      claude_active_account_id: "claude-b",
+      gemini_accounts: [],
+      gemini_active_account_id: null,
+      kimi_accounts: [],
+      kimi_active_account_id: null,
+      copilot_accounts: [],
+      copilot_active_account_id: null,
+      kiro_accounts: [],
+      kiro_active_account_id: null,
+      claude_accounts: [
+        {
+          id: "claude-a",
+          label: "Claude Primary",
+          email: "claude-a@example.com",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        {
+          id: "claude-b",
+          label: "Claude Backup",
+          email: "claude-b@example.com",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+    });
+
+    expect(rows).toHaveLength(2);
+    const active = rows.filter((row) => row.active);
+    expect(active).toHaveLength(1);
+    expect(active[0]?.account_id).toBe("claude-b");
+    expect(rows[0]?.label).toBe("claude-a@example.com");
+  });
+
+  it("builds gemini subscription rows and marks active", () => {
+    const rows = buildHarnessAuthRows({
+      provider_id: "gemini",
+      selected_source_kind: "subscription",
+      selected_endpoint_id: null,
+      endpoints: [],
+      codex_accounts: [],
+      codex_active_account_id: null,
+      claude_accounts: [],
+      claude_active_account_id: null,
+      kimi_accounts: [],
+      kimi_active_account_id: null,
+      copilot_accounts: [],
+      copilot_active_account_id: null,
+      kiro_accounts: [],
+      kiro_active_account_id: null,
+      gemini_active_account_id: "gemini-2",
+      gemini_accounts: [
+        {
+          id: "gemini-1",
+          label: "Gemini Primary",
+          email: "gemini-a@example.com",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        {
+          id: "gemini-2",
+          label: "Gemini Backup",
+          email: "gemini-b@example.com",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+    });
+
+    expect(rows).toHaveLength(2);
+    const active = rows.filter((row) => row.active);
+    expect(active).toHaveLength(1);
+    expect(active[0]?.account_id).toBe("gemini-2");
+    expect(rows[0]?.label).toBe("gemini-a@example.com");
+  });
+
+  it("builds kimi/copilot/kiro subscription rows and marks active", () => {
+    const kimiRows = buildHarnessAuthRows({
+      provider_id: "kimi",
+      selected_source_kind: "subscription",
+      selected_endpoint_id: null,
+      endpoints: [],
+      codex_accounts: [],
+      codex_active_account_id: null,
+      claude_accounts: [],
+      claude_active_account_id: null,
+      gemini_accounts: [],
+      gemini_active_account_id: null,
+      kimi_active_account_id: "kimi-2",
+      kimi_accounts: [
+        { id: "kimi-1", label: "Kimi A", email: "kimi-a@example.com", created_at: "2026-01-01T00:00:00Z" },
+        { id: "kimi-2", label: "Kimi B", email: "kimi-b@example.com", created_at: "2026-01-01T00:00:00Z" },
+      ],
+      copilot_accounts: [],
+      copilot_active_account_id: null,
+      kiro_accounts: [],
+      kiro_active_account_id: null,
+    });
+    expect(kimiRows.find((row) => row.active)?.account_id).toBe("kimi-2");
+
+    const copilotRows = buildHarnessAuthRows({
+      provider_id: "copilot",
+      selected_source_kind: "subscription",
+      selected_endpoint_id: null,
+      endpoints: [],
+      codex_accounts: [],
+      codex_active_account_id: null,
+      claude_accounts: [],
+      claude_active_account_id: null,
+      gemini_accounts: [],
+      gemini_active_account_id: null,
+      kimi_accounts: [],
+      kimi_active_account_id: null,
+      copilot_active_account_id: "copilot-1",
+      copilot_accounts: [
+        { id: "copilot-1", label: "Copilot", email: "copilot@example.com", created_at: "2026-01-01T00:00:00Z" },
+      ],
+      kiro_accounts: [],
+      kiro_active_account_id: null,
+    });
+    expect(copilotRows.find((row) => row.active)?.account_id).toBe("copilot-1");
+
+    const kiroRows = buildHarnessAuthRows({
+      provider_id: "kiro",
+      selected_source_kind: "subscription",
+      selected_endpoint_id: null,
+      endpoints: [],
+      codex_accounts: [],
+      codex_active_account_id: null,
+      claude_accounts: [],
+      claude_active_account_id: null,
+      gemini_accounts: [],
+      gemini_active_account_id: null,
+      kimi_accounts: [],
+      kimi_active_account_id: null,
+      copilot_accounts: [],
+      copilot_active_account_id: null,
+      kiro_active_account_id: "kiro-1",
+      kiro_accounts: [
+        { id: "kiro-1", label: "Kiro", email: "kiro@example.com", created_at: "2026-01-01T00:00:00Z" },
+      ],
+    });
+    expect(kiroRows.find((row) => row.active)?.account_id).toBe("kiro-1");
   });
 });

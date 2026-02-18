@@ -4,14 +4,18 @@ import {
   defaultShapeForHarnessProvider,
   getHarnessEndpointProviderPreset,
   HARNESS_ENDPOINT_PROVIDER_PRESETS,
+  normalizeOptionalBaseUrl,
   nextDefaultEndpointName,
+  nextTokenEndpointName,
+  supportsOptionalBaseUrlForHarness,
 } from "./harnessEndpointProviders";
 
 describe("harnessEndpointProviders", () => {
   it("returns harness-specific default provider presets", () => {
     expect(defaultEndpointProviderPresetForHarness("codex")).toBe("openai");
     expect(defaultEndpointProviderPresetForHarness("claude-crp")).toBe("anthropic");
-    expect(defaultEndpointProviderPresetForHarness("gemini")).toBe("openrouter");
+    expect(defaultEndpointProviderPresetForHarness("gemini")).toBe("google_ai_studio");
+    expect(defaultEndpointProviderPresetForHarness("kimi")).toBe("moonshot_ai");
   });
 
   it("keeps openrouter and other as final options", () => {
@@ -39,5 +43,21 @@ describe("harnessEndpointProviders", () => {
 
   it("uses endpoint fallback naming for unknown provider ids", () => {
     expect(nextDefaultEndpointName("not-real", [])).toBe("Other 1");
+  });
+
+  it("builds unique token endpoint names per provider", () => {
+    expect(nextTokenEndpointName("copilot", [])).toBe("copilot token");
+    expect(nextTokenEndpointName("copilot", ["copilot token"])).toBe("copilot token 2");
+    expect(nextTokenEndpointName("copilot", ["Copilot Token", "copilot token 2"])).toBe("copilot token 3");
+  });
+
+  it("flags providers that support optional base URL", () => {
+    expect(supportsOptionalBaseUrlForHarness("cody")).toBe(true);
+    expect(supportsOptionalBaseUrlForHarness("copilot")).toBe(false);
+  });
+
+  it("normalizes optional base URL inputs", () => {
+    expect(normalizeOptionalBaseUrl("  ")).toBeNull();
+    expect(normalizeOptionalBaseUrl(" https://sourcegraph.example.com ")).toBe("https://sourcegraph.example.com");
   });
 });

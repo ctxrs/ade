@@ -1,21 +1,46 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   authenticateProviderForWorkspace,
+  deleteClaudeAccount,
+  deleteCopilotAccount,
   deleteCodexAccount,
+  deleteGeminiAccount,
+  deleteKimiAccount,
+  deleteKiroAccount,
   deleteProviderHarnessEndpoint,
   getCodexLogin,
   getInstall,
+  listClaudeAccounts,
+  listCopilotAccounts,
+  listGeminiAccounts,
+  listKimiAccounts,
+  listKiroAccounts,
   getProviderHarnessConfig,
   installAllProviders,
   installProvider,
   listCodexAccounts,
   listProviders,
   selectProviderHarnessSource,
+  setClaudeActiveAccount,
+  setCopilotActiveAccount,
   setCodexActiveAccount,
+  setGeminiActiveAccount,
+  setKimiActiveAccount,
+  setKiroActiveAccount,
   startCodexLogin,
+  upsertClaudeAccount,
+  upsertCopilotAccount,
+  upsertGeminiAccount,
+  upsertKimiAccount,
+  upsertKiroAccount,
   upsertProviderHarnessEndpoint,
+  type ClaudeAccountsResponse,
+  type CopilotAccountsResponse,
   type CodexAccountsResponse,
+  type GeminiAccountsResponse,
   type HarnessProviderSourceConfig,
+  type KimiAccountsResponse,
+  type KiroAccountsResponse,
   type ProviderStatus,
 } from "../../../api/client";
 import { desktopStartCodexLoginRelay, isDesktopApp, openExternalLink } from "../../../utils/desktop";
@@ -26,7 +51,9 @@ import {
   defaultEndpointProviderPresetForHarness,
   defaultShapeForHarnessProvider,
   getHarnessEndpointProviderPreset,
+  normalizeOptionalBaseUrl,
   nextDefaultEndpointName,
+  nextTokenEndpointName,
 } from "../harnessEndpointProviders";
 
 type UseHarnessAuthenticationControllerArgs = {
@@ -44,6 +71,16 @@ type HarnessAuthenticationController = {
   providerHarnessBusy: Record<string, boolean>;
   codexAccounts: CodexAccountsResponse | null;
   codexAccountsBusy: boolean;
+  claudeAccounts: ClaudeAccountsResponse | null;
+  claudeAccountsBusy: boolean;
+  geminiAccounts: GeminiAccountsResponse | null;
+  geminiAccountsBusy: boolean;
+  kimiAccounts: KimiAccountsResponse | null;
+  kimiAccountsBusy: boolean;
+  copilotAccounts: CopilotAccountsResponse | null;
+  copilotAccountsBusy: boolean;
+  kiroAccounts: KiroAccountsResponse | null;
+  kiroAccountsBusy: boolean;
   harnessAuthModal: HarnessAuthModalState | null;
   openHarnessAuthModal: (providerId: string) => void;
   closeHarnessAuthModal: () => void;
@@ -53,12 +90,62 @@ type HarnessAuthenticationController = {
   onSelectHarnessAuthRow: (providerId: string, row: HarnessAuthRow) => Promise<void>;
   onDeleteProviderEndpoint: (providerId: string, endpointId: string) => Promise<void>;
   onCodexDelete: (accountId: string) => Promise<void>;
+  onClaudeDelete: (accountId: string) => Promise<void>;
+  onGeminiDelete: (accountId: string) => Promise<void>;
+  onKimiDelete: (accountId: string) => Promise<void>;
+  onCopilotDelete: (accountId: string) => Promise<void>;
+  onKiroDelete: (accountId: string) => Promise<void>;
   providerError: string | null;
   supportsHarnessEndpointConfig: (providerId: string) => boolean;
+  harnessEndpointRequiresBaseUrl: (providerId: string) => boolean;
 };
 
+const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
+  "codex",
+  "claude-crp",
+  "gemini",
+  "kimi",
+  "qwen",
+  "opencode",
+  "mistral",
+  "goose",
+  "cagent",
+  "amp",
+  "droid",
+  "cody",
+  "continue",
+  "cline",
+  "swe-agent",
+  "openhands",
+  "copilot",
+  "kiro",
+  "rovo",
+  "auggie",
+]);
+
 const supportsHarnessEndpointConfig = (providerId: string): boolean =>
-  providerId === "codex" || providerId === "claude-crp";
+  HARNESSES_WITH_ENDPOINT_CONFIG.has(providerId);
+
+const HARNESSES_WITH_ENDPOINT_BASE_URL = new Set([
+  "codex",
+  "claude-crp",
+  "gemini",
+  "kimi",
+  "qwen",
+  "opencode",
+  "mistral",
+  "goose",
+  "cagent",
+  "cline",
+  "swe-agent",
+  "openhands",
+]);
+
+const harnessEndpointRequiresBaseUrl = (providerId: string): boolean =>
+  HARNESSES_WITH_ENDPOINT_BASE_URL.has(providerId);
+
+const harnessEndpointRequiresApiShape = (providerId: string): boolean =>
+  HARNESSES_WITH_ENDPOINT_BASE_URL.has(providerId);
 
 const messageFromError = (error: unknown): string => {
   if (error instanceof Error && error.message) {
@@ -81,6 +168,16 @@ export function useHarnessAuthenticationController({
 
   const [codexAccounts, setCodexAccounts] = useState<CodexAccountsResponse | null>(null);
   const [codexAccountsBusy, setCodexAccountsBusy] = useState(false);
+  const [claudeAccounts, setClaudeAccounts] = useState<ClaudeAccountsResponse | null>(null);
+  const [claudeAccountsBusy, setClaudeAccountsBusy] = useState(false);
+  const [geminiAccounts, setGeminiAccounts] = useState<GeminiAccountsResponse | null>(null);
+  const [geminiAccountsBusy, setGeminiAccountsBusy] = useState(false);
+  const [kimiAccounts, setKimiAccounts] = useState<KimiAccountsResponse | null>(null);
+  const [kimiAccountsBusy, setKimiAccountsBusy] = useState(false);
+  const [copilotAccounts, setCopilotAccounts] = useState<CopilotAccountsResponse | null>(null);
+  const [copilotAccountsBusy, setCopilotAccountsBusy] = useState(false);
+  const [kiroAccounts, setKiroAccounts] = useState<KiroAccountsResponse | null>(null);
+  const [kiroAccountsBusy, setKiroAccountsBusy] = useState(false);
 
   const installPollTimeoutsRef = useRef<Record<string, number>>({});
 
@@ -109,6 +206,96 @@ export function useHarnessAuthenticationController({
     } finally {
       if (!opts?.silent) {
         setCodexAccountsBusy(false);
+      }
+    }
+  }, []);
+
+  const refreshClaudeAccounts = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setClaudeAccountsBusy(true);
+    }
+    try {
+      const next = await listClaudeAccounts();
+      setClaudeAccounts(next);
+      return next;
+    } catch (error) {
+      setProviderError(messageFromError(error));
+      return null;
+    } finally {
+      if (!opts?.silent) {
+        setClaudeAccountsBusy(false);
+      }
+    }
+  }, []);
+
+  const refreshGeminiAccounts = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setGeminiAccountsBusy(true);
+    }
+    try {
+      const next = await listGeminiAccounts();
+      setGeminiAccounts(next);
+      return next;
+    } catch (error) {
+      setProviderError(messageFromError(error));
+      return null;
+    } finally {
+      if (!opts?.silent) {
+        setGeminiAccountsBusy(false);
+      }
+    }
+  }, []);
+
+  const refreshKimiAccounts = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setKimiAccountsBusy(true);
+    }
+    try {
+      const next = await listKimiAccounts();
+      setKimiAccounts(next);
+      return next;
+    } catch (error) {
+      setProviderError(messageFromError(error));
+      return null;
+    } finally {
+      if (!opts?.silent) {
+        setKimiAccountsBusy(false);
+      }
+    }
+  }, []);
+
+  const refreshCopilotAccounts = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setCopilotAccountsBusy(true);
+    }
+    try {
+      const next = await listCopilotAccounts();
+      setCopilotAccounts(next);
+      return next;
+    } catch (error) {
+      setProviderError(messageFromError(error));
+      return null;
+    } finally {
+      if (!opts?.silent) {
+        setCopilotAccountsBusy(false);
+      }
+    }
+  }, []);
+
+  const refreshKiroAccounts = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setKiroAccountsBusy(true);
+    }
+    try {
+      const next = await listKiroAccounts();
+      setKiroAccounts(next);
+      return next;
+    } catch (error) {
+      setProviderError(messageFromError(error));
+      return null;
+    } finally {
+      if (!opts?.silent) {
+        setKiroAccountsBusy(false);
       }
     }
   }, []);
@@ -162,14 +349,26 @@ export function useHarnessAuthenticationController({
   const openHarnessAuthModal = useCallback((providerId: string) => {
     const defaultPresetId = defaultEndpointProviderPresetForHarness(providerId);
     const defaultPreset = getHarnessEndpointProviderPreset(defaultPresetId);
+    const requiresBaseUrl = harnessEndpointRequiresBaseUrl(providerId);
     setProviderError(null);
     setHarnessAuthModal({
       provider_id: providerId,
       stage: "choose",
       endpoint_provider_id: defaultPresetId,
       endpoint_name: "",
-      base_url: defaultPreset.base_url ?? defaultEndpointBaseUrlForProvider(providerId),
+      base_url: requiresBaseUrl
+        ? (defaultPreset.base_url ?? defaultEndpointBaseUrlForProvider(providerId))
+        : "",
       api_key: "",
+      subscription_label: "",
+      subscription_token: "",
+      subscription_email: "",
+      subscription_provider: "",
+      subscription_credentials_json: "",
+      subscription_config_toml: "",
+      subscription_auth_token_json: "",
+      subscription_oauth_creds_json: "",
+      subscription_google_accounts_json: "",
       subscription_status: null,
       subscription_busy: false,
       api_key_busy: false,
@@ -193,12 +392,18 @@ export function useHarnessAuthenticationController({
       return;
     }
 
+    const requiresBaseUrl = harnessEndpointRequiresBaseUrl(modal.provider_id);
+    const requiresApiShape = harnessEndpointRequiresApiShape(modal.provider_id);
     const nameInput = modal.endpoint_name.trim();
     const existingNames = (providerHarnessConfig[modal.provider_id]?.endpoints ?? []).map((endpoint) => endpoint.name);
-    const name = nameInput || nextDefaultEndpointName(modal.endpoint_provider_id, existingNames);
+    const name = nameInput
+      || (requiresBaseUrl
+        ? nextDefaultEndpointName(modal.endpoint_provider_id, existingNames)
+        : nextTokenEndpointName(modal.provider_id, existingNames));
     const base = modal.base_url.trim();
+    const normalizedBase = normalizeOptionalBaseUrl(base);
     const key = modal.api_key.trim();
-    if (!base) {
+    if (requiresBaseUrl && !base) {
       setProviderError("Endpoint base URL is required.");
       return;
     }
@@ -213,12 +418,15 @@ export function useHarnessAuthenticationController({
       const next = await upsertProviderHarnessEndpoint(modal.provider_id, {
         endpoint_id: null,
         name,
-        base_url: base,
-        api_shape: defaultShapeForHarnessProvider(modal.provider_id),
+        base_url: normalizedBase,
+        api_shape: requiresApiShape ? defaultShapeForHarnessProvider(modal.provider_id) : null,
         api_key: key,
       });
+      const reversedEndpoints = [...next.endpoints].reverse();
       const createdEndpoint =
-        next.endpoints.find((endpoint) => endpoint.name === name && endpoint.base_url === base)
+        reversedEndpoints.find(
+          (endpoint) => endpoint.name === name && (endpoint.base_url ?? null) === normalizedBase,
+        )
         ?? next.endpoints[next.endpoints.length - 1]
         ?? null;
       const selected = createdEndpoint?.id ?? next.selected_endpoint_id ?? null;
@@ -329,6 +537,103 @@ export function useHarnessAuthenticationController({
         return;
       }
 
+      if (modal.provider_id === "claude-crp") {
+        const token = modal.subscription_token.trim();
+        if (!token) {
+          throw new Error("Subscription token is required.");
+        }
+        const label = modal.subscription_label.trim();
+        const next = await upsertClaudeAccount(token, label ? label : undefined);
+        setClaudeAccounts(next);
+        if (supportsHarnessEndpointConfig(modal.provider_id)) {
+          await onSelectProviderSource(modal.provider_id, "subscription", null);
+        }
+        closeHarnessAuthModal();
+        return;
+      }
+
+      if (modal.provider_id === "gemini") {
+        const oauthCredsJson = modal.subscription_oauth_creds_json.trim();
+        if (!oauthCredsJson) {
+          throw new Error("OAuth credentials JSON is required.");
+        }
+        const googleAccountsJson = modal.subscription_google_accounts_json.trim();
+        const label = modal.subscription_label.trim();
+        const email = modal.subscription_email.trim();
+        const next = await upsertGeminiAccount(oauthCredsJson, {
+          ...(label ? { label } : {}),
+          ...(googleAccountsJson ? { googleAccountsJson } : {}),
+          ...(email ? { email } : {}),
+        });
+        setGeminiAccounts(next);
+        if (supportsHarnessEndpointConfig(modal.provider_id)) {
+          await onSelectProviderSource(modal.provider_id, "subscription", null);
+        }
+        closeHarnessAuthModal();
+        return;
+      }
+
+      if (modal.provider_id === "kimi") {
+        const credentialsJson = modal.subscription_credentials_json.trim();
+        if (!credentialsJson) {
+          throw new Error("Credentials JSON is required.");
+        }
+        const provider = modal.subscription_provider.trim();
+        const configToml = modal.subscription_config_toml.trim();
+        const label = modal.subscription_label.trim();
+        const email = modal.subscription_email.trim();
+        const next = await upsertKimiAccount(credentialsJson, {
+          ...(label ? { label } : {}),
+          ...(provider ? { provider } : {}),
+          ...(configToml ? { configToml } : {}),
+          ...(email ? { email } : {}),
+        });
+        setKimiAccounts(next);
+        if (supportsHarnessEndpointConfig(modal.provider_id)) {
+          await onSelectProviderSource(modal.provider_id, "subscription", null);
+        }
+        closeHarnessAuthModal();
+        return;
+      }
+
+      if (modal.provider_id === "copilot") {
+        const token = modal.subscription_token.trim();
+        if (!token) {
+          throw new Error("Token is required.");
+        }
+        const label = modal.subscription_label.trim();
+        const email = modal.subscription_email.trim();
+        const next = await upsertCopilotAccount(token, {
+          ...(label ? { label } : {}),
+          ...(email ? { email } : {}),
+        });
+        setCopilotAccounts(next);
+        if (supportsHarnessEndpointConfig(modal.provider_id)) {
+          await onSelectProviderSource(modal.provider_id, "subscription", null);
+        }
+        closeHarnessAuthModal();
+        return;
+      }
+
+      if (modal.provider_id === "kiro") {
+        const authTokenJson = modal.subscription_auth_token_json.trim();
+        if (!authTokenJson) {
+          throw new Error("Auth token JSON is required.");
+        }
+        const label = modal.subscription_label.trim();
+        const email = modal.subscription_email.trim();
+        const next = await upsertKiroAccount(authTokenJson, {
+          ...(label ? { label } : {}),
+          ...(email ? { email } : {}),
+        });
+        setKiroAccounts(next);
+        if (supportsHarnessEndpointConfig(modal.provider_id)) {
+          await onSelectProviderSource(modal.provider_id, "subscription", null);
+        }
+        closeHarnessAuthModal();
+        return;
+      }
+
       if (!workspaceId) {
         throw new Error("Select a workspace first.");
       }
@@ -381,6 +686,136 @@ export function useHarnessAuthenticationController({
     }
   }, []);
 
+  const onClaudeDelete = useCallback(async (accountId: string) => {
+    setClaudeAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await deleteClaudeAccount(accountId);
+      setClaudeAccounts(next);
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setClaudeAccountsBusy(false);
+    }
+  }, []);
+
+  const onClaudeSetActive = useCallback(async (accountId: string | null) => {
+    setClaudeAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await setClaudeActiveAccount(accountId);
+      setClaudeAccounts(next);
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setClaudeAccountsBusy(false);
+    }
+  }, []);
+
+  const onGeminiDelete = useCallback(async (accountId: string) => {
+    setGeminiAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await deleteGeminiAccount(accountId);
+      setGeminiAccounts(next);
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setGeminiAccountsBusy(false);
+    }
+  }, []);
+
+  const onGeminiSetActive = useCallback(async (accountId: string | null) => {
+    setGeminiAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await setGeminiActiveAccount(accountId);
+      setGeminiAccounts(next);
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setGeminiAccountsBusy(false);
+    }
+  }, []);
+
+  const onKimiDelete = useCallback(async (accountId: string) => {
+    setKimiAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await deleteKimiAccount(accountId);
+      setKimiAccounts(next);
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setKimiAccountsBusy(false);
+    }
+  }, []);
+
+  const onKimiSetActive = useCallback(async (accountId: string | null) => {
+    setKimiAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await setKimiActiveAccount(accountId);
+      setKimiAccounts(next);
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setKimiAccountsBusy(false);
+    }
+  }, []);
+
+  const onCopilotDelete = useCallback(async (accountId: string) => {
+    setCopilotAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await deleteCopilotAccount(accountId);
+      setCopilotAccounts(next);
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setCopilotAccountsBusy(false);
+    }
+  }, []);
+
+  const onCopilotSetActive = useCallback(async (accountId: string | null) => {
+    setCopilotAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await setCopilotActiveAccount(accountId);
+      setCopilotAccounts(next);
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setCopilotAccountsBusy(false);
+    }
+  }, []);
+
+  const onKiroDelete = useCallback(async (accountId: string) => {
+    setKiroAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await deleteKiroAccount(accountId);
+      setKiroAccounts(next);
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setKiroAccountsBusy(false);
+    }
+  }, []);
+
+  const onKiroSetActive = useCallback(async (accountId: string | null) => {
+    setKiroAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await setKiroActiveAccount(accountId);
+      setKiroAccounts(next);
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setKiroAccountsBusy(false);
+    }
+  }, []);
+
   const onSelectHarnessAuthRow = useCallback(async (providerId: string, row: HarnessAuthRow) => {
     if (!row.selectable) return;
     if (row.kind === "api_key" && row.endpoint_id) {
@@ -389,11 +824,29 @@ export function useHarnessAuthenticationController({
     }
     if (providerId === "codex" && row.account_id) {
       await onCodexSetActive(row.account_id);
+    } else if (providerId === "claude-crp" && row.account_id) {
+      await onClaudeSetActive(row.account_id);
+    } else if (providerId === "gemini" && row.account_id) {
+      await onGeminiSetActive(row.account_id);
+    } else if (providerId === "kimi" && row.account_id) {
+      await onKimiSetActive(row.account_id);
+    } else if (providerId === "copilot" && row.account_id) {
+      await onCopilotSetActive(row.account_id);
+    } else if (providerId === "kiro" && row.account_id) {
+      await onKiroSetActive(row.account_id);
     }
     if (supportsHarnessEndpointConfig(providerId)) {
       await onSelectProviderSource(providerId, "subscription", null);
     }
-  }, [onCodexSetActive, onSelectProviderSource]);
+  }, [
+    onClaudeSetActive,
+    onCodexSetActive,
+    onCopilotSetActive,
+    onGeminiSetActive,
+    onKimiSetActive,
+    onKiroSetActive,
+    onSelectProviderSource,
+  ]);
 
   const attachInstall = useCallback(async (providerId: string, installId: string) => {
     if (!providerId || !installId) return;
@@ -493,13 +946,29 @@ export function useHarnessAuthenticationController({
   useEffect(() => {
     if (!enabled || !workspaceId) return;
     refreshCodexAccounts({ silent: true }).catch(() => {});
+    refreshClaudeAccounts({ silent: true }).catch(() => {});
+    refreshGeminiAccounts({ silent: true }).catch(() => {});
+    refreshKimiAccounts({ silent: true }).catch(() => {});
+    refreshCopilotAccounts({ silent: true }).catch(() => {});
+    refreshKiroAccounts({ silent: true }).catch(() => {});
     for (const provider of providers) {
       if (provider.details?.ui_hidden === "true") continue;
       if (supportsHarnessEndpointConfig(provider.provider_id)) {
         ensureProviderHarnessConfig(provider.provider_id).catch(() => {});
       }
     }
-  }, [enabled, ensureProviderHarnessConfig, providers, refreshCodexAccounts, workspaceId]);
+  }, [
+    enabled,
+    ensureProviderHarnessConfig,
+    providers,
+    refreshClaudeAccounts,
+    refreshCodexAccounts,
+    refreshCopilotAccounts,
+    refreshGeminiAccounts,
+    refreshKimiAccounts,
+    refreshKiroAccounts,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -546,6 +1015,16 @@ export function useHarnessAuthenticationController({
     providerHarnessBusy,
     codexAccounts,
     codexAccountsBusy,
+    claudeAccounts,
+    claudeAccountsBusy,
+    geminiAccounts,
+    geminiAccountsBusy,
+    kimiAccounts,
+    kimiAccountsBusy,
+    copilotAccounts,
+    copilotAccountsBusy,
+    kiroAccounts,
+    kiroAccountsBusy,
     harnessAuthModal,
     openHarnessAuthModal,
     closeHarnessAuthModal,
@@ -555,7 +1034,13 @@ export function useHarnessAuthenticationController({
     onSelectHarnessAuthRow,
     onDeleteProviderEndpoint,
     onCodexDelete,
+    onClaudeDelete,
+    onGeminiDelete,
+    onKimiDelete,
+    onCopilotDelete,
+    onKiroDelete,
     providerError,
     supportsHarnessEndpointConfig,
+    harnessEndpointRequiresBaseUrl,
   };
 }

@@ -1,19 +1,33 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 const CTX_SEED_CODEX_AUTH_FROM_HOST_ENV: &str = "CTX_SEED_CODEX_AUTH_FROM_HOST";
 const CTX_CODEX_HOST_AUTH_PATH_ENV: &str = "CTX_CODEX_HOST_AUTH_PATH";
 const CODEX_SECRET_VERSION: u32 = 1;
+const CLAUDE_SECRET_VERSION: u32 = 1;
+const GEMINI_SECRET_VERSION: u32 = 1;
+const KIMI_SECRET_VERSION: u32 = 1;
+const COPILOT_SECRET_VERSION: u32 = 1;
+const KIRO_SECRET_VERSION: u32 = 1;
 const CODEX_RUNTIME_OWNER_FILE: &str = ".ctx-active-account-id";
 pub const CODEX_CREDENTIAL_KIND_OAUTH: &str = "oauth";
 pub const CODEX_CREDENTIAL_KIND_API_KEY: &str = "api_key";
+pub const CLAUDE_CREDENTIAL_KIND_AUTH_TOKEN: &str = "auth_token";
+pub const GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL: &str = "oauth-personal";
+pub const KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON: &str = "credentials-json";
+pub const COPILOT_CREDENTIAL_KIND_GH_TOKEN: &str = "gh-token";
+pub const KIRO_CREDENTIAL_KIND_AUTH_TOKEN_JSON: &str = "auth-token-json";
+pub const GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL: &str = "oauth-personal";
+pub const GEMINI_FORCE_FILE_STORAGE_ENV: &str = "GEMINI_FORCE_FILE_STORAGE";
+pub const KIMI_SHARE_DIR_ENV: &str = "KIMI_SHARE_DIR";
 pub const CODEX_API_SHAPE_OPENAI_RESPONSES: &str = "openai_responses";
 pub const CODEX_AUTH_TYPE_BEARER: &str = "bearer";
 pub const CODEX_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
+pub const KIRO_AUTH_TOKEN_RELATIVE_PATH: &str = ".aws/sso/cache/kiro-auth-token.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CodexSecretEnvelope {
@@ -21,8 +35,63 @@ struct CodexSecretEnvelope {
     auth: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ClaudeSecretEnvelope {
+    version: u32,
+    anthropic_auth_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GeminiSecretEnvelope {
+    version: u32,
+    oauth_creds: serde_json::Value,
+    #[serde(default)]
+    google_accounts: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KimiSecretEnvelope {
+    version: u32,
+    provider: String,
+    credentials: serde_json::Value,
+    #[serde(default)]
+    config_toml: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CopilotSecretEnvelope {
+    version: u32,
+    gh_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KiroSecretEnvelope {
+    version: u32,
+    auth_token: serde_json::Value,
+}
+
 fn default_codex_credential_kind() -> String {
     CODEX_CREDENTIAL_KIND_OAUTH.to_string()
+}
+
+fn default_claude_credential_kind() -> String {
+    CLAUDE_CREDENTIAL_KIND_AUTH_TOKEN.to_string()
+}
+
+fn default_gemini_credential_kind() -> String {
+    GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL.to_string()
+}
+
+fn default_kimi_credential_kind() -> String {
+    KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON.to_string()
+}
+
+fn default_copilot_credential_kind() -> String {
+    COPILOT_CREDENTIAL_KIND_GH_TOKEN.to_string()
+}
+
+fn default_kiro_credential_kind() -> String {
+    KIRO_CREDENTIAL_KIND_AUTH_TOKEN_JSON.to_string()
 }
 
 fn default_codex_api_shape() -> String {
@@ -88,6 +157,123 @@ pub struct CodexAccountRegistry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeAccountEntry {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_claude_credential_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub subscription_type: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_used_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub secret_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClaudeAccountRegistry {
+    #[serde(default)]
+    pub active_account_id: Option<String>,
+    #[serde(default)]
+    pub accounts: Vec<ClaudeAccountEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeminiAccountEntry {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_gemini_credential_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_used_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub secret_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GeminiAccountRegistry {
+    #[serde(default)]
+    pub active_account_id: Option<String>,
+    #[serde(default)]
+    pub accounts: Vec<GeminiAccountEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KimiAccountEntry {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_kimi_credential_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_used_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub secret_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct KimiAccountRegistry {
+    #[serde(default)]
+    pub active_account_id: Option<String>,
+    #[serde(default)]
+    pub accounts: Vec<KimiAccountEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopilotAccountEntry {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_copilot_credential_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_used_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub secret_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CopilotAccountRegistry {
+    #[serde(default)]
+    pub active_account_id: Option<String>,
+    #[serde(default)]
+    pub accounts: Vec<CopilotAccountEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KiroAccountEntry {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_kiro_credential_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_used_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub secret_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct KiroAccountRegistry {
+    #[serde(default)]
+    pub active_account_id: Option<String>,
+    #[serde(default)]
+    pub accounts: Vec<KiroAccountEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexLoginStatus {
     pub account_id: String,
     pub auth_url: String,
@@ -115,12 +301,75 @@ pub fn codex_accounts_root(data_root: &Path) -> PathBuf {
     data_root.join("providers").join("codex").join("accounts")
 }
 
+pub fn claude_accounts_root(data_root: &Path) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("claude-crp")
+        .join("accounts")
+}
+
+pub fn gemini_accounts_root(data_root: &Path) -> PathBuf {
+    data_root.join("providers").join("gemini").join("accounts")
+}
+
+pub fn kimi_accounts_root(data_root: &Path) -> PathBuf {
+    data_root.join("providers").join("kimi").join("accounts")
+}
+
+pub fn copilot_accounts_root(data_root: &Path) -> PathBuf {
+    data_root.join("providers").join("copilot").join("accounts")
+}
+
+pub fn kiro_accounts_root(data_root: &Path) -> PathBuf {
+    data_root.join("providers").join("kiro").join("accounts")
+}
+
 pub fn codex_secrets_root(data_root: &Path) -> PathBuf {
     data_root.join("secrets").join("codex")
 }
 
+pub fn claude_secrets_root(data_root: &Path) -> PathBuf {
+    data_root.join("secrets").join("claude-crp")
+}
+
+pub fn gemini_secrets_root(data_root: &Path) -> PathBuf {
+    data_root.join("secrets").join("gemini")
+}
+
+pub fn kimi_secrets_root(data_root: &Path) -> PathBuf {
+    data_root.join("secrets").join("kimi")
+}
+
+pub fn copilot_secrets_root(data_root: &Path) -> PathBuf {
+    data_root.join("secrets").join("copilot")
+}
+
+pub fn kiro_secrets_root(data_root: &Path) -> PathBuf {
+    data_root.join("secrets").join("kiro")
+}
+
 fn codex_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
     codex_secrets_root(data_root).join(secret_ref)
+}
+
+fn claude_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
+    claude_secrets_root(data_root).join(secret_ref)
+}
+
+fn gemini_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
+    gemini_secrets_root(data_root).join(secret_ref)
+}
+
+fn kimi_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
+    kimi_secrets_root(data_root).join(secret_ref)
+}
+
+fn copilot_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
+    copilot_secrets_root(data_root).join(secret_ref)
+}
+
+fn kiro_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
+    kiro_secrets_root(data_root).join(secret_ref)
 }
 
 pub fn codex_runtime_home(data_root: &Path) -> PathBuf {
@@ -135,8 +384,107 @@ pub fn codex_registry_path(data_root: &Path) -> PathBuf {
     codex_accounts_root(data_root).join("index.json")
 }
 
+pub fn claude_registry_path(data_root: &Path) -> PathBuf {
+    claude_accounts_root(data_root).join("index.json")
+}
+
+pub fn gemini_registry_path(data_root: &Path) -> PathBuf {
+    gemini_accounts_root(data_root).join("index.json")
+}
+
+pub fn kimi_registry_path(data_root: &Path) -> PathBuf {
+    kimi_accounts_root(data_root).join("index.json")
+}
+
+pub fn copilot_registry_path(data_root: &Path) -> PathBuf {
+    copilot_accounts_root(data_root).join("index.json")
+}
+
+pub fn kiro_registry_path(data_root: &Path) -> PathBuf {
+    kiro_accounts_root(data_root).join("index.json")
+}
+
 pub fn codex_account_dir(data_root: &Path, account_id: &str) -> PathBuf {
     codex_accounts_root(data_root).join(account_id)
+}
+
+pub fn claude_account_dir(data_root: &Path, account_id: &str) -> PathBuf {
+    claude_accounts_root(data_root).join(account_id)
+}
+
+pub fn gemini_account_home(data_root: &Path, account_id: &str) -> PathBuf {
+    gemini_accounts_root(data_root).join(account_id)
+}
+
+pub fn kimi_account_home(data_root: &Path, account_id: &str) -> PathBuf {
+    kimi_accounts_root(data_root).join(account_id)
+}
+
+pub fn copilot_account_dir(data_root: &Path, account_id: &str) -> PathBuf {
+    copilot_accounts_root(data_root).join(account_id)
+}
+
+pub fn kiro_account_home(data_root: &Path, account_id: &str) -> PathBuf {
+    kiro_accounts_root(data_root).join(account_id)
+}
+
+fn ensure_safe_account_id(account_id: &str) -> Result<()> {
+    if account_id.trim().is_empty() {
+        bail!("account_id is required");
+    }
+
+    let mut components = Path::new(account_id).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(()),
+        _ => bail!("account_id must be a single path segment"),
+    }
+}
+
+fn container_workspaces_root(data_root: &Path) -> PathBuf {
+    data_root.join("containers").join("workspaces")
+}
+
+async fn container_runtime_data_roots(data_root: &Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let mut entries = match tokio::fs::read_dir(container_workspaces_root(data_root)).await {
+        Ok(entries) => entries,
+        Err(_) => return roots,
+    };
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let runtime_root = entry.path().join("data");
+        match tokio::fs::metadata(&runtime_root).await {
+            Ok(metadata) if metadata.is_dir() => roots.push(runtime_root),
+            _ => {}
+        }
+    }
+
+    roots
+}
+
+async fn remove_projected_account_home_for_runtime_roots(
+    data_root: &Path,
+    account_id: &str,
+    account_home_for_root: fn(&Path, &str) -> PathBuf,
+    provider_id: &str,
+) -> Result<()> {
+    for runtime_root in container_runtime_data_roots(data_root).await {
+        let projected_home = account_home_for_root(&runtime_root, account_id);
+        match tokio::fs::remove_dir_all(&projected_home).await {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!(
+                        "removing projected {provider_id} account home {}",
+                        projected_home.display()
+                    )
+                });
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn load_codex_registry(data_root: &Path) -> CodexAccountRegistry {
@@ -149,6 +497,105 @@ pub async fn load_codex_registry(data_root: &Path) -> CodexAccountRegistry {
 
 pub async fn save_codex_registry(data_root: &Path, registry: &CodexAccountRegistry) -> Result<()> {
     let path = codex_registry_path(data_root);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let payload = serde_json::to_vec_pretty(registry)?;
+    tokio::fs::write(path, payload).await?;
+    Ok(())
+}
+
+pub async fn load_claude_registry(data_root: &Path) -> ClaudeAccountRegistry {
+    let path = claude_registry_path(data_root);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => ClaudeAccountRegistry::default(),
+    }
+}
+
+pub async fn save_claude_registry(
+    data_root: &Path,
+    registry: &ClaudeAccountRegistry,
+) -> Result<()> {
+    let path = claude_registry_path(data_root);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let payload = serde_json::to_vec_pretty(registry)?;
+    tokio::fs::write(path, payload).await?;
+    Ok(())
+}
+
+pub async fn load_gemini_registry(data_root: &Path) -> GeminiAccountRegistry {
+    let path = gemini_registry_path(data_root);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => GeminiAccountRegistry::default(),
+    }
+}
+
+pub async fn save_gemini_registry(
+    data_root: &Path,
+    registry: &GeminiAccountRegistry,
+) -> Result<()> {
+    let path = gemini_registry_path(data_root);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let payload = serde_json::to_vec_pretty(registry)?;
+    tokio::fs::write(path, payload).await?;
+    Ok(())
+}
+
+pub async fn load_kimi_registry(data_root: &Path) -> KimiAccountRegistry {
+    let path = kimi_registry_path(data_root);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => KimiAccountRegistry::default(),
+    }
+}
+
+pub async fn save_kimi_registry(data_root: &Path, registry: &KimiAccountRegistry) -> Result<()> {
+    let path = kimi_registry_path(data_root);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let payload = serde_json::to_vec_pretty(registry)?;
+    tokio::fs::write(path, payload).await?;
+    Ok(())
+}
+
+pub async fn load_copilot_registry(data_root: &Path) -> CopilotAccountRegistry {
+    let path = copilot_registry_path(data_root);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => CopilotAccountRegistry::default(),
+    }
+}
+
+pub async fn save_copilot_registry(
+    data_root: &Path,
+    registry: &CopilotAccountRegistry,
+) -> Result<()> {
+    let path = copilot_registry_path(data_root);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let payload = serde_json::to_vec_pretty(registry)?;
+    tokio::fs::write(path, payload).await?;
+    Ok(())
+}
+
+pub async fn load_kiro_registry(data_root: &Path) -> KiroAccountRegistry {
+    let path = kiro_registry_path(data_root);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => KiroAccountRegistry::default(),
+    }
+}
+
+pub async fn save_kiro_registry(data_root: &Path, registry: &KiroAccountRegistry) -> Result<()> {
+    let path = kiro_registry_path(data_root);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -186,6 +633,7 @@ pub async fn remove_codex_account(
     data_root: &Path,
     account_id: &str,
 ) -> Result<CodexAccountRegistry> {
+    ensure_safe_account_id(account_id)?;
     let mut registry = load_codex_registry(data_root).await;
     let was_active = registry.active_account_id.as_deref() == Some(account_id);
     let removed: Vec<CodexAccountEntry> = registry
@@ -253,6 +701,1232 @@ pub fn codex_env_for_account(data_root: &Path, account_id: &str) -> HashMap<Stri
     let dir = codex_account_dir(data_root, account_id);
     env.insert("CODEX_HOME".to_string(), dir.to_string_lossy().to_string());
     env
+}
+
+pub async fn ensure_claude_account_dir(data_root: &Path, account_id: &str) -> Result<PathBuf> {
+    let dir = claude_account_dir(data_root, account_id);
+    tokio::fs::create_dir_all(&dir).await?;
+    Ok(dir)
+}
+
+fn normalize_claude_token(token: &str) -> Result<String> {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        bail!("auth_token is required");
+    }
+    Ok(trimmed.to_string())
+}
+
+async fn write_claude_secret_for_account(
+    data_root: &Path,
+    account_id: &str,
+    auth_token: &str,
+) -> Result<String> {
+    let token = normalize_claude_token(auth_token)?;
+    let secret_ref = format!("{account_id}.json");
+    let path = claude_secret_path(data_root, &secret_ref);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let envelope = ClaudeSecretEnvelope {
+        version: CLAUDE_SECRET_VERSION,
+        anthropic_auth_token: token,
+    };
+    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
+    Ok(secret_ref)
+}
+
+async fn read_claude_secret_for_ref(data_root: &Path, secret_ref: &str) -> Result<String> {
+    let path = claude_secret_path(data_root, secret_ref);
+    let payload = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("reading claude secret {}", path.display()))?;
+    let parsed: ClaudeSecretEnvelope = serde_json::from_str(&payload)
+        .with_context(|| format!("invalid claude secret {}", path.display()))?;
+    normalize_claude_token(&parsed.anthropic_auth_token)
+}
+
+pub async fn add_claude_account(
+    data_root: &Path,
+    label: Option<String>,
+    auth_token: String,
+) -> Result<ClaudeAccountRegistry> {
+    let token = normalize_claude_token(&auth_token)?;
+    let mut registry = load_claude_registry(data_root).await;
+    let mut existing_account_id: Option<String> = None;
+
+    for existing in &registry.accounts {
+        let Some(secret_ref) = existing.secret_ref.as_deref() else {
+            continue;
+        };
+        if let Ok(existing_token) = read_claude_secret_for_ref(data_root, secret_ref).await {
+            if existing_token == token {
+                existing_account_id = Some(existing.id.clone());
+                break;
+            }
+        }
+    }
+
+    if let Some(account_id) = existing_account_id {
+        if let Some(entry) = registry
+            .accounts
+            .iter_mut()
+            .find(|entry| entry.id == account_id)
+        {
+            apply_label_update(label.clone(), &mut entry.label);
+            entry.last_used_at = Some(Utc::now());
+        }
+        registry.active_account_id = Some(account_id);
+        save_claude_registry(data_root, &registry).await?;
+        return Ok(registry);
+    }
+
+    let account_id = uuid::Uuid::new_v4().to_string();
+    let secret_ref = write_claude_secret_for_account(data_root, &account_id, &token).await?;
+    let entry = ClaudeAccountEntry {
+        id: account_id.clone(),
+        label: normalize_claude_label(label, &account_id),
+        kind: CLAUDE_CREDENTIAL_KIND_AUTH_TOKEN.to_string(),
+        email: None,
+        subscription_type: None,
+        created_at: Utc::now(),
+        last_used_at: Some(Utc::now()),
+        secret_ref: Some(secret_ref),
+    };
+    registry.accounts.push(entry);
+    registry.active_account_id = Some(account_id);
+    save_claude_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn set_active_claude_account(
+    data_root: &Path,
+    account_id: Option<String>,
+) -> Result<ClaudeAccountRegistry> {
+    let mut registry = load_claude_registry(data_root).await;
+    if let Some(active_id) = account_id.as_deref() {
+        let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
+            bail!("unknown account");
+        };
+        if entry.secret_ref.as_deref().is_none() {
+            bail!("active account has no secret");
+        }
+    }
+    registry.active_account_id = account_id.clone();
+    if let Some(active_id) = account_id {
+        let now = Utc::now();
+        if let Some(entry) = registry.accounts.iter_mut().find(|a| a.id == active_id) {
+            entry.last_used_at = Some(now);
+        }
+    }
+    save_claude_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn remove_claude_account(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<ClaudeAccountRegistry> {
+    ensure_safe_account_id(account_id)?;
+    let mut registry = load_claude_registry(data_root).await;
+    let was_active = registry.active_account_id.as_deref() == Some(account_id);
+    let removed: Vec<ClaudeAccountEntry> = registry
+        .accounts
+        .iter()
+        .filter(|a| a.id == account_id)
+        .cloned()
+        .collect();
+    registry.accounts.retain(|a| a.id != account_id);
+    if was_active {
+        registry.active_account_id = None;
+    }
+    save_claude_registry(data_root, &registry).await?;
+
+    for entry in removed {
+        if let Some(secret_ref) = entry.secret_ref {
+            let secret_path = claude_secret_path(data_root, &secret_ref);
+            if secret_path.exists() {
+                let _ = tokio::fs::remove_file(secret_path).await;
+            }
+        }
+    }
+
+    let account_dir = claude_account_dir(data_root, account_id);
+    if account_dir.exists() {
+        tokio::fs::remove_dir_all(account_dir).await?;
+    }
+    remove_projected_account_home_for_runtime_roots(
+        data_root,
+        account_id,
+        claude_account_dir,
+        "claude-crp",
+    )
+    .await?;
+
+    Ok(registry)
+}
+
+pub fn claude_env_for_account(
+    data_root: &Path,
+    account_id: &str,
+    auth_token: &str,
+) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), auth_token.to_string());
+    env.insert(
+        "CLAUDE_CONFIG_DIR".to_string(),
+        claude_account_dir(data_root, account_id)
+            .to_string_lossy()
+            .to_string(),
+    );
+    env
+}
+
+pub async fn claude_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
+    let registry = load_claude_registry(data_root).await;
+    let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(HashMap::new());
+    };
+
+    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+        return Ok(HashMap::new());
+    };
+
+    let Some(secret_ref) = entry.secret_ref.as_deref() else {
+        bail!("active claude account has no secret reference");
+    };
+
+    let token = read_claude_secret_for_ref(data_root, secret_ref).await?;
+    let _ = ensure_claude_account_dir(data_root, active).await?;
+    Ok(claude_env_for_account(data_root, active, &token))
+}
+
+pub fn normalize_claude_label(label: Option<String>, account_id: &str) -> String {
+    label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Claude Account {account_id}"))
+}
+
+fn parse_json_value(raw: &str, field: &str) -> Result<serde_json::Value> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        bail!("{field} is required");
+    }
+    serde_json::from_str(trimmed).with_context(|| format!("{field} must be valid JSON"))
+}
+
+fn parse_required_json_object(raw: &str, field: &str) -> Result<serde_json::Value> {
+    let parsed = parse_json_value(raw, field)?;
+    if !parsed.is_object() {
+        bail!("{field} must be a JSON object");
+    }
+    Ok(parsed)
+}
+
+fn parse_optional_json_value(raw: Option<&str>, field: &str) -> Result<Option<serde_json::Value>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(parse_json_value(trimmed, field)?))
+}
+
+fn normalize_optional_email(email: Option<String>) -> Option<String> {
+    email
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
+}
+
+fn apply_label_update(label: Option<String>, current: &mut String) {
+    if let Some(raw) = label {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            *current = trimmed.to_string();
+        }
+    }
+}
+
+fn apply_email_update(email: Option<String>, current: &mut Option<String>) {
+    if let Some(raw) = email {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            *current = None;
+        } else {
+            *current = Some(trimmed.to_string());
+        }
+    }
+}
+
+async fn write_gemini_secret_for_account(
+    data_root: &Path,
+    account_id: &str,
+    oauth_creds_json: &str,
+    google_accounts_json: Option<&str>,
+) -> Result<String> {
+    let oauth_creds = parse_required_json_object(oauth_creds_json, "oauth_creds_json")?;
+    let google_accounts = parse_optional_json_value(google_accounts_json, "google_accounts_json")?;
+    let secret_ref = format!("{account_id}.json");
+    let path = gemini_secret_path(data_root, &secret_ref);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let envelope = GeminiSecretEnvelope {
+        version: GEMINI_SECRET_VERSION,
+        oauth_creds,
+        google_accounts,
+    };
+    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
+    Ok(secret_ref)
+}
+
+async fn read_gemini_secret_for_ref(
+    data_root: &Path,
+    secret_ref: &str,
+) -> Result<GeminiSecretEnvelope> {
+    let path = gemini_secret_path(data_root, secret_ref);
+    let payload = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("reading gemini secret {}", path.display()))?;
+    let parsed: GeminiSecretEnvelope = serde_json::from_str(&payload)
+        .with_context(|| format!("invalid gemini secret {}", path.display()))?;
+    if parsed.version != GEMINI_SECRET_VERSION {
+        bail!(
+            "unsupported gemini secret version {} at {}",
+            parsed.version,
+            path.display()
+        );
+    }
+    if !parsed.oauth_creds.is_object() {
+        bail!("gemini oauth_creds must be a JSON object");
+    }
+    Ok(parsed)
+}
+
+async fn ensure_gemini_account_home(
+    data_root: &Path,
+    account_id: &str,
+    secret: &GeminiSecretEnvelope,
+) -> Result<PathBuf> {
+    let home = gemini_account_home(data_root, account_id);
+    let gemini_dir = home.join(".gemini");
+    tokio::fs::create_dir_all(&gemini_dir).await?;
+    write_secure_file_atomic(
+        &gemini_dir.join("oauth_creds.json"),
+        &serde_json::to_vec_pretty(&secret.oauth_creds)?,
+    )
+    .await?;
+    if let Some(accounts) = secret.google_accounts.as_ref() {
+        write_secure_file_atomic(
+            &gemini_dir.join("google_accounts.json"),
+            &serde_json::to_vec_pretty(accounts)?,
+        )
+        .await?;
+    } else {
+        let accounts_path = gemini_dir.join("google_accounts.json");
+        match tokio::fs::remove_file(&accounts_path).await {
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
+    let settings = serde_json::json!({
+        "security": {
+            "auth": {
+                "selectedType": GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL
+            }
+        }
+    });
+    write_secure_file_atomic(
+        &gemini_dir.join("settings.json"),
+        &serde_json::to_vec_pretty(&settings)?,
+    )
+    .await?;
+    Ok(home)
+}
+
+pub async fn add_gemini_account(
+    data_root: &Path,
+    label: Option<String>,
+    oauth_creds_json: String,
+    google_accounts_json: Option<String>,
+    email: Option<String>,
+) -> Result<GeminiAccountRegistry> {
+    let oauth_creds = parse_required_json_object(&oauth_creds_json, "oauth_creds_json")?;
+    let mut registry = load_gemini_registry(data_root).await;
+    let mut existing_account_id: Option<String> = None;
+
+    for existing in &registry.accounts {
+        let Some(secret_ref) = existing.secret_ref.as_deref() else {
+            continue;
+        };
+        if let Ok(existing_secret) = read_gemini_secret_for_ref(data_root, secret_ref).await {
+            if existing_secret.oauth_creds == oauth_creds {
+                existing_account_id = Some(existing.id.clone());
+                break;
+            }
+        }
+    }
+
+    if let Some(account_id) = existing_account_id {
+        if let Some(google_accounts) = google_accounts_json.as_deref() {
+            let _ = write_gemini_secret_for_account(
+                data_root,
+                &account_id,
+                &oauth_creds_json,
+                Some(google_accounts),
+            )
+            .await?;
+        }
+        if let Some(entry) = registry
+            .accounts
+            .iter_mut()
+            .find(|entry| entry.id == account_id)
+        {
+            apply_label_update(label.clone(), &mut entry.label);
+            apply_email_update(email.clone(), &mut entry.email);
+            entry.last_used_at = Some(Utc::now());
+        }
+        registry.active_account_id = Some(account_id);
+        save_gemini_registry(data_root, &registry).await?;
+        return Ok(registry);
+    }
+
+    let account_id = uuid::Uuid::new_v4().to_string();
+    let secret_ref = write_gemini_secret_for_account(
+        data_root,
+        &account_id,
+        &oauth_creds_json,
+        google_accounts_json.as_deref(),
+    )
+    .await?;
+    let entry = GeminiAccountEntry {
+        id: account_id.clone(),
+        label: normalize_gemini_label(label, &account_id),
+        kind: GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL.to_string(),
+        email: normalize_optional_email(email),
+        created_at: Utc::now(),
+        last_used_at: Some(Utc::now()),
+        secret_ref: Some(secret_ref),
+    };
+    registry.accounts.push(entry);
+    registry.active_account_id = Some(account_id);
+    save_gemini_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn set_active_gemini_account(
+    data_root: &Path,
+    account_id: Option<String>,
+) -> Result<GeminiAccountRegistry> {
+    let mut registry = load_gemini_registry(data_root).await;
+    if let Some(active_id) = account_id.as_deref() {
+        let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
+            bail!("unknown account");
+        };
+        if entry.secret_ref.as_deref().is_none() {
+            bail!("active account has no secret");
+        }
+    }
+    registry.active_account_id = account_id.clone();
+    if let Some(active_id) = account_id {
+        let now = Utc::now();
+        if let Some(entry) = registry.accounts.iter_mut().find(|a| a.id == active_id) {
+            entry.last_used_at = Some(now);
+        }
+    }
+    save_gemini_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn remove_gemini_account(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<GeminiAccountRegistry> {
+    ensure_safe_account_id(account_id)?;
+    let mut registry = load_gemini_registry(data_root).await;
+    let was_active = registry.active_account_id.as_deref() == Some(account_id);
+    let removed: Vec<GeminiAccountEntry> = registry
+        .accounts
+        .iter()
+        .filter(|a| a.id == account_id)
+        .cloned()
+        .collect();
+    registry.accounts.retain(|a| a.id != account_id);
+    if was_active {
+        registry.active_account_id = None;
+    }
+    save_gemini_registry(data_root, &registry).await?;
+
+    for entry in removed {
+        if let Some(secret_ref) = entry.secret_ref {
+            let secret_path = gemini_secret_path(data_root, &secret_ref);
+            if secret_path.exists() {
+                let _ = tokio::fs::remove_file(secret_path).await;
+            }
+        }
+    }
+
+    let account_home = gemini_account_home(data_root, account_id);
+    if account_home.exists() {
+        tokio::fs::remove_dir_all(account_home).await?;
+    }
+    remove_projected_account_home_for_runtime_roots(
+        data_root,
+        account_id,
+        gemini_account_home,
+        "gemini",
+    )
+    .await?;
+
+    Ok(registry)
+}
+
+pub fn gemini_env_for_account(data_root: &Path, account_id: &str) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    env.insert(
+        "GEMINI_CLI_HOME".to_string(),
+        gemini_account_home(data_root, account_id)
+            .to_string_lossy()
+            .to_string(),
+    );
+    env.insert(
+        GEMINI_FORCE_FILE_STORAGE_ENV.to_string(),
+        "true".to_string(),
+    );
+    env
+}
+
+pub async fn gemini_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
+    let registry = load_gemini_registry(data_root).await;
+    let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(HashMap::new());
+    };
+
+    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+        return Ok(HashMap::new());
+    };
+
+    let Some(secret_ref) = entry.secret_ref.as_deref() else {
+        bail!("active gemini account has no secret reference");
+    };
+
+    let secret = read_gemini_secret_for_ref(data_root, secret_ref).await?;
+    let _ = ensure_gemini_account_home(data_root, active, &secret).await?;
+    Ok(gemini_env_for_account(data_root, active))
+}
+
+pub fn normalize_gemini_label(label: Option<String>, account_id: &str) -> String {
+    label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Gemini Account {account_id}"))
+}
+
+fn normalize_kimi_provider(provider: Option<String>) -> Result<String> {
+    let provider = provider
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
+        .unwrap_or_else(|| "moonshot".to_string());
+    if provider
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return Ok(provider);
+    }
+    bail!("provider must contain only [A-Za-z0-9_-]");
+}
+
+fn normalize_optional_multiline(raw: Option<String>) -> Option<String> {
+    raw.map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+async fn write_kimi_secret_for_account(
+    data_root: &Path,
+    account_id: &str,
+    provider: &str,
+    credentials_json: &str,
+    config_toml: Option<String>,
+) -> Result<String> {
+    let credentials = parse_required_json_object(credentials_json, "credentials_json")?;
+    let provider = normalize_kimi_provider(Some(provider.to_string()))?;
+    let secret_ref = format!("{account_id}.json");
+    let path = kimi_secret_path(data_root, &secret_ref);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let envelope = KimiSecretEnvelope {
+        version: KIMI_SECRET_VERSION,
+        provider,
+        credentials,
+        config_toml: normalize_optional_multiline(config_toml),
+    };
+    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
+    Ok(secret_ref)
+}
+
+async fn read_kimi_secret_for_ref(
+    data_root: &Path,
+    secret_ref: &str,
+) -> Result<KimiSecretEnvelope> {
+    let path = kimi_secret_path(data_root, secret_ref);
+    let payload = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("reading kimi secret {}", path.display()))?;
+    let parsed: KimiSecretEnvelope = serde_json::from_str(&payload)
+        .with_context(|| format!("invalid kimi secret {}", path.display()))?;
+    if parsed.version != KIMI_SECRET_VERSION {
+        bail!(
+            "unsupported kimi secret version {} at {}",
+            parsed.version,
+            path.display()
+        );
+    }
+    if !parsed.credentials.is_object() {
+        bail!("kimi credentials must be a JSON object");
+    }
+    let _ = normalize_kimi_provider(Some(parsed.provider.clone()))?;
+    Ok(parsed)
+}
+
+async fn ensure_kimi_account_home(
+    data_root: &Path,
+    account_id: &str,
+    secret: &KimiSecretEnvelope,
+) -> Result<PathBuf> {
+    let home = kimi_account_home(data_root, account_id);
+    let share_dir = home.join(".kimi");
+    let credentials_dir = share_dir.join("credentials");
+    tokio::fs::create_dir_all(&credentials_dir).await?;
+    let provider = normalize_kimi_provider(Some(secret.provider.clone()))?;
+    let credentials_path = credentials_dir.join(format!("{provider}.json"));
+    write_secure_file_atomic(
+        &credentials_path,
+        &serde_json::to_vec_pretty(&secret.credentials)?,
+    )
+    .await?;
+    let config_toml = secret
+        .config_toml
+        .clone()
+        .unwrap_or_else(|| format!("current_provider = \"{provider}\"\n"));
+    write_secure_file_atomic(&share_dir.join("config.toml"), config_toml.as_bytes()).await?;
+    Ok(share_dir)
+}
+
+pub async fn add_kimi_account(
+    data_root: &Path,
+    label: Option<String>,
+    provider: Option<String>,
+    credentials_json: String,
+    config_toml: Option<String>,
+    email: Option<String>,
+) -> Result<KimiAccountRegistry> {
+    let normalized_provider = normalize_kimi_provider(provider)?;
+    let credentials = parse_required_json_object(&credentials_json, "credentials_json")?;
+    let mut registry = load_kimi_registry(data_root).await;
+    let mut existing_account_id: Option<String> = None;
+
+    for existing in &registry.accounts {
+        let Some(secret_ref) = existing.secret_ref.as_deref() else {
+            continue;
+        };
+        if let Ok(existing_secret) = read_kimi_secret_for_ref(data_root, secret_ref).await {
+            if existing_secret.provider == normalized_provider
+                && existing_secret.credentials == credentials
+            {
+                existing_account_id = Some(existing.id.clone());
+                break;
+            }
+        }
+    }
+
+    if let Some(account_id) = existing_account_id {
+        if let Some(config_toml_value) = config_toml.clone() {
+            let _ = write_kimi_secret_for_account(
+                data_root,
+                &account_id,
+                &normalized_provider,
+                &credentials_json,
+                Some(config_toml_value),
+            )
+            .await?;
+        }
+        if let Some(entry) = registry
+            .accounts
+            .iter_mut()
+            .find(|entry| entry.id == account_id)
+        {
+            apply_label_update(label.clone(), &mut entry.label);
+            apply_email_update(email.clone(), &mut entry.email);
+            entry.last_used_at = Some(Utc::now());
+        }
+        registry.active_account_id = Some(account_id);
+        save_kimi_registry(data_root, &registry).await?;
+        return Ok(registry);
+    }
+
+    let account_id = uuid::Uuid::new_v4().to_string();
+    let secret_ref = write_kimi_secret_for_account(
+        data_root,
+        &account_id,
+        &normalized_provider,
+        &credentials_json,
+        config_toml,
+    )
+    .await?;
+    let entry = KimiAccountEntry {
+        id: account_id.clone(),
+        label: normalize_kimi_label(label, &account_id),
+        kind: KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON.to_string(),
+        email: normalize_optional_email(email),
+        created_at: Utc::now(),
+        last_used_at: Some(Utc::now()),
+        secret_ref: Some(secret_ref),
+    };
+    registry.accounts.push(entry);
+    registry.active_account_id = Some(account_id);
+    save_kimi_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn set_active_kimi_account(
+    data_root: &Path,
+    account_id: Option<String>,
+) -> Result<KimiAccountRegistry> {
+    let mut registry = load_kimi_registry(data_root).await;
+    if let Some(active_id) = account_id.as_deref() {
+        let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
+            bail!("unknown account");
+        };
+        if entry.secret_ref.as_deref().is_none() {
+            bail!("active account has no secret");
+        }
+    }
+    registry.active_account_id = account_id.clone();
+    if let Some(active_id) = account_id {
+        let now = Utc::now();
+        if let Some(entry) = registry.accounts.iter_mut().find(|a| a.id == active_id) {
+            entry.last_used_at = Some(now);
+        }
+    }
+    save_kimi_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn remove_kimi_account(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<KimiAccountRegistry> {
+    ensure_safe_account_id(account_id)?;
+    let mut registry = load_kimi_registry(data_root).await;
+    let was_active = registry.active_account_id.as_deref() == Some(account_id);
+    let removed: Vec<KimiAccountEntry> = registry
+        .accounts
+        .iter()
+        .filter(|a| a.id == account_id)
+        .cloned()
+        .collect();
+    registry.accounts.retain(|a| a.id != account_id);
+    if was_active {
+        registry.active_account_id = None;
+    }
+    save_kimi_registry(data_root, &registry).await?;
+
+    for entry in removed {
+        if let Some(secret_ref) = entry.secret_ref {
+            let secret_path = kimi_secret_path(data_root, &secret_ref);
+            if secret_path.exists() {
+                let _ = tokio::fs::remove_file(secret_path).await;
+            }
+        }
+    }
+
+    let account_home = kimi_account_home(data_root, account_id);
+    if account_home.exists() {
+        tokio::fs::remove_dir_all(account_home).await?;
+    }
+    remove_projected_account_home_for_runtime_roots(
+        data_root,
+        account_id,
+        kimi_account_home,
+        "kimi",
+    )
+    .await?;
+    Ok(registry)
+}
+
+pub fn kimi_env_for_account(data_root: &Path, account_id: &str) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    env.insert(
+        KIMI_SHARE_DIR_ENV.to_string(),
+        kimi_account_home(data_root, account_id)
+            .join(".kimi")
+            .to_string_lossy()
+            .to_string(),
+    );
+    env
+}
+
+pub async fn kimi_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
+    let registry = load_kimi_registry(data_root).await;
+    let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(HashMap::new());
+    };
+    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+        return Ok(HashMap::new());
+    };
+    let Some(secret_ref) = entry.secret_ref.as_deref() else {
+        bail!("active kimi account has no secret reference");
+    };
+    let secret = read_kimi_secret_for_ref(data_root, secret_ref).await?;
+    let _ = ensure_kimi_account_home(data_root, active, &secret).await?;
+    Ok(kimi_env_for_account(data_root, active))
+}
+
+pub fn normalize_kimi_label(label: Option<String>, account_id: &str) -> String {
+    label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Kimi Account {account_id}"))
+}
+
+fn normalize_copilot_token(token: &str) -> Result<String> {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        bail!("token is required");
+    }
+    Ok(trimmed.to_string())
+}
+
+async fn write_copilot_secret_for_account(
+    data_root: &Path,
+    account_id: &str,
+    token: &str,
+) -> Result<String> {
+    let token = normalize_copilot_token(token)?;
+    let secret_ref = format!("{account_id}.json");
+    let path = copilot_secret_path(data_root, &secret_ref);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let envelope = CopilotSecretEnvelope {
+        version: COPILOT_SECRET_VERSION,
+        gh_token: token,
+    };
+    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
+    Ok(secret_ref)
+}
+
+async fn read_copilot_secret_for_ref(data_root: &Path, secret_ref: &str) -> Result<String> {
+    let path = copilot_secret_path(data_root, secret_ref);
+    let payload = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("reading copilot secret {}", path.display()))?;
+    let parsed: CopilotSecretEnvelope = serde_json::from_str(&payload)
+        .with_context(|| format!("invalid copilot secret {}", path.display()))?;
+    if parsed.version != COPILOT_SECRET_VERSION {
+        bail!(
+            "unsupported copilot secret version {} at {}",
+            parsed.version,
+            path.display()
+        );
+    }
+    normalize_copilot_token(&parsed.gh_token)
+}
+
+pub async fn ensure_copilot_account_dir(data_root: &Path, account_id: &str) -> Result<PathBuf> {
+    let dir = copilot_account_dir(data_root, account_id);
+    tokio::fs::create_dir_all(&dir).await?;
+    Ok(dir)
+}
+
+pub async fn add_copilot_account(
+    data_root: &Path,
+    label: Option<String>,
+    token: String,
+    email: Option<String>,
+) -> Result<CopilotAccountRegistry> {
+    let token = normalize_copilot_token(&token)?;
+    let mut registry = load_copilot_registry(data_root).await;
+    let mut existing_account_id: Option<String> = None;
+
+    for existing in &registry.accounts {
+        let Some(secret_ref) = existing.secret_ref.as_deref() else {
+            continue;
+        };
+        if let Ok(existing_token) = read_copilot_secret_for_ref(data_root, secret_ref).await {
+            if existing_token == token {
+                existing_account_id = Some(existing.id.clone());
+                break;
+            }
+        }
+    }
+
+    if let Some(account_id) = existing_account_id {
+        if let Some(entry) = registry
+            .accounts
+            .iter_mut()
+            .find(|entry| entry.id == account_id)
+        {
+            apply_label_update(label.clone(), &mut entry.label);
+            apply_email_update(email.clone(), &mut entry.email);
+            entry.last_used_at = Some(Utc::now());
+        }
+        registry.active_account_id = Some(account_id);
+        save_copilot_registry(data_root, &registry).await?;
+        return Ok(registry);
+    }
+
+    let account_id = uuid::Uuid::new_v4().to_string();
+    let secret_ref = write_copilot_secret_for_account(data_root, &account_id, &token).await?;
+    let entry = CopilotAccountEntry {
+        id: account_id.clone(),
+        label: normalize_copilot_label(label, &account_id),
+        kind: COPILOT_CREDENTIAL_KIND_GH_TOKEN.to_string(),
+        email: normalize_optional_email(email),
+        created_at: Utc::now(),
+        last_used_at: Some(Utc::now()),
+        secret_ref: Some(secret_ref),
+    };
+    registry.accounts.push(entry);
+    registry.active_account_id = Some(account_id);
+    save_copilot_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn set_active_copilot_account(
+    data_root: &Path,
+    account_id: Option<String>,
+) -> Result<CopilotAccountRegistry> {
+    let mut registry = load_copilot_registry(data_root).await;
+    if let Some(active_id) = account_id.as_deref() {
+        let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
+            bail!("unknown account");
+        };
+        if entry.secret_ref.as_deref().is_none() {
+            bail!("active account has no secret");
+        }
+    }
+    registry.active_account_id = account_id.clone();
+    if let Some(active_id) = account_id {
+        let now = Utc::now();
+        if let Some(entry) = registry.accounts.iter_mut().find(|a| a.id == active_id) {
+            entry.last_used_at = Some(now);
+        }
+    }
+    save_copilot_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn remove_copilot_account(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<CopilotAccountRegistry> {
+    ensure_safe_account_id(account_id)?;
+    let mut registry = load_copilot_registry(data_root).await;
+    let was_active = registry.active_account_id.as_deref() == Some(account_id);
+    let removed: Vec<CopilotAccountEntry> = registry
+        .accounts
+        .iter()
+        .filter(|a| a.id == account_id)
+        .cloned()
+        .collect();
+    registry.accounts.retain(|a| a.id != account_id);
+    if was_active {
+        registry.active_account_id = None;
+    }
+    save_copilot_registry(data_root, &registry).await?;
+    for entry in removed {
+        if let Some(secret_ref) = entry.secret_ref {
+            let secret_path = copilot_secret_path(data_root, &secret_ref);
+            if secret_path.exists() {
+                let _ = tokio::fs::remove_file(secret_path).await;
+            }
+        }
+    }
+    let account_dir = copilot_account_dir(data_root, account_id);
+    if account_dir.exists() {
+        tokio::fs::remove_dir_all(account_dir).await?;
+    }
+    Ok(registry)
+}
+
+pub fn copilot_env_for_account(
+    _data_root: &Path,
+    _account_id: &str,
+    token: &str,
+) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    env.insert("GH_TOKEN".to_string(), token.to_string());
+    env.insert("GITHUB_TOKEN".to_string(), token.to_string());
+    env
+}
+
+pub async fn copilot_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
+    let registry = load_copilot_registry(data_root).await;
+    let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(HashMap::new());
+    };
+    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+        return Ok(HashMap::new());
+    };
+    let Some(secret_ref) = entry.secret_ref.as_deref() else {
+        bail!("active copilot account has no secret reference");
+    };
+    let token = read_copilot_secret_for_ref(data_root, secret_ref).await?;
+    let _ = ensure_copilot_account_dir(data_root, active).await?;
+    Ok(copilot_env_for_account(data_root, active, &token))
+}
+
+pub fn normalize_copilot_label(label: Option<String>, account_id: &str) -> String {
+    label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Copilot Account {account_id}"))
+}
+
+async fn write_kiro_secret_for_account(
+    data_root: &Path,
+    account_id: &str,
+    auth_token_json: &str,
+) -> Result<String> {
+    let auth_token = parse_required_json_object(auth_token_json, "auth_token_json")?;
+    let secret_ref = format!("{account_id}.json");
+    let path = kiro_secret_path(data_root, &secret_ref);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let envelope = KiroSecretEnvelope {
+        version: KIRO_SECRET_VERSION,
+        auth_token,
+    };
+    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
+    Ok(secret_ref)
+}
+
+async fn read_kiro_secret_for_ref(
+    data_root: &Path,
+    secret_ref: &str,
+) -> Result<KiroSecretEnvelope> {
+    let path = kiro_secret_path(data_root, secret_ref);
+    let payload = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("reading kiro secret {}", path.display()))?;
+    let parsed: KiroSecretEnvelope = serde_json::from_str(&payload)
+        .with_context(|| format!("invalid kiro secret {}", path.display()))?;
+    if parsed.version != KIRO_SECRET_VERSION {
+        bail!(
+            "unsupported kiro secret version {} at {}",
+            parsed.version,
+            path.display()
+        );
+    }
+    if !parsed.auth_token.is_object() {
+        bail!("kiro auth_token must be a JSON object");
+    }
+    Ok(parsed)
+}
+
+async fn ensure_kiro_account_home(
+    data_root: &Path,
+    account_id: &str,
+    secret: &KiroSecretEnvelope,
+) -> Result<PathBuf> {
+    let home = kiro_account_home(data_root, account_id);
+    tokio::fs::create_dir_all(&home).await?;
+    let token_path = home.join(KIRO_AUTH_TOKEN_RELATIVE_PATH);
+    write_secure_file_atomic(&token_path, &serde_json::to_vec_pretty(&secret.auth_token)?).await?;
+    tokio::fs::create_dir_all(home.join(".config")).await?;
+    tokio::fs::create_dir_all(home.join(".cache")).await?;
+    Ok(home)
+}
+
+pub async fn add_kiro_account(
+    data_root: &Path,
+    label: Option<String>,
+    auth_token_json: String,
+    email: Option<String>,
+) -> Result<KiroAccountRegistry> {
+    let auth_token = parse_required_json_object(&auth_token_json, "auth_token_json")?;
+    let mut registry = load_kiro_registry(data_root).await;
+    let mut existing_account_id: Option<String> = None;
+
+    for existing in &registry.accounts {
+        let Some(secret_ref) = existing.secret_ref.as_deref() else {
+            continue;
+        };
+        if let Ok(existing_secret) = read_kiro_secret_for_ref(data_root, secret_ref).await {
+            if existing_secret.auth_token == auth_token {
+                existing_account_id = Some(existing.id.clone());
+                break;
+            }
+        }
+    }
+
+    if let Some(account_id) = existing_account_id {
+        if let Some(entry) = registry
+            .accounts
+            .iter_mut()
+            .find(|entry| entry.id == account_id)
+        {
+            apply_label_update(label.clone(), &mut entry.label);
+            apply_email_update(email.clone(), &mut entry.email);
+            entry.last_used_at = Some(Utc::now());
+        }
+        registry.active_account_id = Some(account_id);
+        save_kiro_registry(data_root, &registry).await?;
+        return Ok(registry);
+    }
+
+    let account_id = uuid::Uuid::new_v4().to_string();
+    let secret_ref =
+        write_kiro_secret_for_account(data_root, &account_id, &auth_token_json).await?;
+    let entry = KiroAccountEntry {
+        id: account_id.clone(),
+        label: normalize_kiro_label(label, &account_id),
+        kind: KIRO_CREDENTIAL_KIND_AUTH_TOKEN_JSON.to_string(),
+        email: normalize_optional_email(email),
+        created_at: Utc::now(),
+        last_used_at: Some(Utc::now()),
+        secret_ref: Some(secret_ref),
+    };
+    registry.accounts.push(entry);
+    registry.active_account_id = Some(account_id);
+    save_kiro_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn set_active_kiro_account(
+    data_root: &Path,
+    account_id: Option<String>,
+) -> Result<KiroAccountRegistry> {
+    let mut registry = load_kiro_registry(data_root).await;
+    if let Some(active_id) = account_id.as_deref() {
+        let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
+            bail!("unknown account");
+        };
+        if entry.secret_ref.as_deref().is_none() {
+            bail!("active account has no secret");
+        }
+    }
+    registry.active_account_id = account_id.clone();
+    if let Some(active_id) = account_id {
+        let now = Utc::now();
+        if let Some(entry) = registry.accounts.iter_mut().find(|a| a.id == active_id) {
+            entry.last_used_at = Some(now);
+        }
+    }
+    save_kiro_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn remove_kiro_account(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<KiroAccountRegistry> {
+    ensure_safe_account_id(account_id)?;
+    let mut registry = load_kiro_registry(data_root).await;
+    let was_active = registry.active_account_id.as_deref() == Some(account_id);
+    let removed: Vec<KiroAccountEntry> = registry
+        .accounts
+        .iter()
+        .filter(|a| a.id == account_id)
+        .cloned()
+        .collect();
+    registry.accounts.retain(|a| a.id != account_id);
+    if was_active {
+        registry.active_account_id = None;
+    }
+    save_kiro_registry(data_root, &registry).await?;
+
+    for entry in removed {
+        if let Some(secret_ref) = entry.secret_ref {
+            let secret_path = kiro_secret_path(data_root, &secret_ref);
+            if secret_path.exists() {
+                let _ = tokio::fs::remove_file(secret_path).await;
+            }
+        }
+    }
+
+    let account_home = kiro_account_home(data_root, account_id);
+    if account_home.exists() {
+        tokio::fs::remove_dir_all(account_home).await?;
+    }
+    remove_projected_account_home_for_runtime_roots(
+        data_root,
+        account_id,
+        kiro_account_home,
+        "kiro",
+    )
+    .await?;
+    Ok(registry)
+}
+
+pub fn kiro_env_for_account(data_root: &Path, account_id: &str) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    let home = kiro_account_home(data_root, account_id);
+    env.insert("HOME".to_string(), home.to_string_lossy().to_string());
+    env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        home.join(".config").to_string_lossy().to_string(),
+    );
+    env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        home.join(".cache").to_string_lossy().to_string(),
+    );
+    env
+}
+
+pub async fn kiro_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
+    let registry = load_kiro_registry(data_root).await;
+    let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(HashMap::new());
+    };
+    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+        return Ok(HashMap::new());
+    };
+    let Some(secret_ref) = entry.secret_ref.as_deref() else {
+        bail!("active kiro account has no secret reference");
+    };
+    let secret = read_kiro_secret_for_ref(data_root, secret_ref).await?;
+    let _ = ensure_kiro_account_home(data_root, active, &secret).await?;
+    Ok(kiro_env_for_account(data_root, active))
+}
+
+pub fn normalize_kiro_label(label: Option<String>, account_id: &str) -> String {
+    label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Kiro Account {account_id}"))
 }
 
 pub async fn codex_env_for_runtime_home(state_root: &Path) -> Result<HashMap<String, String>> {
@@ -818,6 +2492,117 @@ pub async fn codex_env_for_active_account(data_root: &Path) -> Result<HashMap<St
     codex_env_for_runtime_home(data_root).await
 }
 
+pub async fn subscription_env_for_active_account(
+    data_root: &Path,
+    provider_id: &str,
+) -> Result<HashMap<String, String>> {
+    match provider_id {
+        "codex" => codex_env_for_active_account(data_root).await,
+        "claude-crp" => claude_env_for_active_account(data_root).await,
+        "gemini" => gemini_env_for_active_account(data_root).await,
+        "kimi" => kimi_env_for_active_account(data_root).await,
+        "copilot" => copilot_env_for_active_account(data_root).await,
+        "kiro" => kiro_env_for_active_account(data_root).await,
+        _ => Ok(HashMap::new()),
+    }
+}
+
+pub async fn subscription_env_for_active_account_with_runtime_root(
+    data_root: &Path,
+    runtime_root: &Path,
+    provider_id: &str,
+) -> Result<HashMap<String, String>> {
+    if data_root == runtime_root {
+        return subscription_env_for_active_account(data_root, provider_id).await;
+    }
+
+    match provider_id {
+        "codex" => codex_env_for_active_account(data_root).await,
+        "claude-crp" => {
+            let registry = load_claude_registry(data_root).await;
+            let Some(active) = registry
+                .active_account_id
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            else {
+                return Ok(HashMap::new());
+            };
+            let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+                return Ok(HashMap::new());
+            };
+            let Some(secret_ref) = entry.secret_ref.as_deref() else {
+                bail!("active claude account has no secret reference");
+            };
+            let token = read_claude_secret_for_ref(data_root, secret_ref).await?;
+            let _ = ensure_claude_account_dir(runtime_root, active).await?;
+            Ok(claude_env_for_account(runtime_root, active, &token))
+        }
+        "gemini" => {
+            let registry = load_gemini_registry(data_root).await;
+            let Some(active) = registry
+                .active_account_id
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            else {
+                return Ok(HashMap::new());
+            };
+            let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+                return Ok(HashMap::new());
+            };
+            let Some(secret_ref) = entry.secret_ref.as_deref() else {
+                bail!("active gemini account has no secret reference");
+            };
+            let secret = read_gemini_secret_for_ref(data_root, secret_ref).await?;
+            let _ = ensure_gemini_account_home(runtime_root, active, &secret).await?;
+            Ok(gemini_env_for_account(runtime_root, active))
+        }
+        "kimi" => {
+            let registry = load_kimi_registry(data_root).await;
+            let Some(active) = registry
+                .active_account_id
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            else {
+                return Ok(HashMap::new());
+            };
+            let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+                return Ok(HashMap::new());
+            };
+            let Some(secret_ref) = entry.secret_ref.as_deref() else {
+                bail!("active kimi account has no secret reference");
+            };
+            let secret = read_kimi_secret_for_ref(data_root, secret_ref).await?;
+            let _ = ensure_kimi_account_home(runtime_root, active, &secret).await?;
+            Ok(kimi_env_for_account(runtime_root, active))
+        }
+        "copilot" => copilot_env_for_active_account(data_root).await,
+        "kiro" => {
+            let registry = load_kiro_registry(data_root).await;
+            let Some(active) = registry
+                .active_account_id
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            else {
+                return Ok(HashMap::new());
+            };
+            let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+                return Ok(HashMap::new());
+            };
+            let Some(secret_ref) = entry.secret_ref.as_deref() else {
+                bail!("active kiro account has no secret reference");
+            };
+            let secret = read_kiro_secret_for_ref(data_root, secret_ref).await?;
+            let _ = ensure_kiro_account_home(runtime_root, active, &secret).await?;
+            Ok(kiro_env_for_account(runtime_root, active))
+        }
+        _ => Ok(HashMap::new()),
+    }
+}
+
 pub fn normalize_label(label: Option<String>, account_id: &str) -> String {
     label
         .map(|s| s.trim().to_string())
@@ -862,6 +2647,69 @@ mod tests {
                 std::env::remove_var(self.key);
             }
         }
+    }
+
+    fn assert_unsafe_account_id_error(err: anyhow::Error) {
+        assert!(
+            err.to_string().contains("single path segment"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn account_id_validation_rejects_path_traversal() {
+        ensure_safe_account_id("acct-123").unwrap();
+        ensure_safe_account_id("acct_123").unwrap();
+
+        assert!(ensure_safe_account_id("").is_err());
+        assert!(ensure_safe_account_id("  ").is_err());
+        assert!(ensure_safe_account_id(".").is_err());
+        assert!(ensure_safe_account_id("..").is_err());
+        assert!(ensure_safe_account_id("../acct").is_err());
+        assert!(ensure_safe_account_id("acct/../x").is_err());
+        assert!(ensure_safe_account_id("acct/x").is_err());
+    }
+
+    #[tokio::test]
+    async fn remove_codex_account_rejects_unsafe_account_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = remove_codex_account(dir.path(), "..").await.unwrap_err();
+        assert_unsafe_account_id_error(err);
+    }
+
+    #[tokio::test]
+    async fn remove_claude_account_rejects_unsafe_account_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = remove_claude_account(dir.path(), "..").await.unwrap_err();
+        assert_unsafe_account_id_error(err);
+    }
+
+    #[tokio::test]
+    async fn remove_gemini_account_rejects_unsafe_account_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = remove_gemini_account(dir.path(), "..").await.unwrap_err();
+        assert_unsafe_account_id_error(err);
+    }
+
+    #[tokio::test]
+    async fn remove_kimi_account_rejects_unsafe_account_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = remove_kimi_account(dir.path(), "..").await.unwrap_err();
+        assert_unsafe_account_id_error(err);
+    }
+
+    #[tokio::test]
+    async fn remove_copilot_account_rejects_unsafe_account_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = remove_copilot_account(dir.path(), "..").await.unwrap_err();
+        assert_unsafe_account_id_error(err);
+    }
+
+    #[tokio::test]
+    async fn remove_kiro_account_rejects_unsafe_account_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = remove_kiro_account(dir.path(), "..").await.unwrap_err();
+        assert_unsafe_account_id_error(err);
     }
 
     #[tokio::test]
@@ -1319,5 +3167,681 @@ mod tests {
         let _ = remove_codex_account(root, "acct-remove").await.unwrap();
         assert!(!codex_runtime_home(root).join("auth.json").exists());
         assert!(!codex_runtime_owner_path(root).exists());
+    }
+
+    #[tokio::test]
+    async fn claude_active_account_projects_token_to_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_claude_account(
+            root,
+            Some("Claude Test".to_string()),
+            "token-abc".to_string(),
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+
+        let env = claude_env_for_active_account(root).await.unwrap();
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN"),
+            Some(&"token-abc".to_string())
+        );
+        let cfg_dir = env
+            .get("CLAUDE_CONFIG_DIR")
+            .expect("CLAUDE_CONFIG_DIR should be set");
+        assert!(cfg_dir.contains(&active_id));
+    }
+
+    #[tokio::test]
+    async fn adding_existing_claude_account_updates_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        let first = add_claude_account(
+            root,
+            Some("Claude Initial".to_string()),
+            "token-abc".to_string(),
+        )
+        .await
+        .unwrap();
+        let first_id = first.active_account_id.clone().expect("active account");
+
+        let second = add_claude_account(
+            root,
+            Some("Claude Updated".to_string()),
+            "token-abc".to_string(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(second.accounts.len(), 1);
+        assert_eq!(second.active_account_id.as_deref(), Some(first_id.as_str()));
+        assert_eq!(second.accounts[0].label, "Claude Updated");
+    }
+
+    #[tokio::test]
+    async fn deleting_active_claude_account_clears_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_claude_account(
+            root,
+            Some("Claude Test".to_string()),
+            "token-abc".to_string(),
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+
+        let _ = remove_claude_account(root, &active_id).await.unwrap();
+        let env = claude_env_for_active_account(root).await.unwrap();
+        assert!(env.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_active_claude_account_removes_runtime_root_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let runtime_root = root
+            .join("containers")
+            .join("workspaces")
+            .join("workspace-claude")
+            .join("data");
+        tokio::fs::create_dir_all(&runtime_root).await.unwrap();
+
+        let registry = add_claude_account(
+            root,
+            Some("Claude Test".to_string()),
+            "token-abc".to_string(),
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let projected_dir = claude_account_dir(&runtime_root, &active_id);
+
+        let _ = subscription_env_for_active_account_with_runtime_root(
+            root,
+            &runtime_root,
+            "claude-crp",
+        )
+        .await
+        .unwrap();
+        assert!(projected_dir.exists());
+
+        let _ = remove_claude_account(root, &active_id).await.unwrap();
+        assert!(!projected_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn gemini_active_account_projects_home_and_auth_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let oauth_creds =
+            r#"{"access_token":"token-a","refresh_token":"token-r","token_type":"Bearer"}"#;
+        let google_accounts = r#"[{"email":"dev@example.com"}]"#;
+        let registry = add_gemini_account(
+            root,
+            Some("Gemini Test".to_string()),
+            oauth_creds.to_string(),
+            Some(google_accounts.to_string()),
+            Some("dev@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+
+        let env = gemini_env_for_active_account(root).await.unwrap();
+        let home = env
+            .get("GEMINI_CLI_HOME")
+            .expect("GEMINI_CLI_HOME should be set");
+        assert!(home.contains(&active_id));
+        assert_eq!(
+            env.get(GEMINI_FORCE_FILE_STORAGE_ENV),
+            Some(&"true".to_string())
+        );
+        let oauth_path = Path::new(home).join(".gemini").join("oauth_creds.json");
+        assert!(oauth_path.exists());
+        let settings_path = Path::new(home).join(".gemini").join("settings.json");
+        let settings_payload = tokio::fs::read_to_string(settings_path).await.unwrap();
+        assert!(settings_payload.contains(GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL));
+    }
+
+    #[tokio::test]
+    async fn adding_existing_gemini_account_updates_metadata_and_google_accounts() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let oauth_creds = r#"{"access_token":"token-a","refresh_token":"token-r"}"#;
+
+        let first = add_gemini_account(
+            root,
+            Some("Gemini Initial".to_string()),
+            oauth_creds.to_string(),
+            Some(r#"[{"email":"initial@example.com"}]"#.to_string()),
+            Some("initial@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let first_id = first.active_account_id.clone().expect("active account");
+
+        let second = add_gemini_account(
+            root,
+            Some("Gemini Updated".to_string()),
+            oauth_creds.to_string(),
+            Some(r#"[{"email":"updated@example.com"}]"#.to_string()),
+            Some("updated@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(second.accounts.len(), 1);
+        assert_eq!(second.active_account_id.as_deref(), Some(first_id.as_str()));
+        assert_eq!(second.accounts[0].label, "Gemini Updated");
+        assert_eq!(
+            second.accounts[0].email.as_deref(),
+            Some("updated@example.com")
+        );
+
+        let secret_ref = second.accounts[0]
+            .secret_ref
+            .as_deref()
+            .expect("secret ref should be set");
+        let secret = read_gemini_secret_for_ref(root, secret_ref).await.unwrap();
+        assert_eq!(
+            secret.google_accounts,
+            Some(serde_json::json!([{"email":"updated@example.com"}]))
+        );
+    }
+
+    #[tokio::test]
+    async fn deleting_active_gemini_account_clears_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_gemini_account(
+            root,
+            Some("Gemini Test".to_string()),
+            r#"{"access_token":"token-a","refresh_token":"token-r"}"#.to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+
+        let _ = remove_gemini_account(root, &active_id).await.unwrap();
+        let env = gemini_env_for_active_account(root).await.unwrap();
+        assert!(env.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_active_gemini_account_removes_runtime_root_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let runtime_root = root
+            .join("containers")
+            .join("workspaces")
+            .join("workspace-gemini")
+            .join("data");
+        tokio::fs::create_dir_all(&runtime_root).await.unwrap();
+
+        let registry = add_gemini_account(
+            root,
+            Some("Gemini Test".to_string()),
+            r#"{"access_token":"token-a","refresh_token":"token-r"}"#.to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let projected_home = gemini_account_home(&runtime_root, &active_id);
+
+        let _ =
+            subscription_env_for_active_account_with_runtime_root(root, &runtime_root, "gemini")
+                .await
+                .unwrap();
+        assert!(projected_home.exists());
+
+        let _ = remove_gemini_account(root, &active_id).await.unwrap();
+        assert!(!projected_home.exists());
+    }
+
+    #[tokio::test]
+    async fn kimi_active_account_projects_share_dir_and_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_kimi_account(
+            root,
+            Some("Kimi Test".to_string()),
+            Some("moonshot".to_string()),
+            r#"{"access_token":"token-a","refresh_token":"token-r"}"#.to_string(),
+            None,
+            Some("dev@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+
+        let env = kimi_env_for_active_account(root).await.unwrap();
+        let share_dir = env
+            .get(KIMI_SHARE_DIR_ENV)
+            .expect("KIMI_SHARE_DIR should be set");
+        assert!(share_dir.contains(&active_id));
+        let credentials_path = Path::new(share_dir)
+            .join("credentials")
+            .join("moonshot.json");
+        assert!(credentials_path.exists());
+        let config_path = Path::new(share_dir).join("config.toml");
+        assert!(config_path.exists());
+    }
+
+    #[tokio::test]
+    async fn adding_existing_kimi_account_updates_metadata_and_config_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let credentials = r#"{"access_token":"token-a","refresh_token":"token-r"}"#;
+
+        let first = add_kimi_account(
+            root,
+            Some("Kimi Initial".to_string()),
+            Some("moonshot".to_string()),
+            credentials.to_string(),
+            Some("model = \"k1\"".to_string()),
+            Some("initial@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let first_id = first.active_account_id.clone().expect("active account");
+
+        let second = add_kimi_account(
+            root,
+            Some("Kimi Updated".to_string()),
+            Some("moonshot".to_string()),
+            credentials.to_string(),
+            Some("model = \"k2\"".to_string()),
+            Some("updated@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(second.accounts.len(), 1);
+        assert_eq!(second.active_account_id.as_deref(), Some(first_id.as_str()));
+        assert_eq!(second.accounts[0].label, "Kimi Updated");
+        assert_eq!(
+            second.accounts[0].email.as_deref(),
+            Some("updated@example.com")
+        );
+
+        let secret_ref = second.accounts[0]
+            .secret_ref
+            .as_deref()
+            .expect("secret ref should be set");
+        let secret = read_kimi_secret_for_ref(root, secret_ref).await.unwrap();
+        assert_eq!(secret.config_toml.as_deref(), Some("model = \"k2\""));
+    }
+
+    #[tokio::test]
+    async fn deleting_active_kimi_account_clears_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_kimi_account(
+            root,
+            Some("Kimi Test".to_string()),
+            None,
+            r#"{"access_token":"token-a","refresh_token":"token-r"}"#.to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let _ = remove_kimi_account(root, &active_id).await.unwrap();
+        let env = kimi_env_for_active_account(root).await.unwrap();
+        assert!(env.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_active_kimi_account_removes_runtime_root_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let runtime_root = root
+            .join("containers")
+            .join("workspaces")
+            .join("workspace-kimi")
+            .join("data");
+        tokio::fs::create_dir_all(&runtime_root).await.unwrap();
+
+        let registry = add_kimi_account(
+            root,
+            Some("Kimi Test".to_string()),
+            None,
+            r#"{"access_token":"token-a","refresh_token":"token-r"}"#.to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let projected_home = kimi_account_home(&runtime_root, &active_id);
+
+        let _ = subscription_env_for_active_account_with_runtime_root(root, &runtime_root, "kimi")
+            .await
+            .unwrap();
+        assert!(projected_home.exists());
+
+        let _ = remove_kimi_account(root, &active_id).await.unwrap();
+        assert!(!projected_home.exists());
+    }
+
+    #[tokio::test]
+    async fn copilot_active_account_projects_token_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_copilot_account(
+            root,
+            Some("Copilot Test".to_string()),
+            "ghp_abc".to_string(),
+            Some("dev@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let env = copilot_env_for_active_account(root).await.unwrap();
+        assert_eq!(env.get("GH_TOKEN"), Some(&"ghp_abc".to_string()));
+        assert_eq!(env.get("GITHUB_TOKEN"), Some(&"ghp_abc".to_string()));
+        assert!(copilot_account_dir(root, &active_id).exists());
+    }
+
+    #[tokio::test]
+    async fn adding_existing_copilot_account_updates_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        let first = add_copilot_account(
+            root,
+            Some("Copilot Initial".to_string()),
+            "ghp_abc".to_string(),
+            Some("initial@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let first_id = first.active_account_id.clone().expect("active account");
+
+        let second = add_copilot_account(
+            root,
+            Some("Copilot Updated".to_string()),
+            "ghp_abc".to_string(),
+            Some("updated@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(second.accounts.len(), 1);
+        assert_eq!(second.active_account_id.as_deref(), Some(first_id.as_str()));
+        assert_eq!(second.accounts[0].label, "Copilot Updated");
+        assert_eq!(
+            second.accounts[0].email.as_deref(),
+            Some("updated@example.com")
+        );
+    }
+
+    #[tokio::test]
+    async fn deleting_active_copilot_account_clears_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_copilot_account(
+            root,
+            Some("Copilot Test".to_string()),
+            "ghp_abc".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let _ = remove_copilot_account(root, &active_id).await.unwrap();
+        let env = copilot_env_for_active_account(root).await.unwrap();
+        assert!(env.is_empty());
+    }
+
+    #[tokio::test]
+    async fn kiro_active_account_projects_token_cache_under_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_kiro_account(
+            root,
+            Some("Kiro Test".to_string()),
+            r#"{"accessToken":"token-a","expiresAt":"2099-01-01T00:00:00Z"}"#.to_string(),
+            Some("dev@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let env = kiro_env_for_active_account(root).await.unwrap();
+        let home = env.get("HOME").expect("HOME should be set");
+        assert!(home.contains(&active_id));
+        let token_path = Path::new(home).join(KIRO_AUTH_TOKEN_RELATIVE_PATH);
+        assert!(token_path.exists());
+    }
+
+    #[tokio::test]
+    async fn adding_existing_kiro_account_updates_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let auth_token_json = r#"{"accessToken":"token-a"}"#;
+
+        let first = add_kiro_account(
+            root,
+            Some("Kiro Initial".to_string()),
+            auth_token_json.to_string(),
+            Some("initial@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let first_id = first.active_account_id.clone().expect("active account");
+
+        let second = add_kiro_account(
+            root,
+            Some("Kiro Updated".to_string()),
+            auth_token_json.to_string(),
+            Some("updated@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(second.accounts.len(), 1);
+        assert_eq!(second.active_account_id.as_deref(), Some(first_id.as_str()));
+        assert_eq!(second.accounts[0].label, "Kiro Updated");
+        assert_eq!(
+            second.accounts[0].email.as_deref(),
+            Some("updated@example.com")
+        );
+    }
+
+    #[tokio::test]
+    async fn deleting_active_kiro_account_clears_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_kiro_account(
+            root,
+            Some("Kiro Test".to_string()),
+            r#"{"accessToken":"token-a"}"#.to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let _ = remove_kiro_account(root, &active_id).await.unwrap();
+        let env = kiro_env_for_active_account(root).await.unwrap();
+        assert!(env.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_active_kiro_account_removes_runtime_root_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let runtime_root = root
+            .join("containers")
+            .join("workspaces")
+            .join("workspace-kiro")
+            .join("data");
+        tokio::fs::create_dir_all(&runtime_root).await.unwrap();
+
+        let registry = add_kiro_account(
+            root,
+            Some("Kiro Test".to_string()),
+            r#"{"accessToken":"token-a","expiresAt":"2099-01-01T00:00:00Z"}"#.to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let projected_home = kiro_account_home(&runtime_root, &active_id);
+
+        let _ = subscription_env_for_active_account_with_runtime_root(root, &runtime_root, "kiro")
+            .await
+            .unwrap();
+        assert!(projected_home.exists());
+
+        let _ = remove_kiro_account(root, &active_id).await.unwrap();
+        assert!(!projected_home.exists());
+    }
+
+    #[tokio::test]
+    async fn subscription_env_dispatches_to_supported_providers() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let _ = add_claude_account(root, Some("Claude".to_string()), "token-abc".to_string())
+            .await
+            .unwrap();
+        let _ = add_gemini_account(
+            root,
+            Some("Gemini".to_string()),
+            r#"{"access_token":"token-a","refresh_token":"token-r"}"#.to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let _ = add_kimi_account(
+            root,
+            Some("Kimi".to_string()),
+            None,
+            r#"{"access_token":"token-a"}"#.to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let _ = add_copilot_account(
+            root,
+            Some("Copilot".to_string()),
+            "ghp_abc".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+        let _ = add_kiro_account(
+            root,
+            Some("Kiro".to_string()),
+            r#"{"accessToken":"token-a"}"#.to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let claude_env = subscription_env_for_active_account(root, "claude-crp")
+            .await
+            .unwrap();
+        assert!(claude_env.contains_key("ANTHROPIC_AUTH_TOKEN"));
+        let gemini_env = subscription_env_for_active_account(root, "gemini")
+            .await
+            .unwrap();
+        assert!(gemini_env.contains_key("GEMINI_CLI_HOME"));
+        let kimi_env = subscription_env_for_active_account(root, "kimi")
+            .await
+            .unwrap();
+        assert!(kimi_env.contains_key(KIMI_SHARE_DIR_ENV));
+        let copilot_env = subscription_env_for_active_account(root, "copilot")
+            .await
+            .unwrap();
+        assert!(copilot_env.contains_key("GH_TOKEN"));
+        let kiro_env = subscription_env_for_active_account(root, "kiro")
+            .await
+            .unwrap();
+        assert!(kiro_env.contains_key("HOME"));
+        let unknown_env = subscription_env_for_active_account(root, "unknown")
+            .await
+            .unwrap();
+        assert!(unknown_env.is_empty());
+    }
+
+    #[tokio::test]
+    async fn subscription_env_runtime_root_projects_path_based_providers() {
+        let dir = tempfile::tempdir().unwrap();
+        let runtime_dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let runtime_root = runtime_dir.path();
+
+        let _ = add_claude_account(root, Some("Claude".to_string()), "token-abc".to_string())
+            .await
+            .unwrap();
+        let _ = add_gemini_account(
+            root,
+            Some("Gemini".to_string()),
+            r#"{"access_token":"token-a","refresh_token":"token-r"}"#.to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let _ = add_kimi_account(
+            root,
+            Some("Kimi".to_string()),
+            None,
+            r#"{"access_token":"token-a"}"#.to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let _ = add_kiro_account(
+            root,
+            Some("Kiro".to_string()),
+            r#"{"accessToken":"token-a"}"#.to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let claude_env =
+            subscription_env_for_active_account_with_runtime_root(root, runtime_root, "claude-crp")
+                .await
+                .unwrap();
+        let claude_dir = PathBuf::from(claude_env.get("CLAUDE_CONFIG_DIR").unwrap());
+        assert!(claude_dir.starts_with(runtime_root));
+
+        let gemini_env =
+            subscription_env_for_active_account_with_runtime_root(root, runtime_root, "gemini")
+                .await
+                .unwrap();
+        let gemini_home = PathBuf::from(gemini_env.get("GEMINI_CLI_HOME").unwrap());
+        assert!(gemini_home.starts_with(runtime_root));
+
+        let kimi_env =
+            subscription_env_for_active_account_with_runtime_root(root, runtime_root, "kimi")
+                .await
+                .unwrap();
+        let kimi_share = PathBuf::from(kimi_env.get(KIMI_SHARE_DIR_ENV).unwrap());
+        assert!(kimi_share.starts_with(runtime_root));
+
+        let kiro_env =
+            subscription_env_for_active_account_with_runtime_root(root, runtime_root, "kiro")
+                .await
+                .unwrap();
+        let kiro_home = PathBuf::from(kiro_env.get("HOME").unwrap());
+        assert!(kiro_home.starts_with(runtime_root));
+        let kiro_config = PathBuf::from(kiro_env.get("XDG_CONFIG_HOME").unwrap());
+        assert!(kiro_config.starts_with(runtime_root));
+        let kiro_cache = PathBuf::from(kiro_env.get("XDG_CACHE_HOME").unwrap());
+        assert!(kiro_cache.starts_with(runtime_root));
     }
 }

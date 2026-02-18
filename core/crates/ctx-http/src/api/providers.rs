@@ -202,6 +202,36 @@ pub(super) struct CodexAccountsResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub(super) struct ClaudeAccountsResponse {
+    active_account_id: Option<String>,
+    accounts: Vec<provider_accounts::ClaudeAccountEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct GeminiAccountsResponse {
+    active_account_id: Option<String>,
+    accounts: Vec<provider_accounts::GeminiAccountEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct KimiAccountsResponse {
+    active_account_id: Option<String>,
+    accounts: Vec<provider_accounts::KimiAccountEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct CopilotAccountsResponse {
+    active_account_id: Option<String>,
+    accounts: Vec<provider_accounts::CopilotAccountEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct KiroAccountsResponse {
+    active_account_id: Option<String>,
+    accounts: Vec<provider_accounts::KiroAccountEntry>,
+}
+
+#[derive(Debug, Serialize)]
 pub(super) struct CodexAccountUsageEntry {
     account_id: Option<String>,
     label: String,
@@ -232,6 +262,75 @@ pub(super) struct CodexLoginStartResp {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CodexActiveAccountReq {
+    account_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ClaudeAccountUpsertReq {
+    label: Option<String>,
+    auth_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ClaudeActiveAccountReq {
+    account_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GeminiAccountUpsertReq {
+    label: Option<String>,
+    oauth_creds_json: String,
+    #[serde(default)]
+    google_accounts_json: Option<String>,
+    #[serde(default)]
+    email: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GeminiActiveAccountReq {
+    account_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct KimiAccountUpsertReq {
+    label: Option<String>,
+    #[serde(default)]
+    provider: Option<String>,
+    credentials_json: String,
+    #[serde(default)]
+    config_toml: Option<String>,
+    #[serde(default)]
+    email: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct KimiActiveAccountReq {
+    account_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct CopilotAccountUpsertReq {
+    label: Option<String>,
+    token: String,
+    #[serde(default)]
+    email: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct CopilotActiveAccountReq {
+    account_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct KiroAccountUpsertReq {
+    label: Option<String>,
+    auth_token_json: String,
+    #[serde(default)]
+    email: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct KiroActiveAccountReq {
     account_id: Option<String>,
 }
 
@@ -363,22 +462,86 @@ async fn codex_accounts_response(state: &Arc<AppState>) -> CodexAccountsResponse
     }
 }
 
-async fn restart_codex_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
+async fn claude_accounts_response(state: &Arc<AppState>) -> ClaudeAccountsResponse {
+    let registry = provider_accounts::load_claude_registry(&state.core.data_root).await;
+    ClaudeAccountsResponse {
+        active_account_id: registry.active_account_id,
+        accounts: registry.accounts,
+    }
+}
+
+async fn gemini_accounts_response(state: &Arc<AppState>) -> GeminiAccountsResponse {
+    let registry = provider_accounts::load_gemini_registry(&state.core.data_root).await;
+    GeminiAccountsResponse {
+        active_account_id: registry.active_account_id,
+        accounts: registry.accounts,
+    }
+}
+
+async fn kimi_accounts_response(state: &Arc<AppState>) -> KimiAccountsResponse {
+    let registry = provider_accounts::load_kimi_registry(&state.core.data_root).await;
+    KimiAccountsResponse {
+        active_account_id: registry.active_account_id,
+        accounts: registry.accounts,
+    }
+}
+
+async fn copilot_accounts_response(state: &Arc<AppState>) -> CopilotAccountsResponse {
+    let registry = provider_accounts::load_copilot_registry(&state.core.data_root).await;
+    CopilotAccountsResponse {
+        active_account_id: registry.active_account_id,
+        accounts: registry.accounts,
+    }
+}
+
+async fn kiro_accounts_response(state: &Arc<AppState>) -> KiroAccountsResponse {
+    let registry = provider_accounts::load_kiro_registry(&state.core.data_root).await;
+    KiroAccountsResponse {
+        active_account_id: registry.active_account_id,
+        accounts: registry.accounts,
+    }
+}
+
+async fn restart_provider_for_auth_change(state: &Arc<AppState>, provider_id: &str, reason: &str) {
     let adapters = {
         let map = state.providers.adapters.lock().await;
-        ["codex"]
+        [provider_id]
             .iter()
-            .filter_map(|provider_id| {
-                map.get(*provider_id)
-                    .map(|adapter| (provider_id.to_string(), Arc::clone(adapter)))
+            .filter_map(|id| {
+                map.get(*id)
+                    .map(|adapter| (id.to_string(), Arc::clone(adapter)))
             })
             .collect::<Vec<_>>()
     };
-    for (provider_id, adapter) in adapters {
+    for (id, adapter) in adapters {
         if let Err(err) = adapter.restart(reason, ProviderRestartMode::Drain).await {
-            tracing::warn!("failed to drain-restart {provider_id} after auth change: {err}");
+            tracing::warn!("failed to drain-restart {id} after auth change: {err}");
         }
     }
+}
+
+async fn restart_codex_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
+    restart_provider_for_auth_change(state, "codex", reason).await;
+}
+
+async fn restart_claude_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
+    restart_provider_for_auth_change(state, "claude-crp", reason).await;
+}
+
+async fn restart_gemini_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
+    restart_provider_for_auth_change(state, "gemini", reason).await;
+}
+
+async fn restart_kimi_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
+    restart_provider_for_auth_change(state, "kimi", reason).await;
+}
+
+async fn restart_copilot_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
+    restart_provider_for_auth_change(state, "copilot", reason).await;
+}
+
+async fn restart_kiro_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
+    restart_provider_for_auth_change(state, "kiro", reason).await;
 }
 
 pub(super) async fn list_codex_accounts(
@@ -692,6 +855,379 @@ pub(super) async fn delete_codex_account(
         accounts: registry.accounts,
         logins,
     }))
+}
+
+pub(super) async fn list_claude_accounts(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    Ok(Json(claude_accounts_response(&state).await))
+}
+
+pub(super) async fn upsert_claude_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ClaudeAccountUpsertReq>,
+) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::add_claude_account(&state.core.data_root, req.label, req.auth_token)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_claude_providers_for_auth_change(&state, "claude auth updated").await;
+    Ok(Json(claude_accounts_response(&state).await))
+}
+
+pub(super) async fn set_claude_active_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ClaudeActiveAccountReq>,
+) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    if let Some(ref account_id) = req.account_id {
+        let registry = provider_accounts::load_claude_registry(&state.core.data_root).await;
+        if !registry.accounts.iter().any(|a| a.id == *account_id) {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "unknown account".to_string(),
+                }),
+            ));
+        }
+    }
+    provider_accounts::set_active_claude_account(&state.core.data_root, req.account_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_claude_providers_for_auth_change(&state, "claude auth updated").await;
+    Ok(Json(claude_accounts_response(&state).await))
+}
+
+pub(super) async fn delete_claude_account(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::remove_claude_account(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_claude_providers_for_auth_change(&state, "claude auth updated").await;
+    Ok(Json(claude_accounts_response(&state).await))
+}
+
+pub(super) async fn list_gemini_accounts(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<GeminiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    Ok(Json(gemini_accounts_response(&state).await))
+}
+
+pub(super) async fn upsert_gemini_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<GeminiAccountUpsertReq>,
+) -> Result<Json<GeminiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::add_gemini_account(
+        &state.core.data_root,
+        req.label,
+        req.oauth_creds_json,
+        req.google_accounts_json,
+        req.email,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    restart_gemini_providers_for_auth_change(&state, "gemini auth updated").await;
+    Ok(Json(gemini_accounts_response(&state).await))
+}
+
+pub(super) async fn set_gemini_active_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<GeminiActiveAccountReq>,
+) -> Result<Json<GeminiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    if let Some(ref account_id) = req.account_id {
+        let registry = provider_accounts::load_gemini_registry(&state.core.data_root).await;
+        if !registry.accounts.iter().any(|a| a.id == *account_id) {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "unknown account".to_string(),
+                }),
+            ));
+        }
+    }
+    provider_accounts::set_active_gemini_account(&state.core.data_root, req.account_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_gemini_providers_for_auth_change(&state, "gemini auth updated").await;
+    Ok(Json(gemini_accounts_response(&state).await))
+}
+
+pub(super) async fn delete_gemini_account(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<GeminiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::remove_gemini_account(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_gemini_providers_for_auth_change(&state, "gemini auth updated").await;
+    Ok(Json(gemini_accounts_response(&state).await))
+}
+
+pub(super) async fn list_kimi_accounts(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<KimiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    Ok(Json(kimi_accounts_response(&state).await))
+}
+
+pub(super) async fn upsert_kimi_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<KimiAccountUpsertReq>,
+) -> Result<Json<KimiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::add_kimi_account(
+        &state.core.data_root,
+        req.label,
+        req.provider,
+        req.credentials_json,
+        req.config_toml,
+        req.email,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    restart_kimi_providers_for_auth_change(&state, "kimi auth updated").await;
+    Ok(Json(kimi_accounts_response(&state).await))
+}
+
+pub(super) async fn set_kimi_active_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<KimiActiveAccountReq>,
+) -> Result<Json<KimiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    if let Some(ref account_id) = req.account_id {
+        let registry = provider_accounts::load_kimi_registry(&state.core.data_root).await;
+        if !registry.accounts.iter().any(|a| a.id == *account_id) {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "unknown account".to_string(),
+                }),
+            ));
+        }
+    }
+    provider_accounts::set_active_kimi_account(&state.core.data_root, req.account_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_kimi_providers_for_auth_change(&state, "kimi auth updated").await;
+    Ok(Json(kimi_accounts_response(&state).await))
+}
+
+pub(super) async fn delete_kimi_account(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<KimiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::remove_kimi_account(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_kimi_providers_for_auth_change(&state, "kimi auth updated").await;
+    Ok(Json(kimi_accounts_response(&state).await))
+}
+
+pub(super) async fn list_copilot_accounts(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<CopilotAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    Ok(Json(copilot_accounts_response(&state).await))
+}
+
+pub(super) async fn upsert_copilot_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CopilotAccountUpsertReq>,
+) -> Result<Json<CopilotAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::add_copilot_account(&state.core.data_root, req.label, req.token, req.email)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_copilot_providers_for_auth_change(&state, "copilot auth updated").await;
+    Ok(Json(copilot_accounts_response(&state).await))
+}
+
+pub(super) async fn set_copilot_active_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CopilotActiveAccountReq>,
+) -> Result<Json<CopilotAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    if let Some(ref account_id) = req.account_id {
+        let registry = provider_accounts::load_copilot_registry(&state.core.data_root).await;
+        if !registry.accounts.iter().any(|a| a.id == *account_id) {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "unknown account".to_string(),
+                }),
+            ));
+        }
+    }
+    provider_accounts::set_active_copilot_account(&state.core.data_root, req.account_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_copilot_providers_for_auth_change(&state, "copilot auth updated").await;
+    Ok(Json(copilot_accounts_response(&state).await))
+}
+
+pub(super) async fn delete_copilot_account(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<CopilotAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::remove_copilot_account(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_copilot_providers_for_auth_change(&state, "copilot auth updated").await;
+    Ok(Json(copilot_accounts_response(&state).await))
+}
+
+pub(super) async fn list_kiro_accounts(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<KiroAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    Ok(Json(kiro_accounts_response(&state).await))
+}
+
+pub(super) async fn upsert_kiro_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<KiroAccountUpsertReq>,
+) -> Result<Json<KiroAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::add_kiro_account(
+        &state.core.data_root,
+        req.label,
+        req.auth_token_json,
+        req.email,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    restart_kiro_providers_for_auth_change(&state, "kiro auth updated").await;
+    Ok(Json(kiro_accounts_response(&state).await))
+}
+
+pub(super) async fn set_kiro_active_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<KiroActiveAccountReq>,
+) -> Result<Json<KiroAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    if let Some(ref account_id) = req.account_id {
+        let registry = provider_accounts::load_kiro_registry(&state.core.data_root).await;
+        if !registry.accounts.iter().any(|a| a.id == *account_id) {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "unknown account".to_string(),
+                }),
+            ));
+        }
+    }
+    provider_accounts::set_active_kiro_account(&state.core.data_root, req.account_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_kiro_providers_for_auth_change(&state, "kiro auth updated").await;
+    Ok(Json(kiro_accounts_response(&state).await))
+}
+
+pub(super) async fn delete_kiro_account(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<KiroAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::remove_kiro_account(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_kiro_providers_for_auth_change(&state, "kiro auth updated").await;
+    Ok(Json(kiro_accounts_response(&state).await))
 }
 
 pub(super) async fn list_provider_auth_import_candidates(
@@ -1035,8 +1571,10 @@ pub(super) struct UpsertHarnessEndpointReq {
     #[serde(default)]
     endpoint_id: Option<String>,
     name: String,
-    base_url: String,
-    api_shape: HarnessApiShape,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    api_shape: Option<HarnessApiShape>,
     #[serde(default)]
     model_override: Option<String>,
     #[serde(default)]
@@ -1127,10 +1665,13 @@ async fn provider_probe_env(
     if let Some(token) = state.core.auth_token.as_ref() {
         env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
     }
-    if source.source_kind == HarnessSourceKind::Subscription && provider_id == "codex" {
-        if let Ok(extra) =
-            crate::provider_accounts::codex_env_for_active_account(&state.core.data_root).await
-        {
+    if source.source_kind == HarnessSourceKind::Subscription {
+        let extra = crate::provider_accounts::subscription_env_for_active_account(
+            &state.core.data_root,
+            provider_id,
+        )
+        .await;
+        if let Ok(extra) = extra {
             for (key, value) in extra {
                 env.insert(key, value);
             }

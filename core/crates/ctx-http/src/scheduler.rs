@@ -600,9 +600,18 @@ async fn start_turn(
     for (key, value) in runtime_plan.env_overrides.iter() {
         provider_env.insert(key.clone(), value.clone());
     }
-    let resolved_source = match harness_sources::resolve_provider_source_for_run(
+    let runtime_data_root = if is_container {
+        runtime_plan
+            .env_overrides
+            .get("CTX_DATA_ROOT")
+            .map(Path::new)
+    } else {
+        None
+    };
+    let resolved_source = match harness_sources::resolve_provider_source_for_run_with_runtime_root(
         &state.core.data_root,
         &session.provider_id,
+        runtime_data_root,
     )
     .await
     {
@@ -681,6 +690,33 @@ async fn start_turn(
             for (key, value) in env {
                 provider_env.insert(key, value);
             }
+        }
+    }
+    if session.provider_id != "codex" && !using_endpoint_source {
+        let env = if is_container {
+            if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
+                provider_accounts::subscription_env_for_active_account_with_runtime_root(
+                    &state.core.data_root,
+                    Path::new(root),
+                    &session.provider_id,
+                )
+                .await?
+            } else {
+                provider_accounts::subscription_env_for_active_account(
+                    &state.core.data_root,
+                    &session.provider_id,
+                )
+                .await?
+            }
+        } else {
+            provider_accounts::subscription_env_for_active_account(
+                &state.core.data_root,
+                &session.provider_id,
+            )
+            .await?
+        };
+        for (key, value) in env {
+            provider_env.insert(key, value);
         }
     }
     if session.provider_id == "codex" {

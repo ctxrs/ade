@@ -70,7 +70,7 @@ export type HarnessEndpointRecord = {
   id: string;
   provider_id: string;
   name: string;
-  base_url: string;
+  base_url?: string | null;
   api_shape: HarnessApiShape;
   auth_type: string;
   model_override?: string | null;
@@ -92,8 +92,8 @@ export type HarnessProviderSourceConfig = {
 export type UpsertHarnessEndpointRequest = {
   endpoint_id?: string | null;
   name: string;
-  base_url: string;
-  api_shape: HarnessApiShape;
+  base_url?: string | null;
+  api_shape?: HarnessApiShape | null;
   model_override?: string | null;
   api_key?: string | null;
 };
@@ -164,6 +164,52 @@ export type CodexAccountEntry = {
   last_used_at?: string | null;
 };
 
+export type ClaudeAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  subscription_type?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
+export type GeminiAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
+export type KimiAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
+export type CopilotAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
+export type KiroAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
 export type CodexAccountUsageEntry = {
   account_id: string | null;
   label: string;
@@ -190,6 +236,31 @@ export type CodexAccountsResponse = {
   active_account_id: string | null;
   accounts: CodexAccountEntry[];
   logins: CodexLoginStatus[];
+};
+
+export type ClaudeAccountsResponse = {
+  active_account_id: string | null;
+  accounts: ClaudeAccountEntry[];
+};
+
+export type GeminiAccountsResponse = {
+  active_account_id: string | null;
+  accounts: GeminiAccountEntry[];
+};
+
+export type KimiAccountsResponse = {
+  active_account_id: string | null;
+  accounts: KimiAccountEntry[];
+};
+
+export type CopilotAccountsResponse = {
+  active_account_id: string | null;
+  accounts: CopilotAccountEntry[];
+};
+
+export type KiroAccountsResponse = {
+  active_account_id: string | null;
+  accounts: KiroAccountEntry[];
 };
 
 export type CodexLoginStartResponse = {
@@ -295,6 +366,142 @@ export const setCodexActiveAccount = (accountId: string | null) =>
 
 export const deleteCodexAccount = (accountId: string) =>
   apiAny<CodexAccountsResponse>(`/api/providers/codex/accounts/${accountId}`, {
+    method: "DELETE",
+  });
+
+export const listClaudeAccounts = () =>
+  apiAny<ClaudeAccountsResponse>(`/api/providers/claude-crp/accounts`);
+
+export const upsertClaudeAccount = (authToken: string, label?: string) =>
+  apiAny<ClaudeAccountsResponse>(`/api/providers/claude-crp/accounts`, {
+    method: "POST",
+    body: JSON.stringify(label ? { auth_token: authToken, label } : { auth_token: authToken }),
+  });
+
+export const setClaudeActiveAccount = (accountId: string | null) =>
+  apiAny<ClaudeAccountsResponse>(`/api/providers/claude-crp/active-account`, {
+    method: "PUT",
+    body: JSON.stringify({ account_id: accountId }),
+  });
+
+export const deleteClaudeAccount = (accountId: string) =>
+  apiAny<ClaudeAccountsResponse>(`/api/providers/claude-crp/accounts/${accountId}`, {
+    method: "DELETE",
+  });
+
+export const listGeminiAccounts = () =>
+  apiAny<GeminiAccountsResponse>(`/api/providers/gemini/accounts`);
+
+export const upsertGeminiAccount = (
+  oauthCredsJson: string,
+  opts?: { label?: string; googleAccountsJson?: string; email?: string },
+) =>
+  apiAny<GeminiAccountsResponse>(`/api/providers/gemini/accounts`, {
+    method: "POST",
+    body: JSON.stringify({
+      oauth_creds_json: oauthCredsJson,
+      ...(opts?.label ? { label: opts.label } : {}),
+      ...(opts?.googleAccountsJson ? { google_accounts_json: opts.googleAccountsJson } : {}),
+      ...(opts?.email ? { email: opts.email } : {}),
+    }),
+  });
+
+export const setGeminiActiveAccount = (accountId: string | null) =>
+  apiAny<GeminiAccountsResponse>(`/api/providers/gemini/active-account`, {
+    method: "PUT",
+    body: JSON.stringify({ account_id: accountId }),
+  });
+
+export const deleteGeminiAccount = (accountId: string) =>
+  apiAny<GeminiAccountsResponse>(`/api/providers/gemini/accounts/${accountId}`, {
+    method: "DELETE",
+  });
+
+export const listKimiAccounts = () =>
+  apiAny<KimiAccountsResponse>(`/api/providers/kimi/accounts`);
+
+export const upsertKimiAccount = (
+  credentialsJson: string,
+  opts?: {
+    label?: string;
+    provider?: string;
+    configToml?: string;
+    email?: string;
+  },
+) =>
+  apiAny<KimiAccountsResponse>(`/api/providers/kimi/accounts`, {
+    method: "POST",
+    body: JSON.stringify({
+      credentials_json: credentialsJson,
+      ...(opts?.label ? { label: opts.label } : {}),
+      ...(opts?.provider ? { provider: opts.provider } : {}),
+      ...(opts?.configToml ? { config_toml: opts.configToml } : {}),
+      ...(opts?.email ? { email: opts.email } : {}),
+    }),
+  });
+
+export const setKimiActiveAccount = (accountId: string | null) =>
+  apiAny<KimiAccountsResponse>(`/api/providers/kimi/active-account`, {
+    method: "PUT",
+    body: JSON.stringify({ account_id: accountId }),
+  });
+
+export const deleteKimiAccount = (accountId: string) =>
+  apiAny<KimiAccountsResponse>(`/api/providers/kimi/accounts/${accountId}`, {
+    method: "DELETE",
+  });
+
+export const listCopilotAccounts = () =>
+  apiAny<CopilotAccountsResponse>(`/api/providers/copilot/accounts`);
+
+export const upsertCopilotAccount = (
+  token: string,
+  opts?: { label?: string; email?: string },
+) =>
+  apiAny<CopilotAccountsResponse>(`/api/providers/copilot/accounts`, {
+    method: "POST",
+    body: JSON.stringify({
+      token,
+      ...(opts?.label ? { label: opts.label } : {}),
+      ...(opts?.email ? { email: opts.email } : {}),
+    }),
+  });
+
+export const setCopilotActiveAccount = (accountId: string | null) =>
+  apiAny<CopilotAccountsResponse>(`/api/providers/copilot/active-account`, {
+    method: "PUT",
+    body: JSON.stringify({ account_id: accountId }),
+  });
+
+export const deleteCopilotAccount = (accountId: string) =>
+  apiAny<CopilotAccountsResponse>(`/api/providers/copilot/accounts/${accountId}`, {
+    method: "DELETE",
+  });
+
+export const listKiroAccounts = () =>
+  apiAny<KiroAccountsResponse>(`/api/providers/kiro/accounts`);
+
+export const upsertKiroAccount = (
+  authTokenJson: string,
+  opts?: { label?: string; email?: string },
+) =>
+  apiAny<KiroAccountsResponse>(`/api/providers/kiro/accounts`, {
+    method: "POST",
+    body: JSON.stringify({
+      auth_token_json: authTokenJson,
+      ...(opts?.label ? { label: opts.label } : {}),
+      ...(opts?.email ? { email: opts.email } : {}),
+    }),
+  });
+
+export const setKiroActiveAccount = (accountId: string | null) =>
+  apiAny<KiroAccountsResponse>(`/api/providers/kiro/active-account`, {
+    method: "PUT",
+    body: JSON.stringify({ account_id: accountId }),
+  });
+
+export const deleteKiroAccount = (accountId: string) =>
+  apiAny<KiroAccountsResponse>(`/api/providers/kiro/accounts/${accountId}`, {
     method: "DELETE",
   });
 

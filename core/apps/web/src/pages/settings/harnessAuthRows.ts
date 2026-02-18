@@ -1,4 +1,13 @@
-import type { CodexAccountEntry, HarnessEndpointRecord, HarnessSourceKind } from "../../api/client";
+import type {
+  ClaudeAccountEntry,
+  CopilotAccountEntry,
+  CodexAccountEntry,
+  GeminiAccountEntry,
+  HarnessEndpointRecord,
+  HarnessSourceKind,
+  KimiAccountEntry,
+  KiroAccountEntry,
+} from "../../api/client";
 
 export type HarnessAuthRow = {
   key: string;
@@ -21,9 +30,49 @@ type BuildHarnessAuthRowsArgs = {
   endpoints: HarnessEndpointRecord[];
   codex_accounts: CodexAccountEntry[];
   codex_active_account_id?: string | null;
+  claude_accounts: ClaudeAccountEntry[];
+  claude_active_account_id?: string | null;
+  gemini_accounts: GeminiAccountEntry[];
+  gemini_active_account_id?: string | null;
+  kimi_accounts: KimiAccountEntry[];
+  kimi_active_account_id?: string | null;
+  copilot_accounts: CopilotAccountEntry[];
+  copilot_active_account_id?: string | null;
+  kiro_accounts: KiroAccountEntry[];
+  kiro_active_account_id?: string | null;
 };
 
 const codexAccountLabel = (account: CodexAccountEntry): string => {
+  if (account.email && account.email.trim()) return account.email.trim();
+  if (account.label.trim()) return account.label.trim();
+  return account.id;
+};
+
+const claudeAccountLabel = (account: ClaudeAccountEntry): string => {
+  if (account.email && account.email.trim()) return account.email.trim();
+  if (account.label.trim()) return account.label.trim();
+  return account.id;
+};
+
+const geminiAccountLabel = (account: GeminiAccountEntry): string => {
+  if (account.email && account.email.trim()) return account.email.trim();
+  if (account.label.trim()) return account.label.trim();
+  return account.id;
+};
+
+const kimiAccountLabel = (account: KimiAccountEntry): string => {
+  if (account.email && account.email.trim()) return account.email.trim();
+  if (account.label.trim()) return account.label.trim();
+  return account.id;
+};
+
+const copilotAccountLabel = (account: CopilotAccountEntry): string => {
+  if (account.email && account.email.trim()) return account.email.trim();
+  if (account.label.trim()) return account.label.trim();
+  return account.id;
+};
+
+const kiroAccountLabel = (account: KiroAccountEntry): string => {
   if (account.email && account.email.trim()) return account.email.trim();
   if (account.label.trim()) return account.label.trim();
   return account.id;
@@ -42,6 +91,16 @@ export const buildHarnessAuthRows = ({
   endpoints,
   codex_accounts,
   codex_active_account_id,
+  claude_accounts,
+  claude_active_account_id,
+  gemini_accounts,
+  gemini_active_account_id,
+  kimi_accounts,
+  kimi_active_account_id,
+  copilot_accounts,
+  copilot_active_account_id,
+  kiro_accounts,
+  kiro_active_account_id,
 }: BuildHarnessAuthRowsArgs): HarnessAuthRow[] => {
   const rows: HarnessAuthRow[] = [];
 
@@ -52,6 +111,77 @@ export const buildHarnessAuthRows = ({
         kind: "subscription",
         label: codexAccountLabel(account),
         active: selected_source_kind === "subscription" && codex_active_account_id === account.id,
+        selectable: true,
+        account_id: account.id,
+        can_delete: true,
+      });
+    }
+  }
+
+  if (provider_id === "claude-crp" && claude_accounts.length > 0) {
+    for (const account of claude_accounts) {
+      rows.push({
+        key: `subscription:${account.id}`,
+        kind: "subscription",
+        label: claudeAccountLabel(account),
+        active: selected_source_kind === "subscription" && claude_active_account_id === account.id,
+        selectable: true,
+        account_id: account.id,
+        can_delete: true,
+      });
+    }
+  }
+
+  if (provider_id === "gemini" && gemini_accounts.length > 0) {
+    for (const account of gemini_accounts) {
+      rows.push({
+        key: `subscription:${account.id}`,
+        kind: "subscription",
+        label: geminiAccountLabel(account),
+        active: selected_source_kind === "subscription" && gemini_active_account_id === account.id,
+        selectable: true,
+        account_id: account.id,
+        can_delete: true,
+      });
+    }
+  }
+
+  if (provider_id === "kimi" && kimi_accounts.length > 0) {
+    for (const account of kimi_accounts) {
+      rows.push({
+        key: `subscription:${account.id}`,
+        kind: "subscription",
+        label: kimiAccountLabel(account),
+        active: selected_source_kind === "subscription" && kimi_active_account_id === account.id,
+        selectable: true,
+        account_id: account.id,
+        can_delete: true,
+      });
+    }
+  }
+
+  if (provider_id === "copilot" && copilot_accounts.length > 0) {
+    for (const account of copilot_accounts) {
+      rows.push({
+        key: `subscription:${account.id}`,
+        kind: "subscription",
+        label: copilotAccountLabel(account),
+        active:
+          selected_source_kind === "subscription" && copilot_active_account_id === account.id,
+        selectable: true,
+        account_id: account.id,
+        can_delete: true,
+      });
+    }
+  }
+
+  if (provider_id === "kiro" && kiro_accounts.length > 0) {
+    for (const account of kiro_accounts) {
+      rows.push({
+        key: `subscription:${account.id}`,
+        kind: "subscription",
+        label: kiroAccountLabel(account),
+        active: selected_source_kind === "subscription" && kiro_active_account_id === account.id,
         selectable: true,
         account_id: account.id,
         can_delete: true,

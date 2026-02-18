@@ -115,11 +115,21 @@ export const getHarnessEndpointProviderPreset = (id: string): HarnessEndpointPro
 export const defaultEndpointProviderPresetForHarness = (harnessProviderId: string): string => {
   if (harnessProviderId === "codex") return "openai";
   if (harnessProviderId === "claude-crp") return "anthropic";
+  if (harnessProviderId === "gemini") return "google_ai_studio";
+  if (harnessProviderId === "kimi") return "moonshot_ai";
   return "openrouter";
 };
 
 export const defaultShapeForHarnessProvider = (harnessProviderId: string): HarnessApiShape =>
   harnessProviderId === "claude-crp" ? "anthropic_messages" : "openai_responses";
+
+export const supportsOptionalBaseUrlForHarness = (harnessProviderId: string): boolean =>
+  harnessProviderId === "cody";
+
+export const normalizeOptionalBaseUrl = (rawBaseUrl: string): string | null => {
+  const trimmed = rawBaseUrl.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
 
 export const nextDefaultEndpointName = (
   endpointProviderId: string,
@@ -141,5 +151,25 @@ export const nextDefaultEndpointName = (
 
   let next = 1;
   while (usedNumbers.has(next)) next += 1;
+  return `${base} ${next}`;
+};
+
+export const nextTokenEndpointName = (
+  providerId: string,
+  existingNames: string[],
+): string => {
+  const base = `${providerId} token`;
+  const used = new Set(
+    existingNames
+      .map((value) => value.trim().toLowerCase())
+      .filter((value) => value.length > 0),
+  );
+  if (!used.has(base.toLowerCase())) {
+    return base;
+  }
+  let next = 2;
+  while (used.has(`${base} ${next}`.toLowerCase())) {
+    next += 1;
+  }
   return `${base} ${next}`;
 };
