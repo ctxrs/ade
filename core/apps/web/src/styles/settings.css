@@ -993,6 +993,11 @@
   min-width: 0;
 }
 
+.settings-attachments-panel {
+  display: grid;
+  gap: 12px;
+}
+
 .settings-attachments-actions {
   display: flex;
   gap: 8px;
