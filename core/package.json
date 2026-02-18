@@ -33,7 +33,7 @@
     "crp:codex": "bash -lc '../scripts/build_codex_crp.sh'",
     "crp:codex:test": "bash -lc 'cd ../external-harnesses/codex/codex-rs && cargo test -q -p codex-crp replay_golden_tests && cargo test -q -p codex-crp reasoning_summary_state_tests'",
     "crp:claude": "bash -lc '../scripts/build_claude_crp.sh'",
-    "verify:quick": "turbo run rust:fmt rust:panic-traps rust:clippy rust:test crp:codex:test supabase:migrations:check supabase:functions:check typecheck --filter=ctx-monorepo --filter=ctx-web --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only --log-order=grouped --concurrency=4 --ui=stream --cache=local:rw",
+    "verify:quick": "turbo run rust:fmt rust:panic-traps rust:clippy rust:test crp:codex:test supabase:migrations:check supabase:functions:check typecheck --filter=ctx-monorepo --filter=ctx-web --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only --log-order=grouped --concurrency=4 --ui=stream --cache=${TURBO_CACHE_MODE:-local:rw}",
     "verify:e2e": "pnpm test:e2e:premerge",
     "verify:e2e:cross-platform": "pnpm test:e2e:cross-platform && bash -lc 'scripts/run-rust-suite.sh cross_platform'",
     "verify:e2e:soak": "pnpm test:e2e:soak && bash -lc 'scripts/run-rust-suite.sh soak'",
