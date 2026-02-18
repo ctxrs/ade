@@ -4,6 +4,7 @@ import {
   deleteClaudeAccount,
   deleteCopilotAccount,
   deleteCodexAccount,
+  deleteCursorAccount,
   deleteGeminiAccount,
   deleteKimiAccount,
   deleteKiroAccount,
@@ -19,17 +20,20 @@ import {
   installAllProviders,
   installProvider,
   listCodexAccounts,
+  listCursorAccounts,
   listProviders,
   selectProviderHarnessSource,
   setClaudeActiveAccount,
   setCopilotActiveAccount,
   setCodexActiveAccount,
+  setCursorActiveAccount,
   setGeminiActiveAccount,
   setKimiActiveAccount,
   setKiroActiveAccount,
   startCodexLogin,
   upsertClaudeAccount,
   upsertCopilotAccount,
+  upsertCursorAccount,
   upsertGeminiAccount,
   upsertKimiAccount,
   upsertKiroAccount,
@@ -37,6 +41,7 @@ import {
   type ClaudeAccountsResponse,
   type CopilotAccountsResponse,
   type CodexAccountsResponse,
+  type CursorAccountsResponse,
   type GeminiAccountsResponse,
   type HarnessProviderSourceConfig,
   type KimiAccountsResponse,
@@ -81,6 +86,8 @@ type HarnessAuthenticationController = {
   copilotAccountsBusy: boolean;
   kiroAccounts: KiroAccountsResponse | null;
   kiroAccountsBusy: boolean;
+  cursorAccounts: CursorAccountsResponse | null;
+  cursorAccountsBusy: boolean;
   harnessAuthModal: HarnessAuthModalState | null;
   openHarnessAuthModal: (providerId: string) => void;
   closeHarnessAuthModal: () => void;
@@ -95,6 +102,7 @@ type HarnessAuthenticationController = {
   onKimiDelete: (accountId: string) => Promise<void>;
   onCopilotDelete: (accountId: string) => Promise<void>;
   onKiroDelete: (accountId: string) => Promise<void>;
+  onCursorDelete: (accountId: string) => Promise<void>;
   providerError: string | null;
   supportsHarnessEndpointConfig: (providerId: string) => boolean;
   harnessEndpointRequiresBaseUrl: (providerId: string) => boolean;
@@ -121,6 +129,7 @@ const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
   "kiro",
   "rovo",
   "auggie",
+  "pi",
 ]);
 
 const supportsHarnessEndpointConfig = (providerId: string): boolean =>
@@ -178,6 +187,8 @@ export function useHarnessAuthenticationController({
   const [copilotAccountsBusy, setCopilotAccountsBusy] = useState(false);
   const [kiroAccounts, setKiroAccounts] = useState<KiroAccountsResponse | null>(null);
   const [kiroAccountsBusy, setKiroAccountsBusy] = useState(false);
+  const [cursorAccounts, setCursorAccounts] = useState<CursorAccountsResponse | null>(null);
+  const [cursorAccountsBusy, setCursorAccountsBusy] = useState(false);
 
   const installPollTimeoutsRef = useRef<Record<string, number>>({});
 
@@ -296,6 +307,24 @@ export function useHarnessAuthenticationController({
     } finally {
       if (!opts?.silent) {
         setKiroAccountsBusy(false);
+      }
+    }
+  }, []);
+
+  const refreshCursorAccounts = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setCursorAccountsBusy(true);
+    }
+    try {
+      const next = await listCursorAccounts();
+      setCursorAccounts(next);
+      return next;
+    } catch (error) {
+      setProviderError(messageFromError(error));
+      return null;
+    } finally {
+      if (!opts?.silent) {
+        setCursorAccountsBusy(false);
       }
     }
   }, []);
@@ -634,6 +663,22 @@ export function useHarnessAuthenticationController({
         return;
       }
 
+      if (modal.provider_id === "cursor") {
+        const token = modal.subscription_token.trim();
+        if (!token) {
+          throw new Error("Token is required.");
+        }
+        const label = modal.subscription_label.trim();
+        const email = modal.subscription_email.trim();
+        const next = await upsertCursorAccount(token, {
+          ...(label ? { label } : {}),
+          ...(email ? { email } : {}),
+        });
+        setCursorAccounts(next);
+        closeHarnessAuthModal();
+        return;
+      }
+
       if (!workspaceId) {
         throw new Error("Select a workspace first.");
       }
@@ -816,6 +861,32 @@ export function useHarnessAuthenticationController({
     }
   }, []);
 
+  const onCursorDelete = useCallback(async (accountId: string) => {
+    setCursorAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await deleteCursorAccount(accountId);
+      setCursorAccounts(next);
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setCursorAccountsBusy(false);
+    }
+  }, []);
+
+  const onCursorSetActive = useCallback(async (accountId: string | null) => {
+    setCursorAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await setCursorActiveAccount(accountId);
+      setCursorAccounts(next);
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setCursorAccountsBusy(false);
+    }
+  }, []);
+
   const onSelectHarnessAuthRow = useCallback(async (providerId: string, row: HarnessAuthRow) => {
     if (!row.selectable) return;
     if (row.kind === "api_key" && row.endpoint_id) {
@@ -834,6 +905,8 @@ export function useHarnessAuthenticationController({
       await onCopilotSetActive(row.account_id);
     } else if (providerId === "kiro" && row.account_id) {
       await onKiroSetActive(row.account_id);
+    } else if (providerId === "cursor" && row.account_id) {
+      await onCursorSetActive(row.account_id);
     }
     if (supportsHarnessEndpointConfig(providerId)) {
       await onSelectProviderSource(providerId, "subscription", null);
@@ -845,6 +918,7 @@ export function useHarnessAuthenticationController({
     onGeminiSetActive,
     onKimiSetActive,
     onKiroSetActive,
+    onCursorSetActive,
     onSelectProviderSource,
   ]);
 
@@ -951,6 +1025,7 @@ export function useHarnessAuthenticationController({
     refreshKimiAccounts({ silent: true }).catch(() => {});
     refreshCopilotAccounts({ silent: true }).catch(() => {});
     refreshKiroAccounts({ silent: true }).catch(() => {});
+    refreshCursorAccounts({ silent: true }).catch(() => {});
     for (const provider of providers) {
       if (provider.details?.ui_hidden === "true") continue;
       if (supportsHarnessEndpointConfig(provider.provider_id)) {
@@ -967,6 +1042,7 @@ export function useHarnessAuthenticationController({
     refreshGeminiAccounts,
     refreshKimiAccounts,
     refreshKiroAccounts,
+    refreshCursorAccounts,
     workspaceId,
   ]);
 
@@ -1025,6 +1101,8 @@ export function useHarnessAuthenticationController({
     copilotAccountsBusy,
     kiroAccounts,
     kiroAccountsBusy,
+    cursorAccounts,
+    cursorAccountsBusy,
     harnessAuthModal,
     openHarnessAuthModal,
     closeHarnessAuthModal,
@@ -1039,6 +1117,7 @@ export function useHarnessAuthenticationController({
     onKimiDelete,
     onCopilotDelete,
     onKiroDelete,
+    onCursorDelete,
     providerError,
     supportsHarnessEndpointConfig,
     harnessEndpointRequiresBaseUrl,

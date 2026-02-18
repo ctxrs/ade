@@ -51,6 +51,8 @@ export function HarnessAuthenticationSection({ workspaceId, active }: HarnessAut
     copilotAccountsBusy,
     kiroAccounts,
     kiroAccountsBusy,
+    cursorAccounts,
+    cursorAccountsBusy,
     harnessAuthModal,
     openHarnessAuthModal,
     closeHarnessAuthModal,
@@ -65,6 +67,7 @@ export function HarnessAuthenticationSection({ workspaceId, active }: HarnessAut
     onKimiDelete,
     onCopilotDelete,
     onKiroDelete,
+    onCursorDelete,
     providerError,
     supportsHarnessEndpointConfig,
     harnessEndpointRequiresBaseUrl,
@@ -181,6 +184,8 @@ export function HarnessAuthenticationSection({ workspaceId, active }: HarnessAut
               copilot_active_account_id: id === "copilot" ? (copilotAccounts?.active_account_id ?? null) : null,
               kiro_accounts: id === "kiro" ? (kiroAccounts?.accounts ?? []) : [],
               kiro_active_account_id: id === "kiro" ? (kiroAccounts?.active_account_id ?? null) : null,
+              cursor_accounts: id === "cursor" ? (cursorAccounts?.accounts ?? []) : [],
+              cursor_active_account_id: id === "cursor" ? (cursorAccounts?.active_account_id ?? null) : null,
             });
             const addBusy = harnessAuthModal?.provider_id === id
               ? harnessAuthModal.api_key_busy || harnessAuthModal.subscription_busy
@@ -192,7 +197,8 @@ export function HarnessAuthenticationSection({ workspaceId, active }: HarnessAut
               || (id === "gemini" && geminiAccountsBusy)
               || (id === "kimi" && kimiAccountsBusy)
               || (id === "copilot" && copilotAccountsBusy)
-              || (id === "kiro" && kiroAccountsBusy);
+              || (id === "kiro" && kiroAccountsBusy)
+              || (id === "cursor" && cursorAccountsBusy);
 
             const installStyle: CSSProperties | undefined =
               installBusyLocal && installUi?.pct !== null
@@ -378,6 +384,18 @@ export function HarnessAuthenticationSection({ workspaceId, active }: HarnessAut
                                       Delete
                                     </DropdownMenuItem>
                                   ) : null}
+                                  {row.kind === "subscription" && id === "cursor" && row.account_id && row.can_delete ? (
+                                    <DropdownMenuItem
+                                      className="tw-text-[var(--error-contrast)] focus:tw-bg-[var(--error-soft)]"
+                                      onSelect={() => {
+                                        const accountId = row.account_id;
+                                        if (!accountId) return;
+                                        void onCursorDelete(accountId);
+                                      }}
+                                    >
+                                      Delete
+                                    </DropdownMenuItem>
+                                  ) : null}
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             </div>
@@ -519,6 +537,8 @@ export function HarnessAuthenticationSection({ workspaceId, active }: HarnessAut
                             ? "Paste a GitHub token with Copilot entitlement for the managed Copilot account."
                             : harnessAuthModal.provider_id === "kiro"
                               ? "Paste the Kiro auth token JSON for a managed token cache."
+                              : harnessAuthModal.provider_id === "cursor"
+                                ? "Paste a Cursor token for the managed account."
                       : "Authenticate this harness for the selected workspace."}
                 </div>
                 {harnessAuthModal.provider_id === "claude-crp" ? (
@@ -702,6 +722,39 @@ export function HarnessAuthenticationSection({ workspaceId, active }: HarnessAut
                         onChange={(e) => patchHarnessAuthModal({ subscription_auth_token_json: e.target.value })}
                         placeholder='{"accessToken":"...","expiresAt":"..."}'
                         rows={6}
+                      />
+                    </label>
+                  </>
+                ) : null}
+                {harnessAuthModal.provider_id === "cursor" ? (
+                  <>
+                    <label className="settings-harness-modal-label">
+                      Label (optional)
+                      <input
+                        className="settings-control"
+                        value={harnessAuthModal.subscription_label}
+                        onChange={(e) => patchHarnessAuthModal({ subscription_label: e.target.value })}
+                        placeholder="Cursor subscription"
+                        autoFocus
+                      />
+                    </label>
+                    <label className="settings-harness-modal-label">
+                      Email (optional)
+                      <input
+                        className="settings-control"
+                        value={harnessAuthModal.subscription_email}
+                        onChange={(e) => patchHarnessAuthModal({ subscription_email: e.target.value })}
+                        placeholder="you@example.com"
+                      />
+                    </label>
+                    <label className="settings-harness-modal-label">
+                      Token
+                      <input
+                        className="settings-control"
+                        value={harnessAuthModal.subscription_token}
+                        onChange={(e) => patchHarnessAuthModal({ subscription_token: e.target.value })}
+                        placeholder="cursor_..."
+                        type="password"
                       />
                     </label>
                   </>

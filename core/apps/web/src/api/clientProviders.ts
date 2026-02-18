@@ -210,6 +210,15 @@ export type KiroAccountEntry = {
   last_used_at?: string | null;
 };
 
+export type CursorAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
 export type CodexAccountUsageEntry = {
   account_id: string | null;
   label: string;
@@ -261,6 +270,11 @@ export type CopilotAccountsResponse = {
 export type KiroAccountsResponse = {
   active_account_id: string | null;
   accounts: KiroAccountEntry[];
+};
+
+export type CursorAccountsResponse = {
+  active_account_id: string | null;
+  accounts: CursorAccountEntry[];
 };
 
 export type CodexLoginStartResponse = {
@@ -502,6 +516,33 @@ export const setKiroActiveAccount = (accountId: string | null) =>
 
 export const deleteKiroAccount = (accountId: string) =>
   apiAny<KiroAccountsResponse>(`/api/providers/kiro/accounts/${accountId}`, {
+    method: "DELETE",
+  });
+
+export const listCursorAccounts = () =>
+  apiAny<CursorAccountsResponse>(`/api/providers/cursor/accounts`);
+
+export const upsertCursorAccount = (
+  token: string,
+  opts?: { label?: string; email?: string },
+) =>
+  apiAny<CursorAccountsResponse>(`/api/providers/cursor/accounts`, {
+    method: "POST",
+    body: JSON.stringify({
+      token,
+      ...(opts?.label ? { label: opts.label } : {}),
+      ...(opts?.email ? { email: opts.email } : {}),
+    }),
+  });
+
+export const setCursorActiveAccount = (accountId: string | null) =>
+  apiAny<CursorAccountsResponse>(`/api/providers/cursor/active-account`, {
+    method: "PUT",
+    body: JSON.stringify({ account_id: accountId }),
+  });
+
+export const deleteCursorAccount = (accountId: string) =>
+  apiAny<CursorAccountsResponse>(`/api/providers/cursor/accounts/${accountId}`, {
     method: "DELETE",
   });
 

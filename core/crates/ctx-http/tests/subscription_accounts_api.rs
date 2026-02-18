@@ -171,6 +171,19 @@ async fn kiro_subscription_accounts_crud_round_trip() {
 }
 
 #[tokio::test]
+async fn cursor_subscription_accounts_crud_round_trip() {
+    assert_managed_subscription_crud(
+        "cursor",
+        json!({
+            "label": "Cursor Team",
+            "token": "cursor-key",
+            "email": "dev@example.com"
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn gemini_upsert_rejects_invalid_oauth_json() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;

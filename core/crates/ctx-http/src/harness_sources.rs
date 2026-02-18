@@ -29,6 +29,7 @@ const PROVIDER_COPILOT: &str = "copilot";
 const PROVIDER_KIRO: &str = "kiro";
 const PROVIDER_ROVO: &str = "rovo";
 const PROVIDER_AUGGIE: &str = "auggie";
+const PROVIDER_PI: &str = "pi";
 
 const CODEX_AUTH_TYPE_BEARER: &str = "bearer";
 const CLAUDE_AUTH_TYPE_API_KEY: &str = "api_key";
@@ -266,6 +267,7 @@ fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
         PROVIDER_KIRO => Some(PROVIDER_KIRO),
         PROVIDER_ROVO => Some(PROVIDER_ROVO),
         PROVIDER_AUGGIE => Some(PROVIDER_AUGGIE),
+        PROVIDER_PI => Some(PROVIDER_PI),
         _ => None,
     }
 }
@@ -296,6 +298,7 @@ pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> 
         Some(PROVIDER_KIRO) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_ROVO) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_AUGGIE) => Some(HarnessApiShape::OpenaiResponses),
+        Some(PROVIDER_PI) => Some(HarnessApiShape::OpenaiResponses),
         _ => None,
     }
 }
@@ -349,7 +352,8 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
         | Some(PROVIDER_COPILOT)
         | Some(PROVIDER_KIRO)
         | Some(PROVIDER_ROVO)
-        | Some(PROVIDER_AUGGIE) => {
+        | Some(PROVIDER_AUGGIE)
+        | Some(PROVIDER_PI) => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "{} requires api_shape=openai_responses; found {}",
@@ -1094,6 +1098,23 @@ async fn resolve_internal(
             env.insert("GH_TOKEN".to_string(), api_key.clone());
             env.insert("GITHUB_TOKEN".to_string(), api_key);
         }
+        PROVIDER_PI => {
+            ensure_shape_compatible(canonical, endpoint.api_shape)?;
+            env.insert("PI_ACP_PROVIDER".to_string(), "openai".to_string());
+            env.insert("OPENAI_API_KEY".to_string(), api_key);
+            let base_url = endpoint.base_url.trim().to_string();
+            if !base_url.is_empty() {
+                env.insert("OPENAI_BASE_URL".to_string(), base_url);
+            }
+            if let Some(model) = endpoint
+                .model_override
+                .as_ref()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+            {
+                env.insert("PI_ACP_MODEL".to_string(), model);
+            }
+        }
         PROVIDER_KIRO => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
             ensure_safe_endpoint_id(&endpoint.id)?;
@@ -1377,6 +1398,10 @@ mod tests {
                 PROVIDER_AUGGIE,
                 &["AUGMENT_SESSION_AUTH", "AUGMENT_API_TOKEN"],
             ),
+            (
+                PROVIDER_PI,
+                &["OPENAI_API_KEY", "PI_ACP_PROVIDER", "PI_ACP_MODEL"],
+            ),
             (PROVIDER_CLINE, &["OPENAI_API_KEY"]),
             (PROVIDER_SWE_AGENT, &["OPENAI_API_KEY"]),
             (
@@ -1396,6 +1421,7 @@ mod tests {
                         || *provider_id == PROVIDER_KIRO
                         || *provider_id == PROVIDER_ROVO
                         || *provider_id == PROVIDER_AUGGIE
+                        || *provider_id == PROVIDER_PI
                     {
                         None
                     } else {
@@ -1405,6 +1431,7 @@ mod tests {
                         || *provider_id == PROVIDER_KIRO
                         || *provider_id == PROVIDER_ROVO
                         || *provider_id == PROVIDER_AUGGIE
+                        || *provider_id == PROVIDER_PI
                     {
                         None
                     } else {
@@ -1473,6 +1500,51 @@ mod tests {
             .expect("stored endpoint");
         assert!(stored.base_url.is_none());
         assert_eq!(stored.api_shape, HarnessApiShape::OpenaiResponses);
+    }
+
+    #[tokio::test]
+    async fn pi_endpoint_allows_token_only_upsert_and_optional_base_url() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_PI,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Pi token".to_string(),
+                base_url: None,
+                api_shape: None,
+                model_override: Some("gpt-5".to_string()),
+                api_key: Some("pi-key".to_string()),
+            },
+        )
+        .await
+        .expect("upsert endpoint");
+
+        assert!(endpoint.base_url.is_none());
+        assert_eq!(endpoint.api_shape, HarnessApiShape::OpenaiResponses);
+
+        set_provider_source_selection(
+            root.path(),
+            PROVIDER_PI,
+            HarnessSourceKind::Endpoint,
+            Some(endpoint.id.clone()),
+        )
+        .await
+        .expect("select endpoint");
+
+        let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_PI)
+            .await
+            .expect("resolve run");
+        assert_eq!(
+            resolved.env.get("OPENAI_API_KEY"),
+            Some(&"pi-key".to_string())
+        );
+        assert_eq!(
+            resolved.env.get("PI_ACP_PROVIDER"),
+            Some(&"openai".to_string())
+        );
+        assert_eq!(resolved.env.get("PI_ACP_MODEL"), Some(&"gpt-5".to_string()));
+        assert!(!resolved.env.contains_key("OPENAI_BASE_URL"));
     }
 
     #[tokio::test]

@@ -13,6 +13,7 @@ const GEMINI_SECRET_VERSION: u32 = 1;
 const KIMI_SECRET_VERSION: u32 = 1;
 const COPILOT_SECRET_VERSION: u32 = 1;
 const KIRO_SECRET_VERSION: u32 = 1;
+const CURSOR_SECRET_VERSION: u32 = 1;
 const CODEX_RUNTIME_OWNER_FILE: &str = ".ctx-active-account-id";
 pub const CODEX_CREDENTIAL_KIND_OAUTH: &str = "oauth";
 pub const CODEX_CREDENTIAL_KIND_API_KEY: &str = "api_key";
@@ -21,6 +22,7 @@ pub const GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL: &str = "oauth-personal";
 pub const KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON: &str = "credentials-json";
 pub const COPILOT_CREDENTIAL_KIND_GH_TOKEN: &str = "gh-token";
 pub const KIRO_CREDENTIAL_KIND_AUTH_TOKEN_JSON: &str = "auth-token-json";
+pub const CURSOR_CREDENTIAL_KIND_API_KEY: &str = "api-key";
 pub const GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL: &str = "oauth-personal";
 pub const GEMINI_FORCE_FILE_STORAGE_ENV: &str = "GEMINI_FORCE_FILE_STORAGE";
 pub const KIMI_SHARE_DIR_ENV: &str = "KIMI_SHARE_DIR";
@@ -70,6 +72,12 @@ struct KiroSecretEnvelope {
     auth_token: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CursorSecretEnvelope {
+    version: u32,
+    api_key: String,
+}
+
 fn default_codex_credential_kind() -> String {
     CODEX_CREDENTIAL_KIND_OAUTH.to_string()
 }
@@ -92,6 +100,10 @@ fn default_copilot_credential_kind() -> String {
 
 fn default_kiro_credential_kind() -> String {
     KIRO_CREDENTIAL_KIND_AUTH_TOKEN_JSON.to_string()
+}
+
+fn default_cursor_credential_kind() -> String {
+    CURSOR_CREDENTIAL_KIND_API_KEY.to_string()
 }
 
 fn default_codex_api_shape() -> String {
@@ -274,6 +286,29 @@ pub struct KiroAccountRegistry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CursorAccountEntry {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_cursor_credential_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_used_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub secret_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CursorAccountRegistry {
+    #[serde(default)]
+    pub active_account_id: Option<String>,
+    #[serde(default)]
+    pub accounts: Vec<CursorAccountEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexLoginStatus {
     pub account_id: String,
     pub auth_url: String,
@@ -324,6 +359,10 @@ pub fn kiro_accounts_root(data_root: &Path) -> PathBuf {
     data_root.join("providers").join("kiro").join("accounts")
 }
 
+pub fn cursor_accounts_root(data_root: &Path) -> PathBuf {
+    data_root.join("providers").join("cursor").join("accounts")
+}
+
 pub fn codex_secrets_root(data_root: &Path) -> PathBuf {
     data_root.join("secrets").join("codex")
 }
@@ -348,6 +387,10 @@ pub fn kiro_secrets_root(data_root: &Path) -> PathBuf {
     data_root.join("secrets").join("kiro")
 }
 
+pub fn cursor_secrets_root(data_root: &Path) -> PathBuf {
+    data_root.join("secrets").join("cursor")
+}
+
 fn codex_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
     codex_secrets_root(data_root).join(secret_ref)
 }
@@ -370,6 +413,10 @@ fn copilot_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
 
 fn kiro_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
     kiro_secrets_root(data_root).join(secret_ref)
+}
+
+fn cursor_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
+    cursor_secrets_root(data_root).join(secret_ref)
 }
 
 pub fn codex_runtime_home(data_root: &Path) -> PathBuf {
@@ -404,6 +451,10 @@ pub fn kiro_registry_path(data_root: &Path) -> PathBuf {
     kiro_accounts_root(data_root).join("index.json")
 }
 
+pub fn cursor_registry_path(data_root: &Path) -> PathBuf {
+    cursor_accounts_root(data_root).join("index.json")
+}
+
 pub fn codex_account_dir(data_root: &Path, account_id: &str) -> PathBuf {
     codex_accounts_root(data_root).join(account_id)
 }
@@ -426,6 +477,10 @@ pub fn copilot_account_dir(data_root: &Path, account_id: &str) -> PathBuf {
 
 pub fn kiro_account_home(data_root: &Path, account_id: &str) -> PathBuf {
     kiro_accounts_root(data_root).join(account_id)
+}
+
+pub fn cursor_account_home(data_root: &Path, account_id: &str) -> PathBuf {
+    cursor_accounts_root(data_root).join(account_id)
 }
 
 fn ensure_safe_account_id(account_id: &str) -> Result<()> {
@@ -596,6 +651,27 @@ pub async fn load_kiro_registry(data_root: &Path) -> KiroAccountRegistry {
 
 pub async fn save_kiro_registry(data_root: &Path, registry: &KiroAccountRegistry) -> Result<()> {
     let path = kiro_registry_path(data_root);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let payload = serde_json::to_vec_pretty(registry)?;
+    tokio::fs::write(path, payload).await?;
+    Ok(())
+}
+
+pub async fn load_cursor_registry(data_root: &Path) -> CursorAccountRegistry {
+    let path = cursor_registry_path(data_root);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => CursorAccountRegistry::default(),
+    }
+}
+
+pub async fn save_cursor_registry(
+    data_root: &Path,
+    registry: &CursorAccountRegistry,
+) -> Result<()> {
+    let path = cursor_registry_path(data_root);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -1929,6 +2005,220 @@ pub fn normalize_kiro_label(label: Option<String>, account_id: &str) -> String {
         .unwrap_or_else(|| format!("Kiro Account {account_id}"))
 }
 
+fn normalize_cursor_token(token: &str) -> Result<String> {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        bail!("token is required");
+    }
+    Ok(trimmed.to_string())
+}
+
+async fn write_cursor_secret_for_account(
+    data_root: &Path,
+    account_id: &str,
+    token: &str,
+) -> Result<String> {
+    let token = normalize_cursor_token(token)?;
+    let secret_ref = format!("{account_id}.json");
+    let path = cursor_secret_path(data_root, &secret_ref);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let envelope = CursorSecretEnvelope {
+        version: CURSOR_SECRET_VERSION,
+        api_key: token,
+    };
+    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
+    Ok(secret_ref)
+}
+
+async fn read_cursor_secret_for_ref(data_root: &Path, secret_ref: &str) -> Result<String> {
+    let path = cursor_secret_path(data_root, secret_ref);
+    let payload = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("reading cursor secret {}", path.display()))?;
+    let parsed: CursorSecretEnvelope = serde_json::from_str(&payload)
+        .with_context(|| format!("invalid cursor secret {}", path.display()))?;
+    if parsed.version != CURSOR_SECRET_VERSION {
+        bail!(
+            "unsupported cursor secret version {} at {}",
+            parsed.version,
+            path.display()
+        );
+    }
+    normalize_cursor_token(&parsed.api_key)
+}
+
+pub async fn ensure_cursor_account_home(data_root: &Path, account_id: &str) -> Result<PathBuf> {
+    let home = cursor_account_home(data_root, account_id);
+    tokio::fs::create_dir_all(&home).await?;
+    Ok(home)
+}
+
+pub async fn add_cursor_account(
+    data_root: &Path,
+    label: Option<String>,
+    token: String,
+    email: Option<String>,
+) -> Result<CursorAccountRegistry> {
+    let token = normalize_cursor_token(&token)?;
+    let mut registry = load_cursor_registry(data_root).await;
+    let mut existing_account_id: Option<String> = None;
+
+    for existing in &registry.accounts {
+        let Some(secret_ref) = existing.secret_ref.as_deref() else {
+            continue;
+        };
+        if let Ok(existing_token) = read_cursor_secret_for_ref(data_root, secret_ref).await {
+            if existing_token == token {
+                existing_account_id = Some(existing.id.clone());
+                break;
+            }
+        }
+    }
+
+    if let Some(account_id) = existing_account_id {
+        if let Some(entry) = registry
+            .accounts
+            .iter_mut()
+            .find(|entry| entry.id == account_id)
+        {
+            apply_label_update(label.clone(), &mut entry.label);
+            apply_email_update(email.clone(), &mut entry.email);
+            entry.last_used_at = Some(Utc::now());
+        }
+        registry.active_account_id = Some(account_id);
+        save_cursor_registry(data_root, &registry).await?;
+        return Ok(registry);
+    }
+
+    let account_id = uuid::Uuid::new_v4().to_string();
+    let secret_ref = write_cursor_secret_for_account(data_root, &account_id, &token).await?;
+    let entry = CursorAccountEntry {
+        id: account_id.clone(),
+        label: normalize_cursor_label(label, &account_id),
+        kind: CURSOR_CREDENTIAL_KIND_API_KEY.to_string(),
+        email: normalize_optional_email(email),
+        created_at: Utc::now(),
+        last_used_at: Some(Utc::now()),
+        secret_ref: Some(secret_ref),
+    };
+    registry.accounts.push(entry);
+    registry.active_account_id = Some(account_id);
+    save_cursor_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn set_active_cursor_account(
+    data_root: &Path,
+    account_id: Option<String>,
+) -> Result<CursorAccountRegistry> {
+    let mut registry = load_cursor_registry(data_root).await;
+    if let Some(active_id) = account_id.as_deref() {
+        let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
+            bail!("unknown account");
+        };
+        if entry.secret_ref.as_deref().is_none() {
+            bail!("active account has no secret");
+        }
+    }
+    registry.active_account_id = account_id.clone();
+    if let Some(active_id) = account_id {
+        let now = Utc::now();
+        if let Some(entry) = registry.accounts.iter_mut().find(|a| a.id == active_id) {
+            entry.last_used_at = Some(now);
+        }
+    }
+    save_cursor_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn remove_cursor_account(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<CursorAccountRegistry> {
+    ensure_safe_account_id(account_id)?;
+    let mut registry = load_cursor_registry(data_root).await;
+    let was_active = registry.active_account_id.as_deref() == Some(account_id);
+    let removed: Vec<CursorAccountEntry> = registry
+        .accounts
+        .iter()
+        .filter(|a| a.id == account_id)
+        .cloned()
+        .collect();
+    registry.accounts.retain(|a| a.id != account_id);
+    if was_active {
+        registry.active_account_id = None;
+    }
+    save_cursor_registry(data_root, &registry).await?;
+
+    for entry in removed {
+        if let Some(secret_ref) = entry.secret_ref {
+            let secret_path = cursor_secret_path(data_root, &secret_ref);
+            if secret_path.exists() {
+                let _ = tokio::fs::remove_file(secret_path).await;
+            }
+        }
+    }
+
+    let account_home = cursor_account_home(data_root, account_id);
+    if account_home.exists() {
+        tokio::fs::remove_dir_all(account_home).await?;
+    }
+    remove_projected_account_home_for_runtime_roots(
+        data_root,
+        account_id,
+        cursor_account_home,
+        "cursor",
+    )
+    .await?;
+    Ok(registry)
+}
+
+pub fn cursor_env_for_account(
+    data_root: &Path,
+    account_id: &str,
+    token: &str,
+) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    env.insert(
+        "CURSOR_CONFIG_DIR".to_string(),
+        cursor_account_home(data_root, account_id)
+            .to_string_lossy()
+            .to_string(),
+    );
+    env.insert("CURSOR_API_KEY".to_string(), token.to_string());
+    env
+}
+
+pub async fn cursor_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
+    let registry = load_cursor_registry(data_root).await;
+    let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(HashMap::new());
+    };
+    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+        return Ok(HashMap::new());
+    };
+    let Some(secret_ref) = entry.secret_ref.as_deref() else {
+        bail!("active cursor account has no secret reference");
+    };
+    let token = read_cursor_secret_for_ref(data_root, secret_ref).await?;
+    let _ = ensure_cursor_account_home(data_root, active).await?;
+    Ok(cursor_env_for_account(data_root, active, &token))
+}
+
+pub fn normalize_cursor_label(label: Option<String>, account_id: &str) -> String {
+    label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Cursor Account {account_id}"))
+}
+
 pub async fn codex_env_for_runtime_home(state_root: &Path) -> Result<HashMap<String, String>> {
     let runtime_home = codex_runtime_home(state_root);
     tokio::fs::create_dir_all(&runtime_home).await?;
@@ -2503,6 +2793,7 @@ pub async fn subscription_env_for_active_account(
         "kimi" => kimi_env_for_active_account(data_root).await,
         "copilot" => copilot_env_for_active_account(data_root).await,
         "kiro" => kiro_env_for_active_account(data_root).await,
+        "cursor" => cursor_env_for_active_account(data_root).await,
         _ => Ok(HashMap::new()),
     }
 }
@@ -2598,6 +2889,26 @@ pub async fn subscription_env_for_active_account_with_runtime_root(
             let secret = read_kiro_secret_for_ref(data_root, secret_ref).await?;
             let _ = ensure_kiro_account_home(runtime_root, active, &secret).await?;
             Ok(kiro_env_for_account(runtime_root, active))
+        }
+        "cursor" => {
+            let registry = load_cursor_registry(data_root).await;
+            let Some(active) = registry
+                .active_account_id
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            else {
+                return Ok(HashMap::new());
+            };
+            let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+                return Ok(HashMap::new());
+            };
+            let Some(secret_ref) = entry.secret_ref.as_deref() else {
+                bail!("active cursor account has no secret reference");
+            };
+            let token = read_cursor_secret_for_ref(data_root, secret_ref).await?;
+            let _ = ensure_cursor_account_home(runtime_root, active).await?;
+            Ok(cursor_env_for_account(runtime_root, active, &token))
         }
         _ => Ok(HashMap::new()),
     }
@@ -2709,6 +3020,13 @@ mod tests {
     async fn remove_kiro_account_rejects_unsafe_account_id() {
         let dir = tempfile::tempdir().unwrap();
         let err = remove_kiro_account(dir.path(), "..").await.unwrap_err();
+        assert_unsafe_account_id_error(err);
+    }
+
+    #[tokio::test]
+    async fn remove_cursor_account_rejects_unsafe_account_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = remove_cursor_account(dir.path(), "..").await.unwrap_err();
         assert_unsafe_account_id_error(err);
     }
 
@@ -3706,6 +4024,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cursor_active_account_projects_config_dir_and_api_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_cursor_account(
+            root,
+            Some("Cursor Test".to_string()),
+            "cursor-key".to_string(),
+            Some("dev@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+
+        let env = cursor_env_for_active_account(root).await.unwrap();
+        assert_eq!(env.get("CURSOR_API_KEY"), Some(&"cursor-key".to_string()));
+        let config_dir = env
+            .get("CURSOR_CONFIG_DIR")
+            .expect("CURSOR_CONFIG_DIR should be set");
+        assert!(config_dir.contains(&active_id));
+        assert!(cursor_account_home(root, &active_id).exists());
+    }
+
+    #[tokio::test]
+    async fn adding_existing_cursor_account_updates_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        let first = add_cursor_account(
+            root,
+            Some("Cursor Initial".to_string()),
+            "cursor-key".to_string(),
+            Some("initial@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let first_id = first.active_account_id.clone().expect("active account");
+
+        let second = add_cursor_account(
+            root,
+            Some("Cursor Updated".to_string()),
+            "cursor-key".to_string(),
+            Some("updated@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(second.accounts.len(), 1);
+        assert_eq!(second.active_account_id.as_deref(), Some(first_id.as_str()));
+        assert_eq!(second.accounts[0].label, "Cursor Updated");
+        assert_eq!(
+            second.accounts[0].email.as_deref(),
+            Some("updated@example.com")
+        );
+    }
+
+    #[tokio::test]
+    async fn deleting_active_cursor_account_clears_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_cursor_account(
+            root,
+            Some("Cursor Test".to_string()),
+            "cursor-key".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let _ = remove_cursor_account(root, &active_id).await.unwrap();
+        let env = cursor_env_for_active_account(root).await.unwrap();
+        assert!(env.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_active_cursor_account_removes_runtime_root_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let runtime_root = root
+            .join("containers")
+            .join("workspaces")
+            .join("workspace-cursor")
+            .join("data");
+        tokio::fs::create_dir_all(&runtime_root).await.unwrap();
+
+        let registry = add_cursor_account(
+            root,
+            Some("Cursor Test".to_string()),
+            "cursor-key".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let projected_home = cursor_account_home(&runtime_root, &active_id);
+
+        let _ =
+            subscription_env_for_active_account_with_runtime_root(root, &runtime_root, "cursor")
+                .await
+                .unwrap();
+        assert!(projected_home.exists());
+
+        let _ = remove_cursor_account(root, &active_id).await.unwrap();
+        assert!(!projected_home.exists());
+    }
+
+    #[tokio::test]
     async fn subscription_env_dispatches_to_supported_providers() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -3747,6 +4171,14 @@ mod tests {
         )
         .await
         .unwrap();
+        let _ = add_cursor_account(
+            root,
+            Some("Cursor".to_string()),
+            "cursor-key".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
 
         let claude_env = subscription_env_for_active_account(root, "claude-crp")
             .await
@@ -3768,6 +4200,10 @@ mod tests {
             .await
             .unwrap();
         assert!(kiro_env.contains_key("HOME"));
+        let cursor_env = subscription_env_for_active_account(root, "cursor")
+            .await
+            .unwrap();
+        assert!(cursor_env.contains_key("CURSOR_CONFIG_DIR"));
         let unknown_env = subscription_env_for_active_account(root, "unknown")
             .await
             .unwrap();
@@ -3811,6 +4247,14 @@ mod tests {
         )
         .await
         .unwrap();
+        let _ = add_cursor_account(
+            root,
+            Some("Cursor".to_string()),
+            "cursor-key".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
 
         let claude_env =
             subscription_env_for_active_account_with_runtime_root(root, runtime_root, "claude-crp")
@@ -3843,5 +4287,12 @@ mod tests {
         assert!(kiro_config.starts_with(runtime_root));
         let kiro_cache = PathBuf::from(kiro_env.get("XDG_CACHE_HOME").unwrap());
         assert!(kiro_cache.starts_with(runtime_root));
+
+        let cursor_env =
+            subscription_env_for_active_account_with_runtime_root(root, runtime_root, "cursor")
+                .await
+                .unwrap();
+        let cursor_config = PathBuf::from(cursor_env.get("CURSOR_CONFIG_DIR").unwrap());
+        assert!(cursor_config.starts_with(runtime_root));
     }
 }

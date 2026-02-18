@@ -53,6 +53,7 @@ describe("harnessEndpointProviders", () => {
 
   it("flags providers that support optional base URL", () => {
     expect(supportsOptionalBaseUrlForHarness("cody")).toBe(true);
+    expect(supportsOptionalBaseUrlForHarness("pi")).toBe(true);
     expect(supportsOptionalBaseUrlForHarness("copilot")).toBe(false);
   });
 

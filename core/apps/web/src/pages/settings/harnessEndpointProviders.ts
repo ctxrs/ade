@@ -124,7 +124,7 @@ export const defaultShapeForHarnessProvider = (harnessProviderId: string): Harne
   harnessProviderId === "claude-crp" ? "anthropic_messages" : "openai_responses";
 
 export const supportsOptionalBaseUrlForHarness = (harnessProviderId: string): boolean =>
-  harnessProviderId === "cody";
+  harnessProviderId === "cody" || harnessProviderId === "pi";
 
 export const normalizeOptionalBaseUrl = (rawBaseUrl: string): string | null => {
   const trimmed = rawBaseUrl.trim();

@@ -2,6 +2,7 @@ import type {
   ClaudeAccountEntry,
   CopilotAccountEntry,
   CodexAccountEntry,
+  CursorAccountEntry,
   GeminiAccountEntry,
   HarnessEndpointRecord,
   HarnessSourceKind,
@@ -40,6 +41,8 @@ type BuildHarnessAuthRowsArgs = {
   copilot_active_account_id?: string | null;
   kiro_accounts: KiroAccountEntry[];
   kiro_active_account_id?: string | null;
+  cursor_accounts: CursorAccountEntry[];
+  cursor_active_account_id?: string | null;
 };
 
 const codexAccountLabel = (account: CodexAccountEntry): string => {
@@ -78,6 +81,12 @@ const kiroAccountLabel = (account: KiroAccountEntry): string => {
   return account.id;
 };
 
+const cursorAccountLabel = (account: CursorAccountEntry): string => {
+  if (account.email && account.email.trim()) return account.email.trim();
+  if (account.label.trim()) return account.label.trim();
+  return account.id;
+};
+
 export const defaultEndpointBaseUrlForProvider = (providerId: string): string => {
   if (providerId === "codex") return "https://api.openai.com/v1";
   if (providerId === "claude-crp") return "https://api.anthropic.com/v1";
@@ -101,6 +110,8 @@ export const buildHarnessAuthRows = ({
   copilot_active_account_id,
   kiro_accounts,
   kiro_active_account_id,
+  cursor_accounts,
+  cursor_active_account_id,
 }: BuildHarnessAuthRowsArgs): HarnessAuthRow[] => {
   const rows: HarnessAuthRow[] = [];
 
@@ -182,6 +193,21 @@ export const buildHarnessAuthRows = ({
         kind: "subscription",
         label: kiroAccountLabel(account),
         active: selected_source_kind === "subscription" && kiro_active_account_id === account.id,
+        selectable: true,
+        account_id: account.id,
+        can_delete: true,
+      });
+    }
+  }
+
+  if (provider_id === "cursor" && cursor_accounts.length > 0) {
+    for (const account of cursor_accounts) {
+      rows.push({
+        key: `subscription:${account.id}`,
+        kind: "subscription",
+        label: cursorAccountLabel(account),
+        // Cursor currently renders managed subscription rows without source-kind config hydration.
+        active: cursor_active_account_id === account.id,
         selectable: true,
         account_id: account.id,
         can_delete: true,

@@ -27,6 +27,8 @@ describe("buildHarnessAuthRows", () => {
       copilot_active_account_id: null,
       kiro_accounts: [],
       kiro_active_account_id: null,
+      cursor_accounts: [],
+      cursor_active_account_id: null,
       codex_accounts: [
         {
           id: "a",
@@ -69,6 +71,8 @@ describe("buildHarnessAuthRows", () => {
       copilot_active_account_id: null,
       kiro_accounts: [],
       kiro_active_account_id: null,
+      cursor_accounts: [],
+      cursor_active_account_id: null,
       endpoints: [
         {
           id: "ep-1",
@@ -128,6 +132,8 @@ describe("buildHarnessAuthRows", () => {
       copilot_active_account_id: null,
       kiro_accounts: [],
       kiro_active_account_id: null,
+      cursor_accounts: [],
+      cursor_active_account_id: null,
       endpoints: [],
     });
 
@@ -151,6 +157,8 @@ describe("buildHarnessAuthRows", () => {
       copilot_active_account_id: null,
       kiro_accounts: [],
       kiro_active_account_id: null,
+      cursor_accounts: [],
+      cursor_active_account_id: null,
       claude_accounts: [
         {
           id: "claude-a",
@@ -190,6 +198,8 @@ describe("buildHarnessAuthRows", () => {
       copilot_active_account_id: null,
       kiro_accounts: [],
       kiro_active_account_id: null,
+      cursor_accounts: [],
+      cursor_active_account_id: null,
       gemini_active_account_id: "gemini-2",
       gemini_accounts: [
         {
@@ -235,6 +245,8 @@ describe("buildHarnessAuthRows", () => {
       copilot_active_account_id: null,
       kiro_accounts: [],
       kiro_active_account_id: null,
+      cursor_accounts: [],
+      cursor_active_account_id: null,
     });
     expect(kimiRows.find((row) => row.active)?.account_id).toBe("kimi-2");
 
@@ -257,6 +269,8 @@ describe("buildHarnessAuthRows", () => {
       ],
       kiro_accounts: [],
       kiro_active_account_id: null,
+      cursor_accounts: [],
+      cursor_active_account_id: null,
     });
     expect(copilotRows.find((row) => row.active)?.account_id).toBe("copilot-1");
 
@@ -279,7 +293,38 @@ describe("buildHarnessAuthRows", () => {
       kiro_accounts: [
         { id: "kiro-1", label: "Kiro", email: "kiro@example.com", created_at: "2026-01-01T00:00:00Z" },
       ],
+      cursor_accounts: [],
+      cursor_active_account_id: null,
     });
     expect(kiroRows.find((row) => row.active)?.account_id).toBe("kiro-1");
+  });
+
+  it("builds cursor subscription rows and marks active without source-kind gating", () => {
+    const rows = buildHarnessAuthRows({
+      provider_id: "cursor",
+      selected_source_kind: "endpoint",
+      selected_endpoint_id: null,
+      endpoints: [],
+      codex_accounts: [],
+      codex_active_account_id: null,
+      claude_accounts: [],
+      claude_active_account_id: null,
+      gemini_accounts: [],
+      gemini_active_account_id: null,
+      kimi_accounts: [],
+      kimi_active_account_id: null,
+      copilot_accounts: [],
+      copilot_active_account_id: null,
+      kiro_accounts: [],
+      kiro_active_account_id: null,
+      cursor_active_account_id: "cursor-2",
+      cursor_accounts: [
+        { id: "cursor-1", label: "Cursor A", email: "cursor-a@example.com", created_at: "2026-01-01T00:00:00Z" },
+        { id: "cursor-2", label: "Cursor B", email: "cursor-b@example.com", created_at: "2026-01-01T00:00:00Z" },
+      ],
+    });
+
+    expect(rows.find((row) => row.active)?.account_id).toBe("cursor-2");
+    expect(rows[0]?.label).toBe("cursor-a@example.com");
   });
 });

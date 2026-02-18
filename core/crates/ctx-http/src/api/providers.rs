@@ -232,6 +232,12 @@ pub(super) struct KiroAccountsResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub(super) struct CursorAccountsResponse {
+    active_account_id: Option<String>,
+    accounts: Vec<provider_accounts::CursorAccountEntry>,
+}
+
+#[derive(Debug, Serialize)]
 pub(super) struct CodexAccountUsageEntry {
     account_id: Option<String>,
     label: String,
@@ -331,6 +337,19 @@ pub(super) struct KiroAccountUpsertReq {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct KiroActiveAccountReq {
+    account_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct CursorAccountUpsertReq {
+    label: Option<String>,
+    token: String,
+    #[serde(default)]
+    email: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct CursorActiveAccountReq {
     account_id: Option<String>,
 }
 
@@ -502,6 +521,14 @@ async fn kiro_accounts_response(state: &Arc<AppState>) -> KiroAccountsResponse {
     }
 }
 
+async fn cursor_accounts_response(state: &Arc<AppState>) -> CursorAccountsResponse {
+    let registry = provider_accounts::load_cursor_registry(&state.core.data_root).await;
+    CursorAccountsResponse {
+        active_account_id: registry.active_account_id,
+        accounts: registry.accounts,
+    }
+}
+
 async fn restart_provider_for_auth_change(state: &Arc<AppState>, provider_id: &str, reason: &str) {
     let adapters = {
         let map = state.providers.adapters.lock().await;
@@ -542,6 +569,10 @@ async fn restart_copilot_providers_for_auth_change(state: &Arc<AppState>, reason
 
 async fn restart_kiro_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
     restart_provider_for_auth_change(state, "kiro", reason).await;
+}
+
+async fn restart_cursor_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
+    restart_provider_for_auth_change(state, "cursor", reason).await;
 }
 
 pub(super) async fn list_codex_accounts(
@@ -1228,6 +1259,77 @@ pub(super) async fn delete_kiro_account(
         })?;
     restart_kiro_providers_for_auth_change(&state, "kiro auth updated").await;
     Ok(Json(kiro_accounts_response(&state).await))
+}
+
+pub(super) async fn list_cursor_accounts(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<CursorAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    Ok(Json(cursor_accounts_response(&state).await))
+}
+
+pub(super) async fn upsert_cursor_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CursorAccountUpsertReq>,
+) -> Result<Json<CursorAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::add_cursor_account(&state.core.data_root, req.label, req.token, req.email)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_cursor_providers_for_auth_change(&state, "cursor auth updated").await;
+    Ok(Json(cursor_accounts_response(&state).await))
+}
+
+pub(super) async fn set_cursor_active_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CursorActiveAccountReq>,
+) -> Result<Json<CursorAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    if let Some(ref account_id) = req.account_id {
+        let registry = provider_accounts::load_cursor_registry(&state.core.data_root).await;
+        if !registry.accounts.iter().any(|a| a.id == *account_id) {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "unknown account".to_string(),
+                }),
+            ));
+        }
+    }
+    provider_accounts::set_active_cursor_account(&state.core.data_root, req.account_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_cursor_providers_for_auth_change(&state, "cursor auth updated").await;
+    Ok(Json(cursor_accounts_response(&state).await))
+}
+
+pub(super) async fn delete_cursor_account(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<CursorAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::remove_cursor_account(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_cursor_providers_for_auth_change(&state, "cursor auth updated").await;
+    Ok(Json(cursor_accounts_response(&state).await))
 }
 
 pub(super) async fn list_provider_auth_import_candidates(

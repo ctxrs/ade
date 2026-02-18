@@ -341,6 +341,18 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/providers/kiro/accounts/:id",
             delete(delete_kiro_account),
         )
+        .route(
+            "/api/providers/cursor/accounts",
+            get(list_cursor_accounts).post(upsert_cursor_account),
+        )
+        .route(
+            "/api/providers/cursor/active-account",
+            put(set_cursor_active_account),
+        )
+        .route(
+            "/api/providers/cursor/accounts/:id",
+            delete(delete_cursor_account),
+        )
         .route("/api/providers/:id/install", post(install_provider))
         .route("/api/providers/install/:install_id", get(get_install))
         .route(
