@@ -82,6 +82,11 @@ webkit_pkg="$(choose_first_available_pkg libwebkit2gtk-4.0-dev libwebkit2gtk-4.1
   exit 3
 }
 
+libsoup_pkg="$(choose_first_available_pkg libsoup-3.0-dev)" || {
+  echo "error: could not find libsoup-3.0-dev (required by current Tauri Linux stack)." >&2
+  exit 3
+}
+
 appindicator_pkg="$(choose_first_available_pkg libayatana-appindicator3-dev libappindicator3-dev)" || {
   echo "error: could not find an appindicator dev package (tried libayatana-appindicator3-dev, libappindicator3-dev)." >&2
   exit 3
@@ -90,11 +95,12 @@ appindicator_pkg="$(choose_first_available_pkg libayatana-appindicator3-dev liba
 "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   "${packages[@]}" \
   "$webkit_pkg" \
+  "$libsoup_pkg" \
   "$appindicator_pkg"
 
 echo
 echo "${BOLD}Sanity check (pkg-config)${RESET}"
-for pc in glib-2.0 gtk+-3.0 webkit2gtk-4.0; do
+for pc in glib-2.0 gtk+-3.0 libsoup-3.0 webkit2gtk-4.0; do
   if pkg-config --exists "${pc}"; then
     echo "- ${pc}: OK"
   else
