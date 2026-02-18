@@ -386,15 +386,6 @@
   padding: 4px 0;
 }
 
-.launcher-footer {
-  width: 100%;
-  display: flex;
-  justify-content: flex-end;
-  color: var(--launcher-muted);
-  font-size: 11px;
-  margin-top: 4px;
-}
-
 .wizard-panel {
   width: min(700px, 92vw);
   justify-items: stretch;

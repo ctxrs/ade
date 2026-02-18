@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   applyDaemonDesktopConnection,
@@ -7,7 +7,6 @@ import {
   idToString,
   listWorkspaces,
 } from "../api/client";
-import { useDaemonBaseUrl } from "../api/useDaemonConnection";
 import {
   desktopConnectLocal,
   desktopConnectSsh,
@@ -128,7 +127,6 @@ export default function LauncherPage() {
   const [recents, setRecents] = useState<RecentEntry[]>(() => loadRecents());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const daemonBaseUrl = useDaemonBaseUrl();
 
   const isDesktop = isDesktopApp();
 
@@ -148,12 +146,6 @@ export default function LauncherPage() {
   useEffect(() => {
     setRecents(loadRecents());
   }, [busy]);
-
-  const connectedLabel = useMemo(() => {
-    if (!connection || connection.kind === "none") return "";
-    const base = String(connection.base_url ?? daemonBaseUrl ?? "").trim();
-    return `${connection.kind.toUpperCase()} · ${base || "(unknown)"}`;
-  }, [connection, daemonBaseUrl]);
 
   const connectLocalAndOpen = async (rootPath?: string) => {
     setError(null);
@@ -256,12 +248,6 @@ export default function LauncherPage() {
               {recents.length === 0 && <div className="launcher-empty">No recent workspaces yet.</div>}
             </div>
           </section>
-
-          {connectedLabel && (
-            <div className="launcher-footer">
-              <div className="launcher-connection">{connectedLabel}</div>
-            </div>
-          )}
         </div>
       </LauncherBrand>
     </div>
