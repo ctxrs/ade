@@ -4,6 +4,11 @@
 interface ImportMetaEnv {
   readonly VITE_CTX_WAL_MODE?: string;
   readonly VITE_CTX_WAL_ENDPOINT?: string;
+  readonly VITE_POSTHOG_KEY?: string;
+  readonly VITE_POSTHOG_ENV?: "staging" | "production";
+  readonly VITE_POSTHOG_HOST?: string;
+  readonly VITE_POSTHOG_UI_HOST?: string;
+  readonly VITE_POSTHOG_CAPTURE_IN_DEV?: string;
 }
 
 interface ImportMeta {
@@ -39,3 +44,5 @@ declare module "*.webp" {
   const src: string;
   export default src;
 }
+
+declare const __CTX_APP_VERSION__: string;

@@ -32,6 +32,13 @@ import {
 } from "../utils/desktop";
 import { ensureDesktopNotificationPermission } from "../utils/desktopNotifications";
 import {
+  trackCheckoutStarted,
+  trackEntitlementActivated,
+  trackFeatureUsed,
+  trackPlanViewed,
+  trackSubscribeCtaClicked,
+} from "../utils/analytics";
+import {
   applyTheme,
   readCssVar,
   resolveThemeMode,
@@ -81,6 +88,8 @@ import { CodexAccountsSection } from "./settings/sections/CodexAccountsSection";
 import { useSettingsActions } from "./settings/useSettingsActions";
 import { useSettingsState } from "./settings/useSettingsState";
 import type { SectionId } from "./SettingsPage.types";
+import { runBillingCheckoutFlow } from "./settings/billingCheckoutFlow";
+import { shouldTrackEntitlementActivated } from "./settings/entitlementAnalytics";
 import {
   formatAge,
   formatBytes,
@@ -131,6 +140,7 @@ export default function SettingsPage() {
   const [billingPassword, setBillingPassword] = useState("");
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingError, setBillingError] = useState<string | null>(null);
+  const billingViewTrackedRef = useRef(false);
   const [entitlements, setEntitlements] = useState<EntitlementsSnapshot | null>(() => {
     try {
       const cached = readCachedValue<EntitlementsSnapshot>(window.localStorage, ENTITLEMENTS_CACHE_KEY);
@@ -139,6 +149,7 @@ export default function SettingsPage() {
       return null;
     }
   });
+  const priorPlanRef = useRef<EntitlementsSnapshot["plan_type"] | null>(entitlements?.plan_type ?? null);
   const [entitlementsBusy, setEntitlementsBusy] = useState(false);
   const [devRestartBusy, setDevRestartBusy] = useState(false);
   const [devRestartError, setDevRestartError] = useState<string | null>(null);
@@ -326,6 +337,33 @@ export default function SettingsPage() {
     if (!supabase) return;
     refreshEntitlements().catch(() => {});
   }, [supabase, billingUser, refreshEntitlements]);
+
+  useEffect(() => {
+    if (active !== "billing") {
+      billingViewTrackedRef.current = false;
+      return;
+    }
+    if (billingViewTrackedRef.current) return;
+    billingViewTrackedRef.current = true;
+    trackPlanViewed("settings_billing");
+    trackFeatureUsed("billing_settings_viewed");
+  }, [active]);
+
+  useEffect(() => {
+    const nextPlan = entitlements?.plan_type ?? null;
+    const priorPlan = priorPlanRef.current;
+    if (nextPlan === null) {
+      return;
+    }
+    if (priorPlan === null) {
+      priorPlanRef.current = nextPlan;
+      return;
+    }
+    if (shouldTrackEntitlementActivated(priorPlan, nextPlan)) {
+      trackEntitlementActivated(nextPlan);
+    }
+    priorPlanRef.current = nextPlan;
+  }, [entitlements?.plan_type]);
 
   useEffect(() => {
     if (!supabase || checkoutStatus !== "success") return;
@@ -1391,12 +1429,18 @@ export default function SettingsPage() {
         setBillingBusy(true);
         setBillingError(null);
         try {
-          const res = await supabase.functions.invoke("billing-checkout", {
-            body: { interval, return_path: billingReturnPath },
+          const url = await runBillingCheckoutFlow({
+            interval,
+            returnPath: billingReturnPath,
+            invokeCheckout: ({ interval: nextInterval, returnPath }) => supabase.functions.invoke(
+              "billing-checkout",
+              {
+                body: { interval: nextInterval, return_path: returnPath },
+              },
+            ),
+            trackSubscribeCtaClicked,
+            trackCheckoutStarted,
           });
-          if (res.error) throw res.error;
-          const url = String((res.data as any)?.url ?? "").trim();
-          if (!url) throw new Error("Checkout URL missing.");
           window.location.href = url;
         } catch (e: any) {
           setBillingError(e?.message ?? String(e));

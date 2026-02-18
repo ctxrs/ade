@@ -47,7 +47,7 @@ import {
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
 import { useRelativeNowMs } from "../utils/useRelativeNowMs";
-import { useStatsigGate } from "../utils/statsig";
+import { useFeatureGate } from "../utils/analytics";
 import { useDictationController } from "../utils/useDictationController";
 import { useWorkbenchStore } from "../workbench/store";
 import { buildModelsFromProviderOptions } from "../components/workbenchComposer/WorkbenchComposer.utils";
@@ -655,7 +655,7 @@ export function SessionView({
     () => turns.some((turn) => turn.status === "running" || turn.status === "queued"),
     [turnsKey],
   );
-  const queuedMessagesEnabled = useStatsigGate("queued_messages_enabled", false);
+  const queuedMessagesEnabled = useFeatureGate("queued_messages_enabled", false);
   const sessionError = useMemo(
     () => deriveSessionError(turns, events),
     [turnsKey, eventsKey],

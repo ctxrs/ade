@@ -1,0 +1,45 @@
+const POSTHOG_US_HOST = import.meta.env.VITE_POSTHOG_US_HOST ?? "https://telemetry.example.invalid";
+const POSTHOG_UI_HOST = import.meta.env.VITE_POSTHOG_UI_HOST ?? "https://telemetry.example.invalid";
+
+const POSTHOG_STAGING_PROJECT_ID = import.meta.env.VITE_POSTHOG_STAGING_PROJECT_ID ?? "ade-staging";
+const POSTHOG_PRODUCTION_PROJECT_ID = import.meta.env.VITE_POSTHOG_PRODUCTION_PROJECT_ID ?? "ade-production";
+
+const POSTHOG_STAGING_KEY = import.meta.env.VITE_POSTHOG_STAGING_KEY ?? "ADE_PUBLIC_KEY_PLACEHOLDER";
+const POSTHOG_PRODUCTION_KEY = import.meta.env.VITE_POSTHOG_PRODUCTION_KEY ?? "ADE_PUBLIC_KEY_PLACEHOLDER";
+
+export type AnalyticsEnvironment = "staging" | "production";
+
+const readTrimmed = (value: string | undefined): string | undefined => {
+  const next = value?.trim();
+  return next ? next : undefined;
+};
+
+export const resolveAnalyticsEnvironment = (
+  explicitEnv: string | undefined,
+  mode: string | undefined,
+): AnalyticsEnvironment => {
+  const env = readTrimmed(explicitEnv)?.toLowerCase();
+  if (env === "production") return "production";
+  if (env === "staging") return "staging";
+  const normalizedMode = String(mode ?? "").trim().toLowerCase();
+  if (normalizedMode === "production" || normalizedMode === "prod") return "production";
+  return "staging";
+};
+
+export const getAnalyticsEnvironment = (): AnalyticsEnvironment =>
+  resolveAnalyticsEnvironment(import.meta.env.VITE_POSTHOG_ENV, import.meta.env.MODE);
+
+export const getPostHogProjectId = (): string =>
+  getAnalyticsEnvironment() === "production"
+    ? POSTHOG_PRODUCTION_PROJECT_ID
+    : POSTHOG_STAGING_PROJECT_ID;
+
+export const getPostHogHost = (): string =>
+  readTrimmed(import.meta.env.VITE_POSTHOG_HOST) ?? POSTHOG_US_HOST;
+
+export const getPostHogUiHost = (): string =>
+  readTrimmed(import.meta.env.VITE_POSTHOG_UI_HOST) ?? POSTHOG_UI_HOST;
+
+export const getPostHogKey = (): string =>
+  readTrimmed(import.meta.env.VITE_POSTHOG_KEY)
+  ?? (getAnalyticsEnvironment() === "production" ? POSTHOG_PRODUCTION_KEY : POSTHOG_STAGING_KEY);

@@ -41,6 +41,7 @@ import { SessionReplicaBridge } from "./sessionReplicaBridge";
 import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
 import { sendDesktopNotification } from "../utils/desktopNotifications";
 import { isAppInForeground } from "../utils/windowFocus";
+import { trackFirstTurnCompleted, trackProviderRunCompleted } from "../utils/analytics";
 import { emitUiDiagnostic } from "./diagnosticsChannel";
 import { normalizeGitStatusSummaryInput } from "./sessionSupervisor/gitStatusNormalization";
 import {
@@ -2022,10 +2023,39 @@ export class SessionSupervisor {
     if (!changed) return false;
     turn.updated_at = event.created_at ?? turn.updated_at;
     entry.turns[idx] = { ...turn };
-    if ((opts?.notify ?? true) && prevStatus !== "completed" && turn.status === "completed") {
+    const shouldNotify = opts?.notify ?? true;
+    if (shouldNotify) {
+      this.trackTurnOutcomeAnalytics(entry, turn, prevStatus);
+    }
+    if (shouldNotify && prevStatus !== "completed" && turn.status === "completed") {
       this.notifyTurnCompleted(entry);
     }
     return true;
+  }
+
+  private trackTurnOutcomeAnalytics(
+    entry: InternalEntry,
+    turn: SessionTurn,
+    prevStatus: SessionTurn["status"],
+  ) {
+    if (turn.status === prevStatus) return;
+    if (turn.status !== "completed" && turn.status !== "failed" && turn.status !== "interrupted") {
+      return;
+    }
+    const sessionId = idToString(entry.session?.id ?? turn.session_id ?? "");
+    if (!sessionId) return;
+    const providerId = String(entry.session?.provider_id ?? "").trim() || undefined;
+    const modelId = String(entry.session?.model_id ?? "").trim() || undefined;
+    trackProviderRunCompleted({
+      providerId,
+      modelId,
+      status: turn.status,
+    });
+    trackFirstTurnCompleted({
+      sessionId,
+      providerId,
+      status: turn.status,
+    });
   }
 
   private notifyTurnCompleted(entry: InternalEntry) {

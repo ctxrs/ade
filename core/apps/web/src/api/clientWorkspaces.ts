@@ -16,6 +16,7 @@ import type {
 } from "@ctx/types";
 import { apiAny, daemonFetchRaw, idToString } from "./clientBase";
 import { getDaemonConnection, getDaemonWsUrl } from "./daemonConnection";
+import { trackWorkspaceCreated } from "../utils/analytics";
 
 export const listWorkspaces = () =>
   apiAny<Workspace[]>("/api/workspaces");
@@ -34,11 +35,14 @@ export type SubagentSystemPromptConfig = {
   source: "default" | "config" | "disabled";
 };
 
-export const createWorkspace = (root_path: string, name?: string) =>
-  apiAny<Workspace>("/api/workspaces", {
+export const createWorkspace = async (root_path: string, name?: string) => {
+  const workspace = await apiAny<Workspace>("/api/workspaces", {
     method: "POST",
     body: JSON.stringify({ root_path, name }),
   });
+  trackWorkspaceCreated("local");
+  return workspace;
+};
 
 export const getWorkspace = (id: string) =>
   apiAny<Workspace>(`/api/workspaces/${id}`);

@@ -9,6 +9,8 @@ import mkcert from "vite-plugin-mkcert";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const packageJsonPath = path.join(__dirname, "package.json");
+const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as { version?: string };
 
 type DaemonAuthFile = {
   token?: string;
@@ -148,6 +150,7 @@ export default defineConfig(({ command }) => {
       : process.env.CTX_DEV_HTTP === "1"
         ? false
         : !supabaseUrl.startsWith("http://");
+  const appVersion = String(process.env.VITE_CTX_APP_VERSION ?? packageJson.version ?? "0.0.0");
 
   if (command === "serve" && auth?.token) {
     process.env.VITE_CTX_AUTH_TOKEN ??= auth.token;
@@ -195,6 +198,9 @@ export default defineConfig(({ command }) => {
       : {};
 
   return {
+    define: {
+      __CTX_APP_VERSION__: JSON.stringify(appVersion),
+    },
     plugins: [
       react(),
       walPlugin(command === "serve" && !isTest),

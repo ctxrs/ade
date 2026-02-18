@@ -15,6 +15,12 @@ import type {
 import { apiAny, authToken } from "./clientBase";
 import { getDaemonConnection, getDaemonHttpUrl } from "./daemonConnection";
 import { desktopUploadBlob, isDesktopApp } from "../utils/desktop";
+import {
+  trackFeatureUsed,
+  trackFirstTurnSubmitted,
+  trackProviderSelected,
+  trackSessionCreated,
+} from "../utils/analytics";
 
 export type BlobUploadResp = {
   blob_id: string;
@@ -90,6 +96,28 @@ export const createSession = (
         ? { initial_message_id: opts.initial_message_id, initial_turn_id: opts.initial_turn_id }
         : {}),
     }),
+  }).then((session) => {
+    trackSessionCreated({
+      providerId: provider_id,
+      modelId: model_id,
+      envTarget: opts?.env_target === "cloud" ? "remote" : opts?.env_target,
+    });
+    trackFeatureUsed("session_created");
+    trackProviderSelected({
+      providerId: provider_id,
+      source: "session_create",
+    });
+    if (opts?.initial_prompt) {
+      const sessionId = String(session.id ?? "").trim();
+      if (sessionId) {
+        trackFirstTurnSubmitted({
+          sessionId,
+          providerId: provider_id,
+          modelId: model_id,
+        });
+      }
+    }
+    return session;
   });
 };
 
@@ -259,6 +287,15 @@ export const postMessage = (
       ...(opts?.id ? { id: opts.id } : {}),
       ...(opts?.turn_id ? { turn_id: opts.turn_id } : {}),
     }),
+  }).then((message) => {
+    trackFirstTurnSubmitted({ sessionId });
+    if (delivery === "queued") {
+      trackFeatureUsed("queued_message_sent");
+    }
+    if (attachments && attachments.length > 0) {
+      trackFeatureUsed("message_with_attachment_sent");
+    }
+    return message;
   });
 
 export const uploadBlob = async (file: File): Promise<BlobUploadResp> => {

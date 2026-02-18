@@ -35,7 +35,7 @@
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-select": "^2.2.6",
     "@radix-ui/react-switch": "^1.2.6",
-    "@statsig/js-client": "^3.31.2",
+    "posthog-js": "^1.234.5",
     "@supabase/supabase-js": "^2.49.1",
     "@tauri-apps/api": "^2.9.1",
     "@tauri-apps/plugin-notification": "^2.3.3",

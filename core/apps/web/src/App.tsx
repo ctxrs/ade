@@ -13,11 +13,12 @@ import SettingsPage from "./pages/SettingsPage";
 import WorkspaceSetupPage from "./pages/WorkspaceSetupPage";
 import CrashCoursePage from "./pages/CrashCoursePage";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
-import { SettingsStoreProvider } from "./state/settingsStore";
+import { SettingsStoreProvider, useSettingsSnapshot } from "./state/settingsStore";
 import { preloadHarnessLogos } from "./utils/harnessCatalog";
-import { initStatsig } from "./utils/statsig";
 import { refreshUpdateCheck } from "./utils/updateNotice";
 import { desktopListen, isDesktopApp } from "./utils/desktop";
+import { initAnalytics, setAnalyticsEnabled, trackAppOpened } from "./utils/analytics";
+import { computeAnalyticsCaptureEnabled } from "./utils/analytics/runtimePolicy";
 
 function DesktopSettingsListener() {
   const navigate = useNavigate();
@@ -60,6 +61,27 @@ function DesktopSettingsListener() {
   return null;
 }
 
+function AnalyticsSettingsBridge() {
+  const snapshot = useSettingsSnapshot();
+  const appOpenedSentRef = useRef(false);
+
+  useEffect(() => {
+    const enabled = computeAnalyticsCaptureEnabled({
+      settingsLoaded: snapshot.loaded,
+      telemetryEnabled: snapshot.settings?.telemetry?.enabled ?? true,
+      isDev: import.meta.env.DEV,
+      devCaptureFlag: import.meta.env.VITE_POSTHOG_CAPTURE_IN_DEV,
+    });
+    setAnalyticsEnabled(enabled);
+    if (!appOpenedSentRef.current && enabled) {
+      appOpenedSentRef.current = true;
+      trackAppOpened();
+    }
+  }, [snapshot.loaded, snapshot.settings?.telemetry?.enabled]);
+
+  return null;
+}
+
 export default function App() {
   useEffect(() => {
     appendDesktopLog("ui: app loaded").catch(() => {});
@@ -70,7 +92,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    initStatsig();
+    initAnalytics();
   }, []);
 
   useEffect(() => {
@@ -81,6 +103,7 @@ export default function App() {
     <SessionSupervisorProvider>
       <SettingsStoreProvider>
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <AnalyticsSettingsBridge />
           <DesktopSettingsListener />
           <Routes>
             <Route path="/" element={<LauncherPage />} />

@@ -1,0 +1,61 @@
+import { getAnalyticsEnvironment } from "./config";
+import { getInstallId } from "./identity";
+import type { AnalyticsProperties, AnalyticsSurface } from "./types";
+import { isDesktopApp } from "../desktop";
+
+declare const __CTX_APP_VERSION__: string;
+
+const UNKNOWN = "unknown";
+
+const detectOs = (): string => {
+  if (typeof navigator === "undefined") return UNKNOWN;
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes("windows")) return "windows";
+  if (ua.includes("mac os x") || ua.includes("macintosh")) return "macos";
+  if (ua.includes("android")) return "android";
+  if (ua.includes("iphone") || ua.includes("ipad") || ua.includes("ios")) return "ios";
+  if (ua.includes("linux")) return "linux";
+  return UNKNOWN;
+};
+
+const detectArch = (): string => {
+  if (typeof navigator === "undefined") return UNKNOWN;
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes("arm64") || ua.includes("aarch64")) return "arm64";
+  if (ua.includes("x86_64") || ua.includes("win64") || ua.includes("x64")) return "x64";
+  if (ua.includes("i686") || ua.includes("i386") || ua.includes("x86")) return "x86";
+  return UNKNOWN;
+};
+
+const isMobileUserAgent = (): boolean => {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent.toLowerCase();
+  return ua.includes("iphone") || ua.includes("ipad") || ua.includes("android");
+};
+
+const detectSurface = (): AnalyticsSurface => {
+  if (!isDesktopApp()) return "web";
+  return isMobileUserAgent() ? "mobile_shell" : "desktop";
+};
+
+export const getAppVersion = (): string => {
+  const raw = typeof __CTX_APP_VERSION__ === "string" ? __CTX_APP_VERSION__.trim() : "";
+  return raw || "0.0.0";
+};
+
+export const buildEventEnvelope = (
+  eventVersion: number,
+  properties: AnalyticsProperties = {},
+): AnalyticsProperties => {
+  return {
+    event_version: eventVersion,
+    occurred_at: new Date().toISOString(),
+    app_version: getAppVersion(),
+    os: detectOs(),
+    arch: detectArch(),
+    install_id: getInstallId(),
+    surface: detectSurface(),
+    analytics_environment: getAnalyticsEnvironment(),
+    ...properties,
+  };
+};
