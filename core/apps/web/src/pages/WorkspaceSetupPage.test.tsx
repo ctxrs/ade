@@ -5,9 +5,13 @@ import WorkspaceSetupPage from "./WorkspaceSetupPage";
 import {
   buildExecutionLaunchWsUrl,
   createWorkspace,
+  getInstall,
   getExecutionLaunchStatus,
   getHealth,
+  getSettings,
+  getTitleGenerationLocalStatus,
   importProviderAuthCandidates,
+  installTitleGenerationLocal,
   listProviderAuthImportCandidates,
   listWorkspaces,
   repoClone,
@@ -15,6 +19,7 @@ import {
   repoStagingPath,
   repoStatus,
   startExecutionLaunch,
+  updateSettings,
   updateWorkspaceExecutionConfig,
   updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig,
@@ -28,9 +33,13 @@ vi.mock("../api/client", async () => {
     applyDaemonDesktopConnection: vi.fn(),
     buildExecutionLaunchWsUrl: vi.fn(),
     createWorkspace: vi.fn(),
+    getInstall: vi.fn(),
     getExecutionLaunchStatus: vi.fn(),
     getHealth: vi.fn(),
+    getSettings: vi.fn(),
+    getTitleGenerationLocalStatus: vi.fn(),
     importProviderAuthCandidates: vi.fn(),
+    installTitleGenerationLocal: vi.fn(),
     listProviderAuthImportCandidates: vi.fn(),
     listWorkspaces: vi.fn(),
     repoClone: vi.fn(),
@@ -38,6 +47,7 @@ vi.mock("../api/client", async () => {
     repoStatus: vi.fn(),
     repoStagingPath: vi.fn(),
     startExecutionLaunch: vi.fn(),
+    updateSettings: vi.fn(),
     updateWorkspaceExecutionConfig: vi.fn(),
     updateWorkspaceMergeQueueConfig: vi.fn(),
     updateWorkspaceWorktreeBootstrapConfig: vi.fn(),
@@ -81,6 +91,33 @@ describe("WorkspaceSetupPage", () => {
     vi.mocked(getHealth).mockResolvedValue({
       daemon_version: "0.0.0-test",
       compatibility: { desktop_exact_version: "0.0.0-test", mobile_api_min: 1, mobile_api_max: 1 },
+    } as never);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+    vi.mocked(getTitleGenerationLocalStatus).mockResolvedValue({
+      ready: false,
+      runtime: { version: "0.0.0-test", installed: false, path: null },
+      model: {
+        model_id: "ggml-org/Qwen3-1.7B-GGUF",
+        file_name: "Qwen3-1.7B-GGUF.gguf",
+        installed: false,
+        version: null,
+        sha256: null,
+        size_bytes: null,
+        installed_at: null,
+      },
+      install_id: null,
+      install_running: false,
+    } as never);
+    vi.mocked(updateSettings).mockResolvedValue({} as never);
+    vi.mocked(installTitleGenerationLocal).mockResolvedValue({ install_id: "install_test" } as never);
+    vi.mocked(getInstall).mockResolvedValue({
+      install_id: "install_test",
+      provider_id: "title_generation_local",
+      state: "succeeded",
+      started_at: "2026-02-18T00:00:00Z",
+      finished_at: "2026-02-18T00:00:01Z",
+      error: undefined,
+      last_event: undefined,
     } as never);
     vi.mocked(repoStatus).mockResolvedValue({ canonical_path: "/tmp/repo", is_repo: true });
     vi.mocked(repoInit).mockResolvedValue({ path: "/tmp/repo" });
@@ -231,5 +268,260 @@ describe("WorkspaceSetupPage", () => {
     expect(cursorCheckbox.checked).toBe(false);
     expect(cursorCheckbox.disabled).toBe(true);
     expect(screen.getByText("Source: /Users/example-user/.codex/auth.json")).toBeInTheDocument();
+  });
+
+  it("keeps auth-import next enabled before session titling is selected", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
+      candidates: [
+        {
+          id: "cand-codex",
+          provider_id: "codex",
+          provider_label: "Codex",
+          kind: "auth_file",
+          path: "/Users/example-user/.codex/auth.json",
+          signal_strength: "strong",
+          confidence: "high",
+          parse_status: "parsed",
+        },
+      ],
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("auth-import");
+    });
+
+    const nextButton = screen.getByTestId("wizard-next");
+    expect(nextButton).toBeEnabled();
+    fireEvent.click(nextButton);
+
+    await waitFor(() => {
+      expect(importProviderAuthCandidates).toHaveBeenCalled();
+      expect(wizardStepKey()).toBe("session-titling");
+    });
+  });
+
+  it("does not launch a second probe while same-target probe is already running", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
+      candidates: [
+        {
+          id: "cand-codex",
+          provider_id: "codex",
+          provider_label: "Codex",
+          kind: "auth_file",
+          path: "/Users/example-user/.codex/auth.json",
+          signal_strength: "strong",
+          confidence: "high",
+          parse_status: "parsed",
+        },
+      ],
+    } as never);
+
+    const pendingSettings = new Promise((resolve) => {
+      window.setTimeout(() => {
+        resolve({ title_generation: null });
+      }, 40);
+    });
+    vi.mocked(getSettings).mockImplementation(() => pendingSettings as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("auth-import");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(importProviderAuthCandidates).toHaveBeenCalled();
+    });
+    expect(getSettings).toHaveBeenCalledTimes(1);
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("session-titling");
+    });
+    expect(getSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows session titling step when selected daemon is not configured", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("session-titling");
+    });
+    expect(screen.getByTestId("wizard-titling-mode-remote")).toBeInTheDocument();
+    expect(screen.getByTestId("wizard-titling-mode-local")).toBeInTheDocument();
+  });
+
+  it("masks session titling remote API key input", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("session-titling");
+    });
+    fireEvent.click(screen.getByTestId("wizard-titling-mode-remote"));
+
+    const apiKeyInput = screen.getByTestId("wizard-titling-remote-api-key");
+    expect(apiKeyInput).toHaveAttribute("type", "password");
+  });
+
+  it("skips session titling step when daemon is already configured and ready", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({
+      title_generation: {
+        mode: "remote",
+        remote: {
+          base_url: "https://openrouter.ai/api/v1",
+          api_key: "sk-ready",
+          model: "google/gemini-3-flash-preview",
+          use_json: true,
+        },
+        local: {
+          model_id: "ggml-org/Qwen3-1.7B-GGUF",
+          use_json: true,
+        },
+      },
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    expect(screen.queryByTestId("wizard-titling-mode-remote")).not.toBeInTheDocument();
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("persists remote session titling settings before advancing", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("session-titling");
+    });
+    fireEvent.click(screen.getByTestId("wizard-titling-mode-remote"));
+    fireEvent.change(screen.getByTestId("wizard-titling-remote-api-key"), {
+      target: { value: "sk-onboarding" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+        title_generation: expect.objectContaining({
+          mode: "remote",
+          remote: expect.objectContaining({
+            api_key: "sk-onboarding",
+          }),
+        }),
+      }));
+    });
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+  });
+
+  it("allows advancing with local titling mode even when local install is not ready", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+    vi.mocked(getTitleGenerationLocalStatus).mockResolvedValue({
+      ready: false,
+      runtime: { version: "0.0.0-test", installed: false, path: null },
+      model: {
+        model_id: "ggml-org/Qwen3-1.7B-GGUF",
+        file_name: "Qwen3-1.7B-GGUF.gguf",
+        installed: false,
+        version: null,
+        sha256: null,
+        size_bytes: null,
+        installed_at: null,
+      },
+      install_id: null,
+      install_running: false,
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("session-titling");
+    });
+    fireEvent.click(screen.getByTestId("wizard-titling-mode-local"));
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+        title_generation: expect.objectContaining({
+          mode: "local",
+        }),
+      }));
+    });
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+  });
+
+  it("does not loop local status fetches after a local-status error", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+    vi.mocked(getTitleGenerationLocalStatus).mockRejectedValue(new Error("status unavailable"));
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("session-titling");
+    });
+    fireEvent.click(screen.getByTestId("wizard-titling-mode-local"));
+
+    await waitFor(() => {
+      expect(getTitleGenerationLocalStatus).toHaveBeenCalledTimes(2);
+    });
+    const callsAfterInitial = vi.mocked(getTitleGenerationLocalStatus).mock.calls.length;
+    await new Promise((resolve) => window.setTimeout(resolve, 80));
+    expect(vi.mocked(getTitleGenerationLocalStatus).mock.calls.length).toBe(callsAfterInitial);
+  });
+
+  it("supports skip path without writing session titling settings", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("session-titling");
+    });
+    fireEvent.click(screen.getByTestId("wizard-titling-skip"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    expect(updateSettings).not.toHaveBeenCalled();
   });
 });

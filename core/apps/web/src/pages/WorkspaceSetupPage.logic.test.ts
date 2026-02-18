@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getSourceStepValidation, resolveWorkspaceName } from "./WorkspaceSetupPage.logic";
+import {
+  buildSessionTitlingDraft,
+  buildSessionTitlingPayload,
+  getSourceStepValidation,
+  resolveSessionTitlingReadiness,
+  resolveWorkspaceName,
+} from "./WorkspaceSetupPage.logic";
 
 describe("getSourceStepValidation", () => {
   it("allows disk-isolated clone with repo URL and blank source path", () => {
@@ -137,5 +143,106 @@ describe("resolveWorkspaceName", () => {
     });
 
     expect(name).toBe("react 2");
+  });
+});
+
+describe("session titling readiness", () => {
+  it("returns missing when title generation is not configured", () => {
+    const readiness = resolveSessionTitlingReadiness({}, null);
+    expect(readiness).toEqual({ ready: false, reason: "missing" });
+  });
+
+  it("requires remote base_url/api_key/model when mode is remote", () => {
+    const incomplete = resolveSessionTitlingReadiness({
+      title_generation: {
+        mode: "remote",
+        remote: { base_url: "https://openrouter.ai/api/v1", api_key: "", model: "gpt-4o-mini", use_json: true },
+        local: { model_id: "ggml-org/Qwen3-1.7B-GGUF", use_json: true },
+      },
+    }, null);
+    expect(incomplete).toEqual({ ready: false, reason: "remote_incomplete" });
+
+    const ready = resolveSessionTitlingReadiness({
+      title_generation: {
+        mode: "remote",
+        remote: { base_url: "https://openrouter.ai/api/v1", api_key: "sk-test", model: "gpt-4o-mini", use_json: true },
+        local: { model_id: "ggml-org/Qwen3-1.7B-GGUF", use_json: true },
+      },
+    }, null);
+    expect(ready).toEqual({ ready: true, reason: "remote_ready" });
+  });
+
+  it("requires local runtime/model readiness when mode is local", () => {
+    const notReady = resolveSessionTitlingReadiness({
+      title_generation: {
+        mode: "local",
+        remote: { base_url: "", api_key: "", model: "", use_json: true },
+        local: { model_id: "ggml-org/Qwen3-1.7B-GGUF", use_json: true },
+      },
+    }, { ready: false } as never);
+    expect(notReady).toEqual({ ready: false, reason: "local_not_ready" });
+
+    const ready = resolveSessionTitlingReadiness({
+      title_generation: {
+        mode: "local",
+        remote: { base_url: "", api_key: "", model: "", use_json: true },
+        local: { model_id: "ggml-org/Qwen3-1.7B-GGUF", use_json: true },
+      },
+    }, { ready: true } as never);
+    expect(ready).toEqual({ ready: true, reason: "local_ready" });
+  });
+});
+
+describe("session titling payload", () => {
+  it("hydrates draft defaults and existing values", () => {
+    const draft = buildSessionTitlingDraft({
+      title_generation: {
+        mode: "remote",
+        remote: { base_url: "https://api.example", api_key: "sk-existing", model: "gpt-x", use_json: false },
+        local: { model_id: "local-model", use_json: false },
+      },
+    });
+
+    expect(draft.mode).toBe("remote");
+    expect(draft.remote.baseUrl).toBe("https://api.example");
+    expect(draft.remote.apiKey).toBe("sk-existing");
+    expect(draft.remote.model).toBe("gpt-x");
+    expect(draft.remote.useJson).toBe(false);
+    expect(draft.local.modelId).toBe("local-model");
+    expect(draft.local.useJson).toBe(false);
+  });
+
+  it("builds payload with explicit mode and complete schema", () => {
+    const payload = buildSessionTitlingPayload({
+      mode: "local",
+      draft: {
+        mode: "local",
+        remote: {
+          baseUrl: "https://api.example",
+          apiKey: "sk-live",
+          model: "gpt-y",
+          useJson: true,
+        },
+        local: {
+          modelId: "ggml-org/Qwen3-1.7B-GGUF",
+          useJson: false,
+        },
+      },
+      existing: null,
+    });
+
+    expect(payload).toEqual({
+      mode: "local",
+      remote: {
+        base_url: "https://api.example",
+        api_key: "sk-live",
+        model: "gpt-y",
+        use_json: true,
+      },
+      local: {
+        model_id: "ggml-org/Qwen3-1.7B-GGUF",
+        use_json: false,
+      },
+    });
   });
 });

@@ -8,10 +8,14 @@ import {
   applyDaemonDesktopConnection,
   buildExecutionLaunchWsUrl,
   createWorkspace,
+  getInstall,
   getExecutionLaunchStatus,
   getHealth,
+  getSettings,
+  getTitleGenerationLocalStatus,
   importProviderAuthCandidates,
   idToString,
+  installTitleGenerationLocal,
   listProviderAuthImportCandidates,
   listWorkspaces,
   startExecutionLaunch,
@@ -23,6 +27,10 @@ import {
   repoInit,
   repoStatus,
   repoStagingPath,
+  type Settings,
+  type TitleGenerationLocalStatus,
+  type TitleGenerationSettings,
+  updateSettings,
   updateWorkspaceExecutionConfig,
   updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig,
@@ -42,10 +50,18 @@ import {
   type DesktopSshHost,
 } from "../utils/desktop";
 import {
+  buildSessionTitlingDraft,
+  buildSessionTitlingPayload,
+  DEFAULT_TITLE_LOCAL_MODEL_ID,
+  DEFAULT_TITLE_REMOTE_BASE_URL,
+  DEFAULT_TITLE_REMOTE_MODEL,
   deriveRepoNameFromUrl,
   getSourceStepValidation,
   parseCloneDestPath,
+  resolveSessionTitlingReadiness,
   resolveWorkspaceName,
+  sessionTitlingPayloadHash,
+  type SessionTitlingMode,
 } from "./WorkspaceSetupPage.logic";
 import {
   formatLaunchElapsed,
@@ -87,6 +103,13 @@ type WizardStep = {
 
 type ImportInitDialogState = {
   path: string;
+};
+
+type LocalInstallState = {
+  installId: string;
+  state: "running" | "succeeded" | "failed";
+  pct: number | null;
+  error?: string;
 };
 
 export default function WorkspaceSetupPage() {
@@ -137,8 +160,37 @@ export default function WorkspaceSetupPage() {
   const [authImportError, setAuthImportError] = useState<string | null>(null);
   const [authImportResults, setAuthImportResults] = useState<Array<{ provider: string; status: string; message?: string | null }>>([]);
   const [authImportScannedKey, setAuthImportScannedKey] = useState<string | null>(null);
+  const [titlingProbeBusy, setTitlingProbeBusy] = useState(false);
+  const [titlingProbeError, setTitlingProbeError] = useState<string | null>(null);
+  const [titlingProbeDone, setTitlingProbeDone] = useState(false);
+  const [titlingConfiguredReady, setTitlingConfiguredReady] = useState(false);
+  const [titlingStepRequired, setTitlingStepRequired] = useState(false);
+  const [titlingProbeTargetKey, setTitlingProbeTargetKey] = useState<string | null>(null);
+  const [titlingMode, setTitlingMode] = useState<SessionTitlingMode>("unset");
+  const [titlingRemoteBaseUrl, setTitlingRemoteBaseUrl] = useState(DEFAULT_TITLE_REMOTE_BASE_URL);
+  const [titlingRemoteApiKey, setTitlingRemoteApiKey] = useState("");
+  const [titlingRemoteModel, setTitlingRemoteModel] = useState(DEFAULT_TITLE_REMOTE_MODEL);
+  const [titlingRemoteUseJson, setTitlingRemoteUseJson] = useState(true);
+  const [titlingRemoteAdvancedOpen, setTitlingRemoteAdvancedOpen] = useState(false);
+  const [titlingLocalModelId, setTitlingLocalModelId] = useState(DEFAULT_TITLE_LOCAL_MODEL_ID);
+  const [titlingLocalUseJson, setTitlingLocalUseJson] = useState(true);
+  const [titlingLocalAdvancedOpen, setTitlingLocalAdvancedOpen] = useState(false);
+  const [titlingLocalStatus, setTitlingLocalStatus] = useState<TitleGenerationLocalStatus | null>(null);
+  const [titlingLocalStatusBusy, setTitlingLocalStatusBusy] = useState(false);
+  const [titlingLocalStatusRequestedTargetKey, setTitlingLocalStatusRequestedTargetKey] = useState<string | null>(null);
+  const [titlingStatusError, setTitlingStatusError] = useState<string | null>(null);
+  const [titlingLocalInstallBusy, setTitlingLocalInstallBusy] = useState(false);
+  const [titlingLocalInstall, setTitlingLocalInstall] = useState<LocalInstallState | null>(null);
+  const [titlingPersistBusy, setTitlingPersistBusy] = useState(false);
+  const [titlingPersistError, setTitlingPersistError] = useState<string | null>(null);
+  const [titlingPersistedTargetKey, setTitlingPersistedTargetKey] = useState<string | null>(null);
+  const [titlingPersistedHash, setTitlingPersistedHash] = useState<string | null>(null);
+  const [titlingExistingSettings, setTitlingExistingSettings] = useState<TitleGenerationSettings | null>(null);
   const importInitResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
   const remoteProfileAutoAppliedKeyRef = useRef<string | null>(null);
+  const titlingInstallPollRef = useRef<number | null>(null);
+  const titlingInstallPollGenerationRef = useRef(0);
+  const selectedDaemonTargetKeyRef = useRef<string | null>(null);
   const harnessByProviderId = useMemo(() => {
     return new Map(HARNESS_CATALOG.map((entry) => [entry.id, entry]));
   }, []);
@@ -150,6 +202,7 @@ export default function WorkspaceSetupPage() {
 
   const containerMode = selections.container;
   const authImportStepVisible = authImportCandidates.length > 0;
+  const titlingStepVisible = Boolean(selections.location) && titlingProbeDone && titlingStepRequired;
 
   const steps = useMemo<WizardStep[]>(() => {
     const out: WizardStep[] = [
@@ -169,6 +222,14 @@ export default function WorkspaceSetupPage() {
         key: "auth-import",
         title: "Import Existing Auth",
         note: "Optional: import provider credentials found on this host.",
+      });
+    }
+
+    if (titlingStepVisible) {
+      out.push({
+        key: "session-titling",
+        title: "Session Titling",
+        note: "Choose how ctx should generate session titles on this daemon.",
       });
     }
 
@@ -272,7 +333,7 @@ export default function WorkspaceSetupPage() {
     );
 
     return out;
-  }, [containerMode, authImportStepVisible]);
+  }, [containerMode, authImportStepVisible, titlingStepVisible]);
 
   useEffect(() => {
     setStepIndex((idx) => Math.min(idx, Math.max(0, steps.length - 1)));
@@ -309,8 +370,7 @@ export default function WorkspaceSetupPage() {
   const hasAllowlist = !needsAllowlist
     || networkAllowlist.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length > 0;
   const parsedRemote = parseUserHost(remoteHostInput);
-  const authScanKey = `${selections.location ?? ""}|${parsedRemote?.user ?? ""}@${parsedRemote?.host ?? ""}`;
-  const hasRemoteHost = Boolean(parsedRemote?.host);
+  const desktopApp = isDesktopApp();
   const remoteCtxBinValue = remoteCtxBinInput.trim();
   const remoteCtxBinIsAbsolute = remoteCtxBinValue.startsWith("/");
   const parsedRemotePort = (() => {
@@ -322,6 +382,47 @@ export default function WorkspaceSetupPage() {
     if (port < 1 || port > 65535) return null;
     return port;
   })();
+  const selectedDaemonTargetKey = selections.location === "remote"
+    ? (parsedRemote?.host
+      ? `ssh:${parsedRemote.user ?? ""}@${parsedRemote.host}:${parsedRemotePort ?? 4399}:${remoteDataDirInput.trim()}:${remoteCtxBinValue}`
+      : null)
+    : selections.location === "local"
+      ? "local"
+      : null;
+  const canProbeTitling = desktopApp && (
+    selections.location === "local"
+    || (
+      selections.location === "remote"
+      && Boolean(parsedRemote?.host)
+      && remoteStatus === "connected"
+      && remoteCtxBinValue !== ""
+      && remoteCtxBinIsAbsolute
+    )
+  );
+  const authScanKey = `${selections.location ?? ""}|${parsedRemote?.user ?? ""}@${parsedRemote?.host ?? ""}`;
+  const hasRemoteHost = Boolean(parsedRemote?.host);
+  const titlingRemoteValid = titlingRemoteBaseUrl.trim() !== ""
+    && titlingRemoteApiKey.trim() !== ""
+    && titlingRemoteModel.trim() !== "";
+  const titlingSelectionComplete = !titlingStepVisible
+    || titlingMode === "skip"
+    || (titlingMode === "remote" && titlingRemoteValid)
+    || titlingMode === "local";
+  const titlingStepCanAdvance = step.key !== "session-titling"
+    || (!titlingPersistBusy && titlingSelectionComplete);
+  const titlingSummaryValue = titlingMode === "skip"
+    ? "Skipped (fallback titles)"
+    : titlingMode === "remote"
+      ? `Configured remote (${titlingRemoteModel.trim() || "model pending"})`
+      : titlingMode === "local"
+        ? (titlingLocalStatus?.ready
+          ? "Configured local (ready)"
+          : "Configured local (install pending; fallback until ready)")
+        : titlingConfiguredReady
+          ? (titlingExistingSettings?.mode === "local" ? "Configured local (ready)" : "Configured remote")
+          : "Not configured";
+  const titlingProbeResolved = !selections.location || titlingProbeDone || !canProbeTitling;
+  const titlingFlowGateSatisfied = step.key === "location" || step.key === "auth-import" || titlingProbeResolved;
   const canAdvance = (!requiresSelection || hasSelection)
     && (!isRemoteStep || (
       hasRemoteHost
@@ -332,6 +433,8 @@ export default function WorkspaceSetupPage() {
     && hasTargetBranch
     && hasAllowlist
     && (step.key !== "auth-import" || !authImportBusy)
+    && titlingStepCanAdvance
+    && titlingFlowGateSatisfied
     ;
   const showLaunchPanel = Boolean(launchSnapshot) && (creating || launchSnapshot?.state === "error");
   const currentLaunchPhaseLabel = launchPhaseLabel(launchSnapshot?.current_phase);
@@ -409,6 +512,240 @@ export default function WorkspaceSetupPage() {
     await waitForDaemonReady(15000);
   };
 
+  const messageFromError = (error: unknown): string =>
+    error instanceof Error && error.message ? error.message : String(error);
+
+  const clearTitlingInstallPoll = () => {
+    titlingInstallPollGenerationRef.current += 1;
+    if (titlingInstallPollRef.current) {
+      window.clearTimeout(titlingInstallPollRef.current);
+      titlingInstallPollRef.current = null;
+    }
+  };
+
+  const refreshTitlingLocalStatus = async (opts?: { silent?: boolean }): Promise<TitleGenerationLocalStatus | null> => {
+    if (!opts?.silent) {
+      setTitlingLocalStatusBusy(true);
+    }
+    setTitlingStatusError(null);
+    try {
+      const status = await getTitleGenerationLocalStatus();
+      setTitlingLocalStatus(status);
+      return status;
+    } catch (error) {
+      setTitlingStatusError(messageFromError(error));
+      return null;
+    } finally {
+      if (!opts?.silent) {
+        setTitlingLocalStatusBusy(false);
+      }
+    }
+  };
+
+  const attachTitlingInstall = async (installId: string) => {
+    if (!installId) return;
+    clearTitlingInstallPoll();
+    const generation = titlingInstallPollGenerationRef.current;
+    setTitlingLocalInstall({
+      installId,
+      state: "running",
+      pct: null,
+    });
+
+    const poll = async () => {
+      if (generation !== titlingInstallPollGenerationRef.current) return;
+      try {
+        const info = await getInstall(installId);
+        if (generation !== titlingInstallPollGenerationRef.current) return;
+        const pct =
+          typeof info.last_event?.bytes === "number"
+          && typeof info.last_event?.total_bytes === "number"
+          && info.last_event.total_bytes > 0
+            ? Math.max(0, Math.min(100, Math.round((info.last_event.bytes / info.last_event.total_bytes) * 100)))
+            : null;
+        setTitlingLocalInstall({
+          installId,
+          state: info.state,
+          pct,
+          error: info.error,
+        });
+        if (info.state !== "running") {
+          if (generation === titlingInstallPollGenerationRef.current) {
+            clearTitlingInstallPoll();
+          }
+          await refreshTitlingLocalStatus({ silent: true });
+          return;
+        }
+      } catch {
+        // Keep polling: install fetches may transiently fail while daemon restarts/backgrounds.
+      }
+
+      if (generation !== titlingInstallPollGenerationRef.current) return;
+      titlingInstallPollRef.current = window.setTimeout(() => {
+        if (generation !== titlingInstallPollGenerationRef.current) return;
+        poll().catch(() => {});
+      }, 900);
+    };
+
+    await poll();
+  };
+
+  const resetTitlingDraft = () => {
+    setTitlingMode("unset");
+    setTitlingRemoteBaseUrl(DEFAULT_TITLE_REMOTE_BASE_URL);
+    setTitlingRemoteApiKey("");
+    setTitlingRemoteModel(DEFAULT_TITLE_REMOTE_MODEL);
+    setTitlingRemoteUseJson(true);
+    setTitlingLocalModelId(DEFAULT_TITLE_LOCAL_MODEL_ID);
+    setTitlingLocalUseJson(true);
+  };
+
+  const invalidateTitlingPersisted = () => {
+    setTitlingPersistError(null);
+    setTitlingPersistedTargetKey(null);
+    setTitlingPersistedHash(null);
+  };
+
+  const probeTitlingForTarget = async (targetKey: string): Promise<void> => {
+    setTitlingProbeBusy(true);
+    setTitlingProbeTargetKey(targetKey);
+    setTitlingProbeDone(false);
+    setTitlingProbeError(null);
+    setTitlingStatusError(null);
+    try {
+      await connectDaemonForImport();
+      if (selectedDaemonTargetKeyRef.current !== targetKey) return;
+
+      const settings = await getSettings();
+      if (selectedDaemonTargetKeyRef.current !== targetKey) return;
+
+      setTitlingExistingSettings(settings.title_generation ?? null);
+      const draft = buildSessionTitlingDraft(settings);
+      setTitlingRemoteBaseUrl(draft.remote.baseUrl);
+      setTitlingRemoteApiKey(draft.remote.apiKey);
+      setTitlingRemoteModel(draft.remote.model);
+      setTitlingRemoteUseJson(draft.remote.useJson);
+      setTitlingLocalModelId(draft.local.modelId);
+      setTitlingLocalUseJson(draft.local.useJson);
+      setTitlingMode(draft.mode);
+
+      let localStatus: TitleGenerationLocalStatus | null = null;
+      if (!settings.title_generation || settings.title_generation.mode === "local") {
+        localStatus = await refreshTitlingLocalStatus({ silent: true });
+        if (selectedDaemonTargetKeyRef.current !== targetKey) return;
+      } else {
+        setTitlingLocalStatus(null);
+        setTitlingStatusError(null);
+      }
+
+      const readiness = resolveSessionTitlingReadiness(settings, localStatus);
+      setTitlingConfiguredReady(readiness.ready);
+      setTitlingStepRequired(!readiness.ready);
+      setTitlingProbeTargetKey(targetKey);
+      setTitlingProbeDone(true);
+      if (localStatus?.install_running && localStatus.install_id) {
+        void attachTitlingInstall(localStatus.install_id).catch(() => {});
+      }
+    } catch (error) {
+      if (selectedDaemonTargetKeyRef.current !== targetKey) return;
+      setTitlingProbeTargetKey(targetKey);
+      setTitlingProbeDone(true);
+      setTitlingConfiguredReady(false);
+      setTitlingStepRequired(true);
+      setTitlingProbeError(messageFromError(error));
+    } finally {
+      if (selectedDaemonTargetKeyRef.current === targetKey) {
+        setTitlingProbeBusy(false);
+      }
+    }
+  };
+
+  const ensureTitlingProbeForCurrentTarget = async (): Promise<void> => {
+    if (!selectedDaemonTargetKey || !canProbeTitling) return;
+    if (titlingProbeBusy && titlingProbeTargetKey === selectedDaemonTargetKey) return;
+    if (titlingProbeDone && titlingProbeTargetKey === selectedDaemonTargetKey) return;
+    await probeTitlingForTarget(selectedDaemonTargetKey);
+  };
+
+  const currentTitlingPayload = (): TitleGenerationSettings | null => {
+    if (titlingMode !== "remote" && titlingMode !== "local") return null;
+    return buildSessionTitlingPayload({
+      mode: titlingMode,
+      draft: {
+        mode: titlingMode,
+        remote: {
+          baseUrl: titlingRemoteBaseUrl,
+          apiKey: titlingRemoteApiKey,
+          model: titlingRemoteModel,
+          useJson: titlingRemoteUseJson,
+        },
+        local: {
+          modelId: titlingLocalModelId,
+          useJson: titlingLocalUseJson,
+        },
+      },
+      existing: titlingExistingSettings,
+    });
+  };
+
+  const ensureTitlingPersistedForCurrentTarget = async (): Promise<boolean> => {
+    if (titlingMode === "skip") return true;
+    const payload = currentTitlingPayload();
+    if (!payload) return false;
+    if (!selectedDaemonTargetKey) return false;
+    const targetKey = selectedDaemonTargetKey;
+    const payloadHash = sessionTitlingPayloadHash(payload);
+    if (titlingPersistedTargetKey === targetKey && titlingPersistedHash === payloadHash) {
+      return true;
+    }
+
+    setTitlingPersistBusy(true);
+    setTitlingPersistError(null);
+    try {
+      await connectDaemonForImport();
+      if (selectedDaemonTargetKeyRef.current !== targetKey) {
+        return false;
+      }
+      await updateSettings({ title_generation: payload });
+      setTitlingExistingSettings(payload);
+      setTitlingPersistedTargetKey(targetKey);
+      setTitlingPersistedHash(payloadHash);
+      if (payload.mode === "remote") {
+        setTitlingConfiguredReady(true);
+      } else {
+        const localStatus = await refreshTitlingLocalStatus({ silent: true });
+        const readiness = resolveSessionTitlingReadiness({ title_generation: payload }, localStatus);
+        setTitlingConfiguredReady(readiness.ready);
+        if (localStatus?.install_running && localStatus.install_id) {
+          void attachTitlingInstall(localStatus.install_id).catch(() => {});
+        }
+      }
+      return true;
+    } catch (error) {
+      setTitlingPersistError(messageFromError(error));
+      return false;
+    } finally {
+      setTitlingPersistBusy(false);
+    }
+  };
+
+  const onInstallTitlingLocal = async () => {
+    if (titlingLocalInstallBusy) return;
+    setTitlingLocalInstallBusy(true);
+    setTitlingStatusError(null);
+    setTitlingPersistError(null);
+    try {
+      const persisted = await ensureTitlingPersistedForCurrentTarget();
+      if (!persisted) return;
+      const { install_id } = await installTitleGenerationLocal();
+      await attachTitlingInstall(install_id);
+    } catch (error) {
+      setTitlingStatusError(messageFromError(error));
+    } finally {
+      setTitlingLocalInstallBusy(false);
+    }
+  };
+
   const shouldAutoAdvance = (stepKey: string, optionId: string): boolean => {
     if (stepKey === "location") return optionId === "local";
     if (stepKey === "container") return true;
@@ -437,6 +774,8 @@ export default function WorkspaceSetupPage() {
       setAuthImportSelected({});
       setAuthImportError(null);
       setAuthImportResults([]);
+      invalidateTitlingPersisted();
+      setTitlingProbeError(null);
     }
     if (stepKey === "container" && optionId === "no-container") {
       setNetworkAllowlist("");
@@ -475,6 +814,107 @@ export default function WorkspaceSetupPage() {
       return next;
     });
   };
+
+  useEffect(() => {
+    selectedDaemonTargetKeyRef.current = selectedDaemonTargetKey;
+  }, [selectedDaemonTargetKey]);
+
+  useEffect(() => {
+    if (!selectedDaemonTargetKey) {
+      setTitlingProbeBusy(false);
+      setTitlingProbeError(null);
+      setTitlingProbeDone(false);
+      setTitlingConfiguredReady(false);
+      setTitlingStepRequired(false);
+      setTitlingProbeTargetKey(null);
+      setTitlingPersistError(null);
+      setTitlingPersistedTargetKey(null);
+      setTitlingPersistedHash(null);
+      setTitlingExistingSettings(null);
+      setTitlingLocalStatus(null);
+      setTitlingLocalStatusRequestedTargetKey(null);
+      setTitlingStatusError(null);
+      setTitlingLocalInstall(null);
+      clearTitlingInstallPoll();
+      resetTitlingDraft();
+      return;
+    }
+    if (!canProbeTitling) {
+      setTitlingProbeBusy(false);
+      setTitlingProbeError(null);
+      setTitlingProbeDone(false);
+      setTitlingConfiguredReady(false);
+      setTitlingStepRequired(false);
+      setTitlingProbeTargetKey(null);
+      setTitlingPersistError(null);
+      setTitlingPersistedTargetKey(null);
+      setTitlingPersistedHash(null);
+      setTitlingExistingSettings(null);
+      setTitlingLocalStatus(null);
+      setTitlingLocalStatusRequestedTargetKey(null);
+      setTitlingStatusError(null);
+      setTitlingLocalInstall(null);
+      clearTitlingInstallPoll();
+      resetTitlingDraft();
+      return;
+    }
+
+    if (titlingProbeTargetKey !== selectedDaemonTargetKey) {
+      setTitlingProbeError(null);
+      setTitlingProbeDone(false);
+      setTitlingConfiguredReady(false);
+      setTitlingStepRequired(false);
+      setTitlingPersistError(null);
+      setTitlingPersistedTargetKey(null);
+      setTitlingPersistedHash(null);
+      setTitlingExistingSettings(null);
+      setTitlingLocalStatus(null);
+      setTitlingLocalStatusRequestedTargetKey(null);
+      setTitlingStatusError(null);
+      setTitlingLocalInstall(null);
+      clearTitlingInstallPoll();
+      resetTitlingDraft();
+    }
+
+    if (titlingProbeTargetKey === selectedDaemonTargetKey && (titlingProbeDone || titlingProbeBusy)) {
+      return;
+    }
+
+    void probeTitlingForTarget(selectedDaemonTargetKey);
+  }, [
+    canProbeTitling,
+    selectedDaemonTargetKey,
+    titlingProbeBusy,
+    titlingProbeDone,
+    titlingProbeTargetKey,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      clearTitlingInstallPoll();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (titlingMode === "local") return;
+    setTitlingLocalStatusRequestedTargetKey(null);
+  }, [titlingMode]);
+
+  useEffect(() => {
+    if (titlingMode !== "local") return;
+    if (!selectedDaemonTargetKey || !canProbeTitling) return;
+    if (titlingLocalStatus || titlingLocalStatusBusy) return;
+    if (titlingLocalStatusRequestedTargetKey === selectedDaemonTargetKey) return;
+    setTitlingLocalStatusRequestedTargetKey(selectedDaemonTargetKey);
+    void refreshTitlingLocalStatus().catch(() => {});
+  }, [
+    canProbeTitling,
+    selectedDaemonTargetKey,
+    titlingLocalStatus,
+    titlingLocalStatusBusy,
+    titlingLocalStatusRequestedTargetKey,
+    titlingMode,
+  ]);
 
   useEffect(() => {
     if (selections.container === "host-mounted") {
@@ -795,59 +1235,62 @@ export default function WorkspaceSetupPage() {
     });
 
   const onNext = async () => {
-    if (step.key === "location" && selections.location === "remote") {
-      if (!parsedRemote) return;
-      if (!isDesktopApp()) {
-        setRemoteStatus("error");
-        setRemoteError("Remote connections require the desktop app.");
-        return;
+    if (step.key === "location") {
+      if (selections.location === "remote") {
+        if (!parsedRemote) return;
+        if (!isDesktopApp()) {
+          setRemoteStatus("error");
+          setRemoteError("Remote connections require the desktop app.");
+          return;
+        }
+        if (!remoteCtxBinValue) {
+          setRemoteAdvancedOpen(true);
+          setRemoteStatus("error");
+          setRemoteError("Remote ctx binary path is required.");
+          return;
+        }
+        if (!remoteCtxBinIsAbsolute) {
+          setRemoteAdvancedOpen(true);
+          setRemoteStatus("error");
+          setRemoteError("Remote ctx binary path must be absolute (for example /opt/ctx/bin/ctx).");
+          return;
+        }
+        if (remoteStatus !== "connected") {
+          setRemoteStatus("connecting");
+          setRemoteError(null);
+          try {
+            await desktopTestSsh({
+              host: parsedRemote.host,
+              user: parsedRemote.user ?? null,
+            });
+            setRemoteStatus("connected");
+            const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
+            setRemoteProfiles(upsertRemoteProfile(parsedRemote.host, parsedRemote.user ?? null, {
+              remote_port: parsedRemotePort ?? 4399,
+              remote_data_dir: normalizedDataDir,
+              remote_ctx_bin: remoteCtxBinValue,
+            }));
+            remoteProfileAutoAppliedKeyRef.current = remoteProfileKey(parsedRemote.host, parsedRemote.user ?? null);
+            void desktopKickoffRemotePrewarm({
+              host: parsedRemote.host,
+              user: parsedRemote.user ?? null,
+              remote_port: parsedRemotePort,
+              remote_data_dir: normalizedDataDir,
+            }).catch((err: any) => {
+              console.debug("remote prewarm kickoff skipped/failed", err?.message ?? String(err));
+            });
+            const nextRecents = upsertSshRecent(parsedRemote.host, parsedRemote.user ?? null);
+            setSshRecents(nextRecents);
+          } catch (err: any) {
+            setRemoteStatus("error");
+            setRemoteError(err?.message ?? String(err));
+            return;
+          }
+        }
       }
-      if (!remoteCtxBinValue) {
-        setRemoteAdvancedOpen(true);
-        setRemoteStatus("error");
-        setRemoteError("Remote ctx binary path is required.");
-        return;
-      }
-      if (!remoteCtxBinIsAbsolute) {
-        setRemoteAdvancedOpen(true);
-        setRemoteStatus("error");
-        setRemoteError("Remote ctx binary path must be absolute (for example /opt/ctx/bin/ctx).");
-        return;
-      }
-      if (remoteStatus === "connected") {
-        setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
-        return;
-      }
-      setRemoteStatus("connecting");
-      setRemoteError(null);
-      try {
-        await desktopTestSsh({
-          host: parsedRemote.host,
-          user: parsedRemote.user ?? null,
-        });
-        setRemoteStatus("connected");
-        const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
-        setRemoteProfiles(upsertRemoteProfile(parsedRemote.host, parsedRemote.user ?? null, {
-          remote_port: parsedRemotePort ?? 4399,
-          remote_data_dir: normalizedDataDir,
-          remote_ctx_bin: remoteCtxBinValue,
-        }));
-        remoteProfileAutoAppliedKeyRef.current = remoteProfileKey(parsedRemote.host, parsedRemote.user ?? null);
-        void desktopKickoffRemotePrewarm({
-          host: parsedRemote.host,
-          user: parsedRemote.user ?? null,
-          remote_port: parsedRemotePort,
-          remote_data_dir: normalizedDataDir,
-        }).catch((err: any) => {
-          console.debug("remote prewarm kickoff skipped/failed", err?.message ?? String(err));
-        });
-        const nextRecents = upsertSshRecent(parsedRemote.host, parsedRemote.user ?? null);
-        setSshRecents(nextRecents);
-        setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
-      } catch (err: any) {
-        setRemoteStatus("error");
-        setRemoteError(err?.message ?? String(err));
-      }
+
+      await ensureTitlingProbeForCurrentTarget();
+      setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
       return;
     }
     if (step.key === "auth-import") {
@@ -876,6 +1319,26 @@ export default function WorkspaceSetupPage() {
         return;
       }
       setAuthImportBusy(false);
+      await ensureTitlingProbeForCurrentTarget();
+      setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+      return;
+    }
+    if (step.key === "session-titling") {
+      setTitlingPersistError(null);
+      if (titlingMode === "skip") {
+        setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+        return;
+      }
+      if (titlingMode !== "remote" && titlingMode !== "local") {
+        setTitlingPersistError("Choose a titling option or skip for now.");
+        return;
+      }
+      if (titlingMode === "remote" && !titlingRemoteValid) {
+        setTitlingPersistError("Remote titling needs base URL, API key, and model.");
+        return;
+      }
+      const persisted = await ensureTitlingPersistedForCurrentTarget();
+      if (!persisted) return;
       setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
       return;
     }
@@ -1024,6 +1487,19 @@ export default function WorkspaceSetupPage() {
       // Ensure the daemon is reachable before we navigate away from the wizard.
       // This avoids landing on the workbench too early on cold start.
       await waitForDaemonReady(15000);
+
+      if (titlingStepVisible && titlingMode !== "skip") {
+        if (titlingMode !== "remote" && titlingMode !== "local") {
+          throw new Error("Choose a session titling option or skip for now.");
+        }
+        if (titlingMode === "remote" && !titlingRemoteValid) {
+          throw new Error("Remote session titling requires base URL, API key, and model.");
+        }
+        const persisted = await ensureTitlingPersistedForCurrentTarget();
+        if (!persisted) {
+          throw new Error(titlingPersistError ?? "Failed to save session titling settings.");
+        }
+      }
 
       // 2. Ensure we have a VCS repo root_path (workspace creation requires this).
       let allWorkspaces: Awaited<ReturnType<typeof listWorkspaces>> | null = null;
@@ -1201,6 +1677,7 @@ export default function WorkspaceSetupPage() {
       const stepKeyForError = (m: string): WizardStep["key"] | null => {
         const s = String(m || "");
         if (s.includes("Remote host is required")) return "location";
+        if (s.includes("session titling") || s.includes("title generation")) return "session-titling";
         if (s.includes("repo_url") || s.includes("Destination") || s.includes("Folder") || s.includes("git clone") || s.includes("git init") || s.includes("root_path") || s.includes("not a repo")) {
           return "source";
         }
@@ -1651,6 +2128,207 @@ export default function WorkspaceSetupPage() {
                     </button>
                   </div>
                 )}
+                {step.key === "session-titling" && (
+                  <div className="wizard-input">
+                    {titlingProbeBusy ? (
+                      <div className="wizard-note">Checking session titling configuration on this daemon…</div>
+                    ) : null}
+                    {titlingProbeError ? (
+                      <div className="wizard-error">
+                        Could not auto-detect titling configuration. You can still configure now or skip. ({titlingProbeError})
+                      </div>
+                    ) : null}
+                    {titlingPersistError ? <div className="wizard-error">{titlingPersistError}</div> : null}
+                    {titlingStatusError ? <div className="wizard-error">{titlingStatusError}</div> : null}
+                    <div className="wizard-option-grid wizard-option-grid--two">
+                      <button
+                        type="button"
+                        className={`wizard-option${titlingMode === "remote" ? " is-selected" : ""}`}
+                        data-testid="wizard-titling-mode-remote"
+                        onClick={() => {
+                          invalidateTitlingPersisted();
+                          setTitlingMode("remote");
+                        }}
+                        aria-pressed={titlingMode === "remote"}
+                      >
+                        <div className="wizard-option-title">
+                          <span className="wizard-option-title-text">Remote model</span>
+                        </div>
+                        <div className="wizard-option-desc">
+                          Use a cloud endpoint with API key + model for title generation.
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        className={`wizard-option${titlingMode === "local" ? " is-selected" : ""}`}
+                        data-testid="wizard-titling-mode-local"
+                        onClick={() => {
+                          invalidateTitlingPersisted();
+                          setTitlingMode("local");
+                        }}
+                        aria-pressed={titlingMode === "local"}
+                      >
+                        <div className="wizard-option-title">
+                          <span className="wizard-option-title-text">Local model</span>
+                        </div>
+                        <div className="wizard-option-desc">
+                          Run titling on-daemon. Download can continue in background.
+                        </div>
+                      </button>
+                    </div>
+                    {titlingMode === "remote" && (
+                      <div className="wizard-input">
+                        <label>
+                          Endpoint base URL
+                          <input
+                            data-testid="wizard-titling-remote-base-url"
+                            placeholder="https://openrouter.ai/api/v1"
+                            value={titlingRemoteBaseUrl}
+                            onChange={(e) => {
+                              invalidateTitlingPersisted();
+                              setTitlingRemoteBaseUrl(e.target.value);
+                            }}
+                          />
+                        </label>
+                        <label>
+                          API key
+                          <input
+                            data-testid="wizard-titling-remote-api-key"
+                            placeholder="sk-..."
+                            value={titlingRemoteApiKey}
+                            type="password"
+                            onChange={(e) => {
+                              invalidateTitlingPersisted();
+                              setTitlingRemoteApiKey(e.target.value);
+                            }}
+                          />
+                        </label>
+                        <label>
+                          Model
+                          <input
+                            data-testid="wizard-titling-remote-model"
+                            placeholder="google/gemini-3-flash-preview"
+                            value={titlingRemoteModel}
+                            onChange={(e) => {
+                              invalidateTitlingPersisted();
+                              setTitlingRemoteModel(e.target.value);
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="wizard-advanced-link"
+                          data-testid="wizard-titling-remote-advanced-toggle"
+                          onClick={() => setTitlingRemoteAdvancedOpen((open) => !open)}
+                          aria-expanded={titlingRemoteAdvancedOpen}
+                        >
+                          <ChevronRight
+                            size={14}
+                            className={titlingRemoteAdvancedOpen ? "is-open" : undefined}
+                            aria-hidden="true"
+                          />
+                          Advanced
+                        </button>
+                        {titlingRemoteAdvancedOpen && (
+                          <label className="wizard-checkbox">
+                            <input
+                              data-testid="wizard-titling-remote-use-json"
+                              type="checkbox"
+                              checked={titlingRemoteUseJson}
+                              onChange={(e) => {
+                                invalidateTitlingPersisted();
+                                setTitlingRemoteUseJson(e.target.checked);
+                              }}
+                            />
+                            Prefer JSON response format
+                          </label>
+                        )}
+                        {!titlingRemoteValid && (
+                          <div className="wizard-note">Base URL, API key, and model are required.</div>
+                        )}
+                      </div>
+                    )}
+                    {titlingMode === "local" && (
+                      <div className="wizard-input">
+                        <label>
+                          Model ID
+                          <input
+                            data-testid="wizard-titling-local-model-id"
+                            placeholder="ggml-org/Qwen3-1.7B-GGUF"
+                            value={titlingLocalModelId}
+                            onChange={(e) => {
+                              invalidateTitlingPersisted();
+                              setTitlingLocalModelId(e.target.value);
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="wizard-advanced-link"
+                          data-testid="wizard-titling-local-advanced-toggle"
+                          onClick={() => setTitlingLocalAdvancedOpen((open) => !open)}
+                          aria-expanded={titlingLocalAdvancedOpen}
+                        >
+                          <ChevronRight
+                            size={14}
+                            className={titlingLocalAdvancedOpen ? "is-open" : undefined}
+                            aria-hidden="true"
+                          />
+                          Advanced
+                        </button>
+                        {titlingLocalAdvancedOpen && (
+                          <label className="wizard-checkbox">
+                            <input
+                              data-testid="wizard-titling-local-use-json"
+                              type="checkbox"
+                              checked={titlingLocalUseJson}
+                              onChange={(e) => {
+                                invalidateTitlingPersisted();
+                                setTitlingLocalUseJson(e.target.checked);
+                              }}
+                            />
+                            Prefer JSON response format
+                          </label>
+                        )}
+                        <button
+                          type="button"
+                          className="wizard-input-button"
+                          data-testid="wizard-titling-local-install"
+                          onClick={() => {
+                            void onInstallTitlingLocal();
+                          }}
+                          disabled={titlingLocalInstallBusy || titlingPersistBusy || titlingLocalStatusBusy}
+                        >
+                          {titlingLocalInstallBusy
+                            ? "Starting install…"
+                            : titlingLocalInstall?.state === "running"
+                              ? "Installing…"
+                              : "Download now"}
+                        </button>
+                        <div className="wizard-note" data-testid="wizard-titling-local-status">
+                          {titlingLocalStatus?.ready
+                            ? "Local model ready."
+                            : titlingLocalInstall?.state === "running"
+                              ? `Installing local model${typeof titlingLocalInstall.pct === "number" ? ` (${titlingLocalInstall.pct}%)` : ""}. Workspace creation is still allowed.`
+                              : "Local model is not ready yet. Titles will use truncation fallback until install finishes."}
+                        </div>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      className="wizard-skip wizard-skip--left wizard-skip--below"
+                      data-testid="wizard-titling-skip"
+                      onClick={() => {
+                        invalidateTitlingPersisted();
+                        setTitlingMode("skip");
+                        setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+                      }}
+                      disabled={titlingPersistBusy}
+                    >
+                      Skip for now
+                    </button>
+                  </div>
+                )}
                 {step.key === "source" && needsSourcePath && (
                   <div className="wizard-input">
                     <label>
@@ -1974,6 +2652,10 @@ export default function WorkspaceSetupPage() {
                         </div>
                       )}
                       <div className="wizard-summary-row">
+                        <div className="wizard-summary-k">Session titling</div>
+                        <div className="wizard-summary-v">{titlingSummaryValue}</div>
+                      </div>
+                      <div className="wizard-summary-row">
                         <div className="wizard-summary-k">Worktree hook</div>
                         <div className="wizard-summary-v">{setupHook.trim() || "(none)"}</div>
                       </div>
@@ -2018,6 +2700,11 @@ export default function WorkspaceSetupPage() {
                   return remoteStatus === "connected" && Boolean(parseUserHost(remoteHostInput)?.host);
                 }
                 if (key === "auth-import") return true;
+                if (key === "session-titling") {
+                  return titlingMode === "skip"
+                    || titlingMode === "local"
+                    || (titlingMode === "remote" && titlingRemoteValid);
+                }
                 if (key === "source") {
                   return sourceStepValidation.isComplete;
                 }
