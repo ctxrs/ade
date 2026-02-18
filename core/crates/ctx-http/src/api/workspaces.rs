@@ -1632,7 +1632,7 @@ pub(super) async fn create_workspace_attachment(
         mode: req.mode,
         update_policy: req.update_policy,
     };
-    attachments::upsert_attachment_config(StdPath::new(&workspace.root_path), cfg)
+    attachments::upsert_workspace_attachment(state.as_ref(), workspace.id, cfg)
         .await
         .map_err(|e| {
             (
@@ -1702,20 +1702,17 @@ pub(super) async fn delete_workspace_attachment(
             }),
         ))?;
 
-    let removed = attachments::remove_attachment_config(
-        StdPath::new(&workspace.root_path),
-        req.kind,
-        &req.name,
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
+    let removed =
+        attachments::delete_workspace_attachment(state.as_ref(), workspace.id, req.kind, &req.name)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
     if !removed {
         return Err((
             StatusCode::NOT_FOUND,

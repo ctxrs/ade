@@ -12,7 +12,6 @@ type WorkspaceAttachmentsSectionProps = {
 
 export function WorkspaceAttachmentsSection({ workspaceId, active }: WorkspaceAttachmentsSectionProps) {
   const {
-    workspaces,
     attachmentSource,
     setAttachmentSource,
     attachmentName,
@@ -39,8 +38,6 @@ export function WorkspaceAttachmentsSection({ workspaceId, active }: WorkspaceAt
     enabled: active,
   });
 
-  const selectedWorkspace = workspaces.find((ws) => idToString((ws as { id?: string | null }).id) === workspaceId) ?? null;
-  const configPath = selectedWorkspace ? `${selectedWorkspace.root_path}/.ctx/attachments.toml` : ".ctx/attachments.toml";
   const canAdd = Boolean(workspaceId && attachmentSource.trim());
   const canAddDocs = Boolean(workspaceId && docsAttachmentSource.trim());
 
@@ -49,9 +46,9 @@ export function WorkspaceAttachmentsSection({ workspaceId, active }: WorkspaceAt
       <div className="settings-preferences-flat">
         <div className="settings-preferences-group">
           <Row
-            title="Config file"
-            description="Repo-scoped attachments configuration."
-            control={<span className="settings-pill wb-mono">{configPath}</span>}
+            title="Storage"
+            description="Attachments configured here are stored locally in daemon workspace state."
+            control={<span className="settings-pill">Local</span>}
           />
           <Row
             title="Mount paths"

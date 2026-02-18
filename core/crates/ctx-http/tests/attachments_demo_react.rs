@@ -4,7 +4,7 @@ use tempfile::TempDir;
 use tokio::process::Command;
 
 use ctx_core::ids::WorktreeId;
-use ctx_core::models::{VcsKind, Worktree};
+use ctx_core::models::{VcsKind, WorkspaceAttachmentKind, Worktree};
 use ctx_fs::git::rev_parse_head;
 use ctx_http::attachments;
 use ctx_http::daemon::AppState;
@@ -118,6 +118,39 @@ async fn attachments_demo_react_smoketest() {
         "http://127.0.0.1:0".to_string(),
         None,
     ));
+
+    attachments::upsert_workspace_attachment(
+        state.as_ref(),
+        ws.id,
+        attachments::AttachmentConfig {
+            kind: WorkspaceAttachmentKind::ReferenceRepo,
+            name: "react".to_string(),
+            source: ws_root.to_string_lossy().to_string(),
+            revision: Some("main".to_string()),
+            subpath: None,
+            mount_relpath: None,
+            mode: None,
+            update_policy: None,
+        },
+    )
+    .await
+    .unwrap();
+    attachments::upsert_workspace_attachment(
+        state.as_ref(),
+        ws.id,
+        attachments::AttachmentConfig {
+            kind: WorkspaceAttachmentKind::DocMirror,
+            name: "react-docs".to_string(),
+            source: ".ctx/scripts/fetch-react-docs.sh".to_string(),
+            revision: None,
+            subpath: None,
+            mount_relpath: None,
+            mode: None,
+            update_policy: None,
+        },
+    )
+    .await
+    .unwrap();
 
     attachments::sync_workspace_attachments(std::sync::Arc::clone(&state), &ws, false)
         .await

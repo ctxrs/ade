@@ -1,4 +1,3 @@
-use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -25,14 +24,7 @@ use crate::harness_runtime::{
     podman_command, workspace_container_name, CTX_CONTAINER_WORKSPACE_ROOT,
 };
 
-const ATTACHMENTS_CONFIG_PATH: &str = ".ctx/attachments.toml";
 const CONTAINER_ATTACHMENTS_SUBDIR: &str = "attachments";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AttachmentsConfigFile {
-    #[serde(default)]
-    attachments: Vec<AttachmentConfig>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttachmentConfig {
@@ -68,61 +60,26 @@ pub async fn sync_workspace_attachments(
     workspace: &Workspace,
     refresh: bool,
 ) -> Result<Vec<WorkspaceAttachment>> {
-    let cfg = load_attachments_config(Path::new(&workspace.root_path)).await?;
     let store = state.store_for_workspace(workspace.id).await?;
     let existing = store.list_workspace_attachments(workspace.id).await?;
-    if cfg.is_none() {
-        for attachment in existing {
-            cleanup_removed_attachment(state.as_ref(), &attachment).await?;
-            store.delete_workspace_attachment(attachment.id).await?;
-        }
-        return Ok(vec![]);
-    }
-    let Some(cfg) = cfg else {
-        return Ok(vec![]);
-    };
 
-    let mut existing_map: HashMap<(WorkspaceAttachmentKind, String), WorkspaceAttachment> =
-        HashMap::new();
-    for attachment in existing {
-        existing_map.insert(
-            (attachment.kind.clone(), attachment.name.clone()),
-            attachment,
-        );
-    }
-
-    let mut keep_ids = HashSet::new();
-    let mut out = Vec::with_capacity(cfg.attachments.len());
+    let mut out = Vec::with_capacity(existing.len());
     let mut sync_plans = Vec::new();
-    for entry in cfg.attachments {
-        let mut attachment =
-            normalize_attachment_config(workspace.id, entry, |key| existing_map.remove(key));
+    for mut attachment in existing {
         let should_refresh = refresh || attachment.update_policy != AttachmentUpdatePolicy::Manual;
         let should_materialize = should_refresh
             || !materialized_path_for_attachment(state.as_ref(), &attachment).exists();
         if should_materialize && attachment.status != WorkspaceAttachmentStatus::Syncing {
             attachment.status = WorkspaceAttachmentStatus::Pending;
             attachment.error_message = None;
+            attachment.updated_at = Utc::now();
             sync_plans.push(AttachmentSyncPlan {
                 id: attachment.id,
                 refresh: should_refresh,
             });
         }
-        keep_ids.insert(attachment.id);
         store.upsert_workspace_attachment(&attachment).await?;
         out.push(attachment);
-    }
-
-    let mut removed = Vec::new();
-    for (_, attachment) in existing_map {
-        if !keep_ids.contains(&attachment.id) {
-            removed.push(attachment);
-        }
-    }
-
-    for attachment in removed {
-        cleanup_removed_attachment(state.as_ref(), &attachment).await?;
-        store.delete_workspace_attachment(attachment.id).await?;
     }
 
     for plan in sync_plans {
@@ -135,6 +92,40 @@ pub async fn sync_workspace_attachments(
     }
 
     Ok(out)
+}
+
+pub async fn upsert_workspace_attachment(
+    state: &AppState,
+    workspace_id: WorkspaceId,
+    cfg: AttachmentConfig,
+) -> Result<WorkspaceAttachment> {
+    let store = state.store_for_workspace(workspace_id).await?;
+    let existing = store.list_workspace_attachments(workspace_id).await?;
+    let existing = existing.into_iter().find(|attachment| {
+        attachment.kind == cfg.kind && attachment.name.trim() == cfg.name.trim()
+    });
+    let attachment = normalize_attachment_config(workspace_id, cfg, existing);
+    store.upsert_workspace_attachment(&attachment).await?;
+    Ok(attachment)
+}
+
+pub async fn delete_workspace_attachment(
+    state: &AppState,
+    workspace_id: WorkspaceId,
+    kind: WorkspaceAttachmentKind,
+    name: &str,
+) -> Result<bool> {
+    let store = state.store_for_workspace(workspace_id).await?;
+    let existing = store.list_workspace_attachments(workspace_id).await?;
+    let Some(target) = existing
+        .into_iter()
+        .find(|attachment| attachment.kind == kind && attachment.name.trim() == name.trim())
+    else {
+        return Ok(false);
+    };
+    cleanup_removed_attachment(state, &target).await?;
+    store.delete_workspace_attachment(target.id).await?;
+    Ok(true)
 }
 
 fn spawn_attachment_materialization(
@@ -349,92 +340,14 @@ pub async fn ensure_workspace_attachments_for_worktrees_with_attachments(
     Ok(())
 }
 
-async fn load_attachments_config(workspace_root: &Path) -> Result<Option<AttachmentsConfigFile>> {
-    let path = workspace_root.join(ATTACHMENTS_CONFIG_PATH);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let txt = tokio::fs::read_to_string(&path)
-        .await
-        .with_context(|| format!("reading {}", path.display()))?;
-    let cfg: AttachmentsConfigFile = toml::from_str(&txt).context("parsing attachments.toml")?;
-    Ok(Some(cfg))
-}
-
-pub async fn upsert_attachment_config(
-    workspace_root: &Path,
-    new_attachment: AttachmentConfig,
-) -> Result<()> {
-    let mut cfg = load_attachments_config(workspace_root)
-        .await?
-        .unwrap_or(AttachmentsConfigFile {
-            attachments: Vec::new(),
-        });
-    let mut replaced = false;
-    for entry in cfg.attachments.iter_mut() {
-        if entry.kind == new_attachment.kind && entry.name == new_attachment.name {
-            *entry = new_attachment.clone();
-            replaced = true;
-            break;
-        }
-    }
-    if !replaced {
-        cfg.attachments.push(new_attachment);
-    }
-    write_attachments_config(workspace_root, &cfg).await?;
-    Ok(())
-}
-
-pub async fn remove_attachment_config(
-    workspace_root: &Path,
-    kind: WorkspaceAttachmentKind,
-    name: &str,
-) -> Result<bool> {
-    let Some(mut cfg) = load_attachments_config(workspace_root).await? else {
-        return Ok(false);
-    };
-    let trimmed = name.trim();
-    let before = cfg.attachments.len();
-    cfg.attachments
-        .retain(|entry| !(entry.kind == kind && entry.name.trim() == trimmed));
-    if cfg.attachments.len() == before {
-        return Ok(false);
-    }
-    if cfg.attachments.is_empty() {
-        let path = workspace_root.join(ATTACHMENTS_CONFIG_PATH);
-        if path.exists() {
-            tokio::fs::remove_file(&path).await?;
-        }
-        return Ok(true);
-    }
-    write_attachments_config(workspace_root, &cfg).await?;
-    Ok(true)
-}
-
-async fn write_attachments_config(
-    workspace_root: &Path,
-    cfg: &AttachmentsConfigFile,
-) -> Result<()> {
-    let path = workspace_root.join(ATTACHMENTS_CONFIG_PATH);
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    let txt = toml::to_string_pretty(cfg).context("serializing attachments config")?;
-    tokio::fs::write(&path, txt)
-        .await
-        .with_context(|| format!("writing {}", path.display()))?;
-    Ok(())
-}
-
 fn normalize_attachment_config(
     workspace_id: WorkspaceId,
     cfg: AttachmentConfig,
-    mut take_existing: impl FnMut(&(WorkspaceAttachmentKind, String)) -> Option<WorkspaceAttachment>,
+    existing: Option<WorkspaceAttachment>,
 ) -> WorkspaceAttachment {
     let name = cfg.name.trim().to_string();
-    let key = (cfg.kind.clone(), name.clone());
     let now = Utc::now();
-    let (id, created_at, status, last_sync_at, error_message) = match take_existing(&key) {
+    let (id, created_at, status, last_sync_at, error_message) = match existing {
         Some(existing) => (
             existing.id,
             existing.created_at,

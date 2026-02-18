@@ -4,9 +4,7 @@ import {
   deleteWorkspaceAttachment,
   idToString,
   listWorkspaceAttachments,
-  listWorkspaces,
   syncWorkspaceAttachments,
-  type Workspace,
   type WorkspaceAttachment,
 } from "../../../api/client";
 import { guessAttachmentName } from "../../SettingsPage.utils";
@@ -17,7 +15,6 @@ type UseWorkspaceAttachmentsControllerArgs = {
 };
 
 type WorkspaceAttachmentsController = {
-  workspaces: Workspace[];
   attachmentSource: string;
   setAttachmentSource: (value: string) => void;
   attachmentName: string;
@@ -54,7 +51,6 @@ export function useWorkspaceAttachmentsController({
   workspaceId,
   enabled,
 }: UseWorkspaceAttachmentsControllerArgs): WorkspaceAttachmentsController {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [attachments, setAttachments] = useState<WorkspaceAttachment[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [attachmentsError, setAttachmentsError] = useState<string | null>(null);
@@ -196,11 +192,6 @@ export function useWorkspaceAttachmentsController({
   );
 
   useEffect(() => {
-    if (!enabled) return;
-    listWorkspaces().then(setWorkspaces).catch(() => {});
-  }, [enabled]);
-
-  useEffect(() => {
     setAttachments([]);
     setAttachmentsError(null);
   }, [workspaceId]);
@@ -240,7 +231,6 @@ export function useWorkspaceAttachmentsController({
   }, []);
 
   return {
-    workspaces,
     attachmentSource,
     setAttachmentSource,
     attachmentName,
