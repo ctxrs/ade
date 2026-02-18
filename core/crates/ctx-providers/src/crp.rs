@@ -38,38 +38,109 @@ pub struct Tier1CrpAdapter {
     pool: Arc<CrpSessionPool>,
 }
 
-fn rewrite_bundled_provider_command_for_linux(provider_id: &str, command: &str) -> Option<String> {
-    let trimmed = command.trim();
+enum BundledLinuxRewrite {
+    NotBundledPath,
+    AlreadyLinux,
+    Candidate(String),
+}
+
+fn bundled_linux_candidate_for_marker(path: &str, marker: &str) -> BundledLinuxRewrite {
+    let trimmed = path.trim();
     if trimmed.is_empty() {
-        return None;
+        return BundledLinuxRewrite::NotBundledPath;
     }
-    // Only rewrite bundled-provider style paths:
-    //   .../bundles/providers/<provider_id>/<os>/<arch>/<bin>
-    // to:
-    //   .../bundles/providers/<provider_id>/linux/<arch>/<bin>
-    //
-    // This keeps host runs using host-native binaries, while container runs can use Linux
-    // binaries placed alongside in the bundle.
     let sep = if trimmed.contains('\\') { '\\' } else { '/' };
-    let needle = format!("{sep}providers{sep}{provider_id}{sep}");
-    let idx = trimmed.find(&needle)?;
+    let needle = format!("{sep}{marker}{sep}");
+    let Some(idx) = trimmed.find(&needle) else {
+        return BundledLinuxRewrite::NotBundledPath;
+    };
     let prefix = &trimmed[..idx];
+    let bundles_segment = format!("{sep}bundles");
+    if prefix != "bundles" && !prefix.ends_with(&bundles_segment) {
+        return BundledLinuxRewrite::NotBundledPath;
+    }
     let rest = &trimmed[idx + needle.len()..];
     let mut parts = rest.split(sep);
-    let os = parts.next()?;
-    let arch = parts.next()?;
+    let Some(id) = parts.next() else {
+        return BundledLinuxRewrite::NotBundledPath;
+    };
+    let Some(os) = parts.next() else {
+        return BundledLinuxRewrite::NotBundledPath;
+    };
+    let Some(arch) = parts.next() else {
+        return BundledLinuxRewrite::NotBundledPath;
+    };
     if os == "linux" {
-        return None;
+        return BundledLinuxRewrite::AlreadyLinux;
     }
     let tail: String = parts.collect::<Vec<_>>().join(&sep.to_string());
-    let candidate = format!("{prefix}{needle}linux{sep}{arch}{sep}{tail}");
-    // The caller will attempt to execute this inside the container; ensure it exists on the host
-    // so the error is deterministic and actionable.
-    if std::path::Path::new(&candidate).exists() {
-        Some(candidate)
-    } else {
-        None
+    let candidate = format!("{prefix}{needle}{id}{sep}linux{sep}{arch}{sep}{tail}");
+    BundledLinuxRewrite::Candidate(candidate)
+}
+
+fn bundled_linux_candidate(path: &str) -> BundledLinuxRewrite {
+    let providers = bundled_linux_candidate_for_marker(path, "providers");
+    if !matches!(providers, BundledLinuxRewrite::NotBundledPath) {
+        return providers;
     }
+    bundled_linux_candidate_for_marker(path, "runtimes")
+}
+
+fn rewrite_bundled_path_for_linux(path: &str) -> Result<String> {
+    match bundled_linux_candidate(path) {
+        BundledLinuxRewrite::NotBundledPath | BundledLinuxRewrite::AlreadyLinux => {
+            Ok(path.to_string())
+        }
+        BundledLinuxRewrite::Candidate(candidate) => {
+            if std::path::Path::new(&candidate).exists() {
+                Ok(candidate)
+            } else {
+                anyhow::bail!(
+                    "missing linux bundled path for container execution: source='{}' expected='{}'",
+                    path,
+                    candidate
+                );
+            }
+        }
+    }
+}
+
+fn rewrite_bundled_paths_in_shell_command(raw: &str) -> Result<String> {
+    let tokens = shlex::split(raw).ok_or_else(|| {
+        anyhow::anyhow!("invalid shell command in --acp-command: unmatched quote")
+    })?;
+    if tokens.is_empty() {
+        return Ok(raw.to_string());
+    }
+
+    let mut rewritten = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        rewritten.push(rewrite_bundled_path_for_linux(&token)?);
+    }
+
+    shlex::try_join(rewritten.iter().map(String::as_str))
+        .map_err(|err| anyhow::anyhow!("failed to quote --acp-command after rewrite: {err}"))
+}
+
+fn rewrite_container_args_for_linux(args: &[String]) -> Result<Vec<String>> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut idx = 0;
+    while idx < args.len() {
+        let arg = &args[idx];
+        if arg == "--acp-command" {
+            out.push(arg.clone());
+            if let Some(acp_command) = args.get(idx + 1) {
+                out.push(rewrite_bundled_paths_in_shell_command(acp_command)?);
+                idx += 2;
+                continue;
+            }
+            idx += 1;
+            continue;
+        }
+        out.push(rewrite_bundled_path_for_linux(arg)?);
+        idx += 1;
+    }
+    Ok(out)
 }
 
 fn resolve_explicit_command_path(command: &str) -> Option<PathBuf> {
@@ -769,10 +840,9 @@ impl CrpProcess {
         env: &HashMap<String, String>,
     ) -> Result<Arc<Self>> {
         let mut cmd = if let Some(spec) = container_exec_spec(env) {
-            let container_command =
-                rewrite_bundled_provider_command_for_linux(&agent.provider_id, &agent.command)
-                    .unwrap_or_else(|| agent.command.clone());
-            build_container_exec_command(&spec, workdir, env, &container_command, &agent.args)
+            let container_command = rewrite_bundled_path_for_linux(&agent.command)?;
+            let container_args = rewrite_container_args_for_linux(&agent.args)?;
+            build_container_exec_command(&spec, workdir, env, &container_command, &container_args)
         } else {
             let mut cmd = Command::new(&agent.command);
             cmd.args(&agent.args);
@@ -2000,9 +2070,9 @@ pub async fn probe_crp_models(
 ) -> Result<CrpModelsProbe> {
     let command_label = command.clone();
     let mut cmd = if let Some(spec) = container_exec_spec(&env) {
-        let container_command = rewrite_bundled_provider_command_for_linux(provider_id, &command)
-            .unwrap_or_else(|| command.clone());
-        build_container_exec_command(&spec, &workdir, &env, &container_command, &args)
+        let container_command = rewrite_bundled_path_for_linux(&command)?;
+        let container_args = rewrite_container_args_for_linux(&args)?;
+        build_container_exec_command(&spec, &workdir, &env, &container_command, &container_args)
     } else {
         let mut cmd = Command::new(&command);
         cmd.args(&args);
@@ -2142,6 +2212,7 @@ async fn build_prompt_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn tool_completed_retains_started_preview_when_completed_omits_it() {
@@ -2196,6 +2267,142 @@ mod tests {
         let payload = &completed.events[0].payload_json;
         assert_eq!(payload.get("input_preview"), Some(&started_preview));
         assert_eq!(payload.get("rawInput"), Some(&started_preview));
+    }
+
+    #[test]
+    fn rewrite_bundled_path_for_linux_rewrites_provider_paths() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host = tmp
+            .path()
+            .join("bundles/providers/acp-crp-bridge/macos/aarch64/acp-crp-bridge");
+        let linux = tmp
+            .path()
+            .join("bundles/providers/acp-crp-bridge/linux/aarch64/acp-crp-bridge");
+        fs::create_dir_all(linux.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux, b"ok").expect("write");
+
+        let rewritten = rewrite_bundled_path_for_linux(host.to_string_lossy().as_ref())
+            .expect("rewrite should succeed");
+        assert_eq!(rewritten, linux.to_string_lossy());
+    }
+
+    #[test]
+    fn rewrite_container_args_for_linux_rewrites_nested_acp_command_paths() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host_provider = tmp
+            .path()
+            .join("bundles/providers/pi/macos/aarch64/pi-acp.js");
+        let linux_provider = tmp
+            .path()
+            .join("bundles/providers/pi/linux/aarch64/pi-acp.js");
+        let host_node = tmp
+            .path()
+            .join("bundles/runtimes/node/macos/aarch64/node-v1/bin/node");
+        let linux_node = tmp
+            .path()
+            .join("bundles/runtimes/node/linux/aarch64/node-v1/bin/node");
+        fs::create_dir_all(linux_provider.parent().expect("parent")).expect("mkdir");
+        fs::create_dir_all(linux_node.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux_provider, b"ok").expect("write");
+        fs::write(&linux_node, b"ok").expect("write");
+
+        let raw_acp = format!(
+            "{} {} --foo",
+            host_provider.to_string_lossy(),
+            host_node.to_string_lossy()
+        );
+        let args = vec!["--acp-command".to_string(), raw_acp];
+        let rewritten = rewrite_container_args_for_linux(&args).expect("rewrite args");
+        assert_eq!(rewritten.len(), 2);
+        let payload = &rewritten[1];
+        assert!(payload.contains(linux_provider.to_string_lossy().as_ref()));
+        assert!(payload.contains(linux_node.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn rewrite_container_args_for_linux_preserves_quoted_paths_with_spaces() {
+        let tmp = tempfile::Builder::new()
+            .prefix("ctx bundles with spaces ")
+            .tempdir()
+            .expect("tempdir");
+        let host_provider = tmp
+            .path()
+            .join("bundles/providers/pi/macos/aarch64/pi-acp.js");
+        let linux_provider = tmp
+            .path()
+            .join("bundles/providers/pi/linux/aarch64/pi-acp.js");
+        let host_node = tmp
+            .path()
+            .join("bundles/runtimes/node/macos/aarch64/node-v1/bin/node");
+        let linux_node = tmp
+            .path()
+            .join("bundles/runtimes/node/linux/aarch64/node-v1/bin/node");
+        fs::create_dir_all(linux_provider.parent().expect("parent")).expect("mkdir");
+        fs::create_dir_all(linux_node.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux_provider, b"ok").expect("write");
+        fs::write(&linux_node, b"ok").expect("write");
+
+        let raw_acp = shlex::try_join(
+            [
+                host_provider.to_string_lossy().to_string(),
+                host_node.to_string_lossy().to_string(),
+                "--flag".to_string(),
+            ]
+            .iter()
+            .map(String::as_str),
+        )
+        .expect("quote acp command");
+        let args = vec!["--acp-command".to_string(), raw_acp];
+        let rewritten = rewrite_container_args_for_linux(&args).expect("rewrite args");
+        assert_eq!(rewritten.len(), 2);
+        let parsed = shlex::split(&rewritten[1]).expect("parse rewritten command");
+        assert_eq!(
+            parsed,
+            vec![
+                linux_provider.to_string_lossy().to_string(),
+                linux_node.to_string_lossy().to_string(),
+                "--flag".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn rewrite_bundled_path_for_linux_errors_when_linux_target_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host = tmp
+            .path()
+            .join("bundles/providers/cursor/macos/aarch64/cursor-agent-acp.js");
+        fs::create_dir_all(host.parent().expect("parent")).expect("mkdir");
+        fs::write(&host, b"ok").expect("write");
+
+        let err = rewrite_bundled_path_for_linux(host.to_string_lossy().as_ref())
+            .expect_err("expected missing linux target error");
+        let msg = err.to_string();
+        assert!(msg.contains("missing linux bundled path"));
+    }
+
+    #[test]
+    fn rewrite_bundled_path_for_linux_ignores_managed_install_provider_paths() {
+        let path =
+            "/tmp/providers/agent-servers/cursor-agent-acp/node_modules/@scope/pkg/dist/bin/app.js";
+        let rewritten = rewrite_bundled_path_for_linux(path).expect("rewrite should succeed");
+        assert_eq!(rewritten, path);
+    }
+
+    #[test]
+    fn rewrite_bundled_path_for_linux_ignores_managed_install_runtime_paths() {
+        let path = "/tmp/runtimes/node/v24.12.0/bin/node";
+        let rewritten = rewrite_bundled_path_for_linux(path).expect("rewrite should succeed");
+        assert_eq!(rewritten, path);
+    }
+
+    #[test]
+    fn rewrite_container_args_for_linux_rejects_invalid_shell_command() {
+        let args = vec!["--acp-command".to_string(), "\"unterminated".to_string()];
+        let err = rewrite_container_args_for_linux(&args).expect_err("expected parse error");
+        assert!(err
+            .to_string()
+            .contains("invalid shell command in --acp-command"));
     }
 
     #[test]

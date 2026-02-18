@@ -133,6 +133,18 @@ const PROVIDERS: &[ProviderSpec] = &[
         fallback_args: &["--experimental-acp"],
         opencode_config: false,
     },
+    ProviderSpec {
+        id: "cursor",
+        fallback_cmd: "cursor-agent-acp",
+        fallback_args: &[],
+        opencode_config: false,
+    },
+    ProviderSpec {
+        id: "pi",
+        fallback_cmd: "pi-acp",
+        fallback_args: &[],
+        opencode_config: false,
+    },
 ];
 
 async fn run_git(root: &Path, args: &[&str]) {
@@ -551,6 +563,9 @@ fn provider_skip_reason(provider: ProviderSpec) -> Option<String> {
     if provider.id == "copilot" {
         return Some("requires GitHub Copilot login; not OpenRouter-compatible".to_string());
     }
+    if provider.id == "cursor" {
+        return Some("requires Cursor login/session; not OpenRouter-compatible".to_string());
+    }
     if provider.id == "kiro" {
         let allow = env_truthy("KIRO_TOKEN_TESTS");
         if !allow {
@@ -580,6 +595,14 @@ fn provider_skip_reason(provider: ProviderSpec) -> Option<String> {
         if !allow {
             return Some(
                 "cline-acp bundle missing deps (vscode/grpc-health-check/package.json); set CLINE_TOKEN_TESTS=1 to attempt".to_string(),
+            );
+        }
+    }
+    if provider.id == "pi" {
+        let allow = env_truthy("PI_TOKEN_TESTS");
+        if !allow {
+            return Some(
+                "pi ACP adapter requires explicit PI_TOKEN_TESTS=1 to attempt".to_string(),
             );
         }
     }

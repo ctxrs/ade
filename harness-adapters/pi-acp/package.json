@@ -1,0 +1,32 @@
+{
+  "name": "@ctx/pi-acp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ACP-compatible adapter for Pi coding agent via Pi RPC mode",
+  "main": "dist/index.js",
+  "bin": {
+    "pi-acp": "./dist/bin/pi-acp.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "npm run build && node dist/bin/pi-acp.js",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/__tests__/*.test.js"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "0.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.1",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

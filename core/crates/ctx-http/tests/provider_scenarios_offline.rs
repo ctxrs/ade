@@ -179,6 +179,8 @@ async fn provider_scenarios_offline_crp_fixtures() {
         // ACP bridge providers
         "gemini",
         "qwen",
+        "cursor",
+        "pi",
         "opencode",
         "mistral",
         "goose",

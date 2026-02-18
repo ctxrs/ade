@@ -39,6 +39,13 @@ case "$host_os_raw" in
   MINGW*|MSYS*|CYGWIN*|Windows_NT) host_os="windows";;
 esac
 
+host_arch_raw="$(uname -m 2>/dev/null || true)"
+host_arch="unknown"
+case "$host_arch_raw" in
+  x86_64|amd64) host_arch="x86_64";;
+  aarch64|arm64) host_arch="aarch64";;
+esac
+
 PYTHON_HOST_CMD=()
 if command -v python3 >/dev/null 2>&1; then
   PYTHON_HOST_CMD=(python3)
@@ -491,6 +498,7 @@ EOF
 local_adapter_dir() {
   case "${1:-}" in
     amp) printf '%s' "amp-acp" ;;
+    pi) printf '%s' "pi-acp" ;;
     droid) printf '%s' "droid-acp" ;;
     copilot) printf '%s' "copilot-cli-acp" ;;
     kiro) printf '%s' "kiro-acp" ;;
@@ -566,12 +574,42 @@ require_bridge_binary() {
     log "error: missing acp-crp-bridge source dir at $BRIDGE_DIR"
     exit 5
   fi
+
+  build_bridge_in_container() {
+    if ! ensure_docker_ready_for_builds "0" "acp-crp-bridge container build"; then
+      log "error: building acp-crp-bridge for ${os}/${arch} requires Docker on PATH and a healthy daemon."
+      log "       Ensure Docker Desktop (or Docker Engine) is running and retry."
+      exit 5
+    fi
+
+    local target_dir="${CARGO_TARGET_DIR:-$BRIDGE_DIR/target}"
+    mkdir -p "$target_dir"
+
+    local platform="linux/arm64"
+    if [[ "$arch" == "x86_64" ]]; then
+      platform="linux/amd64"
+    fi
+
+    local image="${CTX_BUNDLE_RUST_IMAGE:-rust:1}"
+    docker run --rm --platform "$platform" \
+      -v "$BRIDGE_DIR:/work:rw" \
+      -v "$target_dir:/target:rw" \
+      -w /work \
+      -e CARGO_TARGET_DIR=/target \
+      "$image" \
+      bash -c "set -euo pipefail; export PATH=\"/usr/local/cargo/bin:\$PATH\"; rustup target add '$rust_target' >/dev/null 2>&1 || true; cargo build --release --target '$rust_target'"
+  }
+
   local bridge_out
   bridge_out="$(local_bridge_binary_path)"
   if [[ ! -f "$bridge_out" ]]; then
     if is_truthy "$BUILD_LOCAL_BRIDGE" || is_truthy "$BUILD_LOCAL_ADAPTERS"; then
-      require_cmd cargo
-      (cd "$BRIDGE_DIR" && cargo build --release --target "$rust_target")
+      if [[ "$os" == "linux" && "$host_os" != "linux" ]]; then
+        build_bridge_in_container
+      else
+        require_cmd cargo
+        (cd "$BRIDGE_DIR" && cargo build --release --target "$rust_target")
+      fi
     fi
   fi
   if [[ ! -f "$bridge_out" ]]; then
@@ -586,23 +624,87 @@ local_adapter_amp_entrypoint() {
   printf '%s' "$LOCAL_ADAPTERS_DIR/$dir/dist/bin/amp-acp.js"
 }
 
+local_adapter_node_entrypoint() {
+  case "${1:-}" in
+    amp)
+      local_adapter_amp_entrypoint
+      ;;
+    pi)
+      local dir
+      dir="$(local_adapter_dir "pi")"
+      printf '%s' "$LOCAL_ADAPTERS_DIR/$dir/dist/bin/pi-acp.js"
+      ;;
+    *)
+      printf '%s' ""
+      ;;
+  esac
+}
+
+local_adapter_root_path() {
+  local provider_id="$1"
+  local dir
+  dir="$(local_adapter_dir "$provider_id")"
+  if [[ -z "$dir" ]]; then
+    return 1
+  fi
+  printf '%s' "$LOCAL_ADAPTERS_DIR/$dir"
+}
+
+copy_local_node_adapter_payload() {
+  local adapter_root="$1"
+  local dest_root="$2"
+  run_python - "$adapter_root" "$dest_root" <<'PY'
+import os
+import shutil
+import sys
+
+src = sys.argv[1]
+dst = sys.argv[2]
+
+if os.path.exists(dst):
+    shutil.rmtree(dst)
+
+ignored = {
+    ".git",
+    ".github",
+    "node_modules",
+    "target",
+    ".next",
+    ".turbo",
+    "coverage",
+}
+
+def ignore(_dir, names):
+    return [name for name in names if name in ignored]
+
+shutil.copytree(src, dst, ignore=ignore, symlinks=True)
+PY
+}
+
 build_local_adapters() {
   if [[ ! -d "$LOCAL_ADAPTERS_DIR" ]]; then
     log "error: local adapters dir missing: $LOCAL_ADAPTERS_DIR"
     exit 4
   fi
 
-  local amp_js
-  amp_js="$(local_adapter_amp_entrypoint)"
-  if [[ ! -f "$amp_js" ]]; then
-    local amp_dir
-    amp_dir="$(local_adapter_dir "amp")"
-    if [[ -d "$LOCAL_ADAPTERS_DIR/$amp_dir" ]]; then
-      require_cmd npm
-      (cd "$LOCAL_ADAPTERS_DIR/$amp_dir" && npm install)
-      (cd "$LOCAL_ADAPTERS_DIR/$amp_dir" && npm run build)
+  local node_adapter_id
+  for node_adapter_id in amp pi; do
+    if ! provider_selected_for_bundle "$node_adapter_id"; then
+      continue
     fi
-  fi
+    local entrypoint
+    entrypoint="$(local_adapter_node_entrypoint "$node_adapter_id")"
+    if [[ -z "$entrypoint" || -f "$entrypoint" ]]; then
+      continue
+    fi
+    local adapter_dir
+    adapter_dir="$(local_adapter_dir "$node_adapter_id")"
+    if [[ -d "$LOCAL_ADAPTERS_DIR/$adapter_dir" ]]; then
+      require_cmd npm
+      (cd "$LOCAL_ADAPTERS_DIR/$adapter_dir" && npm install)
+      (cd "$LOCAL_ADAPTERS_DIR/$adapter_dir" && npm run build)
+    fi
+  done
 
   local id
   for id in droid copilot kiro rovo cody; do
@@ -901,15 +1003,96 @@ ensure_venv_pip() {
 
 npm_install_bundle() {
   local install_dir="$1"
-  local package_spec="$2"
+  local package_spec="${2:-}"
+  local install_mode="${3:-package}"
   local cache_dir="$install_dir/.npm-cache"
   mkdir -p "$cache_dir"
 
+  local npm_node_bin="$node_bin"
+  local npm_cli_bin="$npm_cli"
+  local use_system_npm="0"
+  local ignore_scripts="false"
+  if [[ "$install_mode" == "project" ]]; then
+    ignore_scripts="true"
+  fi
+
+  if [[ "$os" != "$host_os" ]]; then
+    ignore_scripts="true"
+
+    # Cross-target npm providers are JS-only assets; install them using a host-compatible
+    # runtime while writing files into the target provider root.
+    local host_node_target=""
+    case "${host_os}/${host_arch}" in
+      linux/x86_64) host_node_target="linux-x64" ;;
+      linux/aarch64) host_node_target="linux-arm64" ;;
+      macos/x86_64) host_node_target="darwin-x64" ;;
+      macos/aarch64) host_node_target="darwin-arm64" ;;
+      windows/x86_64) host_node_target="win-x64" ;;
+      windows/aarch64) host_node_target="win-arm64" ;;
+    esac
+
+    if [[ -n "$host_node_target" ]]; then
+      local host_node_root_rel="runtimes/node/${host_os}/${host_arch}/node-v${NODE_VERSION}-${host_node_target}"
+      local host_node_root="$bundle_dir/$host_node_root_rel"
+      local host_node_bin_rel="bin/node"
+      local host_npm_cli_rel="lib/node_modules/npm/bin/npm-cli.js"
+      if [[ "$host_os" == "windows" ]]; then
+        host_node_bin_rel="node.exe"
+        host_npm_cli_rel="node_modules/npm/bin/npm-cli.js"
+      fi
+      local bundled_host_node_bin="$host_node_root/$host_node_bin_rel"
+      local bundled_host_npm_cli="$host_node_root/$host_npm_cli_rel"
+      if [[ -f "$bundled_host_node_bin" && -f "$bundled_host_npm_cli" ]]; then
+        npm_node_bin="$bundled_host_node_bin"
+        npm_cli_bin="$bundled_host_npm_cli"
+      else
+        use_system_npm="1"
+      fi
+    else
+      use_system_npm="1"
+    fi
+  fi
+
+  if [[ "$use_system_npm" == "1" ]]; then
+    require_cmd npm
+    if [[ "$install_mode" == "project" ]]; then
+      npm_config_update_notifier="false" \
+      npm_config_fund="false" \
+      npm_config_audit="false" \
+      npm_config_progress="false" \
+      npm_config_cache="$cache_dir" \
+      npm_config_ignore_scripts="$ignore_scripts" \
+      npm install --prefix "$install_dir" --omit=dev --no-audit --no-fund --silent
+    else
+      npm_config_update_notifier="false" \
+      npm_config_fund="false" \
+      npm_config_audit="false" \
+      npm_config_progress="false" \
+      npm_config_cache="$cache_dir" \
+      npm_config_ignore_scripts="$ignore_scripts" \
+      npm install --prefix "$install_dir" --no-audit --no-fund --silent "$package_spec"
+    fi
+    rm -rf "$cache_dir" || true
+    return
+  fi
+
   local node_bin_dir
-  node_bin_dir="$(dirname "$node_bin")"
+  node_bin_dir="$(dirname "$npm_node_bin")"
   local path_sep=":"
   if [[ "$os" == "windows" ]]; then
     path_sep=";"
+  fi
+  local install_args=(
+    install
+    --prefix "$install_dir"
+    --no-audit
+    --no-fund
+    --silent
+  )
+  if [[ "$install_mode" == "project" ]]; then
+    install_args+=(--omit=dev)
+  else
+    install_args+=("$package_spec")
   fi
 
   PATH="${node_bin_dir}${path_sep}${PATH:-}" \
@@ -918,15 +1101,90 @@ npm_install_bundle() {
   npm_config_audit="false" \
   npm_config_progress="false" \
   npm_config_cache="$cache_dir" \
-  "$node_bin" "$npm_cli" install --prefix "$install_dir" --no-audit --no-fund --silent "$package_spec"
+  npm_config_ignore_scripts="$ignore_scripts" \
+  "$npm_node_bin" "$npm_cli_bin" "${install_args[@]}"
+  rm -rf "$cache_dir" || true
 }
 
 skip_runtimes_raw="${CTX_BUNDLE_SKIP_RUNTIMES:-}"
 skip_images_raw="${CTX_BUNDLE_SKIP_IMAGES:-}"
+only_providers_raw="${CTX_BUNDLE_ONLY_PROVIDERS:-}"
+only_providers_raw="${only_providers_raw// /}"
+skip_providers_raw="${CTX_BUNDLE_SKIP_PROVIDERS:-}"
+skip_providers_raw="${skip_providers_raw// /}"
+
+provider_selected_for_bundle() {
+  local provider_id="$1"
+  if [[ -n "$only_providers_raw" ]]; then
+    if [[ ",$only_providers_raw," != *",$provider_id,"* ]]; then
+      return 1
+    fi
+  fi
+  if [[ -n "$skip_providers_raw" ]]; then
+    if [[ ",$skip_providers_raw," == *",$provider_id,"* ]]; then
+      return 1
+    fi
+  fi
+  return 0
+}
+
+runtime_need_node="1"
+runtime_need_python="1"
+if [[ "${CTX_BUNDLE_DEPENDENCY_AWARE_RUNTIMES:-1}" == "1" ]]; then
+  read -r runtime_need_node runtime_need_python < <(
+    run_python - "$MATRIX_JSON" "$only_providers_raw" "$skip_providers_raw" <<'PY'
+import json
+import sys
+
+matrix_path = sys.argv[1]
+only_raw = sys.argv[2]
+skip_raw = sys.argv[3]
+
+only = {v for v in only_raw.split(",") if v}
+skip = {v for v in skip_raw.split(",") if v}
+
+def include(provider_id: str) -> bool:
+    if only and provider_id not in only:
+        return False
+    if provider_id in skip:
+        return False
+    return True
+
+needs_node = False
+needs_python = False
+
+with open(matrix_path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+
+for provider in data.get("providers", []):
+    provider_id = provider.get("id", "")
+    if not provider_id or not include(provider_id):
+        continue
+    managed = provider.get("managed_install") or {}
+    kind = managed.get("kind")
+    if kind == "npm":
+        needs_node = True
+    elif kind == "python":
+        needs_python = True
+
+print("1" if needs_node else "0", "1" if needs_python else "0")
+PY
+  )
+fi
+
+if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
+  if provider_selected_for_bundle "amp" || provider_selected_for_bundle "pi"; then
+    runtime_need_node="1"
+  fi
+fi
 
 if ! is_truthy "$skip_runtimes_raw"; then
-  ensure_node_runtime
-  ensure_python_runtime
+  if [[ "$runtime_need_node" == "1" ]]; then
+    ensure_node_runtime
+  fi
+  if [[ "$runtime_need_python" == "1" ]]; then
+    ensure_python_runtime
+  fi
   ensure_podman_runtime
 fi
 if ! is_falsy "$INCLUDE_BRIDGE"; then
@@ -953,29 +1211,33 @@ python_root=""
 python_bin=""
 
 if ! is_truthy "$skip_runtimes_raw"; then
-  node_root_rel="runtimes/node/${os}/${arch}/node-v${NODE_VERSION}-${node_target}"
-  if [[ "$os" == "windows" ]]; then
-    node_bin_rel="node.exe"
-    npm_cli_rel="node_modules/npm/bin/npm-cli.js"
-  else
-    node_bin_rel="bin/node"
-    npm_cli_rel="lib/node_modules/npm/bin/npm-cli.js"
-  fi
-  node_root="$bundle_dir/$node_root_rel"
-  node_bin="$node_root/$node_bin_rel"
-  npm_cli="$node_root/$npm_cli_rel"
-
-  python_root_rel="runtimes/python/${os}/${arch}/cpython-${PYTHON_VERSION}+${PYTHON_BUILD_TAG}-${python_target}"
-  if [[ "$os" == "windows" ]]; then
-    python_bin_rel="python.exe"
-  else
-    python_bin_rel="bin/python3"
-    if [[ ! -f "$bundle_dir/$python_root_rel/$python_bin_rel" ]]; then
-      python_bin_rel="bin/python"
+  if [[ "$runtime_need_node" == "1" ]]; then
+    node_root_rel="runtimes/node/${os}/${arch}/node-v${NODE_VERSION}-${node_target}"
+    if [[ "$os" == "windows" ]]; then
+      node_bin_rel="node.exe"
+      npm_cli_rel="node_modules/npm/bin/npm-cli.js"
+    else
+      node_bin_rel="bin/node"
+      npm_cli_rel="lib/node_modules/npm/bin/npm-cli.js"
     fi
+    node_root="$bundle_dir/$node_root_rel"
+    node_bin="$node_root/$node_bin_rel"
+    npm_cli="$node_root/$npm_cli_rel"
   fi
-  python_root="$bundle_dir/$python_root_rel"
-  python_bin="$python_root/$python_bin_rel"
+
+  if [[ "$runtime_need_python" == "1" ]]; then
+    python_root_rel="runtimes/python/${os}/${arch}/cpython-${PYTHON_VERSION}+${PYTHON_BUILD_TAG}-${python_target}"
+    if [[ "$os" == "windows" ]]; then
+      python_bin_rel="python.exe"
+    else
+      python_bin_rel="bin/python3"
+      if [[ ! -f "$bundle_dir/$python_root_rel/$python_bin_rel" ]]; then
+        python_bin_rel="bin/python"
+      fi
+    fi
+    python_root="$bundle_dir/$python_root_rel"
+    python_bin="$python_root/$python_bin_rel"
+  fi
 fi
 
 podman_root_rel=""
@@ -1276,6 +1538,9 @@ if should_build_codex_crp; then
 fi
 
 for id in "${ACP_PROVIDER_IDS[@]}"; do
+  if ! provider_selected_for_bundle "$id"; then
+    continue
+  fi
   version="$(get_matrix_version "$id")"
   if [[ -z "$version" ]]; then
     version="local"
@@ -1291,7 +1556,10 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   fi
 
   adapter_version_override="${CTX_BUNDLE_ADAPTER_VERSION:-}"
-  for id in amp droid copilot kiro rovo cody; do
+  for id in amp pi droid copilot kiro rovo cody; do
+    if ! provider_selected_for_bundle "$id"; then
+      continue
+    fi
     version="$adapter_version_override"
     if [[ -z "$version" ]]; then
       version="$(get_matrix_version "$id")"
@@ -1300,12 +1568,27 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
       version="local"
     fi
 
-    if [[ "$id" == "amp" ]]; then
-      src="$(local_adapter_amp_entrypoint)"
+    if [[ "$id" == "amp" || "$id" == "pi" ]]; then
+      src="$(local_adapter_node_entrypoint "$id")"
+      if [[ ! -f "$src" ]]; then
+        dir="$(local_adapter_dir "$id")"
+        if [[ -n "$dir" && -d "$LOCAL_ADAPTERS_DIR/$dir" ]]; then
+          require_cmd npm
+          (cd "$LOCAL_ADAPTERS_DIR/$dir" && npm install)
+          (cd "$LOCAL_ADAPTERS_DIR/$dir" && npm run build)
+          src="$(local_adapter_node_entrypoint "$id")"
+        fi
+      fi
       if [[ -f "$src" ]]; then
-        add_local_provider "$id" "local-node" "$version" "$src" "amp-acp.js" "[]"
+        adapter_root="$(local_adapter_root_path "$id" || true)"
+        if [[ -n "$adapter_root" && "$src" == "$adapter_root/"* ]]; then
+          entrypoint_rel="${src#"$adapter_root/"}"
+          add_local_provider "$id" "local-node" "$version" "$adapter_root" "$entrypoint_rel" "[]"
+        else
+          add_local_provider "$id" "local-node" "$version" "$src" "$(basename "$src")" "[]"
+        fi
       elif [[ "$local_adapter_required" == "1" ]]; then
-        log "error: missing amp adapter entrypoint at $src"
+        log "error: missing local-node adapter entrypoint for $id at $src"
         exit 5
       fi
       continue
@@ -1347,10 +1630,6 @@ PY
 fi
 
 providers_out="$(mktemp /tmp/ctx-bundle-providers-out.XXXXXX)"
-only_providers_raw="${CTX_BUNDLE_ONLY_PROVIDERS:-}"
-only_providers_raw="${only_providers_raw// /}"
-skip_providers_raw="${CTX_BUNDLE_SKIP_PROVIDERS:-}"
-skip_providers_raw="${skip_providers_raw// /}"
 
 while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package entrypoint args_json; do
   if [[ -z "$provider_id" || -z "$kind" ]]; then
@@ -1401,10 +1680,33 @@ while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package 
       if [[ -z "$bin_path" ]]; then
         bin_path="$(basename "$url")"
       fi
-      mkdir -p "$provider_root"
+
+      if [[ -d "$url" ]]; then
+        src_entrypoint="$url/$bin_path"
+        if [[ ! -f "$src_entrypoint" ]]; then
+          log "error: local-node entrypoint missing for $provider_id: $src_entrypoint"
+          exit 5
+        fi
+        copy_local_node_adapter_payload "$url" "$provider_root"
+        if [[ -f "$provider_root/package.json" ]]; then
+          npm_install_bundle "$provider_root" "" "project"
+        fi
+      else
+        mkdir -p "$provider_root"
+        dest="$provider_root/$bin_path"
+        mkdir -p "$(dirname "$dest")"
+        cp "$url" "$dest"
+      fi
+
       dest="$provider_root/$bin_path"
-      mkdir -p "$(dirname "$dest")"
-      cp "$url" "$dest"
+      if [[ ! -f "$dest" ]]; then
+        log "error: bundled local-node entrypoint missing for $provider_id: $dest"
+        exit 5
+      fi
+      if [[ -z "$node_bin" || ! -f "$node_bin" ]]; then
+        log "error: local-node provider $provider_id requires bundled node runtime"
+        exit 5
+      fi
       echo "$version" > "$version_marker"
       command_path="$node_bin"
       entrypoint_rel="${dest#"$bundle_dir/"}"
@@ -1507,6 +1809,10 @@ PY
         fi
         echo "$version" > "$version_marker"
       fi
+      if [[ -z "$node_bin" || ! -f "$node_bin" ]]; then
+        log "error: npm provider $provider_id requires bundled node runtime"
+        exit 5
+      fi
 
       command_path="$node_bin"
       entrypoint_rel="${entrypoint_path#"$bundle_dir/"}"
@@ -1541,6 +1847,10 @@ PY
 
       if [[ ! -d "$provider_root" ]]; then
         mkdir -p "$provider_root"
+        if [[ -z "$python_bin" || ! -f "$python_bin" ]]; then
+          log "error: python provider $provider_id requires bundled python runtime"
+          exit 5
+        fi
         "$python_bin" -m venv "$venv_dir"
         venv_python="$(venv_exe "$venv_dir" "python")"
         ensure_venv_pip "$venv_python"
@@ -1614,15 +1924,16 @@ runtimes_out="$(mktemp /tmp/ctx-bundle-runtimes-out.XXXXXX)"
 images_out="$(mktemp /tmp/ctx-bundle-images-out.XXXXXX)"
 
 if ! is_truthy "$skip_runtimes_raw"; then
-  node_sha="$(sha256_file "$node_bin")"
-  NODE_VERSION_ENV="$NODE_VERSION" \
-  NODE_OS_ENV="$os" \
-  NODE_ARCH_ENV="$arch" \
-  NODE_SHA_ENV="$node_sha" \
-  NODE_ROOT_REL_ENV="$node_root_rel" \
-  NODE_BIN_REL_ENV="$node_bin_rel" \
-  NODE_NPM_REL_ENV="$npm_cli_rel" \
-  run_python - <<'PY' >> "$runtimes_out"
+  if [[ "$runtime_need_node" == "1" ]]; then
+    node_sha="$(sha256_file "$node_bin")"
+    NODE_VERSION_ENV="$NODE_VERSION" \
+    NODE_OS_ENV="$os" \
+    NODE_ARCH_ENV="$arch" \
+    NODE_SHA_ENV="$node_sha" \
+    NODE_ROOT_REL_ENV="$node_root_rel" \
+    NODE_BIN_REL_ENV="$node_bin_rel" \
+    NODE_NPM_REL_ENV="$npm_cli_rel" \
+    run_python - <<'PY' >> "$runtimes_out"
 import json
 import os
 
@@ -1638,15 +1949,17 @@ entry = {
 }
 print(json.dumps(entry, separators=(",", ":")))
 PY
+  fi
 
-  python_sha="$(sha256_file "$python_bin")"
-  PYTHON_VERSION_ENV="$PYTHON_VERSION" \
-  PYTHON_OS_ENV="$os" \
-  PYTHON_ARCH_ENV="$arch" \
-  PYTHON_SHA_ENV="$python_sha" \
-  PYTHON_ROOT_REL_ENV="$python_root_rel" \
-  PYTHON_BIN_REL_ENV="$python_bin_rel" \
-  run_python - <<'PY' >> "$runtimes_out"
+  if [[ "$runtime_need_python" == "1" ]]; then
+    python_sha="$(sha256_file "$python_bin")"
+    PYTHON_VERSION_ENV="$PYTHON_VERSION" \
+    PYTHON_OS_ENV="$os" \
+    PYTHON_ARCH_ENV="$arch" \
+    PYTHON_SHA_ENV="$python_sha" \
+    PYTHON_ROOT_REL_ENV="$python_root_rel" \
+    PYTHON_BIN_REL_ENV="$python_bin_rel" \
+    run_python - <<'PY' >> "$runtimes_out"
 import json
 import os
 
@@ -1661,6 +1974,7 @@ entry = {
 }
 print(json.dumps(entry, separators=(",", ":")))
 PY
+  fi
 
   if [[ "${CTX_BUNDLE_PODMAN:-0}" == "1" ]]; then
     if [[ ! -f "$podman_bin" ]]; then

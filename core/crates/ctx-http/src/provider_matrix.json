@@ -90,6 +90,33 @@
           "notes": "Release pending for managed installs"
         }
       ]
+    },
+    {
+      "id": "cursor",
+      "display_name": "Cursor",
+      "tier": "tier2",
+      "command": {
+        "command": "cursor-agent-acp",
+        "args": []
+      },
+      "managed_install": {
+        "kind": "npm",
+        "package": "@blowmage/cursor-agent-acp",
+        "entrypoint": "node_modules/@blowmage/cursor-agent-acp/dist/bin/cursor-agent-acp.js",
+        "args": []
+      },
+      "version_probe": {
+        "kind": "node_package",
+        "package": "@blowmage/cursor-agent-acp"
+      },
+      "releases": [
+        {
+          "version": "0.7.1",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Third-party ACP adapter for Cursor CLI"
+        }
+      ]
     }
   ]
 }

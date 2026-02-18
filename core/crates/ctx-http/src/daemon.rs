@@ -562,6 +562,8 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     let acp_provider_ids = vec![
         "gemini",
         "qwen",
+        "cursor",
+        "pi",
         "opencode",
         "mistral",
         "goose",

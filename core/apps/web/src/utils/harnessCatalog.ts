@@ -39,6 +39,7 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "codex", label: "Codex", logoSrc: codexLogo, invertInDark: true },
   { id: "qwen", label: "Qwen Code", logoSrc: qwenLogo },
   { id: "cursor", label: "Cursor", logoSrc: cursorLogo, invertInDark: true },
+  { id: "pi", label: "Pi", logoSrc: codexLogo, invertInDark: true },
   { id: "amp", label: "Amp", logoSrc: ampLogo },
   { id: "droid", label: "Droid", logoSrc: droidLogo, invertInDark: true },
   { id: "gemini", label: "Gemini", logoSrc: geminiLogo },

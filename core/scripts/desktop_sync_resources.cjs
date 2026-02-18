@@ -210,11 +210,11 @@ const syncBundles = () => {
         CTX_BUNDLE_APPEND: "1",
         CTX_BUNDLE_OS: "linux",
         CTX_BUNDLE_ARCH: target.arch,
-        CTX_BUNDLE_ONLY_PROVIDERS: "codex",
-        CTX_BUNDLE_SKIP_RUNTIMES: "1",
+        CTX_BUNDLE_ONLY_PROVIDERS: "codex,acp-crp-bridge,cursor,pi",
+        CTX_BUNDLE_SKIP_RUNTIMES: "0",
         CTX_BUNDLE_SKIP_IMAGES: "1",
-        CTX_BUNDLE_INCLUDE_BRIDGE: "0",
-        CTX_BUNDLE_LOCAL_ADAPTERS: "off",
+        CTX_BUNDLE_INCLUDE_BRIDGE: "1",
+        CTX_BUNDLE_LOCAL_ADAPTERS: "auto",
         CTX_BUNDLE_BUILD_LOCAL_ADAPTERS: "0",
         CTX_BUNDLE_HARNESS_IMAGE: "0",
         CTX_BUNDLE_PODMAN: "0",
@@ -236,6 +236,18 @@ const syncBundles = () => {
       }
     }
     assertBundledProviderTargets(destBundleDir, "codex", [
+      { os: "linux", arch: "aarch64" },
+      { os: "linux", arch: "x86_64" },
+    ]);
+    assertBundledProviderTargets(destBundleDir, "acp-crp-bridge", [
+      { os: "linux", arch: "aarch64" },
+      { os: "linux", arch: "x86_64" },
+    ]);
+    assertBundledProviderTargets(destBundleDir, "cursor", [
+      { os: "linux", arch: "aarch64" },
+      { os: "linux", arch: "x86_64" },
+    ]);
+    assertBundledProviderTargets(destBundleDir, "pi", [
       { os: "linux", arch: "aarch64" },
       { os: "linux", arch: "x86_64" },
     ]);
