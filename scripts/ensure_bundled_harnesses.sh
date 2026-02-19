@@ -570,7 +570,7 @@ prepare_claude_crp_workspace() {
     cd "$CLAUDE_CRP_WORKSPACE"
     pnpm install --frozen-lockfile
     pnpm build
-  )
+  ) >&2
   if [[ ! -f "$entry" || ! -f "$dist" ]]; then
     log "error: claude-crp build did not produce expected assets at $CLAUDE_CRP_WORKSPACE"
     exit 5
