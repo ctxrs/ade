@@ -100,11 +100,18 @@ import {
 } from "../state/workspaceActiveSnapshotStore";
 import { useDaemonBaseUrl } from "../api/useDaemonConnection";
 import { useEnsureArchivedLoaded } from "../state/useEnsureArchivedLoaded";
+import { hasConfiguredHarnessAuth } from "../utils/providerAuthStatus";
+import { HarnessAuthenticationSection } from "./settings/sections/HarnessAuthenticationSection";
 import { TaskRow } from "./WorkbenchPage.taskRow";
 import { TASK_LIST_COMPONENTS } from "./WorkbenchPage.taskList";
 import { WorkbenchSessionSlot } from "./WorkbenchPage.sessionSlot";
 import { useWorkbenchDragDropAttachments } from "./workbenchShell/useWorkbenchDragDropAttachments";
 import { getDiffSummaryStats, isDiffSummaryTooLarge } from "./workbenchShell/useWorkbenchDiffPane";
+import {
+  collectSelectableHarnessProviderIds,
+  getHarnessMruStorageKey,
+  resolveInitialHarnessSelection,
+} from "./workbenchShell/harnessSelection";
 import { useWorkbenchOptimisticTasks } from "./workbenchShell/useWorkbenchOptimisticTasks";
 import { useWorkbenchProviders } from "./workbenchShell/useWorkbenchProviders";
 import { WorkbenchSessionHeader } from "./workbenchShell/WorkbenchSessionHeader";
@@ -251,13 +258,14 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     [workbenchStore],
   );
 
-  const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
-    { key: "t1", label: "", providerId: "codex", modelId: "" },
-  ]);
+  const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([]);
   const [startBusy, setStartBusy] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [useMultipleAgents, setUseMultipleAgents] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
+  const [harnessAuthModalProviderId, setHarnessAuthModalProviderId] = useState<string | null>(null);
+  const [pendingHarnessSelectionProviderId, setPendingHarnessSelectionProviderId] = useState<string | null>(null);
+  const prefetchedProviderOptionsRef = useRef<Set<string>>(new Set());
 
   const {
     dictationRecording,
@@ -293,6 +301,37 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setDraftTracks,
     onStartError: setStartError,
   });
+
+  const selectableHarnessProviderIds = useMemo(
+    () => collectSelectableHarnessProviderIds(providersById),
+    [providersById],
+  );
+
+  const setSingleDraftHarness = useCallback((providerId: string) => {
+    setDraftTracks([{ key: `t${Date.now()}`, label: "", providerId, modelId: "" }]);
+  }, []);
+
+  const requestHarnessAuthFromComposer = useCallback((providerId: string) => {
+    setPendingHarnessSelectionProviderId(providerId);
+    setHarnessAuthModalProviderId(providerId);
+  }, []);
+
+  const onComposerHarnessAuthModalClosed = useCallback(
+    (providerId: string | null) => {
+      setHarnessAuthModalProviderId(null);
+      if (!providerId) return;
+      if (pendingHarnessSelectionProviderId !== providerId) return;
+      setPendingHarnessSelectionProviderId(null);
+      void ensureProviderOptions(providerId, { force: true })
+        .then((opts) => {
+          const resolved = opts ?? providerOptions[providerId];
+          if (!hasConfiguredHarnessAuth(providerId, resolved)) return;
+          setSingleDraftHarness(providerId);
+        })
+        .catch(() => {});
+    },
+    [ensureProviderOptions, pendingHarnessSelectionProviderId, providerOptions, setSingleDraftHarness],
+  );
 
   const { dropActive } = useWorkbenchDragDropAttachments({
     scopeRef: newComposerRef,
@@ -515,6 +554,70 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (draftTracks.length <= 1) return;
     setDraftTracks((prev) => (prev.length > 0 ? [prev[0]] : prev));
   }, [useMultipleAgents, draftTracks.length]);
+
+  useEffect(() => {
+    if (activeTaskId) return;
+    for (const providerId of selectableHarnessProviderIds) {
+      if (providerOptions[providerId]) continue;
+      if (prefetchedProviderOptionsRef.current.has(providerId)) continue;
+      prefetchedProviderOptionsRef.current.add(providerId);
+      ensureProviderOptions(providerId).catch(() => {});
+    }
+  }, [activeTaskId, ensureProviderOptions, providerOptions, selectableHarnessProviderIds]);
+
+  useEffect(() => {
+    prefetchedProviderOptionsRef.current.clear();
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (activeTaskId) return;
+    if (!workspaceId) return;
+    if (draftTracks.length > 0) return;
+    if (selectableHarnessProviderIds.length === 0) return;
+
+    let mruProviderId: string | null = null;
+    try {
+      mruProviderId = localStorage.getItem(getHarnessMruStorageKey(workspaceId));
+    } catch {
+      // ignore
+    }
+
+    const selectedProviderId = resolveInitialHarnessSelection({
+      providerIds: selectableHarnessProviderIds,
+      providerOptions,
+      mruProviderId,
+    });
+    if (!selectedProviderId) return;
+
+    setSingleDraftHarness(selectedProviderId);
+  }, [
+    activeTaskId,
+    draftTracks.length,
+    providerOptions,
+    selectableHarnessProviderIds,
+    setSingleDraftHarness,
+    workspaceId,
+  ]);
+
+  const selectedDraftProviderId = draftTracks[0]?.providerId ?? null;
+
+  useEffect(() => {
+    if (activeTaskId) return;
+    if (!workspaceId) return;
+    if (!selectedDraftProviderId) return;
+    if (!hasConfiguredHarnessAuth(selectedDraftProviderId, providerOptions[selectedDraftProviderId])) return;
+    try {
+      localStorage.setItem(getHarnessMruStorageKey(workspaceId), selectedDraftProviderId);
+    } catch {
+      // ignore
+    }
+  }, [activeTaskId, providerOptions, selectedDraftProviderId, workspaceId]);
+
+  useEffect(() => {
+    if (!activeTaskId) return;
+    setHarnessAuthModalProviderId(null);
+    setPendingHarnessSelectionProviderId(null);
+  }, [activeTaskId]);
 
 
   const ensureActiveSessionSelection = useCallback(
@@ -1904,6 +2007,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const startBlockedReason = useMemo(() => {
     if (draftPrompt.trim().length === 0) return "Enter a prompt to start.";
     if (startBusy) return "Starting…";
+    if (draftTracks.length === 0) return "Select a harness to start.";
     const missing = draftTracks.find(
       (t) => !(providersById[t.providerId]?.installed === true && providersById[t.providerId]?.health === "ok"),
     );
@@ -1931,9 +2035,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const nowIso = new Date().toISOString();
     const title = deriveTaskTitle(prompt);
     const attachmentsToSend = draftAttachments.slice();
-    const toStart =
-      draftTracks.length > 0 ? draftTracks : [{ key: "t1", label: "", providerId: "codex", modelId: "" }];
+    const toStart = draftTracks;
     const primaryTrack = toStart[0];
+    if (!primaryTrack) {
+      setStartBusy(false);
+      setStartError("Select a harness to start.");
+      return;
+    }
     const optimisticTaskId = randomUuid();
     const optimisticSessionId = randomUuid();
     const optimisticMessageId = randomUuid();
@@ -2954,6 +3062,16 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
       <UpdateNoticeBanner />
 
+      {!activeTaskId ? (
+        <HarnessAuthenticationSection
+          workspaceId={workspaceId}
+          active={true}
+          modalOnly
+          openProviderId={harnessAuthModalProviderId}
+          onModalClosed={onComposerHarnessAuthModalClosed}
+        />
+      ) : null}
+
       {workbenchSnap.warnings.length > 0 && (
         <div className="banner" style={{ margin: "8px 12px 0" }}>
           {workbenchSnap.warnings[0]}
@@ -3070,6 +3188,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 installAllBusy={installAllBusy}
                 providerOptions={providerOptions}
                 ensureProviderOptions={ensureProviderOptions}
+                onRequestHarnessAuth={requestHarnessAuthFromComposer}
                 draftTracks={draftTracks}
                 setDraftTracks={setDraftTracks}
                 defaultProviderId={defaultProviderId}

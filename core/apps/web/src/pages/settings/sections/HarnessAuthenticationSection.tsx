@@ -135,6 +135,7 @@ export function HarnessAuthenticationSection({
   useEffect(() => {
     if (!active) return;
     if (!openProviderId) return;
+    if (!harnessAuthModal && openProviderId === lastModalProviderIdRef.current) return;
     if (openProviderId === suppressReopenProviderIdRef.current) return;
     if (harnessAuthModal?.provider_id === openProviderId) return;
     openHarnessAuthModal(openProviderId);
