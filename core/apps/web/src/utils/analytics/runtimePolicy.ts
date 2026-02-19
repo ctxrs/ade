@@ -9,5 +9,5 @@ export const computeAnalyticsCaptureEnabled = (input: CapturePolicyInput): boole
   if (!input.settingsLoaded) return false;
   if (!input.telemetryEnabled) return false;
   if (!input.isDev) return true;
-  return String(input.devCaptureFlag ?? "") === "1";
+  return String(input.devCaptureFlag ?? "") !== "0";
 };

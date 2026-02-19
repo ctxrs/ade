@@ -12,9 +12,14 @@ describe("resolveAnalyticsEnvironment", () => {
     expect(resolveAnalyticsEnvironment(undefined, "prod")).toBe("production");
   });
 
+  it("forces staging when running in development mode", () => {
+    expect(resolveAnalyticsEnvironment(undefined, "development")).toBe("staging");
+    expect(resolveAnalyticsEnvironment("production", "development")).toBe("staging");
+    expect(resolveAnalyticsEnvironment(undefined, "dev")).toBe("staging");
+  });
+
   it("defaults unknown modes to staging", () => {
     expect(resolveAnalyticsEnvironment(undefined, "staging")).toBe("staging");
-    expect(resolveAnalyticsEnvironment(undefined, "development")).toBe("staging");
     expect(resolveAnalyticsEnvironment(undefined, "preview")).toBe("staging");
   });
 });

@@ -24,7 +24,7 @@ describe("computeAnalyticsCaptureEnabled", () => {
     ).toBe(false);
   });
 
-  it("requires explicit dev override when running in dev", () => {
+  it("defaults enabled in dev and supports explicit disable override", () => {
     expect(
       computeAnalyticsCaptureEnabled({
         settingsLoaded: true,
@@ -32,14 +32,14 @@ describe("computeAnalyticsCaptureEnabled", () => {
         isDev: true,
         devCaptureFlag: undefined,
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       computeAnalyticsCaptureEnabled({
         settingsLoaded: true,
         telemetryEnabled: true,
         isDev: true,
-        devCaptureFlag: "1",
+        devCaptureFlag: "0",
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 });

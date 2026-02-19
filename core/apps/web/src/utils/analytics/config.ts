@@ -18,10 +18,11 @@ export const resolveAnalyticsEnvironment = (
   explicitEnv: string | undefined,
   mode: string | undefined,
 ): AnalyticsEnvironment => {
+  const normalizedMode = String(mode ?? "").trim().toLowerCase();
+  if (normalizedMode === "development" || normalizedMode === "dev") return "staging";
   const env = readTrimmed(explicitEnv)?.toLowerCase();
   if (env === "production") return "production";
   if (env === "staging") return "staging";
-  const normalizedMode = String(mode ?? "").trim().toLowerCase();
   if (normalizedMode === "production" || normalizedMode === "prod") return "production";
   return "staging";
 };
