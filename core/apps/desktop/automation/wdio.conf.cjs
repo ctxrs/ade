@@ -48,6 +48,12 @@ const SKIP_APP_BUILD = ["1", "true", "yes"].includes(
   String(process.env.CTX_AUTOMATION_SKIP_APP_BUILD || "0").trim().toLowerCase(),
 );
 const REMOTE_CTX_BIN = String(process.env.CTX_AUTOMATION_REMOTE_CTX_BIN || "").trim();
+const REMOTE_SSH_KEY_PATH = String(
+  process.env.CTX_AUTOMATION_REMOTE_SSH_KEY_PATH || process.env.CTX_UPDATER_E2E_SSH_KEY_PATH || "",
+).trim();
+const SKIP_REMOTE_CTX_PROVISION = ["1", "true", "yes"].includes(
+  String(process.env.CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION || "0").trim().toLowerCase(),
+);
 const WDIO_LOG_LEVEL = String(process.env.CTX_AUTOMATION_WDIO_LOG_LEVEL || "info").trim() || "info";
 const parsePositiveInt = (raw, fallback) => {
   const n = Number.parseInt(String(raw ?? ""), 10);
@@ -185,6 +191,7 @@ const resolveSshTarget = ({ host, user }) => {
 const runSshCommand = ({ host, user, password, command }) => {
   const target = resolveSshTarget({ host, user });
   const sshArgs = [
+    ...(REMOTE_SSH_KEY_PATH ? ["-F", "/dev/null", "-i", REMOTE_SSH_KEY_PATH, "-o", "IdentitiesOnly=yes"] : []),
     "-o", "StrictHostKeyChecking=no",
     "-o", "ConnectTimeout=15",
     "-o", "ServerAliveInterval=15",
@@ -204,6 +211,7 @@ const runSshCommand = ({ host, user, password, command }) => {
 const runScpCommand = ({ host, user, password, localPath, remotePath }) => {
   const target = resolveSshTarget({ host, user });
   const scpArgs = [
+    ...(REMOTE_SSH_KEY_PATH ? ["-F", "/dev/null", "-i", REMOTE_SSH_KEY_PATH, "-o", "IdentitiesOnly=yes"] : []),
     "-o", "StrictHostKeyChecking=no",
     "-o", "ConnectTimeout=15",
     "-o", "ServerAliveInterval=15",
@@ -510,7 +518,7 @@ exports.config = {
       `[wdio] CTX_DESKTOP_SSH_NO_START_REMOTE=${String(process.env.CTX_DESKTOP_SSH_NO_START_REMOTE || "<unset>")} CTX_DESKTOP_SSH_START_REMOTE=${String(process.env.CTX_DESKTOP_SSH_START_REMOTE || "<unset>")}`,
     );
     if (REMOTE_CTX_BIN) {
-      if (!SSH_NO_START_REMOTE) {
+      if (!SSH_NO_START_REMOTE && !SKIP_REMOTE_CTX_PROVISION) {
         const targets = [];
         if (process.env.CTX_AUTOMATION_REMOTE_HOST) {
           targets.push({

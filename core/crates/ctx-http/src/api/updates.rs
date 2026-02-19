@@ -64,7 +64,10 @@ pub(super) async fn check_updates(
     }))
 }
 
-fn platform_supported(manifest: &crate::updates::ReleaseManifest, platform_key: Option<&str>) -> bool {
+fn platform_supported(
+    manifest: &crate::updates::ReleaseManifest,
+    platform_key: Option<&str>,
+) -> bool {
     let Some(platform_key) = platform_key else {
         return false;
     };
@@ -74,7 +77,11 @@ fn platform_supported(manifest: &crate::updates::ReleaseManifest, platform_key: 
     entry.preferred_desktop_artifact(platform_key).is_some()
 }
 
-fn is_update_available(current_version: &str, latest_version: &str, platform_supported: bool) -> bool {
+fn is_update_available(
+    current_version: &str,
+    latest_version: &str,
+    platform_supported: bool,
+) -> bool {
     if !platform_supported {
         return false;
     }
