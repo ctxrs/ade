@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { createWorkspace, idToString, listProviders, listWorkspaces, ProviderStatus, Workspace } from "../api/client";
 import { errorMessage } from "../utils/errorMessage";
 import UpdateNoticeBanner from "../components/UpdateNoticeBanner";
+import { desktopGetConnection, isDesktopApp } from "../utils/desktop";
 
 export default function WorkspacesPage() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -21,11 +22,22 @@ export default function WorkspacesPage() {
     listProviders().then(setProviders).catch(() => {});
   }, []);
 
+  const resolveWorkspaceKind = async (): Promise<"local" | "remote"> => {
+    if (!isDesktopApp()) return "local";
+    try {
+      const connection = await desktopGetConnection();
+      return connection.kind === "ssh" ? "remote" : "local";
+    } catch {
+      return "local";
+    }
+  };
+
   const onCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     try {
-      await createWorkspace(rootPath, name || undefined);
+      const workspaceKind = await resolveWorkspaceKind();
+      await createWorkspace(rootPath, name || undefined, workspaceKind);
       setRootPath("");
       setName("");
       refresh();

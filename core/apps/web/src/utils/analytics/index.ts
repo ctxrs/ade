@@ -23,6 +23,19 @@ export {
   trackEntitlementActivated,
   trackFeatureGateEvaluated,
   trackExperimentExposure,
+  trackRuntimeErrorObserved,
+  trackSessionLoadFatalObserved,
+  trackApiErrorObserved,
 } from "./events";
 
 export { sanitizeAnalyticsProperties } from "./schema";
+
+export {
+  normalizeDownloadAttributionId,
+  createDownloadAttributionId,
+  appendDownloadAttributionIdToUrl,
+  setPendingDownloadAttributionId,
+  getPendingDownloadAttributionId,
+  clearPendingDownloadAttributionId,
+  consumePendingDownloadAttributionId,
+} from "./downloadAttribution";

@@ -19,8 +19,10 @@ const capture = (eventName: string, properties: AnalyticsProperties): boolean =>
   return captureProductEvent(eventName, 1, properties);
 };
 
-export const trackAppOpened = (): void => {
-  capture("app_opened", {});
+export const trackAppOpened = (props?: { downloadId?: string }): void => {
+  capture("app_opened", {
+    ...(props?.downloadId ? { download_id: props.downloadId } : {}),
+  });
 };
 
 export const trackWorkspaceCreated = (workspaceKind: "local" | "remote"): void => {
@@ -135,5 +137,43 @@ export const trackExperimentExposure = (props: {
     experiment_key: props.experimentKey,
     variant: props.variant,
     assignment_unit: props.assignmentUnit,
+  });
+};
+
+export const trackRuntimeErrorObserved = (props: {
+  errorKey: string;
+  severity: "warning" | "error";
+  signature: string;
+}): void => {
+  capture("runtime_error_observed", {
+    error_key: props.errorKey,
+    severity: props.severity,
+    error_signature: props.signature,
+  });
+};
+
+export const trackSessionLoadFatalObserved = (props: {
+  mode: string;
+  signature: string;
+}): void => {
+  capture("session_load_fatal_observed", {
+    mode: props.mode,
+    error_signature: props.signature,
+  });
+};
+
+export const trackApiErrorObserved = (props: {
+  errorKey: string;
+  endpoint: string;
+  method: string;
+  statusFamily: "2xx" | "3xx" | "4xx" | "5xx" | "none";
+  signature: string;
+}): void => {
+  capture("api_error_observed", {
+    error_key: props.errorKey,
+    api_endpoint: props.endpoint,
+    method: props.method,
+    status_family: props.statusFamily,
+    error_signature: props.signature,
   });
 };

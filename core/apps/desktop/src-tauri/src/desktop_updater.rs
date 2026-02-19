@@ -28,6 +28,8 @@ pub(super) struct DesktopAppUpdateApplyReq {
     confirm: bool,
     #[serde(default)]
     channel: Option<String>,
+    #[serde(default)]
+    download_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -104,12 +106,12 @@ pub(super) async fn desktop_apply_app_update(
         return Err("confirm required".to_string());
     }
     let channel = desktop_ssh::normalize_update_channel(req.channel.as_deref())?;
+    let download_id = normalize_download_id(req.download_id.as_deref());
     let config = resolve_native_updater_config(&channel)?;
     let pubkey = config.pubkey.as_deref().ok_or_else(|| {
         "native updater is not configured (missing CTX_DESKTOP_UPDATER_PUBKEY)".to_string()
     })?;
-    let endpoint_url =
-        Url::parse(&config.endpoint).map_err(|e| format!("invalid update endpoint: {e}"))?;
+    let endpoint_url = endpoint_with_download_id(&config.endpoint, download_id.as_deref())?;
     let updater = app
         .updater_builder()
         .target(config.target.clone())
@@ -139,6 +141,30 @@ pub(super) async fn desktop_apply_app_update(
         latest_version: Some(latest_version),
         message: "Desktop update installed. Relaunch the app to complete the update.".to_string(),
     })
+}
+
+fn normalize_download_id(raw: Option<&str>) -> Option<String> {
+    let candidate = raw?.trim();
+    if candidate.is_empty() || candidate.len() > 64 {
+        return None;
+    }
+    if !candidate
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | ':'))
+    {
+        return None;
+    }
+    Some(candidate.to_string())
+}
+
+fn endpoint_with_download_id(endpoint: &str, download_id: Option<&str>) -> Result<Url, String> {
+    let mut parsed = Url::parse(endpoint).map_err(|e| format!("invalid update endpoint: {e}"))?;
+    if let Some(download_id) = download_id {
+        parsed
+            .query_pairs_mut()
+            .append_pair("ctx_download_id", download_id);
+    }
+    Ok(parsed)
 }
 
 fn resolve_native_updater_config(channel: &str) -> Result<DesktopNativeUpdaterConfig, String> {
@@ -226,5 +252,24 @@ mod tests {
             cfg,
             "https://example.test/releases/rc-2026.02.17/latest-tauri.json"
         );
+    }
+
+    #[test]
+    fn endpoint_with_download_id_appends_query_param() {
+        let url = endpoint_with_download_id(
+            "https://example.test/releases/stable/latest-tauri.json",
+            Some("abc-123"),
+        )
+        .expect("endpoint should parse");
+        assert_eq!(
+            url.as_str(),
+            "https://example.test/releases/stable/latest-tauri.json?ctx_download_id=abc-123"
+        );
+    }
+
+    #[test]
+    fn normalize_download_id_rejects_invalid_chars() {
+        let value = normalize_download_id(Some("abc def"));
+        assert!(value.is_none());
     }
 }

@@ -28,7 +28,13 @@ import {
   openExternalLink,
   type DesktopPlatform,
 } from "./utils/desktop";
-import { initAnalytics, setAnalyticsEnabled, trackAppOpened } from "./utils/analytics";
+import {
+  consumePendingDownloadAttributionId,
+  getPendingDownloadAttributionId,
+  initAnalytics,
+  setAnalyticsEnabled,
+  trackAppOpened,
+} from "./utils/analytics";
 import { computeAnalyticsCaptureEnabled } from "./utils/analytics/runtimePolicy";
 import { useThemeVariant } from "./utils/theme";
 import {
@@ -323,6 +329,7 @@ function AnalyticsSettingsBridge() {
   const appOpenedSentRef = useRef(false);
 
   useEffect(() => {
+    let cancelled = false;
     const enabled = computeAnalyticsCaptureEnabled({
       settingsLoaded: snapshot.loaded,
       telemetryEnabled: snapshot.settings?.telemetry?.enabled ?? true,
@@ -331,9 +338,25 @@ function AnalyticsSettingsBridge() {
     });
     setAnalyticsEnabled(enabled);
     if (!appOpenedSentRef.current && enabled) {
-      appOpenedSentRef.current = true;
-      trackAppOpened();
+      void (async () => {
+        let downloadId: string | null = null;
+        try {
+          downloadId = await getPendingDownloadAttributionId();
+        } catch {
+          downloadId = null;
+        }
+        if (cancelled) return;
+        if (appOpenedSentRef.current) return;
+        appOpenedSentRef.current = true;
+        trackAppOpened(downloadId ? { downloadId } : undefined);
+        if (downloadId) {
+          void consumePendingDownloadAttributionId().catch(() => {});
+        }
+      })();
     }
+    return () => {
+      cancelled = true;
+    };
   }, [snapshot.loaded, snapshot.settings?.telemetry?.enabled]);
 
   return null;

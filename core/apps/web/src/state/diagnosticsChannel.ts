@@ -1,3 +1,9 @@
+import {
+  trackApiErrorObserved,
+  trackRuntimeErrorObserved,
+  trackSessionLoadFatalObserved,
+} from "../utils/analytics";
+
 export type UiDiagnosticSeverity = "info" | "warning" | "error";
 
 export type UiDiagnosticEvent = {
@@ -27,6 +33,113 @@ let events: UiDiagnosticEvent[] = [];
 const listeners = new Set<() => void>();
 let runtimeHandlersInstalled = false;
 let runtimeHandlersCleanup: (() => void) | null = null;
+
+const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+const HEX_TOKEN_PATTERN = /\b[0-9a-f]{8,}\b/gi;
+const NUMERIC_TOKEN_PATTERN = /\b\d+\b/g;
+const UUID_SEGMENT_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const NUMERIC_PATH_SEGMENT_PATTERN = /^\d+$/;
+const HEX_PATH_SEGMENT_PATTERN = /^[0-9a-f]{8,}$/i;
+const ID_LIKE_SEGMENT_PATTERN = /^[A-Za-z0-9_-]{8,}$/;
+
+const fnv1a32 = (input: string): string => {
+  let hash = 0x811c9dc5;
+  for (let idx = 0; idx < input.length; idx += 1) {
+    hash ^= input.charCodeAt(idx);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+};
+
+const buildDiagnosticSignature = (event: UiDiagnosticEvent): string => {
+  const normalizedMessage = event.message
+    .toLowerCase()
+    .replace(UUID_PATTERN, ":uuid")
+    .replace(HEX_TOKEN_PATTERN, ":hex")
+    .replace(NUMERIC_TOKEN_PATTERN, ":n")
+    .slice(0, 240);
+  return fnv1a32(`${event.source}|${event.code}|${normalizedMessage}`);
+};
+
+const normalizeEndpoint = (value: unknown): string => {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return "unknown";
+
+  let path = raw;
+  if (raw.startsWith("http://") || raw.startsWith("https://")) {
+    try {
+      path = new URL(raw).pathname;
+    } catch {
+      return "unknown";
+    }
+  } else {
+    path = raw.split("?")[0]?.split("#")[0] ?? "";
+  }
+
+  if (!(path === "/api" || path.startsWith("/api/"))) return "unknown";
+  const normalizedSegments = path
+    .split("/")
+    .filter(Boolean)
+    .map((segment, index) => {
+      if (index === 0 && segment === "api") return segment;
+      if (segment.startsWith(":")) return segment;
+      if (NUMERIC_PATH_SEGMENT_PATTERN.test(segment)) return ":id";
+      if (UUID_SEGMENT_PATTERN.test(segment)) return ":id";
+      if (HEX_PATH_SEGMENT_PATTERN.test(segment)) return ":id";
+      if (ID_LIKE_SEGMENT_PATTERN.test(segment) && /\d/.test(segment)) return ":id";
+      return segment;
+    });
+  if (normalizedSegments.length === 0) return "unknown";
+  return `/${normalizedSegments.join("/")}`;
+};
+
+const normalizeMethod = (value: unknown): string => {
+  const raw = typeof value === "string" ? value.trim().toUpperCase() : "";
+  return raw || "UNKNOWN";
+};
+
+const normalizeStatusFamily = (
+  value: unknown,
+): "2xx" | "3xx" | "4xx" | "5xx" | "none" => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "none";
+  const normalized = Math.trunc(value);
+  if (normalized >= 200 && normalized < 300) return "2xx";
+  if (normalized >= 300 && normalized < 400) return "3xx";
+  if (normalized >= 400 && normalized < 500) return "4xx";
+  if (normalized >= 500 && normalized < 600) return "5xx";
+  return "none";
+};
+
+const emitAnalyticsDiagnostic = (event: UiDiagnosticEvent) => {
+  const signature = buildDiagnosticSignature(event);
+  if (event.source === "runtime" && event.severity !== "info") {
+    trackRuntimeErrorObserved({
+      errorKey: event.code,
+      severity: event.severity,
+      signature,
+    });
+    return;
+  }
+
+  if (event.source === "session_supervisor" && event.code === "session.load_fatal") {
+    const modeRaw = event.context && typeof event.context.mode === "string" ? event.context.mode.trim() : "";
+    trackSessionLoadFatalObserved({
+      mode: modeRaw || "unknown",
+      signature,
+    });
+    return;
+  }
+
+  if (event.source === "api" && (event.code === "api.transport_error" || event.code === "api.http_error")) {
+    trackApiErrorObserved({
+      errorKey: event.code,
+      endpoint: normalizeEndpoint(event.context?.path),
+      method: normalizeMethod(event.context?.method),
+      statusFamily: normalizeStatusFamily(event.context?.status),
+      signature,
+    });
+  }
+};
 
 const notifyListeners = () => {
   for (const listener of listeners) {
@@ -69,6 +182,11 @@ export const emitUiDiagnostic = (input: UiDiagnosticInput): UiDiagnosticEvent =>
   events = [...events, event];
   if (events.length > maxEvents) {
     events = events.slice(events.length - maxEvents);
+  }
+  try {
+    emitAnalyticsDiagnostic(event);
+  } catch {
+    // Ignore analytics failures; diagnostics channel must remain local-first and robust.
   }
   notifyListeners();
   return event;

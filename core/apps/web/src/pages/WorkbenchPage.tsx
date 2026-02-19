@@ -4,6 +4,7 @@ import { WorkbenchStoreProvider } from "../workbench/store";
 import { WorkspaceActiveSnapshotProvider } from "../state/workspaceActiveSnapshotStore";
 import { WorkbenchPageInner } from "./WorkbenchPage.shell";
 import { trackFeatureUsed, trackWorkspaceOpened } from "../utils/analytics";
+import { desktopGetConnection, isDesktopApp } from "../utils/desktop";
 
 export { TaskRow } from "./WorkbenchPage.taskRow";
 
@@ -11,8 +12,31 @@ export default function WorkbenchPage() {
   const { id: workspaceId } = useParams<{ id: string }>();
   useEffect(() => {
     if (!workspaceId) return;
-    trackWorkspaceOpened("local");
-    trackFeatureUsed("workbench_opened");
+    let cancelled = false;
+
+    const emitOpened = (workspaceKind: "local" | "remote") => {
+      trackWorkspaceOpened(workspaceKind);
+      trackFeatureUsed("workbench_opened", { workspace_kind: workspaceKind });
+    };
+
+    if (!isDesktopApp()) {
+      emitOpened("local");
+      return;
+    }
+
+    desktopGetConnection()
+      .then((connection) => {
+        if (cancelled) return;
+        emitOpened(connection.kind === "ssh" ? "remote" : "local");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        emitOpened("local");
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [workspaceId]);
   if (!workspaceId) return null;
   return (
