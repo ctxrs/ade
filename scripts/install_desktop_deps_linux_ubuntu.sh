@@ -67,6 +67,7 @@ packages=(
   pkg-config
   curl
   file
+  xdg-utils
   libglib2.0-dev
   libgtk-3-dev
   librsvg2-dev
@@ -108,6 +109,13 @@ for pc in glib-2.0 gtk+-3.0 libsoup-3.0 javascriptcoregtk-4.1 webkit2gtk-4.1; do
     exit 2
   fi
 done
+
+if command -v xdg-mime >/dev/null 2>&1; then
+  echo "- xdg-mime: OK ($(command -v xdg-mime))"
+else
+  echo "- xdg-mime: MISSING (install xdg-utils)" >&2
+  exit 2
+fi
 
 echo
 echo "${BOLD}Next steps${RESET}"
