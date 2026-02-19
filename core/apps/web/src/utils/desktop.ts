@@ -326,6 +326,9 @@ export const desktopSetOpenWorkspaces = async (workspace_ids: string[]): Promise
 export const desktopOpenWorkspaceInNewWindow = async (workspace_id: string): Promise<void> =>
   invoke<void>("desktop_open_workspace_in_new_window", { workspace_id });
 
+export const desktopOpenWorkspaceSetupInNewWindow = async (): Promise<void> =>
+  invoke<void>("desktop_open_workspace_setup_in_new_window");
+
 export const desktopSetTitlebarColor = async (color: DesktopTitlebarColor): Promise<void> =>
   invoke<void>("desktop_set_titlebar_color", { color });
 

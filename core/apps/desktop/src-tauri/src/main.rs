@@ -112,9 +112,12 @@ fn main() {
             desktop_get_deep_link_token,
             desktop_set_open_workspaces,
             desktop_open_workspace_in_new_window,
+            desktop_open_workspace_setup_in_new_window,
             desktop_set_titlebar_color,
             desktop_set_menu_state,
             desktop_set_window_title,
+            desktop_trigger_menu_command,
+            desktop_get_menu_item_state,
             desktop_register_workspace_window,
             desktop_unregister_workspace_window,
             desktop_upload_blob,
@@ -517,6 +520,27 @@ fn desktop_open_workspace_in_new_window(
     Ok(())
 }
 
+#[tauri::command]
+fn desktop_open_workspace_setup_in_new_window(
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let label = format!("workspace-setup:{}", uuid::Uuid::new_v4());
+    let builder =
+        tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("/workspace-setup".into()))
+            .title("ctx")
+            .inner_size(1200.0, 900.0);
+    let window = apply_workbench_titlebar(builder)
+        .build()
+        .map_err(|e| format!("creating window failed: {e}"))?;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = install_macos_settings_button(&app, &window);
+    }
+    let _ = window.show();
+    let _ = window.set_focus();
+    Ok(())
+}
+
 #[derive(Deserialize)]
 struct DesktopTitlebarColor {
     r: f64,
@@ -570,6 +594,32 @@ fn desktop_set_window_title(window: tauri::WebviewWindow, title: String) -> Resu
         });
     }
     Ok(())
+}
+
+#[tauri::command]
+fn desktop_trigger_menu_command(
+    app: tauri::AppHandle,
+    command_id: String,
+) -> Result<(), String> {
+    #[cfg(feature = "automation")]
+    {
+        let command_id = command_id.trim().to_string();
+        if command_id.is_empty() {
+            return Err("command_id is required".to_string());
+        }
+        if !is_menu_command_id(&command_id) {
+            return Err(format!("unknown menu command id: {command_id}"));
+        }
+        emit_menu_action(&app, &command_id);
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "automation"))]
+    {
+        let _ = app;
+        let _ = command_id;
+        Err("desktop_trigger_menu_command is automation-only".to_string())
+    }
 }
 
 #[tauri::command]

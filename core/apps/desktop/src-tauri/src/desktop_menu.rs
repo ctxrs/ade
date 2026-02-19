@@ -45,8 +45,8 @@ pub(super) const CMD_HELP_REPORT_ISSUE: &str = "help.report-issue";
 pub(super) const CMD_HELP_DIAGNOSTICS: &str = "help.diagnostics";
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct DesktopMenuActionEvent {
+    #[serde(rename = "commandId")]
     command_id: String,
 }
 
@@ -55,6 +55,14 @@ struct DesktopMenuActionEvent {
 pub(super) struct DesktopMenuItemStateUpdate {
     pub id: String,
     pub enabled: Option<bool>,
+    pub checked: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct DesktopMenuItemStateSnapshot {
+    pub id: String,
+    pub enabled: bool,
     pub checked: Option<bool>,
 }
 
@@ -513,7 +521,7 @@ pub(super) fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri
         .build()
 }
 
-fn is_menu_command_id(id: &str) -> bool {
+pub(super) fn is_menu_command_id(id: &str) -> bool {
     matches!(
         id,
         CMD_FILE_NEW_WORKSPACE
@@ -570,7 +578,7 @@ fn focused_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
         .or_else(|| app.webview_windows().values().next().cloned())
 }
 
-fn emit_menu_action(app: &tauri::AppHandle, command_id: &str) {
+pub(super) fn emit_menu_action(app: &tauri::AppHandle, command_id: &str) {
     let payload = DesktopMenuActionEvent {
         command_id: command_id.to_string(),
     };
@@ -666,6 +674,72 @@ fn apply_menu_state_updates(
     Ok(())
 }
 
+#[cfg(feature = "automation")]
+fn read_enabled_for_kind(kind: &MenuItemKind<tauri::Wry>) -> Result<bool, String> {
+    match kind {
+        MenuItemKind::MenuItem(item) => item.is_enabled().map_err(|e| e.to_string()),
+        MenuItemKind::Submenu(item) => item.is_enabled().map_err(|e| e.to_string()),
+        MenuItemKind::Check(item) => item.is_enabled().map_err(|e| e.to_string()),
+        MenuItemKind::Icon(item) => item.is_enabled().map_err(|e| e.to_string()),
+        MenuItemKind::Predefined(_) => Ok(true),
+    }
+}
+
+#[cfg(feature = "automation")]
+fn read_checked_for_kind(kind: &MenuItemKind<tauri::Wry>) -> Result<Option<bool>, String> {
+    if let Some(item) = kind.as_check_menuitem() {
+        return item
+            .is_checked()
+            .map(Some)
+            .map_err(|e| e.to_string());
+    }
+    Ok(None)
+}
+
+#[cfg(feature = "automation")]
+fn read_state_from_submenu(
+    submenu: &Submenu<tauri::Wry>,
+    id: &str,
+) -> Result<Option<DesktopMenuItemStateSnapshot>, String> {
+    for item in submenu.items().map_err(|e| e.to_string())? {
+        if item.id() == &id {
+            return Ok(Some(DesktopMenuItemStateSnapshot {
+                id: id.to_string(),
+                enabled: read_enabled_for_kind(&item)?,
+                checked: read_checked_for_kind(&item)?,
+            }));
+        }
+        if let Some(child_submenu) = item.as_submenu() {
+            if let Some(state) = read_state_from_submenu(child_submenu, id)? {
+                return Ok(Some(state));
+            }
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(feature = "automation")]
+fn read_state_from_menu(
+    menu: &Menu<tauri::Wry>,
+    id: &str,
+) -> Result<Option<DesktopMenuItemStateSnapshot>, String> {
+    for item in menu.items().map_err(|e| e.to_string())? {
+        if item.id() == &id {
+            return Ok(Some(DesktopMenuItemStateSnapshot {
+                id: id.to_string(),
+                enabled: read_enabled_for_kind(&item)?,
+                checked: read_checked_for_kind(&item)?,
+            }));
+        }
+        if let Some(submenu) = item.as_submenu() {
+            if let Some(state) = read_state_from_submenu(submenu, id)? {
+                return Ok(Some(state));
+            }
+        }
+    }
+    Ok(None)
+}
+
 pub(super) fn apply_cached_menu_state_for_window(
     app: &tauri::AppHandle,
     window_label: &str,
@@ -706,6 +780,37 @@ pub(super) fn desktop_set_menu_state(
         apply_menu_state_updates(&app, &items)?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub(super) fn desktop_get_menu_item_state(
+    app: tauri::AppHandle,
+    command_id: String,
+) -> Result<DesktopMenuItemStateSnapshot, String> {
+    #[cfg(feature = "automation")]
+    {
+        let command_id = command_id.trim().to_string();
+        if command_id.is_empty() {
+            return Err("command_id is required".to_string());
+        }
+        if !is_menu_command_id(&command_id) {
+            return Err(format!("unknown menu command id: {command_id}"));
+        }
+        let Some(menu) = app.menu() else {
+            return Err("desktop menu not available".to_string());
+        };
+        let Some(state) = read_state_from_menu(&menu, &command_id)? else {
+            return Err(format!("menu item not found: {command_id}"));
+        };
+        return Ok(state);
+    }
+
+    #[cfg(not(feature = "automation"))]
+    {
+        let _ = app;
+        let _ = command_id;
+        Err("desktop_get_menu_item_state is automation-only".to_string())
+    }
 }
 
 #[cfg(test)]

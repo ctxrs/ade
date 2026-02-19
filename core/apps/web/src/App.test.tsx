@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, test, vi } from "vitest";
 import App from "./App";
-import { WEB_MENU_COMMAND_EVENT } from "./utils/desktopMenuCommands";
 import {
   desktopListen,
+  desktopOpenWorkspaceSetupInNewWindow,
   desktopSetMenuState,
   desktopSetTitlebarColor,
   desktopSetWindowTitle,
@@ -12,6 +12,11 @@ import {
   isDesktopApp,
   openExternalLink,
 } from "./utils/desktop";
+import {
+  DESKTOP_MENU_COMMAND_IDS,
+  WEB_MENU_COMMAND_EVENT,
+  type DesktopMenuCommandId,
+} from "./utils/desktopMenuCommands";
 
 const desktopHandlers = new Map<string, (payload?: unknown) => void>();
 
@@ -110,6 +115,7 @@ vi.mock("./utils/desktop", () => ({
   }),
   desktopSetMenuState: vi.fn(async () => {}),
   desktopOpenWorkspaceInNewWindow: vi.fn(async () => {}),
+  desktopOpenWorkspaceSetupInNewWindow: vi.fn(async () => {}),
   openExternalLink: vi.fn(async () => true),
 }));
 
@@ -216,9 +222,9 @@ test("desktop menu action routes to workspace settings and updates menu state", 
   expect(await screen.findByText("Settings Screen")).toBeInTheDocument();
 });
 
-test("desktop menu action accepts snake_case payload for compatibility", async () => {
+test("desktop menu action ignores payloads without commandId", async () => {
   vi.mocked(isDesktopApp).mockReturnValue(true);
-  window.history.pushState({}, "", "/workspaces/ws-901");
+  window.history.pushState({}, "", "/workspaces/ws-987");
 
   render(<App />);
   expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
@@ -235,47 +241,84 @@ test("desktop menu action accepts snake_case payload for compatibility", async (
     handler({ command_id: "go.settings" });
   });
 
-  await waitFor(() => {
-    expect(window.location.pathname).toBe("/settings");
-    expect(new URLSearchParams(window.location.search).get("ws")).toBe("ws-901");
+  expect(window.location.pathname).toBe("/workspaces/ws-987");
+});
+
+test("desktop menu new workspace opens setup in a new window", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+  window.history.pushState({}, "", "/workspaces/ws-987");
+
+  render(<App />);
+  expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
+
+  const handler = await waitFor(() => {
+    const value = desktopHandlers.get("desktop_menu_action");
+    if (!value) {
+      throw new Error("desktop_menu_action handler not ready");
+    }
+    return value;
   });
+
+  act(() => {
+    handler({ commandId: "file.new-workspace" });
+  });
+
+  await waitFor(() => {
+    expect(vi.mocked(desktopOpenWorkspaceSetupInNewWindow)).toHaveBeenCalledTimes(1);
+  });
+  expect(window.location.pathname).toBe("/workspaces/ws-987");
 });
 
 test("desktop menu action forwards workbench-scoped commands to the web menu bus", async () => {
   vi.mocked(isDesktopApp).mockReturnValue(true);
-  window.history.pushState({}, "", "/workspaces/ws-777");
+  window.history.pushState({}, "", "/workspaces/ws-456");
 
-  const received: string[] = [];
-  const onCommand = (event: Event) => {
-    const custom = event as CustomEvent<{ commandId?: unknown }>;
-    if (typeof custom.detail?.commandId === "string") {
-      received.push(custom.detail.commandId);
+  render(<App />);
+  expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
+
+  const handler = await waitFor(() => {
+    const value = desktopHandlers.get("desktop_menu_action");
+    if (!value) {
+      throw new Error("desktop_menu_action handler not ready");
     }
+    return value;
+  });
+
+  const appHandledCommands = new Set<DesktopMenuCommandId>([
+    "file.new-workspace",
+    "go.workspace-setup",
+    "file.open-workspaces",
+    "go.workspaces",
+    "go.launcher",
+    "go.settings",
+    "go.diagnostics",
+    "help.diagnostics",
+    "go.agent-harnesses",
+    "help.crash-course",
+    "help.keyboard-shortcuts",
+    "help.open-logs-folder",
+    "file.open-workspace-new-window",
+  ]);
+  const forwardedCommands = DESKTOP_MENU_COMMAND_IDS.filter((commandId) => !appHandledCommands.has(commandId));
+
+  const seen: DesktopMenuCommandId[] = [];
+  const onWebMenuCommand = (event: Event) => {
+    const custom = event as CustomEvent<{ commandId: DesktopMenuCommandId }>;
+    seen.push(custom.detail.commandId);
   };
-  window.addEventListener(WEB_MENU_COMMAND_EVENT, onCommand as EventListener);
+  window.addEventListener(WEB_MENU_COMMAND_EVENT, onWebMenuCommand as EventListener);
 
   try {
-    render(<App />);
-    expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
-
-    const handler = await waitFor(() => {
-      const value = desktopHandlers.get("desktop_menu_action");
-      if (!value) {
-        throw new Error("desktop_menu_action handler not ready");
-      }
-      return value;
-    });
-
     act(() => {
-      handler({ command_id: "view.toggle-diff" });
-    });
-
-    await waitFor(() => {
-      expect(received).toContain("view.toggle-diff");
+      for (const commandId of forwardedCommands) {
+        handler({ commandId });
+      }
     });
   } finally {
-    window.removeEventListener(WEB_MENU_COMMAND_EVENT, onCommand as EventListener);
+    window.removeEventListener(WEB_MENU_COMMAND_EVENT, onWebMenuCommand as EventListener);
   }
+
+  expect(seen).toEqual(forwardedCommands);
 });
 
 test("desktop menu report issue opens external tracker link", async () => {
