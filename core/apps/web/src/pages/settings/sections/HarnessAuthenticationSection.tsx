@@ -831,7 +831,7 @@ export function HarnessAuthenticationSection({
                       <SelectTrigger className="tw-min-w-[10rem]">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="tw-z-[1101]">
                         {HARNESS_ENDPOINT_PROVIDER_PRESETS.map((preset) => (
                           <SelectItem key={preset.id} value={preset.id}>
                             {preset.label}
