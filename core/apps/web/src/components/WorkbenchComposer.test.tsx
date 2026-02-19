@@ -3,7 +3,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkbenchComposer } from "./WorkbenchComposer";
 import type { MessageAttachment, ProviderOptions, ProviderStatus } from "../api/client";
-import type { DraftTrack, WorkbenchModeId } from "./WorkbenchComposer";
+import type { DraftHarness, WorkbenchModeId } from "./WorkbenchComposer";
 import type { HarnessCatalogEntry } from "../utils/harnessCatalog";
 
 function mockRaf() {
@@ -57,10 +57,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [value, setValue] = useState("");
       const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
       const [modeId, setModeId] = useState<WorkbenchModeId>("default");
-      const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
-        { key: "t1", label: "Track 1", providerId: "codex", modelId: "o3" },
-      ]);
-      const [useMultipleAgents, setUseMultipleAgents] = useState(false);
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
         codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
@@ -92,11 +89,9 @@ describe("WorkbenchComposer textarea sizing", () => {
           onInstallAllProviders={vi.fn()}
           providerOptions={providerOptions}
           ensureProviderOptions={async () => undefined}
-          draftTracks={draftTracks}
-          setDraftTracks={setDraftTracks}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
           defaultProviderId="codex"
-          useMultipleAgents={useMultipleAgents}
-          setUseMultipleAgents={setUseMultipleAgents}
         />
       );
     };
@@ -274,10 +269,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [value, setValue] = useState("");
       const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
       const [modeId, setModeId] = useState<WorkbenchModeId>("default");
-      const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
-        { key: "t1", label: "Track 1", providerId: "codex", modelId: "o3" },
-      ]);
-      const [useMultipleAgents, setUseMultipleAgents] = useState(false);
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
         codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
@@ -309,11 +301,9 @@ describe("WorkbenchComposer textarea sizing", () => {
           onInstallAllProviders={vi.fn()}
           providerOptions={providerOptions}
           ensureProviderOptions={async () => undefined}
-          draftTracks={draftTracks}
-          setDraftTracks={setDraftTracks}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
           defaultProviderId="codex"
-          useMultipleAgents={useMultipleAgents}
-          setUseMultipleAgents={setUseMultipleAgents}
         />
       );
     };
@@ -401,10 +391,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [value, setValue] = useState("");
       const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
       const [modeId, setModeId] = useState<WorkbenchModeId>("default");
-      const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
-        { key: "t1", label: "Track 1", providerId: "codex", modelId: "o3" },
-      ]);
-      const [useMultipleAgents, setUseMultipleAgents] = useState(false);
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
       const harnessCatalog: HarnessCatalogEntry[] = [
         { id: "codex", label: "Codex", logoSrc: "" },
         { id: "claude-crp", label: "Claude Code", logoSrc: "" },
@@ -438,11 +425,9 @@ describe("WorkbenchComposer textarea sizing", () => {
           onInstallAllProviders={vi.fn()}
           providerOptions={{}}
           ensureProviderOptions={async () => undefined}
-          draftTracks={draftTracks}
-          setDraftTracks={setDraftTracks}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
           defaultProviderId="codex"
-          useMultipleAgents={useMultipleAgents}
-          setUseMultipleAgents={setUseMultipleAgents}
         />
       );
     };
@@ -460,10 +445,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [value, setValue] = useState("");
       const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
       const [modeId, setModeId] = useState<WorkbenchModeId>("default");
-      const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
-        { key: "t1", label: "Track 1", providerId: "codex", modelId: "o3" },
-      ]);
-      const [useMultipleAgents, setUseMultipleAgents] = useState(false);
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
         codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
@@ -505,11 +487,9 @@ describe("WorkbenchComposer textarea sizing", () => {
           onInstallAllProviders={vi.fn()}
           providerOptions={providerOptions}
           ensureProviderOptions={async () => providerOptions.codex}
-          draftTracks={draftTracks}
-          setDraftTracks={setDraftTracks}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
           defaultProviderId="codex"
-          useMultipleAgents={useMultipleAgents}
-          setUseMultipleAgents={setUseMultipleAgents}
         />
       );
     };
@@ -527,8 +507,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [value, setValue] = useState("");
       const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
       const [modeId, setModeId] = useState<WorkbenchModeId>("default");
-      const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([]);
-      const [useMultipleAgents, setUseMultipleAgents] = useState(false);
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>(null);
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
         codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
@@ -559,11 +538,9 @@ describe("WorkbenchComposer textarea sizing", () => {
           onInstallAllProviders={vi.fn()}
           providerOptions={{}}
           ensureProviderOptions={async () => undefined}
-          draftTracks={draftTracks}
-          setDraftTracks={setDraftTracks}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
           defaultProviderId="codex"
-          useMultipleAgents={useMultipleAgents}
-          setUseMultipleAgents={setUseMultipleAgents}
         />
       );
     };
@@ -579,10 +556,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [value, setValue] = useState("");
       const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
       const [modeId, setModeId] = useState<WorkbenchModeId>("default");
-      const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
-        { key: "t1", label: "Track 1", providerId: "codex", modelId: "" },
-      ]);
-      const [useMultipleAgents, setUseMultipleAgents] = useState(false);
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "" });
       const harnessCatalog: HarnessCatalogEntry[] = [
         { id: "codex", label: "Codex", logoSrc: "" },
         { id: "cursor", label: "Cursor", logoSrc: "" },
@@ -622,11 +596,9 @@ describe("WorkbenchComposer textarea sizing", () => {
           providerOptions={providerOptions}
           ensureProviderOptions={async (providerId: string) => providerOptions[providerId]}
           onRequestHarnessAuth={onRequestHarnessAuth}
-          draftTracks={draftTracks}
-          setDraftTracks={setDraftTracks}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
           defaultProviderId="codex"
-          useMultipleAgents={useMultipleAgents}
-          setUseMultipleAgents={setUseMultipleAgents}
         />
       );
     };

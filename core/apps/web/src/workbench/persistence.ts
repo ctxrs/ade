@@ -202,7 +202,7 @@ function decodeTab(raw: unknown): WorkbenchTab | null {
       raw.viewMode === "compact" || raw.viewMode === "normal" || raw.viewMode === "verbose" ? raw.viewMode : undefined;
     return { id: raw.id, kind: "new_task", titleOverride, viewMode };
   }
-  if (kind === "task" || kind === "track") {
+  if (kind === "task") {
     const ref = raw.ref;
     if (!isRecord(ref)) return null;
     if (!isString(ref.taskId) || !ref.taskId.trim()) return null;

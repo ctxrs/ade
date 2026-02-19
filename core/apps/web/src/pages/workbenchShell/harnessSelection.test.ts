@@ -4,6 +4,7 @@ import {
   collectSelectableHarnessProviderIds,
   getHarnessMruStorageKey,
   resolveInitialHarnessSelection,
+  shouldFinalizeInitialHarnessSelection,
 } from "./harnessSelection";
 
 const provider = (
@@ -86,5 +87,10 @@ describe("harnessSelection", () => {
       mruProviderId: null,
     });
     expect(multipleAuthed).toBeNull();
+  });
+
+  it("finalizes initial resolver only after a provider is actually selected", () => {
+    expect(shouldFinalizeInitialHarnessSelection(null)).toBe(false);
+    expect(shouldFinalizeInitialHarnessSelection("codex")).toBe(true);
   });
 });

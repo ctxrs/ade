@@ -329,7 +329,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     }
 
     const ns = newSession;
-    const primary = ns?.draftTracks[0] ?? null;
+    const primary = ns?.draftHarness ?? null;
     if (!primary) return { models: [], catalog: buildModelCatalog([]), parsed: parseModelId(""), loading: false, fromProviderOptions: true };
     const opts = ns?.providerOptions[primary.providerId];
     const models = buildModelsForProvider(primary.providerId, opts);
@@ -341,11 +341,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
   const providerIdsToEnsure = useMemo(() => {
     if (!newSession) return [];
-    if (newSession.useMultipleAgents) {
-      return [...new Set(newSession.draftTracks.map((t) => t.providerId).filter(Boolean))];
-    }
-    return [newSession.draftTracks[0]?.providerId ?? newSession.defaultProviderId].filter(Boolean);
-  }, [newSession?.defaultProviderId, newSession?.draftTracks, newSession?.useMultipleAgents]);
+    return [newSession.draftHarness?.providerId ?? newSession.defaultProviderId].filter(Boolean);
+  }, [newSession?.defaultProviderId, newSession?.draftHarness]);
 
   // Proactively probe provider options so the model list (and effort variants) populate
   // without requiring the user to manually focus/expand a config panel.
@@ -373,22 +370,21 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   // so the UI shows the current model + effort (e.g. `gpt-5.2/xhigh`) immediately.
   useEffect(() => {
     if (!newSession) return;
-    const primary = newSession.draftTracks[0] ?? null;
+    const primary = newSession.draftHarness ?? null;
     if (!primary) return;
-    if (newSession.draftTracks.length !== 1) return;
     if (primary.modelId.trim().length > 0) return;
     const opts = newSession.providerOptions[primary.providerId];
     const next = modelIdFromProviderOptions(opts);
     if (!next) return;
-    newSession.setDraftTracks((prev) => prev.map((t, idx) => (idx === 0 ? { ...t, modelId: next } : t)));
-  }, [newSession?.draftTracks, newSession?.providerOptions, newSession?.setDraftTracks]);
+    newSession.setDraftHarness((prev) => (prev ? { ...prev, modelId: next } : prev));
+  }, [newSession?.draftHarness, newSession?.providerOptions, newSession?.setDraftHarness]);
 
   const showModelEffort = useMemo(() => {
     if (variant === "newSession") {
-      return (newSession?.draftTracks.length ?? 0) === 1;
+      return !!newSession?.draftHarness;
     }
     return true;
-  }, [newSession?.draftTracks.length, variant]);
+  }, [newSession?.draftHarness, variant]);
 
   const currentBase = activeModelData.parsed.base || activeModelData.catalog.baseIds[0] || "";
   const currentEffort = activeModelData.parsed.effort;
@@ -401,7 +397,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         return;
       }
       const ns = props as NewSessionProps;
-      ns.setDraftTracks((prev) => prev.map((t, idx) => (idx === 0 ? { ...t, modelId: nextFullId } : t)));
+      ns.setDraftHarness((prev) => (prev ? { ...prev, modelId: nextFullId } : prev));
     },
     [props, variant],
   );
@@ -485,7 +481,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     }
 
     const ns = props as NewSessionProps;
-    const primary = ns.draftTracks[0] ?? null;
+    const primary = ns.draftHarness ?? null;
     if (!primary) {
       return {
         label: "Select harness",
@@ -497,8 +493,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     }
     const providerId = primary.providerId;
     const info = ns.harnessCatalog.find((h) => h.id === providerId);
-    const label =
-      ns.draftTracks.length === 1 ? (info?.label ?? providerId) : `${ns.draftTracks.length} harnesses`;
+    const label = info?.label ?? providerId;
     return {
       label,
       logoSrc: info?.logoSrc,
@@ -523,22 +518,12 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         setOpenMenu(null);
         return;
       }
-      ns.setDraftTracks((prev) => {
-        const has = prev.some((t) => t.providerId === providerId);
-        if (!ns.useMultipleAgents) {
-          if (has) return prev;
-          return [{ key: `t${Date.now()}`, label: "", providerId, modelId: "" }];
-        }
-        if (has) {
-          const next = prev.filter((t) => t.providerId !== providerId);
-          return next;
-        }
-        return [...prev, { key: `t${Date.now()}`, label: "", providerId, modelId: "" }];
+      ns.setDraftHarness((prev) => {
+        if (prev?.providerId === providerId) return null;
+        return { providerId, modelId: "" };
       });
       ns.ensureProviderOptions(providerId).catch(() => {});
-      if (!ns.useMultipleAgents) {
-        setOpenMenu(null);
-      }
+      setOpenMenu(null);
     },
     [props, variant],
   );
@@ -605,9 +590,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             const visible = filtered;
             if (visible.length === 0) return <div className="wb-menu-empty">No matching agents.</div>;
 
-            const counts: Record<string, number> = {};
-            for (const t of ns.draftTracks) counts[t.providerId] = (counts[t.providerId] ?? 0) + 1;
-
             return visible.map((h) => {
               const id = String(h.id);
               const label = String(h.label ?? id);
@@ -625,8 +607,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                   : typeof installUi?.pct === "number"
                     ? installUi.pct
                     : null;
-              const count = counts[id] ?? 0;
-              const checked = count > 0;
+              const checked = ns.draftHarness?.providerId === id;
 
               const opts = ns.providerOptions[id];
               const hasActiveAuth = hasConfiguredHarnessAuth(id, opts);
