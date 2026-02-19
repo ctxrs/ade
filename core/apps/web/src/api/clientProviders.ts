@@ -291,6 +291,19 @@ export type CodexLoginCompleteResponse = {
   status_code: number;
 };
 
+export type ClaudeLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  account_id?: string | null;
+  error?: string | null;
+};
+
+export type ClaudeLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
 export type CodexHostImportProbe = {
   available: boolean;
   path?: string | null;
@@ -388,10 +401,19 @@ export const deleteCodexAccount = (accountId: string) =>
 export const listClaudeAccounts = () =>
   apiAny<ClaudeAccountsResponse>(`/api/providers/claude-crp/accounts`);
 
-export const upsertClaudeAccount = (authToken: string, label?: string) =>
+export const startClaudeLogin = (label?: string) =>
+  apiAny<ClaudeLoginStartResponse>(`/api/providers/claude-crp/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getClaudeLogin = (loginId: string) =>
+  apiAny<ClaudeLoginStatus>(`/api/providers/claude-crp/accounts/login/${loginId}`);
+
+export const upsertClaudeAccount = (setupToken: string, label?: string) =>
   apiAny<ClaudeAccountsResponse>(`/api/providers/claude-crp/accounts`, {
     method: "POST",
-    body: JSON.stringify(label ? { auth_token: authToken, label } : { auth_token: authToken }),
+    body: JSON.stringify(label ? { setup_token: setupToken, label } : { setup_token: setupToken }),
   });
 
 export const setClaudeActiveAccount = (accountId: string | null) =>

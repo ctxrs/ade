@@ -340,6 +340,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(list_claude_accounts).post(upsert_claude_account),
         )
         .route(
+            "/api/providers/claude-crp/accounts/login/start",
+            post(start_claude_login),
+        )
+        .route(
+            "/api/providers/claude-crp/accounts/login/:id",
+            get(get_claude_login),
+        )
+        .route(
             "/api/providers/claude-crp/active-account",
             put(set_claude_active_account),
         )

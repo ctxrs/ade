@@ -3,10 +3,15 @@ mod common;
 use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
+use std::time::Duration;
+
+use ctx_http::installer::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 
 #[derive(Debug, Deserialize)]
 struct SubscriptionAccountEntry {
     id: String,
+    label: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -18,6 +23,19 @@ struct SubscriptionAccountsResponse {
 #[derive(Debug, Deserialize)]
 struct ErrorResp {
     error: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaudeLoginStartResponse {
+    login_id: String,
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaudeLoginStatusResponse {
+    status: String,
+    account_id: Option<String>,
+    error: Option<String>,
 }
 
 async fn assert_managed_subscription_crud(provider_id: &str, upsert_body: serde_json::Value) {
@@ -103,16 +121,305 @@ async fn assert_managed_subscription_crud(provider_id: &str, upsert_body: serde_
     assert!(deleted_body.active_account_id.is_none());
 }
 
+async fn write_mock_claude_runtime(
+    data_root: &std::path::Path,
+    script_contents: &str,
+) -> std::path::PathBuf {
+    let script_path = data_root.join("mock-claude");
+    tokio::fs::write(&script_path, script_contents)
+        .await
+        .expect("write mock claude script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)
+            .expect("mock claude metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).expect("set mock claude permissions");
+    }
+    script_path
+}
+
+async fn poll_claude_login_status(
+    server: &common::TestServer,
+    login_id: &str,
+) -> ClaudeLoginStatusResponse {
+    let status_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/{}",
+        server.base_url, login_id
+    );
+    for _ in 0..40 {
+        let resp = server
+            .client
+            .get(&status_url)
+            .send()
+            .await
+            .expect("claude login status request");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: ClaudeLoginStatusResponse = resp.json().await.expect("claude login status body");
+        if body.status != "pending" {
+            return body;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("claude login did not reach terminal status in time");
+}
+
 #[tokio::test]
 async fn claude_subscription_accounts_crud_round_trip() {
     assert_managed_subscription_crud(
         "claude-crp",
         json!({
             "label": "Claude Team",
-            "auth_token": "token-abc"
+            "setup_token": "token-abc"
         }),
     )
     .await;
+}
+
+#[tokio::test]
+async fn claude_login_start_and_status_success_persists_account() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1-}" != "--shim" || "${2-}" != "setup-token" ]]; then
+  echo "unexpected args: $*" >&2
+  exit 2
+fi
+echo "Claude setup-token URL: https://claude.ai/oauth/authorize?code=test"
+echo "Long-lived authentication token created successfully!"
+echo ""
+echo "Your OAuth token (valid for 1 year):"
+echo ""
+echo "sk-ant-oat01-abcDEF1234567890_"
+echo "ZXY987654321"
+"#,
+    )
+    .await;
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        managed_installs: HashMap::new(),
+    };
+    cfg.providers.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec!["--shim".to_string()],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({ "label": "Claude OAuth" }))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
+    assert!(!start_body.login_id.is_empty());
+    assert!(start_body.auth_url.as_deref().is_some());
+
+    let status = poll_claude_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "success");
+    assert!(status.account_id.is_some());
+    assert!(status.error.is_none());
+
+    let accounts_url = format!("{}/api/providers/claude-crp/accounts", server.base_url);
+    let accounts_resp = server
+        .client
+        .get(accounts_url)
+        .send()
+        .await
+        .expect("claude accounts request");
+    assert_eq!(accounts_resp.status(), StatusCode::OK);
+    let accounts: SubscriptionAccountsResponse = accounts_resp.json().await.expect("accounts body");
+    assert_eq!(accounts.accounts.len(), 1);
+    assert_eq!(accounts.active_account_id, status.account_id);
+}
+
+#[tokio::test]
+async fn claude_login_start_and_status_failure_reports_error() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+echo "Claude setup-token URL: https://claude.ai/oauth/authorize?code=test"
+echo "failed" >&2
+exit 7
+"#,
+    )
+    .await;
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        managed_installs: HashMap::new(),
+    };
+    cfg.providers.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
+
+    let status = poll_claude_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "failed");
+    assert!(status.account_id.is_none());
+    assert!(status.error.unwrap_or_default().contains("exited"));
+}
+
+#[tokio::test]
+async fn claude_login_without_label_preserves_existing_account_label() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let shared_token = "sk-ant-oat01-abcDEF1234567890_abcdefghijklmnopqrstuvwxyz_0123456789";
+    let accounts_url = format!("{}/api/providers/claude-crp/accounts", server.base_url);
+    let existing_resp = server
+        .client
+        .post(&accounts_url)
+        .json(&json!({
+            "label": "Claude Existing Label",
+            "setup_token": shared_token
+        }))
+        .send()
+        .await
+        .expect("create existing claude account request");
+    assert_eq!(existing_resp.status(), StatusCode::OK);
+    let existing_body: SubscriptionAccountsResponse = existing_resp
+        .json()
+        .await
+        .expect("existing claude account body");
+    let existing_account = existing_body
+        .accounts
+        .first()
+        .expect("existing account should be present");
+    let existing_id = existing_account.id.clone();
+    assert_eq!(
+        existing_account.label.as_deref(),
+        Some("Claude Existing Label")
+    );
+
+    let script_with_token = format!(
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+echo "Claude setup-token URL: https://claude.ai/oauth/authorize?code=test"
+echo "Long-lived authentication token created successfully!"
+echo ""
+echo "Your OAuth token (valid for 1 year):"
+echo ""
+echo "{}"
+"#,
+        shared_token
+    );
+    let script_path = write_mock_claude_runtime(data_dir.path(), &script_with_token).await;
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        managed_installs: HashMap::new(),
+    };
+    cfg.providers.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
+
+    let status = poll_claude_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "success");
+    assert_eq!(status.account_id.as_deref(), Some(existing_id.as_str()));
+
+    let listed_resp = server
+        .client
+        .get(&accounts_url)
+        .send()
+        .await
+        .expect("list claude accounts request");
+    assert_eq!(listed_resp.status(), StatusCode::OK);
+    let listed_body: SubscriptionAccountsResponse =
+        listed_resp.json().await.expect("list claude accounts body");
+    assert_eq!(listed_body.accounts.len(), 1);
+    assert_eq!(listed_body.accounts[0].id, existing_id);
+    assert_eq!(
+        listed_body.accounts[0].label.as_deref(),
+        Some("Claude Existing Label")
+    );
 }
 
 #[tokio::test]
