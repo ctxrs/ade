@@ -12,6 +12,16 @@ function mockRaf() {
   });
 }
 
+function baseOptions(providerId: string): ProviderOptions {
+  return {
+    provider_id: providerId,
+    workspace_id: "ws-test",
+    supports_load: false,
+    auth_required: false,
+    probed_at: new Date().toISOString(),
+  };
+}
+
 describe("WorkbenchComposer textarea sizing", () => {
   const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "scrollHeight");
 
@@ -510,6 +520,125 @@ describe("WorkbenchComposer textarea sizing", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(screen.getByTitle("Authentication configured")).toBeInTheDocument();
+  });
+
+  it("shows an explicit unselected harness state", async () => {
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([]);
+      const [useMultipleAgents, setUseMultipleAgents] = useState(false);
+      const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={{}}
+          ensureProviderOptions={async () => undefined}
+          draftTracks={draftTracks}
+          setDraftTracks={setDraftTracks}
+          defaultProviderId="codex"
+          useMultipleAgents={useMultipleAgents}
+          setUseMultipleAgents={setUseMultipleAgents}
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    expect(screen.getByRole("button", { name: "Select harness" })).toBeInTheDocument();
+  });
+
+  it("requests auth modal when selecting an unauthenticated harness", async () => {
+    const onRequestHarnessAuth = vi.fn();
+
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
+        { key: "t1", label: "Track 1", providerId: "codex", modelId: "" },
+      ]);
+      const [useMultipleAgents, setUseMultipleAgents] = useState(false);
+      const harnessCatalog: HarnessCatalogEntry[] = [
+        { id: "codex", label: "Codex", logoSrc: "" },
+        { id: "cursor", label: "Cursor", logoSrc: "" },
+      ];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        cursor: { provider_id: "cursor", installed: true, health: "ok", diagnostics: [] },
+      };
+      const providerOptions: Record<string, ProviderOptions | undefined> = {
+        codex: { ...baseOptions("codex"), has_active_auth: true },
+        cursor: { ...baseOptions("cursor"), has_active_auth: false },
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={providerOptions}
+          ensureProviderOptions={async (providerId: string) => providerOptions[providerId]}
+          onRequestHarnessAuth={onRequestHarnessAuth}
+          draftTracks={draftTracks}
+          setDraftTracks={setDraftTracks}
+          defaultProviderId="codex"
+          useMultipleAgents={useMultipleAgents}
+          setUseMultipleAgents={setUseMultipleAgents}
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Cursor/ }));
+    expect(onRequestHarnessAuth).toHaveBeenCalledWith("cursor");
+    expect(screen.getByRole("button", { name: "Codex" })).toBeInTheDocument();
   });
 
 });

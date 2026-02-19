@@ -215,6 +215,15 @@ export function useHarnessAuthenticationController({
     providerEndpointUnsupportedRef.current = providerEndpointUnsupported;
   }, [providerEndpointUnsupported]);
 
+  const markProviderEndpointUnsupported = useCallback((providerId: string) => {
+    setProviderEndpointUnsupported((prev) => {
+      if (prev[providerId]) return prev;
+      const next = { ...prev, [providerId]: true };
+      providerEndpointUnsupportedRef.current = next;
+      return next;
+    });
+  }, []);
+
   const setProviderHarnessConfigForProvider = useCallback(
     (providerId: string, nextConfig: HarnessProviderSourceConfig) => {
       setProviderHarnessConfig((prev) => {
@@ -224,6 +233,18 @@ export function useHarnessAuthenticationController({
       });
     },
     [],
+  );
+
+  const setSubscriptionSourceFallback = useCallback(
+    (providerId: string) => {
+      setProviderHarnessConfigForProvider(providerId, {
+        provider_id: providerId,
+        selected_source_kind: "subscription",
+        selected_endpoint_id: null,
+        endpoints: providerHarnessConfigRef.current[providerId]?.endpoints ?? [],
+      });
+    },
+    [setProviderHarnessConfigForProvider],
   );
 
   const setProviderHarnessBusyForProvider = useCallback((providerId: string, busy: boolean) => {
@@ -380,18 +401,8 @@ export function useHarnessAuthenticationController({
       } catch (error) {
         const message = messageFromError(error);
         if (message.includes("provider does not support harness endpoints")) {
-          setProviderEndpointUnsupported((prev) => {
-            if (prev[providerId]) return prev;
-            const next = { ...prev, [providerId]: true };
-            providerEndpointUnsupportedRef.current = next;
-            return next;
-          });
-          setProviderHarnessConfigForProvider(providerId, {
-            provider_id: providerId,
-            selected_source_kind: "subscription",
-            selected_endpoint_id: null,
-            endpoints: [],
-          });
+          markProviderEndpointUnsupported(providerId);
+          setSubscriptionSourceFallback(providerId);
         } else {
           setProviderError(message);
         }
@@ -399,7 +410,7 @@ export function useHarnessAuthenticationController({
         setProviderHarnessBusyForProvider(providerId, false);
       }
     },
-    [setProviderHarnessBusyForProvider, setProviderHarnessConfigForProvider],
+    [markProviderEndpointUnsupported, setProviderHarnessBusyForProvider, setSubscriptionSourceFallback],
   );
 
   const onDeleteProviderEndpoint = useCallback(async (providerId: string, endpointId: string) => {
@@ -429,6 +440,29 @@ export function useHarnessAuthenticationController({
       }
     },
     [setProviderHarnessBusyForProvider, setProviderHarnessConfigForProvider],
+  );
+
+  const selectSubscriptionSourceIfSupported = useCallback(
+    async (providerId: string) => {
+      if (!supportsHarnessEndpointConfig(providerId)) return;
+      try {
+        await onSelectProviderSource(providerId, "subscription", null);
+      } catch (error) {
+        const message = messageFromError(error);
+        if (message.includes("provider does not support harness endpoints")) {
+          markProviderEndpointUnsupported(providerId);
+          setSubscriptionSourceFallback(providerId);
+          return;
+        }
+        throw error;
+      }
+    },
+    [
+      markProviderEndpointUnsupported,
+      onSelectProviderSource,
+      setSubscriptionSourceFallback,
+      supportsHarnessEndpointConfig,
+    ],
   );
 
   const openHarnessAuthModal = useCallback((providerId: string) => {
@@ -505,25 +539,8 @@ export function useHarnessAuthenticationController({
         const label = name.trim();
         const next = await upsertCursorAccount(key, label ? { label } : undefined);
         setCursorAccounts(next);
-        if (supportsHarnessEndpointConfig(modal.provider_id)) {
-          try {
-            await onSelectProviderSource(modal.provider_id, "subscription", null);
-          } catch {
-            setProviderHarnessConfigForProvider(modal.provider_id, {
-              provider_id: modal.provider_id,
-              selected_source_kind: "subscription",
-              selected_endpoint_id: null,
-              endpoints: providerHarnessConfigRef.current[modal.provider_id]?.endpoints ?? [],
-            });
-          }
-        } else {
-          setProviderHarnessConfigForProvider(modal.provider_id, {
-            provider_id: modal.provider_id,
-            selected_source_kind: "subscription",
-            selected_endpoint_id: null,
-            endpoints: providerHarnessConfigRef.current[modal.provider_id]?.endpoints ?? [],
-          });
-        }
+        await selectSubscriptionSourceIfSupported(modal.provider_id);
+        setSubscriptionSourceFallback(modal.provider_id);
         closeHarnessAuthModal();
         return;
       }
@@ -554,9 +571,8 @@ export function useHarnessAuthenticationController({
   }, [
     closeHarnessAuthModal,
     harnessAuthModal,
-    onSelectProviderSource,
-    setProviderHarnessConfigForProvider,
-    supportsHarnessEndpointConfig,
+    selectSubscriptionSourceIfSupported,
+    setSubscriptionSourceFallback,
   ]);
 
   const waitForCodexLoginOutcome = useCallback(async (accountId: string): Promise<"success" | "failed" | "timeout"> => {
@@ -664,9 +680,7 @@ export function useHarnessAuthenticationController({
         const label = modal.subscription_label.trim();
         const next = await upsertClaudeAccount(token, label ? label : undefined);
         setClaudeAccounts(next);
-        if (supportsHarnessEndpointConfig(modal.provider_id)) {
-          await onSelectProviderSource(modal.provider_id, "subscription", null);
-        }
+        await selectSubscriptionSourceIfSupported(modal.provider_id);
         closeHarnessAuthModal();
         return;
       }
@@ -685,9 +699,7 @@ export function useHarnessAuthenticationController({
           ...(email ? { email } : {}),
         });
         setGeminiAccounts(next);
-        if (supportsHarnessEndpointConfig(modal.provider_id)) {
-          await onSelectProviderSource(modal.provider_id, "subscription", null);
-        }
+        await selectSubscriptionSourceIfSupported(modal.provider_id);
         closeHarnessAuthModal();
         return;
       }
@@ -708,9 +720,7 @@ export function useHarnessAuthenticationController({
           ...(email ? { email } : {}),
         });
         setKimiAccounts(next);
-        if (supportsHarnessEndpointConfig(modal.provider_id)) {
-          await onSelectProviderSource(modal.provider_id, "subscription", null);
-        }
+        await selectSubscriptionSourceIfSupported(modal.provider_id);
         closeHarnessAuthModal();
         return;
       }
@@ -727,9 +737,7 @@ export function useHarnessAuthenticationController({
           ...(email ? { email } : {}),
         });
         setCopilotAccounts(next);
-        if (supportsHarnessEndpointConfig(modal.provider_id)) {
-          await onSelectProviderSource(modal.provider_id, "subscription", null);
-        }
+        await selectSubscriptionSourceIfSupported(modal.provider_id);
         closeHarnessAuthModal();
         return;
       }
@@ -746,9 +754,7 @@ export function useHarnessAuthenticationController({
           ...(email ? { email } : {}),
         });
         setKiroAccounts(next);
-        if (supportsHarnessEndpointConfig(modal.provider_id)) {
-          await onSelectProviderSource(modal.provider_id, "subscription", null);
-        }
+        await selectSubscriptionSourceIfSupported(modal.provider_id);
         closeHarnessAuthModal();
         return;
       }
@@ -757,9 +763,7 @@ export function useHarnessAuthenticationController({
         throw new Error("Select a workspace first.");
       }
       await authenticateProviderForWorkspace(workspaceId, modal.provider_id);
-      if (supportsHarnessEndpointConfig(modal.provider_id)) {
-        await onSelectProviderSource(modal.provider_id, "subscription", null);
-      }
+      await selectSubscriptionSourceIfSupported(modal.provider_id);
       closeHarnessAuthModal();
     } catch (error) {
       const message = messageFromError(error);
@@ -772,10 +776,9 @@ export function useHarnessAuthenticationController({
   }, [
     closeHarnessAuthModal,
     harnessAuthModal,
-    onSelectProviderSource,
     openCodexAuthUrl,
     refreshCodexAccounts,
-    supportsHarnessEndpointConfig,
+    selectSubscriptionSourceIfSupported,
     waitForCodexLoginOutcome,
     workspaceId,
   ]);

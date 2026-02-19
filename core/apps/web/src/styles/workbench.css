@@ -1432,20 +1432,20 @@
 }
 
 .wb-harness-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
+  display: flex;
+  align-items: center;
   gap: 8px;
   padding: 4px 0;
 }
 
 .wb-harness-row-main {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   display: grid;
   grid-template-columns: 16px 16px 1fr auto;
   align-items: center;
   column-gap: 10px;
   justify-content: flex-start;
-  justify-self: stretch;
   text-align: left;
   border-radius: 10px;
   border: 1px solid transparent;
@@ -1618,12 +1618,11 @@
 }
 
 .wb-harness-actions {
-  display: inline-flex;
+  display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  justify-self: end;
   justify-content: flex-end;
-  min-width: 78px;
 }
 
 .wb-harness-auth-btn,

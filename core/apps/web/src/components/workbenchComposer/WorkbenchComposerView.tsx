@@ -3,21 +3,14 @@ import { ArrowUp, ChevronDown, Ellipsis, Image, Mic, Square } from "lucide-react
 import { shouldSendOnEnter } from "../../utils/keyboard";
 import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
 import { PROVIDER_INSTALLS_ENABLED } from "../../utils/providerInstallGate";
+import { hasConfiguredHarnessAuth } from "../../utils/providerAuthStatus";
 import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../ui/select";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToInlineAttachments } from "../../utils/messageAttachments";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import { MenuTitleRow } from "./WorkbenchComposerMenu";
 import {
   MENU_DESCRIPTIONS,
-  MAX_TRACKS_PER_PROVIDER,
   attachmentDisplayName,
   buildModelsForProvider,
   clamp,
@@ -31,7 +24,6 @@ import {
 } from "./WorkbenchComposer.utils";
 import type {
   ActiveSessionProps,
-  DraftTrack,
   NewSessionProps,
   WorkbenchComposerProps,
 } from "./WorkbenchComposer.types";
@@ -494,9 +486,19 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
     const ns = props as NewSessionProps;
     const primary = ns.draftTracks[0] ?? null;
-    const providerId = primary?.providerId ?? ns.defaultProviderId;
+    if (!primary) {
+      return {
+        label: "Select harness",
+        logoSrc: "",
+        invertInDark: false,
+        invertInLight: false,
+        locked: false,
+      };
+    }
+    const providerId = primary.providerId;
     const info = ns.harnessCatalog.find((h) => h.id === providerId);
-    const label = ns.draftTracks.length === 1 ? (info?.label ?? providerId) : `${ns.draftTracks.length} tracks`;
+    const label =
+      ns.draftTracks.length === 1 ? (info?.label ?? providerId) : `${ns.draftTracks.length} harnesses`;
     return {
       label,
       logoSrc: info?.logoSrc,
@@ -507,63 +509,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   }, [props, variant]);
 
   const [harnessSearch, setHarnessSearch] = useState("");
-  const [expandedHarnessId, setExpandedHarnessId] = useState<string | null>(null);
-  const [countMenu, setCountMenu] = useState<{ providerId: string; anchor: DOMRect; style: React.CSSProperties } | null>(null);
-  const countMenuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (openMenu !== "harness") {
-      setCountMenu(null);
-    }
-  }, [openMenu]);
-
-  useLayoutEffect(() => {
-    if (!countMenu) return;
-    const menu = countMenuRef.current;
-    if (!menu) return;
-
-    const rect = countMenu.anchor;
-    const menuRect = menu.getBoundingClientRect();
-    const margin = 10;
-    const gap = 6;
-    const viewportW = window.innerWidth;
-    const viewportH = window.innerHeight;
-
-    let left = Number(countMenu.style.left ?? 0);
-    let top = Number(countMenu.style.top ?? 0);
-
-    left = clamp(left, margin, viewportW - margin - menuRect.width);
-
-    if (top + menuRect.height > viewportH - margin) {
-      top = rect.top - menuRect.height - gap;
-    }
-    if (top < margin) {
-      top = rect.bottom + gap;
-    }
-    top = clamp(top, margin, viewportH - margin - menuRect.height);
-
-    if (left !== countMenu.style.left || top !== countMenu.style.top) {
-      setCountMenu((prev) => (prev ? { ...prev, style: { left, top } } : prev));
-    }
-  }, [countMenu]);
-
-  useEffect(() => {
-    if (!countMenu) return;
-    const onPointerDown = (e: PointerEvent) => {
-      const el = e.target as Element | null;
-      if (el && (el.closest(".wb-harness-count-menu") || el.closest(".wb-harness-count-trigger"))) return;
-      setCountMenu(null);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setCountMenu(null);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [countMenu]);
 
   const toggleHarness = useCallback(
     (providerId: string) => {
@@ -572,6 +517,12 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       const st = ns.providersById[providerId];
       const installed = st?.installed === true && st.health === "ok";
       if (!installed) return;
+      const hasActiveAuth = hasConfiguredHarnessAuth(providerId, ns.providerOptions[providerId]);
+      if (!hasActiveAuth) {
+        ns.onRequestHarnessAuth?.(providerId);
+        setOpenMenu(null);
+        return;
+      }
       ns.setDraftTracks((prev) => {
         const has = prev.some((t) => t.providerId === providerId);
         if (!ns.useMultipleAgents) {
@@ -580,87 +531,14 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         }
         if (has) {
           const next = prev.filter((t) => t.providerId !== providerId);
-          return next.length > 0
-            ? next
-            : [{ key: `t${Date.now()}`, label: "", providerId: ns.defaultProviderId, modelId: "" }];
+          return next;
         }
         return [...prev, { key: `t${Date.now()}`, label: "", providerId, modelId: "" }];
       });
       ns.ensureProviderOptions(providerId).catch(() => {});
       if (!ns.useMultipleAgents) {
         setOpenMenu(null);
-        setExpandedHarnessId(null);
       }
-    },
-    [props, variant],
-  );
-
-  const updateTrackModel = useCallback(
-    (key: string, nextFull: string) => {
-      if (variant !== "newSession") return;
-      const ns = props as NewSessionProps;
-      ns.setDraftTracks((prev) => prev.map((t) => (t.key === key ? { ...t, modelId: nextFull } : t)));
-    },
-    [props, variant],
-  );
-
-  const addTrackForProvider = useCallback(
-    (providerId: string) => {
-      if (variant !== "newSession") return;
-      const ns = props as NewSessionProps;
-      ns.setDraftTracks((prev) => {
-        const existing = prev.filter((t) => t.providerId === providerId).length;
-        if (existing >= MAX_TRACKS_PER_PROVIDER) return prev;
-        return [...prev, { key: `t${Date.now()}`, label: "", providerId, modelId: "" }];
-      });
-    },
-    [props, variant],
-  );
-
-  const setTrackCountForProvider = useCallback(
-    (providerId: string, nextCount: number) => {
-      if (variant !== "newSession") return;
-      const ns = props as NewSessionProps;
-      if (!ns.useMultipleAgents) return;
-      const clamped = Math.max(1, Math.min(MAX_TRACKS_PER_PROVIDER, Math.round(nextCount)));
-      ns.setDraftTracks((prev) => {
-        const existing = prev.filter((t) => t.providerId === providerId);
-        const firstIdx = prev.findIndex((t) => t.providerId === providerId);
-        const keep = existing.slice(0, clamped);
-        while (keep.length < clamped) {
-          keep.push({ key: `t${Date.now()}_${keep.length}`, label: "", providerId, modelId: "" });
-        }
-
-        if (firstIdx === -1) {
-          return [...prev, ...keep];
-        }
-
-        const next: DraftTrack[] = [];
-        let inserted = false;
-        for (const t of prev) {
-          if (t.providerId !== providerId) {
-            next.push(t);
-            continue;
-          }
-          if (!inserted) {
-            next.push(...keep);
-            inserted = true;
-          }
-        }
-        return next.length > 0 ? next : prev;
-      });
-    },
-    [props, variant],
-  );
-
-  const removeTrackByKey = useCallback(
-    (key: string) => {
-      if (variant !== "newSession") return;
-      const ns = props as NewSessionProps;
-      ns.setDraftTracks((prev) => {
-        const next = prev.filter((t) => t.key !== key);
-        return next.length > 0 ? next : prev;
-      });
     },
     [props, variant],
   );
@@ -749,26 +627,9 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                     : null;
               const count = counts[id] ?? 0;
               const checked = count > 0;
-              const expanded = expandedHarnessId === id;
-              const canConfigureModels = ns.useMultipleAgents && ns.draftTracks.length > 1 && checked;
-              const rows = ns.draftTracks.filter((t) => t.providerId === id);
 
               const opts = ns.providerOptions[id];
-              const models = buildModelsForProvider(id, opts);
-              const catalog = buildModelCatalog(models);
-              const endpointIsSelected =
-                opts?.source?.selected_source_kind === "endpoint"
-                && !!opts?.source?.selected_endpoint_id;
-              const subscriptionConfiguredBySelectionForManagedUnmanaged =
-                opts?.source?.selected_source_kind === "subscription"
-                && (id === "cursor" || id === "codex");
-              const subscriptionConfiguredByAuthMode =
-                opts?.auth_mode === "subscription" && (id === "cursor" || id === "codex");
-              const hasActiveAuth =
-                opts?.has_active_auth === true
-                || endpointIsSelected
-                || subscriptionConfiguredBySelectionForManagedUnmanaged
-                || subscriptionConfiguredByAuthMode;
+              const hasActiveAuth = hasConfiguredHarnessAuth(id, opts);
 
               return (
                 <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
@@ -800,201 +661,37 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                     </span>
                   </button>
 
-                  <div className="wb-harness-actions">
-                    {!installed ? (
-                      installControlsEnabled ? (
-                        <button
-                          type="button"
-                          className="wb-harness-install"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            ns.onInstallProvider(id);
-                          }}
-                          disabled={!installSupported || installBusy}
-                          title={!installSupported ? "Install not supported yet" : "Install this harness"}
-                          style={
-                            installBusy && installPct !== null
-                              ? ({ "--wb-install-pct": `${Math.max(0, Math.min(100, installPct))}%` } as React.CSSProperties)
-                              : undefined
-                          }
-                        >
-                          {installBusy
-                            ? installFinishing
-                              ? "Finalizing…"
-                              : installPct === null
-                                ? "Installing…"
-                                : `${Math.max(0, Math.min(100, installPct))}%`
-                            : installUi?.state === "failed"
-                              ? "Retry"
-                              : providerStatus?.installed
-                                ? "Update"
-                                : "Install"}
-                        </button>
-                      ) : null
-                    ) : (
-                      <>
-                        {checked && (
-                          <button
-                            type="button"
-                            className="wb-harness-expand wb-menu-trigger"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (!canConfigureModels) return;
-                              setExpandedHarnessId((prev) => (prev === id ? null : id));
-                              ns.ensureProviderOptions(id).catch(() => {});
-                            }}
-                            disabled={!canConfigureModels}
-                            title={canConfigureModels ? "Configure models" : "Enable multi-agent to configure"}
-                          >
-                            <ChevronDown size={14} />
-                          </button>
-                        )}
-
-                        {checked && ns.useMultipleAgents && (
-                          <button
-                            type="button"
-                            className="wb-harness-count-trigger wb-menu-trigger"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                              const menuW = 140;
-                              const margin = 10;
-                              const approxH = 160;
-                              const left = clamp(rect.right - menuW, margin, window.innerWidth - margin - menuW);
-                              const openDown = rect.bottom + 6 + approxH <= window.innerHeight - margin;
-                              const top = openDown
-                                ? rect.bottom + 6
-                                : clamp(rect.top - approxH - 6, margin, window.innerHeight - margin - approxH);
-                              setCountMenu((prev) =>
-                                prev && prev.providerId === id ? null : { providerId: id, anchor: rect, style: { left, top } },
-                              );
-                            }}
-                            title="Set track count"
-                          >
-                            {Math.max(1, Math.min(MAX_TRACKS_PER_PROVIDER, count || 1))}x <ChevronDown size={12} />
-                          </button>
-                        )}
-                      </>
-                    )}
-                  </div>
-
-                  {countMenu?.providerId === id && checked && ns.useMultipleAgents && (
-                    <div ref={countMenuRef} className="wb-menu wb-harness-count-menu" role="menu" style={countMenu.style}>
-                      {Array.from({ length: MAX_TRACKS_PER_PROVIDER }, (_, i) => i + 1).map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          className={`wb-menu-item ${count === n ? "wb-menu-item-active" : ""}`}
-                          onClick={() => {
-                            setTrackCountForProvider(id, n);
-                            setCountMenu(null);
-                          }}
-                          role="menuitemradio"
-                          aria-checked={count === n}
-                        >
-                          <span className="wb-harness-count-item">
-                            <span>{n}x</span>
-                            <span aria-hidden="true">{count === n ? "✓" : ""}</span>
-                          </span>
-                        </button>
-                      ))}
+                  {!installed && installControlsEnabled ? (
+                    <div className="wb-harness-actions">
+                      <button
+                        type="button"
+                        className="wb-harness-install"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          ns.onInstallProvider(id);
+                        }}
+                        disabled={!installSupported || installBusy}
+                        title={!installSupported ? "Install not supported yet" : "Install this harness"}
+                        style={
+                          installBusy && installPct !== null
+                            ? ({ "--wb-install-pct": `${Math.max(0, Math.min(100, installPct))}%` } as React.CSSProperties)
+                            : undefined
+                        }
+                      >
+                        {installBusy
+                          ? installFinishing
+                            ? "Finalizing…"
+                            : installPct === null
+                              ? "Installing…"
+                              : `${Math.max(0, Math.min(100, installPct))}%`
+                          : installUi?.state === "failed"
+                            ? "Retry"
+                            : providerStatus?.installed
+                              ? "Update"
+                              : "Install"}
+                      </button>
                     </div>
-                  )}
-
-                  {expanded && canConfigureModels && (
-                    <div className="wb-harness-config">
-                      {rows.map((t) => {
-                        const parsed = parseModelId(t.modelId, catalog);
-                        const base = parsed.base || catalog.baseIds[0] || "";
-                        const efforts = catalog.effortsByBase[base] ?? [];
-                        const eff = parsed.effort;
-                        return (
-                          <div key={t.key} className="wb-harness-track">
-                            <div className="wb-harness-track-left">
-                              <div className="wb-harness-track-title">Track</div>
-                              {catalog.baseIds.length > 0 ? (
-                                <>
-                                  <Select
-                                    value={base}
-                                    onValueChange={(nextBase) => {
-                                      const next = deriveFullModelIdForBase(catalog, nextBase, eff);
-                                      updateTrackModel(t.key, next);
-                                    }}
-                                  >
-                                    <SelectTrigger
-                                      className="wb-harness-model-select"
-                                      onFocus={() => ns.ensureProviderOptions(id).catch(() => {})}
-                                    >
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {catalog.baseIds.map((b) => (
-                                        <SelectItem key={b} value={b}>
-                                          {catalog.displayNameByBase[b] ?? b}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                  {efforts.length > 0 && (
-                                    <Select
-                                      value={eff ?? pickDefaultEffort(efforts) ?? ""}
-                                      onValueChange={(nextEff) => {
-                                        const next = deriveFullModelIdForBase(catalog, base, nextEff || null);
-                                        updateTrackModel(t.key, next);
-                                      }}
-                                    >
-                                      <SelectTrigger className="wb-harness-model-select">
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        {efforts.map((x) => (
-                                          <SelectItem key={x} value={x}>
-                                            {formatEffortLabel(x)}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  )}
-                                </>
-                              ) : (
-                                <input
-                                  className="wb-harness-model-input"
-                                  value={t.modelId}
-                                  placeholder={opts ? "model_id" : "Loading models…"}
-                                  onFocus={() => ns.ensureProviderOptions(id).catch(() => {})}
-                                  onChange={(e) => updateTrackModel(t.key, e.target.value)}
-                                />
-                              )}
-                            </div>
-                            <div className="wb-harness-track-right">
-                              <button
-                                type="button"
-                                className="wb-harness-mini"
-                                onClick={() => addTrackForProvider(id)}
-                                title={
-                                  rows.length >= MAX_TRACKS_PER_PROVIDER
-                                    ? `Max ${MAX_TRACKS_PER_PROVIDER} tracks`
-                                    : "Add another track"
-                                }
-                                disabled={rows.length >= MAX_TRACKS_PER_PROVIDER}
-                              >
-                                +
-                              </button>
-                              <button
-                                type="button"
-                                className="wb-harness-mini"
-                                onClick={() => removeTrackByKey(t.key)}
-                                title="Remove track"
-                                disabled={rows.length <= 1}
-                              >
-                                −
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                  ) : null}
                 </div>
               );
             });
@@ -1095,7 +792,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                   if (variant !== "newSession") return;
                   setOpenMenu((v) => (v === "harness" ? null : "harness"));
                   setHarnessSearch("");
-                  setExpandedHarnessId(null);
                 }}
                 aria-haspopup={variant === "newSession" ? "menu" : undefined}
                 aria-expanded={openMenu === "harness"}

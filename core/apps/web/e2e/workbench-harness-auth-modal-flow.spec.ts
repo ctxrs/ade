@@ -1,0 +1,207 @@
+import { test, expect } from "./fixtures";
+import { mkdtempSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import path from "path";
+import { execSync } from "child_process";
+import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+
+test("workbench: unauthed harness opens auth modal and API key flow readies harness", async ({ page, request }) => {
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
+  execSync("git init -b main", { cwd: repo });
+  execSync("git config user.email test@example.com", { cwd: repo });
+  execSync("git config user.name Test", { cwd: repo });
+  writeFileSync(path.join(repo, "README.md"), "hello\n");
+  execSync("git add .", { cwd: repo });
+  execSync("git commit -m init", { cwd: repo });
+
+  let cursorAuthed = false;
+  let cursorAccounts = {
+    active_account_id: null as string | null,
+    accounts: [] as Array<{
+      id: string;
+      label: string;
+      kind: string;
+      email: string | null;
+      created_at: string;
+      last_used_at: string | null;
+    }>,
+  };
+
+  await page.route("**/api/providers", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { provider_id: "codex", installed: true, health: "ok", diagnostics: [], details: {} },
+        { provider_id: "cursor", installed: true, health: "ok", diagnostics: [], details: {} },
+      ]),
+    });
+  });
+
+  await page.route("**/api/providers/codex/accounts", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ active_account_id: "codex-1", accounts: [], logins: [] }),
+    });
+  });
+
+  await page.route("**/api/providers/cursor/accounts", async (route) => {
+    const method = route.request().method();
+    if (method === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(cursorAccounts),
+      });
+      return;
+    }
+    if (method === "POST") {
+      cursorAuthed = true;
+      cursorAccounts = {
+        active_account_id: "cursor-1",
+        accounts: [
+          {
+            id: "cursor-1",
+            label: "Cursor API",
+            kind: "api_key",
+            email: null,
+            created_at: new Date().toISOString(),
+            last_used_at: null,
+          },
+        ],
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(cursorAccounts),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.route("**/api/providers/codex/harness_config", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        provider_id: "codex",
+        selected_source_kind: "subscription",
+        selected_endpoint_id: null,
+        endpoints: [],
+      }),
+    });
+  });
+
+  await page.route("**/api/providers/cursor/harness_config", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "provider does not support harness endpoints: cursor" }),
+    });
+  });
+
+  await page.route("**/api/providers/cursor/harness_config/select", async (route) => {
+    await route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "provider does not support harness endpoints: cursor" }),
+    });
+  });
+
+  await page.route("**/api/workspaces/*/providers/*/options", async (route) => {
+    const url = new URL(route.request().url());
+    const match = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/providers\/([^/]+)\/options$/);
+    if (!match) {
+      await route.continue();
+      return;
+    }
+    const workspaceId = decodeURIComponent(match[1]);
+    const providerId = decodeURIComponent(match[2]);
+    if (providerId === "codex") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          provider_id: "codex",
+          workspace_id: workspaceId,
+          supports_load: false,
+          auth_required: false,
+          has_active_auth: true,
+          auth_mode: "subscription",
+          probed_at: new Date().toISOString(),
+        }),
+      });
+      return;
+    }
+    if (providerId === "cursor") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          provider_id: "cursor",
+          workspace_id: workspaceId,
+          supports_load: false,
+          auth_required: false,
+          has_active_auth: cursorAuthed,
+          auth_mode: cursorAuthed ? "subscription" : "none",
+          probed_at: new Date().toISOString(),
+        }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await createWorkspaceAndOpenWorkbench({
+    page,
+    request,
+    repo,
+    workspaceName: `ws-${Date.now()}`,
+  });
+
+  const codexHarnessButton = page.getByRole("button", { name: "Codex" });
+  await expect(codexHarnessButton).toBeVisible({ timeout: 15_000 });
+
+  await codexHarnessButton.click();
+  const menu = page.locator(".wb-harness-menu");
+  await expect(menu).toBeVisible();
+
+  await menu.getByRole("button", { name: /Cursor/ }).click();
+  const modal = page.locator(".settings-harness-modal");
+  await expect(modal).toBeVisible({ timeout: 10_000 });
+  await expect(modal.getByRole("button", { name: "Subscription" })).toBeVisible();
+  await expect(modal.getByRole("button", { name: "API Key" })).toBeVisible();
+
+  await modal.getByRole("button", { name: "API Key" }).click();
+  await modal.locator("input[type='password']").fill("cursor-test-token");
+  await modal.getByRole("button", { name: "Add API key" }).click();
+  await expect(modal).toBeHidden({ timeout: 10_000 });
+
+  const cursorHarnessButton = page.getByRole("button", { name: "Cursor" });
+  await expect(cursorHarnessButton).toBeVisible({ timeout: 10_000 });
+  await cursorHarnessButton.click();
+  await expect(
+    page
+      .locator(".wb-harness-row")
+      .filter({ hasText: "Cursor" })
+      .locator(".wb-harness-auth-dot-active"),
+  ).toBeVisible();
+});
