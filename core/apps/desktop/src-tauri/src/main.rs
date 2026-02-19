@@ -113,6 +113,7 @@ fn main() {
             desktop_read_file,
             desktop_get_deep_link_token,
             desktop_set_open_workspaces,
+            desktop_open_launcher_in_new_window,
             desktop_open_workspace_in_new_window,
             desktop_open_workspace_setup_in_new_window,
             desktop_set_titlebar_color,
@@ -121,6 +122,7 @@ fn main() {
             desktop_trigger_menu_command,
             desktop_get_menu_item_state,
             desktop_record_workspace_visit,
+            desktop_set_dock_recent_local_workspaces,
             desktop_register_workspace_window,
             desktop_unregister_workspace_window,
             desktop_upload_blob,
@@ -304,7 +306,7 @@ fn schedule_startup_workspaces(app: tauri::AppHandle) {
             eprintln!("CTX_DESKTOP_START_WORKSPACE_PATHS: navigating to {url}");
             let js = format!(
                 "window.location.href = {};",
-                serde_json::to_string(&url).unwrap_or_else(|_| "\"/workspaces\"".to_string())
+                serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
             );
             let _ = window.eval(&js);
         }
@@ -373,6 +375,7 @@ struct DeepLinkTokenStore {
 struct WorkspaceWindowRegistry {
     by_window: std::sync::Mutex<HashMap<String, HashSet<String>>>,
     recent_workspaces: std::sync::Mutex<Vec<RecentWorkspaceEntry>>,
+    dock_recent_local_workspaces: std::sync::Mutex<Vec<DockRecentLocalWorkspaceEntry>>,
 }
 
 const MAX_RECENT_WORKSPACES: usize = 8;
@@ -381,6 +384,12 @@ const MAX_RECENT_WORKSPACES: usize = 8;
 struct RecentWorkspaceEntry {
     workspace_id: String,
     label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct DockRecentLocalWorkspaceEntry {
+    label: String,
+    root_path: String,
 }
 
 const DEEP_LINK_TOKEN_TTL: Duration = Duration::from_secs(600);
@@ -522,6 +531,45 @@ impl WorkspaceWindowRegistry {
             Err(_) => Vec::new(),
         }
     }
+
+    fn set_dock_recent_local_workspaces(&self, entries: Vec<DockRecentLocalWorkspaceEntry>) {
+        let mut dedup = HashSet::new();
+        let mut normalized = Vec::new();
+        for entry in entries {
+            let root_path = entry.root_path.trim();
+            if root_path.is_empty() {
+                continue;
+            }
+            if !dedup.insert(root_path.to_string()) {
+                continue;
+            }
+            let label = entry.label.trim();
+            normalized.push(DockRecentLocalWorkspaceEntry {
+                label: if label.is_empty() {
+                    root_path.to_string()
+                } else {
+                    label.to_string()
+                },
+                root_path: root_path.to_string(),
+            });
+            if normalized.len() >= MAX_RECENT_WORKSPACES {
+                break;
+            }
+        }
+
+        let mut guard = match self.dock_recent_local_workspaces.lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        *guard = normalized;
+    }
+
+    fn dock_recent_local_workspaces(&self) -> Vec<DockRecentLocalWorkspaceEntry> {
+        match self.dock_recent_local_workspaces.lock() {
+            Ok(entries) => entries.clone(),
+            Err(_) => Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -591,6 +639,32 @@ mod workspace_window_registry_tests {
             "current workspace mapping should remain"
         );
     }
+
+    #[test]
+    fn dock_recent_local_workspaces_are_deduped_and_trimmed() {
+        let registry = WorkspaceWindowRegistry::default();
+        registry.set_dock_recent_local_workspaces(vec![
+            DockRecentLocalWorkspaceEntry {
+                label: "Alpha".to_string(),
+                root_path: "/tmp/alpha".to_string(),
+            },
+            DockRecentLocalWorkspaceEntry {
+                label: "Alpha Duplicate".to_string(),
+                root_path: "/tmp/alpha".to_string(),
+            },
+            DockRecentLocalWorkspaceEntry {
+                label: "  ".to_string(),
+                root_path: "/tmp/beta".to_string(),
+            },
+        ]);
+
+        let entries = registry.dock_recent_local_workspaces();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].label, "Alpha");
+        assert_eq!(entries[0].root_path, "/tmp/alpha");
+        assert_eq!(entries[1].label, "/tmp/beta");
+        assert_eq!(entries[1].root_path, "/tmp/beta");
+    }
 }
 #[tauri::command]
 fn desktop_get_deep_link_token(
@@ -620,6 +694,11 @@ fn desktop_open_workspace_in_new_window(
         return Err("workspace_id is required".to_string());
     }
     open_workspace_in_new_window(&app, &registry, workspace_id).map_err(to_err)
+}
+
+#[tauri::command]
+fn desktop_open_launcher_in_new_window(app: tauri::AppHandle) -> Result<(), String> {
+    open_launcher_window(&app).map_err(to_err)
 }
 
 #[tauri::command]
@@ -766,6 +845,15 @@ fn desktop_record_workspace_visit(
     }
     registry.set_window_workspaces(window.label(), vec![workspace_id.to_string()]);
     registry.record_recent_workspace(workspace_id, Some(&workspace_label));
+    Ok(())
+}
+
+#[tauri::command]
+fn desktop_set_dock_recent_local_workspaces(
+    registry: tauri::State<WorkspaceWindowRegistry>,
+    entries: Vec<DockRecentLocalWorkspaceEntry>,
+) -> Result<(), String> {
+    registry.set_dock_recent_local_workspaces(entries);
     Ok(())
 }
 

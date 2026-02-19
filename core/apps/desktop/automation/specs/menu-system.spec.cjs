@@ -9,9 +9,8 @@ const WORKSPACE_PATH = process.env.CTX_AUTOMATION_WORKSPACE_PATH
 
 const ALL_MENU_COMMAND_IDS = [
   "file.new-workspace",
-  "file.open-workspaces",
+  "file.new-window",
   "file.open-recent",
-  "file.open-workspace-new-window",
   "file.export-transcript",
   "file.export-session-log",
   "view.find-tasks",
@@ -32,7 +31,6 @@ const ALL_MENU_COMMAND_IDS = [
   "session.interrupt",
   "go.launcher",
   "go.workspace-setup",
-  "go.workspaces",
   "go.settings",
   "go.diagnostics",
   "go.agent-harnesses",
@@ -65,8 +63,7 @@ const MENU_TEST_ORDER = [
   "help.report-issue",
   "go.launcher",
   "go.workspace-setup",
-  "file.open-workspaces",
-  "go.workspaces",
+  "file.new-window",
   "go.settings",
   "go.diagnostics",
   "go.agent-harnesses",
@@ -76,17 +73,14 @@ const MENU_TEST_ORDER = [
   "help.diagnostics",
   "task.archive-toggle",
   "task.delete",
-  "file.open-workspace-new-window",
   "file.new-workspace",
 ];
 
 const APP_HANDLED_COMMANDS = new Set([
   "file.new-workspace",
-  "file.open-workspaces",
-  "file.open-workspace-new-window",
+  "file.new-window",
   "go.launcher",
   "go.workspace-setup",
-  "go.workspaces",
   "go.settings",
   "go.diagnostics",
   "go.agent-harnesses",
@@ -108,8 +102,6 @@ const TOGGLE_COMMANDS = new Set([
 const NAV_EXPECTATIONS = new Map([
   ["go.launcher", (_workspaceId) => "/"],
   ["go.workspace-setup", (_workspaceId) => "/workspace-setup"],
-  ["file.open-workspaces", (_workspaceId) => "/workspaces"],
-  ["go.workspaces", (_workspaceId) => "/workspaces"],
   ["go.settings", (workspaceId) => `/settings?ws=${encodeURIComponent(workspaceId)}`],
   ["go.diagnostics", (_workspaceId) => "/diagnostics"],
   ["help.diagnostics", (_workspaceId) => "/diagnostics"],

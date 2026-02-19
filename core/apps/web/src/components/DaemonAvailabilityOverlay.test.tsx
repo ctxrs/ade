@@ -30,7 +30,7 @@ vi.mock("../utils/desktop", () => ({
   isDesktopApp: vi.fn(),
 }));
 
-const renderOverlay = (path = "/workspaces") =>
+const renderOverlay = (path = "/workspaces/ws-1") =>
   render(
     <MemoryRouter
       initialEntries={[path]}

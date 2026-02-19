@@ -11,12 +11,22 @@ use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSString;
 #[cfg(target_os = "macos")]
+use std::collections::HashSet;
+#[cfg(target_os = "macos")]
 use std::sync::{Once, OnceLock};
 
 #[cfg(target_os = "macos")]
 static DOCK_MENU_INSTALL_ONCE: Once = Once::new();
 #[cfg(target_os = "macos")]
 static DOCK_MENU_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum DockRecentWorkspaceTarget {
+    WorkspaceId { workspace_id: String },
+    LocalRootPath { root_path: String },
+}
 
 #[cfg(target_os = "macos")]
 extern "C" fn application_dock_menu(
@@ -48,32 +58,62 @@ extern "C" fn dock_open_recent_workspace(_this: &AnyObject, _cmd: Sel, sender: *
     let Some(app) = DOCK_MENU_APP.get() else {
         return;
     };
-    let Some(workspace_id) = workspace_id_from_sender(sender) else {
+    let Some(target) = dock_target_from_sender(sender) else {
         return;
     };
-    let registry = app.state::<WorkspaceWindowRegistry>();
-    if let Err(err) = focus_or_open_workspace_window(app, &registry, &workspace_id) {
-        eprintln!(
-            "dock menu open workspace '{}' failed: {err:#}",
-            workspace_id
-        );
+    match target {
+        DockRecentWorkspaceTarget::WorkspaceId { workspace_id } => {
+            let registry = app.state::<WorkspaceWindowRegistry>();
+            if let Err(err) = focus_or_open_workspace_window(app, &registry, &workspace_id) {
+                eprintln!(
+                    "dock menu open workspace '{}' failed: {err:#}",
+                    workspace_id
+                );
+            }
+        }
+        DockRecentWorkspaceTarget::LocalRootPath { root_path } => {
+            let manager = app.state::<ConnectionManager>();
+            if let Err(err) = ensure_local_connection(app, &manager) {
+                eprintln!(
+                    "dock menu ensure local daemon failed for '{}': {err:#}",
+                    root_path
+                );
+                return;
+            }
+            let workspace_id = match resolve_or_create_workspace_id(&manager, &root_path) {
+                Ok(workspace_id) => workspace_id,
+                Err(err) => {
+                    eprintln!(
+                        "dock menu resolve/create workspace failed for '{}': {err:#}",
+                        root_path
+                    );
+                    return;
+                }
+            };
+            let registry = app.state::<WorkspaceWindowRegistry>();
+            if let Err(err) = focus_or_open_workspace_window(app, &registry, &workspace_id) {
+                eprintln!(
+                    "dock menu open workspace '{}' failed: {err:#}",
+                    workspace_id
+                );
+            }
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
-fn workspace_id_from_sender(sender: *mut AnyObject) -> Option<String> {
+fn dock_target_from_sender(sender: *mut AnyObject) -> Option<DockRecentWorkspaceTarget> {
     let item = unsafe { (sender as *mut NSMenuItem).as_ref() }?;
     let represented = item.representedObject()?;
-    let workspace_id = represented
+    let raw = represented
         .downcast::<NSString>()
         .ok()?
         .to_string()
-        .trim()
         .to_string();
-    if workspace_id.is_empty() {
+    if raw.trim().is_empty() {
         return None;
     }
-    Some(workspace_id)
+    serde_json::from_str::<DockRecentWorkspaceTarget>(&raw).ok()
 }
 
 #[cfg(target_os = "macos")]
@@ -82,7 +122,7 @@ fn build_action_item(
     title: &str,
     action: Sel,
     target: &AnyObject,
-    represented_workspace_id: Option<&str>,
+    represented_target: Option<&DockRecentWorkspaceTarget>,
 ) -> Option<Retained<NSMenuItem>> {
     let title = NSString::from_str(title);
     let key_equivalent = NSString::from_str("");
@@ -97,13 +137,56 @@ fn build_action_item(
     unsafe {
         item.setTarget(Some(target));
     }
-    if let Some(workspace_id) = represented_workspace_id {
-        let workspace_id = NSString::from_str(workspace_id);
+    if let Some(target_payload) = represented_target {
+        let payload = serde_json::to_string(target_payload).ok()?;
+        let payload = NSString::from_str(&payload);
         unsafe {
-            item.setRepresentedObject(Some(&workspace_id));
+            item.setRepresentedObject(Some(&payload));
         }
     }
     Some(item)
+}
+
+#[cfg(target_os = "macos")]
+fn dock_recent_workspace_targets(
+    registry: &WorkspaceWindowRegistry,
+) -> Vec<(String, DockRecentWorkspaceTarget)> {
+    let mut entries = Vec::new();
+    let mut seen_labels = HashSet::new();
+
+    for recent in registry.recent_workspaces() {
+        let label = recent.label.trim();
+        if label.is_empty() || !seen_labels.insert(label.to_string()) {
+            continue;
+        }
+        entries.push((
+            label.to_string(),
+            DockRecentWorkspaceTarget::WorkspaceId {
+                workspace_id: recent.workspace_id,
+            },
+        ));
+        if entries.len() >= MAX_RECENT_WORKSPACES {
+            return entries;
+        }
+    }
+
+    for recent in registry.dock_recent_local_workspaces() {
+        let label = recent.label.trim();
+        if label.is_empty() || !seen_labels.insert(label.to_string()) {
+            continue;
+        }
+        entries.push((
+            label.to_string(),
+            DockRecentWorkspaceTarget::LocalRootPath {
+                root_path: recent.root_path,
+            },
+        ));
+        if entries.len() >= MAX_RECENT_WORKSPACES {
+            break;
+        }
+    }
+
+    entries
 }
 
 #[cfg(target_os = "macos")]
@@ -118,30 +201,22 @@ fn build_dock_menu(app: &tauri::AppHandle, target: &AnyObject) -> Option<Retaine
     menu.addItem(&new_window);
 
     let registry = app.state::<WorkspaceWindowRegistry>();
-    let recents = registry.recent_workspaces();
-    let separator = NSMenuItem::separatorItem(mtm);
-    menu.addItem(&separator);
+    let recents = dock_recent_workspace_targets(&registry);
 
     if recents.is_empty() {
-        let empty = build_action_item(
-            mtm,
-            "No Recent Workspaces",
-            sel!(ctxDockOpenRecentWorkspace:),
-            target,
-            None,
-        )?;
-        empty.setEnabled(false);
-        menu.addItem(&empty);
         return Some(menu);
     }
 
-    for recent in recents {
+    let separator = NSMenuItem::separatorItem(mtm);
+    menu.addItem(&separator);
+
+    for (title, target_payload) in recents {
         let item = build_action_item(
             mtm,
-            &recent.label,
+            &title,
             sel!(ctxDockOpenRecentWorkspace:),
             target,
-            Some(&recent.workspace_id),
+            Some(&target_payload),
         )?;
         menu.addItem(&item);
     }

@@ -11,6 +11,7 @@ import {
 import {
   desktopConnectLocal,
   desktopGetConnection,
+  desktopSetDockRecentLocalWorkspaces,
   isDesktopApp,
 } from "../utils/desktop";
 
@@ -42,6 +43,7 @@ vi.mock("../utils/desktop", async () => {
     ...actual,
     desktopConnectLocal: vi.fn(),
     desktopGetConnection: vi.fn(),
+    desktopSetDockRecentLocalWorkspaces: vi.fn(),
     isDesktopApp: vi.fn(),
   };
 });
@@ -57,6 +59,7 @@ describe("LauncherPage recents", () => {
     navigateMock.mockReset();
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "none" });
+    vi.mocked(desktopSetDockRecentLocalWorkspaces).mockResolvedValue();
     vi.mocked(loadLauncherRecents).mockResolvedValue([]);
     vi.mocked(upsertLauncherRecent).mockResolvedValue([]);
     vi.mocked(getHealth).mockResolvedValue({

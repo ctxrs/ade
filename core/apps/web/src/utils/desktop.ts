@@ -323,11 +323,23 @@ export const desktopUploadBlob = async (args: {
 export const desktopSetOpenWorkspaces = async (workspace_ids: string[]): Promise<void> =>
   invoke<void>("desktop_set_open_workspaces", { workspace_ids });
 
+export const desktopOpenLauncherInNewWindow = async (): Promise<void> =>
+  invoke<void>("desktop_open_launcher_in_new_window");
+
 export const desktopOpenWorkspaceInNewWindow = async (workspace_id: string): Promise<void> =>
   invoke<void>("desktop_open_workspace_in_new_window", { workspace_id });
 
 export const desktopOpenWorkspaceSetupInNewWindow = async (): Promise<void> =>
   invoke<void>("desktop_open_workspace_setup_in_new_window");
+
+export type DesktopDockRecentLocalWorkspace = {
+  label: string;
+  root_path: string;
+};
+
+export const desktopSetDockRecentLocalWorkspaces = async (
+  entries: DesktopDockRecentLocalWorkspace[],
+): Promise<void> => invoke<void>("desktop_set_dock_recent_local_workspaces", { entries });
 
 export const desktopRecordWorkspaceVisit = async (
   workspace_id: string,

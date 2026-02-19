@@ -11,8 +11,10 @@ import {
   desktopConnectLocal,
   desktopConnectSsh,
   desktopGetConnection,
+  desktopSetDockRecentLocalWorkspaces,
   isDesktopApp,
   type DesktopConnectionInfo,
+  type DesktopDockRecentLocalWorkspace,
 } from "../utils/desktop";
 import { errorMessage } from "../utils/errorMessage";
 import LauncherBrand from "../components/LauncherBrand";
@@ -96,15 +98,27 @@ export default function LauncherPage() {
     let cancelled = false;
     loadLauncherRecents()
       .then((next) => {
-        if (!cancelled) setRecents(next);
+        if (cancelled) return;
+        setRecents(next);
+        if (!isDesktop) return;
+        const localEntries: DesktopDockRecentLocalWorkspace[] = next
+          .filter((entry): entry is Extract<LauncherRecentEntry, { kind: "local" }> => entry.kind === "local")
+          .map((entry) => ({
+            label: entry.label,
+            root_path: entry.root_path,
+          }));
+        void desktopSetDockRecentLocalWorkspaces(localEntries).catch(() => {});
       })
       .catch(() => {
-        if (!cancelled) setRecents([]);
+        if (cancelled) return;
+        setRecents([]);
+        if (!isDesktop) return;
+        void desktopSetDockRecentLocalWorkspaces([]).catch(() => {});
       });
     return () => {
       cancelled = true;
     };
-  }, [busy]);
+  }, [busy, isDesktop]);
 
   const connectLocalAndOpen = async (rootPath?: string) => {
     setError(null);
@@ -129,7 +143,7 @@ export default function LauncherPage() {
         }
         navigate(`/workspaces/${wsId}`, { replace: true });
       } else {
-        navigate("/workspaces", { replace: true });
+        navigate("/", { replace: true });
       }
     } catch (e: unknown) {
       setError(errorMessage(e));
@@ -164,7 +178,7 @@ export default function LauncherPage() {
       } catch {
         // best-effort only; do not block connection flow on recents persistence
       }
-      navigate("/workspaces", { replace: true });
+      navigate("/", { replace: true });
     } catch (e: unknown) {
       setError(errorMessage(e));
     } finally {

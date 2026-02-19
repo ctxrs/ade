@@ -1,10 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { appendDesktopLog, openLogsFolder } from "./api/client";
 import DaemonAvailabilityOverlay from "./components/DaemonAvailabilityOverlay";
 import LauncherPage from "./pages/LauncherPage";
-import AppSettingsPage from "./pages/AppSettingsPage";
-import WorkspacesPage from "./pages/WorkspacesPage";
 import WorkbenchPage from "./pages/WorkbenchPage";
 import CursorDiffDemoPage from "./pages/CursorDiffDemoPage";
 import ProvidersPage from "./pages/ProvidersPage";
@@ -14,28 +12,25 @@ import WorkspaceSetupPage from "./pages/WorkspaceSetupPage";
 import CrashCoursePage from "./pages/CrashCoursePage";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
 import { SettingsStoreProvider, useSettingsSnapshot } from "./state/settingsStore";
+import { loadLauncherRecents } from "./state/launcherRecentsStore";
 import { preloadHarnessLogos } from "./utils/harnessCatalog";
 import { refreshUpdateCheck } from "./utils/updateNotice";
 import {
   desktopListen,
+  desktopOpenLauncherInNewWindow,
   desktopOpenWorkspaceSetupInNewWindow,
-  desktopOpenWorkspaceInNewWindow,
-  desktopSetTitlebarColor,
+  desktopSetDockRecentLocalWorkspaces,
   desktopSetMenuState,
   desktopSetWindowTitle,
-  getDesktopPlatform,
   isDesktopApp,
   openExternalLink,
-  type DesktopPlatform,
 } from "./utils/desktop";
 import { initAnalytics, setAnalyticsEnabled, trackAppOpened } from "./utils/analytics";
 import { computeAnalyticsCaptureEnabled } from "./utils/analytics/runtimePolicy";
-import { useThemeVariant } from "./utils/theme";
 import {
   buildDesktopMenuBaseState,
   DESKTOP_MENU_ACTION_EVENT,
   isDesktopMenuCommandId,
-  parseWorkspaceIdFromPathname,
   WEB_MENU_TRACE_EVENT,
   WEB_MENU_COMMAND_EVENT,
   WEB_MENU_STATE_EVENT,
@@ -147,6 +142,28 @@ function DesktopMenuBridge() {
 
   useEffect(() => {
     if (!isDesktopApp()) return;
+    let cancelled = false;
+    loadLauncherRecents()
+      .then((entries) => {
+        if (cancelled) return;
+        const localEntries = entries.flatMap((entry) =>
+          entry.kind === "local"
+            ? [{ label: entry.label, root_path: entry.root_path }]
+            : [],
+        );
+        void desktopSetDockRecentLocalWorkspaces(localEntries).catch(() => {});
+      })
+      .catch(() => {
+        if (cancelled) return;
+        void desktopSetDockRecentLocalWorkspaces([]).catch(() => {});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!isDesktopApp()) return;
     const onMenuState = (event: Event) => {
       const custom = event as CustomEvent<WebMenuStateDetail>;
       const detail = custom.detail;
@@ -181,14 +198,13 @@ function DesktopMenuBridge() {
           void desktopOpenWorkspaceSetupInNewWindow().catch(() => {});
           emitMenuTrace({ commandId, layer: "app", status: "handled", note: "open-workspace-setup-window" });
           return;
+        case "file.new-window":
+          void desktopOpenLauncherInNewWindow().catch(() => {});
+          emitMenuTrace({ commandId, layer: "app", status: "handled", note: "open-launcher-window" });
+          return;
         case "go.workspace-setup":
           navigate("/workspace-setup");
           emitMenuTrace({ commandId, layer: "app", status: "handled", note: "navigate-workspace-setup" });
-          return;
-        case "file.open-workspaces":
-        case "go.workspaces":
-          navigate("/workspaces");
-          emitMenuTrace({ commandId, layer: "app", status: "handled", note: "navigate-workspaces" });
           return;
         case "go.launcher":
           navigate("/");
@@ -216,16 +232,6 @@ function DesktopMenuBridge() {
           void openLogsFolder().catch(() => {});
           emitMenuTrace({ commandId, layer: "app", status: "handled", note: "open-logs-folder" });
           return;
-        case "file.open-workspace-new-window": {
-          const wsId = parseWorkspaceIdFromPathname(location.pathname);
-          if (wsId) {
-            void desktopOpenWorkspaceInNewWindow(wsId).catch(() => {});
-            emitMenuTrace({ commandId, layer: "app", status: "handled", note: "open-workspace-window" });
-          } else {
-            emitMenuTrace({ commandId, layer: "app", status: "ignored", note: "workspace-missing" });
-          }
-          return;
-        }
         default:
           break;
       }
@@ -275,49 +281,6 @@ function DesktopMenuBridge() {
   return null;
 }
 
-function DesktopChromeBridge() {
-  const location = useLocation();
-  const [desktopPlatform, setDesktopPlatform] = useState<DesktopPlatform>("unknown");
-  const themeVariant = useThemeVariant();
-
-  useEffect(() => {
-    if (!isDesktopApp()) return;
-    let cancelled = false;
-    getDesktopPlatform()
-      .then((platform) => {
-        if (!cancelled) setDesktopPlatform(platform);
-      })
-      .catch(() => {
-        if (!cancelled) setDesktopPlatform("unknown");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isDesktopApp() || desktopPlatform !== "macos") return;
-    const color =
-      themeVariant === "light" ? { r: 248, g: 248, b: 248, a: 1 } : { r: 24, g: 24, b: 24, a: 1 };
-    desktopSetTitlebarColor(color).catch(() => {});
-  }, [desktopPlatform, themeVariant]);
-
-  useEffect(() => {
-    if (!isDesktopApp()) return;
-    if (location.pathname === "/settings") {
-      document.title = "Settings";
-      desktopSetWindowTitle("Settings").catch(() => {});
-      return;
-    }
-    if (!location.pathname.startsWith("/workspaces/")) {
-      document.title = "";
-      desktopSetWindowTitle("").catch(() => {});
-    }
-  }, [location.pathname]);
-
-  return null;
-}
-
 function AnalyticsSettingsBridge() {
   const snapshot = useSettingsSnapshot();
   const appOpenedSentRef = useRef(false);
@@ -363,13 +326,10 @@ export default function App() {
           <AnalyticsSettingsBridge />
           <DesktopSettingsListener />
           <DesktopMenuBridge />
-          <DesktopChromeBridge />
           <Routes>
             <Route path="/" element={<LauncherPage />} />
             <Route path="/crash-course" element={<CrashCoursePage />} />
             <Route path="/workspace-setup" element={<WorkspaceSetupPage />} />
-            <Route path="/app-settings" element={<AppSettingsPage />} />
-            <Route path="/workspaces" element={<WorkspacesPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/providers" element={<ProvidersPage />} />
             <Route path="/diagnostics" element={<DiagnosticsPage />} />

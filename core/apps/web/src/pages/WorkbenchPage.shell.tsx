@@ -647,7 +647,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       const resp = await daemonFetchRaw(`/api/workspaces/${workspaceId}`);
       if (cancelled) return;
       if (resp.status === 404 || resp.status === 400) {
-        navigate("/workspaces", { replace: true });
+        navigate("/", { replace: true });
         return;
       }
       if (resp.status >= 200 && resp.status < 300 && resp.body) {
@@ -2929,7 +2929,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const canToggleArchive = Boolean(activeTaskId) && !Boolean(activeTaskId && archivePendingById[activeTaskId]);
 
     const items: DesktopMenuItemState[] = [
-      { id: "file.open-workspace-new-window", enabled: true },
       { id: "file.export-transcript", enabled: Boolean(activeSessionId) },
       { id: "file.export-session-log", enabled: Boolean(activeSessionId) },
       { id: "view.find-tasks", enabled: true },

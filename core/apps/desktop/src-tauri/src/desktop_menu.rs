@@ -11,9 +11,8 @@ use tauri::{Emitter, Manager};
 const MENU_EVENT_NAME: &str = "desktop_menu_action";
 
 pub(super) const CMD_FILE_NEW_WORKSPACE: &str = "file.new-workspace";
-pub(super) const CMD_FILE_OPEN_WORKSPACES: &str = "file.open-workspaces";
+pub(super) const CMD_FILE_NEW_WINDOW: &str = "file.new-window";
 pub(super) const CMD_FILE_OPEN_RECENT: &str = "file.open-recent";
-pub(super) const CMD_FILE_OPEN_WORKSPACE_NEW_WINDOW: &str = "file.open-workspace-new-window";
 pub(super) const CMD_FILE_EXPORT_TRANSCRIPT: &str = "file.export-transcript";
 pub(super) const CMD_FILE_EXPORT_SESSION_LOG: &str = "file.export-session-log";
 pub(super) const CMD_VIEW_FIND_TASKS: &str = "view.find-tasks";
@@ -34,7 +33,6 @@ pub(super) const CMD_SESSION_OPEN_WORKTREE_TERMINAL: &str = "session.open-worktr
 pub(super) const CMD_SESSION_INTERRUPT: &str = "session.interrupt";
 pub(super) const CMD_GO_LAUNCHER: &str = "go.launcher";
 pub(super) const CMD_GO_WORKSPACE_SETUP: &str = "go.workspace-setup";
-pub(super) const CMD_GO_WORKSPACES: &str = "go.workspaces";
 pub(super) const CMD_GO_SETTINGS: &str = "go.settings";
 pub(super) const CMD_GO_DIAGNOSTICS: &str = "go.diagnostics";
 pub(super) const CMD_GO_AGENT_HARNESSES: &str = "go.agent-harnesses";
@@ -163,15 +161,14 @@ fn build_file_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
         Some("CmdOrCtrl+Shift+N"),
         true,
     )?;
-    let open_workspaces = menu_item(app, CMD_FILE_OPEN_WORKSPACES, "Open Workspaces", None, true)?;
-    let open_recent = menu_item(app, CMD_FILE_OPEN_RECENT, "Open Recent", None, false)?;
-    let open_new_window = menu_item(
+    let new_window = menu_item(
         app,
-        CMD_FILE_OPEN_WORKSPACE_NEW_WINDOW,
-        "Open Workspace in New Window",
+        CMD_FILE_NEW_WINDOW,
+        "New Window",
         Some("CmdOrCtrl+Shift+O"),
-        false,
+        true,
     )?;
+    let open_recent = menu_item(app, CMD_FILE_OPEN_RECENT, "Open Recent", None, false)?;
     let export_transcript = menu_item(
         app,
         CMD_FILE_EXPORT_TRANSCRIPT,
@@ -192,9 +189,8 @@ fn build_file_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
 
     SubmenuBuilder::new(app, "File")
         .item(&new_workspace)
-        .item(&open_workspaces)
+        .item(&new_window)
         .item(&open_recent)
-        .item(&open_new_window)
         .item(&sep1)
         .item(&export_transcript)
         .item(&export_session_log)
@@ -212,7 +208,13 @@ fn build_edit_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
     let select_all = PredefinedMenuItem::select_all(app, None)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
-    let find_tasks = menu_item(app, CMD_VIEW_FIND_TASKS, "Find Tasks", Some("CmdOrCtrl+F"), false)?;
+    let find_tasks = menu_item(
+        app,
+        CMD_VIEW_FIND_TASKS,
+        "Find Tasks",
+        Some("CmdOrCtrl+F"),
+        false,
+    )?;
 
     SubmenuBuilder::new(app, "Edit")
         .item(&undo)
@@ -236,7 +238,14 @@ fn build_view_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
         false,
         false,
     )?;
-    let toggle_diff = check_item(app, CMD_VIEW_TOGGLE_DIFF, "Toggle Diff Pane", None, false, false)?;
+    let toggle_diff = check_item(
+        app,
+        CMD_VIEW_TOGGLE_DIFF,
+        "Toggle Diff Pane",
+        None,
+        false,
+        false,
+    )?;
     let toggle_artifacts = check_item(
         app,
         CMD_VIEW_TOGGLE_ARTIFACTS,
@@ -278,9 +287,27 @@ fn build_view_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
 fn build_task_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
     let new_task = menu_item(app, CMD_TASK_NEW, "New Task", Some("CmdOrCtrl+N"), false)?;
     let rename_task = menu_item(app, CMD_TASK_RENAME, "Rename Task", Some("F2"), false)?;
-    let archive_toggle = menu_item(app, CMD_TASK_ARCHIVE_TOGGLE, "Archive/Unarchive", None, false)?;
-    let mark_read_toggle = menu_item(app, CMD_TASK_MARK_READ_TOGGLE, "Mark Read/Unread", None, false)?;
-    let delete_task = menu_item(app, CMD_TASK_DELETE, "Delete Task", Some("CmdOrCtrl+Backspace"), false)?;
+    let archive_toggle = menu_item(
+        app,
+        CMD_TASK_ARCHIVE_TOGGLE,
+        "Archive/Unarchive",
+        None,
+        false,
+    )?;
+    let mark_read_toggle = menu_item(
+        app,
+        CMD_TASK_MARK_READ_TOGGLE,
+        "Mark Read/Unread",
+        None,
+        false,
+    )?;
+    let delete_task = menu_item(
+        app,
+        CMD_TASK_DELETE,
+        "Delete Task",
+        Some("CmdOrCtrl+Backspace"),
+        false,
+    )?;
 
     SubmenuBuilder::new(app, "Task")
         .item(&new_task)
@@ -346,9 +373,14 @@ fn build_go_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>
         Some("CmdOrCtrl+Shift+S"),
         true,
     )?;
-    let workspaces = menu_item(app, CMD_GO_WORKSPACES, "Workspaces", Some("CmdOrCtrl+2"), true)?;
     let settings = menu_item(app, CMD_GO_SETTINGS, "Settings", Some("CmdOrCtrl+,"), true)?;
-    let diagnostics = menu_item(app, CMD_GO_DIAGNOSTICS, "Diagnostics", Some("CmdOrCtrl+3"), true)?;
+    let diagnostics = menu_item(
+        app,
+        CMD_GO_DIAGNOSTICS,
+        "Diagnostics",
+        Some("CmdOrCtrl+3"),
+        true,
+    )?;
     let harnesses = menu_item(
         app,
         CMD_GO_AGENT_HARNESSES,
@@ -360,7 +392,6 @@ fn build_go_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>
     SubmenuBuilder::new(app, "Go")
         .item(&launcher)
         .item(&workspace_setup)
-        .item(&workspaces)
         .item(&settings)
         .item(&diagnostics)
         .item(&harnesses)
@@ -428,7 +459,13 @@ fn build_help_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
         Some("CmdOrCtrl+/"),
         true,
     )?;
-    let open_logs_folder = menu_item(app, CMD_HELP_OPEN_LOGS_FOLDER, "Open Logs Folder", None, true)?;
+    let open_logs_folder = menu_item(
+        app,
+        CMD_HELP_OPEN_LOGS_FOLDER,
+        "Open Logs Folder",
+        None,
+        true,
+    )?;
     let diagnostics = menu_item(app, CMD_HELP_DIAGNOSTICS, "Diagnostics", None, true)?;
     let report_issue = menu_item(app, CMD_HELP_REPORT_ISSUE, "Report Issue", None, true)?;
 
@@ -469,8 +506,20 @@ fn build_app_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry
         Some("CmdOrCtrl+N"),
         true,
     )?;
-    let open_workspaces = menu_item(app, CMD_FILE_OPEN_WORKSPACES, "Open Workspaces", None, true)?;
-    let settings = menu_item(app, CMD_GO_SETTINGS, "Settings...", Some("CmdOrCtrl+,"), true)?;
+    let new_window = menu_item(
+        app,
+        CMD_FILE_NEW_WINDOW,
+        "New Window",
+        Some("CmdOrCtrl+Shift+O"),
+        true,
+    )?;
+    let settings = menu_item(
+        app,
+        CMD_GO_SETTINGS,
+        "Settings...",
+        Some("CmdOrCtrl+,"),
+        true,
+    )?;
     let hide = PredefinedMenuItem::hide(app, None)?;
     let hide_others = PredefinedMenuItem::hide_others(app, None)?;
     let show_all = PredefinedMenuItem::show_all(app, None)?;
@@ -480,7 +529,7 @@ fn build_app_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry
         .item(&about)
         .item(&sep1)
         .item(&new_workspace)
-        .item(&open_workspaces)
+        .item(&new_window)
         .item(&sep2)
         .item(&settings)
         .item(&sep3)
@@ -525,9 +574,8 @@ pub(super) fn is_menu_command_id(id: &str) -> bool {
     matches!(
         id,
         CMD_FILE_NEW_WORKSPACE
-            | CMD_FILE_OPEN_WORKSPACES
+            | CMD_FILE_NEW_WINDOW
             | CMD_FILE_OPEN_RECENT
-            | CMD_FILE_OPEN_WORKSPACE_NEW_WINDOW
             | CMD_FILE_EXPORT_TRANSCRIPT
             | CMD_FILE_EXPORT_SESSION_LOG
             | CMD_VIEW_FIND_TASKS
@@ -548,7 +596,6 @@ pub(super) fn is_menu_command_id(id: &str) -> bool {
             | CMD_SESSION_INTERRUPT
             | CMD_GO_LAUNCHER
             | CMD_GO_WORKSPACE_SETUP
-            | CMD_GO_WORKSPACES
             | CMD_GO_SETTINGS
             | CMD_GO_DIAGNOSTICS
             | CMD_GO_AGENT_HARNESSES
@@ -607,7 +654,10 @@ fn set_enabled_for_kind(kind: &MenuItemKind<tauri::Wry>, enabled: bool) -> Resul
     }
 }
 
-fn apply_state_to_kind(kind: &MenuItemKind<tauri::Wry>, update: &DesktopMenuItemStateUpdate) -> Result<(), String> {
+fn apply_state_to_kind(
+    kind: &MenuItemKind<tauri::Wry>,
+    update: &DesktopMenuItemStateUpdate,
+) -> Result<(), String> {
     if let Some(enabled) = update.enabled {
         set_enabled_for_kind(kind, enabled)?;
     }
@@ -688,10 +738,7 @@ fn read_enabled_for_kind(kind: &MenuItemKind<tauri::Wry>) -> Result<bool, String
 #[cfg(feature = "automation")]
 fn read_checked_for_kind(kind: &MenuItemKind<tauri::Wry>) -> Result<Option<bool>, String> {
     if let Some(item) = kind.as_check_menuitem() {
-        return item
-            .is_checked()
-            .map(Some)
-            .map_err(|e| e.to_string());
+        return item.is_checked().map(Some).map_err(|e| e.to_string());
     }
     Ok(None)
 }
@@ -772,10 +819,7 @@ pub(super) fn desktop_set_menu_state(
     let window_label = webview_window.label().to_string();
     cache.set_state(&window_label, items.clone());
 
-    if webview_window
-        .is_focused()
-        .map_err(|err| err.to_string())?
-    {
+    if webview_window.is_focused().map_err(|err| err.to_string())? {
         cache.set_focused_window(&window_label);
         apply_menu_state_updates(&app, &items)?;
     }

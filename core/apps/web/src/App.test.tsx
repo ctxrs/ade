@@ -4,11 +4,10 @@ import { beforeEach, test, vi } from "vitest";
 import App from "./App";
 import {
   desktopListen,
+  desktopOpenLauncherInNewWindow,
   desktopOpenWorkspaceSetupInNewWindow,
+  desktopSetDockRecentLocalWorkspaces,
   desktopSetMenuState,
-  desktopSetTitlebarColor,
-  desktopSetWindowTitle,
-  getDesktopPlatform,
   isDesktopApp,
   openExternalLink,
 } from "./utils/desktop";
@@ -32,16 +31,6 @@ vi.mock("./components/DaemonAvailabilityOverlay", () => ({
 vi.mock("./pages/LauncherPage", () => ({
   __esModule: true,
   default: () => <div>New Workspace</div>,
-}));
-
-vi.mock("./pages/AppSettingsPage", () => ({
-  __esModule: true,
-  default: () => <div>App Settings Screen</div>,
-}));
-
-vi.mock("./pages/WorkspacesPage", () => ({
-  __esModule: true,
-  default: () => <div>Workspaces Screen</div>,
 }));
 
 vi.mock("./pages/WorkbenchPage", () => ({
@@ -104,9 +93,6 @@ vi.mock("./utils/analytics", () => ({
 
 vi.mock("./utils/desktop", () => ({
   isDesktopApp: vi.fn(() => false),
-  getDesktopPlatform: vi.fn(async () => "unknown"),
-  desktopSetTitlebarColor: vi.fn(async () => {}),
-  desktopSetWindowTitle: vi.fn(async () => {}),
   desktopListen: vi.fn(async <T,>(event: string, handler: (payload: T) => void) => {
     desktopHandlers.set(event, (payload?: unknown) => handler(payload as T));
     return () => {
@@ -114,9 +100,15 @@ vi.mock("./utils/desktop", () => ({
     };
   }),
   desktopSetMenuState: vi.fn(async () => {}),
-  desktopOpenWorkspaceInNewWindow: vi.fn(async () => {}),
+  desktopSetDockRecentLocalWorkspaces: vi.fn(async () => {}),
+  desktopSetWindowTitle: vi.fn(async () => {}),
+  desktopOpenLauncherInNewWindow: vi.fn(async () => {}),
   desktopOpenWorkspaceSetupInNewWindow: vi.fn(async () => {}),
   openExternalLink: vi.fn(async () => true),
+}));
+
+vi.mock("./state/launcherRecentsStore", () => ({
+  loadLauncherRecents: vi.fn(async () => []),
 }));
 
 vi.mock("./state/uiStateStore", () => ({
@@ -128,9 +120,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   desktopHandlers.clear();
   vi.mocked(isDesktopApp).mockReturnValue(false);
-  vi.mocked(getDesktopPlatform).mockResolvedValue("unknown");
-  vi.mocked(desktopSetTitlebarColor).mockResolvedValue();
-  vi.mocked(desktopSetWindowTitle).mockResolvedValue();
+  vi.mocked(desktopSetDockRecentLocalWorkspaces).mockResolvedValue();
   window.history.pushState({}, "", "/");
   const globalWithFetch = globalThis as typeof globalThis & { fetch: typeof fetch };
   globalWithFetch.fetch = vi.fn(async () => {
@@ -269,6 +259,31 @@ test("desktop menu new workspace opens setup in a new window", async () => {
   expect(window.location.pathname).toBe("/workspaces/ws-987");
 });
 
+test("desktop menu new window opens launcher in a new window", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+  window.history.pushState({}, "", "/workspaces/ws-741");
+
+  render(<App />);
+  expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
+
+  const handler = await waitFor(() => {
+    const value = desktopHandlers.get("desktop_menu_action");
+    if (!value) {
+      throw new Error("desktop_menu_action handler not ready");
+    }
+    return value;
+  });
+
+  act(() => {
+    handler({ commandId: "file.new-window" });
+  });
+
+  await waitFor(() => {
+    expect(vi.mocked(desktopOpenLauncherInNewWindow)).toHaveBeenCalledTimes(1);
+  });
+  expect(window.location.pathname).toBe("/workspaces/ws-741");
+});
+
 test("desktop menu action forwards workbench-scoped commands to the web menu bus", async () => {
   vi.mocked(isDesktopApp).mockReturnValue(true);
   window.history.pushState({}, "", "/workspaces/ws-456");
@@ -286,9 +301,8 @@ test("desktop menu action forwards workbench-scoped commands to the web menu bus
 
   const appHandledCommands = new Set<DesktopMenuCommandId>([
     "file.new-workspace",
+    "file.new-window",
     "go.workspace-setup",
-    "file.open-workspaces",
-    "go.workspaces",
     "go.launcher",
     "go.settings",
     "go.diagnostics",
@@ -297,7 +311,6 @@ test("desktop menu action forwards workbench-scoped commands to the web menu bus
     "help.crash-course",
     "help.keyboard-shortcuts",
     "help.open-logs-folder",
-    "file.open-workspace-new-window",
   ]);
   const forwardedCommands = DESKTOP_MENU_COMMAND_IDS.filter((commandId) => !appHandledCommands.has(commandId));
 
@@ -344,31 +357,5 @@ test("desktop menu report issue opens external tracker link", async () => {
     expect(vi.mocked(openExternalLink)).toHaveBeenCalledWith(
       "https://github.com/context-labs/ctx/issues/new",
     );
-  });
-});
-
-test("desktop settings route updates native window title", async () => {
-  vi.mocked(isDesktopApp).mockReturnValue(true);
-  vi.mocked(getDesktopPlatform).mockResolvedValue("macos");
-  window.history.pushState({}, "", "/settings");
-
-  render(<App />);
-  expect(await screen.findByText("Settings Screen")).toBeInTheDocument();
-
-  await waitFor(() => {
-    expect(vi.mocked(desktopSetWindowTitle)).toHaveBeenCalledWith("Settings");
-  });
-});
-
-test("desktop launcher route clears native window title", async () => {
-  vi.mocked(isDesktopApp).mockReturnValue(true);
-  vi.mocked(getDesktopPlatform).mockResolvedValue("macos");
-  window.history.pushState({}, "", "/");
-
-  render(<App />);
-  expect(await screen.findByText("New Workspace")).toBeInTheDocument();
-
-  await waitFor(() => {
-    expect(vi.mocked(desktopSetWindowTitle)).toHaveBeenCalledWith("");
   });
 });

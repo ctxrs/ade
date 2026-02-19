@@ -5,9 +5,8 @@ export const WEB_MENU_TRACE_EVENT = "ctx:menu-trace" as const;
 
 export const DESKTOP_MENU_COMMAND_IDS = [
   "file.new-workspace",
-  "file.open-workspaces",
+  "file.new-window",
   "file.open-recent",
-  "file.open-workspace-new-window",
   "file.export-transcript",
   "file.export-session-log",
   "view.find-tasks",
@@ -28,7 +27,6 @@ export const DESKTOP_MENU_COMMAND_IDS = [
   "session.interrupt",
   "go.launcher",
   "go.workspace-setup",
-  "go.workspaces",
   "go.settings",
   "go.diagnostics",
   "go.agent-harnesses",
@@ -77,21 +75,12 @@ export const isDesktopWorkspaceRoute = (pathname: string): boolean => {
   return pathname.startsWith("/workspaces/");
 };
 
-export const parseWorkspaceIdFromPathname = (pathname: string): string | null => {
-  if (!isDesktopWorkspaceRoute(pathname)) return null;
-  const parts = pathname.split("/").filter(Boolean);
-  if (parts.length < 2) return null;
-  const workspaceId = String(parts[1] ?? "").trim();
-  return workspaceId || null;
-};
-
 export const buildDesktopMenuBaseState = (pathname: string): DesktopMenuItemState[] => {
   const inWorkspace = isDesktopWorkspaceRoute(pathname);
   return [
     { id: "file.new-workspace", enabled: true },
-    { id: "file.open-workspaces", enabled: true },
+    { id: "file.new-window", enabled: true },
     { id: "file.open-recent", enabled: false },
-    { id: "file.open-workspace-new-window", enabled: inWorkspace },
     { id: "file.export-transcript", enabled: false },
     { id: "file.export-session-log", enabled: false },
     { id: "view.find-tasks", enabled: inWorkspace },
@@ -112,7 +101,6 @@ export const buildDesktopMenuBaseState = (pathname: string): DesktopMenuItemStat
     { id: "session.interrupt", enabled: false },
     { id: "go.launcher", enabled: true },
     { id: "go.workspace-setup", enabled: true },
-    { id: "go.workspaces", enabled: true },
     { id: "go.settings", enabled: true },
     { id: "go.diagnostics", enabled: true },
     { id: "go.agent-harnesses", enabled: true },

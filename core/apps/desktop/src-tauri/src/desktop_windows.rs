@@ -12,7 +12,7 @@ pub(super) fn open_workspace_window(
             let url = format!("/workspaces/{workspace_id}");
             let js = format!(
                 "window.location.href = {};",
-                serde_json::to_string(&url).unwrap_or_else(|_| "\"/workspaces\"".to_string())
+                serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
             );
             let _ = window.eval(&js);
             let _ = window.emit("workspace:open", workspace_id.to_string());
@@ -33,7 +33,7 @@ pub(super) fn open_workspace_window(
     let url = format!("/workspaces/{workspace_id}");
     let js = format!(
         "window.location.href = {};",
-        serde_json::to_string(&url).unwrap_or_else(|_| "\"/workspaces\"".to_string())
+        serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
     );
     let _ = window.eval(&js);
     let _ = window.emit("workspace:open", workspace_id.to_string());
@@ -87,7 +87,7 @@ pub(super) fn focus_or_open_workspace_window(
             let url = format!("/workspaces/{workspace_id}");
             let js = format!(
                 "window.location.href = {};",
-                serde_json::to_string(&url).unwrap_or_else(|_| "\"/workspaces\"".to_string())
+                serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
             );
             let _ = window.eval(&js);
             let _ = window.emit("workspace:open", workspace_id.to_string());

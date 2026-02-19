@@ -290,7 +290,7 @@ export default function ProvidersPage() {
   return (
     <div className="page">
       <div className="header">
-        <Link to="/workspaces">← Workspaces</Link>
+        <Link to="/">← Launcher</Link>
       </div>
 
       <h1>Providers</h1>
