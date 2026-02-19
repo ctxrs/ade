@@ -424,7 +424,7 @@ pub(super) fn open_settings_window(app: &tauri::AppHandle) -> Result<()> {
         return Ok(());
     }
     tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App("/settings".into()))
-        .title("ctx settings")
+        .title("Settings")
         .inner_size(1000.0, 780.0)
         .build()
         .context("creating settings window")?;

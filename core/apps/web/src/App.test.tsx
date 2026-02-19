@@ -2,7 +2,15 @@ import type { ReactNode } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, test, vi } from "vitest";
 import App from "./App";
-import { desktopListen, desktopSetMenuState, isDesktopApp, openExternalLink } from "./utils/desktop";
+import {
+  desktopListen,
+  desktopSetMenuState,
+  desktopSetTitlebarColor,
+  desktopSetWindowTitle,
+  getDesktopPlatform,
+  isDesktopApp,
+  openExternalLink,
+} from "./utils/desktop";
 
 const desktopHandlers = new Map<string, (payload?: unknown) => void>();
 
@@ -90,6 +98,9 @@ vi.mock("./utils/analytics", () => ({
 
 vi.mock("./utils/desktop", () => ({
   isDesktopApp: vi.fn(() => false),
+  getDesktopPlatform: vi.fn(async () => "unknown"),
+  desktopSetTitlebarColor: vi.fn(async () => {}),
+  desktopSetWindowTitle: vi.fn(async () => {}),
   desktopListen: vi.fn(async <T,>(event: string, handler: (payload: T) => void) => {
     desktopHandlers.set(event, (payload?: unknown) => handler(payload as T));
     return () => {
@@ -110,6 +121,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   desktopHandlers.clear();
   vi.mocked(isDesktopApp).mockReturnValue(false);
+  vi.mocked(getDesktopPlatform).mockResolvedValue("unknown");
+  vi.mocked(desktopSetTitlebarColor).mockResolvedValue();
+  vi.mocked(desktopSetWindowTitle).mockResolvedValue();
   window.history.pushState({}, "", "/");
   const globalWithFetch = globalThis as typeof globalThis & { fetch: typeof fetch };
   globalWithFetch.fetch = vi.fn(async () => {
@@ -224,5 +238,31 @@ test("desktop menu report issue opens external tracker link", async () => {
     expect(vi.mocked(openExternalLink)).toHaveBeenCalledWith(
       "https://github.com/context-labs/ctx/issues/new",
     );
+  });
+});
+
+test("desktop settings route updates native window title", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+  vi.mocked(getDesktopPlatform).mockResolvedValue("macos");
+  window.history.pushState({}, "", "/settings");
+
+  render(<App />);
+  expect(await screen.findByText("Settings Screen")).toBeInTheDocument();
+
+  await waitFor(() => {
+    expect(vi.mocked(desktopSetWindowTitle)).toHaveBeenCalledWith("Settings");
+  });
+});
+
+test("desktop launcher route clears native window title", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+  vi.mocked(getDesktopPlatform).mockResolvedValue("macos");
+  window.history.pushState({}, "", "/");
+
+  render(<App />);
+  expect(await screen.findByText("New Workspace")).toBeInTheDocument();
+
+  await waitFor(() => {
+    expect(vi.mocked(desktopSetWindowTitle)).toHaveBeenCalledWith("");
   });
 });

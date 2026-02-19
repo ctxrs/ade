@@ -3,6 +3,7 @@
 .settings-root {
   min-height: 100vh;
   background: var(--bg);
+  border-top: 1px solid var(--border);
 }
 
 .settings-shell {

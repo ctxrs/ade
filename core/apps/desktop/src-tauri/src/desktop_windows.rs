@@ -199,6 +199,8 @@ pub(super) fn install_macos_settings_button(
             return;
         };
         let ns_window: &NSWindow = &*webview.ns_window().cast();
+        ns_window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
+        ns_window.setTitleVisibility(NSWindowTitleVisibility::Visible);
         let image = icon_path
             .as_deref()
             .and_then(|path| load_lucide_settings_icon(path))
@@ -229,7 +231,23 @@ pub(super) fn install_macos_settings_button(
             Some(sel!(openSettings:)),
             mtm,
         );
-        button.setBezelStyle(NSBezelStyle::Toolbar);
+        button.setBordered(false);
+        let tint = NSColor::secondaryLabelColor();
+        button.setContentTintColor(Some(&tint));
+        let mut frame = button.frame();
+        frame.size.height += 3.0;
+        button.setFrame(frame);
+
+        // Keep a balanced leading accessory so the native title stays visually centered.
+        let mut spacer_frame = frame;
+        spacer_frame.size.width = spacer_frame.size.width.max(22.0);
+        let spacer = NSView::initWithFrame(NSView::alloc(mtm), spacer_frame);
+        spacer.setAlphaValue(0.0);
+        let leading_accessory = NSTitlebarAccessoryViewController::new(mtm);
+        leading_accessory.setView(spacer.as_ref());
+        leading_accessory.setLayoutAttribute(NSLayoutAttribute::Leading);
+        leading_accessory.setAutomaticallyAdjustsSize(true);
+        ns_window.addTitlebarAccessoryViewController(&leading_accessory);
 
         let accessory = NSTitlebarAccessoryViewController::new(mtm);
         accessory.setView(button.as_ref());
@@ -271,7 +289,7 @@ pub(super) fn open_main_window(app: &tauri::AppHandle) -> Result<()> {
         Ok(v) if v.trim().starts_with('/') => tauri::WebviewUrl::App(v.trim().into()),
         _ => tauri::WebviewUrl::App("index.html".into()),
     };
-    let mut builder = tauri::WebviewWindowBuilder::new(app, "main", start_url).title("ctx");
+    let mut builder = tauri::WebviewWindowBuilder::new(app, "main", start_url).title("");
     if let Ok(Some(monitor)) = app.primary_monitor() {
         let size = monitor.size();
         let width = (size.width as f64 * 0.9).round().max(1200.0);

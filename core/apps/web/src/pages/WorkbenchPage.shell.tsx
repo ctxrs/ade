@@ -58,13 +58,12 @@ import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import {
-  desktopSetTitlebarColor,
+  desktopSetWindowTitle,
   desktopStorageConsumeNotice,
   getDesktopPlatform,
   isDesktopApp,
   type DesktopPlatform,
   type DesktopStorageNotice,
-  type DesktopTitlebarColor,
 } from "../utils/desktop";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { pickPreferredSessionId } from "../utils/workbenchSelection";
@@ -72,7 +71,6 @@ import { parseModelId } from "../utils/modelEffort";
 import { getLoadTestTelemetry } from "../utils/loadTestTelemetry";
 import { useDictationController } from "../utils/useDictationController";
 import { randomUuid } from "../utils/randomUuid";
-import { readCssVar, useThemeVariant } from "../utils/theme";
 import {
   WEB_MENU_COMMAND_EVENT,
   WEB_MENU_STATE_EVENT,
@@ -140,37 +138,6 @@ import {
   spinnerDelayForNow,
 } from "./WorkbenchPage.utils";
 import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
-
-const parseCssColor = (value: string): DesktopTitlebarColor | null => {
-  const raw = value.trim();
-  if (!raw) return null;
-  if (raw.startsWith("#")) {
-    const hex = raw.slice(1);
-    if (hex.length === 3) {
-      const r = parseInt(hex[0] + hex[0], 16);
-      const g = parseInt(hex[1] + hex[1], 16);
-      const b = parseInt(hex[2] + hex[2], 16);
-      if ([r, g, b].some((v) => Number.isNaN(v))) return null;
-      return { r, g, b, a: 1 };
-    }
-    if (hex.length === 6) {
-      const r = parseInt(hex.slice(0, 2), 16);
-      const g = parseInt(hex.slice(2, 4), 16);
-      const b = parseInt(hex.slice(4, 6), 16);
-      if ([r, g, b].some((v) => Number.isNaN(v))) return null;
-      return { r, g, b, a: 1 };
-    }
-    return null;
-  }
-  const nums = raw.match(/[\d.]+/g);
-  if (!nums || nums.length < 3) return null;
-  const r = Number(nums[0]);
-  const g = Number(nums[1]);
-  const b = Number(nums[2]);
-  if ([r, g, b].some((v) => Number.isNaN(v))) return null;
-  const a = nums.length >= 4 ? Number(nums[3]) : 1;
-  return { r, g, b, a: Number.isNaN(a) ? 1 : a };
-};
 
 export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate();
@@ -2871,7 +2838,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (/linux/i.test(platform)) return "linux";
     return "unknown";
   });
-  const themeVariant = useThemeVariant();
 
   useEffect(() => {
     if (!desktopUi) return;
@@ -2906,14 +2872,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const useHtmlTopbar = !desktopUi || desktopPlatform !== "macos";
   const workspaceTitle = workspace?.name ?? "";
 
-  useEffect(() => {
-    if (!desktopUi || desktopPlatform !== "macos") return;
-    const raw = readCssVar("--surface-sidebar");
-    const color = parseCssColor(raw);
-    if (!color) return;
-    desktopSetTitlebarColor(color).catch(() => {});
-  }, [desktopUi, desktopPlatform, themeVariant]);
-
   const rootStyle = useMemo(() => {
     const max = Math.max(170, window.innerWidth - 240);
     const clamped = Math.min(max, Math.max(170, Math.round(sidebarWidth)));
@@ -2927,9 +2885,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     if (!desktopUi) return;
-    const title = `${workspace?.name ?? "Workspace"}${activeTask?.title ? ` — ${activeTask.title}` : ""}`;
+    const title = workspace?.name ?? "";
     document.title = title;
-  }, [activeTask?.title, desktopUi, workspace?.name]);
+    desktopSetWindowTitle(title).catch(() => {});
+  }, [desktopUi, workspace?.name]);
 
   const topbar = useHtmlTopbar ? (
     <div className="wb-topbar" data-tauri-drag-region={desktopUi ? true : undefined}>
@@ -2976,7 +2935,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   if (!workbenchSnap.hydrated) {
     return (
       <div
-        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
+        className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""} ${!useHtmlTopbar ? "wb-root-native-titlebar" : ""}`}
         style={rootStyle}
       >
         <WorktreeBootstrapSnackbar />
@@ -2997,7 +2956,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div
-      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""}`}
+      className={`wb-root ${sidebarCollapsed ? "wb-root-collapsed" : ""} ${sidebarResizing ? "wb-root-resizing" : ""} ${diffResizing ? "wb-root-diff-resizing" : ""} ${terminalResizing ? "wb-root-terminal-resizing" : ""} ${!useHtmlTopbar ? "wb-root-native-titlebar" : ""}`}
       style={rootStyle}
     >
       <WorktreeBootstrapSnackbar />

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { appendDesktopLog, openLogsFolder } from "./api/client";
 import DaemonAvailabilityOverlay from "./components/DaemonAvailabilityOverlay";
@@ -19,12 +19,17 @@ import { refreshUpdateCheck } from "./utils/updateNotice";
 import {
   desktopListen,
   desktopOpenWorkspaceInNewWindow,
+  desktopSetTitlebarColor,
   desktopSetMenuState,
+  desktopSetWindowTitle,
+  getDesktopPlatform,
   isDesktopApp,
   openExternalLink,
+  type DesktopPlatform,
 } from "./utils/desktop";
 import { initAnalytics, setAnalyticsEnabled, trackAppOpened } from "./utils/analytics";
 import { computeAnalyticsCaptureEnabled } from "./utils/analytics/runtimePolicy";
+import { useThemeVariant } from "./utils/theme";
 import {
   buildDesktopMenuBaseState,
   DESKTOP_MENU_ACTION_EVENT,
@@ -237,6 +242,49 @@ function DesktopMenuBridge() {
   return null;
 }
 
+function DesktopChromeBridge() {
+  const location = useLocation();
+  const [desktopPlatform, setDesktopPlatform] = useState<DesktopPlatform>("unknown");
+  const themeVariant = useThemeVariant();
+
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    let cancelled = false;
+    getDesktopPlatform()
+      .then((platform) => {
+        if (!cancelled) setDesktopPlatform(platform);
+      })
+      .catch(() => {
+        if (!cancelled) setDesktopPlatform("unknown");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktopApp() || desktopPlatform !== "macos") return;
+    const color =
+      themeVariant === "light" ? { r: 248, g: 248, b: 248, a: 1 } : { r: 24, g: 24, b: 24, a: 1 };
+    desktopSetTitlebarColor(color).catch(() => {});
+  }, [desktopPlatform, themeVariant]);
+
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    if (location.pathname === "/settings") {
+      document.title = "Settings";
+      desktopSetWindowTitle("Settings").catch(() => {});
+      return;
+    }
+    if (!location.pathname.startsWith("/workspaces/")) {
+      document.title = "";
+      desktopSetWindowTitle("").catch(() => {});
+    }
+  }, [location.pathname]);
+
+  return null;
+}
+
 function AnalyticsSettingsBridge() {
   const snapshot = useSettingsSnapshot();
   const appOpenedSentRef = useRef(false);
@@ -282,6 +330,7 @@ export default function App() {
           <AnalyticsSettingsBridge />
           <DesktopSettingsListener />
           <DesktopMenuBridge />
+          <DesktopChromeBridge />
           <Routes>
             <Route path="/" element={<LauncherPage />} />
             <Route path="/crash-course" element={<CrashCoursePage />} />

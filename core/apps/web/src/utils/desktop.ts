@@ -280,3 +280,8 @@ export const desktopSetTitlebarColor = async (color: DesktopTitlebarColor): Prom
 
 export const desktopSetMenuState = async (items: DesktopMenuItemStateUpdate[]): Promise<void> =>
   invoke<void>("desktop_set_menu_state", { items });
+
+export const desktopSetWindowTitle = async (title: string): Promise<void> => {
+  if (!isDesktopApp()) return;
+  await invoke<void>("desktop_set_window_title", { title });
+};

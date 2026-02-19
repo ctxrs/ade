@@ -648,6 +648,11 @@
   overflow: hidden;
 }
 
+.wb-root-native-titlebar .wb-sidebar,
+.wb-root-native-titlebar .wb-main {
+  border-top: 1px solid var(--border);
+}
+
 .wb-terminal-shell {
   grid-area: terminal;
   display: flex;
@@ -664,7 +669,7 @@
   gap: 0;
   padding: 0 8px;
   position: relative;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border);
   background: var(--surface-sidebar);
 }
 

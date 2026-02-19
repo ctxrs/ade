@@ -16,11 +16,12 @@ use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, NSObject, Sel};
 #[cfg(target_os = "macos")]
-use objc2::{msg_send, sel, AnyThread, ClassType, MainThreadMarker};
+use objc2::{msg_send, sel, AnyThread, ClassType, MainThreadMarker, MainThreadOnly};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
-    NSBezelStyle, NSButton, NSColor, NSImage, NSImageNamePreferencesGeneral, NSLayoutAttribute,
-    NSTitlebarAccessoryViewController, NSWindow,
+    NSButton, NSColor, NSImage, NSImageNamePreferencesGeneral, NSLayoutAttribute,
+    NSTitlebarAccessoryViewController, NSTitlebarSeparatorStyle, NSView, NSWindow,
+    NSWindowTitleVisibility,
 };
 #[cfg(target_os = "macos")]
 use objc2_core_foundation::CGFloat;
@@ -108,6 +109,7 @@ fn main() {
             desktop_open_workspace_in_new_window,
             desktop_set_titlebar_color,
             desktop_set_menu_state,
+            desktop_set_window_title,
             desktop_register_workspace_window,
             desktop_unregister_workspace_window,
             desktop_upload_blob,
@@ -495,7 +497,7 @@ fn desktop_open_workspace_in_new_window(
     let url = format!("/workspaces/{workspace_id}");
     let builder =
         tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
-            .title("ctx")
+            .title("")
             .inner_size(1200.0, 900.0);
     let window = apply_workbench_titlebar(builder)
         .build()
@@ -537,10 +539,30 @@ fn desktop_set_titlebar_color(
                 };
                 let ns_window: &NSWindow = &*webview.ns_window().cast();
                 ns_window.setTitlebarAppearsTransparent(false);
+                ns_window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
+                ns_window.setTitleVisibility(NSWindowTitleVisibility::Visible);
                 let bg = NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, alpha);
                 ns_window.setBackgroundColor(Some(&bg));
             })
             .map_err(|e| format!("failed to set titlebar color: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn desktop_set_window_title(window: tauri::WebviewWindow, title: String) -> Result<(), String> {
+    window
+        .set_title(&title)
+        .map_err(|e| format!("failed to set window title: {e}"))?;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.with_webview(|webview| unsafe {
+            let Some(_mtm) = MainThreadMarker::new() else {
+                return;
+            };
+            let ns_window: &NSWindow = &*webview.ns_window().cast();
+            ns_window.setTitleVisibility(NSWindowTitleVisibility::Visible);
+        });
     }
     Ok(())
 }
