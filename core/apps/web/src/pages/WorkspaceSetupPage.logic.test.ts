@@ -172,24 +172,24 @@ describe("session titling readiness", () => {
     expect(ready).toEqual({ ready: true, reason: "remote_ready" });
   });
 
-  it("requires local runtime/model readiness when mode is local", () => {
-    const notReady = resolveSessionTitlingReadiness({
+  it("treats local mode as configured once model is set", () => {
+    const configured = resolveSessionTitlingReadiness({
       title_generation: {
         mode: "local",
         remote: { base_url: "", api_key: "", model: "", use_json: true },
         local: { model_id: "ggml-org/Qwen3-1.7B-GGUF", use_json: true },
       },
     }, { ready: false } as never);
-    expect(notReady).toEqual({ ready: false, reason: "local_not_ready" });
+    expect(configured).toEqual({ ready: true, reason: "local_ready" });
 
-    const ready = resolveSessionTitlingReadiness({
+    const missingModel = resolveSessionTitlingReadiness({
       title_generation: {
         mode: "local",
         remote: { base_url: "", api_key: "", model: "", use_json: true },
-        local: { model_id: "ggml-org/Qwen3-1.7B-GGUF", use_json: true },
+        local: { model_id: "", use_json: true },
       },
     }, { ready: true } as never);
-    expect(ready).toEqual({ ready: true, reason: "local_ready" });
+    expect(missingModel).toEqual({ ready: false, reason: "local_missing_model" });
   });
 });
 

@@ -9,8 +9,7 @@ export type SessionTitlingReadinessReason =
   | "remote_ready"
   | "remote_incomplete"
   | "local_ready"
-  | "local_missing_model"
-  | "local_not_ready";
+  | "local_missing_model";
 
 export type SessionTitlingReadiness = {
   ready: boolean;
@@ -37,11 +36,11 @@ export const isRemoteTitlingConfigured = (
 
 export const isLocalTitlingConfiguredReady = (
   titleGeneration: TitleGenerationSettings | null | undefined,
-  localStatus: TitleGenerationLocalStatus | null | undefined,
+  _localStatus: TitleGenerationLocalStatus | null | undefined,
 ): boolean => {
   if (!titleGeneration || titleGeneration.mode !== "local") return false;
   if (trim(titleGeneration.local?.model_id) === "") return false;
-  return Boolean(localStatus?.ready);
+  return true;
 };
 
 export const resolveSessionTitlingReadiness = (
@@ -60,9 +59,7 @@ export const resolveSessionTitlingReadiness = (
   if (trim(titleGeneration.local?.model_id) === "") {
     return { ready: false, reason: "local_missing_model" };
   }
-  return Boolean(localStatus?.ready)
-    ? { ready: true, reason: "local_ready" }
-    : { ready: false, reason: "local_not_ready" };
+  return { ready: true, reason: "local_ready" };
 };
 
 export type SessionTitlingDraft = {
