@@ -16,6 +16,7 @@ describe("harnessEndpointProviders", () => {
     expect(defaultEndpointProviderPresetForHarness("claude-crp")).toBe("anthropic");
     expect(defaultEndpointProviderPresetForHarness("gemini")).toBe("google_ai_studio");
     expect(defaultEndpointProviderPresetForHarness("kimi")).toBe("moonshot_ai");
+    expect(defaultEndpointProviderPresetForHarness("cursor")).toBe("other");
   });
 
   it("keeps openrouter and other as final options", () => {
@@ -54,6 +55,7 @@ describe("harnessEndpointProviders", () => {
   it("flags providers that support optional base URL", () => {
     expect(supportsOptionalBaseUrlForHarness("cody")).toBe(true);
     expect(supportsOptionalBaseUrlForHarness("pi")).toBe(true);
+    expect(supportsOptionalBaseUrlForHarness("cursor")).toBe(true);
     expect(supportsOptionalBaseUrlForHarness("copilot")).toBe(false);
   });
 

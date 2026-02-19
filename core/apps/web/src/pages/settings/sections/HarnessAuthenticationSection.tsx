@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { Ellipsis, KeyRound, User as UserIcon, X } from "lucide-react";
 import {
   DropdownMenu,
@@ -28,9 +28,18 @@ import { useHarnessAuthenticationController } from "../hooks/useHarnessAuthentic
 type HarnessAuthenticationSectionProps = {
   workspaceId: string | null;
   active: boolean;
+  modalOnly?: boolean;
+  openProviderId?: string | null;
+  onModalClosed?: (providerId: string | null) => void;
 };
 
-export function HarnessAuthenticationSection({ workspaceId, active }: HarnessAuthenticationSectionProps) {
+export function HarnessAuthenticationSection({
+  workspaceId,
+  active,
+  modalOnly = false,
+  openProviderId,
+  onModalClosed,
+}: HarnessAuthenticationSectionProps) {
   const {
     providers,
     installs,
@@ -117,36 +126,66 @@ export function HarnessAuthenticationSection({ workspaceId, active }: HarnessAut
       : harnessAuthModal?.provider_id === "auggie"
         ? "Auggie session token"
         : "sk-...";
+  const lastModalProviderIdRef = useRef<string | null>(null);
+  const suppressReopenProviderIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    if (!openProviderId) return;
+    if (openProviderId === suppressReopenProviderIdRef.current) return;
+    if (harnessAuthModal?.provider_id === openProviderId) return;
+    openHarnessAuthModal(openProviderId);
+  }, [active, harnessAuthModal?.provider_id, openHarnessAuthModal, openProviderId]);
+
+  useEffect(() => {
+    if (!openProviderId || openProviderId !== suppressReopenProviderIdRef.current) {
+      suppressReopenProviderIdRef.current = null;
+    }
+  }, [openProviderId]);
+
+  useEffect(() => {
+    if (harnessAuthModal) {
+      lastModalProviderIdRef.current = harnessAuthModal.provider_id;
+      return;
+    }
+    if (!lastModalProviderIdRef.current) return;
+    const closedProviderId = lastModalProviderIdRef.current;
+    lastModalProviderIdRef.current = null;
+    suppressReopenProviderIdRef.current = closedProviderId;
+    onModalClosed?.(closedProviderId);
+  }, [harnessAuthModal, onModalClosed]);
 
   return (
     <>
-      <p className="settings-harness-intro">
-        Authenticate each agent harness with the provider&apos;s subscription or API key.
-      </p>
-      {installControlsEnabled ? (
-        <Card>
-          <Row
-            title="Install all"
-            description="Installs supported harnesses to ~/.ctx/providers/agent-servers."
-            control={
-              <button
-                type="button"
-                className="settings-btn"
-                onClick={() => {
-                  void onInstallAll();
-                }}
-                disabled={installBusy !== null}
-              >
-                {installBusy === "all" ? "Installing…" : "Install all"}
-              </button>
-            }
-          />
-        </Card>
-      ) : null}
+      {!modalOnly ? (
+        <>
+          <p className="settings-harness-intro">
+            Authenticate each agent harness with the provider&apos;s subscription or API key.
+          </p>
+          {installControlsEnabled ? (
+            <Card>
+              <Row
+                title="Install all"
+                description="Installs supported harnesses to ~/.ctx/providers/agent-servers."
+                control={
+                  <button
+                    type="button"
+                    className="settings-btn"
+                    onClick={() => {
+                      void onInstallAll();
+                    }}
+                    disabled={installBusy !== null}
+                  >
+                    {installBusy === "all" ? "Installing…" : "Install all"}
+                  </button>
+                }
+              />
+            </Card>
+          ) : null}
 
-      <div className="settings-card settings-harness-list">
-        <div className="settings-card-rows">
-          {harnesses.map((harness) => {
+          <div className="settings-card settings-harness-list">
+            <div className="settings-card-rows">
+              {harnesses.map((harness) => {
             const id = harness.id;
             const provider = providersById.get(id);
             if (!provider) return null;
@@ -425,10 +464,12 @@ export function HarnessAuthenticationSection({ workspaceId, active }: HarnessAut
                 ) : null}
               </div>
             );
-          })}
-          {harnesses.length === 0 ? <div className="settings-empty">No harnesses.</div> : null}
-        </div>
-      </div>
+              })}
+              {harnesses.length === 0 ? <div className="settings-empty">No harnesses.</div> : null}
+            </div>
+          </div>
+        </>
+      ) : null}
 
       {harnessAuthModal ? (
         <div className="modal-overlay" role="dialog" aria-modal="true" onClick={closeHarnessAuthModal}>
@@ -538,7 +579,7 @@ export function HarnessAuthenticationSection({ workspaceId, active }: HarnessAut
                             : harnessAuthModal.provider_id === "kiro"
                               ? "Paste the Kiro auth token JSON for a managed token cache."
                               : harnessAuthModal.provider_id === "cursor"
-                                ? "Paste a Cursor token for the managed account."
+                                ? "Sign in with Cursor on this host (unmanaged)."
                       : "Authenticate this harness for the selected workspace."}
                 </div>
                 {harnessAuthModal.provider_id === "claude-crp" ? (
@@ -726,39 +767,6 @@ export function HarnessAuthenticationSection({ workspaceId, active }: HarnessAut
                     </label>
                   </>
                 ) : null}
-                {harnessAuthModal.provider_id === "cursor" ? (
-                  <>
-                    <label className="settings-harness-modal-label">
-                      Label (optional)
-                      <input
-                        className="settings-control"
-                        value={harnessAuthModal.subscription_label}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_label: e.target.value })}
-                        placeholder="Cursor subscription"
-                        autoFocus
-                      />
-                    </label>
-                    <label className="settings-harness-modal-label">
-                      Email (optional)
-                      <input
-                        className="settings-control"
-                        value={harnessAuthModal.subscription_email}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_email: e.target.value })}
-                        placeholder="you@example.com"
-                      />
-                    </label>
-                    <label className="settings-harness-modal-label">
-                      Token
-                      <input
-                        className="settings-control"
-                        value={harnessAuthModal.subscription_token}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_token: e.target.value })}
-                        placeholder="cursor_..."
-                        type="password"
-                      />
-                    </label>
-                  </>
-                ) : null}
                 {harnessAuthModal.subscription_status ? (
                   <div className="settings-row-desc settings-harness-modal-status">
                     {harnessAuthModal.subscription_status}
@@ -795,7 +803,7 @@ export function HarnessAuthenticationSection({ workspaceId, active }: HarnessAut
                   >
                     {harnessAuthModal.subscription_busy
                       ? "Starting..."
-                      : harnessAuthModal.provider_id === "codex"
+                      : harnessAuthModal.provider_id === "codex" || harnessAuthModal.provider_id === "cursor"
                         ? "Start sign-in"
                         : "Save subscription"}
                   </button>

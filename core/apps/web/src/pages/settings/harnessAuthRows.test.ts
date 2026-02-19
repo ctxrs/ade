@@ -299,8 +299,8 @@ describe("buildHarnessAuthRows", () => {
     expect(kiroRows.find((row) => row.active)?.account_id).toBe("kiro-1");
   });
 
-  it("builds cursor subscription rows and marks active without source-kind gating", () => {
-    const rows = buildHarnessAuthRows({
+  it("builds cursor unmanaged subscription row gated by source kind", () => {
+    const endpointSelected = buildHarnessAuthRows({
       provider_id: "cursor",
       selected_source_kind: "endpoint",
       selected_endpoint_id: null,
@@ -324,7 +324,32 @@ describe("buildHarnessAuthRows", () => {
       ],
     });
 
-    expect(rows.find((row) => row.active)?.account_id).toBe("cursor-2");
-    expect(rows[0]?.label).toBe("cursor-a@example.com");
+    expect(endpointSelected).toHaveLength(1);
+    expect(endpointSelected[0]?.label).toContain("unmanaged");
+    expect(endpointSelected[0]?.active).toBe(false);
+    expect(endpointSelected[0]?.can_delete).toBe(false);
+
+    const subscriptionSelected = buildHarnessAuthRows({
+      provider_id: "cursor",
+      selected_source_kind: "subscription",
+      selected_endpoint_id: null,
+      endpoints: [],
+      codex_accounts: [],
+      codex_active_account_id: null,
+      claude_accounts: [],
+      claude_active_account_id: null,
+      gemini_accounts: [],
+      gemini_active_account_id: null,
+      kimi_accounts: [],
+      kimi_active_account_id: null,
+      copilot_accounts: [],
+      copilot_active_account_id: null,
+      kiro_accounts: [],
+      kiro_active_account_id: null,
+      cursor_active_account_id: null,
+      cursor_accounts: [],
+    });
+
+    expect(subscriptionSelected[0]?.active).toBe(true);
   });
 });

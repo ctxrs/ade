@@ -41,11 +41,6 @@ type OpenMenuId = "harness" | "model" | "effort" | "verbosity";
 const logoClasses = (base: string, invertInDark?: boolean, invertInLight?: boolean) =>
   [base, invertInDark ? "wb-invert" : "", invertInLight ? "wb-invert-light" : ""].filter(Boolean).join(" ");
 
-const asRecord = (value: unknown): Record<string, unknown> => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
-};
-
 export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const {
     variant,
@@ -371,6 +366,16 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       newSession.ensureProviderOptions(providerId).catch(() => {});
     }
   }, [newSession?.ensureProviderOptions, newSession?.providerOptions, newSession?.providersById, providerIdsToEnsure]);
+
+  useEffect(() => {
+    if (!newSession) return;
+    if (openMenu !== "harness") return;
+    for (const [providerId, status] of Object.entries(newSession.providersById)) {
+      if (!(status?.installed && status.health === "ok")) continue;
+      if (newSession.providerOptions[providerId]) continue;
+      newSession.ensureProviderOptions(providerId).catch(() => {});
+    }
+  }, [newSession, openMenu]);
 
   // Seed the primary draft model from provider-advertised defaults (when available),
   // so the UI shows the current model + effort (e.g. `gpt-5.2/xhigh`) immediately.
@@ -767,24 +772,9 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               const opts = ns.providerOptions[id];
               const models = buildModelsForProvider(id, opts);
               const catalog = buildModelCatalog(models);
-              const verifyStatus = String(asRecord(opts?.verify).status ?? "");
-
-              const statusUi = (() => {
-                if (!opts) return null;
-                if (opts.auth_required || verifyStatus === "auth_required") {
-                  return { label: "Auth required", kind: "warn" as const };
-                }
-                if (verifyStatus === "network_error") {
-                  return { label: "Offline", kind: "warn" as const };
-                }
-                if (verifyStatus === "error") {
-                  return { label: "Error", kind: "err" as const };
-                }
-                if (opts.probe_ok === false) {
-                  return { label: "Unhealthy", kind: "err" as const };
-                }
-                return null;
-              })();
+              const hasActiveAuth = opts?.has_active_auth === true;
+              const showAddAuthButton =
+                checked && installed && !hasActiveAuth && typeof ns.onRequestHarnessAuth === "function";
 
               return (
                 <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
@@ -806,12 +796,14 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                     ) : (
                       <span className="wb-harness-logo-fallback" aria-hidden="true" />
                     )}
-                    <span className="wb-harness-name">{label}</span>
-                    {statusUi && (
-                      <span className={`wb-harness-status wb-harness-status-${statusUi.kind}`}>
-                        {statusUi.label}
-                      </span>
-                    )}
+                    <span className="wb-harness-name-wrap">
+                      <span className="wb-harness-name">{label}</span>
+                      <span
+                        className={`wb-harness-auth-dot ${hasActiveAuth ? "wb-harness-auth-dot-active" : "wb-harness-auth-dot-inactive"}`}
+                        aria-label={hasActiveAuth ? "Authentication configured" : "Authentication not configured"}
+                        title={hasActiveAuth ? "Authentication configured" : "Authentication not configured"}
+                      />
+                    </span>
                   </button>
 
                   <div className="wb-harness-actions">
@@ -847,6 +839,19 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                       ) : null
                     ) : (
                       <>
+                        {showAddAuthButton && (
+                          <button
+                            type="button"
+                            className="wb-harness-auth-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              ns.onRequestHarnessAuth?.(id);
+                            }}
+                            title="Add authentication profile"
+                          >
+                            Add auth
+                          </button>
+                        )}
                         {checked && (
                           <button
                             type="button"

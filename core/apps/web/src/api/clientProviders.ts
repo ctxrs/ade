@@ -41,6 +41,8 @@ export type ProviderOptions = {
   probe_error?: string;
   supports_load: boolean;
   auth_required: boolean;
+  has_active_auth?: boolean;
+  auth_mode?: "subscription" | "endpoint" | "none";
   auth_methods?: unknown;
   modes?: unknown;
   models?: unknown;

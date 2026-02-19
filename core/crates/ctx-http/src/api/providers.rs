@@ -1836,6 +1836,52 @@ fn selected_endpoint_from_harness_config(
     })
 }
 
+fn endpoint_selection_is_active(config: &harness_sources::HarnessProviderSourceConfig) -> bool {
+    if config.selected_source_kind != HarnessSourceKind::Endpoint {
+        return false;
+    }
+    let Some(selected_endpoint_id) = config.selected_endpoint_id.as_deref() else {
+        return false;
+    };
+    config
+        .endpoints
+        .iter()
+        .any(|endpoint| endpoint.id == selected_endpoint_id)
+}
+
+async fn provider_has_active_auth_config(
+    data_root: &std::path::Path,
+    provider_id: &str,
+    source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
+) -> bool {
+    if let Some(config) = source_config {
+        if endpoint_selection_is_active(config) {
+            return true;
+        }
+    }
+    match crate::provider_accounts::subscription_env_for_active_account(data_root, provider_id)
+        .await
+    {
+        Ok(env) => !env.is_empty(),
+        Err(_) => false,
+    }
+}
+
+fn provider_auth_mode(
+    has_active_auth: bool,
+    source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
+) -> &'static str {
+    if !has_active_auth {
+        return "none";
+    }
+    if let Some(config) = source_config {
+        if endpoint_selection_is_active(config) {
+            return "endpoint";
+        }
+    }
+    "subscription"
+}
+
 pub(super) async fn get_provider_options(
     State(state): State<Arc<AppState>>,
     Path((ws_id, provider_id)): Path<(String, String)>,
@@ -1899,6 +1945,13 @@ pub(super) async fn get_provider_options(
         harness_sources::get_provider_source_config(&state.core.data_root, &provider_id)
             .await
             .ok();
+    let has_active_auth = provider_has_active_auth_config(
+        &state.core.data_root,
+        &provider_id,
+        source_config.as_ref(),
+    )
+    .await;
+    let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
 
     if provider_status.is_none() {
         return Err((
@@ -1919,6 +1972,8 @@ pub(super) async fn get_provider_options(
                 "diagnostics": st.diagnostics,
                 "probe_ok": false,
                 "probe_error": "provider not installed or unhealthy",
+                "has_active_auth": has_active_auth,
+                "auth_mode": auth_mode,
                 "probed_at": chrono::Utc::now().to_rfc3339(),
             });
             if let Some(source) = source_config.as_ref() {
@@ -1954,6 +2009,8 @@ pub(super) async fn get_provider_options(
             "probe_ok": true,
             "supports_load": false,
             "auth_required": false,
+            "has_active_auth": has_active_auth,
+            "auth_mode": auth_mode,
             "probed_at": chrono::Utc::now().to_rfc3339(),
         });
         if let Some(source) = source_config.as_ref() {
@@ -2057,6 +2114,8 @@ pub(super) async fn get_provider_options(
                 "probe_ok": true,
                 "supports_load": false,
                 "auth_required": false,
+                "has_active_auth": has_active_auth,
+                "auth_mode": auth_mode,
                 "models": {
                     "models": probe.models,
                     "current_model_id": probe.current_model_id,
@@ -2069,6 +2128,8 @@ pub(super) async fn get_provider_options(
                 "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(false),
                 "probe_ok": false,
                 "probe_error": logs::redact_sensitive(&e.to_string()),
+                "has_active_auth": has_active_auth,
+                "auth_mode": auth_mode,
                 "probed_at": chrono::Utc::now().to_rfc3339(),
             }),
         };
@@ -2838,6 +2899,25 @@ pub(super) async fn dev_restart_providers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+
+    fn test_endpoint(id: &str) -> harness_sources::HarnessEndpointRecord {
+        harness_sources::HarnessEndpointRecord {
+            id: id.to_string(),
+            provider_id: "codex".to_string(),
+            name: "Test endpoint".to_string(),
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            api_shape: HarnessApiShape::OpenaiResponses,
+            auth_type: "bearer".to_string(),
+            model_override: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            last_verification_status: harness_sources::HarnessEndpointVerificationStatus::Unknown,
+            last_verification_at: None,
+            last_error: None,
+            has_api_key: true,
+        }
+    }
 
     #[test]
     fn expected_callback_extracts_loopback_redirect() {
@@ -2902,6 +2982,48 @@ mod tests {
             },
         ));
         assert!(subscription.is_none());
+    }
+
+    #[test]
+    fn endpoint_selection_is_active_requires_selected_endpoint_record() {
+        let active = harness_sources::HarnessProviderSourceConfig {
+            provider_id: "codex".to_string(),
+            selected_source_kind: HarnessSourceKind::Endpoint,
+            selected_endpoint_id: Some("ep-1".to_string()),
+            endpoints: vec![test_endpoint("ep-1")],
+        };
+        assert!(endpoint_selection_is_active(&active));
+
+        let missing = harness_sources::HarnessProviderSourceConfig {
+            provider_id: "codex".to_string(),
+            selected_source_kind: HarnessSourceKind::Endpoint,
+            selected_endpoint_id: Some("ep-2".to_string()),
+            endpoints: vec![test_endpoint("ep-1")],
+        };
+        assert!(!endpoint_selection_is_active(&missing));
+    }
+
+    #[test]
+    fn provider_auth_mode_prefers_endpoint_for_active_endpoint_selection() {
+        let endpoint = harness_sources::HarnessProviderSourceConfig {
+            provider_id: "codex".to_string(),
+            selected_source_kind: HarnessSourceKind::Endpoint,
+            selected_endpoint_id: Some("ep-1".to_string()),
+            endpoints: vec![test_endpoint("ep-1")],
+        };
+        assert_eq!(provider_auth_mode(true, Some(&endpoint)), "endpoint");
+
+        let subscription = harness_sources::HarnessProviderSourceConfig {
+            provider_id: "codex".to_string(),
+            selected_source_kind: HarnessSourceKind::Subscription,
+            selected_endpoint_id: None,
+            endpoints: vec![],
+        };
+        assert_eq!(
+            provider_auth_mode(true, Some(&subscription)),
+            "subscription"
+        );
+        assert_eq!(provider_auth_mode(false, Some(&subscription)), "none");
     }
 
     #[test]

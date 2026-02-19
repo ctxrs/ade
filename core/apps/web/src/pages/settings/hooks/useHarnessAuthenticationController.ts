@@ -33,7 +33,6 @@ import {
   startCodexLogin,
   upsertClaudeAccount,
   upsertCopilotAccount,
-  upsertCursorAccount,
   upsertGeminiAccount,
   upsertKimiAccount,
   upsertKiroAccount,
@@ -130,6 +129,7 @@ const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
   "rovo",
   "auggie",
   "pi",
+  "cursor",
 ]);
 
 const supportsHarnessEndpointConfig = (providerId: string): boolean =>
@@ -659,22 +659,6 @@ export function useHarnessAuthenticationController({
         if (supportsHarnessEndpointConfig(modal.provider_id)) {
           await onSelectProviderSource(modal.provider_id, "subscription", null);
         }
-        closeHarnessAuthModal();
-        return;
-      }
-
-      if (modal.provider_id === "cursor") {
-        const token = modal.subscription_token.trim();
-        if (!token) {
-          throw new Error("Token is required.");
-        }
-        const label = modal.subscription_label.trim();
-        const email = modal.subscription_email.trim();
-        const next = await upsertCursorAccount(token, {
-          ...(label ? { label } : {}),
-          ...(email ? { email } : {}),
-        });
-        setCursorAccounts(next);
         closeHarnessAuthModal();
         return;
       }

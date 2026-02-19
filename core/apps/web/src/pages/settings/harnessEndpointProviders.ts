@@ -117,6 +117,7 @@ export const defaultEndpointProviderPresetForHarness = (harnessProviderId: strin
   if (harnessProviderId === "claude-crp") return "anthropic";
   if (harnessProviderId === "gemini") return "google_ai_studio";
   if (harnessProviderId === "kimi") return "moonshot_ai";
+  if (harnessProviderId === "cursor") return "other";
   return "openrouter";
 };
 
@@ -124,7 +125,7 @@ export const defaultShapeForHarnessProvider = (harnessProviderId: string): Harne
   harnessProviderId === "claude-crp" ? "anthropic_messages" : "openai_responses";
 
 export const supportsOptionalBaseUrlForHarness = (harnessProviderId: string): boolean =>
-  harnessProviderId === "cody" || harnessProviderId === "pi";
+  harnessProviderId === "cody" || harnessProviderId === "pi" || harnessProviderId === "cursor";
 
 export const normalizeOptionalBaseUrl = (rawBaseUrl: string): string | null => {
   const trimmed = rawBaseUrl.trim();

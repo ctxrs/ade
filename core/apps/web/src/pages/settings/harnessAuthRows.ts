@@ -81,12 +81,6 @@ const kiroAccountLabel = (account: KiroAccountEntry): string => {
   return account.id;
 };
 
-const cursorAccountLabel = (account: CursorAccountEntry): string => {
-  if (account.email && account.email.trim()) return account.email.trim();
-  if (account.label.trim()) return account.label.trim();
-  return account.id;
-};
-
 export const defaultEndpointBaseUrlForProvider = (providerId: string): string => {
   if (providerId === "codex") return "https://api.openai.com/v1";
   if (providerId === "claude-crp") return "https://api.anthropic.com/v1";
@@ -201,18 +195,22 @@ export const buildHarnessAuthRows = ({
   }
 
   if (provider_id === "cursor" && cursor_accounts.length > 0) {
-    for (const account of cursor_accounts) {
-      rows.push({
-        key: `subscription:${account.id}`,
-        kind: "subscription",
-        label: cursorAccountLabel(account),
-        // Cursor currently renders managed subscription rows without source-kind config hydration.
-        active: cursor_active_account_id === account.id,
-        selectable: true,
-        account_id: account.id,
-        can_delete: true,
-      });
-    }
+    // Cursor is currently treated as unmanaged subscription auth in settings/workbench.
+    // Keep any legacy managed account records out of the primary row model.
+    void cursor_accounts;
+    void cursor_active_account_id;
+  }
+
+  if (provider_id === "cursor") {
+    rows.push({
+      key: "subscription:cursor-unmanaged",
+      kind: "subscription",
+      label: "Cursor host login (unmanaged)",
+      detail: "Uses cursor-agent login on this target host.",
+      active: selected_source_kind === "subscription",
+      selectable: true,
+      can_delete: false,
+    });
   }
 
   for (const endpoint of endpoints) {

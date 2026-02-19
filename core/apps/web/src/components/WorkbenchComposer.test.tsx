@@ -385,4 +385,139 @@ describe("WorkbenchComposer textarea sizing", () => {
 
     expect(textarea.scrollTop).toBe(textarea.scrollHeight);
   });
+
+  it("offers add-auth action for selected harnesses without configured auth", async () => {
+    const onRequestHarnessAuth = vi.fn();
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
+        { key: "t1", label: "Track 1", providerId: "codex", modelId: "o3" },
+      ]);
+      const [useMultipleAgents, setUseMultipleAgents] = useState(false);
+      const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+      };
+      const providerOptions: Record<string, ProviderOptions | undefined> = {
+        codex: {
+          provider_id: "codex",
+          workspace_id: "ws-test",
+          supports_load: false,
+          auth_required: false,
+          has_active_auth: false,
+          probed_at: new Date().toISOString(),
+        },
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={providerOptions}
+          ensureProviderOptions={async () => providerOptions.codex}
+          onRequestHarnessAuth={onRequestHarnessAuth}
+          draftTracks={draftTracks}
+          setDraftTracks={setDraftTracks}
+          defaultProviderId="codex"
+          useMultipleAgents={useMultipleAgents}
+          setUseMultipleAgents={setUseMultipleAgents}
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add auth" }));
+    expect(onRequestHarnessAuth).toHaveBeenCalledWith("codex");
+  });
+
+  it("hides add-auth action when selected harness already has configured auth", async () => {
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([
+        { key: "t1", label: "Track 1", providerId: "codex", modelId: "o3" },
+      ]);
+      const [useMultipleAgents, setUseMultipleAgents] = useState(false);
+      const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+      };
+      const providerOptions: Record<string, ProviderOptions | undefined> = {
+        codex: {
+          provider_id: "codex",
+          workspace_id: "ws-test",
+          supports_load: false,
+          auth_required: false,
+          has_active_auth: true,
+          probed_at: new Date().toISOString(),
+        },
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={providerOptions}
+          ensureProviderOptions={async () => providerOptions.codex}
+          draftTracks={draftTracks}
+          setDraftTracks={setDraftTracks}
+          defaultProviderId="codex"
+          useMultipleAgents={useMultipleAgents}
+          setUseMultipleAgents={setUseMultipleAgents}
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.queryByRole("button", { name: "Add auth" })).toBeNull();
+  });
 });

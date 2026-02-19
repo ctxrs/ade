@@ -30,6 +30,7 @@ const PROVIDER_KIRO: &str = "kiro";
 const PROVIDER_ROVO: &str = "rovo";
 const PROVIDER_AUGGIE: &str = "auggie";
 const PROVIDER_PI: &str = "pi";
+const PROVIDER_CURSOR: &str = "cursor";
 
 const CODEX_AUTH_TYPE_BEARER: &str = "bearer";
 const CLAUDE_AUTH_TYPE_API_KEY: &str = "api_key";
@@ -215,6 +216,14 @@ fn kiro_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
         .join(endpoint_id)
 }
 
+fn cursor_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("cursor")
+        .join("endpoint-homes")
+        .join(endpoint_id)
+}
+
 fn container_workspaces_root(data_root: &Path) -> PathBuf {
     data_root.join("containers").join("workspaces")
 }
@@ -257,6 +266,26 @@ async fn remove_kiro_endpoint_homes_for_runtime_roots(
     Ok(())
 }
 
+async fn remove_cursor_endpoint_home_for_root(root: &Path, endpoint_id: &str) -> Result<()> {
+    let endpoint_home = cursor_endpoint_home(root, endpoint_id);
+    match tokio::fs::remove_dir_all(&endpoint_home).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err)
+            .with_context(|| format!("removing cursor endpoint home for endpoint {}", endpoint_id)),
+    }
+}
+
+async fn remove_cursor_endpoint_homes_for_runtime_roots(
+    data_root: &Path,
+    endpoint_id: &str,
+) -> Result<()> {
+    for runtime_root in container_runtime_data_roots(data_root).await {
+        remove_cursor_endpoint_home_for_root(&runtime_root, endpoint_id).await?;
+    }
+    Ok(())
+}
+
 fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
     match provider_id {
         PROVIDER_CODEX => Some(PROVIDER_CODEX),
@@ -280,6 +309,7 @@ fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
         PROVIDER_ROVO => Some(PROVIDER_ROVO),
         PROVIDER_AUGGIE => Some(PROVIDER_AUGGIE),
         PROVIDER_PI => Some(PROVIDER_PI),
+        PROVIDER_CURSOR => Some(PROVIDER_CURSOR),
         _ => None,
     }
 }
@@ -311,6 +341,7 @@ pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> 
         Some(PROVIDER_ROVO) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_AUGGIE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_PI) => Some(HarnessApiShape::OpenaiResponses),
+        Some(PROVIDER_CURSOR) => Some(HarnessApiShape::OpenaiResponses),
         _ => None,
     }
 }
@@ -365,7 +396,8 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
         | Some(PROVIDER_KIRO)
         | Some(PROVIDER_ROVO)
         | Some(PROVIDER_AUGGIE)
-        | Some(PROVIDER_PI) => {
+        | Some(PROVIDER_PI)
+        | Some(PROVIDER_CURSOR) => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "{} requires api_shape=openai_responses; found {}",
@@ -834,6 +866,11 @@ pub async fn delete_provider_endpoint(
                 remove_kiro_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
                 remove_kiro_endpoint_homes_for_runtime_roots(data_root, &removed_endpoint_id)
                     .await?;
+            } else if canonical == PROVIDER_CURSOR {
+                ensure_safe_endpoint_id(&removed_endpoint_id)?;
+                remove_cursor_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
+                remove_cursor_endpoint_homes_for_runtime_roots(data_root, &removed_endpoint_id)
+                    .await?;
             }
         }
         save_registry(data_root, &registry).await?;
@@ -1184,6 +1221,23 @@ async fn resolve_internal(
                 env.insert("PI_ACP_MODEL".to_string(), model);
             }
         }
+        PROVIDER_CURSOR => {
+            ensure_shape_compatible(canonical, endpoint.api_shape)?;
+            ensure_safe_endpoint_id(&endpoint.id)?;
+            let cursor_home_root = runtime_data_root.unwrap_or(data_root);
+            let cursor_home = cursor_endpoint_home(cursor_home_root, &endpoint.id);
+            tokio::fs::create_dir_all(&cursor_home).await?;
+            env.insert("CURSOR_API_KEY".to_string(), api_key);
+            env.insert(
+                "CURSOR_CONFIG_DIR".to_string(),
+                cursor_home.to_string_lossy().to_string(),
+            );
+            let base_url = endpoint.base_url.trim().to_string();
+            if !base_url.is_empty() {
+                env.insert("CURSOR_API_BASE_URL".to_string(), base_url.clone());
+                env.insert("CURSOR_API_ENDPOINT".to_string(), base_url);
+            }
+        }
         PROVIDER_KIRO => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
             ensure_safe_endpoint_id(&endpoint.id)?;
@@ -1471,6 +1525,7 @@ mod tests {
                 PROVIDER_PI,
                 &["OPENAI_API_KEY", "PI_ACP_PROVIDER", "PI_ACP_MODEL"],
             ),
+            (PROVIDER_CURSOR, &["CURSOR_API_KEY", "CURSOR_CONFIG_DIR"]),
             (PROVIDER_CLINE, &["OPENAI_API_KEY"]),
             (PROVIDER_SWE_AGENT, &["OPENAI_API_KEY"]),
             (
@@ -1491,6 +1546,7 @@ mod tests {
                         || *provider_id == PROVIDER_ROVO
                         || *provider_id == PROVIDER_AUGGIE
                         || *provider_id == PROVIDER_PI
+                        || *provider_id == PROVIDER_CURSOR
                     {
                         None
                     } else {
@@ -1501,6 +1557,7 @@ mod tests {
                         || *provider_id == PROVIDER_ROVO
                         || *provider_id == PROVIDER_AUGGIE
                         || *provider_id == PROVIDER_PI
+                        || *provider_id == PROVIDER_CURSOR
                     {
                         None
                     } else {
@@ -1614,6 +1671,47 @@ mod tests {
         );
         assert_eq!(resolved.env.get("PI_ACP_MODEL"), Some(&"gpt-5".to_string()));
         assert!(!resolved.env.contains_key("OPENAI_BASE_URL"));
+    }
+
+    #[tokio::test]
+    async fn cursor_endpoint_allows_token_only_upsert_and_sets_cursor_env() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_CURSOR,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Cursor key".to_string(),
+                base_url: None,
+                api_shape: None,
+                model_override: None,
+                api_key: Some("cursor-key".to_string()),
+            },
+        )
+        .await
+        .expect("upsert endpoint");
+
+        set_provider_source_selection(
+            root.path(),
+            PROVIDER_CURSOR,
+            HarnessSourceKind::Endpoint,
+            Some(endpoint.id.clone()),
+        )
+        .await
+        .expect("select endpoint");
+
+        let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_CURSOR)
+            .await
+            .expect("resolve run");
+        assert_eq!(
+            resolved.env.get("CURSOR_API_KEY"),
+            Some(&"cursor-key".to_string())
+        );
+        let cursor_config_dir = resolved
+            .env
+            .get("CURSOR_CONFIG_DIR")
+            .expect("CURSOR_CONFIG_DIR should be set");
+        assert!(Path::new(cursor_config_dir).exists());
     }
 
     #[tokio::test]
