@@ -46,6 +46,7 @@ mod desktop_editor;
 mod desktop_menu;
 mod desktop_ssh;
 mod desktop_storage;
+mod desktop_updater;
 mod desktop_windows;
 use desktop_connection::*;
 use desktop_daemon::*;
@@ -54,6 +55,7 @@ use desktop_editor::*;
 use desktop_menu::*;
 use desktop_ssh::*;
 use desktop_storage::*;
+use desktop_updater::*;
 use desktop_windows::*;
 
 fn main() {
@@ -86,11 +88,14 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             desktop_get_connection,
             desktop_disconnect,
             desktop_connect_local,
+            desktop_restart_local_daemon,
             desktop_connect_ssh,
+            desktop_update_remote_daemon,
             desktop_kickoff_remote_prewarm,
             desktop_list_ssh_hosts,
             desktop_test_ssh,
@@ -118,6 +123,8 @@ fn main() {
             desktop_storage_consume_notice,
             desktop_daemon_request,
             desktop_start_codex_login_relay,
+            desktop_check_app_update,
+            desktop_apply_app_update,
         ])
         .setup(|app| {
             open_main_window(&app.handle())?;
@@ -463,9 +470,6 @@ impl WorkspaceWindowRegistry {
     }
 }
 
-
-
-
 #[tauri::command]
 fn desktop_get_deep_link_token(
     store: tauri::State<DeepLinkTokenStore>,
@@ -606,12 +610,9 @@ enum DeepLinkOpenWith {
     System,
 }
 
-
-
 fn to_err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
-
 
 fn normalize_path(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -642,8 +643,6 @@ fn expand_tilde(raw: &str) -> Option<PathBuf> {
         None
     }
 }
-
-
 
 fn pick_unused_local_port() -> Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0").context("binding ephemeral port")?;

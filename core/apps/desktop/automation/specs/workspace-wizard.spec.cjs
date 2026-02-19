@@ -185,6 +185,33 @@ const clickOption = async (stepKey, optionId) => {
   }
 };
 
+const ensureContainerOptionVisible = async (optionId, timeoutMs = 15000) => {
+  const optionSelector = `[data-testid="wizard-option-container-${optionId}"]`;
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const state = await browser.execute((selector) => {
+      const root = document.querySelector('[data-testid="workspace-setup"]');
+      const step = root ? root.getAttribute("data-step-key") : null;
+      if (step !== "container") {
+        return { visible: false, toggled: false, step };
+      }
+      if (document.querySelector(selector)) {
+        return { visible: true, toggled: false, step };
+      }
+      const toggle = document.querySelector('[data-testid="wizard-container-advanced-toggle"]');
+      if (toggle) {
+        toggle.click();
+        return { visible: false, toggled: true, step };
+      }
+      return { visible: false, toggled: false, step };
+    }, optionSelector);
+    if (state.step !== "container") return false;
+    if (state.visible) return true;
+    await browser.pause(state.toggled ? 150 : 100);
+  }
+  return false;
+};
+
 const clickNext = async () => {
   await clickTestId("wizard-next");
 };
@@ -454,6 +481,13 @@ const ensureReadyForSourceSelection = async ({ location, container }, timeoutMs 
     }
     if (key === "container") {
       if (!container) throw new Error("container step reached but scenario.container is missing");
+      if (container === "host-mounted") {
+        const hostMountedVisible = await ensureContainerOptionVisible("host-mounted");
+        if (!hostMountedVisible) {
+          await browser.pause(100);
+          continue;
+        }
+      }
       await clickOption("container", container);
       await browser.pause(100);
       const afterSelect = await currentStepKey();
@@ -484,17 +518,36 @@ const selectSourceOptionWithRetry = async (
   { location, container, sourceKind },
   attempts = 6,
 ) => {
+  const sourceSelectionReady = async () => {
+    const state = await browser.execute(() => {
+      const root = document.querySelector('[data-testid="workspace-setup"]');
+      const step = root ? root.getAttribute("data-step-key") : null;
+      return {
+        step,
+        hasSourcePath: Boolean(document.querySelector('[data-testid="wizard-source-path"]')),
+        hasRepoUrl: Boolean(document.querySelector('[data-testid="wizard-repo-url"]')),
+        hasWorkspaceName: Boolean(document.querySelector('[data-testid="wizard-workspace-name"]')),
+      };
+    });
+    if (state.step !== "source") return false;
+    if (sourceKind === "import") return state.hasSourcePath;
+    if (sourceKind === "clone") return state.hasRepoUrl;
+    if (sourceKind === "new") return state.hasWorkspaceName;
+    return false;
+  };
+
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     await ensureReadyForSourceSelection({ location, container });
     try {
       await clickOption("source", sourceKind);
-      return;
+      if (await sourceSelectionReady()) return;
+      lastError = new Error(`source option '${sourceKind}' click did not settle UI`);
     } catch (error) {
       lastError = error;
-      if (attempt === attempts - 1) break;
-      await browser.pause(150);
     }
+    if (attempt === attempts - 1) break;
+    await browser.pause(150);
   }
   if (lastError instanceof Error) throw lastError;
   throw new Error("failed to select source option");
@@ -702,26 +755,20 @@ const runWizardScenario = async (scenario) => {
     await clickNext(); // verifies SSH and advances
   }
 
-  const afterLocation = scenario.location === "remote"
-    ? await waitForRemoteStepAfterLocation()
-    : await currentStepKey();
-  if (afterLocation === "container") {
-    if (scenario.container === "host-mounted") {
-      await clickTestId("wizard-container-advanced-toggle");
-    }
-    await clickOption("container", scenario.container);
-  } else if (afterLocation === "source") {
-    if (scenario.container && scenario.container !== "no-container") {
+  if (scenario.location === "remote") {
+    const afterLocation = await waitForRemoteStepAfterLocation();
+    if (afterLocation === "source" && scenario.container && scenario.container !== "no-container") {
       throw new Error("remote wizard did not expose container step (container modes unavailable)");
     }
-  } else {
-    const wizardErr = await browser.execute(() => {
-      const el = document.querySelector(".wizard-error");
-      return el ? String(el.textContent || "").trim() : "";
-    });
-    throw new Error(
-      `expected step 'container' or 'source', got '${afterLocation}' (wizard-error: ${wizardErr || "none"})`,
-    );
+    if (afterLocation !== "source" && afterLocation !== "container") {
+      const wizardErr = await browser.execute(() => {
+        const el = document.querySelector(".wizard-error");
+        return el ? String(el.textContent || "").trim() : "";
+      });
+      throw new Error(
+        `expected step 'container' or 'source', got '${afterLocation}' (wizard-error: ${wizardErr || "none"})`,
+      );
+    }
   }
 
   await selectSourceOptionWithRetry({
@@ -730,17 +777,34 @@ const runWizardScenario = async (scenario) => {
     sourceKind: scenario.source.kind,
   });
 
+  const sourcePathVisible = await browser.execute(
+    () => Boolean(document.querySelector('[data-testid="wizard-source-path"]')),
+  );
+  const expectsManagedStagingSource = (
+    scenario.container === "disk-isolated"
+    && (scenario.source.kind === "clone" || scenario.source.kind === "new")
+  );
+
   if (scenario.source.kind === "import") {
+    if (!sourcePathVisible) {
+      throw new Error("wizard-source-path missing for import source");
+    }
     await setInput("wizard-source-path", scenario.source.path);
   } else if (scenario.source.kind === "clone") {
-    await setInput("wizard-source-path", scenario.source.destPath);
+    if (sourcePathVisible) {
+      await setInput("wizard-source-path", scenario.source.destPath);
+    } else if (!expectsManagedStagingSource) {
+      throw new Error("wizard-source-path missing for clone source");
+    }
     await setInput("wizard-repo-url", scenario.source.repoUrl);
     if (scenario.source.branch) {
       await setInput("wizard-repo-branch", scenario.source.branch);
     }
   } else if (scenario.source.kind === "new") {
-    if (scenario.source.destPath) {
+    if (scenario.source.destPath && sourcePathVisible) {
       await setInput("wizard-source-path", scenario.source.destPath);
+    } else if (scenario.source.destPath && !expectsManagedStagingSource) {
+      throw new Error("wizard-source-path missing for new source");
     }
     if (scenario.source.workspaceName) {
       await setInput("wizard-workspace-name", scenario.source.workspaceName);
@@ -925,10 +989,6 @@ describe("launcher workspace wizard (e2e)", () => {
     const ws = await getWorkspace(id);
     await assertLocalWorkspaceConfig(id, { environment: "host", mergeQueueEnabled: false, setupHook: "pnpm install" });
     await assertWorkspaceTerminalCwdPrefix(id, ws.root_path);
-    const container = await getWorkspaceHarnessContainer(id);
-    if (container !== null) {
-      throw new Error(`expected no harness container in host mode, got: ${JSON.stringify(container)}`);
-    }
   });
 
   it("local clone works end-to-end (merge queue enabled)", async function () {

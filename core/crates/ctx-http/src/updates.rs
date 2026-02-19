@@ -15,11 +15,51 @@ pub struct ReleaseArtifact {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ReleasePlatform {
     #[serde(default)]
+    pub desktop: Option<ReleaseArtifact>,
+    #[serde(default)]
     pub appimage: Option<ReleaseArtifact>,
     #[serde(default)]
     pub deb: Option<ReleaseArtifact>,
     #[serde(default)]
+    pub dmg: Option<ReleaseArtifact>,
+    #[serde(default)]
+    pub msi: Option<ReleaseArtifact>,
+    #[serde(default)]
+    pub nsis: Option<ReleaseArtifact>,
+    #[serde(default)]
+    pub exe: Option<ReleaseArtifact>,
+    #[serde(default)]
+    pub zip: Option<ReleaseArtifact>,
+    #[serde(default)]
     pub daemon: Option<ReleaseArtifact>,
+}
+
+impl ReleasePlatform {
+    pub fn preferred_desktop_artifact<'a>(
+        &'a self,
+        platform_key: &str,
+    ) -> Option<&'a ReleaseArtifact> {
+        match platform_key {
+            "linux-x64" | "linux-arm64" => self
+                .appimage
+                .as_ref()
+                .or(self.desktop.as_ref())
+                .or(self.deb.as_ref()),
+            "macos-x64" | "macos-arm64" => self
+                .desktop
+                .as_ref()
+                .or(self.dmg.as_ref())
+                .or(self.zip.as_ref()),
+            "windows-x64" => self
+                .desktop
+                .as_ref()
+                .or(self.nsis.as_ref())
+                .or(self.msi.as_ref())
+                .or(self.exe.as_ref())
+                .or(self.zip.as_ref()),
+            _ => self.desktop.as_ref(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -43,6 +83,7 @@ pub fn platform_key() -> Option<&'static str> {
         ("linux", "aarch64") => Some("linux-arm64"),
         ("macos", "x86_64") => Some("macos-x64"),
         ("macos", "aarch64") => Some("macos-arm64"),
+        ("windows", "x86_64") => Some("windows-x64"),
         _ => None,
     }
 }
@@ -269,4 +310,95 @@ pub async fn atomic_replace_file(target: &Path, new_file: &Path) -> Result<()> {
         return Err(e).with_context(|| format!("moving new file into place: {}", target.display()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn artifact(path: &str) -> ReleaseArtifact {
+        ReleaseArtifact {
+            url_path: path.to_string(),
+            sha256: "sha".to_string(),
+        }
+    }
+
+    #[test]
+    fn preferred_desktop_artifact_follows_platform_order() {
+        let platform = ReleasePlatform {
+            desktop: Some(artifact("/desktop")),
+            appimage: Some(artifact("/appimage")),
+            deb: Some(artifact("/deb")),
+            dmg: Some(artifact("/dmg")),
+            msi: Some(artifact("/msi")),
+            nsis: Some(artifact("/nsis")),
+            exe: Some(artifact("/exe")),
+            zip: Some(artifact("/zip")),
+            daemon: Some(artifact("/daemon")),
+        };
+
+        let linux = platform
+            .preferred_desktop_artifact("linux-x64")
+            .expect("linux artifact");
+        assert_eq!(linux.url_path, "/appimage");
+
+        let mac = platform
+            .preferred_desktop_artifact("macos-arm64")
+            .expect("mac artifact");
+        assert_eq!(mac.url_path, "/desktop");
+
+        let windows = platform
+            .preferred_desktop_artifact("windows-x64")
+            .expect("windows artifact");
+        assert_eq!(windows.url_path, "/desktop");
+    }
+
+    #[test]
+    fn preferred_desktop_artifact_uses_fallbacks() {
+        let linux = ReleasePlatform {
+            desktop: None,
+            appimage: None,
+            deb: Some(artifact("/deb")),
+            dmg: None,
+            msi: None,
+            nsis: None,
+            exe: None,
+            zip: None,
+            daemon: Some(artifact("/daemon")),
+        };
+        assert_eq!(
+            linux
+                .preferred_desktop_artifact("linux-arm64")
+                .expect("linux fallback")
+                .url_path,
+            "/deb"
+        );
+
+        let windows = ReleasePlatform {
+            desktop: None,
+            appimage: None,
+            deb: None,
+            dmg: None,
+            msi: Some(artifact("/msi")),
+            nsis: None,
+            exe: None,
+            zip: None,
+            daemon: Some(artifact("/daemon")),
+        };
+        assert_eq!(
+            windows
+                .preferred_desktop_artifact("windows-x64")
+                .expect("windows fallback")
+                .url_path,
+            "/msi"
+        );
+    }
+
+    #[test]
+    fn normalize_version_accepts_v_prefix() {
+        assert_eq!(
+            normalize_version_str("v1.2.3").expect("semver").to_string(),
+            "1.2.3"
+        );
+    }
 }

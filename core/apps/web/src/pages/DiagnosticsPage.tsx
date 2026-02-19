@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  applyDaemonDesktopConnection,
   appendDesktopLog,
   ApplyAppImageUpdateResp,
   checkUpdates,
@@ -15,7 +16,65 @@ import {
   openLogsFolder,
 } from "../api/client";
 import { copyTextToClipboard } from "../utils/clipboard";
+import {
+  desktopGetConnection,
+  getDesktopPlatform,
+  openExternalLink,
+  desktopRestartLocalDaemon,
+  desktopApplyAppUpdate,
+  desktopCheckAppUpdate,
+  desktopUpdateRemoteDaemon,
+  isDesktopApp,
+  type DesktopAppUpdateCheckResp,
+  type DesktopPlatform,
+  type DesktopConnectionInfo,
+} from "../utils/desktop";
 import { errorMessage } from "../utils/errorMessage";
+
+type ReleaseArtifact = {
+  url_path?: string;
+  sha256?: string;
+};
+
+const asRecord = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+const asArtifact = (value: unknown): ReleaseArtifact | null => {
+  const rec = asRecord(value);
+  if (typeof rec.url_path !== "string" || !rec.url_path.trim()) return null;
+  return {
+    url_path: rec.url_path,
+    sha256: typeof rec.sha256 === "string" ? rec.sha256 : undefined,
+  };
+};
+
+const preferredDesktopArtifactFromManifest = (
+  manifest: unknown,
+  platformKey: string | null | undefined,
+): ReleaseArtifact | null => {
+  const key = String(platformKey ?? "").trim();
+  if (!key) return null;
+  const platforms = asRecord(asRecord(manifest).platforms);
+  const platformEntry = asRecord(platforms[key]);
+  const order = key.startsWith("linux-")
+    ? ["appimage", "desktop", "deb"]
+    : key.startsWith("macos-")
+      ? ["desktop", "dmg", "zip"]
+      : key.startsWith("windows-")
+        ? ["desktop", "nsis", "msi", "exe", "zip"]
+        : ["desktop", "appimage", "deb", "dmg", "msi", "nsis", "exe", "zip"];
+  for (const kind of order) {
+    const artifact = asArtifact(platformEntry[kind]);
+    if (artifact) return artifact;
+  }
+  return null;
+};
+
+const joinBaseAndPath = (baseUrl: string, urlPath: string): string => {
+  return `${baseUrl.replace(/\/+$/, "")}${urlPath}`;
+};
 
 export default function DiagnosticsPage() {
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
@@ -24,8 +83,14 @@ export default function DiagnosticsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
+  const [desktopAppUpdateBusy, setDesktopAppUpdateBusy] = useState(false);
+  const [daemonUpdateBusy, setDaemonUpdateBusy] = useState(false);
   const [downloadResp, setDownloadResp] = useState<DownloadAppImageUpdateResp | null>(null);
   const [applyResp, setApplyResp] = useState<ApplyAppImageUpdateResp | null>(null);
+  const [desktopAppUpdateInfo, setDesktopAppUpdateInfo] = useState<DesktopAppUpdateCheckResp | null>(null);
+  const [desktopConnection, setDesktopConnection] = useState<DesktopConnectionInfo | null>(null);
+  const [desktopPlatform, setDesktopPlatform] = useState<DesktopPlatform>("unknown");
+  const desktop = isDesktopApp();
 
   const refresh = () => {
     setError(null);
@@ -44,7 +109,16 @@ export default function DiagnosticsPage() {
   useEffect(() => {
     appendDesktopLog("ui: opened Diagnostics page").catch(() => {});
     refresh();
-  }, []);
+    if (desktop) {
+      desktopGetConnection()
+        .then((info) => {
+          setDesktopConnection(info);
+          applyDaemonDesktopConnection(info);
+        })
+        .catch(() => setDesktopConnection({ kind: "none" }));
+      getDesktopPlatform().then((platform) => setDesktopPlatform(platform));
+    }
+  }, [desktop]);
 
   const pretty = useMemo(
     () => (diagnostics ? JSON.stringify(diagnostics, null, 2) : ""),
@@ -86,10 +160,21 @@ export default function DiagnosticsPage() {
     try {
       const info = await checkUpdates();
       setUpdateInfo(info);
-      if (info.update_available) {
+      if (info.platform_supported === false) {
+        setNotice("Update metadata found, but this platform currently has no desktop artifact.");
+      } else if (info.update_available) {
         setNotice(`Update available: ${info.latest_version}`);
       } else {
         setNotice("No update available.");
+      }
+      const nextIsLinux = (info.platform ?? "").startsWith("linux-") || desktopPlatform === "linux";
+      if (desktop && !nextIsLinux) {
+        try {
+          const nativeInfo = await desktopCheckAppUpdate("stable");
+          setDesktopAppUpdateInfo(nativeInfo);
+        } catch {
+          setDesktopAppUpdateInfo(null);
+        }
       }
     } catch (e: unknown) {
       setError(errorMessage(e));
@@ -128,6 +213,87 @@ export default function DiagnosticsPage() {
       setUpdateBusy(false);
     }
   };
+
+  const onApplyDesktopAppUpdate = async () => {
+    setError(null);
+    setNotice(null);
+    setDesktopAppUpdateBusy(true);
+    try {
+      const resp = await desktopApplyAppUpdate("stable");
+      setNotice(resp.message);
+      try {
+        const nativeInfo = await desktopCheckAppUpdate("stable");
+        setDesktopAppUpdateInfo(nativeInfo);
+      } catch {
+        // ignore re-check failures
+      }
+    } catch (e: unknown) {
+      setError(errorMessage(e));
+    } finally {
+      setDesktopAppUpdateBusy(false);
+    }
+  };
+
+  const desktopArtifact = useMemo(
+    () => preferredDesktopArtifactFromManifest(updateInfo?.manifest, updateInfo?.platform),
+    [updateInfo?.manifest, updateInfo?.platform],
+  );
+
+  const desktopArtifactUrl = useMemo(() => {
+    if (!updateInfo?.base_url) return null;
+    const urlPath = String(desktopArtifact?.url_path ?? "").trim();
+    if (!urlPath) return null;
+    return joinBaseAndPath(updateInfo.base_url, urlPath);
+  }, [desktopArtifact?.url_path, updateInfo?.base_url]);
+
+  const onOpenDesktopDownload = async () => {
+    if (!desktopArtifactUrl) return;
+    setError(null);
+    setNotice(null);
+    const opened = await openExternalLink(desktopArtifactUrl);
+    if (opened) {
+      setNotice("Opened desktop update download.");
+    } else {
+      setError("Unable to open desktop update URL.");
+    }
+  };
+
+  const onUpdateConnectedDaemon = async () => {
+    if (!desktop) return;
+    const kind = desktopConnection?.kind ?? "none";
+    const label = kind === "ssh" ? "update and restart the remote daemon" : "restart the local daemon";
+    if (!window.confirm(`This will ${label} and may interrupt active agent activity. Continue?`)) {
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setDaemonUpdateBusy(true);
+    try {
+      if (kind === "ssh") {
+        const resp = await desktopUpdateRemoteDaemon("stable");
+        setNotice(resp.message);
+      } else {
+        await desktopRestartLocalDaemon();
+        setNotice("Local daemon restarted with the app-managed binary.");
+      }
+      const info = await desktopGetConnection().catch(() => null);
+      if (info) {
+        setDesktopConnection(info);
+        applyDaemonDesktopConnection(info);
+      }
+    } catch (e: unknown) {
+      setError(errorMessage(e));
+    } finally {
+      setDaemonUpdateBusy(false);
+    }
+  };
+
+  const isLinuxPlatform = (updateInfo?.platform ?? "").startsWith("linux-") || desktopPlatform === "linux";
+  const useNativeDesktopUpdater =
+    desktop &&
+    !isLinuxPlatform &&
+    desktopAppUpdateInfo?.configured === true &&
+    (desktopAppUpdateInfo.available || !updateInfo?.update_available);
 
   return (
     <div className="page">
@@ -227,18 +393,50 @@ export default function DiagnosticsPage() {
           <button onClick={onCheckUpdates} disabled={updateBusy}>
             {updateBusy ? "Checking…" : "Check updates"}
           </button>
-          <button
-            onClick={onDownloadUpdate}
-            disabled={updateBusy || !updateInfo?.update_available}
-          >
-            Download AppImage update
-          </button>
-          <button
-            onClick={onApplyUpdate}
-            disabled={updateBusy || !downloadResp?.can_apply_in_place}
-          >
-            Apply in place
-          </button>
+          {desktop && (
+            <button onClick={onUpdateConnectedDaemon} disabled={daemonUpdateBusy}>
+              {daemonUpdateBusy
+                ? "Applying daemon update..."
+                : desktopConnection?.kind === "ssh"
+                  ? "Update connected remote daemon"
+                  : "Restart local daemon"}
+            </button>
+          )}
+          {isLinuxPlatform && (
+            <>
+              <button
+                onClick={onDownloadUpdate}
+                disabled={updateBusy || !updateInfo?.update_available}
+              >
+                Download AppImage update
+              </button>
+              <button
+                onClick={onApplyUpdate}
+                disabled={updateBusy || !downloadResp?.can_apply_in_place}
+              >
+                Apply in place
+              </button>
+            </>
+          )}
+          {!isLinuxPlatform && (
+            <>
+              {useNativeDesktopUpdater ? (
+                <button
+                  onClick={onApplyDesktopAppUpdate}
+                  disabled={desktopAppUpdateBusy || !desktopAppUpdateInfo?.available}
+                >
+                  {desktopAppUpdateBusy ? "Installing desktop update..." : "Install desktop update"}
+                </button>
+              ) : (
+                <button
+                  onClick={onOpenDesktopDownload}
+                  disabled={updateBusy || !updateInfo?.update_available || !desktopArtifactUrl}
+                >
+                  Open latest desktop download
+                </button>
+              )}
+            </>
+          )}
         </div>
         <div className="muted" style={{ marginTop: 8 }}>
           <div>
@@ -249,6 +447,39 @@ export default function DiagnosticsPage() {
             <b>Latest:</b>{" "}
             <span className="muted">{updateInfo?.latest_version ?? "Unknown"}</span>
           </div>
+          <div>
+            <b>Platform:</b>{" "}
+            <span className="muted">{updateInfo?.platform ?? desktopPlatform}</span>
+          </div>
+          {updateInfo?.platform_supported === false && (
+            <div className="muted">
+              No desktop artifact is published for this platform in the current release manifest.
+            </div>
+          )}
+          {!isLinuxPlatform && desktopArtifactUrl && (
+            <div>
+              <b>Download URL:</b> <span className="muted">{desktopArtifactUrl}</span>
+            </div>
+          )}
+          {!isLinuxPlatform && desktopAppUpdateInfo?.configured === false && desktopAppUpdateInfo?.message && (
+            <div className="muted">{desktopAppUpdateInfo.message}</div>
+          )}
+          {!isLinuxPlatform && desktopAppUpdateInfo?.configured && (
+            <div>
+              <b>Native updater:</b>{" "}
+              <span className="muted">
+                {desktopAppUpdateInfo.available
+                  ? `Update available (${desktopAppUpdateInfo.latest_version ?? "unknown"})`
+                  : "No update available"}
+              </span>
+            </div>
+          )}
+          {desktop && (
+            <div>
+              <b>Connected daemon:</b>{" "}
+              <span className="muted">{desktopConnection?.kind ?? "unknown"}</span>
+            </div>
+          )}
           {downloadResp?.downloaded_path && (
             <div>
               <b>Downloaded:</b>{" "}

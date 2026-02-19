@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../../../.. && pwd)"
 
 if [[ "$(uname -s)" == "Darwin" && -z "${CN_API_KEY:-}" ]]; then
-  echo "error: CN_API_KEY is required on macOS for desktop automation." >&2
+  echo "error: CN_API_KEY is required on macOS for desktop automation. Load it from Infisical (core/.infisical.json)." >&2
   exit 1
 fi
 

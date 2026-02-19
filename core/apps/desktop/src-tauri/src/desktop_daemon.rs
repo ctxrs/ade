@@ -7,6 +7,11 @@ pub(super) struct DaemonAuthFile {
     pub(super) daemon_url: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct DesktopRestartLocalDaemonReq {
+    #[serde(default)]
+    confirm: bool,
+}
 
 #[derive(Debug, Deserialize)]
 pub(super) struct DesktopDaemonRequest {
@@ -34,7 +39,9 @@ pub(super) struct DesktopHttpResponse {
 }
 
 #[tauri::command]
-pub(super) async fn desktop_connect_local(app: tauri::AppHandle) -> Result<DesktopConnectionInfo, String> {
+pub(super) async fn desktop_connect_local(
+    app: tauri::AppHandle,
+) -> Result<DesktopConnectionInfo, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<ConnectionManager>();
         // Idempotent: if we're already connected to a healthy local daemon, keep the connection.
@@ -80,8 +87,32 @@ pub(super) async fn desktop_connect_local(app: tauri::AppHandle) -> Result<Deskt
     .map_err(|e| format!("failed to connect to daemon: {e}"))?
 }
 
+#[tauri::command]
+pub(super) async fn desktop_restart_local_daemon(
+    app: tauri::AppHandle,
+    req: DesktopRestartLocalDaemonReq,
+) -> Result<DesktopConnectionInfo, String> {
+    if !req.confirm {
+        return Err("confirm required".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ConnectionManager>();
+        let manager: &ConnectionManager = state.inner();
+        manager.disconnect();
+        let data_dir = daemon_data_dir(&app).map_err(to_err)?;
+        let (url, child, systemd_scope) = spawn_daemon(&app, &data_dir, true).map_err(to_err)?;
+        let auth = read_daemon_auth_with_retry(&data_dir).map_err(to_err)?;
+        manager.set_local(url, auth.token, child, systemd_scope);
+        Ok(manager.info())
+    })
+    .await
+    .map_err(|e| format!("failed to restart local daemon: {e}"))?
+}
 
-pub(super) fn ensure_local_connection(app: &tauri::AppHandle, state: &ConnectionManager) -> Result<()> {
+pub(super) fn ensure_local_connection(
+    app: &tauri::AppHandle,
+    state: &ConnectionManager,
+) -> Result<()> {
     if !matches!(state.info().kind, DesktopConnectionKind::None) {
         return Ok(());
     }
@@ -392,23 +423,17 @@ fn parse_daemon_auth(bytes: &[u8], path: &Path) -> Result<DaemonAuthFile> {
 fn read_daemon_auth_with_retry(data_dir: &Path) -> Result<DaemonAuthFile> {
     let path = data_dir.join(DAEMON_AUTH_FILENAME);
     let deadline = Instant::now() + DAEMON_AUTH_READ_TIMEOUT;
-    let mut last_err: Option<anyhow::Error> = None;
     loop {
-        match std::fs::read(&path) {
+        let err = match std::fs::read(&path) {
             Ok(bytes) => return parse_daemon_auth(&bytes, &path),
             Err(err) if err.kind() == ErrorKind::NotFound => {
-                last_err = Some(anyhow!("daemon auth file not found at {}", path.display()));
+                anyhow!("daemon auth file not found at {}", path.display())
             }
-            Err(err) => {
-                last_err = Some(
-                    anyhow::Error::new(err)
-                        .context(format!("reading daemon auth file {}", path.display())),
-                );
-            }
-        }
+            Err(err) => anyhow::Error::new(err)
+                .context(format!("reading daemon auth file {}", path.display())),
+        };
         if Instant::now() > deadline {
-            return Err(last_err
-                .unwrap_or_else(|| anyhow!("daemon auth file not found at {}", path.display())));
+            return Err(err);
         }
         std::thread::sleep(DAEMON_AUTH_RETRY_DELAY);
     }
@@ -518,16 +543,13 @@ pub(super) fn read_remote_daemon_auth_with_retry(
     remote_data_dir: Option<&str>,
 ) -> Result<DaemonAuthFile> {
     let deadline = Instant::now() + DAEMON_AUTH_REMOTE_TIMEOUT;
-    let mut last_err: Option<anyhow::Error> = None;
     loop {
-        match read_remote_daemon_auth(host, user, remote_data_dir) {
+        let err = match read_remote_daemon_auth(host, user, remote_data_dir) {
             Ok(auth) => return Ok(auth),
-            Err(err) => last_err = Some(err),
-        }
+            Err(err) => err,
+        };
         if Instant::now() > deadline {
-            return Err(
-                last_err.unwrap_or_else(|| anyhow!("timed out reading daemon auth file over ssh"))
-            );
+            return Err(err);
         }
         std::thread::sleep(DAEMON_AUTH_RETRY_DELAY);
     }

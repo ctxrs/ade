@@ -15,10 +15,31 @@ pub(super) struct DesktopConnectionInfo {
     pub(super) base_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) remote_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) remote_data_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) remote_ctx_bin: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct SshConnectionTarget {
+    pub(super) host: String,
+    pub(super) user: Option<String>,
+    pub(super) remote_port: u16,
+    pub(super) remote_data_dir: Option<String>,
+    pub(super) remote_ctx_bin: Option<String>,
 }
 
 #[tauri::command]
-pub(super) fn desktop_get_connection(state: tauri::State<ConnectionManager>) -> DesktopConnectionInfo {
+pub(super) fn desktop_get_connection(
+    state: tauri::State<ConnectionManager>,
+) -> DesktopConnectionInfo {
     state.info()
 }
 
@@ -58,6 +79,11 @@ struct SshConnection {
     base_url: String,
     token: Option<String>,
     tunnel: Child,
+    host: String,
+    user: Option<String>,
+    remote_port: u16,
+    remote_data_dir: Option<String>,
+    remote_ctx_bin: Option<String>,
 }
 
 impl ConnectionManager {
@@ -68,6 +94,11 @@ impl ConnectionManager {
                 kind: DesktopConnectionKind::None,
                 base_url: None,
                 token: None,
+                host: None,
+                user: None,
+                remote_port: None,
+                remote_data_dir: None,
+                remote_ctx_bin: None,
             };
         };
         match &guard.active {
@@ -75,21 +106,41 @@ impl ConnectionManager {
                 kind: DesktopConnectionKind::None,
                 base_url: None,
                 token: None,
+                host: None,
+                user: None,
+                remote_port: None,
+                remote_data_dir: None,
+                remote_ctx_bin: None,
             },
             Some(ActiveConnection::Local(c)) => DesktopConnectionInfo {
                 kind: DesktopConnectionKind::Local,
                 base_url: Some(c.base_url.clone()),
                 token: Some(c.token.clone()),
+                host: None,
+                user: None,
+                remote_port: None,
+                remote_data_dir: None,
+                remote_ctx_bin: None,
             },
             Some(ActiveConnection::LocalExternal(c)) => DesktopConnectionInfo {
                 kind: DesktopConnectionKind::Local,
                 base_url: Some(c.base_url.clone()),
                 token: Some(c.token.clone()),
+                host: None,
+                user: None,
+                remote_port: None,
+                remote_data_dir: None,
+                remote_ctx_bin: None,
             },
             Some(ActiveConnection::Ssh(c)) => DesktopConnectionInfo {
                 kind: DesktopConnectionKind::Ssh,
                 base_url: Some(c.base_url.clone()),
                 token: c.token.clone(),
+                host: Some(c.host.clone()),
+                user: c.user.clone(),
+                remote_port: Some(c.remote_port),
+                remote_data_dir: c.remote_data_dir.clone(),
+                remote_ctx_bin: c.remote_ctx_bin.clone(),
             },
         }
     }
@@ -126,7 +177,13 @@ impl ConnectionManager {
         }
     }
 
-    pub(super) fn set_local(&self, base_url: String, token: String, child: Child, systemd_scope: bool) {
+    pub(super) fn set_local(
+        &self,
+        base_url: String,
+        token: String,
+        child: Child,
+        systemd_scope: bool,
+    ) {
         let mut guard = match self.0.lock() {
             Ok(g) => g,
             Err(_) => {
@@ -153,7 +210,17 @@ impl ConnectionManager {
         }));
     }
 
-    pub(super) fn set_ssh(&self, base_url: String, token: Option<String>, tunnel: Child) {
+    pub(super) fn set_ssh(
+        &self,
+        base_url: String,
+        token: Option<String>,
+        tunnel: Child,
+        host: String,
+        user: Option<String>,
+        remote_port: u16,
+        remote_data_dir: Option<String>,
+        remote_ctx_bin: Option<String>,
+    ) {
         let mut guard = match self.0.lock() {
             Ok(g) => g,
             Err(_) => {
@@ -165,7 +232,47 @@ impl ConnectionManager {
             base_url,
             token,
             tunnel,
+            host,
+            user,
+            remote_port,
+            remote_data_dir,
+            remote_ctx_bin,
         }));
+    }
+
+    pub(super) fn ssh_target(&self) -> Result<SshConnectionTarget> {
+        let guard = self
+            .0
+            .lock()
+            .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
+        let Some(active) = guard.active.as_ref() else {
+            anyhow::bail!("not connected (open a workspace first)");
+        };
+        let ActiveConnection::Ssh(c) = active else {
+            anyhow::bail!("current connection is not SSH");
+        };
+        Ok(SshConnectionTarget {
+            host: c.host.clone(),
+            user: c.user.clone(),
+            remote_port: c.remote_port,
+            remote_data_dir: c.remote_data_dir.clone(),
+            remote_ctx_bin: c.remote_ctx_bin.clone(),
+        })
+    }
+
+    pub(super) fn update_ssh_token(&self, token: String) -> Result<()> {
+        let mut guard = self
+            .0
+            .lock()
+            .map_err(|e| anyhow!("connection manager lock poisoned: {e}"))?;
+        let Some(active) = guard.active.as_mut() else {
+            anyhow::bail!("not connected (open a workspace first)");
+        };
+        let ActiveConnection::Ssh(c) = active else {
+            anyhow::bail!("current connection is not SSH");
+        };
+        c.token = Some(token);
+        Ok(())
     }
 
     pub(super) fn daemon_request(&self, req: DesktopDaemonRequest) -> Result<DesktopHttpResponse> {

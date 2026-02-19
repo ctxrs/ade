@@ -705,14 +705,46 @@ pub fn bundled_default_container_image_tar() -> Option<PathBuf> {
     bundled_assets::bundled_ctx_harness_image_tar(DEFAULT_CONTAINER_IMAGE)
 }
 
-pub async fn prefetch_container_image(data_root: &Path, image: &str) -> Result<()> {
+pub async fn prefetch_container_image_with_observer(
+    data_root: &Path,
+    image: &str,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
     let image = image.trim();
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
+    observe_phase(
+        observer,
+        HarnessSetupPhase::MachineCheck,
+        "checking container runtime",
+    );
     // On macOS/Windows `podman` is a remote client; image ops require a running machine.
-    ensure_podman_machine_running_with_observer(data_root, None).await?;
-    ensure_container_image_available(data_root, image, None).await
+    ensure_podman_machine_running_with_observer(data_root, observer).await?;
+    observe_phase(
+        observer,
+        HarnessSetupPhase::ImageCheck,
+        "checking harness image availability",
+    );
+    if container_image_present(data_root, image).await? {
+        observe_log(
+            observer,
+            HarnessSetupPhase::ImageCheck,
+            HarnessSetupLogLevel::Info,
+            "harness image already present",
+        );
+        return Ok(());
+    }
+    observe_phase(
+        observer,
+        HarnessSetupPhase::ImageLoad,
+        "loading harness image into podman",
+    );
+    ensure_container_image_available(data_root, image, observer).await
+}
+
+pub async fn prefetch_container_image(data_root: &Path, image: &str) -> Result<()> {
+    prefetch_container_image_with_observer(data_root, image, None).await
 }
 
 pub async fn container_image_present(data_root: &Path, image: &str) -> Result<bool> {
@@ -1305,6 +1337,24 @@ async fn podman_machine_present(data_root: &Path) -> Result<bool> {
     Ok(output.status.success())
 }
 
+fn looks_like_missing_machine_error(message_lc: &str) -> bool {
+    message_lc.contains("no such")
+        || message_lc.contains("not found")
+        || message_lc.contains("does not exist")
+        || message_lc.contains("no machine")
+}
+
+fn looks_like_recoverable_machine_start_error(message_lc: &str) -> bool {
+    message_lc.contains("already running")
+        || message_lc.contains("already starting")
+        || message_lc.contains("already started")
+        || message_lc.contains("in progress")
+        || message_lc.contains("timed out")
+        || message_lc.contains("resource busy")
+        || message_lc.contains("another process")
+        || message_lc.contains("lock")
+}
+
 async fn ensure_podman_machine_running_with_observer(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
@@ -1364,10 +1414,7 @@ async fn ensure_podman_machine_running_with_observer(
         let combined = format!("{start_stderr}\n{start_stdout}").trim().to_string();
         let combined_lc = combined.to_ascii_lowercase();
 
-        let looks_like_missing_machine = combined_lc.contains("no such")
-            || combined_lc.contains("not found")
-            || combined_lc.contains("does not exist")
-            || combined_lc.contains("no machine");
+        let looks_like_missing_machine = looks_like_missing_machine_error(&combined_lc);
 
         if looks_like_missing_machine {
             observe_log(
@@ -1407,8 +1454,44 @@ async fn ensure_podman_machine_running_with_observer(
                     anyhow::bail!("podman machine init --now failed: {combined}");
                 }
             }
+        } else if looks_like_recoverable_machine_start_error(&combined_lc) {
+            let message = if combined.is_empty() {
+                "podman machine start returned a recoverable error; waiting for readiness"
+                    .to_string()
+            } else {
+                format!(
+                    "podman machine start returned recoverable error; waiting for readiness: {combined}"
+                )
+            };
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Warn,
+                &message,
+            );
+            if !combined.is_empty() {
+                last_err = combined;
+            }
         } else {
-            anyhow::bail!("podman machine start failed: {combined}");
+            // `podman machine start` can report non-zero while the VM/socket are still
+            // converging. Continue through readiness polling and only fail if the runtime
+            // remains unreachable at the end of the bounded wait.
+            let message = if combined.is_empty() {
+                "podman machine start returned non-zero exit; waiting for readiness".to_string()
+            } else {
+                format!(
+                    "podman machine start returned non-zero exit; waiting for readiness: {combined}"
+                )
+            };
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Warn,
+                &message,
+            );
+            if !combined.is_empty() {
+                last_err = combined;
+            }
         }
     }
 
@@ -1710,5 +1793,34 @@ mod tests {
         let _guard = EnvGuard::set("CTX_PODMAN_PATH", &path);
         let resolved = podman_binary_path().expect("env override should resolve");
         assert_eq!(resolved, tmp.path());
+    }
+
+    #[test]
+    fn missing_machine_error_detection_matches_expected_shapes() {
+        assert!(looks_like_missing_machine_error(
+            "error: no machine with this name exists"
+        ));
+        assert!(looks_like_missing_machine_error(
+            "Error: machine ctx not found"
+        ));
+        assert!(!looks_like_missing_machine_error(
+            "error: machine already running"
+        ));
+    }
+
+    #[test]
+    fn recoverable_machine_start_error_detection_matches_expected_shapes() {
+        assert!(looks_like_recoverable_machine_start_error(
+            "error: machine is already starting"
+        ));
+        assert!(looks_like_recoverable_machine_start_error(
+            "error: resource busy while acquiring lock"
+        ));
+        assert!(looks_like_recoverable_machine_start_error(
+            "error: operation timed out while waiting for vm startup"
+        ));
+        assert!(!looks_like_recoverable_machine_start_error(
+            "error: unknown vm provider configuration"
+        ));
     }
 }

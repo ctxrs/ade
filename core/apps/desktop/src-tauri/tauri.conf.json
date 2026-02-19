@@ -20,6 +20,10 @@
       "desktop": {
         "schemes": ["ctx"]
       }
+    },
+    "updater": {
+      "pubkey": "",
+      "endpoints": []
     }
   },
   "bundle": {

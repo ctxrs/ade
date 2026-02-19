@@ -67,6 +67,7 @@ packages=(
   pkg-config
   curl
   file
+  xdg-utils
   libglib2.0-dev
   libgtk-3-dev
   librsvg2-dev
@@ -77,8 +78,13 @@ echo "${BOLD}Installing desktop (Tauri v2) Linux build dependencies (Ubuntu/Debi
 
 "${SUDO[@]}" apt-get update
 
-webkit_pkg="$(choose_first_available_pkg libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev)" || {
-  echo "error: could not find a WebKitGTK dev package (tried libwebkit2gtk-4.0-dev, libwebkit2gtk-4.1-dev)." >&2
+webkit_pkg="$(choose_first_available_pkg libwebkit2gtk-4.1-dev)" || {
+  echo "error: could not find libwebkit2gtk-4.1-dev (required by current Tauri Linux stack)." >&2
+  exit 3
+}
+
+libsoup_pkg="$(choose_first_available_pkg libsoup-3.0-dev)" || {
+  echo "error: could not find libsoup-3.0-dev (required by current Tauri Linux stack)." >&2
   exit 3
 }
 
@@ -90,23 +96,26 @@ appindicator_pkg="$(choose_first_available_pkg libayatana-appindicator3-dev liba
 "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   "${packages[@]}" \
   "$webkit_pkg" \
+  "$libsoup_pkg" \
   "$appindicator_pkg"
 
 echo
 echo "${BOLD}Sanity check (pkg-config)${RESET}"
-for pc in glib-2.0 gtk+-3.0 webkit2gtk-4.0; do
+for pc in glib-2.0 gtk+-3.0 libsoup-3.0 javascriptcoregtk-4.1 webkit2gtk-4.1; do
   if pkg-config --exists "${pc}"; then
     echo "- ${pc}: OK"
   else
-    if [[ "$pc" == "webkit2gtk-4.0" ]] && pkg-config --exists webkit2gtk-4.1; then
-      echo "- webkit2gtk-4.1: OK"
-      continue
-    fi
-
     echo "- ${pc}: MISSING (check packages and pkg-config search path)" >&2
     exit 2
   fi
 done
+
+if command -v xdg-mime >/dev/null 2>&1; then
+  echo "- xdg-mime: OK ($(command -v xdg-mime))"
+else
+  echo "- xdg-mime: MISSING (install xdg-utils)" >&2
+  exit 2
+fi
 
 echo
 echo "${BOLD}Next steps${RESET}"

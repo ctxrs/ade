@@ -7,6 +7,7 @@ pub(super) struct UpdateCheckResp {
     platform: Option<String>,
     current_version: String,
     latest_version: Option<String>,
+    platform_supported: bool,
     update_available: bool,
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     manifest: serde_json::Value,
@@ -47,13 +48,9 @@ pub(super) async fn check_updates(
             })?;
 
     let latest_version = manifest.latest_version.clone();
-    let update_available = match (
-        crate::updates::normalize_version_str(&current_version),
-        crate::updates::normalize_version_str(&latest_version),
-    ) {
-        (Some(cur), Some(lat)) => lat > cur,
-        _ => false,
-    };
+    let platform_supported = platform_supported(&manifest, platform.as_deref());
+    let update_available =
+        is_update_available(&current_version, &latest_version, platform_supported);
 
     Ok(Json(UpdateCheckResp {
         channel,
@@ -61,9 +58,33 @@ pub(super) async fn check_updates(
         platform,
         current_version,
         latest_version: Some(latest_version),
+        platform_supported,
         update_available,
         manifest: serde_json::to_value(manifest).unwrap_or(serde_json::Value::Null),
     }))
+}
+
+fn platform_supported(manifest: &crate::updates::ReleaseManifest, platform_key: Option<&str>) -> bool {
+    let Some(platform_key) = platform_key else {
+        return false;
+    };
+    let Some(entry) = manifest.platforms.get(platform_key) else {
+        return false;
+    };
+    entry.preferred_desktop_artifact(platform_key).is_some()
+}
+
+fn is_update_available(current_version: &str, latest_version: &str, platform_supported: bool) -> bool {
+    if !platform_supported {
+        return false;
+    }
+    match (
+        crate::updates::normalize_version_str(current_version),
+        crate::updates::normalize_version_str(latest_version),
+    ) {
+        (Some(cur), Some(lat)) => lat > cur,
+        _ => false,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -210,4 +231,85 @@ pub(super) async fn apply_appimage_update(
             "Update applied in place. Quit and relaunch the desktop app to run the new version."
                 .to_string(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+
+    fn artifact(name: &str) -> crate::updates::ReleaseArtifact {
+        crate::updates::ReleaseArtifact {
+            url_path: format!("/{name}"),
+            sha256: "abc123".to_string(),
+        }
+    }
+
+    fn release_platform_with_dmg() -> crate::updates::ReleasePlatform {
+        crate::updates::ReleasePlatform {
+            desktop: None,
+            appimage: None,
+            deb: None,
+            dmg: Some(artifact("ctx.dmg")),
+            msi: None,
+            nsis: None,
+            exe: None,
+            zip: None,
+            daemon: Some(artifact("ctx-daemon")),
+        }
+    }
+
+    fn release_platform_daemon_only() -> crate::updates::ReleasePlatform {
+        crate::updates::ReleasePlatform {
+            desktop: None,
+            appimage: None,
+            deb: None,
+            dmg: None,
+            msi: None,
+            nsis: None,
+            exe: None,
+            zip: None,
+            daemon: Some(artifact("ctx-daemon")),
+        }
+    }
+
+    fn manifest_with_platforms(
+        platforms: HashMap<String, crate::updates::ReleasePlatform>,
+    ) -> crate::updates::ReleaseManifest {
+        crate::updates::ReleaseManifest {
+            channel: "stable".to_string(),
+            latest_version: "1.2.3".to_string(),
+            published_at: "2026-02-19T00:00:00Z".to_string(),
+            platforms,
+        }
+    }
+
+    #[test]
+    fn platform_supported_false_when_platform_missing() {
+        let manifest = manifest_with_platforms(HashMap::new());
+        assert!(!platform_supported(&manifest, Some("macos-arm64")));
+    }
+
+    #[test]
+    fn platform_supported_false_when_no_desktop_artifact() {
+        let mut platforms = HashMap::new();
+        platforms.insert("macos-arm64".to_string(), release_platform_daemon_only());
+        let manifest = manifest_with_platforms(platforms);
+        assert!(!platform_supported(&manifest, Some("macos-arm64")));
+    }
+
+    #[test]
+    fn platform_supported_true_with_matching_desktop_artifact() {
+        let mut platforms = HashMap::new();
+        platforms.insert("macos-arm64".to_string(), release_platform_with_dmg());
+        let manifest = manifest_with_platforms(platforms);
+        assert!(platform_supported(&manifest, Some("macos-arm64")));
+    }
+
+    #[test]
+    fn update_available_requires_supported_platform() {
+        assert!(!is_update_available("1.0.0", "1.2.3", false));
+        assert!(is_update_available("1.0.0", "1.2.3", true));
+    }
 }
