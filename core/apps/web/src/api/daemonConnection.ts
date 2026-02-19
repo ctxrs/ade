@@ -277,6 +277,8 @@ const initialConnection = (): DaemonConnection => {
     writeCanonicalSession(restored);
     return restored;
   }
+  // Desktop windows do not use same-origin daemon routing; base URL must be supplied by
+  // desktop bridge connection state to keep main-thread and worker clients aligned.
   if (!isDesktopWindow() && typeof window !== "undefined") {
     const protocol = String(window.location.protocol || "").toLowerCase();
     if (protocol === "http:" || protocol === "https:") {
@@ -416,6 +418,8 @@ export const bootstrapDaemonConnectionFromRuntime = () => {
   }
 
   const latest = getDaemonConnection();
+  // In browser mode, same-origin /api is valid. In desktop mode, daemon origin comes from
+  // bridge-managed connection state instead of the webview origin.
   if (!latest.baseUrl && !isDesktopWindow()) {
     const protocol = String(window.location.protocol || "").toLowerCase();
     if (protocol === "http:" || protocol === "https:") {

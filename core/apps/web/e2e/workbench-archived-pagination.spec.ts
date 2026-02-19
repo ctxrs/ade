@@ -25,13 +25,27 @@ test("workbench: archived pagination uses workspace task listing", async ({ page
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   const firstPageRequest = page.waitForRequest((req) => req.url().includes(archivedEndpoint));
+  const firstPageResponse = page.waitForResponse(
+    (resp) =>
+      resp.url().includes(archivedEndpoint)
+      && !resp.url().includes("cursor_")
+      && resp.request().method() === "GET",
+  );
   await page.getByRole("button", { name: "Archived Tasks" }).click();
 
   await firstPageRequest;
+  const firstResp = await firstPageResponse;
+  expect(firstResp.ok()).toBeTruthy();
   await expect(page.getByRole("listitem", { name: "fixture task 52" })).toBeVisible({ timeout: 20000 });
 
   const loadMoreRequest = page.waitForRequest(
     (req) => req.url().includes(archivedEndpoint) && req.url().includes("cursor_"),
+  );
+  const loadMoreResponse = page.waitForResponse(
+    (resp) =>
+      resp.url().includes(archivedEndpoint)
+      && resp.url().includes("cursor_")
+      && resp.request().method() === "GET",
   );
   const scroller = page
     .getByRole("list", { name: "Tasks" })
@@ -41,6 +55,8 @@ test("workbench: archived pagination uses workspace task listing", async ({ page
     el.scrollTop = el.scrollHeight;
   });
   await loadMoreRequest;
+  const loadMoreResp = await loadMoreResponse;
+  expect(loadMoreResp.ok()).toBeTruthy();
 
   expect(seenRequests.length).toBeGreaterThan(1);
 });

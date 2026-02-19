@@ -26,22 +26,34 @@ export async function getOpenedWebSocketUrls(page: Page): Promise<string[]> {
 
 const readCanonicalWsBaseUrl = async (page: Page): Promise<string | null> => {
   return page.evaluate(() => {
+    const readOrigin = (value: unknown): string | null => {
+      if (typeof value !== "string") return null;
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      try {
+        return new URL(trimmed).origin;
+      } catch {
+        return null;
+      }
+    };
     try {
       const raw = window.sessionStorage.getItem("ctxDaemonConnectionV1");
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as { wsBaseUrl?: unknown };
-      const value = typeof parsed.wsBaseUrl === "string" ? parsed.wsBaseUrl.trim() : "";
-      return value || null;
+      if (raw) {
+        const parsed = JSON.parse(raw) as { wsBaseUrl?: unknown };
+        const sessionOrigin = readOrigin(parsed.wsBaseUrl);
+        if (sessionOrigin) return sessionOrigin;
+      }
     } catch {
-      return null;
+      // ignore session storage parsing and fall back to stream URL
     }
+    const streamCanonicalUrl = (window as E2EWindow).__ctxE2E?.workspaceStream?.getCanonicalUrl?.() ?? null;
+    return readOrigin(streamCanonicalUrl);
   });
 };
 
 export async function expectWsPathOnCanonicalOrigin(page: Page, pathFragment: string): Promise<void> {
-  const canonicalWsBaseUrl = await readCanonicalWsBaseUrl(page);
-  expect(canonicalWsBaseUrl, "Missing canonical ws base URL in session storage.").toBeTruthy();
-  const expectedOrigin = new URL(String(canonicalWsBaseUrl)).origin;
+  const expectedOrigin = await readCanonicalWsBaseUrl(page);
+  expect(expectedOrigin, "Missing canonical websocket origin from session storage and stream state.").toBeTruthy();
   const urls = await getOpenedWebSocketUrls(page);
   let matching = urls.filter((url) => url.includes(pathFragment));
   if (matching.length === 0 && pathFragment.includes("/api/workspaces/")) {

@@ -40,7 +40,7 @@ opentelemetry-otlp = { version = "0.16", features = ["http-proto", "reqwest-clie
 toml = "0.8"
 uuid.workspace = true
 sysinfo.workspace = true
-tower-http = { version = "0.6", features = ["fs"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
 tower = { version = "0.5", features = ["util"] }
 flate2 = "1"
 tar = "0.4"

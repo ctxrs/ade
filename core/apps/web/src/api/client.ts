@@ -7,12 +7,17 @@ export {
   setDaemonBaseUrl,
   setDaemonAuthToken,
   applyDaemonDesktopConnection,
+  syncDesktopDaemonConnectionFromBridge,
   resetDaemonConnection,
   daemonFetchRaw,
   idToString,
   recordClientCounterMetric,
 } from "./clientBase";
-export type { DaemonRawResponse, DaemonClientConfig } from "./clientBase";
+export type {
+  DaemonRawResponse,
+  DaemonClientConfig,
+  DesktopDaemonConnectionSyncResult,
+} from "./clientBase";
 export {
   getDaemonConnection,
   subscribeDaemonConnection,

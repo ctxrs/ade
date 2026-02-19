@@ -10,6 +10,7 @@ export type WorkspaceActiveSnapshotCommand =
   | {
       type: "init";
       workspaceId: string;
+      connectionSeq: number;
       authToken?: string | null;
       baseUrl?: string | null;
       wsBaseUrl?: string | null;
@@ -18,6 +19,7 @@ export type WorkspaceActiveSnapshotCommand =
     }
   | {
       type: "update_auth";
+      connectionSeq: number;
       authToken?: string | null;
       baseUrl?: string | null;
       wsBaseUrl?: string | null;

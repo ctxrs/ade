@@ -108,6 +108,16 @@ describe("daemonConnection", () => {
     expect(connection.wsBaseUrl).toBe(window.location.origin.replace(/^http/, "ws"));
   });
 
+  it("does not same-origin bootstrap daemon base in desktop windows", async () => {
+    const g = globalThis as typeof globalThis & { __TAURI__?: unknown };
+    g.__TAURI__ = {};
+    const mod = await import("./daemonConnection");
+    const connection = mod.getDaemonConnection();
+
+    expect(connection.baseUrl).toBeNull();
+    expect(connection.wsBaseUrl).toBeNull();
+  });
+
   it("applies dev env daemon url even after same-origin preseed", async () => {
     vi.stubEnv("VITE_CTX_DAEMON_URL", "http://127.0.0.1:4399");
     const mod = await import("./daemonConnection");

@@ -20,6 +20,8 @@ import type {
 } from "@ctx/types";
 import {
   getDaemonClientConfig,
+  getDaemonConnection,
+  syncDesktopDaemonConnectionFromBridge,
   subscribeDaemonConfig,
   idToString,
   listWorkspaceArchivedTaskSummaries,
@@ -31,8 +33,9 @@ import {
   type PersistedWorkspaceActiveSnapshotV1,
   type PersistedWorkspaceActiveTaskSummaryV1,
 } from "./uiStateStore";
+import { isDesktopApp } from "../utils/desktop";
 import { parseWsJson } from "../utils/wsJson";
-import { emitUiDiagnostic } from "./diagnosticsChannel";
+import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "./diagnosticsChannel";
 import type {
   WorkspaceActiveSnapshotCommand,
   WorkspaceActiveSnapshotPatch,
@@ -91,6 +94,13 @@ type WorkspaceActiveSnapshotStoreOptions = {
   authToken?: string | null;
   wsBaseUrl?: string | null;
   listWorkspaceArchivedTaskSummaries?: typeof listWorkspaceArchivedTaskSummaries;
+};
+
+type WorkerAuthUpdateConfig = {
+  authToken?: string | null;
+  wsBaseUrl?: string | null;
+  baseUrl?: string | null;
+  runId?: string | null;
 };
 
 const ACTIVE_PAGE_SIZE = 50;
@@ -364,6 +374,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private sessionHeadsById = new Map<string, SessionHeadSnapshot>();
   private worktreeRootsById = new Map<string, string>();
   private worker: Worker | null = null;
+  private workerStarting = false;
+  private workerAuthReconcileInFlight = false;
+  private pendingWorkerAuthUpdate: WorkerAuthUpdateConfig | null = null;
+  private workerConnectionSeq = 0;
   private useWorker = false;
   private disableCache = false;
   private disableWorker = false;
@@ -604,44 +618,167 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.ensureWorkerAvailable();
     cachePromise.finally(() => {
       if (!this.destroyed) {
-        this.startWorker();
+        this.startWorker().catch(() => {});
       }
     });
   };
 
-  private startWorker() {
-    if (this.worker || this.destroyed) return;
-    this.useWorker = true;
-    this.worker = new Worker(new URL("../workers/workspaceActiveSnapshot.worker.ts", import.meta.url), {
-      type: "module",
+  private emitWorkerConnectionMissingDiagnostic = (
+    phase: "worker_init" | "worker_update_auth",
+    bridgeKind: "none" | "local" | "ssh" | null,
+    syncError: string | null,
+  ) => {
+    const connection = getDaemonConnection();
+    const bridgeConnected = bridgeKind === "local" || bridgeKind === "ssh";
+    const code = bridgeConnected
+      ? "workspace.worker_desktop_bridge_missing_base"
+      : "workspace.worker_connection_missing";
+    const message = bridgeConnected
+      ? "Desktop bridge is connected, but worker daemon HTTP base URL is missing."
+      : "Worker daemon HTTP base URL is missing.";
+    emitUiDiagnostic({
+      source: "workspace_snapshot",
+      code,
+      severity: "warning",
+      message,
+      context: {
+        workspaceId: this.workspaceId,
+        phase,
+        bridgeKind,
+        connectionSource: connection.source ?? null,
+        syncError: syncError ?? undefined,
+      },
     });
-    this.worker.onmessage = (event: MessageEvent<WorkspaceActiveSnapshotWorkerMessage>) => {
-      const msg = event.data;
-      if (msg?.type !== "patch") return;
-      this.applyWorkerPatch(msg.patch);
+  };
+
+  private async resolveWorkerConnectionState(
+    phase: "worker_init" | "worker_update_auth",
+    opts?: WorkerAuthUpdateConfig,
+  ): Promise<{
+    authToken: string | null;
+    wsBaseUrl: string | null;
+    baseUrl: string | null;
+    runId: string | null;
+  }> {
+    let daemonConfig = getDaemonClientConfig();
+    let bridgeKind: "none" | "local" | "ssh" | null = null;
+    let syncError: string | null = null;
+
+    const readState = () => {
+      const authToken = opts?.authToken ?? this.authTokenOverride ?? daemonConfig.authToken ?? null;
+      const wsBaseUrl = opts?.wsBaseUrl ?? this.wsBaseUrlOverride ?? daemonConfig.wsBaseUrl ?? null;
+      const baseUrl = opts?.baseUrl ?? daemonConfig.baseUrl ?? (wsBaseUrl ? toHttpBaseUrl(wsBaseUrl) : null);
+      const runId = opts?.runId ?? daemonConfig.runId ?? null;
+      return {
+        authToken,
+        wsBaseUrl,
+        baseUrl,
+        runId,
+      };
     };
-    const daemonConfig = getDaemonClientConfig();
-    const auth = this.authTokenOverride ?? daemonConfig.authToken;
-    const wsBaseUrl = this.wsBaseUrlOverride ?? daemonConfig.wsBaseUrl ?? null;
-    const baseUrl = daemonConfig.baseUrl ?? (wsBaseUrl ? toHttpBaseUrl(wsBaseUrl) : null);
-    this.postWorkerCommand({
-      type: "init",
-      workspaceId: this.workspaceId,
-      authToken: auth,
-      baseUrl,
-      wsBaseUrl: wsBaseUrl || null,
-      runId: daemonConfig.runId ?? null,
-      e2eEnabled: this.e2eEnabled,
-    });
-    if (this.subscribedSessionIds.length > 0) {
-      this.postWorkerCommand({ type: "set_subscribed_session_ids", sessionIds: this.subscribedSessionIds.slice() });
+
+    let state = readState();
+    if (!state.baseUrl && isDesktopApp()) {
+      const synced = await syncDesktopDaemonConnectionFromBridge({
+        force: true,
+        probeHealth: true,
+        reason: phase,
+      });
+      daemonConfig = synced.config;
+      bridgeKind = synced.info?.kind ?? null;
+      syncError = synced.error;
+      state = readState();
     }
-    if (this.foregroundTaskId) {
-      this.postWorkerCommand({ type: "set_foreground_task_id", taskId: this.foregroundTaskId });
+
+    if (!state.baseUrl && isDesktopApp()) {
+      this.emitWorkerConnectionMissingDiagnostic(phase, bridgeKind, syncError);
     }
-    if (this.pendingWorkerCache) {
-      this.postWorkerCommand({ type: "seed_cache", snapshot: this.pendingWorkerCache });
-      this.pendingWorkerCache = null;
+    return state;
+  }
+
+  private async startWorker() {
+    if (this.worker || this.destroyed || this.workerStarting) return;
+    this.workerStarting = true;
+    try {
+      const connection = await this.resolveWorkerConnectionState("worker_init");
+      if (this.worker || this.destroyed) {
+        return;
+      }
+      this.useWorker = true;
+      this.worker = new Worker(new URL("../workers/workspaceActiveSnapshot.worker.ts", import.meta.url), {
+        type: "module",
+      });
+      this.worker.onmessage = (event: MessageEvent<WorkspaceActiveSnapshotWorkerMessage>) => {
+        const msg = event.data;
+        if (!msg) return;
+        if (msg.type === "patch") {
+          this.applyWorkerPatch(msg.patch);
+        }
+      };
+      this.postWorkerCommand({
+        type: "init",
+        workspaceId: this.workspaceId,
+        connectionSeq: ++this.workerConnectionSeq,
+        authToken: connection.authToken,
+        baseUrl: connection.baseUrl,
+        wsBaseUrl: connection.wsBaseUrl || null,
+        runId: connection.runId,
+        e2eEnabled: this.e2eEnabled,
+      });
+      if (this.subscribedSessionIds.length > 0) {
+        this.postWorkerCommand({ type: "set_subscribed_session_ids", sessionIds: this.subscribedSessionIds.slice() });
+      }
+      if (this.foregroundTaskId) {
+        this.postWorkerCommand({ type: "set_foreground_task_id", taskId: this.foregroundTaskId });
+      }
+      if (this.pendingWorkerCache) {
+        this.postWorkerCommand({ type: "seed_cache", snapshot: this.pendingWorkerCache });
+        this.pendingWorkerCache = null;
+      }
+    } finally {
+      this.workerStarting = false;
+    }
+  }
+
+  private queueWorkerAuthUpdate(opts: WorkerAuthUpdateConfig) {
+    this.pendingWorkerAuthUpdate = {
+      authToken: opts.authToken ?? null,
+      wsBaseUrl: opts.wsBaseUrl ?? null,
+      baseUrl: opts.baseUrl,
+      runId: opts.runId ?? null,
+    };
+    if (this.workerAuthReconcileInFlight || this.destroyed) return;
+    this.workerAuthReconcileInFlight = true;
+    void this.runWorkerAuthReconcileLoop();
+  }
+
+  private async runWorkerAuthReconcileLoop() {
+    try {
+      while (!this.destroyed) {
+        const pending = this.pendingWorkerAuthUpdate;
+        if (!pending) return;
+        this.pendingWorkerAuthUpdate = null;
+        const connection = await this.resolveWorkerConnectionState("worker_update_auth", pending);
+        if (!this.worker || this.destroyed) return;
+        // Newer auth arrived while we were awaiting bridge sync; discard stale result.
+        if (this.pendingWorkerAuthUpdate) {
+          continue;
+        }
+        this.postWorkerCommand({
+          type: "update_auth",
+          connectionSeq: ++this.workerConnectionSeq,
+          authToken: connection.authToken,
+          baseUrl: connection.baseUrl,
+          wsBaseUrl: connection.wsBaseUrl,
+          runId: connection.runId,
+        });
+      }
+    } finally {
+      this.workerAuthReconcileInFlight = false;
+      if (!this.destroyed && this.pendingWorkerAuthUpdate) {
+        this.workerAuthReconcileInFlight = true;
+        void this.runWorkerAuthReconcileLoop();
+      }
     }
   }
 
@@ -659,13 +796,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.wsBaseUrlOverride = nextWs;
 
     if (this.worker) {
-      const daemonConfig = getDaemonClientConfig();
-      const baseUrl = opts.baseUrl ?? daemonConfig.baseUrl ?? (nextWs ? toHttpBaseUrl(nextWs) : null);
-      this.postWorkerCommand({
-        type: "update_auth",
+      this.queueWorkerAuthUpdate({
         authToken: nextAuth,
-        baseUrl,
         wsBaseUrl: nextWs,
+        baseUrl: opts.baseUrl,
         runId: opts.runId ?? null,
       });
       return;
@@ -723,6 +857,9 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   destroy = () => {
     this.destroyed = true;
+    this.pendingWorkerAuthUpdate = null;
+    this.workerAuthReconcileInFlight = false;
+    this.workerConnectionSeq = 0;
     if (this.worker) {
       this.worker.terminate();
       this.worker = null;
@@ -1186,7 +1323,18 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.hasMoreArchived = Boolean(page.next_cursor);
       this.archivedLoaded = true;
       this.publish();
-    } catch {
+    } catch (err) {
+      emitUiDiagnostic({
+        source: "workspace_snapshot",
+        code: "workspace.archived_load_failed",
+        severity: "warning",
+        message: "Archived task summaries failed to load.",
+        context: {
+          workspaceId: this.workspaceId,
+          firstLoad,
+          error: normalizeDiagnosticErrorMessage(err, "Archived task load failed."),
+        },
+      });
       this.setFetchState("archived", "error");
       return;
     }

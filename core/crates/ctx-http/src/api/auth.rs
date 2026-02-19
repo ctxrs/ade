@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::Request;
 use axum::http::StatusCode;
+use axum::http::{Method, Request};
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use base64::Engine;
@@ -31,6 +31,9 @@ pub(super) async fn auth_middleware(
     mut req: Request<Body>,
     next: Next,
 ) -> Result<impl IntoResponse, StatusCode> {
+    if req.method() == Method::OPTIONS {
+        return Ok(next.run(req).await);
+    }
     let path = req.uri().path();
     if !path.starts_with("/api/") || path == "/api/health" {
         return Ok(next.run(req).await);
