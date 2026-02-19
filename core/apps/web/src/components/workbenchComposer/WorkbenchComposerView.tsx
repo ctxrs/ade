@@ -718,29 +718,13 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               .sort((a, b) => String(a.id).localeCompare(String(b.id)));
 
             const all = [...catalog, ...extras];
-            const actionableIds = !installControlsEnabled
-              ? new Set(
-                  all
-                    .map((entry) => String(entry.id))
-                    .filter((id) => {
-                      const status = ns.providersById[id];
-                      return status?.installed === true && status?.health === "ok";
-                    }),
-                )
-              : null;
-            if (!installControlsEnabled) {
-              for (const track of ns.draftTracks) actionableIds?.add(String(track.providerId));
-              if (ns.defaultProviderId) actionableIds?.add(String(ns.defaultProviderId));
-            }
             const filtered = q
               ? all.filter(
                   (h) =>
                     String(h.id).toLowerCase().includes(q) || String(h.label).toLowerCase().includes(q),
                 )
               : all;
-            const visible = actionableIds
-              ? filtered.filter((h) => actionableIds.has(String(h.id)))
-              : filtered;
+            const visible = filtered;
             if (visible.length === 0) return <div className="wb-menu-empty">No matching agents.</div>;
 
             const counts: Record<string, number> = {};
@@ -772,9 +756,19 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               const opts = ns.providerOptions[id];
               const models = buildModelsForProvider(id, opts);
               const catalog = buildModelCatalog(models);
-              const hasActiveAuth = opts?.has_active_auth === true;
-              const showAddAuthButton =
-                checked && installed && !hasActiveAuth && typeof ns.onRequestHarnessAuth === "function";
+              const endpointIsSelected =
+                opts?.source?.selected_source_kind === "endpoint"
+                && !!opts?.source?.selected_endpoint_id;
+              const subscriptionConfiguredBySelectionForManagedUnmanaged =
+                opts?.source?.selected_source_kind === "subscription"
+                && (id === "cursor" || id === "codex");
+              const subscriptionConfiguredByAuthMode =
+                opts?.auth_mode === "subscription" && (id === "cursor" || id === "codex");
+              const hasActiveAuth =
+                opts?.has_active_auth === true
+                || endpointIsSelected
+                || subscriptionConfiguredBySelectionForManagedUnmanaged
+                || subscriptionConfiguredByAuthMode;
 
               return (
                 <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
@@ -796,8 +790,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                     ) : (
                       <span className="wb-harness-logo-fallback" aria-hidden="true" />
                     )}
-                    <span className="wb-harness-name-wrap">
-                      <span className="wb-harness-name">{label}</span>
+                    <span className="wb-harness-name">{label}</span>
+                    <span className="wb-harness-status-lights">
                       <span
                         className={`wb-harness-auth-dot ${hasActiveAuth ? "wb-harness-auth-dot-active" : "wb-harness-auth-dot-inactive"}`}
                         aria-label={hasActiveAuth ? "Authentication configured" : "Authentication not configured"}
@@ -839,19 +833,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                       ) : null
                     ) : (
                       <>
-                        {showAddAuthButton && (
-                          <button
-                            type="button"
-                            className="wb-harness-auth-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              ns.onRequestHarnessAuth?.(id);
-                            }}
-                            title="Add authentication profile"
-                          >
-                            Add auth
-                          </button>
-                        )}
                         {checked && (
                           <button
                             type="button"

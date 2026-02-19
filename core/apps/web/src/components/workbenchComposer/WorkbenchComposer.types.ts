@@ -69,7 +69,6 @@ export type NewSessionProps = SharedProps & {
   installAllBusy?: boolean;
   providerOptions: Record<string, ProviderOptions | undefined>;
   ensureProviderOptions: (providerId: string, opts?: { force?: boolean }) => Promise<ProviderOptions | undefined>;
-  onRequestHarnessAuth?: (providerId: string) => void;
 
   draftTracks: DraftTrack[];
   setDraftTracks: React.Dispatch<React.SetStateAction<DraftTrack[]>>;

@@ -103,7 +103,6 @@ import { useWorkbenchOptimisticTasks } from "./workbenchShell/useWorkbenchOptimi
 import { useWorkbenchProviders } from "./workbenchShell/useWorkbenchProviders";
 import { WorkbenchSessionHeader } from "./workbenchShell/WorkbenchSessionHeader";
 import { useWorkbenchTaskScrollbar } from "./workbenchShell/useWorkbenchTaskScrollbar";
-import { HarnessAuthenticationSection } from "./settings/sections/HarnessAuthenticationSection";
 import type {
   AnchorRect,
   ArchiveConfirmState,
@@ -283,7 +282,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [startError, setStartError] = useState<string | null>(null);
   const [useMultipleAgents, setUseMultipleAgents] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
-  const [harnessAuthModalProviderId, setHarnessAuthModalProviderId] = useState<string | null>(null);
 
   const {
     dictationRecording,
@@ -319,17 +317,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setDraftTracks,
     onStartError: setStartError,
   });
-
-  const openHarnessAuthFromComposer = useCallback((providerId: string) => {
-    if (!providerId.trim()) return;
-    setHarnessAuthModalProviderId(providerId);
-  }, []);
-
-  const handleWorkbenchHarnessAuthModalClosed = useCallback((providerId: string | null) => {
-    setHarnessAuthModalProviderId(null);
-    if (!providerId) return;
-    ensureProviderOptions(providerId, { force: true }).catch(() => {});
-  }, [ensureProviderOptions]);
 
   const { dropActive } = useWorkbenchDragDropAttachments({
     scopeRef: newComposerRef,
@@ -2924,7 +2911,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 installAllBusy={installAllBusy}
                 providerOptions={providerOptions}
                 ensureProviderOptions={ensureProviderOptions}
-                onRequestHarnessAuth={openHarnessAuthFromComposer}
                 draftTracks={draftTracks}
                 setDraftTracks={setDraftTracks}
                 defaultProviderId={defaultProviderId}
@@ -3071,14 +3057,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           />
         </div>
       </div>
-
-      <HarnessAuthenticationSection
-        workspaceId={workspaceId}
-        active={harnessAuthModalProviderId !== null}
-        modalOnly
-        openProviderId={harnessAuthModalProviderId}
-        onModalClosed={handleWorkbenchHarnessAuthModalClosed}
-      />
 
       {taskMenu && (
         <div className="wb-menu wb-task-menu" role="menu" ref={taskMenuRef} style={taskMenu.style}>

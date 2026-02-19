@@ -33,6 +33,7 @@ import {
   startCodexLogin,
   upsertClaudeAccount,
   upsertCopilotAccount,
+  upsertCursorAccount,
   upsertGeminiAccount,
   upsertKimiAccount,
   upsertKiroAccount,
@@ -132,7 +133,7 @@ const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
   "cursor",
 ]);
 
-const supportsHarnessEndpointConfig = (providerId: string): boolean =>
+const supportsHarnessEndpointConfigStatic = (providerId: string): boolean =>
   HARNESSES_WITH_ENDPOINT_CONFIG.has(providerId);
 
 const HARNESSES_WITH_ENDPOINT_BASE_URL = new Set([
@@ -171,6 +172,7 @@ export function useHarnessAuthenticationController({
   const [providerError, setProviderError] = useState<string | null>(null);
   const [providerHarnessConfig, setProviderHarnessConfig] = useState<Record<string, HarnessProviderSourceConfig | undefined>>({});
   const [providerHarnessBusy, setProviderHarnessBusy] = useState<Record<string, boolean>>({});
+  const [providerEndpointUnsupported, setProviderEndpointUnsupported] = useState<Record<string, boolean>>({});
   const [harnessAuthModal, setHarnessAuthModal] = useState<HarnessAuthModalState | null>(null);
   const [installBusy, setInstallBusy] = useState<string | null>(null);
   const [installs, setInstalls] = useState<Record<string, InstallSession>>({});
@@ -191,6 +193,43 @@ export function useHarnessAuthenticationController({
   const [cursorAccountsBusy, setCursorAccountsBusy] = useState(false);
 
   const installPollTimeoutsRef = useRef<Record<string, number>>({});
+  const providerHarnessConfigRef = useRef<Record<string, HarnessProviderSourceConfig | undefined>>({});
+  const providerHarnessBusyRef = useRef<Record<string, boolean>>({});
+  const providerEndpointUnsupportedRef = useRef<Record<string, boolean>>({});
+
+  const supportsHarnessEndpointConfig = useCallback(
+    (providerId: string): boolean =>
+      supportsHarnessEndpointConfigStatic(providerId) && providerEndpointUnsupportedRef.current[providerId] !== true,
+    [],
+  );
+
+  useEffect(() => {
+    providerHarnessConfigRef.current = providerHarnessConfig;
+  }, [providerHarnessConfig]);
+
+  useEffect(() => {
+    providerHarnessBusyRef.current = providerHarnessBusy;
+  }, [providerHarnessBusy]);
+
+  useEffect(() => {
+    providerEndpointUnsupportedRef.current = providerEndpointUnsupported;
+  }, [providerEndpointUnsupported]);
+
+  const setProviderHarnessConfigForProvider = useCallback(
+    (providerId: string, nextConfig: HarnessProviderSourceConfig) => {
+      setProviderHarnessConfig((prev) => {
+        const next = { ...prev, [providerId]: nextConfig };
+        providerHarnessConfigRef.current = next;
+        return next;
+      });
+    },
+    [],
+  );
+
+  const setProviderHarnessBusyForProvider = useCallback((providerId: string, busy: boolean) => {
+    providerHarnessBusyRef.current = { ...providerHarnessBusyRef.current, [providerId]: busy };
+    setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: busy }));
+  }, []);
 
   const refreshProviders = useCallback(async () => {
     try {
@@ -331,48 +370,65 @@ export function useHarnessAuthenticationController({
 
   const ensureProviderHarnessConfig = useCallback(
     async (providerId: string, opts?: { force?: boolean }) => {
-      if (providerHarnessBusy[providerId]) return;
-      if (!opts?.force && providerHarnessConfig[providerId]) return;
-      setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: true }));
+      if (providerHarnessBusyRef.current[providerId]) return;
+      if (!opts?.force && providerHarnessConfigRef.current[providerId]) return;
+
+      setProviderHarnessBusyForProvider(providerId, true);
       try {
         const cfg = await getProviderHarnessConfig(providerId);
-        setProviderHarnessConfig((prev) => ({ ...prev, [providerId]: cfg }));
+        setProviderHarnessConfigForProvider(providerId, cfg);
       } catch (error) {
-        setProviderError(messageFromError(error));
+        const message = messageFromError(error);
+        if (message.includes("provider does not support harness endpoints")) {
+          setProviderEndpointUnsupported((prev) => {
+            if (prev[providerId]) return prev;
+            const next = { ...prev, [providerId]: true };
+            providerEndpointUnsupportedRef.current = next;
+            return next;
+          });
+          setProviderHarnessConfigForProvider(providerId, {
+            provider_id: providerId,
+            selected_source_kind: "subscription",
+            selected_endpoint_id: null,
+            endpoints: [],
+          });
+        } else {
+          setProviderError(message);
+        }
       } finally {
-        setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: false }));
+        setProviderHarnessBusyForProvider(providerId, false);
       }
     },
-    [providerHarnessBusy, providerHarnessConfig],
+    [setProviderHarnessBusyForProvider, setProviderHarnessConfigForProvider],
   );
 
   const onDeleteProviderEndpoint = useCallback(async (providerId: string, endpointId: string) => {
-    setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: true }));
+    setProviderHarnessBusyForProvider(providerId, true);
     setProviderError(null);
     try {
       const next = await deleteProviderHarnessEndpoint(providerId, endpointId);
-      setProviderHarnessConfig((prev) => ({ ...prev, [providerId]: next }));
+      setProviderHarnessConfigForProvider(providerId, next);
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
-      setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: false }));
+      setProviderHarnessBusyForProvider(providerId, false);
     }
-  }, []);
+  }, [setProviderHarnessBusyForProvider, setProviderHarnessConfigForProvider]);
 
   const onSelectProviderSource = useCallback(
     async (providerId: string, sourceKind: "subscription" | "endpoint", endpointId?: string | null) => {
-      setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: true }));
+      setProviderHarnessBusyForProvider(providerId, true);
       setProviderError(null);
       try {
         const next = await selectProviderHarnessSource(providerId, sourceKind, endpointId ?? null);
-        setProviderHarnessConfig((prev) => ({ ...prev, [providerId]: next }));
+        setProviderHarnessConfigForProvider(providerId, next);
       } catch (error) {
         setProviderError(messageFromError(error));
       } finally {
-        setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: false }));
+        setProviderHarnessBusyForProvider(providerId, false);
       }
     },
-    [],
+    [setProviderHarnessBusyForProvider, setProviderHarnessConfigForProvider],
   );
 
   const openHarnessAuthModal = useCallback((providerId: string) => {
@@ -416,7 +472,8 @@ export function useHarnessAuthenticationController({
     const modal = harnessAuthModal;
     if (!modal || modal.stage !== "api_key") return;
 
-    if (!supportsHarnessEndpointConfig(modal.provider_id)) {
+    const isCursor = modal.provider_id === "cursor";
+    if (!isCursor && !supportsHarnessEndpointConfig(modal.provider_id)) {
       setProviderError("API key auth is not configurable for this harness yet.");
       return;
     }
@@ -424,7 +481,7 @@ export function useHarnessAuthenticationController({
     const requiresBaseUrl = harnessEndpointRequiresBaseUrl(modal.provider_id);
     const requiresApiShape = harnessEndpointRequiresApiShape(modal.provider_id);
     const nameInput = modal.endpoint_name.trim();
-    const existingNames = (providerHarnessConfig[modal.provider_id]?.endpoints ?? []).map((endpoint) => endpoint.name);
+    const existingNames = (providerHarnessConfigRef.current[modal.provider_id]?.endpoints ?? []).map((endpoint) => endpoint.name);
     const name = nameInput
       || (requiresBaseUrl
         ? nextDefaultEndpointName(modal.endpoint_provider_id, existingNames)
@@ -444,6 +501,33 @@ export function useHarnessAuthenticationController({
     setHarnessAuthModal((prev) => (prev ? { ...prev, api_key_busy: true } : prev));
     setProviderError(null);
     try {
+      if (isCursor) {
+        const label = name.trim();
+        const next = await upsertCursorAccount(key, label ? { label } : undefined);
+        setCursorAccounts(next);
+        if (supportsHarnessEndpointConfig(modal.provider_id)) {
+          try {
+            await onSelectProviderSource(modal.provider_id, "subscription", null);
+          } catch {
+            setProviderHarnessConfigForProvider(modal.provider_id, {
+              provider_id: modal.provider_id,
+              selected_source_kind: "subscription",
+              selected_endpoint_id: null,
+              endpoints: providerHarnessConfigRef.current[modal.provider_id]?.endpoints ?? [],
+            });
+          }
+        } else {
+          setProviderHarnessConfigForProvider(modal.provider_id, {
+            provider_id: modal.provider_id,
+            selected_source_kind: "subscription",
+            selected_endpoint_id: null,
+            endpoints: providerHarnessConfigRef.current[modal.provider_id]?.endpoints ?? [],
+          });
+        }
+        closeHarnessAuthModal();
+        return;
+      }
+
       const next = await upsertProviderHarnessEndpoint(modal.provider_id, {
         endpoint_id: null,
         name,
@@ -467,7 +551,13 @@ export function useHarnessAuthenticationController({
     } finally {
       setHarnessAuthModal((prev) => (prev ? { ...prev, api_key_busy: false } : prev));
     }
-  }, [closeHarnessAuthModal, harnessAuthModal, providerHarnessConfig]);
+  }, [
+    closeHarnessAuthModal,
+    harnessAuthModal,
+    onSelectProviderSource,
+    setProviderHarnessConfigForProvider,
+    supportsHarnessEndpointConfig,
+  ]);
 
   const waitForCodexLoginOutcome = useCallback(async (accountId: string): Promise<"success" | "failed" | "timeout"> => {
     const attempts = 75;
@@ -685,6 +775,7 @@ export function useHarnessAuthenticationController({
     onSelectProviderSource,
     openCodexAuthUrl,
     refreshCodexAccounts,
+    supportsHarnessEndpointConfig,
     waitForCodexLoginOutcome,
     workspaceId,
   ]);
@@ -904,6 +995,7 @@ export function useHarnessAuthenticationController({
     onKiroSetActive,
     onCursorSetActive,
     onSelectProviderSource,
+    supportsHarnessEndpointConfig,
   ]);
 
   const attachInstall = useCallback(async (providerId: string, installId: string) => {
@@ -1027,6 +1119,7 @@ export function useHarnessAuthenticationController({
     refreshKimiAccounts,
     refreshKiroAccounts,
     refreshCursorAccounts,
+    supportsHarnessEndpointConfig,
     workspaceId,
   ]);
 

@@ -295,8 +295,8 @@ export function useWorkbenchProviders({
   const ensureProviderOptions = useCallback(
     async (providerId: string, opts?: { force?: boolean }): Promise<ProviderOptions | undefined> => {
       if (!workspaceId) return;
-      const installed = providersById[providerId]?.installed === true && providersById[providerId]?.health === "ok";
-      if (!installed) return;
+      const ready = providersById[providerId]?.installed === true && providersById[providerId]?.health === "ok";
+      if (!ready) return;
 
       const force = opts?.force ?? false;
       const existing = providerOptionsInFlightRef.current[providerId];

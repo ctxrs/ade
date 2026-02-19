@@ -87,9 +87,7 @@ export function HarnessAuthenticationSection({
 
   const visibleProviders = providers.filter((provider) => provider.details?.ui_hidden !== "true").slice();
   const installControlsEnabled = PROVIDER_INSTALLS_ENABLED;
-  const scopedVisibleProviders = installControlsEnabled
-    ? visibleProviders
-    : visibleProviders.filter((provider) => provider.installed === true && provider.health === "ok");
+  const scopedVisibleProviders = visibleProviders;
   const providersById = new Map(scopedVisibleProviders.map((provider) => [provider.provider_id, provider]));
 
   const order = new Map<string, number>(HARNESS_CATALOG.map((harness, index) => [harness.id, index]));
@@ -118,6 +116,11 @@ export function HarnessAuthenticationSection({
   const showBaseUrlInput =
     (modalRequiresBaseUrl && modalAllowsCustomBaseUrl)
     || (!modalRequiresBaseUrl && modalAllowsOptionalBaseUrl);
+  const modalSupportsApiKey =
+    harnessAuthModal === null
+      ? false
+      : harnessAuthModal.provider_id === "cursor"
+        || supportsHarnessEndpointConfig(harnessAuthModal.provider_id);
   const modalApiKeyLabel = harnessAuthModal?.provider_id === "kiro" ? "Auth token JSON" : "API key";
   const modalApiKeyPlaceholder = harnessAuthModal?.provider_id === "kiro"
     ? '{"token":"..."}'
@@ -551,9 +554,9 @@ export function HarnessAuthenticationSection({
                             ?? harnessAuthModal.base_url)
                           : "",
                       })}
-                    disabled={!supportsHarnessEndpointConfig(harnessAuthModal.provider_id)}
+                    disabled={!modalSupportsApiKey}
                     title={
-                      supportsHarnessEndpointConfig(harnessAuthModal.provider_id)
+                      modalSupportsApiKey
                         ? "Add API key auth"
                         : "API key auth not supported for this harness yet"
                     }

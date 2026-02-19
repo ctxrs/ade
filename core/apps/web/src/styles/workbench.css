@@ -1512,13 +1512,6 @@
   white-space: nowrap;
 }
 
-.wb-harness-name-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
 .wb-harness-auth-dot {
   width: 8px;
   height: 8px;
@@ -1535,6 +1528,14 @@
 .wb-harness-auth-dot-inactive {
   background: var(--surface-strong);
   border-color: var(--surface-strongest);
+}
+
+.wb-harness-status-lights {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 8px;
 }
 
 .wb-harness-status {
