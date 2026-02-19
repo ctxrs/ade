@@ -127,15 +127,15 @@
   padding: 22px 26px;
 }
 
+.settings-main-inner::after {
+  content: "";
+  display: block;
+  height: 20px;
+}
+
 .settings-main-header {
   display: grid;
   gap: 4px;
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--bg);
-  padding: 4px 0 12px;
-  border-bottom: 1px solid var(--surface-active);
   margin-bottom: 14px;
 }
 
@@ -881,12 +881,6 @@
   .settings-main-inner {
     width: 100%;
     padding: 16px 14px;
-  }
-
-  .settings-main-header {
-    position: static;
-    padding: 0;
-    border-bottom: none;
   }
 
   .settings-row {
