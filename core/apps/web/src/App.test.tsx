@@ -11,6 +11,11 @@ import {
   isDesktopApp,
   openExternalLink,
 } from "./utils/desktop";
+import {
+  DESKTOP_MENU_COMMAND_IDS,
+  WEB_MENU_COMMAND_EVENT,
+  type DesktopMenuCommandId,
+} from "./utils/desktopMenuCommands";
 
 const desktopHandlers = new Map<string, (payload?: unknown) => void>();
 
@@ -213,6 +218,83 @@ test("desktop menu action routes to workspace settings and updates menu state", 
     expect(new URLSearchParams(window.location.search).get("ws")).toBe("ws-321");
   });
   expect(await screen.findByText("Settings Screen")).toBeInTheDocument();
+});
+
+test("desktop menu action accepts snake_case payload for compatibility", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+  window.history.pushState({}, "", "/workspaces/ws-987");
+
+  render(<App />);
+  expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
+
+  const handler = await waitFor(() => {
+    const value = desktopHandlers.get("desktop_menu_action");
+    if (!value) {
+      throw new Error("desktop_menu_action handler not ready");
+    }
+    return value;
+  });
+
+  act(() => {
+    handler({ command_id: "go.settings" });
+  });
+
+  await waitFor(() => {
+    expect(window.location.pathname).toBe("/settings");
+    expect(new URLSearchParams(window.location.search).get("ws")).toBe("ws-987");
+  });
+});
+
+test("desktop menu action forwards workbench-scoped commands to the web menu bus", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+  window.history.pushState({}, "", "/workspaces/ws-456");
+
+  render(<App />);
+  expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
+
+  const handler = await waitFor(() => {
+    const value = desktopHandlers.get("desktop_menu_action");
+    if (!value) {
+      throw new Error("desktop_menu_action handler not ready");
+    }
+    return value;
+  });
+
+  const appHandledCommands = new Set<DesktopMenuCommandId>([
+    "file.new-workspace",
+    "go.workspace-setup",
+    "file.open-workspaces",
+    "go.workspaces",
+    "go.launcher",
+    "go.settings",
+    "go.diagnostics",
+    "help.diagnostics",
+    "go.agent-harnesses",
+    "help.crash-course",
+    "help.keyboard-shortcuts",
+    "help.open-logs-folder",
+    "file.open-workspace-new-window",
+  ]);
+  const forwardedCommands = DESKTOP_MENU_COMMAND_IDS.filter((commandId) => !appHandledCommands.has(commandId));
+
+  const seen: DesktopMenuCommandId[] = [];
+  const onWebMenuCommand = (event: Event) => {
+    const custom = event as CustomEvent<{ commandId: DesktopMenuCommandId }>;
+    seen.push(custom.detail.commandId);
+  };
+  window.addEventListener(WEB_MENU_COMMAND_EVENT, onWebMenuCommand as EventListener);
+
+  try {
+    act(() => {
+      for (const commandId of forwardedCommands) {
+        handler({ command_id: commandId });
+      }
+    });
+  } finally {
+    window.removeEventListener(WEB_MENU_COMMAND_EVENT, onWebMenuCommand as EventListener);
+  }
+
+  expect(seen).toEqual(forwardedCommands);
 });
 
 test("desktop menu report issue opens external tracker link", async () => {

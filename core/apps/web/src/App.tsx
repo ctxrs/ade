@@ -158,9 +158,7 @@ function DesktopMenuBridge() {
     let active = true;
     let unlisten: (() => void) | null = null;
     desktopListen<DesktopMenuActionEventPayload>(DESKTOP_MENU_ACTION_EVENT, (payload) => {
-      const raw =
-        (typeof payload === "string" ? payload : undefined) ??
-        (payload as { commandId?: unknown } | null | undefined)?.commandId;
+      const raw = typeof payload === "string" ? payload : payload?.commandId ?? payload?.command_id;
       if (!isDesktopMenuCommandId(raw)) return;
 
       const commandId = raw;

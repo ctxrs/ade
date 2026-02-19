@@ -40,9 +40,12 @@ export const DESKTOP_MENU_COMMAND_IDS = [
 
 export type DesktopMenuCommandId = (typeof DESKTOP_MENU_COMMAND_IDS)[number];
 
-export type DesktopMenuActionEventPayload = {
-  commandId: string;
-};
+export type DesktopMenuActionEventPayload =
+  | string
+  | {
+      commandId?: string;
+      command_id?: string;
+    };
 
 export type DesktopMenuItemState = {
   id: DesktopMenuCommandId;
