@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::menu::{
     CheckMenuItemBuilder, Menu, MenuBuilder, MenuEvent, MenuItemBuilder, MenuItemKind,
-    PredefinedMenuItem, Submenu, SubmenuBuilder,
+    PredefinedMenuItem, Submenu, SubmenuBuilder, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID,
 };
 use tauri::{Emitter, Manager};
 
@@ -61,6 +61,7 @@ pub(super) struct DesktopMenuItemStateUpdate {
 #[derive(Default)]
 pub(super) struct DesktopMenuStateCache {
     by_window: Mutex<HashMap<String, Vec<DesktopMenuItemStateUpdate>>>,
+    focused_window_label: Mutex<Option<String>>,
 }
 
 impl DesktopMenuStateCache {
@@ -86,6 +87,32 @@ impl DesktopMenuStateCache {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.remove(window_label);
+    }
+
+    fn set_focused_window(&self, window_label: &str) {
+        let mut guard = self
+            .focused_window_label
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = Some(window_label.to_string());
+    }
+
+    fn clear_focused_window_if_matches(&self, window_label: &str) {
+        let mut guard = self
+            .focused_window_label
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if guard.as_deref() == Some(window_label) {
+            *guard = None;
+        }
+    }
+
+    fn get_focused_window(&self) -> Option<String> {
+        let guard = self
+            .focused_window_label
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.clone()
     }
 }
 
@@ -332,6 +359,28 @@ fn build_go_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>
         .build()
 }
 
+fn macos_window_submenu_id() -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        Some(WINDOW_SUBMENU_ID)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+fn macos_help_submenu_id() -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        Some(HELP_SUBMENU_ID)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
 fn build_window_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
     let minimize = PredefinedMenuItem::minimize(app, None)?;
     let maximize = PredefinedMenuItem::maximize(app, None)?;
@@ -341,7 +390,8 @@ fn build_window_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::
     #[cfg(target_os = "macos")]
     {
         let show_all = PredefinedMenuItem::show_all(app, None)?;
-        return SubmenuBuilder::new(app, "Window")
+        let submenu_id = macos_window_submenu_id().unwrap_or("window");
+        return SubmenuBuilder::with_id(app, submenu_id, "Window")
             .item(&minimize)
             .item(&maximize)
             .item(&sep)
@@ -374,13 +424,28 @@ fn build_help_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
     let diagnostics = menu_item(app, CMD_HELP_DIAGNOSTICS, "Diagnostics", None, true)?;
     let report_issue = menu_item(app, CMD_HELP_REPORT_ISSUE, "Report Issue", None, true)?;
 
-    SubmenuBuilder::new(app, "Help")
-        .item(&crash_course)
-        .item(&keyboard_shortcuts)
-        .item(&open_logs_folder)
-        .item(&diagnostics)
-        .item(&report_issue)
-        .build()
+    #[cfg(target_os = "macos")]
+    {
+        let submenu_id = macos_help_submenu_id().unwrap_or("help");
+        return SubmenuBuilder::with_id(app, submenu_id, "Help")
+            .item(&crash_course)
+            .item(&keyboard_shortcuts)
+            .item(&open_logs_folder)
+            .item(&diagnostics)
+            .item(&report_issue)
+            .build();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        return SubmenuBuilder::new(app, "Help")
+            .item(&crash_course)
+            .item(&keyboard_shortcuts)
+            .item(&open_logs_folder)
+            .item(&diagnostics)
+            .item(&report_issue)
+            .build();
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -389,6 +454,14 @@ fn build_app_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
     let sep3 = PredefinedMenuItem::separator(app)?;
+    let new_workspace = menu_item(
+        app,
+        CMD_FILE_NEW_WORKSPACE,
+        "New Workspace",
+        Some("CmdOrCtrl+N"),
+        true,
+    )?;
+    let open_workspaces = menu_item(app, CMD_FILE_OPEN_WORKSPACES, "Open Workspaces", None, true)?;
     let settings = menu_item(app, CMD_GO_SETTINGS, "Settings...", Some("CmdOrCtrl+,"), true)?;
     let hide = PredefinedMenuItem::hide(app, None)?;
     let hide_others = PredefinedMenuItem::hide_others(app, None)?;
@@ -398,12 +471,14 @@ fn build_app_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry
     SubmenuBuilder::new(app, "ctx")
         .item(&about)
         .item(&sep1)
-        .item(&settings)
+        .item(&new_workspace)
+        .item(&open_workspaces)
         .item(&sep2)
+        .item(&settings)
+        .item(&sep3)
         .item(&hide)
         .item(&hide_others)
         .item(&show_all)
-        .item(&sep3)
         .item(&quit)
         .build()
 }
@@ -481,6 +556,13 @@ fn focused_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
     for window in app.webview_windows().values() {
         if window.is_focused().unwrap_or(false) {
             return Some(window.clone());
+        }
+    }
+
+    let cache = app.state::<DesktopMenuStateCache>();
+    if let Some(window_label) = cache.get_focused_window() {
+        if let Some(window) = app.get_webview_window(&window_label) {
+            return Some(window);
         }
     }
 
@@ -598,6 +680,12 @@ pub(super) fn apply_cached_menu_state_for_window(
 pub(super) fn clear_cached_menu_state_for_window(app: &tauri::AppHandle, window_label: &str) {
     let cache = app.state::<DesktopMenuStateCache>();
     cache.remove_state(window_label);
+    cache.clear_focused_window_if_matches(window_label);
+}
+
+pub(super) fn mark_menu_state_window_focused(app: &tauri::AppHandle, window_label: &str) {
+    let cache = app.state::<DesktopMenuStateCache>();
+    cache.set_focused_window(window_label);
 }
 
 #[tauri::command]
@@ -614,6 +702,7 @@ pub(super) fn desktop_set_menu_state(
         .is_focused()
         .map_err(|err| err.to_string())?
     {
+        cache.set_focused_window(&window_label);
         apply_menu_state_updates(&app, &items)?;
     }
     Ok(())
@@ -658,5 +747,35 @@ mod tests {
         cache.remove_state("window-a");
         assert!(cache.get_state("window-a").is_none());
         assert!(cache.get_state("window-b").is_some());
+    }
+
+    #[test]
+    fn desktop_menu_state_cache_tracks_focused_window() {
+        let cache = DesktopMenuStateCache::default();
+        assert_eq!(cache.get_focused_window(), None);
+
+        cache.set_focused_window("window-a");
+        assert_eq!(cache.get_focused_window().as_deref(), Some("window-a"));
+
+        cache.clear_focused_window_if_matches("window-b");
+        assert_eq!(cache.get_focused_window().as_deref(), Some("window-a"));
+
+        cache.clear_focused_window_if_matches("window-a");
+        assert_eq!(cache.get_focused_window(), None);
+    }
+
+    #[test]
+    fn dock_related_submenu_ids_match_platform_expectations() {
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(macos_window_submenu_id(), Some(WINDOW_SUBMENU_ID));
+            assert_eq!(macos_help_submenu_id(), Some(HELP_SUBMENU_ID));
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!(macos_window_submenu_id(), None);
+            assert_eq!(macos_help_submenu_id(), None);
+        }
     }
 }

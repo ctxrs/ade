@@ -134,6 +134,7 @@ fn main() {
             if let tauri::WindowEvent::Focused(is_focused) = event {
                 if *is_focused {
                     let app_handle = window.app_handle();
+                    mark_menu_state_window_focused(&app_handle, window.label());
                     if let Err(err) = apply_cached_menu_state_for_window(&app_handle, window.label()) {
                         eprintln!(
                             "failed to apply cached desktop menu state for window '{}': {}",

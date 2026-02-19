@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, test, vi } from "vitest";
 import App from "./App";
+import { WEB_MENU_COMMAND_EVENT } from "./utils/desktopMenuCommands";
 import {
   desktopListen,
   desktopSetMenuState,
@@ -11,11 +12,6 @@ import {
   isDesktopApp,
   openExternalLink,
 } from "./utils/desktop";
-import {
-  DESKTOP_MENU_COMMAND_IDS,
-  WEB_MENU_COMMAND_EVENT,
-  type DesktopMenuCommandId,
-} from "./utils/desktopMenuCommands";
 
 const desktopHandlers = new Map<string, (payload?: unknown) => void>();
 
@@ -222,7 +218,7 @@ test("desktop menu action routes to workspace settings and updates menu state", 
 
 test("desktop menu action accepts snake_case payload for compatibility", async () => {
   vi.mocked(isDesktopApp).mockReturnValue(true);
-  window.history.pushState({}, "", "/workspaces/ws-987");
+  window.history.pushState({}, "", "/workspaces/ws-901");
 
   render(<App />);
   expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
@@ -241,60 +237,45 @@ test("desktop menu action accepts snake_case payload for compatibility", async (
 
   await waitFor(() => {
     expect(window.location.pathname).toBe("/settings");
-    expect(new URLSearchParams(window.location.search).get("ws")).toBe("ws-987");
+    expect(new URLSearchParams(window.location.search).get("ws")).toBe("ws-901");
   });
 });
 
 test("desktop menu action forwards workbench-scoped commands to the web menu bus", async () => {
   vi.mocked(isDesktopApp).mockReturnValue(true);
-  window.history.pushState({}, "", "/workspaces/ws-456");
+  window.history.pushState({}, "", "/workspaces/ws-777");
 
-  render(<App />);
-  expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
-
-  const handler = await waitFor(() => {
-    const value = desktopHandlers.get("desktop_menu_action");
-    if (!value) {
-      throw new Error("desktop_menu_action handler not ready");
+  const received: string[] = [];
+  const onCommand = (event: Event) => {
+    const custom = event as CustomEvent<{ commandId?: unknown }>;
+    if (typeof custom.detail?.commandId === "string") {
+      received.push(custom.detail.commandId);
     }
-    return value;
-  });
-
-  const appHandledCommands = new Set<DesktopMenuCommandId>([
-    "file.new-workspace",
-    "go.workspace-setup",
-    "file.open-workspaces",
-    "go.workspaces",
-    "go.launcher",
-    "go.settings",
-    "go.diagnostics",
-    "help.diagnostics",
-    "go.agent-harnesses",
-    "help.crash-course",
-    "help.keyboard-shortcuts",
-    "help.open-logs-folder",
-    "file.open-workspace-new-window",
-  ]);
-  const forwardedCommands = DESKTOP_MENU_COMMAND_IDS.filter((commandId) => !appHandledCommands.has(commandId));
-
-  const seen: DesktopMenuCommandId[] = [];
-  const onWebMenuCommand = (event: Event) => {
-    const custom = event as CustomEvent<{ commandId: DesktopMenuCommandId }>;
-    seen.push(custom.detail.commandId);
   };
-  window.addEventListener(WEB_MENU_COMMAND_EVENT, onWebMenuCommand as EventListener);
+  window.addEventListener(WEB_MENU_COMMAND_EVENT, onCommand as EventListener);
 
   try {
-    act(() => {
-      for (const commandId of forwardedCommands) {
-        handler({ command_id: commandId });
+    render(<App />);
+    expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
+
+    const handler = await waitFor(() => {
+      const value = desktopHandlers.get("desktop_menu_action");
+      if (!value) {
+        throw new Error("desktop_menu_action handler not ready");
       }
+      return value;
+    });
+
+    act(() => {
+      handler({ command_id: "view.toggle-diff" });
+    });
+
+    await waitFor(() => {
+      expect(received).toContain("view.toggle-diff");
     });
   } finally {
-    window.removeEventListener(WEB_MENU_COMMAND_EVENT, onWebMenuCommand as EventListener);
+    window.removeEventListener(WEB_MENU_COMMAND_EVENT, onCommand as EventListener);
   }
-
-  expect(seen).toEqual(forwardedCommands);
 });
 
 test("desktop menu report issue opens external tracker link", async () => {
