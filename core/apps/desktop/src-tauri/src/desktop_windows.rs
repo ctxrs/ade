@@ -119,6 +119,9 @@ extern "C" fn settings_button_clicked(_this: &AnyObject, _cmd: Sel, _sender: *mu
 
 #[cfg(target_os = "macos")]
 pub(super) fn emit_settings_inplace(app: &tauri::AppHandle, target: &AnyObject) {
+    const OPEN_SETTINGS_SCRIPT: &str = "(() => { let t = '/settings'; const p = window.location.pathname || ''; \
+        if (p.startsWith('/workspaces/')) { const ws = p.split('/')[2]; if (ws) { t = `/settings?ws=${encodeURIComponent(ws)}`; } } \
+        window.dispatchEvent(new CustomEvent('ctx:open-settings', { detail: { target: t } })); })();";
     const WINDOW_LABEL_IVAR: &[u8] = b"ctxWindowLabel\0";
     let Some(class) = settings_button_target_class() else {
         return;
@@ -133,18 +136,18 @@ pub(super) fn emit_settings_inplace(app: &tauri::AppHandle, target: &AnyObject) 
             let label = unsafe { CStr::from_ptr(label_ptr) }
                 .to_string_lossy()
                 .into_owned();
-            if let Some(window) = app.get_webview_window(&label) {
-                let _ = window.eval(
-                    "(() => { let t = '/settings'; const p = window.location.pathname || ''; \
-                     if (p.startsWith('/workspaces/')) { const ws = p.split('/')[2]; if (ws) { t = `/settings?ws=${encodeURIComponent(ws)}`; } } \
-                     window.location.assign(t); })();",
-                );
+            if app.get_webview_window(&label).is_some() {
+                if let Some(window) = app.get_webview_window(&label) {
+                    let _ = window.eval(OPEN_SETTINGS_SCRIPT);
+                }
                 return;
             }
         }
     }
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.eval("window.location.assign('/settings');");
+    if app.get_webview_window("main").is_some() {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.eval(OPEN_SETTINGS_SCRIPT);
+        }
         return;
     }
     let _ = app.emit("desktop_open_settings", ());

@@ -58,6 +58,31 @@ function DesktopSettingsListener() {
     };
   }, [navigate]);
 
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<{ target?: unknown }>;
+      const detailTarget = custom.detail?.target;
+      if (typeof detailTarget === "string" && detailTarget.startsWith("/settings")) {
+        navigate(detailTarget);
+        return;
+      }
+      const path = locationRef.current.pathname;
+      let target = "/settings";
+      if (path.startsWith("/workspaces/")) {
+        const wsId = path.split("/")[2];
+        if (wsId) {
+          target = `/settings?ws=${encodeURIComponent(wsId)}`;
+        }
+      }
+      navigate(target);
+    };
+    window.addEventListener("ctx:open-settings", handler as EventListener);
+    return () => {
+      window.removeEventListener("ctx:open-settings", handler as EventListener);
+    };
+  }, [navigate]);
+
   return null;
 }
 
