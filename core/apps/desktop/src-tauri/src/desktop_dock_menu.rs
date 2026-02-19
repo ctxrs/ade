@@ -10,17 +10,19 @@ use objc2::MainThreadOnly;
 use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSString;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 use std::collections::HashSet;
 #[cfg(target_os = "macos")]
 use std::sync::{Once, OnceLock};
+
+const DOCK_OPEN_RECENT_SUBMENU_TITLE: &str = "Open Recent";
 
 #[cfg(target_os = "macos")]
 static DOCK_MENU_INSTALL_ONCE: Once = Once::new();
 #[cfg(target_os = "macos")]
 static DOCK_MENU_APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum DockRecentWorkspaceTarget {
@@ -147,7 +149,7 @@ fn build_action_item(
     Some(item)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 fn dock_recent_workspace_targets(
     registry: &WorkspaceWindowRegistry,
 ) -> Vec<(String, DockRecentWorkspaceTarget)> {
@@ -190,6 +192,40 @@ fn dock_recent_workspace_targets(
 }
 
 #[cfg(target_os = "macos")]
+fn build_open_recent_submenu_item(
+    mtm: MainThreadMarker,
+    target: &AnyObject,
+    recents: &[(String, DockRecentWorkspaceTarget)],
+) -> Option<Retained<NSMenuItem>> {
+    let submenu_title = NSString::from_str(DOCK_OPEN_RECENT_SUBMENU_TITLE);
+    let submenu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &submenu_title);
+    submenu.setAutoenablesItems(false);
+
+    for (title, target_payload) in recents {
+        let item = build_action_item(
+            mtm,
+            title,
+            sel!(ctxDockOpenRecentWorkspace:),
+            target,
+            Some(target_payload),
+        )?;
+        submenu.addItem(&item);
+    }
+
+    let key_equivalent = NSString::from_str("");
+    let parent = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            &submenu_title,
+            None,
+            &key_equivalent,
+        )
+    };
+    parent.setSubmenu(Some(&submenu));
+    Some(parent)
+}
+
+#[cfg(target_os = "macos")]
 fn build_dock_menu(app: &tauri::AppHandle, target: &AnyObject) -> Option<Retained<NSMenu>> {
     let mtm = MainThreadMarker::new()?;
     let title = NSString::from_str("ctx");
@@ -210,16 +246,8 @@ fn build_dock_menu(app: &tauri::AppHandle, target: &AnyObject) -> Option<Retaine
     let separator = NSMenuItem::separatorItem(mtm);
     menu.addItem(&separator);
 
-    for (title, target_payload) in recents {
-        let item = build_action_item(
-            mtm,
-            &title,
-            sel!(ctxDockOpenRecentWorkspace:),
-            target,
-            Some(&target_payload),
-        )?;
-        menu.addItem(&item);
-    }
+    let recent_submenu = build_open_recent_submenu_item(mtm, target, &recents)?;
+    menu.addItem(&recent_submenu);
     Some(menu)
 }
 
@@ -278,3 +306,55 @@ pub(super) fn install_macos_dock_menu_bridge(app: tauri::AppHandle) {
 
 #[cfg(not(target_os = "macos"))]
 pub(super) fn install_macos_dock_menu_bridge(_app: tauri::AppHandle) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dock_recent_workspace_targets_dedupes_and_prioritizes_open_workspaces() {
+        let registry = WorkspaceWindowRegistry::default();
+        registry.record_recent_workspace("ws-alpha-old", Some("Alpha"));
+        registry.record_recent_workspace("ws-beta", Some("Beta"));
+        registry.record_recent_workspace("ws-alpha-new", Some("Alpha"));
+        registry.set_dock_recent_local_workspaces(vec![
+            DockRecentLocalWorkspaceEntry {
+                label: "Beta".to_string(),
+                root_path: "/tmp/beta".to_string(),
+            },
+            DockRecentLocalWorkspaceEntry {
+                label: "Gamma".to_string(),
+                root_path: "/tmp/gamma".to_string(),
+            },
+        ]);
+
+        let recents = dock_recent_workspace_targets(&registry);
+        assert_eq!(recents.len(), 3);
+        assert_eq!(recents[0].0, "Alpha");
+        assert_eq!(recents[1].0, "Beta");
+        assert_eq!(recents[2].0, "Gamma");
+        assert_eq!(
+            recents[0].1,
+            DockRecentWorkspaceTarget::WorkspaceId {
+                workspace_id: "ws-alpha-new".to_string()
+            }
+        );
+        assert_eq!(
+            recents[1].1,
+            DockRecentWorkspaceTarget::WorkspaceId {
+                workspace_id: "ws-beta".to_string()
+            }
+        );
+        assert_eq!(
+            recents[2].1,
+            DockRecentWorkspaceTarget::LocalRootPath {
+                root_path: "/tmp/gamma".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn dock_open_recent_submenu_title_is_stable() {
+        assert_eq!(DOCK_OPEN_RECENT_SUBMENU_TITLE, "Open Recent");
+    }
+}
