@@ -30,6 +30,7 @@ import {
   getSessionDiff,
   getWorktree,
   idToString,
+  interruptSession,
   listWebSessions,
   markTaskRead as markTaskReadApi,
   markTaskUnread as markTaskUnreadApi,
@@ -72,6 +73,13 @@ import { getLoadTestTelemetry } from "../utils/loadTestTelemetry";
 import { useDictationController } from "../utils/useDictationController";
 import { randomUuid } from "../utils/randomUuid";
 import { readCssVar, useThemeVariant } from "../utils/theme";
+import {
+  WEB_MENU_COMMAND_EVENT,
+  WEB_MENU_STATE_EVENT,
+  type DesktopMenuItemState,
+  type WebMenuCommandDetail,
+  type WebMenuStateDetail,
+} from "../utils/desktopMenuCommands";
 import {
   NEW_TASK_DRAFT_KEY,
   scrollKey,
@@ -216,6 +224,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [daemonDataRoot, setDaemonDataRoot] = useState<string | null>(null);
 
   const [taskQuery, setTaskQuery] = useState("");
+  const taskSearchRef = useRef<HTMLInputElement | null>(null);
   const {
     optimisticTasks,
     setOptimisticTasks,
@@ -878,6 +887,24 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       // ignore
     }
   }, [workspaceSnapshotStore]);
+
+  const isTaskUnread = useCallback(
+    (taskId: string): boolean => {
+      const summary = tasksById[taskId];
+      const t = summary?.task;
+      if (!t) return false;
+      const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
+      const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[taskId] ?? null;
+      const lastAssistantMs =
+        liveLastAssistantMs !== null && serverLastAssistantMs !== null
+          ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
+          : liveLastAssistantMs ?? serverLastAssistantMs;
+      if (lastAssistantMs === null) return false;
+      const seenMs = parseMs(t.assistant_seen_at ?? null);
+      return seenMs === null || lastAssistantMs > seenMs;
+    },
+    [taskLiveInfo.lastAssistantMsByTask, tasksById],
+  );
 
   useEffect(() => {
     if (!activeTaskId) return;
@@ -2300,6 +2327,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   };
 
   const activeTask = activeTaskSummary?.task ?? null;
+  const activeTaskIsOptimistic = activeTaskSummary ? isOptimisticTask(activeTaskSummary) : false;
+  const activeTaskHasAssistantMessage = Boolean(activeTask?.last_assistant_message_at);
   const worktreeChip = useMemo(() => {
     const sess = activeEntry?.session ?? null;
     const worktreeRoot = String(activeWorktree?.root_path ?? "");
@@ -2664,6 +2693,176 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeSessionId, buildTranscriptExportFromEntry, hydrateTranscriptHistory, supervisor]);
 
   const desktopUi = isDesktopApp();
+
+  useEffect(() => {
+    if (!desktopUi) return;
+
+    const onMenuCommand = (event: Event) => {
+      const custom = event as CustomEvent<WebMenuCommandDetail>;
+      const detail = custom.detail;
+      if (!detail) return;
+
+      switch (detail.commandId) {
+        case "file.export-transcript":
+          void exportTranscript();
+          return;
+        case "file.export-session-log":
+          void exportSessionLog();
+          return;
+        case "view.find-tasks":
+          taskSearchRef.current?.focus();
+          taskSearchRef.current?.select();
+          return;
+        case "view.toggle-sidebar":
+          setSidebarCollapsed((prev) => !prev);
+          return;
+        case "view.toggle-diff":
+          toggleDiffPane();
+          return;
+        case "view.toggle-artifacts":
+          toggleArtifactsPane();
+          return;
+        case "view.toggle-sessions":
+          if (webSessionsEnabled) {
+            toggleSessionsPane();
+          }
+          return;
+        case "view.toggle-terminal":
+          toggleTerminalPanel();
+          return;
+        case "task.new":
+          focusNewTask();
+          return;
+        case "task.rename":
+          if (activeTaskId && !activeTaskIsOptimistic) {
+            beginRenameTask(activeTaskId);
+          }
+          return;
+        case "task.archive-toggle":
+          if (activeTaskId) {
+            void onToggleArchive(activeTaskId, !Boolean(activeTask?.archived_at), null).catch(() => {});
+          }
+          return;
+        case "task.mark-read-toggle":
+          if (activeTaskId && activeTaskHasAssistantMessage) {
+            if (isTaskUnread(activeTaskId)) {
+              void markTaskRead(activeTaskId);
+            } else {
+              void markTaskUnread(activeTaskId);
+            }
+          }
+          return;
+        case "task.delete":
+          if (activeTaskId) {
+            void onDeleteTask(activeTaskId);
+          }
+          return;
+        case "session.copy-transcript":
+          void copyTranscript();
+          return;
+        case "session.copy-session-log":
+          void copySessionLog();
+          return;
+        case "session.copy-worktree-location":
+          void copyWorktreeLocation();
+          return;
+        case "session.open-worktree-terminal":
+          void openWorktreeTerminal();
+          return;
+        case "session.interrupt":
+          if (activeSessionId) {
+            void interruptSession(activeSessionId).catch(() => {});
+          }
+          return;
+        default:
+          return;
+      }
+    };
+
+    window.addEventListener(WEB_MENU_COMMAND_EVENT, onMenuCommand as EventListener);
+    return () => {
+      window.removeEventListener(WEB_MENU_COMMAND_EVENT, onMenuCommand as EventListener);
+    };
+  }, [
+    activeSessionId,
+    activeTask?.archived_at,
+    activeTaskHasAssistantMessage,
+    activeTaskId,
+    activeTaskIsOptimistic,
+    beginRenameTask,
+    copySessionLog,
+    copyTranscript,
+    copyWorktreeLocation,
+    desktopUi,
+    exportSessionLog,
+    exportTranscript,
+    focusNewTask,
+    isTaskUnread,
+    markTaskRead,
+    markTaskUnread,
+    onDeleteTask,
+    onToggleArchive,
+    openWorktreeTerminal,
+    toggleArtifactsPane,
+    toggleDiffPane,
+    toggleSessionsPane,
+    toggleTerminalPanel,
+    webSessionsEnabled,
+  ]);
+
+  useEffect(() => {
+    if (!desktopUi) return;
+    const activeSessionStatus = String(activeEntry?.session?.status ?? "").toLowerCase();
+    const canInterruptSession =
+      Boolean(activeSessionId) && (activeSessionStatus === "active" || activeSessionStatus === "running");
+    const canToggleArchive = Boolean(activeTaskId) && !Boolean(activeTaskId && archivePendingById[activeTaskId]);
+
+    const items: DesktopMenuItemState[] = [
+      { id: "file.open-workspace-new-window", enabled: true },
+      { id: "file.export-transcript", enabled: Boolean(activeSessionId) },
+      { id: "file.export-session-log", enabled: Boolean(activeSessionId) },
+      { id: "view.find-tasks", enabled: true },
+      { id: "view.toggle-sidebar", enabled: true, checked: !sidebarCollapsed },
+      { id: "view.toggle-diff", enabled: Boolean(activeTaskId), checked: diffOpen },
+      { id: "view.toggle-artifacts", enabled: Boolean(activeTaskId && activeSessionId), checked: artifactsOpen },
+      { id: "view.toggle-sessions", enabled: Boolean(webSessionsEnabled && activeTaskId && activeSessionId), checked: sessionsOpen },
+      { id: "view.toggle-terminal", enabled: true, checked: terminalOpen },
+      { id: "task.new", enabled: true },
+      { id: "task.rename", enabled: Boolean(activeTaskId) && !activeTaskIsOptimistic },
+      { id: "task.archive-toggle", enabled: canToggleArchive },
+      { id: "task.mark-read-toggle", enabled: Boolean(activeTaskId) && activeTaskHasAssistantMessage },
+      { id: "task.delete", enabled: Boolean(activeTaskId) },
+      { id: "session.copy-transcript", enabled: Boolean(activeSessionId) && !copyTranscriptBusy },
+      { id: "session.copy-session-log", enabled: Boolean(activeSessionId) },
+      { id: "session.copy-worktree-location", enabled: worktreeChip.canCopyWorktree },
+      { id: "session.open-worktree-terminal", enabled: worktreeChip.canOpenTerminal },
+      { id: "session.interrupt", enabled: canInterruptSession },
+    ];
+
+    window.dispatchEvent(
+      new CustomEvent<WebMenuStateDetail>(WEB_MENU_STATE_EVENT, {
+        detail: { replace: true, items },
+      }),
+    );
+  }, [
+    activeEntry?.session?.status,
+    activeSessionId,
+    activeTaskHasAssistantMessage,
+    activeTaskId,
+    activeTaskIsOptimistic,
+    archivePendingById,
+    artifactsOpen,
+    copyTranscriptBusy,
+    desktopUi,
+    diffOpen,
+    sessionsOpen,
+    sidebarCollapsed,
+    terminalOpen,
+    webSessionsEnabled,
+    worktreeChip.canCopyWorktree,
+    worktreeChip.canOpenTerminal,
+  ]);
+
   const [desktopPlatform, setDesktopPlatform] = useState<DesktopPlatform>(() => {
     if (!desktopUi) return "unknown";
     const platform = typeof navigator === "undefined" ? "" : navigator.platform;
@@ -2841,6 +3040,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         <div className="wb-sidebar-top">
           <div className="wb-sidebar-header">
             <input
+              ref={taskSearchRef}
               className="wb-search"
               data-testid="workbench-task-search"
               placeholder="Search Tasks"
@@ -3123,17 +3323,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             })()}
             onClick={() => {
               const tid = taskMenu.taskId;
-              const summary = tasksById[tid];
-              const t = summary?.task;
-              const serverLastAssistantMs = parseMs(t?.last_assistant_message_at ?? null);
-              const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
-              const lastAssistantMs =
-                liveLastAssistantMs !== null && serverLastAssistantMs !== null
-                  ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
-                  : liveLastAssistantMs ?? serverLastAssistantMs;
-              const seenMs = parseMs(t?.assistant_seen_at ?? null);
-              const unread =
-                lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
+              const unread = isTaskUnread(tid);
               setTaskMenu(null);
               if (unread) markTaskRead(tid);
               else markTaskUnread(tid);
@@ -3142,17 +3332,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           >
             {(() => {
               const tid = taskMenu.taskId;
-              const summary = tasksById[tid];
-              const t = summary?.task;
-              const serverLastAssistantMs = parseMs(t?.last_assistant_message_at ?? null);
-              const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
-              const lastAssistantMs =
-                liveLastAssistantMs !== null && serverLastAssistantMs !== null
-                  ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
-                  : liveLastAssistantMs ?? serverLastAssistantMs;
-              const seenMs = parseMs(t?.assistant_seen_at ?? null);
-              const unread =
-                lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
+              const unread = isTaskUnread(tid);
               return unread ? "Mark as Read" : "Mark as Unread";
             })()}
           </button>

@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, test, vi } from "vitest";
 import App from "./App";
-import { desktopListen, isDesktopApp } from "./utils/desktop";
+import { desktopListen, desktopSetMenuState, isDesktopApp, openExternalLink } from "./utils/desktop";
 
-let desktopHandler: ((payload?: unknown) => void) | null = null;
+const desktopHandlers = new Map<string, (payload?: unknown) => void>();
 
 vi.mock("./api/client", () => ({
   appendDesktopLog: vi.fn(async () => {}),
@@ -90,12 +90,15 @@ vi.mock("./utils/analytics", () => ({
 
 vi.mock("./utils/desktop", () => ({
   isDesktopApp: vi.fn(() => false),
-  desktopListen: vi.fn(async <T,>(_event: string, handler: (payload: T) => void) => {
-    desktopHandler = (payload?: unknown) => handler(payload as T);
+  desktopListen: vi.fn(async <T,>(event: string, handler: (payload: T) => void) => {
+    desktopHandlers.set(event, (payload?: unknown) => handler(payload as T));
     return () => {
-      desktopHandler = null;
+      desktopHandlers.delete(event);
     };
   }),
+  desktopSetMenuState: vi.fn(async () => {}),
+  desktopOpenWorkspaceInNewWindow: vi.fn(async () => {}),
+  openExternalLink: vi.fn(async () => true),
 }));
 
 vi.mock("./state/uiStateStore", () => ({
@@ -105,7 +108,7 @@ vi.mock("./state/uiStateStore", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  desktopHandler = null;
+  desktopHandlers.clear();
   vi.mocked(isDesktopApp).mockReturnValue(false);
   window.history.pushState({}, "", "/");
   const globalWithFetch = globalThis as typeof globalThis & { fetch: typeof fetch };
@@ -134,10 +137,10 @@ test("desktop settings event uses SPA navigation to preserve workspace context",
     expect(vi.mocked(desktopListen)).toHaveBeenCalledWith("desktop_open_settings", expect.any(Function));
   });
 
-  if (!desktopHandler) {
+  const handler = desktopHandlers.get("desktop_open_settings");
+  if (!handler) {
     throw new Error("desktop_open_settings handler was not registered");
   }
-  const handler = desktopHandler;
   act(() => {
     handler();
   });
@@ -169,4 +172,57 @@ test("desktop titlebar DOM event navigates to the provided settings target", asy
     expect(new URLSearchParams(window.location.search).get("ws")).toBe("ws-789");
   });
   expect(await screen.findByText("Settings Screen")).toBeInTheDocument();
+});
+
+test("desktop menu action routes to workspace settings and updates menu state", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+  window.history.pushState({}, "", "/workspaces/ws-321");
+
+  render(<App />);
+  expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
+
+  await waitFor(() => {
+    expect(vi.mocked(desktopListen)).toHaveBeenCalledWith("desktop_menu_action", expect.any(Function));
+    expect(vi.mocked(desktopSetMenuState)).toHaveBeenCalled();
+  });
+
+  const handler = desktopHandlers.get("desktop_menu_action");
+  if (!handler) {
+    throw new Error("desktop_menu_action handler was not registered");
+  }
+  act(() => {
+    handler({ commandId: "go.settings" });
+  });
+
+  await waitFor(() => {
+    expect(window.location.pathname).toBe("/settings");
+    expect(new URLSearchParams(window.location.search).get("ws")).toBe("ws-321");
+  });
+  expect(await screen.findByText("Settings Screen")).toBeInTheDocument();
+});
+
+test("desktop menu report issue opens external tracker link", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+  window.history.pushState({}, "", "/workspaces/ws-654");
+
+  render(<App />);
+  expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
+
+  const handler = await waitFor(() => {
+    const value = desktopHandlers.get("desktop_menu_action");
+    if (!value) {
+      throw new Error("desktop_menu_action handler not ready");
+    }
+    return value;
+  });
+
+  act(() => {
+    handler({ commandId: "help.report-issue" });
+  });
+
+  await waitFor(() => {
+    expect(vi.mocked(openExternalLink)).toHaveBeenCalledWith(
+      "https://github.com/context-labs/ctx/issues/new",
+    );
+  });
 });

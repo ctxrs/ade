@@ -93,6 +93,12 @@ export type DesktopCodexLoginRelayReq = {
   completion_token: string;
 };
 
+export type DesktopMenuItemStateUpdate = {
+  id: string;
+  enabled?: boolean;
+  checked?: boolean;
+};
+
 type TauriGlobals = {
   __TAURI_INTERNALS__?: unknown;
   __TAURI__?: unknown;
@@ -271,3 +277,6 @@ export const desktopOpenWorkspaceInNewWindow = async (workspace_id: string): Pro
 
 export const desktopSetTitlebarColor = async (color: DesktopTitlebarColor): Promise<void> =>
   invoke<void>("desktop_set_titlebar_color", { color });
+
+export const desktopSetMenuState = async (items: DesktopMenuItemStateUpdate[]): Promise<void> =>
+  invoke<void>("desktop_set_menu_state", { items });

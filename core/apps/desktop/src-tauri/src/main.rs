@@ -42,6 +42,7 @@ mod desktop_connection;
 mod desktop_daemon;
 mod desktop_deeplink;
 mod desktop_editor;
+mod desktop_menu;
 mod desktop_ssh;
 mod desktop_storage;
 mod desktop_windows;
@@ -49,6 +50,7 @@ use desktop_connection::*;
 use desktop_daemon::*;
 use desktop_deeplink::*;
 use desktop_editor::*;
+use desktop_menu::*;
 use desktop_ssh::*;
 use desktop_storage::*;
 use desktop_windows::*;
@@ -63,6 +65,7 @@ fn main() {
         .manage(ConnectionManager::default())
         .manage(DeepLinkTokenStore::default())
         .manage(WorkspaceWindowRegistry::default())
+        .manage(DesktopMenuStateCache::default())
         .manage(DesktopStorage::default());
 
     // Keep single-instance behavior for normal desktop usage. Automation builds need
@@ -75,6 +78,8 @@ fn main() {
     }
 
     builder = builder
+        .menu(|app| build_app_menu(app))
+        .on_menu_event(handle_app_menu_event)
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -102,6 +107,7 @@ fn main() {
             desktop_set_open_workspaces,
             desktop_open_workspace_in_new_window,
             desktop_set_titlebar_color,
+            desktop_set_menu_state,
             desktop_register_workspace_window,
             desktop_unregister_workspace_window,
             desktop_upload_blob,
@@ -123,7 +129,21 @@ fn main() {
                 let manager = window.state::<ConnectionManager>();
                 manager.disconnect();
             }
+            if let tauri::WindowEvent::Focused(is_focused) = event {
+                if *is_focused {
+                    let app_handle = window.app_handle();
+                    if let Err(err) = apply_cached_menu_state_for_window(&app_handle, window.label()) {
+                        eprintln!(
+                            "failed to apply cached desktop menu state for window '{}': {}",
+                            window.label(),
+                            err
+                        );
+                    }
+                }
+            }
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                let app_handle = window.app_handle();
+                clear_cached_menu_state_for_window(&app_handle, window.label());
                 let registry = window.state::<WorkspaceWindowRegistry>();
                 registry.unregister_window(window.label());
             }
