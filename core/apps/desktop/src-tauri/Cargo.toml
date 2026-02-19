@@ -39,10 +39,13 @@ uuid = { version = "1", features = ["v4"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.3"
 objc2-app-kit = { version = "0.3.2", features = [
+    "NSApplication",
     "NSButton",
     "NSButtonCell",
     "NSControl",
     "NSImage",
+    "NSMenu",
+    "NSMenuItem",
     "NSLayoutConstraint",
     "NSResponder",
     "NSTitlebarAccessoryViewController",

@@ -41,6 +41,7 @@ use url::Url;
 mod desktop_connection;
 mod desktop_daemon;
 mod desktop_deeplink;
+mod desktop_dock_menu;
 mod desktop_editor;
 mod desktop_menu;
 mod desktop_ssh;
@@ -49,6 +50,7 @@ mod desktop_windows;
 use desktop_connection::*;
 use desktop_daemon::*;
 use desktop_deeplink::*;
+use desktop_dock_menu::*;
 use desktop_editor::*;
 use desktop_menu::*;
 use desktop_ssh::*;
@@ -112,6 +114,7 @@ fn main() {
             desktop_set_window_title,
             desktop_trigger_menu_command,
             desktop_get_menu_item_state,
+            desktop_record_workspace_visit,
             desktop_register_workspace_window,
             desktop_unregister_workspace_window,
             desktop_upload_blob,
@@ -123,6 +126,7 @@ fn main() {
         ])
         .setup(|app| {
             open_main_window(&app.handle())?;
+            install_macos_dock_menu_bridge(app.handle().clone());
             schedule_force_launcher(app.handle().clone());
             schedule_startup_workspaces(app.handle().clone());
             setup_deep_link_listener(&app.handle());
@@ -137,7 +141,9 @@ fn main() {
                 if *is_focused {
                     let app_handle = window.app_handle();
                     mark_menu_state_window_focused(&app_handle, window.label());
-                    if let Err(err) = apply_cached_menu_state_for_window(&app_handle, window.label()) {
+                    if let Err(err) =
+                        apply_cached_menu_state_for_window(&app_handle, window.label())
+                    {
                         eprintln!(
                             "failed to apply cached desktop menu state for window '{}': {}",
                             window.label(),
@@ -358,6 +364,15 @@ struct DeepLinkTokenStore {
 #[derive(Default)]
 struct WorkspaceWindowRegistry {
     by_window: std::sync::Mutex<HashMap<String, HashSet<String>>>,
+    recent_workspaces: std::sync::Mutex<Vec<RecentWorkspaceEntry>>,
+}
+
+const MAX_RECENT_WORKSPACES: usize = 8;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct RecentWorkspaceEntry {
+    workspace_id: String,
+    label: String,
 }
 
 const DEEP_LINK_TOKEN_TTL: Duration = Duration::from_secs(600);
@@ -463,10 +478,112 @@ impl WorkspaceWindowRegistry {
         }
         out.into_iter().collect()
     }
+
+    fn record_recent_workspace(&self, workspace_id: &str, workspace_label: Option<&str>) {
+        let workspace_id = workspace_id.trim();
+        if workspace_id.is_empty() {
+            return;
+        }
+
+        let label = workspace_label
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(workspace_id)
+            .to_string();
+
+        let mut recent = match self.recent_workspaces.lock() {
+            Ok(recent) => recent,
+            Err(_) => return,
+        };
+        recent.retain(|entry| entry.workspace_id != workspace_id);
+        recent.insert(
+            0,
+            RecentWorkspaceEntry {
+                workspace_id: workspace_id.to_string(),
+                label,
+            },
+        );
+        if recent.len() > MAX_RECENT_WORKSPACES {
+            recent.truncate(MAX_RECENT_WORKSPACES);
+        }
+    }
+
+    fn recent_workspaces(&self) -> Vec<RecentWorkspaceEntry> {
+        match self.recent_workspaces.lock() {
+            Ok(recent) => recent.clone(),
+            Err(_) => Vec::new(),
+        }
+    }
 }
 
+#[cfg(test)]
+mod workspace_window_registry_tests {
+    use super::*;
 
+    #[test]
+    fn recent_workspaces_are_deduplicated_and_ordered() {
+        let registry = WorkspaceWindowRegistry::default();
 
+        registry.record_recent_workspace("ws-a", Some("Workspace A"));
+        registry.record_recent_workspace("ws-b", Some("Workspace B"));
+        registry.record_recent_workspace("ws-a", Some("Workspace A Renamed"));
+
+        let recent = registry.recent_workspaces();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].workspace_id, "ws-a");
+        assert_eq!(recent[0].label, "Workspace A Renamed");
+        assert_eq!(recent[1].workspace_id, "ws-b");
+    }
+
+    #[test]
+    fn recent_workspaces_are_trimmed_to_max_size() {
+        let registry = WorkspaceWindowRegistry::default();
+        for idx in 0..(MAX_RECENT_WORKSPACES + 4) {
+            registry
+                .record_recent_workspace(&format!("ws-{idx}"), Some(&format!("Workspace {idx}")));
+        }
+
+        let recent = registry.recent_workspaces();
+        assert_eq!(recent.len(), MAX_RECENT_WORKSPACES);
+        assert_eq!(
+            recent[0].workspace_id,
+            format!("ws-{}", MAX_RECENT_WORKSPACES + 3)
+        );
+    }
+
+    #[test]
+    fn recent_workspace_uses_workspace_id_when_label_missing() {
+        let registry = WorkspaceWindowRegistry::default();
+        registry.record_recent_workspace("ws-abc", Some("   "));
+        let recent = registry.recent_workspaces();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].label, "ws-abc");
+    }
+
+    #[test]
+    fn set_window_workspaces_replaces_stale_workspace_mappings() {
+        let registry = WorkspaceWindowRegistry::default();
+        registry.register("window-a", "ws-a");
+        registry.register("window-a", "ws-b");
+        registry.set_window_workspaces("window-a", vec!["ws-c".to_string()]);
+
+        assert_eq!(
+            registry.window_for_workspace("ws-a"),
+            None,
+            "stale workspace mapping should be removed"
+        );
+        assert_eq!(
+            registry.window_for_workspace("ws-b"),
+            None,
+            "stale workspace mapping should be removed"
+        );
+        assert_eq!(
+            registry.window_for_workspace("ws-c").as_deref(),
+            Some("window-a"),
+            "current workspace mapping should remain"
+        );
+    }
+}
 
 #[tauri::command]
 fn desktop_get_deep_link_token(
@@ -495,35 +612,19 @@ fn desktop_open_workspace_in_new_window(
     if workspace_id.is_empty() {
         return Err("workspace_id is required".to_string());
     }
-
-    let label = format!("workbench:{}", uuid::Uuid::new_v4());
-    let url = format!("/workspaces/{workspace_id}");
-    let builder =
-        tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
-            .title("ctx")
-            .inner_size(1200.0, 900.0);
-    let window = apply_workbench_titlebar(builder)
-        .build()
-        .map_err(|e| format!("creating window failed: {e}"))?;
-    #[cfg(target_os = "macos")]
-    {
-        let _ = install_macos_settings_button(&app, &window);
-    }
-    let _ = window.show();
-    let _ = window.set_focus();
-    registry.register(&label, workspace_id);
-    Ok(())
+    open_workspace_in_new_window(&app, &registry, workspace_id).map_err(to_err)
 }
 
 #[tauri::command]
-fn desktop_open_workspace_setup_in_new_window(
-    app: tauri::AppHandle,
-) -> Result<(), String> {
+fn desktop_open_workspace_setup_in_new_window(app: tauri::AppHandle) -> Result<(), String> {
     let label = format!("workspace-setup:{}", uuid::Uuid::new_v4());
-    let builder =
-        tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("/workspace-setup".into()))
-            .title("ctx")
-            .inner_size(1200.0, 900.0);
+    let builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::App("/workspace-setup".into()),
+    )
+    .title("ctx")
+    .inner_size(1200.0, 900.0);
     let window = apply_workbench_titlebar(builder)
         .build()
         .map_err(|e| format!("creating window failed: {e}"))?;
@@ -579,10 +680,7 @@ fn desktop_set_window_title(window: tauri::WebviewWindow, title: String) -> Resu
 }
 
 #[tauri::command]
-fn desktop_trigger_menu_command(
-    app: tauri::AppHandle,
-    command_id: String,
-) -> Result<(), String> {
+fn desktop_trigger_menu_command(app: tauri::AppHandle, command_id: String) -> Result<(), String> {
     #[cfg(feature = "automation")]
     {
         let command_id = command_id.trim().to_string();
@@ -635,6 +733,22 @@ fn desktop_unregister_workspace_window(
     Ok(())
 }
 
+#[tauri::command]
+fn desktop_record_workspace_visit(
+    window: tauri::WebviewWindow,
+    registry: tauri::State<WorkspaceWindowRegistry>,
+    workspace_id: String,
+    workspace_label: String,
+) -> Result<(), String> {
+    let workspace_id = workspace_id.trim();
+    if workspace_id.is_empty() {
+        return Err("workspace_id is required".to_string());
+    }
+    registry.set_window_workspaces(window.label(), vec![workspace_id.to_string()]);
+    registry.record_recent_workspace(workspace_id, Some(&workspace_label));
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeepLinkOpenWith {
     Ctx,
@@ -642,12 +756,9 @@ enum DeepLinkOpenWith {
     System,
 }
 
-
-
 fn to_err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
-
 
 fn normalize_path(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -678,8 +789,6 @@ fn expand_tilde(raw: &str) -> Option<PathBuf> {
         None
     }
 }
-
-
 
 fn pick_unused_local_port() -> Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0").context("binding ephemeral port")?;

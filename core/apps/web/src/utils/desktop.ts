@@ -278,6 +278,11 @@ export const desktopOpenWorkspaceInNewWindow = async (workspace_id: string): Pro
 export const desktopOpenWorkspaceSetupInNewWindow = async (): Promise<void> =>
   invoke<void>("desktop_open_workspace_setup_in_new_window");
 
+export const desktopRecordWorkspaceVisit = async (
+  workspace_id: string,
+  workspace_label: string,
+): Promise<void> => invoke<void>("desktop_record_workspace_visit", { workspace_id, workspace_label });
+
 export const desktopSetWindowTitle = async (title: string): Promise<void> =>
   invoke<void>("desktop_set_window_title", { title });
 

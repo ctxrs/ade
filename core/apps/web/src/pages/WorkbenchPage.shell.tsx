@@ -58,6 +58,7 @@ import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer, type DraftTrack, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import {
+  desktopRecordWorkspaceVisit,
   desktopSetTitlebarColor,
   desktopSetWindowTitle,
   desktopStorageConsumeNotice,
@@ -3006,6 +3007,14 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     document.title = title;
     void desktopSetWindowTitle(title).catch(() => {});
   }, [activeTask?.title, desktopUi, workspace?.name]);
+
+  useEffect(() => {
+    if (!desktopUi) return;
+    const workspaceIdValue = String(workspaceId || "").trim();
+    if (!workspaceIdValue) return;
+    const workspaceLabel = String(workspace?.name || "").trim() || workspaceIdValue;
+    void desktopRecordWorkspaceVisit(workspaceIdValue, workspaceLabel).catch(() => {});
+  }, [desktopUi, workspace?.name, workspaceId]);
 
   const topbar = useHtmlTopbar ? (
     <div className="wb-topbar" data-tauri-drag-region={desktopUi ? true : undefined}>

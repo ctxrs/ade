@@ -17,6 +17,7 @@ pub(super) fn open_workspace_window(
             let _ = window.eval(&js);
             let _ = window.emit("workspace:open", workspace_id.to_string());
             registry.register(&window_label, workspace_id);
+            registry.record_recent_workspace(workspace_id, None);
             return Ok(());
         }
         registry.unregister_window(&window_label);
@@ -37,6 +38,82 @@ pub(super) fn open_workspace_window(
     let _ = window.eval(&js);
     let _ = window.emit("workspace:open", workspace_id.to_string());
     registry.register("main", workspace_id);
+    registry.record_recent_workspace(workspace_id, None);
+    Ok(())
+}
+
+pub(super) fn open_workspace_in_new_window(
+    app: &tauri::AppHandle,
+    registry: &WorkspaceWindowRegistry,
+    workspace_id: &str,
+) -> Result<()> {
+    let workspace_id = workspace_id.trim();
+    if workspace_id.is_empty() {
+        anyhow::bail!("workspace_id is required");
+    }
+
+    let label = format!("workbench:{}", uuid::Uuid::new_v4());
+    let url = format!("/workspaces/{workspace_id}");
+    let builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(url.into()))
+        .title("ctx")
+        .inner_size(1200.0, 900.0);
+    let window = apply_workbench_titlebar(builder)
+        .build()
+        .context("creating window failed")?;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = install_macos_settings_button(app, &window);
+    }
+    let _ = window.show();
+    let _ = window.set_focus();
+    registry.register(&label, workspace_id);
+    registry.record_recent_workspace(workspace_id, None);
+    Ok(())
+}
+
+pub(super) fn focus_or_open_workspace_window(
+    app: &tauri::AppHandle,
+    registry: &WorkspaceWindowRegistry,
+    workspace_id: &str,
+) -> Result<()> {
+    let workspace_id = workspace_id.trim();
+    if workspace_id.is_empty() {
+        anyhow::bail!("workspace_id is required");
+    }
+    if let Some(window_label) = registry.window_for_workspace(workspace_id) {
+        if let Some(window) = app.get_webview_window(&window_label) {
+            let _ = window.show();
+            let _ = window.set_focus();
+            let url = format!("/workspaces/{workspace_id}");
+            let js = format!(
+                "window.location.href = {};",
+                serde_json::to_string(&url).unwrap_or_else(|_| "\"/workspaces\"".to_string())
+            );
+            let _ = window.eval(&js);
+            let _ = window.emit("workspace:open", workspace_id.to_string());
+            registry.register(&window_label, workspace_id);
+            registry.record_recent_workspace(workspace_id, None);
+            return Ok(());
+        }
+        registry.unregister_window(&window_label);
+    }
+    open_workspace_in_new_window(app, registry, workspace_id)
+}
+
+pub(super) fn open_launcher_window(app: &tauri::AppHandle) -> Result<()> {
+    let label = format!("launcher:{}", uuid::Uuid::new_v4());
+    let builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("/".into()))
+        .title("ctx")
+        .inner_size(1200.0, 900.0);
+    let window = apply_workbench_titlebar(builder)
+        .build()
+        .context("creating launcher window failed")?;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = install_macos_settings_button(app, &window);
+    }
+    let _ = window.show();
+    let _ = window.set_focus();
     Ok(())
 }
 
