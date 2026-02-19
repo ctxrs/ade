@@ -3,8 +3,7 @@ import { Link } from "react-router-dom";
 import { resetDaemonConnection } from "../api/client";
 import { useDaemonBaseUrl } from "../api/useDaemonConnection";
 import { desktopDisconnect, isDesktopApp } from "../utils/desktop";
-
-const RECENTS_KEY = "contextDesktopRecentsV1";
+import { clearLauncherRecents, getLauncherRecentsCount } from "../state/launcherRecentsStore";
 
 export default function AppSettingsPage() {
   const baseUrl = useDaemonBaseUrl();
@@ -12,13 +11,17 @@ export default function AppSettingsPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(RECENTS_KEY);
-      const parsed = raw ? JSON.parse(raw) : null;
-      setRecentsCount(Array.isArray(parsed) ? parsed.length : 0);
-    } catch {
-      setRecentsCount(0);
-    }
+    let cancelled = false;
+    getLauncherRecentsCount()
+      .then((count) => {
+        if (!cancelled) setRecentsCount(count);
+      })
+      .catch(() => {
+        if (!cancelled) setRecentsCount(0);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const onDisconnect = async () => {
@@ -33,12 +36,13 @@ export default function AppSettingsPage() {
     }
   };
 
-  const onClearRecents = () => {
+  const onClearRecents = async () => {
+    setBusy(true);
     try {
-      localStorage.removeItem(RECENTS_KEY);
+      await clearLauncherRecents();
       setRecentsCount(0);
-    } catch {
-      // ignore
+    } finally {
+      setBusy(false);
     }
   };
 

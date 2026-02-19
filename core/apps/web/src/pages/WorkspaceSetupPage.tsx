@@ -91,6 +91,7 @@ import {
   type FlowRunToken,
 } from "./workspaceSetup/flowController";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
+import { upsertLauncherRecent } from "../state/launcherRecentsStore";
 
 type WizardOption = {
   id: string;
@@ -1930,6 +1931,31 @@ export default function WorkspaceSetupPage() {
 
       // Final guard: ensure daemon is still reachable before navigating to the workbench.
       await waitForDaemonReady(15000);
+      try {
+        if (selections.location === "remote" && parsed?.host) {
+          const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
+          await upsertLauncherRecent({
+            kind: "ssh",
+            label: workspaceName.trim() || lastPathSegment(rootPath) || parsed.host,
+            host: parsed.host,
+            user: parsed.user ?? null,
+            remote_port: parsedRemotePort ?? 4399,
+            start_remote: true,
+            remote_data_dir: normalizedDataDir,
+            remote_ctx_bin: remoteCtxBinValue,
+            updated_at_ms: Date.now(),
+          });
+        } else {
+          await upsertLauncherRecent({
+            kind: "local",
+            label: lastPathSegment(rootPath) || rootPath,
+            root_path: rootPath,
+            updated_at_ms: Date.now(),
+          });
+        }
+      } catch {
+        // best-effort only; do not block workspace creation if recents persistence fails
+      }
       navigate(`/workspaces/${wsId}`, { replace: true });
     } catch (e: any) {
       const msg = e?.message ?? String(e);
@@ -2964,5 +2990,12 @@ export default function WorkspaceSetupPage() {
         </div>
       </LauncherBrand>
     </div>
-  );
+		  );
+}
+
+function lastPathSegment(path: string): string {
+  const normalized = String(path || "").trim().replace(/\/+$/, "");
+  if (!normalized) return "";
+  const idx = normalized.lastIndexOf("/");
+  return idx >= 0 ? normalized.slice(idx + 1) : normalized;
 }

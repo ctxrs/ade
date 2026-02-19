@@ -26,6 +26,7 @@ import {
   updateWorkspaceWorktreeBootstrapConfig,
 } from "../api/client";
 import { desktopConnectLocal, desktopListSshHosts, desktopTestSsh, isDesktopApp } from "../utils/desktop";
+import { upsertLauncherRecent } from "../state/launcherRecentsStore";
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
@@ -71,6 +72,10 @@ vi.mock("../utils/desktop", async () => {
     isDesktopApp: vi.fn(),
   };
 });
+
+vi.mock("../state/launcherRecentsStore", () => ({
+  upsertLauncherRecent: vi.fn(),
+}));
 
 const renderPage = () =>
   render(
@@ -161,6 +166,7 @@ describe("WorkspaceSetupPage", () => {
       base_url: "http://127.0.0.1:4402",
       token: "test-token",
     } as never);
+    vi.mocked(upsertLauncherRecent).mockResolvedValue([]);
     vi.mocked(desktopListSshHosts).mockResolvedValue([]);
     vi.mocked(desktopTestSsh).mockResolvedValue();
   });
@@ -858,5 +864,59 @@ describe("WorkspaceSetupPage", () => {
       expect(wizardStepKey()).toBe("container");
     });
     expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("writes launcher recents on successful local workspace creation", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("session-titling");
+    });
+    fireEvent.click(screen.getByTestId("wizard-titling-skip"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-source-path"), {
+      target: { value: "/tmp/new-repo" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("setup");
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("merge-queue");
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("confirm");
+    });
+    fireEvent.click(screen.getByTestId("wizard-create"));
+
+    await waitFor(() => {
+      expect(createWorkspace).toHaveBeenCalled();
+      expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "local",
+        root_path: "/tmp/new-repo",
+        label: "new-repo",
+        updated_at_ms: expect.any(Number),
+      }));
+    });
   });
 });

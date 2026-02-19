@@ -16,27 +16,7 @@ import {
 } from "../utils/desktop";
 import { errorMessage } from "../utils/errorMessage";
 import LauncherBrand from "../components/LauncherBrand";
-
-type RecentEntry =
-  | {
-      kind: "local";
-      label: string;
-      root_path: string;
-      updated_at_ms: number;
-    }
-  | {
-      kind: "ssh";
-      label: string;
-      host: string;
-      user?: string | null;
-      remote_port: number;
-      start_remote?: boolean;
-      remote_data_dir?: string | null;
-      remote_ctx_bin?: string | null;
-      updated_at_ms: number;
-    };
-
-const RECENTS_KEY = "contextDesktopRecentsV1";
+import { loadLauncherRecents, upsertLauncherRecent, type LauncherRecentEntry } from "../state/launcherRecentsStore";
 const REMOTE_PROFILES_KEY = "contextDesktopRemoteProfilesV1";
 
 type RemoteProfile = {
@@ -59,37 +39,6 @@ const getRemoteCtxBinForHost = (host: string, user?: string | null): string | nu
   } catch {
     return null;
   }
-};
-
-const loadRecents = (): RecentEntry[] => {
-  try {
-    const raw = localStorage.getItem(RECENTS_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return Array.isArray(parsed) ? (parsed as RecentEntry[]) : [];
-  } catch {
-    return [];
-  }
-};
-
-const saveRecents = (recents: RecentEntry[]) => {
-  try {
-    localStorage.setItem(RECENTS_KEY, JSON.stringify(recents.slice(0, 50)));
-  } catch {
-    // ignore
-  }
-};
-
-const upsertRecent = (entry: RecentEntry) => {
-  const recents = loadRecents();
-  const key = (() => {
-    if (entry.kind === "local") return `local:${entry.root_path}`;
-    return `ssh:${entry.user ?? ""}@${entry.host}:${entry.remote_port}`;
-  })();
-  const next = [entry, ...recents.filter((r) => {
-    const k = r.kind === "local" ? `local:${r.root_path}` : `ssh:${r.user ?? ""}@${r.host}:${r.remote_port}`;
-    return k !== key;
-  })];
-  saveRecents(next);
 };
 
 function applyConnection(info: DesktopConnectionInfo) {
@@ -124,7 +73,7 @@ async function createOrOpenWorkspaceByPath(rootPath: string): Promise<string> {
 export default function LauncherPage() {
   const navigate = useNavigate();
   const [connection, setConnection] = useState<DesktopConnectionInfo | null>(null);
-  const [recents, setRecents] = useState<RecentEntry[]>(() => loadRecents());
+  const [recents, setRecents] = useState<LauncherRecentEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -144,7 +93,17 @@ export default function LauncherPage() {
   }, [isDesktop, navigate]);
 
   useEffect(() => {
-    setRecents(loadRecents());
+    let cancelled = false;
+    loadLauncherRecents()
+      .then((next) => {
+        if (!cancelled) setRecents(next);
+      })
+      .catch(() => {
+        if (!cancelled) setRecents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [busy]);
 
   const connectLocalAndOpen = async (rootPath?: string) => {
@@ -158,7 +117,16 @@ export default function LauncherPage() {
       await waitForDaemonReady(15000);
       if (rootPath) {
         const wsId = await createOrOpenWorkspaceByPath(rootPath);
-        upsertRecent({ kind: "local", label: lastSegment(rootPath), root_path: rootPath, updated_at_ms: Date.now() });
+        try {
+          await upsertLauncherRecent({
+            kind: "local",
+            label: lastSegment(rootPath),
+            root_path: rootPath,
+            updated_at_ms: Date.now(),
+          });
+        } catch {
+          // best-effort only; do not block workspace open on recents persistence
+        }
         navigate(`/workspaces/${wsId}`, { replace: true });
       } else {
         navigate("/workspaces", { replace: true });
@@ -170,7 +138,7 @@ export default function LauncherPage() {
     }
   };
 
-  const onOpenRecent = async (r: RecentEntry) => {
+  const onOpenRecent = async (r: LauncherRecentEntry) => {
     setError(null);
     setBusy(true);
     try {
@@ -191,7 +159,11 @@ export default function LauncherPage() {
       applyConnection(info);
       // Avoid landing on workspaces while the daemon is still booting / tunnel is coming up.
       await waitForDaemonReady(15000);
-      upsertRecent({ ...r, remote_ctx_bin: resolvedRemoteCtxBin, updated_at_ms: Date.now() });
+      try {
+        await upsertLauncherRecent({ ...r, remote_ctx_bin: resolvedRemoteCtxBin, updated_at_ms: Date.now() });
+      } catch {
+        // best-effort only; do not block connection flow on recents persistence
+      }
       navigate("/workspaces", { replace: true });
     } catch (e: unknown) {
       setError(errorMessage(e));
