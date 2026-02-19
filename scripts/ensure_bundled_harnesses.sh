@@ -769,6 +769,32 @@ prune_claude_agent_sdk_ripgrep_vendor() {
   done
 }
 
+prune_napi_keyring_musl_packages() {
+  local provider_root="$1"
+  if [[ "$os" != "linux" ]]; then
+    return 0
+  fi
+  local napi_root="$provider_root/node_modules/@napi-rs"
+  if [[ ! -d "$napi_root" ]]; then
+    return 0
+  fi
+
+  local pkg
+  for pkg in "$napi_root"/keyring-linux-*-musl; do
+    if [[ ! -d "$pkg" ]]; then
+      continue
+    fi
+    rm -rf "$pkg"
+  done
+}
+
+prune_provider_node_payload() {
+  local provider_id="$1"
+  local provider_root="$2"
+  prune_claude_agent_sdk_ripgrep_vendor "$provider_id" "$provider_root"
+  prune_napi_keyring_musl_packages "$provider_root"
+}
+
 build_local_adapters() {
   if [[ ! -d "$LOCAL_ADAPTERS_DIR" ]]; then
     log "error: local adapters dir missing: $LOCAL_ADAPTERS_DIR"
@@ -1797,7 +1823,7 @@ while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package 
         if [[ -f "$provider_root/package.json" ]]; then
           npm_install_bundle "$provider_root" "" "project"
         fi
-        prune_claude_agent_sdk_ripgrep_vendor "$provider_id" "$provider_root"
+        prune_provider_node_payload "$provider_id" "$provider_root"
       else
         mkdir -p "$provider_root"
         dest="$provider_root/$bin_path"
@@ -1916,7 +1942,7 @@ PY
         fi
         echo "$version" > "$version_marker"
       fi
-      prune_claude_agent_sdk_ripgrep_vendor "$provider_id" "$provider_root"
+      prune_provider_node_payload "$provider_id" "$provider_root"
       if [[ -z "$node_bin" || ! -f "$node_bin" ]]; then
         log "error: npm provider $provider_id requires bundled node runtime"
         exit 5
