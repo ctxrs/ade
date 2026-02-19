@@ -1,10 +1,8 @@
 import ampLogo from "../assets/emdash-logos/ampcode.png";
 import atlassianLogo from "../assets/emdash-logos/atlassian.png";
 import augmentLogo from "../assets/emdash-logos/augmentcode.png";
-import charmLogo from "../assets/emdash-logos/charm.png";
 import claudeLogo from "../assets/emdash-logos/claude.png";
 import clineLogo from "../assets/emdash-logos/cline.png";
-import codebuffLogo from "../assets/emdash-logos/codebuff.png";
 import cursorLogo from "../assets/emdash-logos/cursorlogo.png";
 import droidLogo from "../assets/emdash-logos/factorydroid.png";
 import geminiLogo from "../assets/emdash-logos/gemini.png";
@@ -16,12 +14,9 @@ import mistralLogo from "../assets/emdash-logos/mistral.png";
 import codexLogo from "../assets/emdash-logos/openai.png";
 import opencodeLogo from "../assets/emdash-logos/opencode.png";
 import qwenLogo from "../assets/emdash-logos/qwen.png";
-import aiderLogo from "../assets/harness-logos/aider.png";
 import cagentLogo from "../assets/harness-logos/cagent.png";
 import codyLogo from "../assets/harness-logos/cody.png";
 import continueLogo from "../assets/harness-logos/continue.png";
-import junieLogo from "../assets/harness-logos/junie.png";
-import kiloLogo from "../assets/harness-logos/kilo.png";
 import openhandsLogo from "../assets/harness-logos/openhands.png";
 import piLogo from "../assets/harness-logos/pi.svg";
 import sweAgentLogo from "../assets/harness-logos/swe-agent.png";
@@ -52,20 +47,17 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "goose", label: "Goose", logoSrc: gooseLogo },
   { id: "kimi", label: "Kimi", logoSrc: kimiLogo },
   { id: "kiro", label: "Kiro", logoSrc: kiroLogo },
-  { id: "codebuff", label: "Codebuff", logoSrc: codebuffLogo },
-  { id: "charm", label: "Charm", logoSrc: charmLogo },
   { id: "rovo", label: "Rovo Dev", logoSrc: atlassianLogo },
 
   // Additional harnesses from specs/21_harness_providers.md
-  { id: "aider", label: "Aider", logoSrc: aiderLogo },
   { id: "continue", label: "Continue", logoSrc: continueLogo, invertInLight: true },
   { id: "openhands", label: "OpenHands", logoSrc: openhandsLogo },
   { id: "swe-agent", label: "SWE-agent", logoSrc: sweAgentLogo },
   { id: "cagent", label: "cagent", logoSrc: cagentLogo },
-  { id: "kilo", label: "Kilo Code", logoSrc: kiloLogo },
   { id: "cody", label: "Cody", logoSrc: codyLogo },
-  { id: "junie", label: "JetBrains Junie", logoSrc: junieLogo },
 ];
+
+export const UNSUPPORTED_HARNESS_IDS = new Set(["codebuff", "charm", "aider", "kilo", "junie"]);
 
 export const HARNESS_LOGO_SRCS = Array.from(
   new Set(HARNESS_CATALOG.map((entry) => entry.logoSrc).filter(Boolean)),

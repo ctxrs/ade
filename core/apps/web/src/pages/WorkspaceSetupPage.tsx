@@ -1482,7 +1482,21 @@ export default function WorkspaceSetupPage() {
       setAuthImportError(null);
       try {
         await connectDaemonForImport();
-        await importProviderAuthCandidates(candidateIds);
+        const resp = await importProviderAuthCandidates(candidateIds);
+        const acceptableStatuses = new Set(["imported", "updated", "already_imported"]);
+        const failures = (resp.results ?? [])
+          .filter((result) => !acceptableStatuses.has(result.status))
+          .map((result) => {
+            const label = authImportCandidates.find((candidate) => candidate.id === result.candidate_id)?.provider_label
+              ?? result.provider_id;
+            const detail = (result.message ?? `Import status: ${result.status}`).trim();
+            return `${label}: ${detail}`;
+          });
+        if (failures.length > 0) {
+          setAuthImportError(`Some auth imports did not apply. ${failures.join(" ; ")}`);
+          setAuthImportBusy(false);
+          return;
+        }
       } catch (err: any) {
         setAuthImportError(err?.message ?? String(err));
         setAuthImportBusy(false);

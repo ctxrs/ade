@@ -4,6 +4,7 @@ import { shouldSendOnEnter } from "../../utils/keyboard";
 import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
 import { PROVIDER_INSTALLS_ENABLED } from "../../utils/providerInstallGate";
 import { hasConfiguredHarnessAuth } from "../../utils/providerAuthStatus";
+import { UNSUPPORTED_HARNESS_IDS } from "../../utils/harnessCatalog";
 import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToInlineAttachments } from "../../utils/messageAttachments";
@@ -569,12 +570,19 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             const ns = props as NewSessionProps;
             const q = harnessSearch.trim().toLowerCase();
             const catalog = ns.harnessCatalog.filter(
-              (h) => ns.providersById[h.id]?.details?.ui_hidden !== "true",
+              (h) =>
+                ns.providersById[h.id]?.details?.ui_hidden !== "true"
+                && !UNSUPPORTED_HARNESS_IDS.has(String(h.id)),
             );
             type HarnessOption = NewSessionProps["harnessCatalog"][number];
             const order = new Map<string, number>(catalog.map((h, idx) => [h.id, idx]));
             const extras = Object.keys(ns.providersById)
-              .filter((id) => !order.has(id) && ns.providersById[id]?.details?.ui_hidden !== "true")
+              .filter(
+                (id) =>
+                  !order.has(id)
+                  && ns.providersById[id]?.details?.ui_hidden !== "true"
+                  && !UNSUPPORTED_HARNESS_IDS.has(String(id)),
+              )
               .map((id): HarnessOption => ({ id, label: id, logoSrc: "" }))
               .sort((a, b) => String(a.id).localeCompare(String(b.id)));
 

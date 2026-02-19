@@ -480,6 +480,53 @@ describe("WorkspaceSetupPage", () => {
     });
   });
 
+  it("surfaces auth import failures and stays on auth-import step", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
+      candidates: [
+        {
+          id: "cand-claude",
+          provider_id: "claude-crp",
+          provider_label: "Claude Code",
+          kind: "auth_file",
+          path: "/Users/example-user/.claude.json",
+          signal_strength: "strong",
+          confidence: "high",
+          parse_status: "parsed",
+        },
+      ],
+    } as never);
+    vi.mocked(importProviderAuthCandidates).mockResolvedValue({
+      results: [
+        {
+          candidate_id: "cand-claude",
+          provider_id: "claude-crp",
+          status: "unsupported",
+          message: "Could not find ANTHROPIC auth token in candidate file.",
+        },
+      ],
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("auth-import");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(importProviderAuthCandidates).toHaveBeenCalledWith(["cand-claude"]);
+      expect(
+        screen.getByText(/Some auth imports did not apply\./i),
+      ).toBeInTheDocument();
+      expect(wizardStepKey()).toBe("auth-import");
+    });
+  });
+
   it("probes titling before leaving location when auth candidates exist", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);

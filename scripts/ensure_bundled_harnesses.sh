@@ -381,6 +381,8 @@ BRIDGE_DIR="${CTX_BUNDLE_BRIDGE_DIR:-$ROOT/external-harnesses/acp-crp-bridge}"
 BRIDGE_BIN="acp-crp-bridge"
 CODEX_CRP_WORKSPACE="${CTX_BUNDLE_CODEX_CRP_WORKSPACE:-$ROOT/external-harnesses/codex/codex-rs}"
 CODEX_CRP_BUILD_MODE="${CTX_BUNDLE_BUILD_CODEX_CRP:-auto}"
+CLAUDE_CRP_WORKSPACE="${CTX_BUNDLE_CLAUDE_CRP_WORKSPACE:-$ROOT/external-harnesses/claude-crp}"
+CLAUDE_CRP_BUILD_MODE="${CTX_BUNDLE_BUILD_CLAUDE_CRP:-auto}"
 LOCAL_ADAPTERS_DIR="${CTX_BUNDLE_ADAPTERS_DIR:-$ROOT/harness-adapters}"
 LOCAL_ADAPTER_MODE="${CTX_BUNDLE_LOCAL_ADAPTERS:-auto}"
 BUILD_LOCAL_ADAPTERS="${CTX_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
@@ -535,6 +537,45 @@ for provider in data.get("providers", []):
         sys.exit(0)
 print("")
 PY
+}
+
+should_bundle_claude_crp() {
+  if [[ -d "$CLAUDE_CRP_WORKSPACE" ]]; then
+    return 0
+  fi
+  if is_truthy "$CLAUDE_CRP_BUILD_MODE"; then
+    log "error: claude-crp workspace not found at $CLAUDE_CRP_WORKSPACE"
+    exit 5
+  fi
+  return 1
+}
+
+prepare_claude_crp_workspace() {
+  local entry="$CLAUDE_CRP_WORKSPACE/bin/claude-crp"
+  local dist="$CLAUDE_CRP_WORKSPACE/dist/runtime.js"
+  if [[ -f "$entry" && -f "$dist" ]]; then
+    printf '%s' "$CLAUDE_CRP_WORKSPACE"
+    return 0
+  fi
+  if [[ ! -d "$CLAUDE_CRP_WORKSPACE" ]]; then
+    log "error: claude-crp workspace not found at $CLAUDE_CRP_WORKSPACE"
+    exit 5
+  fi
+  if is_falsy "$CLAUDE_CRP_BUILD_MODE"; then
+    log "error: claude-crp assets missing at $CLAUDE_CRP_WORKSPACE (bin/claude-crp and dist/runtime.js required)"
+    exit 5
+  fi
+  require_cmd pnpm
+  (
+    cd "$CLAUDE_CRP_WORKSPACE"
+    pnpm install --frozen-lockfile
+    pnpm build
+  )
+  if [[ ! -f "$entry" || ! -f "$dist" ]]; then
+    log "error: claude-crp build did not produce expected assets at $CLAUDE_CRP_WORKSPACE"
+    exit 5
+  fi
+  printf '%s' "$CLAUDE_CRP_WORKSPACE"
 }
 
 local_adapter_binary_path() {
@@ -1177,6 +1218,11 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
     runtime_need_node="1"
   fi
 fi
+if ! is_truthy "$skip_runtimes_raw"; then
+  if provider_selected_for_bundle "claude-crp" && should_bundle_claude_crp; then
+    runtime_need_node="1"
+  fi
+fi
 
 if ! is_truthy "$skip_runtimes_raw"; then
   if [[ "$runtime_need_node" == "1" ]]; then
@@ -1534,6 +1580,19 @@ if should_build_codex_crp; then
   else
     log "error: codex-crp build requested but source not available at $CODEX_CRP_WORKSPACE"
     exit 5
+  fi
+fi
+
+if provider_selected_for_bundle "claude-crp"; then
+  if is_truthy "$skip_runtimes_raw"; then
+    log "warn: skipping claude-crp bundle because CTX_BUNDLE_SKIP_RUNTIMES=1"
+  elif should_bundle_claude_crp; then
+    claude_crp_version="$(get_matrix_version "claude-crp")"
+    if [[ -z "$claude_crp_version" ]]; then
+      claude_crp_version="local"
+    fi
+    claude_crp_root="$(prepare_claude_crp_workspace)"
+    add_local_provider "claude-crp" "local-node" "$claude_crp_version" "$claude_crp_root" "bin/claude-crp" "[]"
   fi
 fi
 

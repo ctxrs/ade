@@ -14,6 +14,7 @@
     "test:providers:e2e": "bash -lc 'scripts/providers_e2e.sh e2e'",
     "test:providers:e2e:runner": "bash -lc 'scripts/providers_e2e.sh runner'",
     "test:providers:tokens": "bash -lc 'scripts/providers_e2e.sh tokens'",
+    "test:bundles:claude-crp": "bash -lc '../scripts/tests/ensure_bundled_harnesses_claude_crp.sh'",
     "test:bundles:docker-only": "bash -lc '../scripts/tests/ensure_bundled_harnesses_docker_only.sh'",
     "test:bundles:merge": "bash -lc '../scripts/tests/desktop_merge_bundles.sh'",
     "coverage:daemon": "mkdir -p coverage && CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=${CARGO_TARGET_DIR_COVERAGE:-$PWD/target/llvm-cov} cargo llvm-cov --workspace --lcov --output-path coverage/daemon.lcov",

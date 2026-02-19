@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../../components/ui/select";
-import { HARNESS_CATALOG, type HarnessCatalogEntry } from "../../../utils/harnessCatalog";
+import { HARNESS_CATALOG, type HarnessCatalogEntry, UNSUPPORTED_HARNESS_IDS } from "../../../utils/harnessCatalog";
 import { PROVIDER_INSTALLS_ENABLED } from "../../../utils/providerInstallGate";
 import { Card, Row } from "../../SettingsPage.components";
 import { clampPct } from "../../SettingsPage.utils";
@@ -85,7 +85,10 @@ export function HarnessAuthenticationSection({
     enabled: active,
   });
 
-  const visibleProviders = providers.filter((provider) => provider.details?.ui_hidden !== "true").slice();
+  const visibleProviders = providers
+    .filter((provider) => provider.details?.ui_hidden !== "true")
+    .filter((provider) => !UNSUPPORTED_HARNESS_IDS.has(provider.provider_id))
+    .slice();
   const installControlsEnabled = PROVIDER_INSTALLS_ENABLED;
   const scopedVisibleProviders = visibleProviders;
   const providersById = new Map(scopedVisibleProviders.map((provider) => [provider.provider_id, provider]));
