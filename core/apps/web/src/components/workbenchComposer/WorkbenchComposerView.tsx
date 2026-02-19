@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, ChevronDown, Ellipsis, Image, Mic, Square } from "lucide-react";
+import { ArrowUp, ChevronDown, Ellipsis, Image, Square } from "lucide-react";
 import { shouldSendOnEnter } from "../../utils/keyboard";
 import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
 import { PROVIDER_INSTALLS_ENABLED } from "../../utils/providerInstallGate";
@@ -51,8 +51,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     workspaceIdForAutocomplete,
     slashCommands,
     recording,
-    recordDisabledReason,
-    onToggleRecording,
   } = props;
 
   const newSession = variant === "newSession" ? (props as NewSessionProps) : null;
@@ -909,6 +907,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             }}
           />
 
+          {/* First-launch gate: keep dictation wiring in place, but hide composer mic UI for now. */}
+          {/*
           <button
             type="button"
             className={`wb-icon ${recording ? "wb-icon-active" : ""}`}
@@ -919,6 +919,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
           >
             {recording ? <Square size={14} /> : <Mic size={14} />}
           </button>
+          */}
 
           <button
             type="button"
