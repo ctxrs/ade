@@ -394,16 +394,6 @@ describe("WorkspaceSetupPage", () => {
     vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
       candidates: [
         {
-          id: "cand-claude",
-          provider_id: "claude-crp",
-          provider_label: "Claude Code",
-          kind: "auth_file",
-          path: "/Users/example-user/.claude.json",
-          signal_strength: "strong",
-          confidence: "medium",
-          parse_status: "parsed",
-        },
-        {
           id: "cand-codex",
           provider_id: "codex",
           provider_label: "Codex",
@@ -435,10 +425,9 @@ describe("WorkspaceSetupPage", () => {
       expect(wizardStepKey()).toBe("auth-import");
     });
 
-    const claudeCheckbox = screen.getByRole("checkbox", { name: /claude code/i }) as HTMLInputElement;
     const codexCheckbox = screen.getByRole("checkbox", { name: /codex/i }) as HTMLInputElement;
-    expect(claudeCheckbox.checked).toBe(true);
     expect(codexCheckbox.checked).toBe(true);
+    expect(screen.queryByRole("checkbox", { name: /claude code/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: /cursor/i })).not.toBeInTheDocument();
     expect(screen.queryByText("Source: /Users/example-user/.cursor/cli-config.json")).not.toBeInTheDocument();
     expect(screen.getByText("Source: /Users/example-user/.codex/auth.json")).toBeInTheDocument();

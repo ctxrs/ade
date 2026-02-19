@@ -240,7 +240,7 @@ export default function WorkspaceSetupPage() {
       out.push({
         key: "auth-import",
         title: "Import Existing Auth",
-        note: "Optional: import provider credentials found on this host.",
+        note: "Optional: import provider credentials found on this host. Claude subscription auth is configured later in Harness Authentication or Composer.",
       });
     }
 

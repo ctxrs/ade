@@ -225,36 +225,6 @@ fn build_catalog(roots: &HostRoots) -> Vec<PathSpec> {
             path: roots.codex_home.join("auth.json"),
         },
         PathSpec {
-            provider_id: "claude-crp",
-            provider_label: "Claude Code",
-            kind: "auth_file",
-            signal_strength: "strong",
-            confidence: "medium",
-            importable: true,
-            unsupported_reason: None,
-            path: roots.home.join(".claude.json"),
-        },
-        PathSpec {
-            provider_id: "claude-crp",
-            provider_label: "Claude Code",
-            kind: "auth_file",
-            signal_strength: "strong",
-            confidence: "medium",
-            importable: true,
-            unsupported_reason: None,
-            path: roots.xdg_config.join("claude-code").join("auth.json"),
-        },
-        PathSpec {
-            provider_id: "claude-crp",
-            provider_label: "Claude Code",
-            kind: "auth_file",
-            signal_strength: "weak",
-            confidence: "medium",
-            importable: true,
-            unsupported_reason: None,
-            path: roots.home.join(".claude").join(".credentials.json"),
-        },
-        PathSpec {
             provider_id: "amp",
             provider_label: "Amp",
             kind: "config_file",
@@ -902,27 +872,10 @@ fn parse_endpoint_json_candidate(
     Ok((api_key, base_url, model_override))
 }
 
-fn claude_auth_token_from_bytes(bytes: &[u8]) -> Option<String> {
-    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) {
-        return find_json_string_by_keys(
-            &value,
-            &[
-                "anthropic_auth_token",
-                "anthropicAuthToken",
-                "auth_token",
-                "authToken",
-                "token",
-            ],
-        );
-    }
-    trim_to_option(&String::from_utf8_lossy(bytes))
-}
-
 async fn set_subscription_source_if_supported(data_root: &Path, provider_id: &str) -> Result<()> {
     let should_set = matches!(
         provider_id,
         "codex"
-            | "claude-crp"
             | "gemini"
             | "kimi"
             | "qwen"
@@ -1049,52 +1002,6 @@ async fn import_endpoint_candidate(
             "Endpoint credential updated.".to_string()
         } else {
             "Endpoint credential imported.".to_string()
-        }),
-    ))
-}
-
-async fn import_claude_candidate(
-    data_root: &Path,
-    material: &CandidateMaterial,
-) -> Result<ProviderAuthImportResult> {
-    let Some(bytes) = material.secret_bytes.as_ref() else {
-        return Ok(import_result(
-            material,
-            "unsupported",
-            None,
-            Some("No importable auth material.".to_string()),
-        ));
-    };
-    let Some(token) = claude_auth_token_from_bytes(bytes) else {
-        return Ok(import_result(
-            material,
-            "unsupported",
-            None,
-            Some("Could not find ANTHROPIC auth token in candidate file.".to_string()),
-        ));
-    };
-    let before_len = provider_accounts::load_claude_registry(data_root)
-        .await
-        .accounts
-        .len();
-    let registry =
-        provider_accounts::add_claude_account(data_root, material.label.clone(), token).await?;
-    let imported = registry.accounts.len() > before_len;
-    if imported {
-        set_subscription_source_if_supported(data_root, "claude-crp").await?;
-    }
-    Ok(import_result(
-        material,
-        if imported {
-            "imported"
-        } else {
-            "already_imported"
-        },
-        registry.active_account_id,
-        Some(if imported {
-            "Claude auth imported.".to_string()
-        } else {
-            "Matching Claude auth is already imported.".to_string()
         }),
     ))
 }
@@ -1288,7 +1195,6 @@ async fn import_candidate_to_canonical(
     }
     match material.candidate.provider_id.as_str() {
         "codex" => import_codex_candidate(data_root, material).await,
-        "claude-crp" => import_claude_candidate(data_root, material).await,
         "gemini" => {
             if material.candidate.kind == "env_file" {
                 import_gemini_env_candidate(data_root, material).await
@@ -1502,12 +1408,6 @@ mod tests {
         assert_eq!(endpoint, None);
     }
 
-    #[test]
-    fn claude_token_parser_rejects_tokenless_json() {
-        let token = claude_auth_token_from_bytes(br#"{"schema":"changed","expires":123}"#);
-        assert_eq!(token, None);
-    }
-
     #[tokio::test]
     async fn legacy_migration_keeps_unmigrated_profiles_without_marker() {
         let dir = tempfile::tempdir().unwrap();
@@ -1670,48 +1570,6 @@ mod tests {
             .expect("codex candidate");
         assert_eq!(found.candidate.parse_status, "parsed");
         assert!(found.importable);
-    }
-
-    #[tokio::test]
-    async fn claude_candidate_import_writes_canonical_account_registry() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let material = CandidateMaterial {
-            candidate: ProviderAuthImportCandidate {
-                id: "claude-candidate".to_string(),
-                provider_id: "claude-crp".to_string(),
-                provider_label: "Claude Code".to_string(),
-                kind: "auth_file".to_string(),
-                path: "/tmp/.claude.json".to_string(),
-                signal_strength: "strong".to_string(),
-                confidence: "high".to_string(),
-                parse_status: "parsed".to_string(),
-                unsupported_reason: None,
-                summary: None,
-                account_identity: None,
-                endpoint: None,
-                auth_type: Some("subscription".to_string()),
-                fingerprint: None,
-                last_modified: None,
-            },
-            importable: true,
-            secret_bytes: Some(br#"{"anthropicAuthToken":"claude-token-1"}"#.to_vec()),
-            label: Some("Claude import".to_string()),
-        };
-
-        let first = import_candidate_to_canonical(root, &material)
-            .await
-            .unwrap();
-        assert_eq!(first.status, "imported");
-        let registry = provider_accounts::load_claude_registry(root).await;
-        assert_eq!(registry.accounts.len(), 1);
-
-        let second = import_candidate_to_canonical(root, &material)
-            .await
-            .unwrap();
-        assert_eq!(second.status, "already_imported");
-        let registry = provider_accounts::load_claude_registry(root).await;
-        assert_eq!(registry.accounts.len(), 1);
     }
 
     #[tokio::test]

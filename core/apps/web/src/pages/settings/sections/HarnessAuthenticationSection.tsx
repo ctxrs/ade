@@ -573,7 +573,7 @@ export function HarnessAuthenticationSection({
                   {harnessAuthModal.provider_id === "codex"
                     ? "Sign in with your Codex subscription in a browser window."
                     : harnessAuthModal.provider_id === "claude-crp"
-                      ? "Use a Claude subscription auth token (from `claude setup-token`) and set it as the managed account."
+                      ? "Start browser sign-in to generate and capture a managed Claude setup token automatically. Optional fallback: paste an existing token."
                       : harnessAuthModal.provider_id === "gemini"
                         ? "Paste Gemini OAuth credentials JSON (from oauth_creds.json) for a managed subscription account."
                         : harnessAuthModal.provider_id === "kimi"
@@ -599,12 +599,12 @@ export function HarnessAuthenticationSection({
                       />
                     </label>
                     <label className="settings-harness-modal-label">
-                      Auth Token
+                      Setup Token
                       <input
                         className="settings-control"
                         value={harnessAuthModal.subscription_token}
                         onChange={(e) => patchHarnessAuthModal({ subscription_token: e.target.value })}
-                        placeholder="Paste ANTHROPIC_AUTH_TOKEN"
+                        placeholder="Optional fallback: paste CLAUDE_CODE_OAUTH_TOKEN"
                         type="password"
                       />
                     </label>
@@ -807,7 +807,10 @@ export function HarnessAuthenticationSection({
                   >
                     {harnessAuthModal.subscription_busy
                       ? "Starting..."
-                      : harnessAuthModal.provider_id === "codex" || harnessAuthModal.provider_id === "cursor"
+                      : harnessAuthModal.provider_id === "codex"
+                        || harnessAuthModal.provider_id === "cursor"
+                        || (harnessAuthModal.provider_id === "claude-crp"
+                          && harnessAuthModal.subscription_token.trim().length === 0)
                         ? "Start sign-in"
                         : "Save subscription"}
                   </button>

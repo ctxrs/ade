@@ -224,6 +224,9 @@ read_const() {
 NODE_VERSION="$(read_const NODE_VERSION "$INSTALLER_RS")"
 PYTHON_VERSION="$(read_const PYTHON_VERSION "$INSTALLER_RS")"
 PYTHON_BUILD_TAG="$(read_const PYTHON_BUILD_TAG "$INSTALLER_RS")"
+CLAUDE_CLI_PACKAGE="${CTX_BUNDLE_CLAUDE_CLI_PACKAGE:-@anthropic-ai/claude-code}"
+CLAUDE_CLI_VERSION="${CTX_BUNDLE_CLAUDE_CLI_VERSION:-2.1.47}"
+CLAUDE_CLI_ENTRYPOINT="${CTX_BUNDLE_CLAUDE_CLI_ENTRYPOINT:-cli.js}"
 PODMAN_VERSION="${PODMAN_VERSION:-}"
 PODMAN_ARCHIVE_URL="${PODMAN_ARCHIVE_URL:-}"
 PODMAN_ARCHIVE_PATH="${PODMAN_ARCHIVE_PATH:-}"
@@ -1178,6 +1181,10 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   fi
 fi
 
+if provider_selected_for_bundle "claude-crp" || provider_selected_for_bundle "claude-cli"; then
+  runtime_need_node="1"
+fi
+
 if ! is_truthy "$skip_runtimes_raw"; then
   if [[ "$runtime_need_node" == "1" ]]; then
     ensure_node_runtime
@@ -1390,6 +1397,51 @@ for provider in data.get("providers", []):
         )
         print(line)
 PY
+
+if provider_selected_for_bundle "claude-crp" || provider_selected_for_bundle "claude-cli"; then
+  run_python - "$providers_src" "$CLAUDE_CLI_VERSION" "$CLAUDE_CLI_PACKAGE" "$CLAUDE_CLI_ENTRYPOINT" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+version = sys.argv[2]
+package = sys.argv[3]
+entrypoint = sys.argv[4]
+sep = "\x1f"
+
+rows = []
+with open(path, "r", encoding="utf-8") as fh:
+    for line in fh:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        provider_id = stripped.split(sep, 1)[0]
+        if provider_id == "claude-cli":
+            continue
+        rows.append(stripped)
+
+rows.append(
+    sep.join(
+        [
+            "claude-cli",
+            "npm",
+            version,
+            "",
+            "",
+            "",
+            package,
+            entrypoint,
+            json.dumps([], separators=(",", ":")),
+        ]
+    )
+)
+
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(rows))
+    if rows:
+        fh.write("\n")
+PY
+fi
 
 local_providers_src="$(mktemp /tmp/ctx-bundle-local-providers.XXXXXX)"
 local_ids=()
@@ -1635,15 +1687,14 @@ while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package 
   if [[ -z "$provider_id" || -z "$kind" ]]; then
     continue
   fi
-  if [[ -n "$only_providers_raw" ]]; then
-    if [[ ",$only_providers_raw," != *",$provider_id,"* ]]; then
-      continue
-    fi
+  include_provider=0
+  if provider_selected_for_bundle "$provider_id"; then
+    include_provider=1
+  elif [[ "$provider_id" == "claude-cli" ]] && provider_selected_for_bundle "claude-crp"; then
+    include_provider=1
   fi
-  if [[ -n "$skip_providers_raw" ]]; then
-    if [[ ",$skip_providers_raw," == *",$provider_id,"* ]]; then
-      continue
-    fi
+  if [[ "$include_provider" != "1" ]]; then
+    continue
   fi
 
   provider_root="$bundle_dir/providers/${provider_id}/${os}/${arch}"

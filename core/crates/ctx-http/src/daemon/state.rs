@@ -95,6 +95,7 @@ pub struct ProviderRuntime {
     pub restart: Mutex<provider_restart::ProviderRestartRuntime>,
     pub usage_cache: Mutex<HashMap<String, provider_usage::ProviderUsageSnapshot>>,
     pub codex_login_sessions: Mutex<HashMap<String, provider_accounts::CodexLoginStatus>>,
+    pub claude_login_sessions: Mutex<HashMap<String, provider_accounts::ClaudeLoginStatus>>,
     pub installs: Mutex<HashMap<InstallId, InstallState>>,
 }
 
@@ -424,6 +425,7 @@ impl AppState {
                 restart: Mutex::new(provider_restart::ProviderRestartRuntime::default()),
                 usage_cache: Mutex::new(HashMap::new()),
                 codex_login_sessions: Mutex::new(HashMap::new()),
+                claude_login_sessions: Mutex::new(HashMap::new()),
                 installs: Mutex::new(HashMap::new()),
             },
             telemetry: TelemetryRuntime {

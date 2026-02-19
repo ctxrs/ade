@@ -17,7 +17,7 @@ const CURSOR_SECRET_VERSION: u32 = 1;
 const CODEX_RUNTIME_OWNER_FILE: &str = ".ctx-active-account-id";
 pub const CODEX_CREDENTIAL_KIND_OAUTH: &str = "oauth";
 pub const CODEX_CREDENTIAL_KIND_API_KEY: &str = "api_key";
-pub const CLAUDE_CREDENTIAL_KIND_AUTH_TOKEN: &str = "auth_token";
+pub const CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN: &str = "setup_token";
 pub const GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL: &str = "oauth-personal";
 pub const KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON: &str = "credentials-json";
 pub const COPILOT_CREDENTIAL_KIND_GH_TOKEN: &str = "gh-token";
@@ -40,7 +40,8 @@ struct CodexSecretEnvelope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ClaudeSecretEnvelope {
     version: u32,
-    anthropic_auth_token: String,
+    #[serde(alias = "anthropic_auth_token")]
+    claude_code_oauth_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,7 +84,7 @@ fn default_codex_credential_kind() -> String {
 }
 
 fn default_claude_credential_kind() -> String {
-    CLAUDE_CREDENTIAL_KIND_AUTH_TOKEN.to_string()
+    CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN.to_string()
 }
 
 fn default_gemini_credential_kind() -> String {
@@ -317,6 +318,18 @@ pub struct CodexLoginStatus {
     #[serde(default)]
     pub completion_token: Option<String>,
     pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeLoginStatus {
+    pub login_id: String,
+    #[serde(default)]
+    pub auth_url: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub account_id: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
 }
@@ -785,10 +798,10 @@ pub async fn ensure_claude_account_dir(data_root: &Path, account_id: &str) -> Re
     Ok(dir)
 }
 
-fn normalize_claude_token(token: &str) -> Result<String> {
+fn normalize_claude_setup_token(token: &str) -> Result<String> {
     let trimmed = token.trim();
     if trimmed.is_empty() {
-        bail!("auth_token is required");
+        bail!("setup_token is required");
     }
     Ok(trimmed.to_string())
 }
@@ -796,9 +809,9 @@ fn normalize_claude_token(token: &str) -> Result<String> {
 async fn write_claude_secret_for_account(
     data_root: &Path,
     account_id: &str,
-    auth_token: &str,
+    setup_token: &str,
 ) -> Result<String> {
-    let token = normalize_claude_token(auth_token)?;
+    let token = normalize_claude_setup_token(setup_token)?;
     let secret_ref = format!("{account_id}.json");
     let path = claude_secret_path(data_root, &secret_ref);
     if let Some(parent) = path.parent() {
@@ -806,7 +819,7 @@ async fn write_claude_secret_for_account(
     }
     let envelope = ClaudeSecretEnvelope {
         version: CLAUDE_SECRET_VERSION,
-        anthropic_auth_token: token,
+        claude_code_oauth_token: token,
     };
     write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
     Ok(secret_ref)
@@ -819,15 +832,15 @@ async fn read_claude_secret_for_ref(data_root: &Path, secret_ref: &str) -> Resul
         .with_context(|| format!("reading claude secret {}", path.display()))?;
     let parsed: ClaudeSecretEnvelope = serde_json::from_str(&payload)
         .with_context(|| format!("invalid claude secret {}", path.display()))?;
-    normalize_claude_token(&parsed.anthropic_auth_token)
+    normalize_claude_setup_token(&parsed.claude_code_oauth_token)
 }
 
 pub async fn add_claude_account(
     data_root: &Path,
     label: Option<String>,
-    auth_token: String,
+    setup_token: String,
 ) -> Result<ClaudeAccountRegistry> {
-    let token = normalize_claude_token(&auth_token)?;
+    let token = normalize_claude_setup_token(&setup_token)?;
     let mut registry = load_claude_registry(data_root).await;
     let mut existing_account_id: Option<String> = None;
 
@@ -862,7 +875,7 @@ pub async fn add_claude_account(
     let entry = ClaudeAccountEntry {
         id: account_id.clone(),
         label: normalize_claude_label(label, &account_id),
-        kind: CLAUDE_CREDENTIAL_KIND_AUTH_TOKEN.to_string(),
+        kind: CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN.to_string(),
         email: None,
         subscription_type: None,
         created_at: Utc::now(),
@@ -945,10 +958,13 @@ pub async fn remove_claude_account(
 pub fn claude_env_for_account(
     data_root: &Path,
     account_id: &str,
-    auth_token: &str,
+    setup_token: &str,
 ) -> HashMap<String, String> {
     let mut env = HashMap::new();
-    env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), auth_token.to_string());
+    env.insert(
+        "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+        setup_token.to_string(),
+    );
     env.insert(
         "CLAUDE_CONFIG_DIR".to_string(),
         claude_account_dir(data_root, account_id)
@@ -3502,7 +3518,7 @@ mod tests {
 
         let env = claude_env_for_active_account(root).await.unwrap();
         assert_eq!(
-            env.get("ANTHROPIC_AUTH_TOKEN"),
+            env.get("CLAUDE_CODE_OAUTH_TOKEN"),
             Some(&"token-abc".to_string())
         );
         let cfg_dir = env
@@ -4183,7 +4199,7 @@ mod tests {
         let claude_env = subscription_env_for_active_account(root, "claude-crp")
             .await
             .unwrap();
-        assert!(claude_env.contains_key("ANTHROPIC_AUTH_TOKEN"));
+        assert!(claude_env.contains_key("CLAUDE_CODE_OAUTH_TOKEN"));
         let gemini_env = subscription_env_for_active_account(root, "gemini")
             .await
             .unwrap();

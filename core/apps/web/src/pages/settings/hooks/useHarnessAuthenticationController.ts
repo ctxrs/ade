@@ -9,6 +9,7 @@ import {
   deleteKimiAccount,
   deleteKiroAccount,
   deleteProviderHarnessEndpoint,
+  getClaudeLogin,
   getCodexLogin,
   getInstall,
   listClaudeAccounts,
@@ -31,6 +32,7 @@ import {
   setKimiActiveAccount,
   setKiroActiveAccount,
   startCodexLogin,
+  startClaudeLogin,
   upsertClaudeAccount,
   upsertCopilotAccount,
   upsertCursorAccount,
@@ -162,6 +164,16 @@ const messageFromError = (error: unknown): string => {
     return error.message;
   }
   return String(error);
+};
+
+export const takeNextClaudeAuthUrlToOpen = (
+  authUrl: string | null | undefined,
+  openedAuthUrls: Set<string>,
+): string | null => {
+  const normalized = authUrl?.trim() ?? "";
+  if (!normalized || openedAuthUrls.has(normalized)) return null;
+  openedAuthUrls.add(normalized);
+  return normalized;
 };
 
 export function useHarnessAuthenticationController({
@@ -592,6 +604,33 @@ export function useHarnessAuthenticationController({
     return "timeout";
   }, []);
 
+  const waitForClaudeLoginOutcome = useCallback(async (
+    loginId: string,
+    onAuthUrl?: (authUrl: string) => Promise<void>,
+    opts?: { openedAuthUrl?: string | null },
+  ): Promise<"success" | "failed" | "timeout"> => {
+    const attempts = 90;
+    const openedAuthUrls = new Set<string>();
+    takeNextClaudeAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const status = await getClaudeLogin(loginId);
+        const authUrl = takeNextClaudeAuthUrlToOpen(status.auth_url, openedAuthUrls);
+        if (authUrl && onAuthUrl) {
+          await onAuthUrl(authUrl);
+        }
+        if (status.status === "success") return "success";
+        if (status.status === "failed") return "failed";
+      } catch {
+        // continue polling
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 1600);
+      });
+    }
+    return "timeout";
+  }, []);
+
   const tryStartCodexDesktopRelay = useCallback(async (params: {
     accountId: string;
     expectedCallbackUrl?: string | null;
@@ -674,14 +713,57 @@ export function useHarnessAuthenticationController({
 
       if (modal.provider_id === "claude-crp") {
         const token = modal.subscription_token.trim();
-        if (!token) {
-          throw new Error("Subscription token is required.");
-        }
         const label = modal.subscription_label.trim();
-        const next = await upsertClaudeAccount(token, label ? label : undefined);
-        setClaudeAccounts(next);
-        await selectSubscriptionSourceIfSupported(modal.provider_id);
-        closeHarnessAuthModal();
+        if (token) {
+          const next = await upsertClaudeAccount(token, label ? label : undefined);
+          setClaudeAccounts(next);
+          await selectSubscriptionSourceIfSupported(modal.provider_id);
+          closeHarnessAuthModal();
+          return;
+        }
+        const login = await startClaudeLogin(label ? label : undefined);
+        const initialAuthUrl = takeNextClaudeAuthUrlToOpen(login.auth_url, new Set<string>());
+        if (initialAuthUrl) {
+          await openExternalLink(initialAuthUrl);
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status:
+                  "Waiting for browser sign-in to complete and setup-token capture...",
+              }
+            : prev);
+        const outcome = await waitForClaudeLoginOutcome(login.login_id, async (authUrl) => {
+          await openExternalLink(authUrl);
+        }, {
+          openedAuthUrl: initialAuthUrl,
+        });
+        await refreshClaudeAccounts();
+        if (outcome === "success") {
+          await onSelectProviderSource("claude-crp", "subscription", null);
+          closeHarnessAuthModal();
+          return;
+        }
+        if (outcome === "failed") {
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status:
+                    "Sign-in failed. Retry, or paste an existing setup token as fallback.",
+                }
+              : prev);
+          return;
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status:
+                  "Still waiting for completion. Keep this dialog open or retry.",
+              }
+            : prev);
         return;
       }
 
@@ -777,8 +859,11 @@ export function useHarnessAuthenticationController({
     closeHarnessAuthModal,
     harnessAuthModal,
     openCodexAuthUrl,
+    onSelectProviderSource,
+    refreshClaudeAccounts,
     refreshCodexAccounts,
     selectSubscriptionSourceIfSupported,
+    waitForClaudeLoginOutcome,
     waitForCodexLoginOutcome,
     workspaceId,
   ]);
