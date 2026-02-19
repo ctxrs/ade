@@ -19,6 +19,8 @@ const idToString = (id: string | null | undefined): string => {
   return id;
 };
 
+let latestConnectionSeq = -1;
+
 const listWorkspaceArchivedTaskSummaries = (
   workspaceId: string,
   params?: { limit?: number; cursor?: WorkspaceIndexCursor | null },
@@ -33,7 +35,8 @@ const listWorkspaceArchivedTaskSummaries = (
   }
   const qs = search.toString();
   const suffix = qs ? `?${qs}` : "";
-  return workerFetchJson<WorkspaceArchivedPage>(`/api/workspaces/${workspaceId}/archived_task_summaries${suffix}`);
+  const path = `/api/workspaces/${workspaceId}/archived_task_summaries${suffix}`;
+  return workerFetchJson<WorkspaceArchivedPage>(path);
 };
 
 let store: WorkspaceActiveSnapshotStoreImpl | null = null;
@@ -42,6 +45,8 @@ let pendingSubscribedSessionIds: string[] | null = null;
 let pendingForegroundTaskId: string | null = null;
 
 const ensureStore = (cmd: Extract<WorkspaceActiveSnapshotCommand, { type: "init" }>) => {
+  if (cmd.connectionSeq < latestConnectionSeq) return;
+  latestConnectionSeq = cmd.connectionSeq;
   setAuth(cmd.baseUrl, cmd.authToken, cmd.runId);
   if (store) return;
   store = new WorkspaceActiveSnapshotStoreImpl(cmd.workspaceId, {
@@ -79,6 +84,8 @@ self.onmessage = (event: MessageEvent<WorkspaceActiveSnapshotCommand>) => {
       ensureStore(cmd);
       return;
     case "update_auth":
+      if (cmd.connectionSeq < latestConnectionSeq) return;
+      latestConnectionSeq = cmd.connectionSeq;
       setAuth(cmd.baseUrl, cmd.authToken, cmd.runId);
       store?.updateAuthConfig({
         authToken: cmd.authToken ?? null,

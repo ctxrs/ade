@@ -7,7 +7,7 @@ use anyhow::Context;
 use axum::body::{Body, Bytes};
 use axum::extract::{Extension, MatchedPath, Path, Query, State};
 use axum::http::header;
-use axum::http::{HeaderMap, Request, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::response::Response;
@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tokio::process::Command;
 use tower::util::ServiceExt;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
@@ -181,6 +182,55 @@ fn resolve_request_base_url(headers: &HeaderMap, fallback: &str) -> String {
         Some(host) => format!("{}://{}", proto, host.trim_end_matches('/')),
         None => fallback.to_string(),
     }
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let normalized = host.trim().trim_matches('[').trim_matches(']');
+    normalized.eq_ignore_ascii_case("localhost")
+        || normalized.eq_ignore_ascii_case("tauri.localhost")
+        || normalized == "127.0.0.1"
+        || normalized == "::1"
+}
+
+fn is_allowed_desktop_worker_origin(origin: &HeaderValue) -> bool {
+    let Ok(raw) = origin.to_str() else {
+        return false;
+    };
+    let trimmed = raw.trim();
+    if trimmed.eq_ignore_ascii_case("tauri://localhost") {
+        return true;
+    }
+    let Ok(url) = Url::parse(trimmed) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    match url.scheme() {
+        "http" | "https" => is_loopback_host(host),
+        "tauri" => host.eq_ignore_ascii_case("localhost"),
+        _ => false,
+    }
+}
+
+fn daemon_cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            is_allowed_desktop_worker_origin(origin)
+        }))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::HeaderName::from_static("traceparent"),
+            header::HeaderName::from_static("x-ctx-run-id"),
+        ])
 }
 
 pub fn router(state: Arc<AppState>) -> axum::Router {
@@ -707,6 +757,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route_layer(middleware::from_fn_with_state(perf_state, perf_middleware))
         .layer(middleware::from_fn_with_state(auth_state, auth_middleware))
+        .layer(daemon_cors_layer())
         .with_state(state);
 
     let dist_dir = std::env::var("CTX_WEB_DIST").unwrap_or_else(|_| "apps/web/dist".into());

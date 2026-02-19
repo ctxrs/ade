@@ -1,5 +1,5 @@
 import type { ClientTelemetryBatch } from "@ctx/types";
-import { desktopDaemonRequest, isDesktopApp } from "../utils/desktop";
+import { desktopDaemonRequest, desktopGetConnection, isDesktopApp, type DesktopConnectionInfo } from "../utils/desktop";
 import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "../state/diagnosticsChannel";
 import {
   applyDesktopDaemonConnection,
@@ -48,6 +48,99 @@ export const setDaemonAuthToken = (token: string | null) => {
 export const applyDaemonDesktopConnection = applyDesktopDaemonConnection;
 export const resetDaemonConnection = clearDaemonConnection;
 export const primeDaemonConnection = bootstrapDaemonConnectionFromRuntime;
+
+export type DesktopDaemonConnectionSyncResult = {
+  config: DaemonClientConfig;
+  info: DesktopConnectionInfo | null;
+  synced: boolean;
+  error: string | null;
+};
+
+type DesktopDaemonConnectionSyncOptions = {
+  force?: boolean;
+  probeHealth?: boolean;
+  reason?: string;
+};
+
+const DESKTOP_DAEMON_SYNC_THROTTLE_MS = 1000;
+let desktopSyncInFlight: Promise<DesktopDaemonConnectionSyncResult> | null = null;
+let desktopLastSyncAtMs = 0;
+
+const makeDesktopSyncResult = (
+  info: DesktopConnectionInfo | null,
+  error: string | null,
+): DesktopDaemonConnectionSyncResult => ({
+  config: getDaemonClientConfig(),
+  info,
+  synced: Boolean(info),
+  error,
+});
+
+// Desktop invariant: worker and main-thread HTTP clients should share the same daemon connection state.
+// Bridge-backed requests can succeed before JS state is hydrated, so we opportunistically reconcile here.
+export const syncDesktopDaemonConnectionFromBridge = async (
+  opts?: DesktopDaemonConnectionSyncOptions,
+): Promise<DesktopDaemonConnectionSyncResult> => {
+  if (!isDesktopApp()) return makeDesktopSyncResult(null, null);
+  const now = Date.now();
+  const current = getDaemonConnection();
+  if (
+    !opts?.force
+    && current.baseUrl
+    && now - desktopLastSyncAtMs < DESKTOP_DAEMON_SYNC_THROTTLE_MS
+  ) {
+    return makeDesktopSyncResult(null, null);
+  }
+  if (desktopSyncInFlight) return desktopSyncInFlight;
+  const run = (async (): Promise<DesktopDaemonConnectionSyncResult> => {
+    let info: DesktopConnectionInfo | null = null;
+    let error: string | null = null;
+    try {
+      info = await desktopGetConnection();
+      const shouldProbeHealth = (opts?.probeHealth ?? true) && (!info.base_url || info.kind === "none");
+      if (shouldProbeHealth) {
+        try {
+          await desktopDaemonRequest({
+            method: "GET",
+            path: "/api/health",
+            body: null,
+            headers: [["content-type", "application/json"]],
+          });
+        } catch {
+          // ignore probe failures; caller will still receive the refreshed bridge state
+        }
+        try {
+          info = await desktopGetConnection();
+        } catch {
+          // ignore and use the earlier connection snapshot
+        }
+      }
+      applyDesktopDaemonConnection(info);
+    } catch (err) {
+      error = normalizeDiagnosticErrorMessage(err, "Desktop daemon connection sync failed.");
+      if (opts?.reason) {
+        emitUiDiagnostic({
+          source: "api",
+          code: "api.desktop_connection_sync_failed",
+          severity: "warning",
+          message: `Desktop daemon connection sync failed during ${opts.reason}.`,
+          context: { reason: opts.reason, error },
+        });
+      }
+    } finally {
+      desktopLastSyncAtMs = Date.now();
+    }
+    return makeDesktopSyncResult(info, error);
+  })();
+  desktopSyncInFlight = run;
+  try {
+    return await run;
+  } finally {
+    if (desktopSyncInFlight === run) {
+      desktopSyncInFlight = null;
+    }
+  }
+};
 
 const shouldEmitApiDiagnostic = (path: string): boolean =>
   path.startsWith("/api/") && !path.startsWith("/api/telemetry");
@@ -215,6 +308,20 @@ export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
+  if (!getDaemonConnection().baseUrl) {
+    await syncDesktopDaemonConnectionFromBridge({
+      force: true,
+      probeHealth: true,
+      reason: "desktop_api_preflight",
+    });
+  } else {
+    void syncDesktopDaemonConnectionFromBridge({
+      force: false,
+      probeHealth: false,
+      reason: "desktop_api_background",
+    }).catch(() => {});
+  }
+
   const extraHeaders: Record<string, string> = {};
   if (init?.headers) {
     if (init.headers instanceof Headers) {
@@ -560,6 +667,20 @@ export const daemonFetchRaw = async (path: string, init?: RequestInit): Promise<
     typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
 
   if (isDesktopApp()) {
+    if (!getDaemonConnection().baseUrl) {
+      await syncDesktopDaemonConnectionFromBridge({
+        force: true,
+        probeHealth: true,
+        reason: "daemon_fetch_raw_preflight",
+      });
+    } else {
+      void syncDesktopDaemonConnectionFromBridge({
+        force: false,
+        probeHealth: false,
+        reason: "daemon_fetch_raw_background",
+      }).catch(() => {});
+    }
+
     const resp = await desktopDaemonRequest({
       method,
       path,
