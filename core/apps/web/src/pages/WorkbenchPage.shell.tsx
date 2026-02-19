@@ -59,6 +59,7 @@ import { WorkbenchComposer, type DraftTrack, type WorkbenchModeId } from "../com
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import {
   desktopSetTitlebarColor,
+  desktopSetWindowTitle,
   desktopStorageConsumeNotice,
   getDesktopPlatform,
   isDesktopApp,
@@ -76,7 +77,9 @@ import { readCssVar, useThemeVariant } from "../utils/theme";
 import {
   WEB_MENU_COMMAND_EVENT,
   WEB_MENU_STATE_EVENT,
+  WEB_MENU_TRACE_EVENT,
   type DesktopMenuItemState,
+  type WebMenuTraceDetail,
   type WebMenuCommandDetail,
   type WebMenuStateDetail,
 } from "../utils/desktopMenuCommands";
@@ -2693,6 +2696,16 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeSessionId, buildTranscriptExportFromEntry, hydrateTranscriptHistory, supervisor]);
 
   const desktopUi = isDesktopApp();
+  const emitMenuTrace = useCallback(
+    (detail: Omit<WebMenuTraceDetail, "layer">) => {
+      window.dispatchEvent(
+        new CustomEvent<WebMenuTraceDetail>(WEB_MENU_TRACE_EVENT, {
+          detail: { ...detail, layer: "workbench" },
+        }),
+      );
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!desktopUi) return;
@@ -2704,44 +2717,81 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
       switch (detail.commandId) {
         case "file.export-transcript":
+          if (!activeSessionId) {
+            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "session-missing" });
+            return;
+          }
           void exportTranscript();
+          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "export-transcript" });
           return;
         case "file.export-session-log":
+          if (!activeSessionId) {
+            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "session-missing" });
+            return;
+          }
           void exportSessionLog();
+          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "export-session-log" });
           return;
         case "view.find-tasks":
-          taskSearchRef.current?.focus();
-          taskSearchRef.current?.select();
+          if (!taskSearchRef.current) {
+            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-search-missing" });
+            return;
+          }
+          taskSearchRef.current.focus();
+          taskSearchRef.current.select();
+          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "focus-task-search" });
           return;
         case "view.toggle-sidebar":
           setSidebarCollapsed((prev) => !prev);
+          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-sidebar" });
           return;
         case "view.toggle-diff":
+          if (!activeTaskId) {
+            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-missing" });
+            return;
+          }
           toggleDiffPane();
+          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-diff-pane" });
           return;
         case "view.toggle-artifacts":
+          if (!activeTaskId || !activeSessionId) {
+            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-or-session-missing" });
+            return;
+          }
           toggleArtifactsPane();
+          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-artifacts-pane" });
           return;
         case "view.toggle-sessions":
-          if (webSessionsEnabled) {
+          if (webSessionsEnabled && activeTaskId && activeSessionId) {
             toggleSessionsPane();
+            emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-sessions-pane" });
+            return;
           }
+          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "sessions-unavailable" });
           return;
         case "view.toggle-terminal":
           toggleTerminalPanel();
+          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-terminal" });
           return;
         case "task.new":
           focusNewTask();
+          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "create-task" });
           return;
         case "task.rename":
           if (activeTaskId && !activeTaskIsOptimistic) {
             beginRenameTask(activeTaskId);
+            emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "rename-task" });
+            return;
           }
+          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-missing-or-optimistic" });
           return;
         case "task.archive-toggle":
           if (activeTaskId) {
             void onToggleArchive(activeTaskId, !Boolean(activeTask?.archived_at), null).catch(() => {});
+            emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-task-archive" });
+            return;
           }
+          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-missing" });
           return;
         case "task.mark-read-toggle":
           if (activeTaskId && activeTaskHasAssistantMessage) {
@@ -2750,31 +2800,53 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             } else {
               void markTaskUnread(activeTaskId);
             }
+            emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-task-read" });
+            return;
           }
+          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-or-message-missing" });
           return;
         case "task.delete":
           if (activeTaskId) {
             void onDeleteTask(activeTaskId);
+            emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "delete-task" });
+            return;
           }
+          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-missing" });
           return;
         case "session.copy-transcript":
           void copyTranscript();
+          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "copy-transcript" });
           return;
         case "session.copy-session-log":
           void copySessionLog();
+          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "copy-session-log" });
           return;
         case "session.copy-worktree-location":
+          if (!worktreeChip.canCopyWorktree) {
+            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "worktree-unavailable" });
+            return;
+          }
           void copyWorktreeLocation();
+          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "copy-worktree-location" });
           return;
         case "session.open-worktree-terminal":
+          if (!worktreeChip.canOpenTerminal) {
+            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "worktree-unavailable" });
+            return;
+          }
           void openWorktreeTerminal();
+          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "open-worktree-terminal" });
           return;
         case "session.interrupt":
           if (activeSessionId) {
             void interruptSession(activeSessionId).catch(() => {});
+            emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "interrupt-session" });
+            return;
           }
+          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "session-missing" });
           return;
         default:
+          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "unsupported-command" });
           return;
       }
     };
@@ -2808,6 +2880,9 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     toggleSessionsPane,
     toggleTerminalPanel,
     webSessionsEnabled,
+    emitMenuTrace,
+    worktreeChip.canCopyWorktree,
+    worktreeChip.canOpenTerminal,
   ]);
 
   useEffect(() => {
@@ -2929,6 +3004,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (!desktopUi) return;
     const title = `${workspace?.name ?? "Workspace"}${activeTask?.title ? ` — ${activeTask.title}` : ""}`;
     document.title = title;
+    void desktopSetWindowTitle(title).catch(() => {});
   }, [activeTask?.title, desktopUi, workspace?.name]);
 
   const topbar = useHtmlTopbar ? (

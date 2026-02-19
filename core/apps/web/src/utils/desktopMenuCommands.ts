@@ -1,6 +1,7 @@
 export const DESKTOP_MENU_ACTION_EVENT = "desktop_menu_action" as const;
 export const WEB_MENU_COMMAND_EVENT = "ctx:menu-command" as const;
 export const WEB_MENU_STATE_EVENT = "ctx:menu-state" as const;
+export const WEB_MENU_TRACE_EVENT = "ctx:menu-trace" as const;
 
 export const DESKTOP_MENU_COMMAND_IDS = [
   "file.new-workspace",
@@ -40,12 +41,9 @@ export const DESKTOP_MENU_COMMAND_IDS = [
 
 export type DesktopMenuCommandId = (typeof DESKTOP_MENU_COMMAND_IDS)[number];
 
-export type DesktopMenuActionEventPayload =
-  | string
-  | {
-      commandId?: string;
-      command_id?: string;
-    };
+export type DesktopMenuActionEventPayload = {
+  commandId: DesktopMenuCommandId;
+};
 
 export type DesktopMenuItemState = {
   id: DesktopMenuCommandId;
@@ -60,6 +58,13 @@ export type WebMenuCommandDetail = {
 export type WebMenuStateDetail = {
   items: DesktopMenuItemState[];
   replace?: boolean;
+};
+
+export type WebMenuTraceDetail = {
+  commandId: DesktopMenuCommandId;
+  layer: "app" | "workbench";
+  status: "forwarded" | "handled" | "ignored";
+  note?: string;
 };
 
 const COMMAND_ID_SET = new Set<string>(DESKTOP_MENU_COMMAND_IDS);

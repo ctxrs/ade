@@ -18,8 +18,10 @@ import { preloadHarnessLogos } from "./utils/harnessCatalog";
 import { refreshUpdateCheck } from "./utils/updateNotice";
 import {
   desktopListen,
+  desktopOpenWorkspaceSetupInNewWindow,
   desktopOpenWorkspaceInNewWindow,
   desktopSetMenuState,
+  desktopSetWindowTitle,
   isDesktopApp,
   openExternalLink,
 } from "./utils/desktop";
@@ -30,10 +32,12 @@ import {
   DESKTOP_MENU_ACTION_EVENT,
   isDesktopMenuCommandId,
   parseWorkspaceIdFromPathname,
+  WEB_MENU_TRACE_EVENT,
   WEB_MENU_COMMAND_EVENT,
   WEB_MENU_STATE_EVENT,
   type DesktopMenuActionEventPayload,
   type DesktopMenuItemState,
+  type WebMenuTraceDetail,
   type WebMenuCommandDetail,
   type WebMenuStateDetail,
 } from "./utils/desktopMenuCommands";
@@ -104,6 +108,13 @@ function DesktopMenuBridge() {
   const navigate = useNavigate();
   const location = useLocation();
   const patchRef = useRef<DesktopMenuItemState[]>([]);
+  const emitMenuTrace = (detail: WebMenuTraceDetail) => {
+    window.dispatchEvent(
+      new CustomEvent<WebMenuTraceDetail>(WEB_MENU_TRACE_EVENT, {
+        detail,
+      }),
+    );
+  };
 
   const pushMenuState = useRef(() => {});
   pushMenuState.current = () => {
@@ -122,6 +133,12 @@ function DesktopMenuBridge() {
   useEffect(() => {
     patchRef.current = [];
     pushMenuState.current();
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    const title = (typeof document !== "undefined" ? document.title : "").trim() || "ctx";
+    void desktopSetWindowTitle(title).catch(() => {});
   }, [location.pathname]);
 
   useEffect(() => {
@@ -153,43 +170,55 @@ function DesktopMenuBridge() {
     let active = true;
     let unlisten: (() => void) | null = null;
     desktopListen<DesktopMenuActionEventPayload>(DESKTOP_MENU_ACTION_EVENT, (payload) => {
-      const raw = typeof payload === "string" ? payload : payload?.commandId ?? payload?.command_id;
-      if (!isDesktopMenuCommandId(raw)) return;
-
-      const commandId = raw;
+      if (!payload || !isDesktopMenuCommandId(payload.commandId)) return;
+      const { commandId } = payload;
       switch (commandId) {
         case "file.new-workspace":
+          void desktopOpenWorkspaceSetupInNewWindow().catch(() => {});
+          emitMenuTrace({ commandId, layer: "app", status: "handled", note: "open-workspace-setup-window" });
+          return;
         case "go.workspace-setup":
           navigate("/workspace-setup");
+          emitMenuTrace({ commandId, layer: "app", status: "handled", note: "navigate-workspace-setup" });
           return;
         case "file.open-workspaces":
         case "go.workspaces":
           navigate("/workspaces");
+          emitMenuTrace({ commandId, layer: "app", status: "handled", note: "navigate-workspaces" });
           return;
         case "go.launcher":
           navigate("/");
+          emitMenuTrace({ commandId, layer: "app", status: "handled", note: "navigate-launcher" });
           return;
         case "go.settings":
           navigate(settingsTargetForPath(location.pathname));
+          emitMenuTrace({ commandId, layer: "app", status: "handled", note: "navigate-settings" });
           return;
         case "go.diagnostics":
         case "help.diagnostics":
           navigate("/diagnostics");
+          emitMenuTrace({ commandId, layer: "app", status: "handled", note: "navigate-diagnostics" });
           return;
         case "go.agent-harnesses":
           navigate("/settings#agent_harnesses");
+          emitMenuTrace({ commandId, layer: "app", status: "handled", note: "navigate-agent-harnesses" });
           return;
         case "help.crash-course":
         case "help.keyboard-shortcuts":
           navigate("/crash-course");
+          emitMenuTrace({ commandId, layer: "app", status: "handled", note: "navigate-crash-course" });
           return;
         case "help.open-logs-folder":
           void openLogsFolder().catch(() => {});
+          emitMenuTrace({ commandId, layer: "app", status: "handled", note: "open-logs-folder" });
           return;
         case "file.open-workspace-new-window": {
           const wsId = parseWorkspaceIdFromPathname(location.pathname);
           if (wsId) {
             void desktopOpenWorkspaceInNewWindow(wsId).catch(() => {});
+            emitMenuTrace({ commandId, layer: "app", status: "handled", note: "open-workspace-window" });
+          } else {
+            emitMenuTrace({ commandId, layer: "app", status: "ignored", note: "workspace-missing" });
           }
           return;
         }
@@ -202,6 +231,7 @@ function DesktopMenuBridge() {
           detail: { commandId },
         }),
       );
+      emitMenuTrace({ commandId, layer: "app", status: "forwarded" });
     })
       .then((fn) => {
         if (!active) {
@@ -225,6 +255,12 @@ function DesktopMenuBridge() {
       if (!detail || !isDesktopMenuCommandId(detail.commandId)) return;
       if (detail.commandId !== "help.report-issue") return;
       void openExternalLink("https://github.com/context-labs/ctx/issues/new").catch(() => {});
+      emitMenuTrace({
+        commandId: detail.commandId,
+        layer: "app",
+        status: "handled",
+        note: "open-report-issue-url",
+      });
     };
     window.addEventListener(WEB_MENU_COMMAND_EVENT, onMenuCommand as EventListener);
     return () => {
