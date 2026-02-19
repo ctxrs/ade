@@ -19,6 +19,12 @@ import {
   isDesktopApp,
   openExternalLink,
 } from "../utils/desktop";
+import {
+  appendDownloadAttributionIdToUrl,
+  clearPendingDownloadAttributionId,
+  createDownloadAttributionId,
+  setPendingDownloadAttributionId,
+} from "../utils/analytics";
 
 vi.mock("../api/client", () => ({
   applyDaemonDesktopConnection: vi.fn(),
@@ -42,6 +48,14 @@ vi.mock("../utils/desktop", () => ({
   openExternalLink: vi.fn(),
 }));
 
+vi.mock("../utils/analytics", () => ({
+  appendDownloadAttributionIdToUrl: vi.fn((href: string, downloadId: string) =>
+    `${href}${href.includes("?") ? "&" : "?"}ctx_download_id=${downloadId}`),
+  clearPendingDownloadAttributionId: vi.fn(async () => {}),
+  createDownloadAttributionId: vi.fn(() => "download-test-id"),
+  setPendingDownloadAttributionId: vi.fn(async () => true),
+}));
+
 const renderPage = () =>
   render(
     <MemoryRouter
@@ -55,6 +69,11 @@ const renderPage = () =>
 describe("DiagnosticsPage updates", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(createDownloadAttributionId).mockReturnValue("download-test-id");
+    vi.mocked(appendDownloadAttributionIdToUrl).mockImplementation((href: string, downloadId: string) =>
+      `${href}${href.includes("?") ? "&" : "?"}ctx_download_id=${downloadId}`);
+    vi.mocked(setPendingDownloadAttributionId).mockResolvedValue(true);
+    vi.mocked(clearPendingDownloadAttributionId).mockResolvedValue();
     vi.mocked(appendDesktopLog).mockResolvedValue(undefined);
     const diagnostics: Diagnostics = {
       daemon: {
@@ -131,10 +150,47 @@ describe("DiagnosticsPage updates", () => {
     fireEvent.click(openButton);
 
     await waitFor(() => {
-      expect(openExternalLink).toHaveBeenCalledWith(
+      expect(openExternalLink).toHaveBeenCalledTimes(1);
+      const [openedUrl] = vi.mocked(openExternalLink).mock.calls[0] ?? [];
+      expect(typeof openedUrl).toBe("string");
+      expect(String(openedUrl)).toContain(
         "https://api.example/functions/v1/download/stable/1.0.1/ctx_1.0.1_windows-x64.exe",
       );
+      expect(String(openedUrl)).toContain("ctx_download_id=");
     });
+    expect(setPendingDownloadAttributionId).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not persist pending attribution id in non-desktop sessions", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(false);
+    vi.mocked(checkUpdates).mockResolvedValue({
+      channel: "stable",
+      base_url: "https://api.example/functions/v1",
+      platform: "windows-x64",
+      current_version: "1.0.0",
+      latest_version: "1.0.1",
+      update_available: true,
+      platform_supported: true,
+      manifest: {
+        platforms: {
+          "windows-x64": {
+            nsis: {
+              url_path: "/download/stable/1.0.1/ctx_1.0.1_windows-x64.exe",
+              sha256: "abc",
+            },
+          },
+        },
+      },
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Check updates" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open latest desktop download" }));
+
+    await waitFor(() => {
+      expect(openExternalLink).toHaveBeenCalledTimes(1);
+    });
+    expect(setPendingDownloadAttributionId).not.toHaveBeenCalled();
   });
 
   it("shows unsupported-platform notice when no desktop artifact exists", async () => {
@@ -224,7 +280,52 @@ describe("DiagnosticsPage updates", () => {
     fireEvent.click(installButton);
 
     await waitFor(() => {
-      expect(desktopApplyAppUpdate).toHaveBeenCalledWith("stable");
+      expect(desktopApplyAppUpdate).toHaveBeenCalledWith("stable", expect.any(String));
+    });
+  });
+
+  it("clears pending attribution when native updater does not apply an update", async () => {
+    vi.mocked(desktopApplyAppUpdate).mockResolvedValue({
+      applied: false,
+      needs_restart: false,
+      latest_version: null,
+      message: "No desktop app update is currently available.",
+    });
+    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+      configured: true,
+      available: true,
+      current_version: "1.0.0",
+      latest_version: "1.0.1",
+      target: "windows-x64",
+      endpoint: "https://api.example/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    });
+    vi.mocked(checkUpdates).mockResolvedValue({
+      channel: "stable",
+      base_url: "https://api.example/functions/v1",
+      platform: "windows-x64",
+      current_version: "1.0.0",
+      latest_version: "1.0.1",
+      update_available: true,
+      platform_supported: true,
+      manifest: {
+        platforms: {
+          "windows-x64": {
+            nsis: {
+              url_path: "/download/stable/1.0.1/ctx_1.0.1_windows-x64.exe",
+              sha256: "abc",
+            },
+          },
+        },
+      },
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Check updates" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Install desktop update" }));
+
+    await waitFor(() => {
+      expect(clearPendingDownloadAttributionId).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -233,7 +334,11 @@ describe("DiagnosticsPage updates", () => {
     vi.mocked(desktopGetConnection)
       .mockResolvedValueOnce({ kind: "local", base_url: "http://127.0.0.1:4399", token: "tok-old" })
       .mockResolvedValueOnce({ kind: "local", base_url: "http://127.0.0.1:4401", token: "tok-new" });
-    vi.mocked(desktopRestartLocalDaemon).mockResolvedValue(undefined);
+    vi.mocked(desktopRestartLocalDaemon).mockResolvedValue({
+      kind: "local",
+      base_url: "http://127.0.0.1:4401",
+      token: "tok-new",
+    } as never);
     vi.mocked(checkUpdates).mockResolvedValue({
       channel: "stable",
       base_url: "https://api.example/functions/v1",

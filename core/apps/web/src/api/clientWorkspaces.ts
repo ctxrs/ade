@@ -35,12 +35,16 @@ export type SubagentSystemPromptConfig = {
   source: "default" | "config" | "disabled";
 };
 
-export const createWorkspace = async (root_path: string, name?: string) => {
+export const createWorkspace = async (
+  root_path: string,
+  name?: string,
+  workspaceKind: "local" | "remote" = "local",
+) => {
   const workspace = await apiAny<Workspace>("/api/workspaces", {
     method: "POST",
     body: JSON.stringify({ root_path, name }),
   });
-  trackWorkspaceCreated("local");
+  trackWorkspaceCreated(workspaceKind);
   return workspace;
 };
 

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, test, vi } from "vitest";
 import App from "./App";
@@ -16,6 +16,12 @@ import {
   WEB_MENU_COMMAND_EVENT,
   type DesktopMenuCommandId,
 } from "./utils/desktopMenuCommands";
+import {
+  consumePendingDownloadAttributionId,
+  getPendingDownloadAttributionId,
+  trackAppOpened,
+} from "./utils/analytics";
+import { useSettingsSnapshot } from "./state/settingsStore";
 
 const desktopHandlers = new Map<string, (payload?: unknown) => void>();
 
@@ -74,7 +80,7 @@ vi.mock("./state/sessionSupervisor", () => ({
 
 vi.mock("./state/settingsStore", () => ({
   SettingsStoreProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
-  useSettingsSnapshot: () => ({ loaded: false, settings: null }),
+  useSettingsSnapshot: vi.fn(() => ({ loaded: false, loading: false, error: null, settings: null })),
 }));
 
 vi.mock("./utils/harnessCatalog", () => ({
@@ -89,6 +95,8 @@ vi.mock("./utils/analytics", () => ({
   initAnalytics: vi.fn(() => {}),
   setAnalyticsEnabled: vi.fn(() => {}),
   trackAppOpened: vi.fn(() => {}),
+  getPendingDownloadAttributionId: vi.fn(async () => null),
+  consumePendingDownloadAttributionId: vi.fn(async () => null),
 }));
 
 vi.mock("./utils/desktop", () => ({
@@ -121,6 +129,8 @@ beforeEach(() => {
   desktopHandlers.clear();
   vi.mocked(isDesktopApp).mockReturnValue(false);
   vi.mocked(desktopSetDockRecentLocalWorkspaces).mockResolvedValue();
+  vi.mocked(getPendingDownloadAttributionId).mockResolvedValue(null);
+  vi.mocked(consumePendingDownloadAttributionId).mockResolvedValue(null);
   window.history.pushState({}, "", "/");
   const globalWithFetch = globalThis as typeof globalThis & { fetch: typeof fetch };
   globalWithFetch.fetch = vi.fn(async () => {
@@ -128,6 +138,49 @@ beforeEach(() => {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
+  });
+});
+
+test("app_opened includes pending download attribution id when present", async () => {
+  vi.mocked(useSettingsSnapshot).mockReturnValue({
+    loaded: true,
+    loading: false,
+    error: null,
+    settings: { telemetry: { enabled: true } },
+  } as never);
+  vi.mocked(getPendingDownloadAttributionId).mockResolvedValue("dl-123");
+
+  render(<App />);
+
+  await waitFor(() => {
+    expect(trackAppOpened).toHaveBeenCalledWith({ downloadId: "dl-123" });
+  });
+  await waitFor(() => {
+    expect(consumePendingDownloadAttributionId).toHaveBeenCalledTimes(1);
+  });
+});
+
+test("app_opened still emits once under StrictMode effect replay", async () => {
+  vi.mocked(useSettingsSnapshot).mockReturnValue({
+    loaded: true,
+    loading: false,
+    error: null,
+    settings: { telemetry: { enabled: true } },
+  } as never);
+  vi.mocked(getPendingDownloadAttributionId).mockResolvedValue("dl-strict");
+
+  render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+
+  await waitFor(() => {
+    expect(trackAppOpened).toHaveBeenCalledTimes(1);
+    expect(trackAppOpened).toHaveBeenCalledWith({ downloadId: "dl-strict" });
+  });
+  await waitFor(() => {
+    expect(consumePendingDownloadAttributionId).toHaveBeenCalledTimes(1);
   });
 });
 

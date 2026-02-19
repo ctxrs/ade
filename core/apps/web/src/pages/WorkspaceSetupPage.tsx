@@ -1917,7 +1917,8 @@ export default function WorkspaceSetupPage() {
 
       // 3. Register the workspace.
       if (!wsId) {
-        const created = await createWorkspace(rootPath, name);
+        const workspaceKind = selections.location === "remote" ? "remote" : "local";
+        const created = await createWorkspace(rootPath, name, workspaceKind);
         wsId = idToString((created as any).id);
       }
 

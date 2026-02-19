@@ -1,4 +1,21 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const { trackRuntimeErrorObservedMock, trackSessionLoadFatalObservedMock, trackApiErrorObservedMock } =
+  vi.hoisted(() => ({
+    trackRuntimeErrorObservedMock: vi.fn(),
+    trackSessionLoadFatalObservedMock: vi.fn(),
+    trackApiErrorObservedMock: vi.fn(),
+  }));
+
+vi.mock("../utils/analytics", async () => {
+  const actual = await vi.importActual<typeof import("../utils/analytics")>("../utils/analytics");
+  return {
+    ...actual,
+    trackRuntimeErrorObserved: trackRuntimeErrorObservedMock,
+    trackSessionLoadFatalObserved: trackSessionLoadFatalObservedMock,
+    trackApiErrorObserved: trackApiErrorObservedMock,
+  };
+});
 import {
   clearUiDiagnostics,
   emitUiDiagnostic,
@@ -11,6 +28,9 @@ import {
 describe("diagnosticsChannel", () => {
   afterEach(() => {
     resetUiDiagnosticsForTests();
+    trackRuntimeErrorObservedMock.mockReset();
+    trackSessionLoadFatalObservedMock.mockReset();
+    trackApiErrorObservedMock.mockReset();
   });
 
   it("stores structured diagnostics with stable ids", () => {
@@ -31,6 +51,7 @@ describe("diagnosticsChannel", () => {
     expect(events[0].id).toBeLessThan(events[1].id);
     expect(events[0].source).toBe("api");
     expect(events[1].fatal).toBe(true);
+    expect(trackSessionLoadFatalObservedMock).toHaveBeenCalledTimes(1);
   });
 
   it("enforces bounded retention", () => {
@@ -68,11 +89,52 @@ describe("diagnosticsChannel", () => {
       "runtime.error",
       "runtime.unhandled_rejection",
     ]);
+    expect(trackRuntimeErrorObservedMock).toHaveBeenCalledTimes(2);
   });
 
   it("clears events", () => {
     emitUiDiagnostic({ source: "api", code: "x", message: "x" });
     clearUiDiagnostics();
     expect(getUiDiagnostics()).toEqual([]);
+  });
+
+  it("tracks API diagnostics with normalized endpoint metadata", () => {
+    emitUiDiagnostic({
+      source: "api",
+      code: "api.http_error",
+      message: "HTTP failure",
+      context: {
+        path: "/api/workspaces/123",
+        method: "get",
+        status: 502,
+      },
+    });
+
+    expect(trackApiErrorObservedMock).toHaveBeenCalledTimes(1);
+    expect(trackApiErrorObservedMock).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: "/api/workspaces/:id",
+      method: "GET",
+      statusFamily: "5xx",
+    }));
+  });
+
+  it("strips query params and normalizes id-like path segments", () => {
+    emitUiDiagnostic({
+      source: "api",
+      code: "api.http_error",
+      message: "HTTP failure",
+      context: {
+        path: "/api/execution/launch/ws_abc123def456/status?job_id=3f11f2d5-1270-4f97-b0bc-8d6707a5ef95",
+        method: "post",
+        status: 400,
+      },
+    });
+
+    expect(trackApiErrorObservedMock).toHaveBeenCalledTimes(1);
+    expect(trackApiErrorObservedMock).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: "/api/execution/launch/:id/status",
+      method: "POST",
+      statusFamily: "4xx",
+    }));
   });
 });

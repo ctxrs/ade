@@ -224,11 +224,15 @@ export const desktopCheckAppUpdate = async (channel?: string): Promise<DesktopAp
     req: channel ? { channel } : {},
   });
 
-export const desktopApplyAppUpdate = async (channel?: string): Promise<DesktopAppUpdateApplyResp> =>
+export const desktopApplyAppUpdate = async (
+  channel?: string,
+  downloadId?: string,
+): Promise<DesktopAppUpdateApplyResp> =>
   invoke<DesktopAppUpdateApplyResp>("desktop_apply_app_update", {
     req: {
       confirm: true,
       ...(channel ? { channel } : {}),
+      ...(downloadId ? { download_id: downloadId } : {}),
     },
   });
 

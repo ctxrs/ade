@@ -30,6 +30,12 @@ import {
   type DesktopConnectionInfo,
 } from "../utils/desktop";
 import { errorMessage } from "../utils/errorMessage";
+import {
+  appendDownloadAttributionIdToUrl,
+  clearPendingDownloadAttributionId,
+  createDownloadAttributionId,
+  setPendingDownloadAttributionId,
+} from "../utils/analytics";
 
 type ReleaseArtifact = {
   url_path?: string;
@@ -218,8 +224,13 @@ export default function DiagnosticsPage() {
     setError(null);
     setNotice(null);
     setDesktopAppUpdateBusy(true);
+    const downloadId = createDownloadAttributionId();
     try {
-      const resp = await desktopApplyAppUpdate("stable");
+      await setPendingDownloadAttributionId(downloadId);
+      const resp = await desktopApplyAppUpdate("stable", downloadId);
+      if (!resp.applied) {
+        await clearPendingDownloadAttributionId();
+      }
       setNotice(resp.message);
       try {
         const nativeInfo = await desktopCheckAppUpdate("stable");
@@ -228,6 +239,7 @@ export default function DiagnosticsPage() {
         // ignore re-check failures
       }
     } catch (e: unknown) {
+      await clearPendingDownloadAttributionId();
       setError(errorMessage(e));
     } finally {
       setDesktopAppUpdateBusy(false);
@@ -250,10 +262,18 @@ export default function DiagnosticsPage() {
     if (!desktopArtifactUrl) return;
     setError(null);
     setNotice(null);
-    const opened = await openExternalLink(desktopArtifactUrl);
+    const downloadId = createDownloadAttributionId();
+    const attributedUrl = appendDownloadAttributionIdToUrl(desktopArtifactUrl, downloadId);
+    if (desktop) {
+      await setPendingDownloadAttributionId(downloadId);
+    }
+    const opened = await openExternalLink(attributedUrl);
     if (opened) {
       setNotice("Opened desktop update download.");
     } else {
+      if (desktop) {
+        await clearPendingDownloadAttributionId();
+      }
       setError("Unable to open desktop update URL.");
     }
   };
