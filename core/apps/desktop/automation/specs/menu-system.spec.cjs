@@ -129,7 +129,7 @@ const assertSetEqual = (a, b, label) => {
 };
 
 const invokeDesktop = async (command, args) => {
-  const result = await browser.execute(async (cmd, a) => {
+  const exec = async (cmd, a) => {
     const invoke = window.__TAURI__?.core?.invoke;
     if (!invoke) return { ok: false, error: "Tauri invoke not available" };
     try {
@@ -138,87 +138,112 @@ const invokeDesktop = async (command, args) => {
     } catch (err) {
       return { ok: false, error: String(err) };
     }
-  }, command, args || null);
+  };
+  const result = typeof args === "undefined"
+    ? await browser.execute(exec, command)
+    : await browser.execute(exec, command, args);
   if (!result || !result.ok) {
     throw new Error(result?.error || `invoke failed: ${command}`);
   }
   return result.value;
 };
 
-const installMenuHarness = async () => {
+const installDialogShims = async () => {
   await browser.execute(() => {
-    if (window.__ctxMenuHarnessInstalled) return;
-    window.__ctxMenuHarnessInstalled = true;
-    window.__ctxMenuHarness = {
-      traces: [],
-      stateById: {},
-      stateVersion: 0,
-    };
-
     window.confirm = () => true;
     window.alert = () => {};
+  });
+};
 
-    window.addEventListener("ctx:menu-trace", (event) => {
+const getCommandState = async (commandId) => {
+  return await invokeDesktop("desktop_get_menu_item_state", { commandId });
+};
+
+const triggerCommandAndCollectTraces = async (commandId, timeoutMs = 4000) => {
+  const result = await browser.executeAsync((id, timeout, done) => {
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (!invoke) {
+      done({ ok: false, error: "Tauri invoke not available", traces: [] });
+      return;
+    }
+    const traces = [];
+    const onTrace = (event) => {
       const detail = event && event.detail ? event.detail : null;
-      if (!detail || typeof detail.commandId !== "string") return;
-      const entry = {
+      if (!detail || detail.commandId !== id) return;
+      traces.push({
         commandId: String(detail.commandId),
         layer: String(detail.layer || ""),
         status: String(detail.status || ""),
         note: typeof detail.note === "string" ? detail.note : "",
         route: `${window.location.pathname || ""}${window.location.search || ""}${window.location.hash || ""}`,
-        at: Date.now(),
-      };
-      window.__ctxMenuHarness.traces.push(entry);
-      if (window.__ctxMenuHarness.traces.length > 400) {
-        window.__ctxMenuHarness.traces = window.__ctxMenuHarness.traces.slice(-400);
-      }
-    });
-
-    window.addEventListener("ctx:menu-state", (event) => {
-      const detail = event && event.detail ? event.detail : null;
-      if (!detail || !Array.isArray(detail.items)) return;
-      if (detail.replace !== false) {
-        window.__ctxMenuHarness.stateById = {};
-      }
-      for (const item of detail.items) {
-        if (!item || typeof item.id !== "string") continue;
-        window.__ctxMenuHarness.stateById[item.id] = {
-          id: String(item.id),
-          enabled: typeof item.enabled === "boolean" ? item.enabled : null,
-          checked: typeof item.checked === "boolean" ? item.checked : null,
-        };
-      }
-      window.__ctxMenuHarness.stateVersion += 1;
-    });
-  });
-};
-
-const getHarnessSnapshot = async () => {
-  return browser.execute(() => {
-    const h = window.__ctxMenuHarness;
-    if (!h) return null;
-    return {
-      traceCount: Array.isArray(h.traces) ? h.traces.length : 0,
-      stateVersion: Number(h.stateVersion || 0),
-      stateById: h.stateById || {},
+      });
     };
-  });
+
+    let finished = false;
+    const finish = (payload) => {
+      if (finished) return;
+      finished = true;
+      window.removeEventListener("ctx:menu-trace", onTrace);
+      done(payload);
+    };
+    window.addEventListener("ctx:menu-trace", onTrace);
+    window.confirm = () => true;
+    window.alert = () => {};
+
+    const start = Date.now();
+    const poll = () => {
+      if (traces.length > 0) {
+        finish({ ok: true, traces });
+        return;
+      }
+      if (Date.now() - start >= timeout) {
+        finish({ ok: true, traces });
+        return;
+      }
+      setTimeout(poll, 25);
+    };
+
+    invoke("desktop_trigger_menu_command", { commandId: id })
+      .then(() => poll())
+      .catch((err) => finish({ ok: false, error: String(err), traces }));
+  }, commandId, timeoutMs);
+  if (!result || !result.ok) {
+    throw new Error(result?.error || `desktop_trigger_menu_command failed: ${commandId}`);
+  }
+  return Array.isArray(result.traces) ? result.traces : [];
 };
 
-const getCommandTracesSince = async (startIndex, commandId) => {
-  return browser.execute((start, id) => {
-    const h = window.__ctxMenuHarness;
-    if (!h || !Array.isArray(h.traces)) return [];
-    return h.traces.slice(start).filter((entry) => entry && entry.commandId === id);
-  }, startIndex, commandId);
+const waitForTraceBridgeReady = async () => {
+  await browser.waitUntil(
+    async () => {
+      const traces = await triggerCommandAndCollectTraces("file.open-recent", 1200);
+      return traces.some((t) => t.layer === "app");
+    },
+    { timeout: 30000, timeoutMsg: "menu trace bridge not ready" },
+  );
 };
 
-const getCommandState = async (commandId) => {
-  return browser.execute((id) => {
-    const h = window.__ctxMenuHarness;
-    if (!h || !h.stateById) return null;
-    return h.stateById[id] || null;
+const getToggleUiState = async (commandId) => {
+  return await browser.execute((id) => {
+    switch (id) {
+      case "view.toggle-sidebar": {
+        const root = document.querySelector(".wb-root");
+        return Boolean(root && root.classList.contains("wb-root-collapsed"));
+      }
+      case "view.toggle-diff":
+        return Boolean(document.querySelector(".wb-diff"));
+      case "view.toggle-artifacts":
+        return Boolean(document.querySelector(".wb-artifacts"));
+      case "view.toggle-sessions":
+        return Boolean(document.querySelector(".wb-sessions"));
+      case "view.toggle-terminal": {
+        const shell = document.querySelector(".wb-terminal-shell");
+        if (!(shell instanceof HTMLElement)) return null;
+        return shell.getAttribute("aria-hidden") !== "true";
+      }
+      default:
+        return null;
+    }
   }, commandId);
 };
 
@@ -227,11 +252,9 @@ const getCurrentRoute = async () =>
 
 const ensureWorkspaceRoute = async (workspaceId) => {
   const target = `/workspaces/${workspaceId}`;
-  await browser.execute((nextPath) => {
-    const current = window.location.pathname || "";
-    if (current === nextPath) return;
-    window.location.href = nextPath;
-  }, target);
+  await browser.url(`tauri://localhost${target}?menu_e2e=${Date.now()}`);
+  await waitForTauri();
+  await installDialogShims();
   await browser.waitUntil(
     async () => {
       const pathName = await browser.execute(() => window.location.pathname || "");
@@ -239,27 +262,6 @@ const ensureWorkspaceRoute = async (workspaceId) => {
     },
     { timeout: 60000, timeoutMsg: `failed to route to ${target}` },
   );
-};
-
-const waitForStateVersionIncrement = async (startVersion) => {
-  await browser.waitUntil(
-    async () => {
-      const snap = await getHarnessSnapshot();
-      return Boolean(snap && snap.stateVersion > startVersion);
-    },
-    { timeout: 60000, timeoutMsg: "menu state did not refresh in time" },
-  );
-};
-
-const waitForCommandTrace = async (startTraceCount, commandId) => {
-  await browser.waitUntil(
-    async () => {
-      const traces = await getCommandTracesSince(startTraceCount, commandId);
-      return traces.length > 0;
-    },
-    { timeout: 20000, timeoutMsg: `no menu trace observed for ${commandId}` },
-  );
-  return getCommandTracesSince(startTraceCount, commandId);
 };
 
 const createWorkspaceAndTask = async (rootPath) => {
@@ -288,38 +290,25 @@ describe("desktop menu automation", () => {
   it("executes every menu command through the Tauri bridge", async () => {
     assertSetEqual(ALL_MENU_COMMAND_IDS, MENU_TEST_ORDER, "menu command coverage");
 
-    await browser.url("tauri://localhost");
+    await browser.url(`tauri://localhost/workspace-setup?menu_e2e=${Date.now()}`);
     await waitForTauri();
-    await installMenuHarness();
+    await installDialogShims();
 
     const workspaceId = await createWorkspaceAndTask(WORKSPACE_PATH);
     await ensureWorkspaceRoute(workspaceId);
-
-    const initialSnap = await getHarnessSnapshot();
-    const initialVersion = initialSnap ? initialSnap.stateVersion : 0;
-    await waitForStateVersionIncrement(initialVersion);
-
-    // Wait for the workspace to hydrate enough that workbench-scoped actions are available.
-    await browser.waitUntil(
-      async () => {
-        const diffState = await getCommandState("view.toggle-diff");
-        return Boolean(diffState && diffState.enabled === true);
-      },
-      { timeout: 90000, timeoutMsg: "workbench menu state did not hydrate (view.toggle-diff disabled)" },
-    );
+    await waitForTraceBridgeReady();
 
     for (const commandId of MENU_TEST_ORDER) {
       await ensureWorkspaceRoute(workspaceId);
+      await waitForTraceBridgeReady();
 
-      const before = await getHarnessSnapshot();
-      if (!before) {
-        throw new Error("menu harness not available");
+      const beforeState = await getCommandState(commandId);
+      const beforeToggleUiState = TOGGLE_COMMANDS.has(commandId) ? await getToggleUiState(commandId) : null;
+
+      const traces = await triggerCommandAndCollectTraces(commandId);
+      if (traces.length === 0) {
+        throw new Error(`no menu trace observed for ${commandId}`);
       }
-      const beforeState = before.stateById[commandId] || null;
-      const beforeChecked = beforeState && typeof beforeState.checked === "boolean" ? beforeState.checked : null;
-
-      await invokeDesktop("desktop_trigger_menu_command", { command_id: commandId });
-      const traces = await waitForCommandTrace(before.traceCount, commandId);
       const appTraces = traces.filter((t) => t.layer === "app");
       const workbenchTraces = traces.filter((t) => t.layer === "workbench");
 
@@ -335,21 +324,20 @@ describe("desktop menu automation", () => {
         if (workbenchTraces.length === 0) {
           throw new Error(`expected workbench trace for ${commandId}, got ${JSON.stringify(traces)}`);
         }
-        if (beforeState && beforeState.enabled === true) {
+        if (beforeState.enabled === true) {
           if (!workbenchTraces.some((t) => t.status === "handled")) {
             throw new Error(`expected handled workbench trace for enabled ${commandId}, got ${JSON.stringify(traces)}`);
           }
         }
       }
 
-      if (TOGGLE_COMMANDS.has(commandId) && beforeState && beforeState.enabled === true && beforeChecked !== null) {
+      if (TOGGLE_COMMANDS.has(commandId) && beforeState.enabled === true && typeof beforeToggleUiState === "boolean") {
         await browser.waitUntil(
           async () => {
-            const state = await getCommandState(commandId);
-            if (!state || typeof state.checked !== "boolean") return false;
-            return state.checked !== beforeChecked;
+            const nextState = await getToggleUiState(commandId);
+            return typeof nextState === "boolean" && nextState !== beforeToggleUiState;
           },
-          { timeout: 20000, timeoutMsg: `expected checked state change for ${commandId}` },
+          { timeout: 20000, timeoutMsg: `expected UI state change for ${commandId}` },
         );
       }
 

@@ -111,6 +111,7 @@ fn main() {
             desktop_set_menu_state,
             desktop_set_window_title,
             desktop_trigger_menu_command,
+            desktop_get_menu_item_state,
             desktop_register_workspace_window,
             desktop_unregister_workspace_window,
             desktop_upload_blob,
