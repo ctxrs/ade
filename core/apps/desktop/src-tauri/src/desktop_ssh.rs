@@ -625,17 +625,26 @@ fn run_remote_daemon_self_update(
 }
 
 fn stop_remote_daemon_over_ssh(host: &str, user: Option<&str>, remote_port: u16) -> Result<()> {
-    let bind_pattern = format!("serve --bind 127.0.0.1:{remote_port}");
-    let cmd = format!(
-        "pkill -f -- {pattern} >/dev/null 2>&1 || true; sleep 1",
-        pattern = shell_escape(&bind_pattern),
-    );
+    let cmd = remote_stop_daemon_cmd(remote_port);
     let output = run_remote_ssh_shell(host, user, &cmd).context("stopping remote daemon")?;
     if output.status.success() {
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    anyhow::bail!("remote stop command failed: {stderr}");
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() { stderr } else { stdout };
+    anyhow::bail!("remote stop command failed: {detail}");
+}
+
+fn remote_stop_daemon_cmd(remote_port: u16) -> String {
+    let bind_pattern = format!("serve --bind 127.0.0.1:{remote_port}");
+    format!(
+        "if ! command -v pkill >/dev/null 2>&1; then echo 'pkill unavailable on remote host' >&2; exit 127; fi; \
+pkill -f -- {pattern} >/dev/null 2>&1; status=$?; \
+if [ $status -ne 0 ]; then echo \"remote daemon stop failed (pkill exit $status)\" >&2; exit $status; fi; \
+sleep 1",
+        pattern = shell_escape(&bind_pattern),
+    )
 }
 
 fn run_remote_ssh_shell(host: &str, user: Option<&str>, cmd: &str) -> Result<std::process::Output> {
@@ -933,6 +942,35 @@ mod remote_path_validation_tests {
         assert!(
             normalize_update_channel(Some("bad/channel")).is_err(),
             "slashes should be rejected"
+        );
+    }
+
+    #[test]
+    fn remote_stop_command_requires_pkill_success() {
+        let cmd = remote_stop_daemon_cmd(44199);
+        assert!(
+            cmd.contains("command -v pkill"),
+            "expected pkill preflight in stop command: {cmd}"
+        );
+        assert!(
+            cmd.contains("pkill -f --"),
+            "expected pkill invocation in stop command: {cmd}"
+        );
+        assert!(
+            cmd.contains("status=$?"),
+            "expected status handling in stop command: {cmd}"
+        );
+        assert!(
+            cmd.contains("exit $status"),
+            "expected explicit failure on stop error: {cmd}"
+        );
+        assert!(
+            !cmd.contains("|| true"),
+            "stop command must not mask errors: {cmd}"
+        );
+        assert!(
+            cmd.contains("127.0.0.1:44199"),
+            "expected port-specific match pattern in stop command: {cmd}"
         );
     }
 }
