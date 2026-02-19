@@ -21,7 +21,24 @@ trap 'rm -rf "$tmp_root"' EXIT
 
 bundle_dir="$tmp_root/bundle"
 claude_ws="$tmp_root/claude-crp"
+sdk_pkg="$tmp_root/claude-agent-sdk"
 mkdir -p "$claude_ws/bin" "$claude_ws/dist"
+mkdir -p "$sdk_pkg/vendor/ripgrep"
+
+for target in x64-darwin arm64-darwin x64-linux arm64-linux x64-win32 arm64-win32; do
+  mkdir -p "$sdk_pkg/vendor/ripgrep/$target"
+  printf 'stub-%s\n' "$target" > "$sdk_pkg/vendor/ripgrep/$target/rg"
+  printf 'stub-%s\n' "$target" > "$sdk_pkg/vendor/ripgrep/$target/ripgrep.node"
+done
+
+cat > "$sdk_pkg/package.json" <<'JSON'
+{
+  "name": "@anthropic-ai/claude-agent-sdk",
+  "version": "0.2.7",
+  "private": true,
+  "type": "module"
+}
+JSON
 
 cat > "$claude_ws/package.json" <<'JSON'
 {
@@ -29,9 +46,13 @@ cat > "$claude_ws/package.json" <<'JSON'
   "version": "0.0.0-test",
   "private": true,
   "type": "module",
-  "dependencies": {}
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "file:__SDK_PKG__"
+  }
 }
 JSON
+sed -i.bak "s#__SDK_PKG__#${sdk_pkg}#g" "$claude_ws/package.json"
+rm -f "$claude_ws/package.json.bak"
 
 cat > "$claude_ws/bin/claude-crp" <<'JS'
 #!/usr/bin/env node
@@ -89,6 +110,16 @@ case "${os}/${arch}" in
     exit 2
     ;;
 esac
+case "${os}/${arch}" in
+  macos/x86_64) ripgrep_target="x64-darwin" ;;
+  macos/aarch64) ripgrep_target="arm64-darwin" ;;
+  linux/x86_64) ripgrep_target="x64-linux" ;;
+  linux/aarch64) ripgrep_target="arm64-linux" ;;
+  *)
+    echo "error: unsupported ripgrep target for ${os}/${arch}" >&2
+    exit 2
+    ;;
+esac
 
 node_root="$bundle_dir/runtimes/node/${os}/${arch}/node-v${node_version}-${node_target}"
 mkdir -p "$node_root/bin" "$node_root/lib/node_modules/npm/bin"
@@ -117,7 +148,7 @@ CTX_BUNDLE_BUILD_CLAUDE_CRP=0 \
 CTX_BUNDLE_CLAUDE_CRP_WORKSPACE="$claude_ws" \
 "$BUNDLE_SCRIPT"
 
-python3 - "$bundle_dir/manifest.json" "$os" "$arch" <<'PY'
+python3 - "$bundle_dir/manifest.json" "$os" "$arch" "$ripgrep_target" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -125,6 +156,7 @@ from pathlib import Path
 manifest_path = Path(sys.argv[1])
 os_name = sys.argv[2]
 arch = sys.argv[3]
+expected_ripgrep_target = sys.argv[4]
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 providers = manifest.get("providers") or []
 
@@ -155,6 +187,7 @@ bundle_root = manifest_path.parent
 command_path = bundle_root / command
 entrypoint_path = bundle_root / args[0]
 runtime_path = entrypoint_path.parent.parent / "dist" / "runtime.js"
+ripgrep_vendor = entrypoint_path.parent.parent / "node_modules" / "@anthropic-ai" / "claude-agent-sdk" / "vendor" / "ripgrep"
 
 if not command_path.is_file():
     print(f"missing bundled command binary: {command_path}", file=sys.stderr)
@@ -164,6 +197,17 @@ if not entrypoint_path.is_file():
     raise SystemExit(1)
 if not runtime_path.is_file():
     print(f"missing bundled claude runtime: {runtime_path}", file=sys.stderr)
+    raise SystemExit(1)
+if not ripgrep_vendor.is_dir():
+    print(f"missing bundled claude ripgrep vendor dir: {ripgrep_vendor}", file=sys.stderr)
+    raise SystemExit(1)
+
+actual_targets = sorted([p.name for p in ripgrep_vendor.iterdir() if p.is_dir()])
+if actual_targets != [expected_ripgrep_target]:
+    print(
+        f"expected only ripgrep target {expected_ripgrep_target!r}, found {actual_targets!r}",
+        file=sys.stderr,
+    )
     raise SystemExit(1)
 PY
 

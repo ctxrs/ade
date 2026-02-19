@@ -722,6 +722,53 @@ shutil.copytree(src, dst, ignore=ignore, symlinks=True)
 PY
 }
 
+claude_agent_sdk_ripgrep_target() {
+  case "${os}/${arch}" in
+    linux/x86_64) printf '%s' "x64-linux" ;;
+    linux/aarch64) printf '%s' "arm64-linux" ;;
+    macos/x86_64) printf '%s' "x64-darwin" ;;
+    macos/aarch64) printf '%s' "arm64-darwin" ;;
+    windows/x86_64) printf '%s' "x64-win32" ;;
+    windows/aarch64) printf '%s' "arm64-win32" ;;
+    *) printf '%s' "" ;;
+  esac
+}
+
+prune_claude_agent_sdk_ripgrep_vendor() {
+  local provider_id="$1"
+  local provider_root="$2"
+  if [[ "$provider_id" != "claude-crp" ]]; then
+    return 0
+  fi
+
+  local vendor_root="$provider_root/node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep"
+  if [[ ! -d "$vendor_root" ]]; then
+    return 0
+  fi
+
+  local keep_target
+  keep_target="$(claude_agent_sdk_ripgrep_target)"
+  if [[ -z "$keep_target" ]]; then
+    log "error: unsupported claude-crp ripgrep prune target for ${os}/${arch}"
+    exit 5
+  fi
+  if [[ ! -d "$vendor_root/$keep_target" ]]; then
+    log "error: claude-crp ripgrep vendor missing expected target '$keep_target' at $vendor_root"
+    exit 5
+  fi
+
+  local child
+  for child in "$vendor_root"/*; do
+    if [[ ! -d "$child" ]]; then
+      continue
+    fi
+    if [[ "$(basename "$child")" == "$keep_target" ]]; then
+      continue
+    fi
+    rm -rf "$child"
+  done
+}
+
 build_local_adapters() {
   if [[ ! -d "$LOCAL_ADAPTERS_DIR" ]]; then
     log "error: local adapters dir missing: $LOCAL_ADAPTERS_DIR"
@@ -1750,6 +1797,7 @@ while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package 
         if [[ -f "$provider_root/package.json" ]]; then
           npm_install_bundle "$provider_root" "" "project"
         fi
+        prune_claude_agent_sdk_ripgrep_vendor "$provider_id" "$provider_root"
       else
         mkdir -p "$provider_root"
         dest="$provider_root/$bin_path"
@@ -1868,6 +1916,7 @@ PY
         fi
         echo "$version" > "$version_marker"
       fi
+      prune_claude_agent_sdk_ripgrep_vendor "$provider_id" "$provider_root"
       if [[ -z "$node_bin" || ! -f "$node_bin" ]]; then
         log "error: npm provider $provider_id requires bundled node runtime"
         exit 5
