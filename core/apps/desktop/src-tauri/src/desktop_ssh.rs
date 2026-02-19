@@ -642,10 +642,26 @@ fn stop_remote_daemon_over_ssh(
 }
 
 fn remote_stop_daemon_cmd(remote_port: u16, remote_ctx_bin: &str) -> String {
-    let ctx_serve_pattern = format!("{remote_ctx_bin} serve");
-    let bind_local_pattern = format!("{ctx_serve_pattern} --bind 127.0.0.1:{remote_port}");
-    let bind_any_pattern = format!("{ctx_serve_pattern} --bind 0.0.0.0:{remote_port}");
-    let port_pattern = format!("{ctx_serve_pattern} --port {remote_port}");
+    let ctx_bin_name = std::path::Path::new(remote_ctx_bin)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("ctx");
+    let serve_patterns = [
+        format!("{remote_ctx_bin} serve"),
+        format!("{ctx_bin_name} serve"),
+    ];
+    let mut pkill_patterns = Vec::new();
+    for serve_pattern in serve_patterns {
+        pkill_patterns.push(format!("{serve_pattern} --bind 127.0.0.1:{remote_port}"));
+        pkill_patterns.push(format!("{serve_pattern} --bind 0.0.0.0:{remote_port}"));
+        pkill_patterns.push(format!("{serve_pattern} --port {remote_port}"));
+        pkill_patterns.push(serve_pattern);
+    }
+    let pkill_chain = pkill_patterns
+        .iter()
+        .map(|pattern| format!("pkill -f -- {} >/dev/null 2>&1", shell_escape(pattern)))
+        .collect::<Vec<_>>()
+        .join(" || \\\n");
     format!(
         "if command -v lsof >/dev/null 2>&1; then \
   pids=\"$(lsof -tiTCP:{port} -sTCP:LISTEN || true)\"; \
@@ -656,18 +672,12 @@ fn remote_stop_daemon_cmd(remote_port: u16, remote_ctx_bin: &str) -> String {
   fi; \
 fi; \
 if ! command -v pkill >/dev/null 2>&1; then echo 'pkill unavailable on remote host' >&2; exit 127; fi; \
-pkill -f -- {bind_local} >/dev/null 2>&1 || \
-pkill -f -- {bind_any} >/dev/null 2>&1 || \
-pkill -f -- {port_pattern} >/dev/null 2>&1 || \
-pkill -f -- {ctx_serve} >/dev/null 2>&1; \
+{pkill_chain}; \
 status=$?; \
 if [ $status -ne 0 ]; then echo \"remote daemon stop failed (pkill exit $status)\" >&2; exit $status; fi; \
 sleep 1",
         port = remote_port,
-        bind_local = shell_escape(&bind_local_pattern),
-        bind_any = shell_escape(&bind_any_pattern),
-        port_pattern = shell_escape(&port_pattern),
-        ctx_serve = shell_escape(&ctx_serve_pattern),
+        pkill_chain = pkill_chain,
     )
 }
 
@@ -1006,7 +1016,11 @@ mod remote_path_validation_tests {
         );
         assert!(
             cmd.contains("/opt/ctx/bin/ctx serve"),
-            "expected ctx-serve fallback pattern in stop command: {cmd}"
+            "expected absolute-path serve fallback pattern in stop command: {cmd}"
+        );
+        assert!(
+            cmd.contains("ctx serve"),
+            "expected basename serve fallback pattern in stop command: {cmd}"
         );
     }
 }
