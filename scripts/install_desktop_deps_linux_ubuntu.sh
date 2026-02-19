@@ -72,6 +72,8 @@ packages=(
   squashfs-tools
   zsync
   patchelf
+  appstream
+  libgtk-3-bin
   libglib2.0-dev
   libgtk-3-dev
   librsvg2-dev
@@ -121,7 +123,7 @@ else
   exit 2
 fi
 
-for cmd in desktop-file-validate mksquashfs zsyncmake patchelf; do
+for cmd in desktop-file-validate mksquashfs zsyncmake patchelf appstreamcli gtk-update-icon-cache; do
   if command -v "$cmd" >/dev/null 2>&1; then
     echo "- $cmd: OK ($(command -v "$cmd"))"
   else
