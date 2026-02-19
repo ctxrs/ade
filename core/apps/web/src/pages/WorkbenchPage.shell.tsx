@@ -55,7 +55,7 @@ import UpdateNoticeBanner from "../components/UpdateNoticeBanner";
 import { DictationOnboardingModal } from "../components/dictation/DictationOnboardingModal";
 import { buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
-import { WorkbenchComposer, type DraftTrack, type WorkbenchModeId } from "../components/WorkbenchComposer";
+import { WorkbenchComposer, type DraftHarness, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import {
   desktopSetWindowTitle,
@@ -111,6 +111,7 @@ import {
   collectSelectableHarnessProviderIds,
   getHarnessMruStorageKey,
   resolveInitialHarnessSelection,
+  shouldFinalizeInitialHarnessSelection,
 } from "./workbenchShell/harnessSelection";
 import { useWorkbenchOptimisticTasks } from "./workbenchShell/useWorkbenchOptimisticTasks";
 import { useWorkbenchProviders } from "./workbenchShell/useWorkbenchProviders";
@@ -258,14 +259,14 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     [workbenchStore],
   );
 
-  const [draftTracks, setDraftTracks] = useState<DraftTrack[]>([]);
+  const [draftHarness, setDraftHarness] = useState<DraftHarness | null>(null);
   const [startBusy, setStartBusy] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
-  const [useMultipleAgents, setUseMultipleAgents] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
   const [harnessAuthModalProviderId, setHarnessAuthModalProviderId] = useState<string | null>(null);
   const [pendingHarnessSelectionProviderId, setPendingHarnessSelectionProviderId] = useState<string | null>(null);
   const prefetchedProviderOptionsRef = useRef<Set<string>>(new Set());
+  const initialHarnessSelectionResolvedRef = useRef(false);
 
   const {
     dictationRecording,
@@ -298,7 +299,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     ensureProviderOptions,
   } = useWorkbenchProviders({
     workspaceId,
-    setDraftTracks,
+    setDraftHarness,
     onStartError: setStartError,
   });
 
@@ -308,7 +309,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   );
 
   const setSingleDraftHarness = useCallback((providerId: string) => {
-    setDraftTracks([{ key: `t${Date.now()}`, label: "", providerId, modelId: "" }]);
+    setDraftHarness((prev) => {
+      if (prev?.providerId === providerId) return prev;
+      return { providerId, modelId: "" };
+    });
   }, []);
 
   const requestHarnessAuthFromComposer = useCallback((providerId: string) => {
@@ -550,12 +554,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [focusNewTask]);
 
   useEffect(() => {
-    if (useMultipleAgents) return;
-    if (draftTracks.length <= 1) return;
-    setDraftTracks((prev) => (prev.length > 0 ? [prev[0]] : prev));
-  }, [useMultipleAgents, draftTracks.length]);
-
-  useEffect(() => {
     if (activeTaskId) return;
     for (const providerId of selectableHarnessProviderIds) {
       if (providerOptions[providerId]) continue;
@@ -567,12 +565,14 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     prefetchedProviderOptionsRef.current.clear();
+    initialHarnessSelectionResolvedRef.current = false;
   }, [workspaceId]);
 
   useEffect(() => {
     if (activeTaskId) return;
     if (!workspaceId) return;
-    if (draftTracks.length > 0) return;
+    if (draftHarness) return;
+    if (initialHarnessSelectionResolvedRef.current) return;
     if (selectableHarnessProviderIds.length === 0) return;
 
     let mruProviderId: string | null = null;
@@ -587,19 +587,19 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       providerOptions,
       mruProviderId,
     });
-    if (!selectedProviderId) return;
-
+    if (!shouldFinalizeInitialHarnessSelection(selectedProviderId)) return;
+    initialHarnessSelectionResolvedRef.current = true;
     setSingleDraftHarness(selectedProviderId);
   }, [
     activeTaskId,
-    draftTracks.length,
+    draftHarness,
     providerOptions,
     selectableHarnessProviderIds,
     setSingleDraftHarness,
     workspaceId,
   ]);
 
-  const selectedDraftProviderId = draftTracks[0]?.providerId ?? null;
+  const selectedDraftProviderId = draftHarness?.providerId ?? null;
 
   useEffect(() => {
     if (activeTaskId) return;
@@ -2007,18 +2007,17 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const startBlockedReason = useMemo(() => {
     if (draftPrompt.trim().length === 0) return "Enter a prompt to start.";
     if (startBusy) return "Starting…";
-    if (draftTracks.length === 0) return "Select a harness to start.";
-    const missing = draftTracks.find(
-      (t) => !(providersById[t.providerId]?.installed === true && providersById[t.providerId]?.health === "ok"),
-    );
+    if (!draftHarness) return "Select a harness to start.";
+    const missing =
+      !(providersById[draftHarness.providerId]?.installed === true && providersById[draftHarness.providerId]?.health === "ok");
     if (missing) {
-      const diag = providersById[missing.providerId]?.diagnostics?.[0];
+      const diag = providersById[draftHarness.providerId]?.diagnostics?.[0];
       return diag
-        ? `Harness “${missing.providerId}” unavailable: ${diag}`
-        : `Harness “${missing.providerId}” unavailable.`;
+        ? `Harness “${draftHarness.providerId}” unavailable: ${diag}`
+        : `Harness “${draftHarness.providerId}” unavailable.`;
     }
     return null;
-  }, [draftPrompt, startBusy, draftTracks, providersById]);
+  }, [draftHarness, draftPrompt, startBusy, providersById]);
 
   const startNewTask = async () => {
     if (!workspaceId) return;
@@ -2035,8 +2034,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     const nowIso = new Date().toISOString();
     const title = deriveTaskTitle(prompt);
     const attachmentsToSend = draftAttachments.slice();
-    const toStart = draftTracks;
-    const primaryTrack = toStart[0];
+    const primaryTrack = draftHarness;
     if (!primaryTrack) {
       setStartBusy(false);
       setStartError("Select a harness to start.");
@@ -2189,101 +2187,76 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         }),
       );
 
-      for (let i = 0; i < toStart.length; i++) {
-        const dt = toStart[i];
-        try {
-          const installed =
-            providersById[dt.providerId]?.installed === true && providersById[dt.providerId]?.health === "ok";
-          if (!installed) {
-            const diag = providersById[dt.providerId]?.diagnostics?.[0];
-            throw new Error(
-              diag ? `Harness “${dt.providerId}” unavailable: ${diag}` : `Harness “${dt.providerId}” unavailable.`,
-            );
-          }
-          const env_target = "worktree";
-          const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
-          const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
-          const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
-          const clientSessionId = i === 0 ? optimisticSessionId : randomUuid();
-          const messageId = primaryMessagePosted ? randomUuid() : optimisticMessageId;
-          const turnId = primaryMessagePosted ? randomUuid() : optimisticTurnId;
-          const shouldSendInitialPrompt = attachmentsToSend.length === 0;
-          const session = await createSession(currentTaskId, dt.providerId, modelId, {
-            env_target,
-            id: clientSessionId,
-            initial_message_id: messageId,
-            initial_turn_id: turnId,
-            ...(shouldSendInitialPrompt ? { initial_prompt: prompt } : {}),
-          });
-          const sessionId = idToString(session.id);
-          if (!sessionId) throw new Error("Session creation failed.");
-
-          if (!primaryMessagePosted) {
-            if (sessionId !== clientSessionId) {
-              throw new Error("Session creation returned an unexpected id.");
-            }
-            currentSessionId = sessionId;
-            supervisor.setSession(session);
-            setOptimisticTasks((prev) =>
-              prev.map((item) => {
-                if (item.id !== currentTaskId) return item;
-                const nextSessions = item.sessions.map((summary) => {
-                  if (idToString(summary.session.id) !== sessionId) return summary;
-                  const nextSummary: SessionSnapshotSummary = {
-                    ...summary,
-                    session,
-                    last_message_at: nowIso,
-                    last_message_preview: summary.last_message_preview ?? prompt.slice(0, 160),
-                    activity: { is_working: true, last_turn_status: "running" },
-                  };
-                  return nextSummary;
-                });
-                return {
-                  ...item,
-                  sessions: nextSessions,
-                  primarySessionId: sessionId,
-                  task: { ...item.task, primary_session_id: sessionId },
-                };
-              }),
-            );
-          } else {
-            supervisor.setSession(session);
-          }
-
-          if (shouldSendInitialPrompt) {
-            if (sessionId === currentSessionId) {
-              primaryMessagePosted = true;
-              setOptimisticTasks((prev) =>
-                prev.map((item) =>
-                  item.id === currentTaskId && item.localStatus === "starting"
-                    ? { ...item, localStatus: "synced" }
-                    : item,
-                ),
-              );
-            }
-          } else {
-            const posted = await postMessage(sessionId, prompt, "immediate", attachmentsToSend, {
-              id: messageId,
-              turn_id: turnId,
-            });
-            if (sessionId === currentSessionId) {
-              supervisor.setMessages(sessionId, [posted]);
-              primaryMessagePosted = true;
-              setOptimisticTasks((prev) =>
-                prev.map((item) =>
-                  item.id === currentTaskId && item.localStatus === "starting"
-                    ? { ...item, localStatus: "synced" }
-                    : item,
-                ),
-              );
-            }
-          }
-        } catch (e: any) {
-          const message = e?.message ?? String(e);
-          if (!primaryMessagePosted) throw e;
-          setStartError(message);
-        }
+      const dt = primaryTrack;
+      const installed = providersById[dt.providerId]?.installed === true && providersById[dt.providerId]?.health === "ok";
+      if (!installed) {
+        const diag = providersById[dt.providerId]?.diagnostics?.[0];
+        throw new Error(
+          diag ? `Harness “${dt.providerId}” unavailable: ${diag}` : `Harness “${dt.providerId}” unavailable.`,
+        );
       }
+      const env_target = "worktree";
+      const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
+      const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
+      const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
+      const clientSessionId = optimisticSessionId;
+      const messageId = optimisticMessageId;
+      const turnId = optimisticTurnId;
+      const shouldSendInitialPrompt = attachmentsToSend.length === 0;
+      const session = await createSession(currentTaskId, dt.providerId, modelId, {
+        env_target,
+        id: clientSessionId,
+        initial_message_id: messageId,
+        initial_turn_id: turnId,
+        ...(shouldSendInitialPrompt ? { initial_prompt: prompt } : {}),
+      });
+      const sessionId = idToString(session.id);
+      if (!sessionId) throw new Error("Session creation failed.");
+      if (sessionId !== clientSessionId) {
+        throw new Error("Session creation returned an unexpected id.");
+      }
+      currentSessionId = sessionId;
+      supervisor.setSession(session);
+      setOptimisticTasks((prev) =>
+        prev.map((item) => {
+          if (item.id !== currentTaskId) return item;
+          const nextSessions = item.sessions.map((summary) => {
+            if (idToString(summary.session.id) !== sessionId) return summary;
+            const nextSummary: SessionSnapshotSummary = {
+              ...summary,
+              session,
+              last_message_at: nowIso,
+              last_message_preview: summary.last_message_preview ?? prompt.slice(0, 160),
+              activity: { is_working: true, last_turn_status: "running" },
+            };
+            return nextSummary;
+          });
+          return {
+            ...item,
+            sessions: nextSessions,
+            primarySessionId: sessionId,
+            task: { ...item.task, primary_session_id: sessionId },
+          };
+        }),
+      );
+
+      if (shouldSendInitialPrompt) {
+        primaryMessagePosted = true;
+      } else {
+        const posted = await postMessage(sessionId, prompt, "immediate", attachmentsToSend, {
+          id: messageId,
+          turn_id: turnId,
+        });
+        supervisor.setMessages(sessionId, [posted]);
+        primaryMessagePosted = true;
+      }
+      setOptimisticTasks((prev) =>
+        prev.map((item) =>
+          item.id === currentTaskId && item.localStatus === "starting"
+            ? { ...item, localStatus: "synced" }
+            : item,
+        ),
+      );
 
       if (!primaryMessagePosted) {
         throw new Error("Failed to start the first session.");
@@ -3189,11 +3162,9 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 providerOptions={providerOptions}
                 ensureProviderOptions={ensureProviderOptions}
                 onRequestHarnessAuth={requestHarnessAuthFromComposer}
-                draftTracks={draftTracks}
-                setDraftTracks={setDraftTracks}
+                draftHarness={draftHarness}
+                setDraftHarness={setDraftHarness}
                 defaultProviderId={defaultProviderId}
-                useMultipleAgents={useMultipleAgents}
-                setUseMultipleAgents={setUseMultipleAgents}
               />
 
               {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}

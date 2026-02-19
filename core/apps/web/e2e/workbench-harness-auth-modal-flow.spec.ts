@@ -177,10 +177,10 @@ test("workbench: unauthed harness opens auth modal and API key flow readies harn
     workspaceName: `ws-${Date.now()}`,
   });
 
-  const codexHarnessButton = page.getByRole("button", { name: "Codex" });
-  await expect(codexHarnessButton).toBeVisible({ timeout: 15_000 });
+  const harnessButton = page.locator(".wb-switcher-harness");
+  await expect(harnessButton).toBeVisible({ timeout: 15_000 });
 
-  await codexHarnessButton.click();
+  await harnessButton.click();
   const menu = page.locator(".wb-harness-menu");
   await expect(menu).toBeVisible();
 

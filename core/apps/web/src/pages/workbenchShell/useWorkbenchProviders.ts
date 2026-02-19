@@ -9,7 +9,7 @@ import {
   type ProviderOptions,
   type ProviderStatus,
 } from "../../api/client";
-import type { DraftTrack } from "../../components/WorkbenchComposer";
+import type { DraftHarness } from "../../components/WorkbenchComposer";
 
 type ProviderInstallState = {
   installId: string;
@@ -19,7 +19,7 @@ type ProviderInstallState = {
 
 type UseWorkbenchProvidersArgs = {
   workspaceId: string;
-  setDraftTracks: Dispatch<SetStateAction<DraftTrack[]>>;
+  setDraftHarness: Dispatch<SetStateAction<DraftHarness | null>>;
   onStartError: (message: string | null) => void;
 };
 
@@ -30,7 +30,7 @@ const toErrorMessage = (error: unknown): string => {
 
 export function useWorkbenchProviders({
   workspaceId,
-  setDraftTracks,
+  setDraftHarness,
   onStartError,
 }: UseWorkbenchProvidersArgs) {
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
@@ -285,12 +285,13 @@ export function useWorkbenchProviders({
       providersById.codex?.health === "ok" &&
       providersById.codex?.details?.ui_hidden !== "true";
     if (codexInstalled || defaultProviderId === "codex") return;
-    setDraftTracks((prev) => {
-      const isDefault = prev.every((track) => track.providerId === "codex" && !track.label.trim() && !track.modelId.trim());
+    setDraftHarness((prev) => {
+      if (!prev) return prev;
+      const isDefault = prev.providerId === "codex" && prev.modelId.trim().length === 0;
       if (!isDefault) return prev;
-      return prev.map((track) => ({ ...track, providerId: defaultProviderId }));
+      return { ...prev, providerId: defaultProviderId };
     });
-  }, [defaultProviderId, providers.length, providersById, setDraftTracks]);
+  }, [defaultProviderId, providers.length, providersById, setDraftHarness]);
 
   const ensureProviderOptions = useCallback(
     async (providerId: string, opts?: { force?: boolean }): Promise<ProviderOptions | undefined> => {

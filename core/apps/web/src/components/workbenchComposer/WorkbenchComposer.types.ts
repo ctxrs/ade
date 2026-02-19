@@ -12,9 +12,7 @@ export type ContextWindowInfo = {
   remainingFraction?: number;
 };
 
-export type DraftTrack = {
-  key: string;
-  label: string;
+export type DraftHarness = {
   providerId: string;
   modelId: string;
 };
@@ -71,11 +69,9 @@ export type NewSessionProps = SharedProps & {
   ensureProviderOptions: (providerId: string, opts?: { force?: boolean }) => Promise<ProviderOptions | undefined>;
   onRequestHarnessAuth?: (providerId: string) => void;
 
-  draftTracks: DraftTrack[];
-  setDraftTracks: React.Dispatch<React.SetStateAction<DraftTrack[]>>;
+  draftHarness: DraftHarness | null;
+  setDraftHarness: React.Dispatch<React.SetStateAction<DraftHarness | null>>;
   defaultProviderId: string;
-  useMultipleAgents: boolean;
-  setUseMultipleAgents: (next: boolean) => void;
 };
 
 export type ActiveSessionProps = SharedProps & {

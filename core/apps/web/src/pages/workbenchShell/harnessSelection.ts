@@ -44,3 +44,9 @@ export function resolveInitialHarnessSelection({
 
   return null;
 }
+
+export function shouldFinalizeInitialHarnessSelection(
+  selectedProviderId: string | null,
+): selectedProviderId is string {
+  return selectedProviderId !== null;
+}

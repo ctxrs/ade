@@ -1,7 +1,7 @@
 export { WorkbenchComposer } from "./workbenchComposer/WorkbenchComposerView";
 export type {
   ContextWindowInfo,
-  DraftTrack,
+  DraftHarness,
   WorkbenchComposerProps,
   WorkbenchModeId,
 } from "./workbenchComposer/WorkbenchComposer.types";
