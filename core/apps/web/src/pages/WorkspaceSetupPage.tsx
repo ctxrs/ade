@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ChevronRight, Info, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -26,6 +26,7 @@ import {
   repoClone,
   repoInit,
   repoStatus,
+  repoValidateDestination,
   repoStagingPath,
   type Settings,
   type TitleGenerationLocalStatus,
@@ -158,7 +159,8 @@ export default function WorkspaceSetupPage() {
   const [authImportSelected, setAuthImportSelected] = useState<Record<string, boolean>>({});
   const [authImportBusy, setAuthImportBusy] = useState(false);
   const [authImportError, setAuthImportError] = useState<string | null>(null);
-  const [authImportResults, setAuthImportResults] = useState<Array<{ provider: string; status: string; message?: string | null }>>([]);
+  // Keep a single auth-detection snapshot per daemon target during the wizard.
+  // Back/forward navigation preserves the same rows + checkmarks.
   const [authImportScannedKey, setAuthImportScannedKey] = useState<string | null>(null);
   const [titlingProbeBusy, setTitlingProbeBusy] = useState(false);
   const [titlingProbeError, setTitlingProbeError] = useState<string | null>(null);
@@ -172,9 +174,7 @@ export default function WorkspaceSetupPage() {
   const [titlingRemoteModel, setTitlingRemoteModel] = useState(DEFAULT_TITLE_REMOTE_MODEL);
   const [titlingRemoteUseJson, setTitlingRemoteUseJson] = useState(true);
   const [titlingRemoteAdvancedOpen, setTitlingRemoteAdvancedOpen] = useState(false);
-  const [titlingLocalModelId, setTitlingLocalModelId] = useState(DEFAULT_TITLE_LOCAL_MODEL_ID);
   const [titlingLocalUseJson, setTitlingLocalUseJson] = useState(true);
-  const [titlingLocalAdvancedOpen, setTitlingLocalAdvancedOpen] = useState(false);
   const [titlingLocalStatus, setTitlingLocalStatus] = useState<TitleGenerationLocalStatus | null>(null);
   const [titlingLocalStatusBusy, setTitlingLocalStatusBusy] = useState(false);
   const [titlingLocalStatusRequestedTargetKey, setTitlingLocalStatusRequestedTargetKey] = useState<string | null>(null);
@@ -191,6 +191,13 @@ export default function WorkspaceSetupPage() {
   const titlingInstallPollRef = useRef<number | null>(null);
   const titlingInstallPollGenerationRef = useRef(0);
   const selectedDaemonTargetKeyRef = useRef<string | null>(null);
+  const authImportScanPromiseRef = useRef<Promise<ProviderAuthImportCandidate[]> | null>(null);
+  const authImportScanKeyRef = useRef<string | null>(null);
+  const pendingLocalLocationAdvanceRef = useRef(false);
+  const localLocationAdvanceRunRef = useRef(0);
+  const currentStepKeyRef = useRef<string>("location");
+  const titlingProbePromiseRef = useRef<Promise<void> | null>(null);
+  const titlingProbePromiseTargetKeyRef = useRef<string | null>(null);
   const harnessByProviderId = useMemo(() => {
     return new Map(HARNESS_CATALOG.map((entry) => [entry.id, entry]));
   }, []);
@@ -201,7 +208,7 @@ export default function WorkspaceSetupPage() {
       .join(" ");
 
   const containerMode = selections.container;
-  const authImportStepVisible = authImportCandidates.length > 0;
+  const authImportStepVisible = Boolean(selections.location) && authImportCandidates.length > 0;
   const titlingStepVisible = Boolean(selections.location) && titlingProbeDone && titlingStepRequired;
 
   const steps = useMemo<WizardStep[]>(() => {
@@ -399,7 +406,6 @@ export default function WorkspaceSetupPage() {
       && remoteCtxBinIsAbsolute
     )
   );
-  const authScanKey = `${selections.location ?? ""}|${parsedRemote?.user ?? ""}@${parsedRemote?.host ?? ""}`;
   const hasRemoteHost = Boolean(parsedRemote?.host);
   const titlingRemoteValid = titlingRemoteBaseUrl.trim() !== ""
     && titlingRemoteApiKey.trim() !== ""
@@ -476,11 +482,12 @@ export default function WorkspaceSetupPage() {
     throw lastErr ?? new Error("Timed out waiting for daemon health.");
   };
 
-  const connectDaemonForImport = async () => {
+  const connectDaemonForImport = async (locationOverride?: "local" | "remote") => {
+    const location = locationOverride ?? selections.location;
     if (!isDesktopApp()) {
       throw new Error("Auth import requires the desktop app.");
     }
-    if (selections.location === "remote") {
+    if (location === "remote") {
       const parsed = parseUserHost(remoteHostInput);
       if (!parsed?.host) {
         throw new Error("Remote host is required before scanning auth.");
@@ -596,7 +603,6 @@ export default function WorkspaceSetupPage() {
     setTitlingRemoteApiKey("");
     setTitlingRemoteModel(DEFAULT_TITLE_REMOTE_MODEL);
     setTitlingRemoteUseJson(true);
-    setTitlingLocalModelId(DEFAULT_TITLE_LOCAL_MODEL_ID);
     setTitlingLocalUseJson(true);
   };
 
@@ -625,7 +631,6 @@ export default function WorkspaceSetupPage() {
       setTitlingRemoteApiKey(draft.remote.apiKey);
       setTitlingRemoteModel(draft.remote.model);
       setTitlingRemoteUseJson(draft.remote.useJson);
-      setTitlingLocalModelId(draft.local.modelId);
       setTitlingLocalUseJson(draft.local.useJson);
       setTitlingMode(draft.mode);
 
@@ -662,17 +667,35 @@ export default function WorkspaceSetupPage() {
 
   const ensureTitlingProbeForCurrentTarget = async (): Promise<void> => {
     if (!selectedDaemonTargetKey || !canProbeTitling) return;
-    if (titlingProbeBusy && titlingProbeTargetKey === selectedDaemonTargetKey) return;
     if (titlingProbeDone && titlingProbeTargetKey === selectedDaemonTargetKey) return;
-    await probeTitlingForTarget(selectedDaemonTargetKey);
+    const targetKey = selectedDaemonTargetKey;
+    if (
+      titlingProbePromiseRef.current
+      && titlingProbePromiseTargetKeyRef.current === targetKey
+    ) {
+      await titlingProbePromiseRef.current;
+      return;
+    }
+    const probePromise = probeTitlingForTarget(targetKey);
+    titlingProbePromiseRef.current = probePromise;
+    titlingProbePromiseTargetKeyRef.current = targetKey;
+    try {
+      await probePromise;
+    } finally {
+      if (titlingProbePromiseRef.current === probePromise) {
+        titlingProbePromiseRef.current = null;
+        titlingProbePromiseTargetKeyRef.current = null;
+      }
+    }
   };
 
-  const currentTitlingPayload = (): TitleGenerationSettings | null => {
-    if (titlingMode !== "remote" && titlingMode !== "local") return null;
+  const currentTitlingPayload = (modeOverride?: "remote" | "local"): TitleGenerationSettings | null => {
+    const mode = modeOverride ?? titlingMode;
+    if (mode !== "remote" && mode !== "local") return null;
     return buildSessionTitlingPayload({
-      mode: titlingMode,
+      mode,
       draft: {
-        mode: titlingMode,
+        mode,
         remote: {
           baseUrl: titlingRemoteBaseUrl,
           apiKey: titlingRemoteApiKey,
@@ -680,7 +703,7 @@ export default function WorkspaceSetupPage() {
           useJson: titlingRemoteUseJson,
         },
         local: {
-          modelId: titlingLocalModelId,
+          modelId: DEFAULT_TITLE_LOCAL_MODEL_ID,
           useJson: titlingLocalUseJson,
         },
       },
@@ -688,9 +711,11 @@ export default function WorkspaceSetupPage() {
     });
   };
 
-  const ensureTitlingPersistedForCurrentTarget = async (): Promise<boolean> => {
-    if (titlingMode === "skip") return true;
-    const payload = currentTitlingPayload();
+  const ensureTitlingPersistedForCurrentTarget = async (
+    modeOverride?: "remote" | "local",
+  ): Promise<boolean> => {
+    if (!modeOverride && titlingMode === "skip") return true;
+    const payload = currentTitlingPayload(modeOverride);
     if (!payload) return false;
     if (!selectedDaemonTargetKey) return false;
     const targetKey = selectedDaemonTargetKey;
@@ -729,25 +754,94 @@ export default function WorkspaceSetupPage() {
     }
   };
 
-  const onInstallTitlingLocal = async () => {
-    if (titlingLocalInstallBusy) return;
+  const onSelectTitlingLocal = () => {
+    if (titlingLocalInstallBusy || titlingPersistBusy) return;
+    invalidateTitlingPersisted();
+    setTitlingMode("local");
     setTitlingLocalInstallBusy(true);
     setTitlingStatusError(null);
     setTitlingPersistError(null);
-    try {
-      const persisted = await ensureTitlingPersistedForCurrentTarget();
-      if (!persisted) return;
-      const { install_id } = await installTitleGenerationLocal();
-      await attachTitlingInstall(install_id);
-    } catch (error) {
-      setTitlingStatusError(messageFromError(error));
-    } finally {
-      setTitlingLocalInstallBusy(false);
-    }
+    setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+    void (async () => {
+      try {
+        const persisted = await ensureTitlingPersistedForCurrentTarget("local");
+        if (!persisted) return;
+        const { install_id } = await installTitleGenerationLocal();
+        void attachTitlingInstall(install_id).catch((error) => {
+          setTitlingStatusError(messageFromError(error));
+        });
+      } catch (error) {
+        setTitlingStatusError(messageFromError(error));
+      } finally {
+        setTitlingLocalInstallBusy(false);
+      }
+    })();
   };
 
+  const scanAuthImportCandidatesForTarget = useCallback(async (target: "local" | "remote"): Promise<ProviderAuthImportCandidate[]> => {
+    if (!isDesktopApp()) return [];
+    if (target === "remote") {
+      if (!parsedRemote?.host) return [];
+      if (remoteStatus !== "connected") return [];
+    }
+
+    const scanKey = target === "local"
+      ? "local|@"
+      : `remote|${parsedRemote?.user ?? ""}@${parsedRemote?.host ?? ""}`;
+    if (authImportScannedKey === scanKey) return authImportCandidates;
+
+    if (
+      authImportScanPromiseRef.current
+      && authImportScanKeyRef.current === scanKey
+    ) {
+      return await authImportScanPromiseRef.current;
+    }
+
+    setAuthImportBusy(true);
+    setAuthImportError(null);
+
+    const scanPromise = (async () => {
+      try {
+        await connectDaemonForImport(target);
+        const resp = await listProviderAuthImportCandidates();
+        const candidates = resp.candidates ?? [];
+        setAuthImportCandidates(candidates);
+        setAuthImportSelected(
+          Object.fromEntries(candidates.map((candidate) => [candidate.id, candidate.parse_status === "parsed"])),
+        );
+        return candidates;
+      } catch (error) {
+        setAuthImportCandidates([]);
+        setAuthImportSelected({});
+        setAuthImportError(messageFromError(error));
+        return [];
+      } finally {
+        // Mark this target as scanned even on failure to avoid repeated races while navigating.
+        setAuthImportScannedKey(scanKey);
+        setAuthImportBusy(false);
+      }
+    })();
+
+    authImportScanPromiseRef.current = scanPromise;
+    authImportScanKeyRef.current = scanKey;
+    try {
+      return await scanPromise;
+    } finally {
+      if (authImportScanPromiseRef.current === scanPromise) {
+        authImportScanPromiseRef.current = null;
+        authImportScanKeyRef.current = null;
+      }
+    }
+  }, [
+    authImportCandidates,
+    authImportScannedKey,
+    parsedRemote?.host,
+    parsedRemote?.user,
+    remoteStatus,
+  ]);
+
   const shouldAutoAdvance = (stepKey: string, optionId: string): boolean => {
-    if (stepKey === "location") return optionId === "local";
+    if (stepKey === "location") return false;
     if (stepKey === "container") return true;
     if (stepKey === "network") return optionId !== "allowlist";
     return false;
@@ -769,11 +863,15 @@ export default function WorkspaceSetupPage() {
       setImportRepoNote(null);
     }
     if (stepKey === "location") {
-      setAuthImportScannedKey(null);
-      setAuthImportCandidates([]);
-      setAuthImportSelected({});
-      setAuthImportError(null);
-      setAuthImportResults([]);
+      // Keep local prefetch snapshot so local click can advance without step-topology churn.
+      if (optionId === "remote") {
+        pendingLocalLocationAdvanceRef.current = false;
+        localLocationAdvanceRunRef.current += 1;
+        setAuthImportScannedKey(null);
+        setAuthImportCandidates([]);
+        setAuthImportSelected({});
+        setAuthImportError(null);
+      }
       invalidateTitlingPersisted();
       setTitlingProbeError(null);
     }
@@ -800,6 +898,10 @@ export default function WorkspaceSetupPage() {
 
   const onSelectOption = (stepKey: string, optionId: string) => {
     onSelect(stepKey, optionId);
+    if (stepKey === "location" && optionId === "local") {
+      pendingLocalLocationAdvanceRef.current = true;
+      return;
+    }
     if (shouldAutoAdvance(stepKey, optionId)) {
       setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
     }
@@ -820,26 +922,13 @@ export default function WorkspaceSetupPage() {
   }, [selectedDaemonTargetKey]);
 
   useEffect(() => {
-    if (!selectedDaemonTargetKey) {
-      setTitlingProbeBusy(false);
-      setTitlingProbeError(null);
-      setTitlingProbeDone(false);
-      setTitlingConfiguredReady(false);
-      setTitlingStepRequired(false);
-      setTitlingProbeTargetKey(null);
-      setTitlingPersistError(null);
-      setTitlingPersistedTargetKey(null);
-      setTitlingPersistedHash(null);
-      setTitlingExistingSettings(null);
-      setTitlingLocalStatus(null);
-      setTitlingLocalStatusRequestedTargetKey(null);
-      setTitlingStatusError(null);
-      setTitlingLocalInstall(null);
-      clearTitlingInstallPoll();
-      resetTitlingDraft();
-      return;
-    }
-    if (!canProbeTitling) {
+    currentStepKeyRef.current = step.key;
+  }, [step.key]);
+
+  useEffect(() => {
+    if (!selectedDaemonTargetKey || !canProbeTitling) {
+      titlingProbePromiseRef.current = null;
+      titlingProbePromiseTargetKeyRef.current = null;
       setTitlingProbeBusy(false);
       setTitlingProbeError(null);
       setTitlingProbeDone(false);
@@ -860,6 +949,8 @@ export default function WorkspaceSetupPage() {
     }
 
     if (titlingProbeTargetKey !== selectedDaemonTargetKey) {
+      titlingProbePromiseRef.current = null;
+      titlingProbePromiseTargetKeyRef.current = null;
       setTitlingProbeError(null);
       setTitlingProbeDone(false);
       setTitlingConfiguredReady(false);
@@ -875,17 +966,9 @@ export default function WorkspaceSetupPage() {
       clearTitlingInstallPoll();
       resetTitlingDraft();
     }
-
-    if (titlingProbeTargetKey === selectedDaemonTargetKey && (titlingProbeDone || titlingProbeBusy)) {
-      return;
-    }
-
-    void probeTitlingForTarget(selectedDaemonTargetKey);
   }, [
     canProbeTitling,
     selectedDaemonTargetKey,
-    titlingProbeBusy,
-    titlingProbeDone,
     titlingProbeTargetKey,
   ]);
 
@@ -960,58 +1043,47 @@ export default function WorkspaceSetupPage() {
   }, []);
 
   useEffect(() => {
-    if (!selections.location) {
-      setAuthImportCandidates([]);
-      setAuthImportSelected({});
-      setAuthImportError(null);
-      setAuthImportResults([]);
-      setAuthImportScannedKey(null);
-      return;
-    }
-    if (selections.location === "remote") {
-      if (!parsedRemote?.host) return;
-      if (remoteStatus !== "connected") return;
-    }
-    if (authImportScannedKey === authScanKey) return;
+    if (!pendingLocalLocationAdvanceRef.current) return;
+    if (step.key !== "location") return;
+    if (selections.location !== "local") return;
 
-    let cancelled = false;
-    setAuthImportBusy(true);
-    setAuthImportError(null);
-    setAuthImportResults([]);
-
-    connectDaemonForImport()
-      .then(() => listProviderAuthImportCandidates())
-      .then((resp) => {
-        if (cancelled) return;
-        const candidates = resp.candidates ?? [];
-        setAuthImportCandidates(candidates);
-        setAuthImportSelected(
-          Object.fromEntries(candidates.map((candidate) => [candidate.id, candidate.parse_status === "parsed"])),
-        );
-        setAuthImportScannedKey(authScanKey);
-      })
-      .catch((err: any) => {
-        if (cancelled) return;
-        setAuthImportCandidates([]);
-        setAuthImportSelected({});
-        setAuthImportError(err?.message ?? String(err));
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setAuthImportBusy(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
+    const runId = ++localLocationAdvanceRunRef.current;
+    pendingLocalLocationAdvanceRef.current = false;
+    void (async () => {
+      const candidates = await scanAuthImportCandidatesForTarget("local");
+      if (!candidates.length) {
+        await ensureTitlingProbeForCurrentTarget();
+      }
+      if (localLocationAdvanceRunRef.current !== runId) return;
+      if (selectedDaemonTargetKeyRef.current !== "local") return;
+      if (currentStepKeyRef.current !== "location") return;
+      setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+    })();
   }, [
-    authImportScannedKey,
-    authScanKey,
-    parsedRemote?.host,
-    remoteStatus,
+    ensureTitlingProbeForCurrentTarget,
+    scanAuthImportCandidatesForTarget,
     selections.location,
+    step.key,
   ]);
+
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    if (step.key !== "location") return;
+    if (selections.location) return;
+    void scanAuthImportCandidatesForTarget("local");
+  }, [
+    scanAuthImportCandidatesForTarget,
+    selections.location,
+    step.key,
+  ]);
+
+  useEffect(() => {
+    if (selections.location) return;
+    setAuthImportCandidates([]);
+    setAuthImportSelected({});
+    setAuthImportError(null);
+    setAuthImportScannedKey(null);
+  }, [selections.location]);
 
   useEffect(() => {
     const shouldSuggest = needsSourcePath
@@ -1234,8 +1306,131 @@ export default function WorkspaceSetupPage() {
       setImportInitDialog({ path });
     });
 
+  const preflightSourceStep = async (): Promise<boolean> => {
+    if (step.key !== "source") return true;
+
+    if (isDesktopApp()) {
+      try {
+        await connectDaemonForImport();
+      } catch (error) {
+        setCreateError(messageFromError(error));
+        return false;
+      }
+    }
+
+    // Validate host-path destination constraints on Next so users see path errors before Create.
+    if (selections.source === "clone" && !useDiskIsolatedStaging) {
+      const dest = parseCloneDestPath(sourcePath);
+      if (!dest) {
+        setCreateError("Destination must be an absolute path (e.g. /Users/example-user/projects/ or /Users/example-user/projects/repo-name).");
+        return false;
+      }
+      const destName = dest.dest_name ?? deriveRepoNameFromUrl(repoUrl);
+      if (!destName) {
+        setCreateError("Could not derive repo name from URL.");
+        return false;
+      }
+      const normalizedParent = dest.dest_parent.replace(/\/+$/, "") || "/";
+      const fullDestPath = normalizedParent === "/" ? `/${destName}` : `${normalizedParent}/${destName}`;
+      try {
+        await repoValidateDestination({ path: fullDestPath, must_not_exist: true });
+      } catch (error) {
+        setCreateError(messageFromError(error));
+        return false;
+      }
+      return true;
+    }
+
+    if (selections.source === "new" && !useDiskIsolatedStaging) {
+      const destPath = sourcePath.trim().replace(/\/+$/, "");
+      if (!destPath) {
+        setCreateError("Destination folder is required.");
+        return false;
+      }
+      try {
+        await repoValidateDestination({
+          path: destPath,
+          require_empty_if_exists: true,
+        });
+      } catch (error) {
+        setCreateError(messageFromError(error));
+        return false;
+      }
+      return true;
+    }
+
+    if (selections.source === "import") {
+      const rootPath = sourcePath.trim().replace(/\/+$/, "");
+      if (!rootPath) {
+        setCreateError("Folder is required.");
+        return false;
+      }
+      setImportRepoStatus("checking");
+      setImportRepoNote(null);
+      try {
+        const st = await repoStatus({ path: rootPath });
+        if (st.is_repo) {
+          setImportRepoStatus("ok");
+          setImportRepoNote(null);
+          return true;
+        }
+        const detail = String(st.error ?? "").trim();
+        const note = detail
+          ? `Not a git repo yet (${detail}). We'll offer to initialize it during Create.`
+          : "Not a git repo yet. We'll offer to initialize it during Create.";
+        // Keep this flow reachable: non-repo folders are supported via confirm+repoInit at Create time.
+        setImportRepoStatus("ok");
+        setImportRepoNote(note);
+        return true;
+      } catch (error) {
+        const message = `Could not verify the selected folder. ${messageFromError(error)}`;
+        setImportRepoStatus("error");
+        setImportRepoNote(message);
+        setCreateError(message);
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const advanceFromAuthImportStep = async (
+    options?: { clearSelections?: boolean },
+  ): Promise<void> => {
+    if (authImportBusy) return;
+    const selectionSnapshot = options?.clearSelections ? {} : authImportSelected;
+    if (options?.clearSelections) {
+      setAuthImportSelected({});
+    }
+    const candidateIds = authImportCandidates
+      .filter((candidate) => selectionSnapshot[candidate.id])
+      .map((candidate) => candidate.id);
+    if (candidateIds.length) {
+      setAuthImportBusy(true);
+      setAuthImportError(null);
+      try {
+        await connectDaemonForImport();
+        await importProviderAuthCandidates(candidateIds);
+      } catch (err: any) {
+        setAuthImportError(err?.message ?? String(err));
+        setAuthImportBusy(false);
+        return;
+      }
+      setAuthImportBusy(false);
+    }
+    await ensureTitlingProbeForCurrentTarget();
+    if (currentStepKeyRef.current !== "auth-import") return;
+    setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+  };
+
   const onNext = async () => {
     if (step.key === "location") {
+      if (selections.location === "local") {
+        // If local auto-advance is in flight, manual Next takes ownership so only one
+        // continuation can commit the location->next-step transition.
+        pendingLocalLocationAdvanceRef.current = false;
+        localLocationAdvanceRunRef.current += 1;
+      }
       if (selections.location === "remote") {
         if (!parsedRemote) return;
         if (!isDesktopApp()) {
@@ -1289,38 +1484,22 @@ export default function WorkspaceSetupPage() {
         }
       }
 
-      await ensureTitlingProbeForCurrentTarget();
+      let candidates: ProviderAuthImportCandidate[] = [];
+      if (selections.location === "local") {
+        candidates = await scanAuthImportCandidatesForTarget("local");
+      } else if (selections.location === "remote") {
+        candidates = await scanAuthImportCandidatesForTarget("remote");
+      }
+      // Resolve titling before leaving location only when there is no auth-import step.
+      if (!candidates.length) {
+        await ensureTitlingProbeForCurrentTarget();
+      }
+      if (currentStepKeyRef.current !== "location") return;
       setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
       return;
     }
     if (step.key === "auth-import") {
-      if (authImportBusy) return;
-      const candidateIds = authImportCandidates
-        .filter((candidate) => authImportSelected[candidate.id])
-        .map((candidate) => candidate.id);
-      if (!candidateIds.length) {
-        setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
-        return;
-      }
-      setAuthImportBusy(true);
-      setAuthImportError(null);
-      try {
-        await connectDaemonForImport();
-        const resp = await importProviderAuthCandidates(candidateIds);
-        const results = (resp.results ?? []).map((result) => ({
-          provider: result.provider_id,
-          status: result.status,
-          message: result.message ?? null,
-        }));
-        setAuthImportResults(results);
-      } catch (err: any) {
-        setAuthImportError(err?.message ?? String(err));
-        setAuthImportBusy(false);
-        return;
-      }
-      setAuthImportBusy(false);
-      await ensureTitlingProbeForCurrentTarget();
-      setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+      await advanceFromAuthImportStep();
       return;
     }
     if (step.key === "session-titling") {
@@ -1339,6 +1518,13 @@ export default function WorkspaceSetupPage() {
       }
       const persisted = await ensureTitlingPersistedForCurrentTarget();
       if (!persisted) return;
+      setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+      return;
+    }
+    if (step.key === "source") {
+      setCreateError(null);
+      const preflightOk = await preflightSourceStep();
+      if (!preflightOk) return;
       setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
       return;
     }
@@ -2105,22 +2291,11 @@ export default function WorkspaceSetupPage() {
                         })}
                       </div>
                     )}
-                    {authImportResults.length > 0 && (
-                      <div className="wizard-note">
-                        {authImportResults.map((entry, idx) => (
-                          <div key={`${entry.provider}:${entry.status}:${idx}`}>
-                            {entry.provider}: {entry.status}
-                            {entry.message ? ` (${entry.message})` : ""}
-                          </div>
-                        ))}
-                      </div>
-                    )}
                     <button
                       type="button"
                       className="wizard-skip wizard-skip--left wizard-skip--below"
                       onClick={() => {
-                        setAuthImportSelected({});
-                        setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+                        void advanceFromAuthImportStep({ clearSelections: true });
                       }}
                       disabled={authImportBusy}
                     >
@@ -2149,6 +2324,7 @@ export default function WorkspaceSetupPage() {
                           invalidateTitlingPersisted();
                           setTitlingMode("remote");
                         }}
+                        disabled={titlingLocalInstallBusy || titlingPersistBusy}
                         aria-pressed={titlingMode === "remote"}
                       >
                         <div className="wizard-option-title">
@@ -2163,9 +2339,9 @@ export default function WorkspaceSetupPage() {
                         className={`wizard-option${titlingMode === "local" ? " is-selected" : ""}`}
                         data-testid="wizard-titling-mode-local"
                         onClick={() => {
-                          invalidateTitlingPersisted();
-                          setTitlingMode("local");
+                          void onSelectTitlingLocal();
                         }}
+                        disabled={titlingLocalInstallBusy || titlingPersistBusy}
                         aria-pressed={titlingMode === "local"}
                       >
                         <div className="wizard-option-title">
@@ -2243,75 +2419,6 @@ export default function WorkspaceSetupPage() {
                             Prefer JSON response format
                           </label>
                         )}
-                        {!titlingRemoteValid && (
-                          <div className="wizard-note">Base URL, API key, and model are required.</div>
-                        )}
-                      </div>
-                    )}
-                    {titlingMode === "local" && (
-                      <div className="wizard-input">
-                        <label>
-                          Model ID
-                          <input
-                            data-testid="wizard-titling-local-model-id"
-                            placeholder="ggml-org/Qwen3-1.7B-GGUF"
-                            value={titlingLocalModelId}
-                            onChange={(e) => {
-                              invalidateTitlingPersisted();
-                              setTitlingLocalModelId(e.target.value);
-                            }}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          className="wizard-advanced-link"
-                          data-testid="wizard-titling-local-advanced-toggle"
-                          onClick={() => setTitlingLocalAdvancedOpen((open) => !open)}
-                          aria-expanded={titlingLocalAdvancedOpen}
-                        >
-                          <ChevronRight
-                            size={14}
-                            className={titlingLocalAdvancedOpen ? "is-open" : undefined}
-                            aria-hidden="true"
-                          />
-                          Advanced
-                        </button>
-                        {titlingLocalAdvancedOpen && (
-                          <label className="wizard-checkbox">
-                            <input
-                              data-testid="wizard-titling-local-use-json"
-                              type="checkbox"
-                              checked={titlingLocalUseJson}
-                              onChange={(e) => {
-                                invalidateTitlingPersisted();
-                                setTitlingLocalUseJson(e.target.checked);
-                              }}
-                            />
-                            Prefer JSON response format
-                          </label>
-                        )}
-                        <button
-                          type="button"
-                          className="wizard-input-button"
-                          data-testid="wizard-titling-local-install"
-                          onClick={() => {
-                            void onInstallTitlingLocal();
-                          }}
-                          disabled={titlingLocalInstallBusy || titlingPersistBusy || titlingLocalStatusBusy}
-                        >
-                          {titlingLocalInstallBusy
-                            ? "Starting install…"
-                            : titlingLocalInstall?.state === "running"
-                              ? "Installing…"
-                              : "Download now"}
-                        </button>
-                        <div className="wizard-note" data-testid="wizard-titling-local-status">
-                          {titlingLocalStatus?.ready
-                            ? "Local model ready."
-                            : titlingLocalInstall?.state === "running"
-                              ? `Installing local model${typeof titlingLocalInstall.pct === "number" ? ` (${titlingLocalInstall.pct}%)` : ""}. Workspace creation is still allowed.`
-                              : "Local model is not ready yet. Titles will use truncation fallback until install finishes."}
-                        </div>
                       </div>
                     )}
                     <button
@@ -2323,7 +2430,7 @@ export default function WorkspaceSetupPage() {
                         setTitlingMode("skip");
                         setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
                       }}
-                      disabled={titlingPersistBusy}
+                      disabled={titlingPersistBusy || titlingLocalInstallBusy}
                     >
                       Skip for now
                     </button>
@@ -2434,7 +2541,7 @@ export default function WorkspaceSetupPage() {
 		                  <div className="wizard-input">
 		                    <input
 		                      data-testid="wizard-setup-hook"
-		                      placeholder="pnpm install"
+		                      placeholder="./prepare-worktree.sh"
 		                      value={setupHook}
 		                      onChange={(e) => {
                           setCreateError(null);
@@ -2485,7 +2592,7 @@ export default function WorkspaceSetupPage() {
 	                      Verification command (optional)
 	                  <input
 	                        data-testid="wizard-merge-verify-command"
-	                        placeholder="pnpm test"
+	                        placeholder="./verify.sh"
 		                        value={verifyCommand}
 		                        onChange={(e) => {
                             setCreateError(null);

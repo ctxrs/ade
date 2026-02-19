@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import WorkspaceSetupPage from "./WorkspaceSetupPage";
@@ -18,6 +18,7 @@ import {
   repoInit,
   repoStagingPath,
   repoStatus,
+  repoValidateDestination,
   startExecutionLaunch,
   updateSettings,
   updateWorkspaceExecutionConfig,
@@ -45,6 +46,7 @@ vi.mock("../api/client", async () => {
     repoClone: vi.fn(),
     repoInit: vi.fn(),
     repoStatus: vi.fn(),
+    repoValidateDestination: vi.fn(),
     repoStagingPath: vi.fn(),
     startExecutionLaunch: vi.fn(),
     updateSettings: vi.fn(),
@@ -80,6 +82,13 @@ const renderPage = () =>
 const getWizardShell = (): HTMLElement => screen.getByTestId("workspace-setup");
 
 const wizardStepKey = (): string => getWizardShell().getAttribute("data-step-key") ?? "";
+
+const selectLocalAndContinue = async () => {
+  fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+  await waitFor(() => {
+    expect(wizardStepKey()).not.toBe("location");
+  });
+};
 
 describe("WorkspaceSetupPage", () => {
   beforeEach(() => {
@@ -120,6 +129,7 @@ describe("WorkspaceSetupPage", () => {
       last_event: undefined,
     } as never);
     vi.mocked(repoStatus).mockResolvedValue({ canonical_path: "/tmp/repo", is_repo: true });
+    vi.mocked(repoValidateDestination).mockResolvedValue({ path: "/tmp/repo" });
     vi.mocked(repoInit).mockResolvedValue({ path: "/tmp/repo" });
     vi.mocked(repoStagingPath).mockResolvedValue({ path: "/tmp/staging" } as never);
     vi.mocked(repoClone).mockResolvedValue({ path: "/tmp/staging/repo" });
@@ -163,7 +173,7 @@ describe("WorkspaceSetupPage", () => {
     const nextButton = screen.getByTestId("wizard-next");
     expect(nextButton).toBeDisabled();
 
-    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await selectLocalAndContinue();
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
     });
@@ -213,6 +223,166 @@ describe("WorkspaceSetupPage", () => {
     expect(desktopTestSsh).not.toHaveBeenCalled();
   });
 
+  it("does not auto-advance stale local prefetch after switching to remote", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    let resolveScan: ((value: { candidates: never[] }) => void) | null = null;
+    const pendingScan = new Promise<{ candidates: never[] }>((resolve) => {
+      resolveScan = resolve;
+    });
+    vi.mocked(listProviderAuthImportCandidates).mockImplementation(() => pendingScan as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await waitFor(() => {
+      expect(listProviderAuthImportCandidates).toHaveBeenCalled();
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-location-remote"));
+    expect(wizardStepKey()).toBe("location");
+
+    await act(async () => {
+      resolveScan?.({ candidates: [] });
+      await pendingScan;
+    });
+
+    expect(wizardStepKey()).toBe("location");
+    fireEvent.change(screen.getByTestId("wizard-remote-host"), {
+      target: { value: "devbox.example" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    expect(await screen.findByText("Remote ctx binary path is required.")).toBeInTheDocument();
+    expect(wizardStepKey()).toBe("location");
+  });
+
+  it("shows destination validation errors on source next before create", async () => {
+    vi.mocked(repoValidateDestination).mockRejectedValueOnce(
+      new Error("destination is not empty: /tmp/existing"),
+    );
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-source-path"), {
+      target: { value: "/tmp/existing" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    expect(
+      await screen.findByText("destination is not empty: /tmp/existing"),
+    ).toBeInTheDocument();
+    expect(wizardStepKey()).toBe("source");
+    expect(repoValidateDestination).toHaveBeenCalledWith({
+      path: "/tmp/existing",
+      require_empty_if_exists: true,
+    });
+  });
+
+  it("preflights clone destination path on source next", async () => {
+    vi.mocked(repoValidateDestination).mockRejectedValueOnce(
+      new Error("destination already exists: /tmp/projects/repo"),
+    );
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-source-clone"));
+    fireEvent.change(screen.getByTestId("wizard-repo-url"), {
+      target: { value: "https://github.com/acme/repo.git" },
+    });
+    fireEvent.change(screen.getByTestId("wizard-source-path"), {
+      target: { value: "/tmp/projects/" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    expect(
+      await screen.findByText("destination already exists: /tmp/projects/repo"),
+    ).toBeInTheDocument();
+    expect(wizardStepKey()).toBe("source");
+    expect(repoValidateDestination).toHaveBeenCalledWith({
+      path: "/tmp/projects/repo",
+      must_not_exist: true,
+    });
+  });
+
+  it("advances from source when preflight passes", async () => {
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-source-path"), {
+      target: { value: "/tmp/new-workspace" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("setup");
+    });
+    expect(repoValidateDestination).toHaveBeenCalledWith({
+      path: "/tmp/new-workspace",
+      require_empty_if_exists: true,
+    });
+  });
+
+  it("keeps import source flow reachable for non-repo folders", async () => {
+    vi.mocked(repoStatus).mockResolvedValueOnce({
+      canonical_path: "/tmp/existing-folder",
+      is_repo: false,
+      error: "not a git repository",
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-source-import"));
+    fireEvent.change(screen.getByTestId("wizard-source-path"), {
+      target: { value: "/tmp/existing-folder" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("setup");
+    });
+    expect(repoStatus).toHaveBeenCalledWith({ path: "/tmp/existing-folder" });
+  });
+
   it("renders import auth rows with parsed harnesses preselected", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
@@ -253,7 +423,7 @@ describe("WorkspaceSetupPage", () => {
 
     renderPage();
     await screen.findByTestId("workspace-setup");
-    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await selectLocalAndContinue();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
@@ -290,7 +460,7 @@ describe("WorkspaceSetupPage", () => {
 
     renderPage();
     await screen.findByTestId("workspace-setup");
-    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await selectLocalAndContinue();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
@@ -302,6 +472,76 @@ describe("WorkspaceSetupPage", () => {
 
     await waitFor(() => {
       expect(importProviderAuthCandidates).toHaveBeenCalled();
+      expect(wizardStepKey()).toBe("session-titling");
+    });
+  });
+
+  it("defers titling probe until auth-import next when auth candidates exist", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
+      candidates: [
+        {
+          id: "cand-codex",
+          provider_id: "codex",
+          provider_label: "Codex",
+          kind: "auth_file",
+          path: "/Users/example-user/.codex/auth.json",
+          signal_strength: "strong",
+          confidence: "high",
+          parse_status: "parsed",
+        },
+      ],
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("auth-import");
+    });
+    expect(getSettings).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(getSettings).toHaveBeenCalledTimes(1);
+      expect(wizardStepKey()).toBe("session-titling");
+    });
+  });
+
+  it("probes titling when skipping auth-import", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
+      candidates: [
+        {
+          id: "cand-codex",
+          provider_id: "codex",
+          provider_label: "Codex",
+          kind: "auth_file",
+          path: "/Users/example-user/.codex/auth.json",
+          signal_strength: "strong",
+          confidence: "high",
+          parse_status: "parsed",
+        },
+      ],
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("auth-import");
+    });
+    expect(getSettings).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
+
+    await waitFor(() => {
+      expect(importProviderAuthCandidates).not.toHaveBeenCalled();
+      expect(getSettings).toHaveBeenCalledTimes(1);
       expect(wizardStepKey()).toBe("session-titling");
     });
   });
@@ -332,7 +572,7 @@ describe("WorkspaceSetupPage", () => {
 
     renderPage();
     await screen.findByTestId("workspace-setup");
-    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await selectLocalAndContinue();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
@@ -350,13 +590,113 @@ describe("WorkspaceSetupPage", () => {
     expect(getSettings).toHaveBeenCalledTimes(1);
   });
 
+  it("does not double-advance when local auto-advance and manual next race", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    let resolveScan: ((value: {
+      candidates: Array<{
+        id: string;
+        provider_id: string;
+        provider_label: string;
+        kind: string;
+        path: string;
+        signal_strength: string;
+        confidence: string;
+        parse_status: string;
+      }>;
+    }) => void) | null = null;
+    const pendingScan = new Promise<{
+      candidates: Array<{
+        id: string;
+        provider_id: string;
+        provider_label: string;
+        kind: string;
+        path: string;
+        signal_strength: string;
+        confidence: string;
+        parse_status: string;
+      }>;
+    }>((resolve) => {
+      resolveScan = resolve;
+    });
+    vi.mocked(listProviderAuthImportCandidates).mockImplementation(() => pendingScan as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await waitFor(() => {
+      expect(listProviderAuthImportCandidates).toHaveBeenCalled();
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await act(async () => {
+      resolveScan?.({
+        candidates: [
+          {
+            id: "cand-codex",
+            provider_id: "codex",
+            provider_label: "Codex",
+            kind: "auth_file",
+            path: "/Users/example-user/.codex/auth.json",
+            signal_strength: "strong",
+            confidence: "high",
+            parse_status: "parsed",
+          },
+        ],
+      });
+      await pendingScan;
+    });
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("auth-import");
+    });
+    expect(wizardStepKey()).not.toBe("container");
+  });
+
+  it("waits for titling probe even when no auth candidates are selected", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
+      candidates: [
+        {
+          id: "cand-codex",
+          provider_id: "codex",
+          provider_label: "Codex",
+          kind: "auth_file",
+          path: "/Users/example-user/.codex/auth.json",
+          signal_strength: "strong",
+          confidence: "high",
+          parse_status: "parsed",
+        },
+      ],
+    } as never);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("auth-import");
+    });
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /codex/i }));
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(importProviderAuthCandidates).not.toHaveBeenCalled();
+      expect(getSettings).toHaveBeenCalledTimes(1);
+      expect(wizardStepKey()).toBe("session-titling");
+    });
+  });
+
   it("shows session titling step when selected daemon is not configured", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
 
     renderPage();
     await screen.findByTestId("workspace-setup");
-    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await selectLocalAndContinue();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("session-titling");
@@ -371,7 +711,7 @@ describe("WorkspaceSetupPage", () => {
 
     renderPage();
     await screen.findByTestId("workspace-setup");
-    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await selectLocalAndContinue();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("session-titling");
@@ -402,7 +742,7 @@ describe("WorkspaceSetupPage", () => {
 
     renderPage();
     await screen.findByTestId("workspace-setup");
-    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await selectLocalAndContinue();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
@@ -417,7 +757,7 @@ describe("WorkspaceSetupPage", () => {
 
     renderPage();
     await screen.findByTestId("workspace-setup");
-    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await selectLocalAndContinue();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("session-titling");
@@ -443,7 +783,7 @@ describe("WorkspaceSetupPage", () => {
     });
   });
 
-  it("allows advancing with local titling mode even when local install is not ready", async () => {
+  it("starts local titling install and advances immediately when local mode is selected", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
     vi.mocked(getTitleGenerationLocalStatus).mockResolvedValue({
@@ -464,14 +804,19 @@ describe("WorkspaceSetupPage", () => {
 
     renderPage();
     await screen.findByTestId("workspace-setup");
-    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await selectLocalAndContinue();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("session-titling");
     });
     fireEvent.click(screen.getByTestId("wizard-titling-mode-local"));
-    fireEvent.click(screen.getByTestId("wizard-next"));
 
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    await waitFor(() => {
+      expect(installTitleGenerationLocal).toHaveBeenCalled();
+    });
     await waitFor(() => {
       expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
         title_generation: expect.objectContaining({
@@ -479,31 +824,23 @@ describe("WorkspaceSetupPage", () => {
         }),
       }));
     });
-    await waitFor(() => {
-      expect(wizardStepKey()).toBe("container");
-    });
   });
 
-  it("does not loop local status fetches after a local-status error", async () => {
+  it("removes configurable local titling inputs from the wizard step", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
-    vi.mocked(getTitleGenerationLocalStatus).mockRejectedValue(new Error("status unavailable"));
 
     renderPage();
     await screen.findByTestId("workspace-setup");
-    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await selectLocalAndContinue();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("session-titling");
     });
-    fireEvent.click(screen.getByTestId("wizard-titling-mode-local"));
-
-    await waitFor(() => {
-      expect(getTitleGenerationLocalStatus).toHaveBeenCalledTimes(2);
-    });
-    const callsAfterInitial = vi.mocked(getTitleGenerationLocalStatus).mock.calls.length;
-    await new Promise((resolve) => window.setTimeout(resolve, 80));
-    expect(vi.mocked(getTitleGenerationLocalStatus).mock.calls.length).toBe(callsAfterInitial);
+    expect(screen.queryByTestId("wizard-titling-local-model-id")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("wizard-titling-local-install")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("wizard-titling-mode-remote"));
+    expect(screen.queryByText("Base URL, API key, and model are required.")).not.toBeInTheDocument();
   });
 
   it("supports skip path without writing session titling settings", async () => {
@@ -512,7 +849,7 @@ describe("WorkspaceSetupPage", () => {
 
     renderPage();
     await screen.findByTestId("workspace-setup");
-    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await selectLocalAndContinue();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("session-titling");

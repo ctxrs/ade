@@ -49,6 +49,22 @@ export const repoStatus = (req: RepoStatusRequest) =>
     body: JSON.stringify(req),
   });
 
+export type RepoValidateDestinationRequest = {
+  path: string;
+  must_not_exist?: boolean;
+  require_empty_if_exists?: boolean;
+};
+
+export type RepoValidateDestinationResponse = {
+  path: string;
+};
+
+export const repoValidateDestination = (req: RepoValidateDestinationRequest) =>
+  apiAny<RepoValidateDestinationResponse>("/api/repo/validate_destination", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+
 export type RepoStagingPathResponse = {
   path: string;
 };

@@ -55,7 +55,7 @@ export function MergeQueueSection({ workspaceId, active }: MergeQueueSectionProp
                     verify_command: e.target.value,
                   }))}
                 disabled={mergeQueueDisabled}
-                placeholder="pnpm test"
+                placeholder="./verify.sh"
                 aria-label="Merge queue verification command"
               />
             </div>

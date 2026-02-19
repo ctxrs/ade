@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::Json;
@@ -474,6 +474,128 @@ pub(super) async fn repo_status(
             error: Some(logs::redact_sensitive(&err.to_string())),
         })),
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RepoValidateDestinationReq {
+    path: String,
+    #[serde(default)]
+    must_not_exist: bool,
+    #[serde(default)]
+    require_empty_if_exists: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct RepoValidateDestinationResp {
+    path: String,
+}
+
+pub(super) async fn repo_validate_destination(
+    Json(req): Json<RepoValidateDestinationReq>,
+) -> Result<Json<RepoValidateDestinationResp>, (StatusCode, Json<ApiErrorResp>)> {
+    repo_validate_destination_impl(req).await
+}
+
+pub(super) async fn repo_validate_destination_get(
+    Query(req): Query<RepoValidateDestinationReq>,
+) -> Result<Json<RepoValidateDestinationResp>, (StatusCode, Json<ApiErrorResp>)> {
+    repo_validate_destination_impl(req).await
+}
+
+async fn repo_validate_destination_impl(
+    req: RepoValidateDestinationReq,
+) -> Result<Json<RepoValidateDestinationResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let raw = req.path.trim();
+    if raw.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "path is required".to_string(),
+            }),
+        ));
+    }
+    let expanded = expand_tilde(raw)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: e })))?;
+    validate_absolute_path(&expanded, "path")
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: e })))?;
+
+    let metadata = match tokio::fs::metadata(&expanded).await {
+        Ok(meta) => Some(meta),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: format!(
+                        "failed to inspect destination '{}': {err}",
+                        expanded.display()
+                    ),
+                }),
+            ))
+        }
+    };
+
+    if let Some(meta) = metadata {
+        if !meta.is_dir() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: format!(
+                        "destination exists and is not a directory: {}",
+                        expanded.display()
+                    ),
+                }),
+            ));
+        }
+
+        if req.must_not_exist {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: format!("destination already exists: {}", expanded.display()),
+                }),
+            ));
+        }
+
+        if req.require_empty_if_exists {
+            let mut dir = tokio::fs::read_dir(&expanded).await.map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: format!("failed to read directory '{}': {e}", expanded.display()),
+                    }),
+                )
+            })?;
+            let has_entries = dir
+                .next_entry()
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ApiErrorResp {
+                            error: format!(
+                                "failed to read directory '{}': {e}",
+                                expanded.display()
+                            ),
+                        }),
+                    )
+                })?
+                .is_some();
+            if has_entries {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: format!("destination is not empty: {}", expanded.display()),
+                    }),
+                ));
+            }
+        }
+    }
+
+    let resolved = tokio::fs::canonicalize(&expanded).await.unwrap_or(expanded);
+    Ok(Json(RepoValidateDestinationResp {
+        path: resolved.to_string_lossy().to_string(),
+    }))
 }
 
 #[derive(Debug, Serialize)]

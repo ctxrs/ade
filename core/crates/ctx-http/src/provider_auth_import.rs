@@ -7,7 +7,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::harness_sources;
 use crate::provider_accounts;
+
+const DEFAULT_GEMINI_OPENAI_BASE_URL: &str =
+    "https://generativelanguage.googleapis.com/v1beta/openai";
+const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderAuthImportCandidate {
@@ -107,6 +112,12 @@ struct StoredSecretMaterial {
     content_b64: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyMigrationMarker {
+    version: u32,
+    completed_at: DateTime<Utc>,
+}
+
 fn imported_registry_path(data_root: &Path) -> PathBuf {
     data_root
         .join("providers")
@@ -123,6 +134,13 @@ fn imported_secrets_dir(data_root: &Path) -> PathBuf {
 
 fn imported_secret_path(data_root: &Path, profile_id: &str) -> PathBuf {
     imported_secrets_dir(data_root).join(format!("{profile_id}.json"))
+}
+
+fn legacy_migration_marker_path(data_root: &Path) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("auth_import")
+        .join("migration_v1.json")
 }
 
 pub async fn load_imported_registry(data_root: &Path) -> ProviderImportedAuthRegistry {
@@ -143,6 +161,25 @@ pub async fn save_imported_registry(
     }
     let payload = serde_json::to_vec_pretty(registry)?;
     tokio::fs::write(path, payload).await?;
+    Ok(())
+}
+
+async fn legacy_migration_marker_exists(data_root: &Path) -> bool {
+    tokio::fs::metadata(legacy_migration_marker_path(data_root))
+        .await
+        .is_ok()
+}
+
+async fn write_legacy_migration_marker(data_root: &Path) -> Result<()> {
+    let marker_path = legacy_migration_marker_path(data_root);
+    if let Some(parent) = marker_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let marker = LegacyMigrationMarker {
+        version: 1,
+        completed_at: Utc::now(),
+    };
+    tokio::fs::write(marker_path, serde_json::to_vec_pretty(&marker)?).await?;
     Ok(())
 }
 
@@ -248,7 +285,9 @@ fn build_catalog(roots: &HostRoots) -> Vec<PathSpec> {
             signal_strength: "weak",
             confidence: "low-medium",
             importable: false,
-            unsupported_reason: None,
+            unsupported_reason: Some(
+                "Cursor auth storage is not a stable canonical file path in available docs.",
+            ),
             path: roots.home.join(".cursor").join("cli-config.json"),
         },
         PathSpec {
@@ -272,6 +311,21 @@ fn build_catalog(roots: &HostRoots) -> Vec<PathSpec> {
             importable: true,
             unsupported_reason: None,
             path: roots.home.join(".gemini").join(".env"),
+        },
+        PathSpec {
+            provider_id: "kiro",
+            provider_label: "Kiro",
+            kind: "auth_file",
+            signal_strength: "weak",
+            confidence: "medium",
+            importable: true,
+            unsupported_reason: None,
+            path: roots
+                .home
+                .join(".aws")
+                .join("sso")
+                .join("cache")
+                .join("kiro-auth-token.json"),
         },
         PathSpec {
             provider_id: "gemini",
@@ -571,30 +625,9 @@ pub async fn list_provider_auth_import_candidates() -> Result<Vec<ProviderAuthIm
 pub async fn list_provider_auth_profiles(
     data_root: &Path,
 ) -> Result<Vec<ProviderImportedAuthProfile>> {
+    migrate_legacy_imported_profiles_once(data_root).await?;
     let registry = load_imported_registry(data_root).await;
     Ok(registry.profiles)
-}
-
-async fn write_secret_material(
-    data_root: &Path,
-    profile_id: &str,
-    source_path: &str,
-    source_kind: &str,
-    bytes: &[u8],
-) -> Result<()> {
-    let dir = imported_secrets_dir(data_root);
-    tokio::fs::create_dir_all(&dir).await?;
-    let payload = StoredSecretMaterial {
-        kind: source_kind.to_string(),
-        source_path: source_path.to_string(),
-        content_b64: Some(base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            bytes,
-        )),
-    };
-    let path = imported_secret_path(data_root, profile_id);
-    tokio::fs::write(path, serde_json::to_vec_pretty(&payload)?).await?;
-    Ok(())
 }
 
 async fn import_codex_candidate(
@@ -707,6 +740,13 @@ async fn import_codex_candidate(
         registry.active_account_id = Some(account_id.clone());
     }
     provider_accounts::save_codex_registry(data_root, &registry).await?;
+    let _ = harness_sources::set_provider_source_selection(
+        data_root,
+        "codex",
+        harness_sources::HarnessSourceKind::Subscription,
+        None,
+    )
+    .await?;
 
     Ok(ProviderAuthImportResult {
         candidate_id: material.candidate.id.clone(),
@@ -717,103 +757,633 @@ async fn import_codex_candidate(
     })
 }
 
-async fn import_generic_candidate(
-    data_root: &Path,
-    material: &CandidateMaterial,
-    registry: &mut ProviderImportedAuthRegistry,
-) -> Result<ProviderAuthImportResult> {
-    let Some(bytes) = material.secret_bytes.as_ref() else {
-        return Ok(ProviderAuthImportResult {
-            candidate_id: material.candidate.id.clone(),
-            provider_id: material.candidate.provider_id.clone(),
-            status: "unsupported".to_string(),
-            profile_id: None,
-            message: Some("No importable auth material.".to_string()),
-        });
-    };
-
-    let fingerprint = sha256_hex(bytes);
-    let provider_id = material.candidate.provider_id.clone();
-    let account_identity = material.candidate.account_identity.clone();
-    let endpoint = material.candidate.endpoint.clone();
-    let auth_type = material.candidate.auth_type.clone();
-
-    if let Some(existing) = registry.profiles.iter().find(|p| {
-        p.provider_id == provider_id
-            && p.account_identity == account_identity
-            && p.endpoint == endpoint
-            && p.auth_type == auth_type
-            && p.secret_fingerprint == fingerprint
-    }) {
-        return Ok(ProviderAuthImportResult {
-            candidate_id: material.candidate.id.clone(),
-            provider_id,
-            status: "already_imported".to_string(),
-            profile_id: Some(existing.id.clone()),
-            message: Some("Matching credential already imported.".to_string()),
-        });
+fn trim_to_option(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
+}
 
-    if let Some(existing) = registry.profiles.iter_mut().find(|p| {
-        p.provider_id == provider_id
-            && p.account_identity == account_identity
-            && p.endpoint == endpoint
-            && p.auth_type == auth_type
-    }) {
-        existing.secret_fingerprint = fingerprint.clone();
-        existing.updated_at = Utc::now();
-        write_secret_material(
+fn normalize_json_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect::<String>()
+}
+
+fn json_key_matches(actual: &str, expected: &str) -> bool {
+    normalize_json_key(actual) == normalize_json_key(expected)
+}
+
+fn find_json_string_by_keys(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    match value {
+        serde_json::Value::Object(map) => {
+            for expected in keys {
+                for (actual_key, actual_value) in map {
+                    if !json_key_matches(actual_key, expected) {
+                        continue;
+                    }
+                    if let Some(value) = actual_value.as_str().and_then(trim_to_option) {
+                        return Some(value);
+                    }
+                }
+            }
+            for nested in map.values() {
+                if let Some(value) = find_json_string_by_keys(nested, keys) {
+                    return Some(value);
+                }
+            }
+            None
+        }
+        serde_json::Value::Array(items) => items
+            .iter()
+            .find_map(|item| find_json_string_by_keys(item, keys)),
+        _ => None,
+    }
+}
+
+fn env_value_case_insensitive(env_map: &BTreeMap<String, String>, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = env_map
+            .iter()
+            .find_map(|(actual, value)| actual.eq_ignore_ascii_case(key).then_some(value))
+            .and_then(|value| trim_to_option(value))
+        {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn default_endpoint_base_url_for_provider(provider_id: &str) -> Option<String> {
+    match provider_id {
+        "gemini" => Some(DEFAULT_GEMINI_OPENAI_BASE_URL.to_string()),
+        "qwen" | "opencode" => Some(DEFAULT_OPENROUTER_BASE_URL.to_string()),
+        _ => None,
+    }
+}
+
+fn parse_endpoint_env_candidate(
+    provider_id: &str,
+    material: &CandidateMaterial,
+    default_keys: &[&str],
+) -> Result<(String, Option<String>)> {
+    let Some(bytes) = material.secret_bytes.as_ref() else {
+        anyhow::bail!("No importable auth material.");
+    };
+    let env_map = parse_env_file(&String::from_utf8_lossy(bytes));
+    let api_key = env_value_case_insensitive(&env_map, default_keys)
+        .or_else(|| {
+            env_map
+                .iter()
+                .find(|(key, _)| {
+                    key.to_ascii_uppercase().contains("API_KEY")
+                        || key.to_ascii_uppercase().contains("TOKEN")
+                })
+                .and_then(|(_, value)| trim_to_option(value))
+        })
+        .ok_or_else(|| anyhow::anyhow!("No API key/token variable found in env file."))?;
+
+    let base_url = material
+        .candidate
+        .endpoint
+        .as_deref()
+        .and_then(trim_to_option)
+        .or_else(|| {
+            env_value_case_insensitive(
+                &env_map,
+                &["OPENAI_BASE_URL", "BASE_URL", "CTX_GATEWAY_BASE_URL"],
+            )
+        })
+        .or_else(|| default_endpoint_base_url_for_provider(provider_id));
+
+    Ok((api_key, base_url))
+}
+
+fn parse_endpoint_json_candidate(
+    provider_id: &str,
+    material: &CandidateMaterial,
+) -> Result<(String, Option<String>, Option<String>)> {
+    let Some(bytes) = material.secret_bytes.as_ref() else {
+        anyhow::bail!("No importable auth material.");
+    };
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).context("Auth file must be valid JSON.")?;
+    let api_key = find_json_string_by_keys(
+        &value,
+        &[
+            "api_key",
+            "apiKey",
+            "token",
+            "auth_token",
+            "authToken",
+            "openai_api_key",
+            "openrouter_api_key",
+            "anthropic_api_key",
+        ],
+    )
+    .ok_or_else(|| anyhow::anyhow!("No API key/token field found in auth file."))?;
+    let base_url = find_json_string_by_keys(
+        &value,
+        &[
+            "base_url",
+            "baseURL",
+            "url",
+            "endpoint",
+            "openai_base_url",
+            "openrouter_base_url",
+        ],
+    )
+    .or_else(|| default_endpoint_base_url_for_provider(provider_id));
+    let model_override = find_json_string_by_keys(&value, &["model", "model_name", "openai_model"]);
+    Ok((api_key, base_url, model_override))
+}
+
+fn claude_auth_token_from_bytes(bytes: &[u8]) -> Option<String> {
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) {
+        return find_json_string_by_keys(
+            &value,
+            &[
+                "anthropic_auth_token",
+                "anthropicAuthToken",
+                "auth_token",
+                "authToken",
+                "token",
+            ],
+        );
+    }
+    trim_to_option(&String::from_utf8_lossy(bytes))
+}
+
+async fn set_subscription_source_if_supported(data_root: &Path, provider_id: &str) -> Result<()> {
+    let should_set = matches!(
+        provider_id,
+        "codex"
+            | "claude-crp"
+            | "gemini"
+            | "kimi"
+            | "qwen"
+            | "opencode"
+            | "mistral"
+            | "goose"
+            | "cagent"
+            | "amp"
+            | "droid"
+            | "cody"
+            | "continue"
+            | "cline"
+            | "swe-agent"
+            | "openhands"
+            | "copilot"
+            | "kiro"
+            | "rovo"
+            | "auggie"
+            | "pi"
+    );
+    if should_set {
+        let _ = harness_sources::set_provider_source_selection(
             data_root,
-            &existing.id,
-            &material.candidate.path,
-            &material.candidate.kind,
-            bytes,
+            provider_id,
+            harness_sources::HarnessSourceKind::Subscription,
+            None,
         )
         .await?;
-        return Ok(ProviderAuthImportResult {
-            candidate_id: material.candidate.id.clone(),
-            provider_id,
-            status: "updated".to_string(),
-            profile_id: Some(existing.id.clone()),
-            message: Some("Credential updated.".to_string()),
-        });
     }
+    Ok(())
+}
 
-    let profile_id = uuid::Uuid::new_v4().to_string();
-    let now = Utc::now();
-    registry.profiles.push(ProviderImportedAuthProfile {
-        id: profile_id.clone(),
-        provider_id: provider_id.clone(),
-        provider_label: material.candidate.provider_label.clone(),
-        label: material
-            .label
-            .clone()
-            .unwrap_or_else(|| format!("{} import", material.candidate.provider_label)),
-        account_identity,
-        endpoint,
-        auth_type,
-        source_path: material.candidate.path.clone(),
-        source_kind: material.candidate.kind.clone(),
-        secret_fingerprint: fingerprint,
-        imported_at: now,
-        updated_at: now,
-    });
-    write_secret_material(
+fn import_result(
+    material: &CandidateMaterial,
+    status: &str,
+    profile_id: Option<String>,
+    message: Option<String>,
+) -> ProviderAuthImportResult {
+    ProviderAuthImportResult {
+        candidate_id: material.candidate.id.clone(),
+        provider_id: material.candidate.provider_id.clone(),
+        status: status.to_string(),
+        profile_id,
+        message,
+    }
+}
+
+async fn import_endpoint_candidate(
+    data_root: &Path,
+    material: &CandidateMaterial,
+    provider_id: &str,
+    api_key: String,
+    base_url: Option<String>,
+    model_override: Option<String>,
+) -> Result<ProviderAuthImportResult> {
+    let api_shape = harness_sources::default_shape_for_provider(provider_id)
+        .ok_or_else(|| anyhow::anyhow!("provider does not support endpoint auth import"))?;
+    let match_state = harness_sources::find_provider_endpoint_import_match(
         data_root,
-        &profile_id,
-        &material.candidate.path,
-        &material.candidate.kind,
-        bytes,
+        provider_id,
+        base_url.clone(),
+        api_shape,
+        model_override.clone(),
+        &api_key,
     )
     .await?;
 
-    Ok(ProviderAuthImportResult {
-        candidate_id: material.candidate.id.clone(),
+    if let Some(found) = match_state.as_ref() {
+        if found.kind == harness_sources::HarnessEndpointImportMatchKind::ExactCredentials {
+            let _ = harness_sources::set_provider_source_selection(
+                data_root,
+                provider_id,
+                harness_sources::HarnessSourceKind::Endpoint,
+                Some(found.endpoint_id.clone()),
+            )
+            .await?;
+            return Ok(import_result(
+                material,
+                "already_imported",
+                Some(found.endpoint_id.clone()),
+                Some("Matching endpoint credential already imported.".to_string()),
+            ));
+        }
+    }
+
+    let endpoint = harness_sources::upsert_provider_endpoint(
+        data_root,
         provider_id,
-        status: "imported".to_string(),
-        profile_id: Some(profile_id),
-        message: Some("Credential imported.".to_string()),
-    })
+        harness_sources::HarnessEndpointUpsert {
+            endpoint_id: match_state.as_ref().map(|found| found.endpoint_id.clone()),
+            name: material.label.clone().unwrap_or_else(|| {
+                format!("{} imported endpoint", material.candidate.provider_label)
+            }),
+            base_url,
+            api_shape: Some(api_shape),
+            model_override,
+            api_key: Some(api_key),
+        },
+    )
+    .await?;
+
+    let _ = harness_sources::set_provider_source_selection(
+        data_root,
+        provider_id,
+        harness_sources::HarnessSourceKind::Endpoint,
+        Some(endpoint.id.clone()),
+    )
+    .await?;
+
+    let status = match match_state {
+        Some(found)
+            if found.kind == harness_sources::HarnessEndpointImportMatchKind::SameConfig =>
+        {
+            "updated"
+        }
+        _ => "imported",
+    };
+
+    Ok(import_result(
+        material,
+        status,
+        Some(endpoint.id),
+        Some(if status == "updated" {
+            "Endpoint credential updated.".to_string()
+        } else {
+            "Endpoint credential imported.".to_string()
+        }),
+    ))
+}
+
+async fn import_claude_candidate(
+    data_root: &Path,
+    material: &CandidateMaterial,
+) -> Result<ProviderAuthImportResult> {
+    let Some(bytes) = material.secret_bytes.as_ref() else {
+        return Ok(import_result(
+            material,
+            "unsupported",
+            None,
+            Some("No importable auth material.".to_string()),
+        ));
+    };
+    let Some(token) = claude_auth_token_from_bytes(bytes) else {
+        return Ok(import_result(
+            material,
+            "unsupported",
+            None,
+            Some("Could not find ANTHROPIC auth token in candidate file.".to_string()),
+        ));
+    };
+    let before_len = provider_accounts::load_claude_registry(data_root)
+        .await
+        .accounts
+        .len();
+    let registry =
+        provider_accounts::add_claude_account(data_root, material.label.clone(), token).await?;
+    let imported = registry.accounts.len() > before_len;
+    if imported {
+        set_subscription_source_if_supported(data_root, "claude-crp").await?;
+    }
+    Ok(import_result(
+        material,
+        if imported {
+            "imported"
+        } else {
+            "already_imported"
+        },
+        registry.active_account_id,
+        Some(if imported {
+            "Claude auth imported.".to_string()
+        } else {
+            "Matching Claude auth is already imported.".to_string()
+        }),
+    ))
+}
+
+async fn import_gemini_auth_file_candidate(
+    data_root: &Path,
+    material: &CandidateMaterial,
+) -> Result<ProviderAuthImportResult> {
+    let Some(bytes) = material.secret_bytes.as_ref() else {
+        return Ok(import_result(
+            material,
+            "unsupported",
+            None,
+            Some("No importable auth material.".to_string()),
+        ));
+    };
+
+    let path = Path::new(&material.candidate.path);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+
+    let oauth_creds_json = if file_name.eq_ignore_ascii_case("google_accounts.json") {
+        let oauth_path = parent.join("oauth_creds.json");
+        match tokio::fs::read_to_string(&oauth_path).await {
+            Ok(contents) => trim_to_option(&contents),
+            Err(_) => None,
+        }
+        .ok_or_else(|| anyhow::anyhow!("google_accounts.json requires sibling oauth_creds.json"))?
+    } else {
+        String::from_utf8(bytes.to_vec()).context("gemini auth file must be UTF-8 JSON")?
+    };
+
+    let google_accounts_json = if file_name.eq_ignore_ascii_case("google_accounts.json") {
+        Some(String::from_utf8(bytes.to_vec()).context("google_accounts.json must be UTF-8 JSON")?)
+    } else {
+        let google_path = parent.join("google_accounts.json");
+        tokio::fs::read_to_string(&google_path)
+            .await
+            .ok()
+            .and_then(|raw| trim_to_option(&raw))
+    };
+
+    let before_len = provider_accounts::load_gemini_registry(data_root)
+        .await
+        .accounts
+        .len();
+    let registry = provider_accounts::add_gemini_account(
+        data_root,
+        material.label.clone(),
+        oauth_creds_json,
+        google_accounts_json,
+        None,
+    )
+    .await?;
+    let imported = registry.accounts.len() > before_len;
+    if imported {
+        set_subscription_source_if_supported(data_root, "gemini").await?;
+    }
+    Ok(import_result(
+        material,
+        if imported {
+            "imported"
+        } else {
+            "already_imported"
+        },
+        registry.active_account_id,
+        Some(if imported {
+            "Gemini OAuth auth imported.".to_string()
+        } else {
+            "Matching Gemini OAuth auth is already imported.".to_string()
+        }),
+    ))
+}
+
+async fn import_gemini_env_candidate(
+    data_root: &Path,
+    material: &CandidateMaterial,
+) -> Result<ProviderAuthImportResult> {
+    let (api_key, base_url) =
+        parse_endpoint_env_candidate("gemini", material, &["GEMINI_API_KEY", "OPENAI_API_KEY"])?;
+    import_endpoint_candidate(data_root, material, "gemini", api_key, base_url, None).await
+}
+
+async fn import_qwen_candidate(
+    data_root: &Path,
+    material: &CandidateMaterial,
+) -> Result<ProviderAuthImportResult> {
+    let (api_key, base_url) = parse_endpoint_env_candidate(
+        "qwen",
+        material,
+        &["QWEN_API_KEY", "DASHSCOPE_API_KEY", "OPENAI_API_KEY"],
+    )?;
+    import_endpoint_candidate(data_root, material, "qwen", api_key, base_url, None).await
+}
+
+async fn import_opencode_candidate(
+    data_root: &Path,
+    material: &CandidateMaterial,
+) -> Result<ProviderAuthImportResult> {
+    let (api_key, base_url, model_override) = parse_endpoint_json_candidate("opencode", material)?;
+    import_endpoint_candidate(
+        data_root,
+        material,
+        "opencode",
+        api_key,
+        base_url,
+        model_override,
+    )
+    .await
+}
+
+async fn import_amp_candidate(
+    data_root: &Path,
+    material: &CandidateMaterial,
+) -> Result<ProviderAuthImportResult> {
+    let (api_key, base_url, model_override) = parse_endpoint_json_candidate("amp", material)?;
+    import_endpoint_candidate(
+        data_root,
+        material,
+        "amp",
+        api_key,
+        base_url,
+        model_override,
+    )
+    .await
+}
+
+async fn import_kiro_candidate(
+    data_root: &Path,
+    material: &CandidateMaterial,
+) -> Result<ProviderAuthImportResult> {
+    let Some(bytes) = material.secret_bytes.as_ref() else {
+        return Ok(import_result(
+            material,
+            "unsupported",
+            None,
+            Some("No importable auth material.".to_string()),
+        ));
+    };
+    let auth_token_json =
+        String::from_utf8(bytes.to_vec()).context("kiro auth file must be UTF-8 JSON")?;
+    let before_len = provider_accounts::load_kiro_registry(data_root)
+        .await
+        .accounts
+        .len();
+    let registry = provider_accounts::add_kiro_account(
+        data_root,
+        material.label.clone(),
+        auth_token_json,
+        None,
+    )
+    .await?;
+    let imported = registry.accounts.len() > before_len;
+    if imported {
+        set_subscription_source_if_supported(data_root, "kiro").await?;
+    }
+    Ok(import_result(
+        material,
+        if imported {
+            "imported"
+        } else {
+            "already_imported"
+        },
+        registry.active_account_id,
+        Some(if imported {
+            "Kiro auth imported.".to_string()
+        } else {
+            "Matching Kiro auth is already imported.".to_string()
+        }),
+    ))
+}
+
+async fn import_candidate_to_canonical(
+    data_root: &Path,
+    material: &CandidateMaterial,
+) -> Result<ProviderAuthImportResult> {
+    if !material.importable || material.secret_bytes.is_none() {
+        return Ok(import_result(
+            material,
+            "unsupported",
+            None,
+            material
+                .candidate
+                .unsupported_reason
+                .clone()
+                .or_else(|| Some("No importable auth material.".to_string())),
+        ));
+    }
+    match material.candidate.provider_id.as_str() {
+        "codex" => import_codex_candidate(data_root, material).await,
+        "claude-crp" => import_claude_candidate(data_root, material).await,
+        "gemini" => {
+            if material.candidate.kind == "env_file" {
+                import_gemini_env_candidate(data_root, material).await
+            } else {
+                import_gemini_auth_file_candidate(data_root, material).await
+            }
+        }
+        "qwen" => import_qwen_candidate(data_root, material).await,
+        "opencode" => import_opencode_candidate(data_root, material).await,
+        "amp" => import_amp_candidate(data_root, material).await,
+        "kiro" => import_kiro_candidate(data_root, material).await,
+        _ => Ok(import_result(
+            material,
+            "unsupported",
+            None,
+            Some(format!(
+                "Provider '{}' import is not wired into canonical auth storage yet.",
+                material.candidate.provider_id
+            )),
+        )),
+    }
+}
+
+async fn read_legacy_secret_material_bytes(data_root: &Path, profile_id: &str) -> Option<Vec<u8>> {
+    let payload = tokio::fs::read_to_string(imported_secret_path(data_root, profile_id))
+        .await
+        .ok()?;
+    let parsed = serde_json::from_str::<StoredSecretMaterial>(&payload).ok()?;
+    let content = parsed.content_b64?;
+    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content).ok()
+}
+
+async fn migrate_legacy_imported_profiles_once(data_root: &Path) -> Result<()> {
+    if legacy_migration_marker_exists(data_root).await {
+        return Ok(());
+    }
+
+    let mut registry = load_imported_registry(data_root).await;
+    if registry.profiles.is_empty() {
+        write_legacy_migration_marker(data_root).await?;
+        return Ok(());
+    }
+
+    // Decision: migration must be lossless. Keep any legacy profile that cannot be migrated yet
+    // (missing secret material, unsupported provider, transient failure) so future runs can retry.
+    let mut remaining_profiles: Vec<ProviderImportedAuthProfile> = Vec::new();
+    for profile in registry.profiles.iter().cloned() {
+        let Some(secret_bytes) = read_legacy_secret_material_bytes(data_root, &profile.id).await
+        else {
+            remaining_profiles.push(profile);
+            continue;
+        };
+        let material = CandidateMaterial {
+            candidate: ProviderAuthImportCandidate {
+                id: profile.id.clone(),
+                provider_id: profile.provider_id.clone(),
+                provider_label: profile.provider_label.clone(),
+                kind: profile.source_kind.clone(),
+                path: profile.source_path.clone(),
+                signal_strength: "legacy".to_string(),
+                confidence: "legacy".to_string(),
+                parse_status: "parsed".to_string(),
+                unsupported_reason: None,
+                summary: None,
+                account_identity: profile.account_identity.clone(),
+                endpoint: profile.endpoint.clone(),
+                auth_type: profile.auth_type.clone(),
+                fingerprint: Some(profile.secret_fingerprint.clone()),
+                last_modified: None,
+            },
+            importable: true,
+            secret_bytes: Some(secret_bytes),
+            label: Some(profile.label.clone()),
+        };
+        let migrated = match import_candidate_to_canonical(data_root, &material).await {
+            Ok(result) => matches!(
+                result.status.as_str(),
+                "imported" | "updated" | "already_imported"
+            ),
+            Err(_) => false,
+        };
+        if migrated {
+            let _ = tokio::fs::remove_file(imported_secret_path(data_root, &profile.id)).await;
+        } else {
+            remaining_profiles.push(profile);
+        }
+    }
+
+    registry.profiles = remaining_profiles;
+    save_imported_registry(data_root, &registry).await?;
+    if registry.profiles.is_empty() {
+        let _ = tokio::fs::remove_dir_all(imported_secrets_dir(data_root)).await;
+        write_legacy_migration_marker(data_root).await?;
+    }
+    Ok(())
 }
 
 pub async fn import_provider_auth_candidates(
@@ -823,6 +1393,7 @@ pub async fn import_provider_auth_candidates(
     if candidate_ids.is_empty() {
         return Ok(Vec::new());
     }
+    migrate_legacy_imported_profiles_once(data_root).await?;
 
     let roots = host_roots()?;
     let materials = scan_with_roots(&roots);
@@ -831,7 +1402,6 @@ pub async fn import_provider_auth_candidates(
         by_id.insert(material.candidate.id.clone(), material);
     }
 
-    let mut registry = load_imported_registry(data_root).await;
     let mut results = Vec::new();
 
     for candidate_id in candidate_ids {
@@ -861,21 +1431,44 @@ pub async fn import_provider_auth_candidates(
             continue;
         }
 
-        let result = if material.candidate.provider_id == "codex" {
-            import_codex_candidate(data_root, material).await?
-        } else {
-            import_generic_candidate(data_root, material, &mut registry).await?
-        };
-        results.push(result);
+        match import_candidate_to_canonical(data_root, material).await {
+            Ok(result) => results.push(result),
+            Err(error) => results.push(ProviderAuthImportResult {
+                candidate_id: material.candidate.id.clone(),
+                provider_id: material.candidate.provider_id.clone(),
+                status: "error".to_string(),
+                profile_id: None,
+                message: Some(error.to_string()),
+            }),
+        }
     }
-
-    save_imported_registry(data_root, &registry).await?;
     Ok(results)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+
+    async fn write_legacy_secret_material(
+        data_root: &Path,
+        profile_id: &str,
+        source_path: &str,
+        bytes: &[u8],
+    ) {
+        let payload = StoredSecretMaterial {
+            kind: "auth_file".to_string(),
+            source_path: source_path.to_string(),
+            content_b64: Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
+        };
+        let path = imported_secret_path(data_root, profile_id);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.unwrap();
+        }
+        tokio::fs::write(path, serde_json::to_vec_pretty(&payload).unwrap())
+            .await
+            .unwrap();
+    }
 
     fn test_roots(base: &Path) -> HostRoots {
         HostRoots {
@@ -907,6 +1500,95 @@ mod tests {
         let env = BTreeMap::from([("OPENAI_API_KEY".to_string(), "sk-test".to_string())]);
         let (_summary, endpoint) = summarize_env("qwen", &env);
         assert_eq!(endpoint, None);
+    }
+
+    #[test]
+    fn claude_token_parser_rejects_tokenless_json() {
+        let token = claude_auth_token_from_bytes(br#"{"schema":"changed","expires":123}"#);
+        assert_eq!(token, None);
+    }
+
+    #[tokio::test]
+    async fn legacy_migration_keeps_unmigrated_profiles_without_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let now = Utc::now();
+
+        let codex_profile = ProviderImportedAuthProfile {
+            id: "legacy-codex".to_string(),
+            provider_id: "codex".to_string(),
+            provider_label: "Codex".to_string(),
+            label: "Legacy Codex".to_string(),
+            account_identity: None,
+            endpoint: None,
+            auth_type: Some("subscription".to_string()),
+            source_path: "/tmp/.codex/auth.json".to_string(),
+            source_kind: "auth_file".to_string(),
+            secret_fingerprint: "fp-codex".to_string(),
+            imported_at: now,
+            updated_at: now,
+        };
+        let unsupported_profile = ProviderImportedAuthProfile {
+            id: "legacy-cursor".to_string(),
+            provider_id: "cursor".to_string(),
+            provider_label: "Cursor".to_string(),
+            label: "Legacy Cursor".to_string(),
+            account_identity: None,
+            endpoint: None,
+            auth_type: Some("subscription".to_string()),
+            source_path: "/tmp/.cursor/auth.json".to_string(),
+            source_kind: "auth_file".to_string(),
+            secret_fingerprint: "fp-cursor".to_string(),
+            imported_at: now,
+            updated_at: now,
+        };
+
+        save_imported_registry(
+            root,
+            &ProviderImportedAuthRegistry {
+                profiles: vec![codex_profile.clone(), unsupported_profile.clone()],
+            },
+        )
+        .await
+        .unwrap();
+
+        write_legacy_secret_material(
+            root,
+            &codex_profile.id,
+            &codex_profile.source_path,
+            br#"{"OPENAI_API_KEY":"sk-legacy"}"#,
+        )
+        .await;
+        write_legacy_secret_material(
+            root,
+            &unsupported_profile.id,
+            &unsupported_profile.source_path,
+            br#"{"token":"cursor-legacy"}"#,
+        )
+        .await;
+
+        migrate_legacy_imported_profiles_once(root).await.unwrap();
+
+        let registry = load_imported_registry(root).await;
+        assert_eq!(registry.profiles.len(), 1);
+        assert_eq!(registry.profiles[0].id, unsupported_profile.id);
+
+        assert!(tokio::fs::metadata(legacy_migration_marker_path(root))
+            .await
+            .is_err());
+        assert!(
+            tokio::fs::metadata(imported_secret_path(root, &codex_profile.id))
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::fs::metadata(imported_secret_path(root, &unsupported_profile.id))
+                .await
+                .is_ok()
+        );
+
+        let codex_registry = provider_accounts::load_codex_registry(root).await;
+        assert_eq!(codex_registry.accounts.len(), 1);
     }
 
     #[tokio::test]
@@ -991,56 +1673,219 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generic_import_dedupes_and_updates() {
+    async fn claude_candidate_import_writes_canonical_account_registry() {
         let dir = tempfile::tempdir().unwrap();
-        let data_root = dir.path().join("data");
-        tokio::fs::create_dir_all(&data_root).await.unwrap();
-
-        let now = Utc::now();
-        let mut registry = ProviderImportedAuthRegistry {
-            profiles: vec![ProviderImportedAuthProfile {
-                id: "p1".to_string(),
-                provider_id: "gemini".to_string(),
-                provider_label: "Gemini".to_string(),
-                label: "Gemini API key".to_string(),
-                account_identity: None,
-                endpoint: None,
-                auth_type: Some("api_key".to_string()),
-                source_path: "/tmp/.gemini/.env".to_string(),
-                source_kind: "env_file".to_string(),
-                secret_fingerprint: "old".to_string(),
-                imported_at: now,
-                updated_at: now,
-            }],
-        };
-
+        let root = dir.path();
         let material = CandidateMaterial {
             candidate: ProviderAuthImportCandidate {
-                id: "c1".to_string(),
-                provider_id: "gemini".to_string(),
-                provider_label: "Gemini".to_string(),
-                kind: "env_file".to_string(),
-                path: "/tmp/.gemini/.env".to_string(),
+                id: "claude-candidate".to_string(),
+                provider_id: "claude-crp".to_string(),
+                provider_label: "Claude Code".to_string(),
+                kind: "auth_file".to_string(),
+                path: "/tmp/.claude.json".to_string(),
                 signal_strength: "strong".to_string(),
-                confidence: "medium".to_string(),
+                confidence: "high".to_string(),
                 parse_status: "parsed".to_string(),
                 unsupported_reason: None,
                 summary: None,
                 account_identity: None,
                 endpoint: None,
+                auth_type: Some("subscription".to_string()),
+                fingerprint: None,
+                last_modified: None,
+            },
+            importable: true,
+            secret_bytes: Some(br#"{"anthropicAuthToken":"claude-token-1"}"#.to_vec()),
+            label: Some("Claude import".to_string()),
+        };
+
+        let first = import_candidate_to_canonical(root, &material)
+            .await
+            .unwrap();
+        assert_eq!(first.status, "imported");
+        let registry = provider_accounts::load_claude_registry(root).await;
+        assert_eq!(registry.accounts.len(), 1);
+
+        let second = import_candidate_to_canonical(root, &material)
+            .await
+            .unwrap();
+        assert_eq!(second.status, "already_imported");
+        let registry = provider_accounts::load_claude_registry(root).await;
+        assert_eq!(registry.accounts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn gemini_oauth_candidate_import_writes_canonical_account_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let material = CandidateMaterial {
+            candidate: ProviderAuthImportCandidate {
+                id: "gemini-oauth-candidate".to_string(),
+                provider_id: "gemini".to_string(),
+                provider_label: "Gemini".to_string(),
+                kind: "auth_file".to_string(),
+                path: "/tmp/.gemini/oauth_creds.json".to_string(),
+                signal_strength: "strong".to_string(),
+                confidence: "high".to_string(),
+                parse_status: "parsed".to_string(),
+                unsupported_reason: None,
+                summary: None,
+                account_identity: None,
+                endpoint: None,
+                auth_type: Some("subscription".to_string()),
+                fingerprint: None,
+                last_modified: None,
+            },
+            importable: true,
+            secret_bytes: Some(br#"{"access_token":"a","refresh_token":"b"}"#.to_vec()),
+            label: Some("Gemini import".to_string()),
+        };
+
+        let result = import_candidate_to_canonical(root, &material)
+            .await
+            .unwrap();
+        assert_eq!(result.status, "imported");
+        let registry = provider_accounts::load_gemini_registry(root).await;
+        assert_eq!(registry.accounts.len(), 1);
+        assert_eq!(registry.active_account_id, result.profile_id);
+    }
+
+    #[tokio::test]
+    async fn qwen_env_candidate_import_updates_endpoint_store_without_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let material = CandidateMaterial {
+            candidate: ProviderAuthImportCandidate {
+                id: "qwen-candidate".to_string(),
+                provider_id: "qwen".to_string(),
+                provider_label: "Qwen".to_string(),
+                kind: "env_file".to_string(),
+                path: "/tmp/.qwen/.env".to_string(),
+                signal_strength: "strong".to_string(),
+                confidence: "high".to_string(),
+                parse_status: "parsed".to_string(),
+                unsupported_reason: None,
+                summary: None,
+                account_identity: None,
+                endpoint: Some("https://api.example.com/v1".to_string()),
                 auth_type: Some("api_key".to_string()),
                 fingerprint: None,
                 last_modified: None,
             },
             importable: true,
-            secret_bytes: Some(b"OPENAI_API_KEY=abc".to_vec()),
-            label: Some("Gemini API key".to_string()),
+            secret_bytes: Some(
+                b"OPENAI_API_KEY=key-1\nOPENAI_BASE_URL=https://api.example.com/v1".to_vec(),
+            ),
+            label: Some("Qwen endpoint".to_string()),
         };
 
-        let out = import_generic_candidate(&data_root, &material, &mut registry)
+        let first = import_candidate_to_canonical(root, &material)
             .await
             .unwrap();
-        assert_eq!(out.status, "updated");
-        assert_eq!(registry.profiles.len(), 1);
+        assert_eq!(first.status, "imported");
+        let config = harness_sources::get_provider_source_config(root, "qwen")
+            .await
+            .unwrap();
+        assert_eq!(
+            config.selected_source_kind,
+            harness_sources::HarnessSourceKind::Endpoint
+        );
+        assert_eq!(config.endpoints.len(), 1);
+
+        let second = import_candidate_to_canonical(root, &material)
+            .await
+            .unwrap();
+        assert_eq!(second.status, "already_imported");
+        let config = harness_sources::get_provider_source_config(root, "qwen")
+            .await
+            .unwrap();
+        assert_eq!(config.endpoints.len(), 1);
+
+        let updated_material = CandidateMaterial {
+            secret_bytes: Some(
+                b"OPENAI_API_KEY=key-2\nOPENAI_BASE_URL=https://api.example.com/v1".to_vec(),
+            ),
+            ..material
+        };
+        let updated = import_candidate_to_canonical(root, &updated_material)
+            .await
+            .unwrap();
+        assert_eq!(updated.status, "updated");
+        let config = harness_sources::get_provider_source_config(root, "qwen")
+            .await
+            .unwrap();
+        assert_eq!(config.endpoints.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn qwen_exact_match_import_activates_existing_endpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        let existing = harness_sources::upsert_provider_endpoint(
+            root,
+            "qwen",
+            harness_sources::HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Existing Qwen endpoint".to_string(),
+                base_url: Some("https://api.example.com/v1".to_string()),
+                api_shape: harness_sources::default_shape_for_provider("qwen"),
+                model_override: None,
+                api_key: Some("key-1".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+        let _ = harness_sources::set_provider_source_selection(
+            root,
+            "qwen",
+            harness_sources::HarnessSourceKind::Subscription,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let material = CandidateMaterial {
+            candidate: ProviderAuthImportCandidate {
+                id: "qwen-candidate-exact".to_string(),
+                provider_id: "qwen".to_string(),
+                provider_label: "Qwen".to_string(),
+                kind: "env_file".to_string(),
+                path: "/tmp/.qwen/.env".to_string(),
+                signal_strength: "strong".to_string(),
+                confidence: "high".to_string(),
+                parse_status: "parsed".to_string(),
+                unsupported_reason: None,
+                summary: None,
+                account_identity: None,
+                endpoint: Some("https://api.example.com/v1".to_string()),
+                auth_type: Some("api_key".to_string()),
+                fingerprint: None,
+                last_modified: None,
+            },
+            importable: true,
+            secret_bytes: Some(
+                b"OPENAI_API_KEY=key-1\nOPENAI_BASE_URL=https://api.example.com/v1".to_vec(),
+            ),
+            label: Some("Qwen endpoint".to_string()),
+        };
+
+        let result = import_candidate_to_canonical(root, &material)
+            .await
+            .unwrap();
+        assert_eq!(result.status, "already_imported");
+        assert_eq!(result.profile_id.as_deref(), Some(existing.id.as_str()));
+
+        let config = harness_sources::get_provider_source_config(root, "qwen")
+            .await
+            .unwrap();
+        assert_eq!(
+            config.selected_source_kind,
+            harness_sources::HarnessSourceKind::Endpoint
+        );
+        assert_eq!(
+            config.selected_endpoint_id.as_deref(),
+            Some(existing.id.as_str())
+        );
     }
 }

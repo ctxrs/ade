@@ -120,6 +120,18 @@ pub struct HarnessEndpointUpsert {
     pub api_key: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HarnessEndpointImportMatchKind {
+    ExactCredentials,
+    SameConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct HarnessEndpointImportMatch {
+    pub endpoint_id: String,
+    pub kind: HarnessEndpointImportMatchKind,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HarnessEndpointRecordInternal {
     id: String,
@@ -603,6 +615,63 @@ pub async fn get_provider_source_config(
             .map(public_endpoint_from_internal)
             .collect(),
     })
+}
+
+pub async fn find_provider_endpoint_import_match(
+    data_root: &Path,
+    provider_id: &str,
+    base_url: Option<String>,
+    api_shape: HarnessApiShape,
+    model_override: Option<String>,
+    api_key: &str,
+) -> Result<Option<HarnessEndpointImportMatch>> {
+    let canonical = normalize_provider_id(provider_id).ok_or_else(|| {
+        anyhow::anyhow!("provider does not support harness endpoints: {provider_id}")
+    })?;
+    ensure_shape_compatible(canonical, api_shape)?;
+    let normalized_base_url = normalize_base_url_for_provider(canonical, base_url.as_deref())?;
+    let normalized_model_override = model_override
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let registry = load_registry(data_root).await?;
+    let Some(provider) = registry.providers.get(canonical) else {
+        return Ok(None);
+    };
+
+    let mut config_match_endpoint_id: Option<String> = None;
+    for endpoint in &provider.endpoints {
+        if endpoint.base_url != normalized_base_url || endpoint.api_shape != api_shape {
+            continue;
+        }
+        let endpoint_model_override = endpoint
+            .model_override
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if endpoint_model_override != normalized_model_override {
+            continue;
+        }
+        if config_match_endpoint_id.is_none() {
+            config_match_endpoint_id = Some(endpoint.id.clone());
+        }
+        if let Ok(existing_api_key) = read_endpoint_secret(data_root, &endpoint.secret_ref).await {
+            if existing_api_key == api_key {
+                return Ok(Some(HarnessEndpointImportMatch {
+                    endpoint_id: endpoint.id.clone(),
+                    kind: HarnessEndpointImportMatchKind::ExactCredentials,
+                }));
+            }
+        }
+    }
+
+    Ok(
+        config_match_endpoint_id.map(|endpoint_id| HarnessEndpointImportMatch {
+            endpoint_id,
+            kind: HarnessEndpointImportMatchKind::SameConfig,
+        }),
+    )
 }
 
 pub async fn upsert_provider_endpoint(

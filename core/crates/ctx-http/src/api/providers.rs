@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -573,6 +573,17 @@ async fn restart_kiro_providers_for_auth_change(state: &Arc<AppState>, reason: &
 
 async fn restart_cursor_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
     restart_provider_for_auth_change(state, "cursor", reason).await;
+}
+
+fn import_result_requires_provider_restart(
+    result: &provider_auth_import::ProviderAuthImportResult,
+) -> bool {
+    // `already_imported` can still mutate active account selection (dedupe/upsert paths),
+    // so treat it as auth-affecting to avoid stale runtime credentials.
+    matches!(
+        result.status.as_str(),
+        "imported" | "updated" | "already_imported"
+    )
 }
 
 pub(super) async fn list_codex_accounts(
@@ -1386,11 +1397,18 @@ pub(super) async fn import_provider_auth_candidates(
                     }),
                 )
             })?;
-    let codex_mutated = results.iter().any(|result| {
-        result.provider_id == "codex" && matches!(result.status.as_str(), "imported" | "updated")
-    });
-    if codex_mutated {
-        restart_codex_providers_for_auth_change(&state, "codex auth updated").await;
+    let mutated_providers: HashSet<String> = results
+        .iter()
+        .filter(|result| import_result_requires_provider_restart(result))
+        .map(|result| result.provider_id.clone())
+        .collect();
+    for provider_id in mutated_providers {
+        restart_provider_for_auth_change(
+            &state,
+            &provider_id,
+            &format!("{provider_id} auth updated"),
+        )
+        .await;
     }
     Ok(Json(ProviderAuthImportResponse { results }))
 }
@@ -2884,5 +2902,37 @@ mod tests {
             },
         ));
         assert!(subscription.is_none());
+    }
+
+    #[test]
+    fn import_result_restart_filter_treats_already_imported_as_mutation() {
+        let already_imported = provider_auth_import::ProviderAuthImportResult {
+            candidate_id: "cand-1".to_string(),
+            provider_id: "claude-crp".to_string(),
+            status: "already_imported".to_string(),
+            profile_id: Some("acct-1".to_string()),
+            message: Some("Matching credential already imported.".to_string()),
+        };
+        assert!(import_result_requires_provider_restart(&already_imported));
+    }
+
+    #[test]
+    fn import_result_restart_filter_ignores_non_mutating_statuses() {
+        let unsupported = provider_auth_import::ProviderAuthImportResult {
+            candidate_id: "cand-2".to_string(),
+            provider_id: "cursor".to_string(),
+            status: "unsupported".to_string(),
+            profile_id: None,
+            message: Some("Unsupported in this flow.".to_string()),
+        };
+        let error = provider_auth_import::ProviderAuthImportResult {
+            candidate_id: "cand-3".to_string(),
+            provider_id: "codex".to_string(),
+            status: "error".to_string(),
+            profile_id: None,
+            message: Some("failed".to_string()),
+        };
+        assert!(!import_result_requires_provider_restart(&unsupported));
+        assert!(!import_result_requires_provider_restart(&error));
     }
 }

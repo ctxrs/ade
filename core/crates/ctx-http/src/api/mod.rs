@@ -203,6 +203,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/repo/clone", post(repo_clone))
         .route("/api/repo/init", post(repo_init))
         .route("/api/repo/status", post(repo_status))
+        .route(
+            "/api/repo/validate_destination",
+            get(repo_validate_destination_get).post(repo_validate_destination),
+        )
         .route("/api/repo/staging_path", get(repo_staging_path))
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/resource_utilization", get(resource_utilization))
