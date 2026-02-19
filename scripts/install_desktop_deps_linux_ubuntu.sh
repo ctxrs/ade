@@ -68,6 +68,10 @@ packages=(
   curl
   file
   xdg-utils
+  desktop-file-utils
+  squashfs-tools
+  zsync
+  patchelf
   libglib2.0-dev
   libgtk-3-dev
   librsvg2-dev
@@ -116,6 +120,15 @@ else
   echo "- xdg-mime: MISSING (install xdg-utils)" >&2
   exit 2
 fi
+
+for cmd in desktop-file-validate mksquashfs zsyncmake patchelf; do
+  if command -v "$cmd" >/dev/null 2>&1; then
+    echo "- $cmd: OK ($(command -v "$cmd"))"
+  else
+    echo "- $cmd: MISSING (install corresponding AppImage packaging deps)" >&2
+    exit 2
+  fi
+done
 
 echo
 echo "${BOLD}Next steps${RESET}"
