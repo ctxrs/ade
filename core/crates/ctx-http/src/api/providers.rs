@@ -1858,6 +1858,13 @@ async fn provider_has_active_auth_config(
         if endpoint_selection_is_active(config) {
             return true;
         }
+        if (provider_id == "cursor" || provider_id == "codex")
+            && config.selected_source_kind == HarnessSourceKind::Subscription
+        {
+            // Cursor/Codex can operate in unmanaged host-login mode, where selecting
+            // subscription is the strongest configured-auth signal we can rely on.
+            return true;
+        }
     }
     match crate::provider_accounts::subscription_env_for_active_account(data_root, provider_id)
         .await
@@ -3024,6 +3031,32 @@ mod tests {
             "subscription"
         );
         assert_eq!(provider_auth_mode(false, Some(&subscription)), "none");
+    }
+
+    #[tokio::test]
+    async fn cursor_subscription_selection_counts_as_active_auth_config() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let source = harness_sources::HarnessProviderSourceConfig {
+            provider_id: "cursor".to_string(),
+            selected_source_kind: HarnessSourceKind::Subscription,
+            selected_endpoint_id: None,
+            endpoints: vec![],
+        };
+        let active = provider_has_active_auth_config(root.path(), "cursor", Some(&source)).await;
+        assert!(active);
+    }
+
+    #[tokio::test]
+    async fn codex_subscription_selection_counts_as_active_auth_config() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let source = harness_sources::HarnessProviderSourceConfig {
+            provider_id: "codex".to_string(),
+            selected_source_kind: HarnessSourceKind::Subscription,
+            selected_endpoint_id: None,
+            endpoints: vec![],
+        };
+        let active = provider_has_active_auth_config(root.path(), "codex", Some(&source)).await;
+        assert!(active);
     }
 
     #[test]
