@@ -83,6 +83,13 @@ import {
   type RemoteProfile,
   type SshRecent,
 } from "./workspaceSetup/remoteProfiles";
+import {
+  clampStepKey,
+  isCurrentFlowRunToken,
+  nextFlowRunToken,
+  stepKeyOffset,
+  type FlowRunToken,
+} from "./workspaceSetup/flowController";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 
 type WizardOption = {
@@ -115,7 +122,7 @@ type LocalInstallState = {
 
 export default function WorkspaceSetupPage() {
   const navigate = useNavigate();
-  const [stepIndex, setStepIndex] = useState(0);
+  const [currentStepKey, setCurrentStepKey] = useState("location");
   const [selections, setSelections] = useState<Record<string, string>>({});
   const [sshHosts, setSshHosts] = useState<DesktopSshHost[]>([]);
   const [sshRecents, setSshRecents] = useState<SshRecent[]>(() => loadSshRecents());
@@ -193,11 +200,14 @@ export default function WorkspaceSetupPage() {
   const selectedDaemonTargetKeyRef = useRef<string | null>(null);
   const authImportScanPromiseRef = useRef<Promise<ProviderAuthImportCandidate[]> | null>(null);
   const authImportScanKeyRef = useRef<string | null>(null);
+  const authImportScanRunRef = useRef<FlowRunToken | null>(null);
   const pendingLocalLocationAdvanceRef = useRef(false);
-  const localLocationAdvanceRunRef = useRef(0);
+  const locationAdvanceRunRef = useRef<FlowRunToken | null>(null);
   const currentStepKeyRef = useRef<string>("location");
-  const titlingProbePromiseRef = useRef<Promise<void> | null>(null);
+  const previousStepIndexRef = useRef(0);
+  const titlingProbePromiseRef = useRef<Promise<boolean | null> | null>(null);
   const titlingProbePromiseTargetKeyRef = useRef<string | null>(null);
+  const remoteStatusRef = useRef(remoteStatus);
   const harnessByProviderId = useMemo(() => {
     return new Map(HARNESS_CATALOG.map((entry) => [entry.id, entry]));
   }, []);
@@ -342,19 +352,34 @@ export default function WorkspaceSetupPage() {
     return out;
   }, [containerMode, authImportStepVisible, titlingStepVisible]);
 
+  const stepKeys = useMemo<string[]>(
+    () => steps.map((wizardStep) => wizardStep.key),
+    [steps],
+  );
+
   useEffect(() => {
-    setStepIndex((idx) => Math.min(idx, Math.max(0, steps.length - 1)));
-  }, [steps.length]);
+    setCurrentStepKey((key) => clampStepKey(stepKeys, key, previousStepIndexRef.current));
+  }, [stepKeys]);
   useEffect(() => {
     if (!creating || !launchSnapshot || launchSnapshot.state !== "running") return;
     const handle = window.setInterval(() => setLaunchTick((value) => value + 1), 1000);
     return () => window.clearInterval(handle);
   }, [creating, launchSnapshot?.job_id, launchSnapshot?.state]);
 
+  const stepIndex = Math.max(0, stepKeys.indexOf(currentStepKey));
   const step = steps[stepIndex];
   const infoStep = openInfoKey ? steps.find((s) => s.key === openInfoKey) : null;
   const isFirst = stepIndex === 0;
   const isLast = stepIndex === steps.length - 1;
+  const goToStepKey = useCallback((key: string) => {
+    setCurrentStepKey(key);
+  }, []);
+  const goRelativeStep = useCallback((delta: number) => {
+    setCurrentStepKey((current) => stepKeyOffset(stepKeys, current, delta));
+  }, [stepKeys]);
+  useEffect(() => {
+    previousStepIndexRef.current = stepIndex;
+  }, [stepIndex]);
   const requiresSelection = Boolean(step.options?.length);
   const hasSelection = Boolean(selections[step.key]);
   const mergeQueueSkipped = selections["merge-queue"] === "skip";
@@ -492,7 +517,7 @@ export default function WorkspaceSetupPage() {
       if (!parsed?.host) {
         throw new Error("Remote host is required before scanning auth.");
       }
-      if (remoteStatus !== "connected") {
+      if (remoteStatusRef.current !== "connected") {
         throw new Error("Verify remote host connection before scanning auth.");
       }
       const remoteCtxBin = remoteCtxBinInput.trim();
@@ -612,7 +637,7 @@ export default function WorkspaceSetupPage() {
     setTitlingPersistedHash(null);
   };
 
-  const probeTitlingForTarget = async (targetKey: string): Promise<void> => {
+  const probeTitlingForTarget = async (targetKey: string): Promise<boolean | null> => {
     setTitlingProbeBusy(true);
     setTitlingProbeTargetKey(targetKey);
     setTitlingProbeDone(false);
@@ -620,10 +645,10 @@ export default function WorkspaceSetupPage() {
     setTitlingStatusError(null);
     try {
       await connectDaemonForImport();
-      if (selectedDaemonTargetKeyRef.current !== targetKey) return;
+      if (selectedDaemonTargetKeyRef.current !== targetKey) return null;
 
       const settings = await getSettings();
-      if (selectedDaemonTargetKeyRef.current !== targetKey) return;
+      if (selectedDaemonTargetKeyRef.current !== targetKey) return null;
 
       setTitlingExistingSettings(settings.title_generation ?? null);
       const draft = buildSessionTitlingDraft(settings);
@@ -637,7 +662,7 @@ export default function WorkspaceSetupPage() {
       let localStatus: TitleGenerationLocalStatus | null = null;
       if (!settings.title_generation || settings.title_generation.mode === "local") {
         localStatus = await refreshTitlingLocalStatus({ silent: true });
-        if (selectedDaemonTargetKeyRef.current !== targetKey) return;
+        if (selectedDaemonTargetKeyRef.current !== targetKey) return null;
       } else {
         setTitlingLocalStatus(null);
         setTitlingStatusError(null);
@@ -651,13 +676,15 @@ export default function WorkspaceSetupPage() {
       if (localStatus?.install_running && localStatus.install_id) {
         void attachTitlingInstall(localStatus.install_id).catch(() => {});
       }
+      return !readiness.ready;
     } catch (error) {
-      if (selectedDaemonTargetKeyRef.current !== targetKey) return;
+      if (selectedDaemonTargetKeyRef.current !== targetKey) return null;
       setTitlingProbeTargetKey(targetKey);
       setTitlingProbeDone(true);
       setTitlingConfiguredReady(false);
       setTitlingStepRequired(true);
       setTitlingProbeError(messageFromError(error));
+      return true;
     } finally {
       if (selectedDaemonTargetKeyRef.current === targetKey) {
         setTitlingProbeBusy(false);
@@ -665,22 +692,28 @@ export default function WorkspaceSetupPage() {
     }
   };
 
-  const ensureTitlingProbeForCurrentTarget = async (): Promise<void> => {
-    if (!selectedDaemonTargetKey || !canProbeTitling) return;
-    if (titlingProbeDone && titlingProbeTargetKey === selectedDaemonTargetKey) return;
+  const ensureTitlingProbeForCurrentTarget = async (): Promise<boolean | null> => {
+    if (!selectedDaemonTargetKey || !desktopApp) return null;
+    if (selections.location === "remote") {
+      if (!parsedRemote?.host) return null;
+      if (!remoteCtxBinValue || !remoteCtxBinIsAbsolute) return null;
+      if (remoteStatusRef.current !== "connected") return null;
+    }
+    if (titlingProbeDone && titlingProbeTargetKey === selectedDaemonTargetKey) {
+      return titlingStepRequired;
+    }
     const targetKey = selectedDaemonTargetKey;
     if (
       titlingProbePromiseRef.current
       && titlingProbePromiseTargetKeyRef.current === targetKey
     ) {
-      await titlingProbePromiseRef.current;
-      return;
+      return await titlingProbePromiseRef.current;
     }
     const probePromise = probeTitlingForTarget(targetKey);
     titlingProbePromiseRef.current = probePromise;
     titlingProbePromiseTargetKeyRef.current = targetKey;
     try {
-      await probePromise;
+      return await probePromise;
     } finally {
       if (titlingProbePromiseRef.current === probePromise) {
         titlingProbePromiseRef.current = null;
@@ -761,7 +794,7 @@ export default function WorkspaceSetupPage() {
     setTitlingLocalInstallBusy(true);
     setTitlingStatusError(null);
     setTitlingPersistError(null);
-    setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+    goRelativeStep(1);
     void (async () => {
       try {
         const persisted = await ensureTitlingPersistedForCurrentTarget("local");
@@ -782,7 +815,7 @@ export default function WorkspaceSetupPage() {
     if (!isDesktopApp()) return [];
     if (target === "remote") {
       if (!parsedRemote?.host) return [];
-      if (remoteStatus !== "connected") return [];
+      if (remoteStatusRef.current !== "connected") return [];
     }
 
     const scanKey = target === "local"
@@ -799,26 +832,38 @@ export default function WorkspaceSetupPage() {
 
     setAuthImportBusy(true);
     setAuthImportError(null);
+    const scanRun = nextFlowRunToken(authImportScanRunRef.current?.runId ?? 0, scanKey);
+    authImportScanRunRef.current = scanRun;
 
     const scanPromise = (async () => {
       try {
         await connectDaemonForImport(target);
         const resp = await listProviderAuthImportCandidates();
-        const candidates = resp.candidates ?? [];
+        // Wizard intentionally surfaces only candidates we can import now.
+        const candidates = (resp.candidates ?? [])
+          .filter((candidate) => candidate.parse_status === "parsed");
+        if (!isCurrentFlowRunToken(authImportScanRunRef.current, scanRun)) {
+          return [];
+        }
         setAuthImportCandidates(candidates);
         setAuthImportSelected(
-          Object.fromEntries(candidates.map((candidate) => [candidate.id, candidate.parse_status === "parsed"])),
+          Object.fromEntries(candidates.map((candidate) => [candidate.id, true])),
         );
         return candidates;
       } catch (error) {
+        if (!isCurrentFlowRunToken(authImportScanRunRef.current, scanRun)) {
+          return [];
+        }
         setAuthImportCandidates([]);
         setAuthImportSelected({});
         setAuthImportError(messageFromError(error));
         return [];
       } finally {
-        // Mark this target as scanned even on failure to avoid repeated races while navigating.
-        setAuthImportScannedKey(scanKey);
-        setAuthImportBusy(false);
+        if (isCurrentFlowRunToken(authImportScanRunRef.current, scanRun)) {
+          // Mark this target as scanned even on failure to avoid repeated races while navigating.
+          setAuthImportScannedKey(scanKey);
+          setAuthImportBusy(false);
+        }
       }
     })();
 
@@ -837,7 +882,6 @@ export default function WorkspaceSetupPage() {
     authImportScannedKey,
     parsedRemote?.host,
     parsedRemote?.user,
-    remoteStatus,
   ]);
 
   const shouldAutoAdvance = (stepKey: string, optionId: string): boolean => {
@@ -845,6 +889,12 @@ export default function WorkspaceSetupPage() {
     if (stepKey === "container") return true;
     if (stepKey === "network") return optionId !== "allowlist";
     return false;
+  };
+
+  const nextStepAfterLocation = (candidateCount: number, titlingRequired: boolean | null): string => {
+    if (candidateCount > 0) return "auth-import";
+    if (titlingRequired) return "session-titling";
+    return "container";
   };
 
   const onSelect = (stepKey: string, optionId: string) => {
@@ -857,6 +907,7 @@ export default function WorkspaceSetupPage() {
       return next;
     });
     if (stepKey === "location" && optionId === "local") {
+      remoteStatusRef.current = "idle";
       setRemoteStatus("idle");
       setRemoteError(null);
       setImportRepoStatus("idle");
@@ -866,7 +917,12 @@ export default function WorkspaceSetupPage() {
       // Keep local prefetch snapshot so local click can advance without step-topology churn.
       if (optionId === "remote") {
         pendingLocalLocationAdvanceRef.current = false;
-        localLocationAdvanceRunRef.current += 1;
+        const nextRun = nextFlowRunToken(locationAdvanceRunRef.current?.runId ?? 0, "local");
+        locationAdvanceRunRef.current = nextRun;
+        authImportScanPromiseRef.current = null;
+        authImportScanKeyRef.current = null;
+        authImportScanRunRef.current = null;
+        setAuthImportBusy(false);
         setAuthImportScannedKey(null);
         setAuthImportCandidates([]);
         setAuthImportSelected({});
@@ -900,10 +956,12 @@ export default function WorkspaceSetupPage() {
     onSelect(stepKey, optionId);
     if (stepKey === "location" && optionId === "local") {
       pendingLocalLocationAdvanceRef.current = true;
+      const nextRun = nextFlowRunToken(locationAdvanceRunRef.current?.runId ?? 0, "local");
+      locationAdvanceRunRef.current = nextRun;
       return;
     }
     if (shouldAutoAdvance(stepKey, optionId)) {
-      setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+      goRelativeStep(1);
     }
   };
 
@@ -920,6 +978,10 @@ export default function WorkspaceSetupPage() {
   useEffect(() => {
     selectedDaemonTargetKeyRef.current = selectedDaemonTargetKey;
   }, [selectedDaemonTargetKey]);
+
+  useEffect(() => {
+    remoteStatusRef.current = remoteStatus;
+  }, [remoteStatus]);
 
   useEffect(() => {
     currentStepKeyRef.current = step.key;
@@ -1047,20 +1109,23 @@ export default function WorkspaceSetupPage() {
     if (step.key !== "location") return;
     if (selections.location !== "local") return;
 
-    const runId = ++localLocationAdvanceRunRef.current;
+    const run = nextFlowRunToken(locationAdvanceRunRef.current?.runId ?? 0, "local");
+    locationAdvanceRunRef.current = run;
     pendingLocalLocationAdvanceRef.current = false;
     void (async () => {
-      const candidates = await scanAuthImportCandidatesForTarget("local");
-      if (!candidates.length) {
-        await ensureTitlingProbeForCurrentTarget();
-      }
-      if (localLocationAdvanceRunRef.current !== runId) return;
+      // Resolve both auth + titling before leaving Location so step topology stays stable.
+      const [candidates, titlingRequired] = await Promise.all([
+        scanAuthImportCandidatesForTarget("local"),
+        ensureTitlingProbeForCurrentTarget(),
+      ]);
+      if (!isCurrentFlowRunToken(locationAdvanceRunRef.current, run)) return;
       if (selectedDaemonTargetKeyRef.current !== "local") return;
       if (currentStepKeyRef.current !== "location") return;
-      setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+      goToStepKey(nextStepAfterLocation(candidates.length, titlingRequired));
     })();
   }, [
     ensureTitlingProbeForCurrentTarget,
+    goToStepKey,
     scanAuthImportCandidatesForTarget,
     selections.location,
     step.key,
@@ -1420,7 +1485,7 @@ export default function WorkspaceSetupPage() {
     }
     await ensureTitlingProbeForCurrentTarget();
     if (currentStepKeyRef.current !== "auth-import") return;
-    setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+    goRelativeStep(1);
   };
 
   const onNext = async () => {
@@ -1429,7 +1494,8 @@ export default function WorkspaceSetupPage() {
         // If local auto-advance is in flight, manual Next takes ownership so only one
         // continuation can commit the location->next-step transition.
         pendingLocalLocationAdvanceRef.current = false;
-        localLocationAdvanceRunRef.current += 1;
+        const nextRun = nextFlowRunToken(locationAdvanceRunRef.current?.runId ?? 0, "local");
+        locationAdvanceRunRef.current = nextRun;
       }
       if (selections.location === "remote") {
         if (!parsedRemote) return;
@@ -1458,6 +1524,7 @@ export default function WorkspaceSetupPage() {
               host: parsedRemote.host,
               user: parsedRemote.user ?? null,
             });
+            remoteStatusRef.current = "connected";
             setRemoteStatus("connected");
             const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
             setRemoteProfiles(upsertRemoteProfile(parsedRemote.host, parsedRemote.user ?? null, {
@@ -1484,18 +1551,26 @@ export default function WorkspaceSetupPage() {
         }
       }
 
-      let candidates: ProviderAuthImportCandidate[] = [];
+      let candidateCount = 0;
+      let titlingRequired: boolean | null = null;
       if (selections.location === "local") {
-        candidates = await scanAuthImportCandidatesForTarget("local");
+        // Keep next-step choice deterministic from resolved scan/probe outcomes.
+        const [candidates, required] = await Promise.all([
+          scanAuthImportCandidatesForTarget("local"),
+          ensureTitlingProbeForCurrentTarget(),
+        ]);
+        candidateCount = candidates.length;
+        titlingRequired = required;
       } else if (selections.location === "remote") {
-        candidates = await scanAuthImportCandidatesForTarget("remote");
-      }
-      // Resolve titling before leaving location only when there is no auth-import step.
-      if (!candidates.length) {
-        await ensureTitlingProbeForCurrentTarget();
+        const [candidates, required] = await Promise.all([
+          scanAuthImportCandidatesForTarget("remote"),
+          ensureTitlingProbeForCurrentTarget(),
+        ]);
+        candidateCount = candidates.length;
+        titlingRequired = required;
       }
       if (currentStepKeyRef.current !== "location") return;
-      setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+      goToStepKey(nextStepAfterLocation(candidateCount, titlingRequired));
       return;
     }
     if (step.key === "auth-import") {
@@ -1505,7 +1580,7 @@ export default function WorkspaceSetupPage() {
     if (step.key === "session-titling") {
       setTitlingPersistError(null);
       if (titlingMode === "skip") {
-        setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+        goRelativeStep(1);
         return;
       }
       if (titlingMode !== "remote" && titlingMode !== "local") {
@@ -1518,17 +1593,17 @@ export default function WorkspaceSetupPage() {
       }
       const persisted = await ensureTitlingPersistedForCurrentTarget();
       if (!persisted) return;
-      setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+      goRelativeStep(1);
       return;
     }
     if (step.key === "source") {
       setCreateError(null);
       const preflightOk = await preflightSourceStep();
       if (!preflightOk) return;
-      setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+      goRelativeStep(1);
       return;
     }
-    setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+    goRelativeStep(1);
   };
 
   const applyLaunchSnapshot = (snapshot: ExecutionLaunchSnapshot) => {
@@ -1871,8 +1946,7 @@ export default function WorkspaceSetupPage() {
       };
       const key = stepKeyForError(msg);
       if (key) {
-        const idx = steps.findIndex((st) => st.key === key);
-        if (idx >= 0) setStepIndex(idx);
+        goToStepKey(key);
       }
     } finally {
       setCreating(false);
@@ -2428,7 +2502,7 @@ export default function WorkspaceSetupPage() {
                       onClick={() => {
                         invalidateTitlingPersisted();
                         setTitlingMode("skip");
-                        setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+                        goRelativeStep(1);
                       }}
                       disabled={titlingPersistBusy || titlingLocalInstallBusy}
                     >
@@ -2673,7 +2747,7 @@ export default function WorkspaceSetupPage() {
                         onSelect("merge-queue", "skip");
                         setMergeAdvancedOpen(false);
                         setPushOnSuccess(false);
-                        setStepIndex((idx) => Math.min(steps.length - 1, idx + 1));
+                        goRelativeStep(1);
                       }}
                     >
                       Skip for now
@@ -2842,7 +2916,7 @@ export default function WorkspaceSetupPage() {
                     aria-current={idx === stepIndex ? "true" : undefined}
                     disabled={disabled}
                     onClick={() => {
-                      if (!disabled) setStepIndex(idx);
+                      if (!disabled) goToStepKey(item.key);
                     }}
                   />
                 );
@@ -2860,7 +2934,7 @@ export default function WorkspaceSetupPage() {
 	                type="button"
 	                className="wizard-secondary"
 	                data-testid="wizard-back"
-	                onClick={() => setStepIndex((idx) => Math.max(0, idx - 1))}
+	                onClick={() => goRelativeStep(-1)}
 	              >
 	                Back
 	              </button>

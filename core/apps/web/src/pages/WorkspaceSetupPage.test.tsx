@@ -383,7 +383,7 @@ describe("WorkspaceSetupPage", () => {
     expect(repoStatus).toHaveBeenCalledWith({ path: "/tmp/existing-folder" });
   });
 
-  it("renders import auth rows with parsed harnesses preselected", async () => {
+  it("renders only importable auth rows with parsed harnesses preselected", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
       candidates: [
@@ -431,12 +431,10 @@ describe("WorkspaceSetupPage", () => {
 
     const claudeCheckbox = screen.getByRole("checkbox", { name: /claude code/i }) as HTMLInputElement;
     const codexCheckbox = screen.getByRole("checkbox", { name: /codex/i }) as HTMLInputElement;
-    const cursorCheckbox = screen.getByRole("checkbox", { name: /cursor/i }) as HTMLInputElement;
-
     expect(claudeCheckbox.checked).toBe(true);
     expect(codexCheckbox.checked).toBe(true);
-    expect(cursorCheckbox.checked).toBe(false);
-    expect(cursorCheckbox.disabled).toBe(true);
+    expect(screen.queryByRole("checkbox", { name: /cursor/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Source: /Users/example-user/.cursor/cli-config.json")).not.toBeInTheDocument();
     expect(screen.getByText("Source: /Users/example-user/.codex/auth.json")).toBeInTheDocument();
   });
 
@@ -476,7 +474,7 @@ describe("WorkspaceSetupPage", () => {
     });
   });
 
-  it("defers titling probe until auth-import next when auth candidates exist", async () => {
+  it("probes titling before leaving location when auth candidates exist", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
     vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
@@ -501,13 +499,13 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
     });
-    expect(getSettings).not.toHaveBeenCalled();
+    expect(getSettings).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByTestId("wizard-next"));
     await waitFor(() => {
-      expect(getSettings).toHaveBeenCalledTimes(1);
       expect(wizardStepKey()).toBe("session-titling");
     });
+    expect(getSettings).toHaveBeenCalledTimes(1);
   });
 
   it("probes titling when skipping auth-import", async () => {
@@ -535,15 +533,15 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
     });
-    expect(getSettings).not.toHaveBeenCalled();
+    expect(getSettings).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
 
     await waitFor(() => {
       expect(importProviderAuthCandidates).not.toHaveBeenCalled();
-      expect(getSettings).toHaveBeenCalledTimes(1);
       expect(wizardStepKey()).toBe("session-titling");
     });
+    expect(getSettings).toHaveBeenCalledTimes(1);
   });
 
   it("does not launch a second probe while same-target probe is already running", async () => {
