@@ -617,15 +617,20 @@ fn run_remote_daemon_self_update(
     }
 
     // Always restart to ensure the running daemon process picks up the new binary.
-    stop_remote_daemon_over_ssh(host, user, remote_port)
+    stop_remote_daemon_over_ssh(host, user, remote_port, &ctx_bin)
         .context("stopping remote daemon after self-update")?;
     start_remote_daemon_over_ssh(host, user, remote_port, remote_data_dir, &ctx_bin)
         .context("starting remote daemon after self-update")?;
     Ok(())
 }
 
-fn stop_remote_daemon_over_ssh(host: &str, user: Option<&str>, remote_port: u16) -> Result<()> {
-    let cmd = remote_stop_daemon_cmd(remote_port);
+fn stop_remote_daemon_over_ssh(
+    host: &str,
+    user: Option<&str>,
+    remote_port: u16,
+    remote_ctx_bin: &str,
+) -> Result<()> {
+    let cmd = remote_stop_daemon_cmd(remote_port, remote_ctx_bin);
     let output = run_remote_ssh_shell(host, user, &cmd).context("stopping remote daemon")?;
     if output.status.success() {
         return Ok(());
@@ -636,14 +641,33 @@ fn stop_remote_daemon_over_ssh(host: &str, user: Option<&str>, remote_port: u16)
     anyhow::bail!("remote stop command failed: {detail}");
 }
 
-fn remote_stop_daemon_cmd(remote_port: u16) -> String {
-    let bind_pattern = format!("serve --bind 127.0.0.1:{remote_port}");
+fn remote_stop_daemon_cmd(remote_port: u16, remote_ctx_bin: &str) -> String {
+    let ctx_serve_pattern = format!("{remote_ctx_bin} serve");
+    let bind_local_pattern = format!("{ctx_serve_pattern} --bind 127.0.0.1:{remote_port}");
+    let bind_any_pattern = format!("{ctx_serve_pattern} --bind 0.0.0.0:{remote_port}");
+    let port_pattern = format!("{ctx_serve_pattern} --port {remote_port}");
     format!(
-        "if ! command -v pkill >/dev/null 2>&1; then echo 'pkill unavailable on remote host' >&2; exit 127; fi; \
-pkill -f -- {pattern} >/dev/null 2>&1; status=$?; \
+        "if command -v lsof >/dev/null 2>&1; then \
+  pids=\"$(lsof -tiTCP:{port} -sTCP:LISTEN || true)\"; \
+  if [[ -n \"$pids\" ]]; then \
+    kill $pids >/dev/null 2>&1 || {{ echo \"remote daemon stop failed (kill on port {port})\" >&2; exit 1; }}; \
+    sleep 1; \
+    exit 0; \
+  fi; \
+fi; \
+if ! command -v pkill >/dev/null 2>&1; then echo 'pkill unavailable on remote host' >&2; exit 127; fi; \
+pkill -f -- {bind_local} >/dev/null 2>&1 || \
+pkill -f -- {bind_any} >/dev/null 2>&1 || \
+pkill -f -- {port_pattern} >/dev/null 2>&1 || \
+pkill -f -- {ctx_serve} >/dev/null 2>&1; \
+status=$?; \
 if [ $status -ne 0 ]; then echo \"remote daemon stop failed (pkill exit $status)\" >&2; exit $status; fi; \
 sleep 1",
-        pattern = shell_escape(&bind_pattern),
+        port = remote_port,
+        bind_local = shell_escape(&bind_local_pattern),
+        bind_any = shell_escape(&bind_any_pattern),
+        port_pattern = shell_escape(&port_pattern),
+        ctx_serve = shell_escape(&ctx_serve_pattern),
     )
 }
 
@@ -947,7 +971,11 @@ mod remote_path_validation_tests {
 
     #[test]
     fn remote_stop_command_requires_pkill_success() {
-        let cmd = remote_stop_daemon_cmd(44199);
+        let cmd = remote_stop_daemon_cmd(44199, "/opt/ctx/bin/ctx");
+        assert!(
+            cmd.contains("lsof -tiTCP:44199 -sTCP:LISTEN"),
+            "expected lsof listener probe in stop command: {cmd}"
+        );
         assert!(
             cmd.contains("command -v pkill"),
             "expected pkill preflight in stop command: {cmd}"
@@ -965,12 +993,20 @@ mod remote_path_validation_tests {
             "expected explicit failure on stop error: {cmd}"
         );
         assert!(
-            !cmd.contains("|| true"),
-            "stop command must not mask errors: {cmd}"
+            !cmd.contains("pkill -f -- '/opt/ctx/bin/ctx serve --bind 127.0.0.1:44199' >/dev/null 2>&1 || true"),
+            "pkill stop command must not blanket-ignore failures: {cmd}"
         );
         assert!(
             cmd.contains("127.0.0.1:44199"),
             "expected port-specific match pattern in stop command: {cmd}"
+        );
+        assert!(
+            cmd.contains("0.0.0.0:44199"),
+            "expected wildcard bind fallback in stop command: {cmd}"
+        );
+        assert!(
+            cmd.contains("/opt/ctx/bin/ctx serve"),
+            "expected ctx-serve fallback pattern in stop command: {cmd}"
         );
     }
 }

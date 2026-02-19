@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  applyDaemonDesktopConnection,
   appendDesktopLog,
   ApplyAppImageUpdateResp,
   checkUpdates,
@@ -110,7 +111,10 @@ export default function DiagnosticsPage() {
     refresh();
     if (desktop) {
       desktopGetConnection()
-        .then((info) => setDesktopConnection(info))
+        .then((info) => {
+          setDesktopConnection(info);
+          applyDaemonDesktopConnection(info);
+        })
         .catch(() => setDesktopConnection({ kind: "none" }));
       getDesktopPlatform().then((platform) => setDesktopPlatform(platform));
     }
@@ -273,7 +277,10 @@ export default function DiagnosticsPage() {
         setNotice("Local daemon restarted with the app-managed binary.");
       }
       const info = await desktopGetConnection().catch(() => null);
-      if (info) setDesktopConnection(info);
+      if (info) {
+        setDesktopConnection(info);
+        applyDaemonDesktopConnection(info);
+      }
     } catch (e: unknown) {
       setError(errorMessage(e));
     } finally {

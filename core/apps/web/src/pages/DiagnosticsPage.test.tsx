@@ -3,6 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DiagnosticsPage from "./DiagnosticsPage";
 import {
+  applyDaemonDesktopConnection,
   appendDesktopLog,
   checkUpdates,
   getDiagnostics,
@@ -13,12 +14,14 @@ import {
   desktopApplyAppUpdate,
   desktopCheckAppUpdate,
   desktopGetConnection,
+  desktopRestartLocalDaemon,
   getDesktopPlatform,
   isDesktopApp,
   openExternalLink,
 } from "../utils/desktop";
 
 vi.mock("../api/client", () => ({
+  applyDaemonDesktopConnection: vi.fn(),
   appendDesktopLog: vi.fn(),
   applyAppImageUpdate: vi.fn(),
   checkUpdates: vi.fn(),
@@ -222,6 +225,37 @@ describe("DiagnosticsPage updates", () => {
 
     await waitFor(() => {
       expect(desktopApplyAppUpdate).toHaveBeenCalledWith("stable");
+    });
+  });
+
+  it("reapplies daemon client config after local daemon restart", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(desktopGetConnection)
+      .mockResolvedValueOnce({ kind: "local", base_url: "http://127.0.0.1:4399", token: "tok-old" })
+      .mockResolvedValueOnce({ kind: "local", base_url: "http://127.0.0.1:4401", token: "tok-new" });
+    vi.mocked(desktopRestartLocalDaemon).mockResolvedValue(undefined);
+    vi.mocked(checkUpdates).mockResolvedValue({
+      channel: "stable",
+      base_url: "https://api.example/functions/v1",
+      platform: "windows-x64",
+      current_version: "1.0.0",
+      latest_version: "1.0.1",
+      update_available: false,
+      platform_supported: true,
+      manifest: { platforms: {} },
+    });
+
+    renderPage();
+    const restartButton = await screen.findByRole("button", { name: "Restart local daemon" });
+    fireEvent.click(restartButton);
+
+    await waitFor(() => {
+      expect(desktopRestartLocalDaemon).toHaveBeenCalledTimes(1);
+      expect(applyDaemonDesktopConnection).toHaveBeenCalledWith({
+        kind: "local",
+        base_url: "http://127.0.0.1:4401",
+        token: "tok-new",
+      });
     });
   });
 });
