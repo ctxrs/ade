@@ -15,6 +15,9 @@ const okHealth = {
 };
 
 test("update banner shows when updates are available", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.removeItem("ctx_update_check_v1");
+  });
   await page.route("**/api/health", async (route) => {
     await route.fulfill({
       status: 200,
@@ -37,7 +40,14 @@ test("update banner shows when updates are available", async ({ page }) => {
   });
 
   await page.goto("/workspaces", { waitUntil: "domcontentloaded" });
-  await expect(page.getByText("Update available: 9.9.9.")).toBeVisible();
+  await page.waitForResponse((response) => response.url().includes("/api/health") && response.status() === 200, {
+    timeout: 20000,
+  });
+  await page.waitForResponse(
+    (response) => response.url().includes("/api/updates/check") && response.status() === 200,
+    { timeout: 20000 },
+  );
+  await expect(page.getByText(/Update available:\s*9\.9\.9\./)).toBeVisible({ timeout: 20000 });
 });
 
 test("daemon availability overlay appears on health failures", async ({ page }) => {

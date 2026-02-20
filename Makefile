@@ -4,7 +4,7 @@
 
 PNPM ?= pnpm
 PROFILE ?= dev
-DESKTOP_SYNC_BUNDLES ?= 0
+DESKTOP_SYNC_BUNDLES ?= 1
 SAFE_PROFILE := $(shell printf '%s' "$(PROFILE)" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-*//;s/-*$$//')
 APP_LABEL := ctx [$(SAFE_PROFILE)]
 APP_ID := rs.ctx.desktop.dev.$(SAFE_PROFILE)
