@@ -161,17 +161,35 @@ pub fn resolve_provider_command(
 fn runtime_command_candidate(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
-) -> Option<(AgentServerCommand, ProviderRuntimeCommandSource)> {
+) -> Result<Option<(AgentServerCommand, ProviderRuntimeCommandSource)>> {
+    if bundled_only_mode_applies_to_provider(provider_id) {
+        if let Some(bundled) = bundled_assets::bundled_provider_command(provider_id) {
+            return Ok(Some((
+                AgentServerCommand {
+                    command: bundled.command,
+                    args: bundled.args,
+                    dependencies: Vec::new(),
+                    managed: None,
+                },
+                ProviderRuntimeCommandSource::BundledSeed,
+            )));
+        }
+        anyhow::bail!(
+            "runtime_command_missing_bundled: provider={} (set CTX_BUNDLE_DIR and ensure bundled manifest includes provider)",
+            provider_id
+        );
+    }
+
     if let Some(configured) = cfg.providers.get(provider_id) {
         let source = if configured.managed.is_some() {
             ProviderRuntimeCommandSource::ManagedInstall
         } else {
             ProviderRuntimeCommandSource::UserOverride
         };
-        return Some((configured.clone(), source));
+        return Ok(Some((configured.clone(), source)));
     }
     if let Some(bundled) = bundled_assets::bundled_provider_command(provider_id) {
-        return Some((
+        return Ok(Some((
             AgentServerCommand {
                 command: bundled.command,
                 args: bundled.args,
@@ -179,16 +197,16 @@ fn runtime_command_candidate(
                 managed: None,
             },
             ProviderRuntimeCommandSource::BundledSeed,
-        ));
+        )));
     }
-    None
+    Ok(None)
 }
 
 pub fn resolve_runtime_provider_command(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
 ) -> Result<Option<ProviderRuntimeCommand>> {
-    let Some((candidate, source)) = runtime_command_candidate(cfg, provider_id) else {
+    let Some((candidate, source)) = runtime_command_candidate(cfg, provider_id)? else {
         return Ok(None);
     };
 
@@ -229,6 +247,134 @@ pub fn resolve_runtime_provider_command(
         dependencies: candidate.dependencies,
         source,
     }))
+}
+
+fn env_flag_truthy(var_name: &str) -> bool {
+    match std::env::var(var_name) {
+        Ok(value) => matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
+    }
+}
+
+fn bundled_only_mode_applies_to_provider(provider_id: &str) -> bool {
+    if !env_flag_truthy("CTX_E2E_BUNDLED_ONLY") {
+        return false;
+    }
+    let raw = match std::env::var("CTX_E2E_BUNDLED_ONLY_PROVIDERS") {
+        Ok(value) => value,
+        Err(_) => return true,
+    };
+    let providers: Vec<&str> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .collect();
+    if providers.is_empty() {
+        return true;
+    }
+    providers.iter().any(|entry| *entry == provider_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+    use tempfile::tempdir;
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> &'static Mutex<()> {
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            // SAFETY: Guarded by ENV_LOCK so tests mutate process env serially.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            // SAFETY: Guarded by ENV_LOCK so tests mutate process env serially.
+            unsafe { std::env::remove_var(key) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => {
+                    // SAFETY: Guarded by ENV_LOCK so tests mutate process env serially.
+                    unsafe { std::env::set_var(self.key, value) };
+                }
+                None => {
+                    // SAFETY: Guarded by ENV_LOCK so tests mutate process env serially.
+                    unsafe { std::env::remove_var(self.key) };
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bundled_only_mode_errors_when_bundled_command_missing() {
+        let _guard = env_lock().lock().expect("lock env");
+        let temp = tempdir().expect("tempdir");
+        let _bundle_dir = EnvVarGuard::set("CTX_BUNDLE_DIR", &temp.path().to_string_lossy());
+        let _strict = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY", "1");
+        let _providers = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY_PROVIDERS", "qwen");
+
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.providers.insert(
+            "qwen".to_string(),
+            AgentServerCommand {
+                command: "/tmp/non-bundled-qwen".to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: Some(ManagedInstallMetadata {
+                    package: Some("qwen-managed".to_string()),
+                    version: Some("1.0.0".to_string()),
+                    install_dir_rel: None,
+                    bin_dir_rel: None,
+                    last_success_at: None,
+                    last_error: None,
+                }),
+            },
+        );
+
+        let err = resolve_runtime_provider_command(&cfg, "qwen").expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("runtime_command_missing_bundled: provider=qwen")
+        );
+    }
+
+    #[test]
+    fn bundled_only_provider_scope_defaults_to_all_when_empty() {
+        let _guard = env_lock().lock().expect("lock env");
+        let _strict = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY", "1");
+        let _providers = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY_PROVIDERS", " , ");
+        assert!(bundled_only_mode_applies_to_provider("codex"));
+        assert!(bundled_only_mode_applies_to_provider("acp-crp-bridge"));
+    }
+
+    #[test]
+    fn bundled_only_mode_can_be_disabled() {
+        let _guard = env_lock().lock().expect("lock env");
+        let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
+        let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
+        assert!(!bundled_only_mode_applies_to_provider("codex"));
+    }
 }
 
 pub fn agent_server_config_path(data_root: &Path) -> PathBuf {

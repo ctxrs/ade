@@ -207,7 +207,15 @@ ensure_docker_ready_for_builds() {
 }
 
 INSTALLER_RS="$ROOT/core/crates/ctx-http/src/installer.rs"
-MATRIX_JSON="$ROOT/core/crates/ctx-http/src/provider_matrix.json"
+DEFAULT_MATRIX_JSON="$ROOT/core/crates/ctx-http/src/provider_matrix.json"
+CACHED_MATRIX_JSON="${HOME:-}/.ctx/providers/provider_matrix.json"
+if [[ -n "${CTX_BUNDLE_MATRIX_JSON:-}" ]]; then
+  MATRIX_JSON="${CTX_BUNDLE_MATRIX_JSON}"
+elif [[ -f "$CACHED_MATRIX_JSON" ]]; then
+  MATRIX_JSON="$CACHED_MATRIX_JSON"
+else
+  MATRIX_JSON="$DEFAULT_MATRIX_JSON"
+fi
 
 read_const() {
   local name="$1"
@@ -388,6 +396,7 @@ CLAUDE_CRP_WORKSPACE="${CTX_BUNDLE_CLAUDE_CRP_WORKSPACE:-$ROOT/external-harnesse
 LOCAL_ADAPTERS_DIR="${CTX_BUNDLE_ADAPTERS_DIR:-$ROOT/harness-adapters}"
 LOCAL_ADAPTER_MODE="${CTX_BUNDLE_LOCAL_ADAPTERS:-auto}"
 BUILD_LOCAL_ADAPTERS="${CTX_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
+USE_ACP_SHIMS="${CTX_BUNDLE_USE_ACP_SHIMS:-1}"
 # The bridge is required for bundles; build it when missing unless explicitly disabled.
 BUILD_LOCAL_BRIDGE="${CTX_BUNDLE_BUILD_LOCAL_BRIDGE:-1}"
 INCLUDE_BRIDGE="${CTX_BUNDLE_INCLUDE_BRIDGE:-1}"
@@ -1659,6 +1668,17 @@ local_codex_crp_binary_path() {
 	  exit 5
 	fi
 
+	# codex-crp release defaults are intentionally very heavy upstream; use a lighter optimized
+	# profile so local bundling is practical in CI/dev and consistent with container builds below.
+	local -a cargo_profile_env=()
+	if [[ "$profile" == "release" ]]; then
+	  cargo_profile_env+=(
+	    "CARGO_PROFILE_RELEASE_LTO=false"
+	    "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16"
+	    "CARGO_PROFILE_RELEASE_OPT_LEVEL=2"
+	  )
+	fi
+
 	build_codex_crp_in_container() {
 	  if ! ensure_docker_ready_for_builds "0" "codex-crp container build"; then
 	    log "error: building codex-crp for ${os}/${arch} requires Docker on PATH and a healthy daemon."
@@ -1683,14 +1703,6 @@ local_codex_crp_binary_path() {
 	  # Also: `codex-crp` upstream ships with a very heavy release profile (fat LTO, 1 codegen unit),
 	  # which can OOM on typical Docker Desktop configs. Override to a lighter release build: still
 	  # optimized, but much less memory hungry.
-	  local -a cargo_profile_env=()
-	  if [[ "$profile" == "release" ]]; then
-	    cargo_profile_env+=(
-	      "CARGO_PROFILE_RELEASE_LTO=false"
-	      "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16"
-	      "CARGO_PROFILE_RELEASE_OPT_LEVEL=2"
-	    )
-	  fi
 	  docker "${run_args[@]}" "$image" bash -c "set -euo pipefail; export PATH=\"/usr/local/cargo/bin:\$PATH\"; rustup target add '$rust_target' >/dev/null 2>&1 || true; ${cargo_profile_env[*]} cargo build -p codex-crp --target '$rust_target' ${profile_args[*]}"
 	}
 
@@ -1700,7 +1712,7 @@ local_codex_crp_binary_path() {
 	  require_cmd cargo
 	  (
 	    cd "$CODEX_CRP_WORKSPACE"
-	    CARGO_TARGET_DIR="$target_dir" cargo build -p codex-crp --target "$rust_target" "${profile_args[@]}"
+	    env CARGO_TARGET_DIR="$target_dir" "${cargo_profile_env[@]}" cargo build -p codex-crp --target "$rust_target" "${profile_args[@]}"
 	  )
 	fi
 
@@ -1784,17 +1796,19 @@ if should_bundle_local_claude_crp; then
   add_local_provider "claude-crp" "local-node" "$claude_crp_version" "$CLAUDE_CRP_WORKSPACE" "bin/claude-crp" "[]"
 fi
 
-for id in "${ACP_PROVIDER_IDS[@]}"; do
-  if ! provider_selected_for_bundle "$id"; then
-    continue
-  fi
-  version="$(get_matrix_version "$id")"
-  if [[ -z "$version" ]]; then
-    version="local"
-  fi
-  src="$(generate_acp_provider_shim "$id")"
-  add_local_provider "$id" "local-bin" "$version" "$src" "$(basename "$src")" "[]"
-done
+if is_truthy "$USE_ACP_SHIMS"; then
+  for id in "${ACP_PROVIDER_IDS[@]}"; do
+    if ! provider_selected_for_bundle "$id"; then
+      continue
+    fi
+    version="$(get_matrix_version "$id")"
+    if [[ -z "$version" ]]; then
+      version="local"
+    fi
+    src="$(generate_acp_provider_shim "$id")"
+    add_local_provider "$id" "local-bin" "$version" "$src" "$(basename "$src")" "[]"
+  done
+fi
 
 if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   local_adapter_required=0

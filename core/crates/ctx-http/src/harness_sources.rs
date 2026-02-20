@@ -40,6 +40,8 @@ const GEMINI_AUTH_TYPE_VERTEX_AI: &str = "vertex_ai";
 const KIRO_AUTH_TOKEN_RELATIVE_PATH: &str = ".aws/sso/cache/kiro-auth-token.json";
 const ENDPOINT_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 const ENDPOINT_MODEL_CATALOG_TTL: Duration = Duration::from_secs(60 * 60 * 24);
+const GENERIC_ENDPOINT_NAMESPACE_LABELS: &[&str] =
+    &["api", "www", "app", "gateway", "proxy", "chat", "inference", "llm"];
 
 static REGISTRY_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -634,6 +636,49 @@ fn endpoint_models_url(base_url: &str) -> Result<String> {
     let mut normalized = normalize_base_url(base_url)?;
     normalized.push_str("/models");
     Ok(normalized)
+}
+
+fn infer_endpoint_model_provider_namespace(base_url: &str) -> Option<String> {
+    let parsed = Url::parse(base_url).ok()?;
+    let host = parsed.host_str()?.trim().to_ascii_lowercase();
+    if host.is_empty() {
+        return None;
+    }
+
+    let mut labels = host.split('.').filter(|label| !label.is_empty());
+    let candidate = labels
+        .find(|label| !GENERIC_ENDPOINT_NAMESPACE_LABELS.contains(label))
+        .or_else(|| host.split('.').find(|label| !label.is_empty()))?;
+
+    let mut normalized = String::new();
+    for ch in candidate.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch.to_ascii_lowercase());
+        } else if ch == '-' || ch == '_' {
+            normalized.push('_');
+        }
+    }
+    let normalized = normalized.trim_matches('_').to_string();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn normalize_namespaced_model_override(model: &str, endpoint_namespace: Option<&str>) -> String {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let Some(namespace) = endpoint_namespace
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return trimmed.to_string();
+    };
+
+    format!("{namespace}/{trimmed}")
 }
 
 fn truncate_discovery_error(raw: &str) -> String {
@@ -1528,7 +1573,21 @@ async fn resolve_internal(
                 env.insert("KIMI_MODEL_NAME".to_string(), model);
             }
         }
-        PROVIDER_QWEN | PROVIDER_CAGENT | PROVIDER_CLINE | PROVIDER_SWE_AGENT => {
+        PROVIDER_QWEN => {
+            let base_url = endpoint_base_url_or_err(&endpoint)?;
+            ensure_shape_compatible(canonical, endpoint.api_shape)?;
+            env.insert("OPENAI_API_KEY".to_string(), api_key);
+            env.insert("OPENAI_BASE_URL".to_string(), base_url);
+            if let Some(model) = endpoint
+                .model_override
+                .as_ref()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+            {
+                env.insert("OPENAI_MODEL".to_string(), model);
+            }
+        }
+        PROVIDER_CAGENT | PROVIDER_CLINE | PROVIDER_SWE_AGENT => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
             env.insert("OPENAI_API_KEY".to_string(), api_key);
@@ -1545,14 +1604,20 @@ async fn resolve_internal(
         PROVIDER_OPENCODE => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
+            let provider_namespace =
+                infer_endpoint_model_provider_namespace(&base_url).unwrap_or_else(|| {
+                    "endpoint".to_string()
+                });
             env.insert("OPENAI_API_KEY".to_string(), api_key.clone());
             env.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
-            env.insert("OPENROUTER_API_KEY".to_string(), api_key.clone());
-            env.insert("OPENROUTER_BASE_URL".to_string(), base_url.clone());
+            if provider_namespace == "openrouter" {
+                env.insert("OPENROUTER_API_KEY".to_string(), api_key.clone());
+                env.insert("OPENROUTER_BASE_URL".to_string(), base_url.clone());
+            }
 
             let mut provider_config = serde_json::Map::new();
             provider_config.insert(
-                "openrouter".to_string(),
+                provider_namespace.clone(),
                 serde_json::json!({
                     "options": {
                         "baseURL": base_url,
@@ -1567,7 +1632,13 @@ async fn resolve_internal(
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
             {
-                root.insert("model".to_string(), serde_json::Value::String(model));
+                root.insert(
+                    "model".to_string(),
+                    serde_json::Value::String(normalize_namespaced_model_override(
+                        &model,
+                        Some(provider_namespace.as_str()),
+                    )),
+                );
             }
             root.insert(
                 "provider".to_string(),
@@ -1792,6 +1863,40 @@ mod tests {
                     name: None,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn infer_endpoint_model_provider_namespace_prefers_non_generic_host_label() {
+        assert_eq!(
+            infer_endpoint_model_provider_namespace("https://openrouter.ai/api/v1"),
+            Some("openrouter".to_string())
+        );
+        assert_eq!(
+            infer_endpoint_model_provider_namespace("https://api.myawesomeprovider.example/v1"),
+            Some("myawesomeprovider".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_namespaced_model_override_always_prefixes_namespace() {
+        assert_eq!(
+            normalize_namespaced_model_override("openai/gpt-5.2-codex", Some("openrouter")),
+            "openrouter/openai/gpt-5.2-codex"
+        );
+        assert_eq!(
+            normalize_namespaced_model_override(
+                "openrouter/openai/gpt-5.2-codex",
+                Some("openrouter"),
+            ),
+            "openrouter/openrouter/openai/gpt-5.2-codex"
+        );
+        assert_eq!(
+            normalize_namespaced_model_override(
+                "myawesomeprovider/openai/gpt-5.2-codex",
+                Some("openrouter"),
+            ),
+            "openrouter/myawesomeprovider/openai/gpt-5.2-codex"
         );
     }
 
@@ -2166,6 +2271,91 @@ mod tests {
         assert_eq!(
             resolved.env.get("KIMI_MODEL_NAME"),
             Some(&"kimi-k2".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn qwen_model_override_is_opaque_and_opencode_uses_endpoint_namespace() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let base_url = "https://api.myawesomeprovider.example/v1";
+        let model_override = "openai/gpt-5.2-codex";
+
+        let qwen_endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_QWEN,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Qwen custom".to_string(),
+                base_url: Some(base_url.to_string()),
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
+                model_override: Some(model_override.to_string()),
+                api_key: Some("qwen-key".to_string()),
+            },
+        )
+        .await
+        .expect("upsert qwen endpoint");
+        set_provider_source_selection(
+            root.path(),
+            PROVIDER_QWEN,
+            HarnessSourceKind::Endpoint,
+            Some(qwen_endpoint.id.clone()),
+        )
+        .await
+        .expect("select qwen endpoint");
+        let qwen_resolved = resolve_provider_source_for_run(root.path(), PROVIDER_QWEN)
+            .await
+            .expect("resolve qwen");
+        assert_eq!(
+            qwen_resolved.env.get("OPENAI_MODEL"),
+            Some(&"openai/gpt-5.2-codex".to_string())
+        );
+
+        let opencode_endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_OPENCODE,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "OpenCode custom".to_string(),
+                base_url: Some(base_url.to_string()),
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
+                model_override: Some(model_override.to_string()),
+                api_key: Some("opencode-key".to_string()),
+            },
+        )
+        .await
+        .expect("upsert opencode endpoint");
+        set_provider_source_selection(
+            root.path(),
+            PROVIDER_OPENCODE,
+            HarnessSourceKind::Endpoint,
+            Some(opencode_endpoint.id.clone()),
+        )
+        .await
+        .expect("select opencode endpoint");
+        let opencode_resolved = resolve_provider_source_for_run(root.path(), PROVIDER_OPENCODE)
+            .await
+            .expect("resolve opencode");
+        let config = opencode_resolved
+            .env
+            .get("OPENCODE_CONFIG_CONTENT")
+            .expect("opencode config env");
+        let parsed: serde_json::Value = serde_json::from_str(config).expect("valid json");
+        assert_eq!(
+            parsed.get("model").and_then(serde_json::Value::as_str),
+            Some("myawesomeprovider/openai/gpt-5.2-codex")
+        );
+        assert!(
+            parsed
+                .get("provider")
+                .and_then(|provider| provider.get("myawesomeprovider"))
+                .is_some(),
+            "expected namespaced provider config key"
+        );
+        assert!(
+            !opencode_resolved.env.contains_key("OPENROUTER_API_KEY"),
+            "custom namespace should not force OPENROUTER_* compatibility env vars"
         );
     }
 
