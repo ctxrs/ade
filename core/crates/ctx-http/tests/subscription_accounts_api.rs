@@ -156,6 +156,12 @@ impl ProviderAdapter for GeminiLoginTestAdapter {
         let Some(home) = env.get("GEMINI_CLI_HOME") else {
             return Err(anyhow!("GEMINI_CLI_HOME missing"));
         };
+        if !env
+            .get("NO_BROWSER")
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+        {
+            return Err(anyhow!("NO_BROWSER=true missing"));
+        }
         let gemini_dir = PathBuf::from(home).join(".gemini");
         tokio::fs::create_dir_all(&gemini_dir).await?;
 

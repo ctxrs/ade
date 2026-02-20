@@ -1261,6 +1261,7 @@ async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Opt
         provider_accounts::GEMINI_FORCE_FILE_STORAGE_ENV.to_string(),
         "true".to_string(),
     );
+    provider_env.insert("NO_BROWSER".to_string(), "true".to_string());
     provider_env.insert(
         "CTX_DATA_ROOT".to_string(),
         state.core.data_root.to_string_lossy().to_string(),
