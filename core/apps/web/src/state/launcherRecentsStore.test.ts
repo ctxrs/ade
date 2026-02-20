@@ -59,7 +59,6 @@ describe("launcherRecentsStore", () => {
         remote_port: 4399,
         start_remote: undefined,
         remote_data_dir: null,
-        remote_ctx_bin: null,
         updated_at_ms: 100,
       },
     ]);

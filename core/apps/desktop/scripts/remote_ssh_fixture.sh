@@ -1,0 +1,351 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FIXTURE_DIR="${SCRIPT_DIR}/remote-fixture"
+
+usage() {
+  cat <<'USAGE' >&2
+usage:
+  remote_ssh_fixture.sh start [--runtime auto|docker|podman] [--state-file PATH] [--log-dir PATH] [--user NAME]
+  remote_ssh_fixture.sh stop [--state-file PATH]
+  remote_ssh_fixture.sh print-env [--state-file PATH]
+
+notes:
+  - `start` prints `export ...` lines to stdout. Use with `eval "$(... start ...)"`.
+  - `stop` removes the fixture container and temp files from the state file.
+USAGE
+}
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+log() {
+  echo "[remote_ssh_fixture] $*" >&2
+}
+
+quote_export() {
+  local key="$1"
+  local value="$2"
+  printf 'export %s=%q\n' "$key" "$value"
+}
+
+save_state_var() {
+  local key="$1"
+  local value="$2"
+  printf '%s=%q\n' "$key" "$value" >>"$STATE_FILE"
+}
+
+ensure_exists() {
+  local cmd="$1"
+  command -v "$cmd" >/dev/null 2>&1 || die "required command not found: ${cmd}"
+}
+
+run_with_timeout() {
+  local seconds="$1"
+  shift
+  "$@" &
+  local pid=$!
+  (
+    sleep "${seconds}"
+    if kill -0 "${pid}" >/dev/null 2>&1; then
+      kill -TERM "${pid}" >/dev/null 2>&1 || true
+      sleep 1
+      kill -KILL "${pid}" >/dev/null 2>&1 || true
+    fi
+  ) &
+  local watchdog_pid=$!
+  local status=0
+  if wait "${pid}"; then
+    status=0
+  else
+    status=$?
+  fi
+  kill -KILL "${watchdog_pid}" >/dev/null 2>&1 || true
+  wait "${watchdog_pid}" >/dev/null 2>&1 || true
+  return "${status}"
+}
+
+runtime_healthy() {
+  local runtime="$1"
+  run_with_timeout 8 "${runtime}" ps >/dev/null 2>&1
+}
+
+pick_runtime() {
+  local requested="$1"
+  case "$requested" in
+    docker|podman)
+      ensure_exists "$requested"
+      runtime_healthy "$requested" || die "${requested} is installed but not responding"
+      echo "$requested"
+      return 0
+      ;;
+    auto)
+      if command -v docker >/dev/null 2>&1; then
+        if runtime_healthy docker; then
+          echo "docker"
+          return 0
+        fi
+        log "docker is installed but not responding; trying podman"
+      fi
+      if command -v podman >/dev/null 2>&1; then
+        if runtime_healthy podman; then
+          echo "podman"
+          return 0
+        fi
+        log "podman is installed but not responding"
+      fi
+      ;;
+  esac
+  die "no supported container runtime found (tried docker, podman)"
+}
+
+parse_flags() {
+  RUNTIME="${CTX_AUTOMATION_REMOTE_FIXTURE_RUNTIME:-auto}"
+  STATE_FILE="${CTX_AUTOMATION_REMOTE_FIXTURE_STATE_FILE:-}"
+  LOG_DIR="${CTX_AUTOMATION_REMOTE_FIXTURE_LOG_DIR:-}"
+  FIXTURE_USER="${CTX_AUTOMATION_REMOTE_FIXTURE_USER:-ctxfixture}"
+  DAEMON_PORT="${CTX_AUTOMATION_REMOTE_FIXTURE_DAEMON_PORT:-44099}"
+  IMAGE_TAG="${CTX_AUTOMATION_REMOTE_FIXTURE_IMAGE:-ctx-remote-ssh-fixture:local}"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --runtime)
+        RUNTIME="${2:-}"
+        shift 2
+        ;;
+      --state-file)
+        STATE_FILE="${2:-}"
+        shift 2
+        ;;
+      --log-dir)
+        LOG_DIR="${2:-}"
+        shift 2
+        ;;
+      --user)
+        FIXTURE_USER="${2:-}"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "unknown flag: $1"
+        ;;
+    esac
+  done
+}
+
+load_state() {
+  [[ -n "${STATE_FILE}" ]] || die "--state-file is required for this command"
+  [[ -f "${STATE_FILE}" ]] || die "state file not found: ${STATE_FILE}"
+  # shellcheck disable=SC1090
+  source "${STATE_FILE}"
+}
+
+container_port() {
+  local runtime="$1"
+  local container="$2"
+  local output
+  output="$("${runtime}" port "${container}" 22/tcp 2>/dev/null | head -n 1 | tr -d '\r')"
+  [[ -n "${output}" ]] || return 1
+  printf '%s' "${output}" | sed -E 's/.*:([0-9]+)$/\1/'
+}
+
+render_exports_from_loaded_state() {
+  quote_export CTX_AUTOMATION_REMOTE_HOST "${FIXTURE_HOST_ALIAS}"
+  quote_export CTX_AUTOMATION_REMOTE_USER "${FIXTURE_USER}"
+  quote_export CTX_AUTOMATION_REMOTE_PORT "${FIXTURE_DAEMON_PORT}"
+  quote_export CTX_AUTOMATION_REMOTE_DATA_DIR "${FIXTURE_REMOTE_DATA_DIR}"
+  quote_export CTX_AUTOMATION_REMOTE_PASSWORD ""
+  quote_export CTX_AUTOMATION_REMOTE_SSH_KEY_PATH "${FIXTURE_KEY_PATH}"
+  quote_export CTX_UPDATER_E2E_SSH_KEY_PATH "${FIXTURE_KEY_PATH}"
+  quote_export CTX_AUTOMATION_REMOTE_FIXTURE_HOME "${FIXTURE_SSH_HOME}"
+  quote_export CTX_AUTOMATION_REMOTE_FIXTURE_SSH_PORT "${FIXTURE_HOST_PORT}"
+  quote_export CTX_AUTOMATION_REMOTE_SSH_PORT "${FIXTURE_HOST_PORT}"
+  quote_export CTX_AUTOMATION_REMOTE_FIXTURE_SSH_CONFIG "${FIXTURE_SSH_CONFIG}"
+  quote_export CTX_AUTOMATION_REMOTE_FIXTURE_STATE_FILE "${STATE_FILE}"
+  quote_export CTX_AUTOMATION_REMOTE_FIXTURE_RUNTIME "${FIXTURE_RUNTIME}"
+  quote_export CTX_AUTOMATION_REMOTE_FIXTURE_LOG_DIR "${FIXTURE_LOG_DIR}"
+}
+
+wait_for_ssh_ready() {
+  local config_path="$1"
+  local alias="$2"
+  local attempts="${3:-60}"
+  local i
+  for ((i = 1; i <= attempts; i += 1)); do
+    if ssh -F "${config_path}" \
+      -o BatchMode=yes \
+      -o ConnectTimeout=2 \
+      "${alias}" "echo ready" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+start_fixture() {
+  ensure_exists ssh
+  ensure_exists ssh-keygen
+  ensure_exists mktemp
+
+  local runtime
+  runtime="$(pick_runtime "${RUNTIME}")"
+  local tmp_dir
+  tmp_dir="$(mktemp -d /tmp/ctx-remote-fixture.XXXXXX)"
+  local state_file
+  if [[ -n "${STATE_FILE}" ]]; then
+    state_file="${STATE_FILE}"
+  else
+    state_file="$(mktemp /tmp/ctx-remote-fixture-state.XXXXXX)"
+  fi
+  STATE_FILE="${state_file}"
+
+  local log_dir
+  if [[ -n "${LOG_DIR}" ]]; then
+    log_dir="${LOG_DIR}"
+    mkdir -p "${log_dir}"
+  else
+    log_dir="${tmp_dir}/logs"
+    mkdir -p "${log_dir}"
+  fi
+
+  local key_path="${tmp_dir}/id_ed25519"
+  local key_pub_path="${tmp_dir}/id_ed25519.pub"
+  local authorized_keys="${tmp_dir}/authorized_keys"
+  local ssh_home="${tmp_dir}/ssh-home"
+  local ssh_dir="${ssh_home}/.ssh"
+  local ssh_config="${ssh_dir}/config"
+  local host_alias="ctx-fixture-${RANDOM}-$$"
+  local remote_data_dir="/tmp/ctx-e2e-remote-fixture-${RANDOM}/daemon"
+  local container_name="ctx-remote-fixture-${RANDOM}-$$"
+  local container_id=""
+  local startup_ok=0
+
+  cleanup_on_failure() {
+    if [[ "${startup_ok:-0}" == "1" ]]; then
+      return 0
+    fi
+    if [[ -n "${container_id:-}" ]]; then
+      "${runtime:-docker}" rm -f "${container_id}" >/dev/null 2>&1 || true
+    fi
+    rm -rf "${tmp_dir:-}"
+    rm -f "${STATE_FILE:-}"
+  }
+  trap cleanup_on_failure EXIT
+
+  ssh-keygen -q -t ed25519 -N "" -f "${key_path}" >/dev/null
+  cp "${key_pub_path}" "${authorized_keys}"
+
+  mkdir -p "${ssh_dir}"
+  chmod 700 "${ssh_dir}"
+
+  if ! "${runtime}" image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
+    log "building fixture image (${IMAGE_TAG}) with ${runtime}"
+    "${runtime}" build -t "${IMAGE_TAG}" "${FIXTURE_DIR}" \
+      >"${log_dir}/runtime-build.log" 2>&1
+  fi
+
+  container_id="$("${runtime}" run -d --rm \
+    --name "${container_name}" \
+    -p 127.0.0.1::22 \
+    -e "CTX_FIXTURE_USER=${FIXTURE_USER}" \
+    -e "CTX_FIXTURE_HOME=/home/${FIXTURE_USER}" \
+    -e "CTX_FIXTURE_AUTHORIZED_KEYS=/run/ctx-fixture/authorized_keys" \
+    -v "${authorized_keys}:/run/ctx-fixture/authorized_keys:ro" \
+    "${IMAGE_TAG}")"
+
+  local host_ssh_port
+  host_ssh_port="$(container_port "${runtime}" "${container_id}" || true)"
+  [[ "${host_ssh_port}" =~ ^[0-9]+$ ]] || die "failed to resolve fixture SSH port"
+
+  cat >"${ssh_config}" <<EOF
+Host ${host_alias}
+  HostName 127.0.0.1
+  Port ${host_ssh_port}
+  User ${FIXTURE_USER}
+  IdentityFile ${key_path}
+  IdentitiesOnly yes
+  BatchMode yes
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+EOF
+  chmod 600 "${ssh_config}"
+
+  if ! wait_for_ssh_ready "${ssh_config}" "${host_alias}" 60; then
+    "${runtime}" logs "${container_id}" >"${log_dir}/container.log" 2>&1 || true
+    die "fixture ssh endpoint did not become ready (see ${log_dir}/container.log)"
+  fi
+
+  ssh -F "${ssh_config}" "${host_alias}" "mkdir -p '${remote_data_dir}'" >/dev/null 2>&1
+
+  : >"${STATE_FILE}"
+  save_state_var FIXTURE_RUNTIME "${runtime}"
+  save_state_var FIXTURE_CONTAINER_ID "${container_id}"
+  save_state_var FIXTURE_CONTAINER_NAME "${container_name}"
+  save_state_var FIXTURE_TMP_DIR "${tmp_dir}"
+  save_state_var FIXTURE_KEY_PATH "${key_path}"
+  save_state_var FIXTURE_HOST_ALIAS "${host_alias}"
+  save_state_var FIXTURE_USER "${FIXTURE_USER}"
+  save_state_var FIXTURE_HOST_PORT "${host_ssh_port}"
+  save_state_var FIXTURE_DAEMON_PORT "${DAEMON_PORT}"
+  save_state_var FIXTURE_REMOTE_DATA_DIR "${remote_data_dir}"
+  save_state_var FIXTURE_SSH_HOME "${ssh_home}"
+  save_state_var FIXTURE_SSH_CONFIG "${ssh_config}"
+  save_state_var FIXTURE_LOG_DIR "${log_dir}"
+  save_state_var FIXTURE_IMAGE_TAG "${IMAGE_TAG}"
+  save_state_var FIXTURE_STATE_FILE "${STATE_FILE}"
+
+  load_state
+  render_exports_from_loaded_state
+  startup_ok=1
+  trap - EXIT
+}
+
+stop_fixture() {
+  load_state
+  "${FIXTURE_RUNTIME}" rm -f "${FIXTURE_CONTAINER_ID}" >/dev/null 2>&1 || true
+  rm -rf "${FIXTURE_TMP_DIR}"
+  rm -f "${STATE_FILE}"
+  log "stopped fixture ${FIXTURE_CONTAINER_NAME}"
+}
+
+print_env() {
+  load_state
+  render_exports_from_loaded_state
+}
+
+main() {
+  local command="${1:-}"
+  [[ -n "${command}" ]] || {
+    usage
+    exit 1
+  }
+  shift || true
+  parse_flags "$@"
+  case "${command}" in
+    start)
+      start_fixture
+      ;;
+    stop)
+      stop_fixture
+      ;;
+    print-env)
+      print_env
+      ;;
+    -h|--help|help)
+      usage
+      ;;
+    *)
+      usage
+      die "unknown command: ${command}"
+      ;;
+  esac
+}
+
+main "$@"

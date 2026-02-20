@@ -17,7 +17,6 @@ export type DesktopConnectionInfo = {
   user?: string | null;
   remote_port?: number | null;
   remote_data_dir?: string | null;
-  remote_ctx_bin?: string | null;
 };
 
 export type SshConnectReq = {
@@ -26,7 +25,6 @@ export type SshConnectReq = {
   remote_port?: number | null;
   start_remote?: boolean;
   remote_data_dir?: string | null;
-  remote_ctx_bin?: string | null;
 };
 
 export type DesktopHttpResponse = {

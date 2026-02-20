@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
+const crypto = require("crypto");
 
 const args = process.argv.slice(2);
 const profileIdx = args.indexOf("--profile");
@@ -135,6 +136,184 @@ const ensureExecutable = (filePath) => {
   }
 };
 
+const sha256File = (filePath) => {
+  const data = fs.readFileSync(filePath);
+  return crypto.createHash("sha256").update(data).digest("hex");
+};
+
+const commandExists = (name) => {
+  const res = childProcess.spawnSync(name, ["--version"], { stdio: "ignore" });
+  return res.status === 0;
+};
+
+const runtimeProbeArgs = (runtime) => {
+  if (runtime === "docker") return ["info", "--format", "{{.ServerVersion}}"];
+  if (runtime === "podman") return ["info", "--format", "json"];
+  return null;
+};
+
+const runtimeUsable = (runtime) => {
+  const probeArgs = runtimeProbeArgs(runtime);
+  if (!probeArgs) return true;
+  const res = childProcess.spawnSync(runtime, probeArgs, { stdio: "ignore" });
+  return res.status === 0;
+};
+
+const resolveContainerRuntime = () => {
+  const requested = String(process.env.CTX_BUNDLE_REMOTE_DAEMON_RUNTIME || "").trim();
+  if (requested) {
+    if (!commandExists(requested)) {
+      throw new Error(
+        `CTX_BUNDLE_REMOTE_DAEMON_RUNTIME='${requested}' is not available. Install it or unset the variable.`,
+      );
+    }
+    if (!runtimeUsable(requested)) {
+      throw new Error(
+        `CTX_BUNDLE_REMOTE_DAEMON_RUNTIME='${requested}' is installed but not usable. Ensure the runtime daemon/service is running, or unset CTX_BUNDLE_REMOTE_DAEMON_RUNTIME.`,
+      );
+    }
+    return requested;
+  }
+
+  const runtimeChecks = [
+    { name: "docker", installed: commandExists("docker"), usable: false },
+    { name: "podman", installed: commandExists("podman"), usable: false },
+  ];
+  for (const check of runtimeChecks) {
+    if (check.installed) check.usable = runtimeUsable(check.name);
+  }
+
+  const usableRuntime = runtimeChecks.find((check) => check.installed && check.usable);
+  if (usableRuntime) return usableRuntime.name;
+
+  const installedButUnusable = runtimeChecks
+    .filter((check) => check.installed && !check.usable)
+    .map((check) => check.name);
+  if (installedButUnusable.length > 0) {
+    throw new Error(
+      `remote daemon bundling found container runtime(s) in PATH but none are usable (${installedButUnusable.join(
+        ", ",
+      )}). Ensure the runtime daemon/service is running (for example, start Docker Desktop or podman machine) and rerun desktop prep.`,
+    );
+  }
+
+  throw new Error(
+    "remote daemon bundling requires docker or podman in PATH. Install a container runtime and rerun desktop prep.",
+  );
+};
+
+const resolveRemoteDaemonBuilderImage = () => {
+  const requested = String(process.env.CTX_BUNDLE_REMOTE_DAEMON_IMAGE || "").trim();
+  if (requested) return requested;
+  // Prefer a conservative glibc baseline so bundled daemon binaries run on a wider
+  // range of Linux remotes (including our Debian bookworm fixture).
+  return "rust:1-bookworm";
+};
+
+const upsertManifestDaemons = (bundleDir, daemonEntries) => {
+  const manifestPath = path.join(bundleDir, "manifest.json");
+  const manifest = readBundleManifest(bundleDir);
+  const existing = Array.isArray(manifest?.daemons) ? manifest.daemons : [];
+  const keep = existing.filter(
+    (entry) =>
+      !daemonEntries.some(
+        (next) =>
+          next.id === entry?.id && next.os === entry?.os && next.arch === entry?.arch,
+      ),
+  );
+  const merged = [...keep, ...daemonEntries].sort((a, b) =>
+    `${a.id}::${a.os}::${a.arch}`.localeCompare(`${b.id}::${b.os}::${b.arch}`),
+  );
+  manifest.daemons = merged;
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+};
+
+const bundleRemoteDaemons = (bundleDir) => {
+  const runtime = resolveContainerRuntime();
+  const builderImage = resolveRemoteDaemonBuilderImage();
+  const daemonsDir = path.join(bundleDir, "daemons");
+  fs.mkdirSync(daemonsDir, { recursive: true });
+  const cacheRoot = path.join(
+    process.env.HOME || coreRoot,
+    ".cache",
+    "cargo",
+    "ctx-monorepo",
+    "desktop-remote-daemons",
+  );
+  const cargoRegistryCache = path.join(cacheRoot, "registry");
+  const cargoGitCache = path.join(cacheRoot, "git");
+  fs.mkdirSync(cargoRegistryCache, { recursive: true });
+  fs.mkdirSync(cargoGitCache, { recursive: true });
+
+  const targets = [
+    {
+      arch: "x86_64",
+      platform: "linux/amd64",
+      rustTarget: "x86_64-unknown-linux-gnu",
+      fileName: "ctx-daemon-linux-x86_64",
+    },
+    {
+      arch: "aarch64",
+      platform: "linux/arm64",
+      rustTarget: "aarch64-unknown-linux-gnu",
+      fileName: "ctx-daemon-linux-aarch64",
+    },
+  ];
+
+  const daemonEntries = [];
+  for (const target of targets) {
+    const targetCache = path.join(cacheRoot, "target", target.rustTarget);
+    fs.mkdirSync(targetCache, { recursive: true });
+    const outPath = path.join(daemonsDir, target.fileName);
+    const buildCmd =
+      "set -euo pipefail; " +
+      "export PATH=\"/usr/local/cargo/bin:$PATH\"; " +
+      `rustup target add ${target.rustTarget} >/dev/null 2>&1 || true; ` +
+      `cargo build --manifest-path /src/Cargo.toml -p ctx-http --release --target ${target.rustTarget}; ` +
+      `install -Dm0755 /target/${target.rustTarget}/release/ctx /out/${target.fileName}`;
+    const args = [
+      "run",
+      "--rm",
+      "--platform",
+      target.platform,
+      "-v",
+      `${coreRoot}:/src`,
+      "-v",
+      `${daemonsDir}:/out`,
+      "-v",
+      `${targetCache}:/target`,
+      "-v",
+      `${cargoRegistryCache}:/usr/local/cargo/registry`,
+      "-v",
+      `${cargoGitCache}:/usr/local/cargo/git`,
+      "-w",
+      "/src",
+      "-e",
+      "CARGO_TARGET_DIR=/target",
+      builderImage,
+      "bash",
+      "-lc",
+      buildCmd,
+    ];
+    const res = childProcess.spawnSync(runtime, args, { stdio: "inherit" });
+    if (res.status !== 0) {
+      throw new Error(
+        `failed to build bundled remote daemon for linux/${target.arch} using ${runtime} (${res.status ?? "unknown"})`,
+      );
+    }
+    ensureExecutable(outPath);
+    daemonEntries.push({
+      id: "ctx-daemon",
+      os: "linux",
+      arch: target.arch,
+      sha256: sha256File(outPath),
+      bin: `daemons/${target.fileName}`,
+    });
+  }
+
+  upsertManifestDaemons(bundleDir, daemonEntries);
+};
+
 const resetBundleDir = () => {
   fs.mkdirSync(destBundleDir, { recursive: true });
   // Keep lightweight repo-tracked resources that are used at runtime (and ignore rules).
@@ -166,6 +345,13 @@ const resetBundleDir = () => {
     "ctx desktop placeholder; generated by desktop_sync_resources.cjs\n",
     "utf8",
   );
+  const daemonsDir = path.join(destBundleDir, "daemons");
+  fs.mkdirSync(daemonsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(daemonsDir, "placeholder.txt"),
+    "ctx desktop placeholder daemon bundle\n",
+    "utf8",
+  );
 };
 
 const writePlaceholderBundleManifest = () => {
@@ -176,6 +362,7 @@ const writePlaceholderBundleManifest = () => {
     providers: [],
     runtimes: [],
     images: [],
+    daemons: [],
   };
   fs.writeFileSync(manifestPath, `${JSON.stringify(placeholder, null, 2)}\n`, "utf8");
 };
@@ -198,6 +385,9 @@ const syncBundles = () => {
   }
   resetBundleDir();
   const env = { ...process.env, CTX_BUNDLE_DIR: destBundleDir };
+  // keep harness/provider bundle builds on their own target dirs; forwarding the
+  // desktop CARGO_TARGET_DIR can make adapter binary resolution brittle.
+  delete env.CARGO_TARGET_DIR;
   // Bundle default harness image tar for both debug and release so managed staging
   // works without registry pulls.
   if (profile === "release") {
@@ -293,6 +483,10 @@ const syncBundles = () => {
       );
     }
   }
+
+  // Zero-config remote bootstrap requires shipping managed Linux daemon binaries
+  // for both arches in every desktop bundle.
+  bundleRemoteDaemons(destBundleDir);
 
   return destBundleDir;
 };

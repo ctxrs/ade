@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -63,6 +63,7 @@ const SESSION_HEAD_ARCHIVED_TURN_LIMIT: u32 = 50;
 // Keep stream-only seq values within JS safe integer range.
 const STREAM_ONLY_EVENT_SEQ_START: i64 = -(1_i64 << 52);
 static STREAM_ONLY_EVENT_SEQ: AtomicI64 = AtomicI64::new(STREAM_ONLY_EVENT_SEQ_START);
+static STORE_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
 fn next_stream_only_event_seq() -> i64 {
     STREAM_ONLY_EVENT_SEQ.fetch_add(1, Ordering::Relaxed)
@@ -473,8 +474,7 @@ impl Store {
             })
             .connect(&sqlite_url)
             .await?;
-        let migrator = sqlx::migrate::Migrator::new(store_migrations_dir()).await?;
-        migrator.run(&pool).await?;
+        STORE_MIGRATOR.run(&pool).await?;
         let event_log = Arc::new(EventLogRuntime::load(&pool).await?);
         let store = Self { pool, event_log };
         store.event_log.start_persister(store.clone());

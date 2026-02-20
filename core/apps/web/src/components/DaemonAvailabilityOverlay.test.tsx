@@ -2,9 +2,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DaemonAvailabilityOverlay from "./DaemonAvailabilityOverlay";
-import { daemonFetchRaw } from "../api/client";
+import { daemonFetchRaw, listWorkspaceTasks, listWorkspaces } from "../api/client";
 import { useDaemonBaseUrl } from "../api/useDaemonConnection";
 import {
+  desktopApplyAppUpdate,
   desktopGetConnection,
   desktopGetVersion,
   desktopRestartLocalDaemon,
@@ -15,6 +16,8 @@ import {
 vi.mock("../api/client", () => ({
   applyDaemonDesktopConnection: vi.fn(),
   daemonFetchRaw: vi.fn(),
+  listWorkspaces: vi.fn(),
+  listWorkspaceTasks: vi.fn(),
 }));
 
 vi.mock("../api/useDaemonConnection", () => ({
@@ -22,6 +25,7 @@ vi.mock("../api/useDaemonConnection", () => ({
 }));
 
 vi.mock("../utils/desktop", () => ({
+  desktopApplyAppUpdate: vi.fn(),
   desktopConnectLocal: vi.fn(),
   desktopGetConnection: vi.fn(),
   desktopGetVersion: vi.fn(),
@@ -61,6 +65,14 @@ describe("DaemonAvailabilityOverlay", () => {
     vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "local" });
     vi.mocked(desktopRestartLocalDaemon).mockResolvedValue({ kind: "local" });
     vi.mocked(desktopUpdateRemoteDaemon).mockResolvedValue({ updated: true, message: "ok" });
+    vi.mocked(desktopApplyAppUpdate).mockResolvedValue({
+      applied: true,
+      needs_restart: true,
+      latest_version: "2.0.0",
+      message: "updated",
+    });
+    vi.mocked(listWorkspaces).mockResolvedValue([]);
+    vi.mocked(listWorkspaceTasks).mockResolvedValue([]);
     vi.spyOn(window, "confirm").mockReturnValue(true);
   });
 
@@ -99,7 +111,32 @@ describe("DaemonAvailabilityOverlay", () => {
     renderOverlay();
     expect(await screen.findByText("Desktop and daemon are out of sync")).toBeInTheDocument();
     expect(screen.getByText(/desktop app is older than the daemon/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Update desktop app" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open diagnostics" })).toBeInTheDocument();
+  });
+
+  it("can trigger in-place desktop update from desktop-older mismatch", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopGetVersion).mockResolvedValue("1.0.0");
+    vi.mocked(daemonFetchRaw).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({
+        ...baseHealth,
+        daemon_version: "2.0.0",
+        compatibility: { ...baseHealth.compatibility, desktop_exact_version: "2.0.0" },
+      }),
+      content_type: "application/json",
+    });
+
+    renderOverlay();
+    expect(await screen.findByRole("button", { name: "Update desktop app" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Update desktop app" }));
+    await waitFor(() => {
+      expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledWith("stable");
+    });
+    expect(
+      await screen.findByText(/restart the desktop app to apply the update/i),
+    ).toBeInTheDocument();
   });
 
   it("shows SSH-specific update action for daemon older mismatch", async () => {
@@ -121,6 +158,81 @@ describe("DaemonAvailabilityOverlay", () => {
     fireEvent.click(screen.getByRole("button", { name: "Update remote daemon" }));
     await waitFor(() => {
       expect(vi.mocked(desktopUpdateRemoteDaemon)).toHaveBeenCalledWith("stable");
+    });
+  });
+
+  it("prompts before remote daemon update when running tasks are active", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "ssh" });
+    vi.mocked(desktopGetVersion).mockResolvedValue("2.0.0");
+    vi.mocked(listWorkspaces).mockResolvedValue([
+      {
+        id: "ws-1",
+        name: "ws-1",
+        root_path: "/tmp/ws-1",
+        created_at: "2026-02-20T00:00:00Z",
+      },
+    ]);
+    vi.mocked(listWorkspaceTasks).mockResolvedValue([
+      {
+        id: "task-1",
+        workspace_id: "ws-1",
+        title: "task-1",
+        status: "running",
+        created_at: "2026-02-20T00:00:00Z",
+        updated_at: "2026-02-20T00:00:00Z",
+      },
+    ]);
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    vi.mocked(daemonFetchRaw).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({
+        ...baseHealth,
+        daemon_version: "1.0.0",
+        compatibility: { ...baseHealth.compatibility, desktop_exact_version: "1.0.0" },
+      }),
+      content_type: "application/json",
+    });
+
+    renderOverlay();
+    expect(await screen.findByRole("button", { name: "Update remote daemon" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Update remote daemon" }));
+    await waitFor(() => {
+      expect(vi.mocked(desktopUpdateRemoteDaemon)).not.toHaveBeenCalled();
+    });
+  });
+
+  it("runs remote daemon update as a single flight across rapid clicks", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "ssh" });
+    vi.mocked(desktopGetVersion).mockResolvedValue("2.0.0");
+    vi.mocked(daemonFetchRaw).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({
+        ...baseHealth,
+        daemon_version: "1.0.0",
+        compatibility: { ...baseHealth.compatibility, desktop_exact_version: "1.0.0" },
+      }),
+      content_type: "application/json",
+    });
+    let releaseGate!: () => void;
+    const precheckGate = new Promise<void>((resolve) => {
+      releaseGate = () => resolve();
+    });
+    vi.mocked(listWorkspaces).mockImplementation(async () => {
+      await precheckGate;
+      return [];
+    });
+
+    renderOverlay();
+    const button = await screen.findByRole("button", { name: "Update remote daemon" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(vi.mocked(listWorkspaces)).toHaveBeenCalledTimes(1);
+    releaseGate();
+
+    await waitFor(() => {
+      expect(vi.mocked(desktopUpdateRemoteDaemon)).toHaveBeenCalledTimes(1);
     });
   });
 

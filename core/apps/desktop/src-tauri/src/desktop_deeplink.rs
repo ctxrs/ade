@@ -360,7 +360,11 @@ pub(super) fn open_in_ctx(
     Ok(())
 }
 
-pub(super) fn build_file_preview_url(target: &DeepLinkTarget, line: Option<u32>, col: Option<u32>) -> String {
+pub(super) fn build_file_preview_url(
+    target: &DeepLinkTarget,
+    line: Option<u32>,
+    col: Option<u32>,
+) -> String {
     let mut serializer = url::form_urlencoded::Serializer::new(String::new());
     match target {
         DeepLinkTarget::WorktreeFile { worktree_id, file } => {
@@ -447,7 +451,10 @@ pub(super) fn open_in_editor_with_target(
     open_in_editor(&adjusted, path, line, col, remote)
 }
 
-pub(super) fn resolve_target_path(state: &ConnectionManager, target: &DeepLinkTarget) -> Result<PathBuf> {
+pub(super) fn resolve_target_path(
+    state: &ConnectionManager,
+    target: &DeepLinkTarget,
+) -> Result<PathBuf> {
     match target {
         DeepLinkTarget::WorktreeFile { worktree_id, file } => {
             let info = resolve_worktree_info(state, worktree_id)?;
@@ -494,7 +501,10 @@ pub(super) fn is_target_in_open_workspace(
     }
 }
 
-pub(super) fn resolve_or_create_workspace_id(state: &ConnectionManager, root_path: &str) -> Result<String> {
+pub(super) fn resolve_or_create_workspace_id(
+    state: &ConnectionManager,
+    root_path: &str,
+) -> Result<String> {
     if let Some(existing) = resolve_workspace_id_by_path(state, root_path)? {
         return Ok(existing);
     }
@@ -557,7 +567,10 @@ pub(super) fn resolve_workspace_id_by_path(
     Ok(None)
 }
 
-pub(super) fn resolve_workspace_root(state: &ConnectionManager, workspace_id: &str) -> Result<PathBuf> {
+pub(super) fn resolve_workspace_root(
+    state: &ConnectionManager,
+    workspace_id: &str,
+) -> Result<PathBuf> {
     let resp = state.daemon_request(DesktopDaemonRequest {
         method: "GET".to_string(),
         path: format!("/api/workspaces/{workspace_id}"),
@@ -580,7 +593,10 @@ pub(super) fn resolve_workspace_root(state: &ConnectionManager, workspace_id: &s
     Ok(PathBuf::from(root))
 }
 
-pub(super) fn resolve_worktree_info(state: &ConnectionManager, worktree_id: &str) -> Result<WorktreeInfo> {
+pub(super) fn resolve_worktree_info(
+    state: &ConnectionManager,
+    worktree_id: &str,
+) -> Result<WorktreeInfo> {
     let resp = state.daemon_request(DesktopDaemonRequest {
         method: "GET".to_string(),
         path: format!("/api/worktrees/{worktree_id}"),
@@ -624,8 +640,7 @@ mod deep_link_parse_tests {
 
     #[test]
     fn parse_deep_link_open_path_with_line_col() {
-        let url =
-            Url::parse("ctx://open?path=%2Ftmp%2Fdemo.txt&line=12&col=3").expect("valid url");
+        let url = Url::parse("ctx://open?path=%2Ftmp%2Fdemo.txt&line=12&col=3").expect("valid url");
         let action = parse_deep_link(&url).expect("open should parse");
         match action {
             DeepLinkAction::Open(req) => {
