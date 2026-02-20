@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context};
@@ -11,10 +12,11 @@ use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::Json;
 use chrono::{DateTime, Utc};
 use futures::{Stream, StreamExt};
+use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use url::Url;
 
 use super::errors::ApiErrorResp;
@@ -418,14 +420,24 @@ pub(super) struct CodexLoginCompletion {
 }
 
 pub(super) struct ClaudeLoginProcess {
-    child: tokio::process::Child,
     line_rx: mpsc::UnboundedReceiver<String>,
     buffered_lines: Vec<String>,
     auth_url: Option<String>,
+    exit_rx: oneshot::Receiver<anyhow::Result<portable_pty::ExitStatus>>,
+    killer: Arc<StdMutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
+}
+
+struct ClaudeLoginSpawn {
+    line_rx: mpsc::UnboundedReceiver<String>,
+    exit_rx: oneshot::Receiver<anyhow::Result<portable_pty::ExitStatus>>,
+    killer: Arc<StdMutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
 }
 
 const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAUDE_LOGIN_URL_WAIT: Duration = Duration::from_secs(4);
+const CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT: Duration = Duration::from_secs(8);
+const CLAUDE_LOGIN_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const CLAUDE_LOGIN_EXIT_GRACE_WAIT: Duration = Duration::from_millis(400);
 
 fn is_loopback_host(value: &str) -> bool {
     let host = value.trim().to_ascii_lowercase();
@@ -1506,37 +1518,143 @@ async fn resolve_claude_setup_token_runtime(
 
 fn spawn_claude_setup_token_command(
     runtime: &installer::ProviderRuntimeCommand,
-) -> anyhow::Result<tokio::process::Child> {
-    let mut cmd = Command::new(&runtime.command_abs_path);
-    cmd.args(&runtime.args)
-        .arg("setup-token")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+) -> anyhow::Result<ClaudeLoginSpawn> {
+    let pty = NativePtySystem::default();
+    let pair = pty
+        .openpty(PtySize {
+            rows: 30,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .context("opening pty for claude setup-token")?;
+
+    let mut cmd = CommandBuilder::new(&runtime.command_abs_path);
+    for arg in &runtime.args {
+        cmd.arg(arg);
+    }
+    cmd.arg("setup-token");
     cmd.env("NO_COLOR", "1");
-    cmd.spawn().with_context(|| {
+    cmd.env("TERM", "xterm-256color");
+
+    let mut child = pair.slave.spawn_command(cmd).with_context(|| {
         format!(
             "spawning claude setup-token via {}",
             runtime.command_abs_path
         )
+    })?;
+    let killer = Arc::new(StdMutex::new(child.clone_killer()));
+    drop(pair.slave);
+
+    let reader = pair
+        .master
+        .try_clone_reader()
+        .context("cloning pty reader for claude setup-token")?;
+    let (line_tx, line_rx) = mpsc::unbounded_channel();
+    std::thread::spawn(move || {
+        pump_claude_login_output(reader, line_tx);
+    });
+
+    let (exit_tx, exit_rx) = oneshot::channel();
+    std::thread::spawn(move || {
+        let result = child
+            .wait()
+            .context("waiting for claude setup-token process");
+        let _ = exit_tx.send(result);
+    });
+
+    Ok(ClaudeLoginSpawn {
+        line_rx,
+        exit_rx,
+        killer,
     })
 }
 
-async fn pump_claude_login_output<R>(reader: R, tx: mpsc::UnboundedSender<String>)
-where
-    R: AsyncRead + Unpin + Send + 'static,
-{
-    let mut lines = BufReader::new(reader).lines();
-    loop {
-        match lines.next_line().await {
-            Ok(Some(line)) => {
-                if tx.send(line).is_err() {
-                    break;
+fn strip_ansi_sequences(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let chars: Vec<char> = input.chars().collect();
+    let mut idx = 0usize;
+    while idx < chars.len() {
+        let ch = chars[idx];
+        if ch == '\u{1b}' {
+            idx += 1;
+            if idx < chars.len() {
+                if chars[idx] == '[' {
+                    idx += 1;
+                    while idx < chars.len() {
+                        let c = chars[idx];
+                        idx += 1;
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                if chars[idx] == ']' {
+                    idx += 1;
+                    let mut payload = String::new();
+                    while idx < chars.len() {
+                        let c = chars[idx];
+                        if c == '\u{7}' {
+                            idx += 1;
+                            break;
+                        }
+                        if c == '\u{1b}' && (idx + 1) < chars.len() && chars[idx + 1] == '\\' {
+                            idx += 2;
+                            break;
+                        }
+                        payload.push(c);
+                        idx += 1;
+                    }
+                    if let Some(url) = payload
+                        .strip_prefix("8;;")
+                        .filter(|value| !value.is_empty())
+                    {
+                        out.push(' ');
+                        out.push_str(url);
+                        out.push(' ');
+                    }
+                    continue;
                 }
             }
-            Ok(None) => break,
+            continue;
+        }
+        if ch != '\r' && ch != '\u{7}' {
+            out.push(ch);
+        }
+        idx += 1;
+    }
+    out
+}
+
+fn normalize_claude_login_line(line: &str) -> String {
+    strip_ansi_sequences(line.trim_end_matches('\r'))
+}
+
+fn pump_claude_login_output<R>(mut reader: R, tx: mpsc::UnboundedSender<String>)
+where
+    R: std::io::Read,
+{
+    let mut pending = String::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                pending.push_str(&String::from_utf8_lossy(&buf[..n]));
+                while let Some(newline_idx) = pending.find('\n') {
+                    let raw = pending[..newline_idx].to_string();
+                    pending.drain(..=newline_idx);
+                    if tx.send(normalize_claude_login_line(&raw)).is_err() {
+                        return;
+                    }
+                }
+            }
             Err(_) => break,
         }
+    }
+    if !pending.is_empty() {
+        let _ = tx.send(normalize_claude_login_line(&pending));
     }
 }
 
@@ -1591,18 +1709,11 @@ pub(super) async fn start_claude_login_process(
     data_root: &std::path::Path,
 ) -> anyhow::Result<ClaudeLoginProcess> {
     let runtime = resolve_claude_setup_token_runtime(data_root).await?;
-    let mut child = spawn_claude_setup_token_command(&runtime)?;
-    let stdout = child
-        .stdout
-        .take()
-        .context("claude setup-token stdout unavailable")?;
-    let stderr = child
-        .stderr
-        .take()
-        .context("claude setup-token stderr unavailable")?;
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    tokio::spawn(pump_claude_login_output(stdout, tx.clone()));
-    tokio::spawn(pump_claude_login_output(stderr, tx));
+    let ClaudeLoginSpawn {
+        line_rx: mut rx,
+        exit_rx,
+        killer,
+    } = spawn_claude_setup_token_command(&runtime)?;
 
     let mut buffered_lines = Vec::new();
     let mut auth_url = None;
@@ -1628,11 +1739,75 @@ pub(super) async fn start_claude_login_process(
     }
 
     Ok(ClaudeLoginProcess {
-        child,
         line_rx: rx,
         buffered_lines,
         auth_url,
+        exit_rx,
+        killer,
     })
+}
+
+async fn append_claude_login_line(
+    state: &Arc<AppState>,
+    login_id: &str,
+    observed_auth_url: &mut Option<String>,
+    transcript: &mut String,
+    line: String,
+) {
+    if observed_auth_url.is_none() {
+        *observed_auth_url = extract_auth_url(&line);
+        if let Some(url) = observed_auth_url.clone() {
+            let mut map = state.providers.claude_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(login_id) {
+                entry.auth_url = Some(url);
+            }
+        }
+    }
+    transcript.push_str(&line);
+    transcript.push('\n');
+}
+
+fn format_claude_exit_status(status: &portable_pty::ExitStatus) -> String {
+    if let Some(signal) = status.signal() {
+        return format!("signal {signal}");
+    }
+    status.exit_code().to_string()
+}
+
+async fn kill_claude_login_process(
+    killer: Arc<StdMutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
+) -> anyhow::Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let mut guard = killer
+            .lock()
+            .map_err(|_| anyhow::anyhow!("claude setup-token killer lock poisoned"))?;
+        guard.kill().context("killing claude setup-token process")
+    })
+    .await
+    .context("joining claude setup-token kill task")?
+}
+
+async fn read_trailing_claude_login_lines(
+    line_rx: &mut mpsc::UnboundedReceiver<String>,
+    grace: Duration,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut deadline = Instant::now() + grace;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining, line_rx.recv()).await {
+            Ok(Some(line)) => {
+                lines.push(line);
+                deadline = Instant::now() + grace;
+            }
+            Ok(None) => break,
+            Err(_) => break,
+        }
+    }
+    lines
 }
 
 pub(super) async fn monitor_claude_login(
@@ -1643,76 +1818,192 @@ pub(super) async fn monitor_claude_login(
 ) {
     let mut transcript = String::new();
     let mut observed_auth_url = login.auth_url.clone();
+    let auth_url_deadline = Instant::now() + CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT;
+    let mut completion_deadline = observed_auth_url
+        .as_ref()
+        .map(|_| Instant::now() + CLAUDE_LOGIN_COMPLETION_TIMEOUT);
 
     for line in std::mem::take(&mut login.buffered_lines) {
-        if observed_auth_url.is_none() {
-            observed_auth_url = extract_auth_url(&line);
-            if let Some(url) = observed_auth_url.clone() {
-                let mut map = state.providers.claude_login_sessions.lock().await;
-                if let Some(entry) = map.get_mut(&login_id) {
-                    entry.auth_url = Some(url);
-                }
-            }
+        let had_auth_url = observed_auth_url.is_some();
+        append_claude_login_line(
+            &state,
+            &login_id,
+            &mut observed_auth_url,
+            &mut transcript,
+            line,
+        )
+        .await;
+        if !had_auth_url && observed_auth_url.is_some() {
+            completion_deadline = Some(Instant::now() + CLAUDE_LOGIN_COMPLETION_TIMEOUT);
         }
-        transcript.push_str(&line);
-        transcript.push('\n');
     }
 
-    while let Some(line) = login.line_rx.recv().await {
-        if observed_auth_url.is_none() {
-            observed_auth_url = extract_auth_url(&line);
-            if let Some(url) = observed_auth_url.clone() {
-                let mut map = state.providers.claude_login_sessions.lock().await;
-                if let Some(entry) = map.get_mut(&login_id) {
-                    entry.auth_url = Some(url);
+    let mut exit_result: Option<anyhow::Result<portable_pty::ExitStatus>> = None;
+    let mut timeout_error: Option<String> = None;
+
+    loop {
+        let deadline = completion_deadline.unwrap_or(auth_url_deadline);
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            timeout_error = Some(if observed_auth_url.is_some() {
+                "claude setup-token timed out waiting for browser sign-in completion".to_string()
+            } else {
+                "claude setup-token did not emit an authentication URL".to_string()
+            });
+            break;
+        }
+        let timeout_future = tokio::time::sleep(remaining);
+        tokio::pin!(timeout_future);
+
+        tokio::select! {
+            maybe_line = login.line_rx.recv() => {
+                match maybe_line {
+                    Some(line) => {
+                        let had_auth_url = observed_auth_url.is_some();
+                        append_claude_login_line(
+                            &state,
+                            &login_id,
+                            &mut observed_auth_url,
+                            &mut transcript,
+                            line,
+                        )
+                        .await;
+                        if !had_auth_url && observed_auth_url.is_some() {
+                            completion_deadline = Some(Instant::now() + CLAUDE_LOGIN_COMPLETION_TIMEOUT);
+                        }
+                    }
+                    None => {
+                        match tokio::time::timeout(CLAUDE_LOGIN_EXIT_GRACE_WAIT, &mut login.exit_rx).await {
+                            Ok(Ok(result)) => {
+                                exit_result = Some(result);
+                            }
+                            Ok(Err(err)) => {
+                                exit_result = Some(Err(anyhow::anyhow!("claude setup-token exit channel closed: {err}")));
+                            }
+                            Err(_) => {
+                                timeout_error = Some(
+                                    "claude setup-token output stream closed before process exit".to_string(),
+                                );
+                            }
+                        }
+                        break;
+                    }
                 }
             }
+            exit = &mut login.exit_rx => {
+                exit_result = Some(match exit {
+                    Ok(result) => result,
+                    Err(err) => Err(anyhow::anyhow!("claude setup-token exit channel closed: {err}")),
+                });
+                break;
+            }
+            _ = &mut timeout_future => {
+                timeout_error = Some(if observed_auth_url.is_some() {
+                    "claude setup-token timed out waiting for browser sign-in completion".to_string()
+                } else {
+                    "claude setup-token did not emit an authentication URL".to_string()
+                });
+                break;
+            }
         }
-        transcript.push_str(&line);
-        transcript.push('\n');
+    }
+
+    if exit_result.is_some() {
+        // PTY reader runs on a separate thread, so process exit can arrive before final
+        // buffered lines. Keep consuming briefly before token parsing.
+        for line in
+            read_trailing_claude_login_lines(&mut login.line_rx, CLAUDE_LOGIN_EXIT_GRACE_WAIT).await
+        {
+            append_claude_login_line(
+                &state,
+                &login_id,
+                &mut observed_auth_url,
+                &mut transcript,
+                line,
+            )
+            .await;
+        }
+    } else {
+        while let Ok(line) = login.line_rx.try_recv() {
+            append_claude_login_line(
+                &state,
+                &login_id,
+                &mut observed_auth_url,
+                &mut transcript,
+                line,
+            )
+            .await;
+        }
+    }
+
+    if timeout_error.is_some() {
+        if let Err(err) = kill_claude_login_process(Arc::clone(&login.killer)).await {
+            let suffix = format!("; failed to terminate setup-token process cleanly: {err}");
+            timeout_error = Some(match timeout_error.take() {
+                Some(base) => format!("{base}{suffix}"),
+                None => suffix,
+            });
+        }
+        if exit_result.is_none() {
+            if let Ok(exit) =
+                tokio::time::timeout(CLAUDE_LOGIN_EXIT_GRACE_WAIT, &mut login.exit_rx).await
+            {
+                exit_result = Some(match exit {
+                    Ok(result) => result,
+                    Err(err) => Err(anyhow::anyhow!(
+                        "claude setup-token exit channel closed: {err}"
+                    )),
+                });
+            }
+        }
     }
 
     let mut final_status = "failed".to_string();
-    let mut final_error: Option<String> = None;
+    let mut final_error: Option<String> = timeout_error;
     let mut final_account_id: Option<String> = None;
 
-    match login.child.wait().await {
-        Ok(exit) if exit.success() => match extract_claude_setup_token(&transcript) {
-            Some(setup_token) => {
-                match provider_accounts::add_claude_account(
-                    &state.core.data_root,
-                    label.clone(),
-                    setup_token,
-                )
-                .await
-                {
-                    Ok(registry) => {
-                        final_status = "success".to_string();
-                        final_account_id = registry.active_account_id;
-                        restart_claude_providers_for_auth_change(&state, "claude auth updated")
-                            .await;
-                    }
-                    Err(err) => {
-                        final_error = Some(logs::redact_sensitive(&err.to_string()));
+    if final_error.is_none() {
+        match exit_result {
+            Some(Ok(exit)) if exit.success() => match extract_claude_setup_token(&transcript) {
+                Some(setup_token) => {
+                    match provider_accounts::add_claude_account(
+                        &state.core.data_root,
+                        label.clone(),
+                        setup_token,
+                    )
+                    .await
+                    {
+                        Ok(registry) => {
+                            final_status = "success".to_string();
+                            final_account_id = registry.active_account_id;
+                            restart_claude_providers_for_auth_change(&state, "claude auth updated")
+                                .await;
+                        }
+                        Err(err) => {
+                            final_error = Some(logs::redact_sensitive(&err.to_string()));
+                        }
                     }
                 }
+                None => {
+                    final_error = Some(
+                        "claude setup-token completed but no setup token was detected".to_string(),
+                    );
+                }
+            },
+            Some(Ok(exit)) => {
+                final_error = Some(format!(
+                    "claude setup-token exited with status {}",
+                    format_claude_exit_status(&exit)
+                ));
+            }
+            Some(Err(err)) => {
+                final_error = Some(format!("waiting for claude setup-token failed: {err}"));
             }
             None => {
                 final_error = Some(
-                    "claude setup-token completed but no setup token was detected".to_string(),
+                    "claude setup-token monitor ended before process exit was observed".to_string(),
                 );
             }
-        },
-        Ok(exit) => {
-            final_error = Some(format!(
-                "claude setup-token exited with status {}",
-                exit.code()
-                    .map(|c| c.to_string())
-                    .unwrap_or_else(|| "signal".to_string())
-            ));
-        }
-        Err(err) => {
-            final_error = Some(format!("waiting for claude setup-token failed: {err}"));
         }
     }
 
@@ -3278,6 +3569,38 @@ mod tests {
             extract_auth_url(line).as_deref(),
             Some("https://claude.ai/oauth/authorize?foo=bar")
         );
+    }
+
+    #[test]
+    fn normalize_claude_login_line_strips_ansi_sequences() {
+        let raw = "\u{1b}[90mOpen URL:\u{1b}[0m https://claude.ai/oauth/authorize?foo=bar\r";
+        let normalized = normalize_claude_login_line(raw);
+        assert_eq!(
+            extract_auth_url(&normalized).as_deref(),
+            Some("https://claude.ai/oauth/authorize?foo=bar")
+        );
+    }
+
+    #[test]
+    fn normalize_claude_login_line_extracts_url_from_osc8_sequence() {
+        let raw =
+            "\u{1b}]8;;https://claude.ai/oauth/authorize?foo=bar\u{7}Sign in\u{1b}]8;;\u{7}\r";
+        let normalized = normalize_claude_login_line(raw);
+        assert_eq!(
+            extract_auth_url(&normalized).as_deref(),
+            Some("https://claude.ai/oauth/authorize?foo=bar")
+        );
+    }
+
+    #[tokio::test]
+    async fn read_trailing_claude_login_lines_waits_for_late_arrival() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            let _ = tx.send("sk-ant-oat01-late-token".to_string());
+        });
+        let lines = read_trailing_claude_login_lines(&mut rx, Duration::from_millis(120)).await;
+        assert_eq!(lines, vec!["sk-ant-oat01-late-token".to_string()]);
     }
 
     #[test]

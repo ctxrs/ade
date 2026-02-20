@@ -384,6 +384,7 @@ BRIDGE_DIR="${CTX_BUNDLE_BRIDGE_DIR:-$ROOT/external-harnesses/acp-crp-bridge}"
 BRIDGE_BIN="acp-crp-bridge"
 CODEX_CRP_WORKSPACE="${CTX_BUNDLE_CODEX_CRP_WORKSPACE:-$ROOT/external-harnesses/codex/codex-rs}"
 CODEX_CRP_BUILD_MODE="${CTX_BUNDLE_BUILD_CODEX_CRP:-auto}"
+CLAUDE_CRP_WORKSPACE="${CTX_BUNDLE_CLAUDE_CRP_WORKSPACE:-$ROOT/external-harnesses/claude-crp}"
 LOCAL_ADAPTERS_DIR="${CTX_BUNDLE_ADAPTERS_DIR:-$ROOT/harness-adapters}"
 LOCAL_ADAPTER_MODE="${CTX_BUNDLE_LOCAL_ADAPTERS:-auto}"
 BUILD_LOCAL_ADAPTERS="${CTX_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
@@ -537,6 +538,24 @@ for provider in data.get("providers", []):
         print(mi.get("version") or "")
         sys.exit(0)
 print("")
+PY
+}
+
+package_json_version() {
+  local package_json="$1"
+  run_python - "$package_json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    print("")
+    sys.exit(0)
+value = data.get("version")
+print(value if isinstance(value, str) else "")
 PY
 }
 
@@ -1185,6 +1204,23 @@ if provider_selected_for_bundle "claude-crp" || provider_selected_for_bundle "cl
   runtime_need_node="1"
 fi
 
+if provider_selected_for_bundle "claude-crp"; then
+  if [[ ! -d "$CLAUDE_CRP_WORKSPACE" ]]; then
+    log "error: claude-crp local-only bundling requires workspace at $CLAUDE_CRP_WORKSPACE"
+    exit 5
+  fi
+  if [[ ! -f "$CLAUDE_CRP_WORKSPACE/dist/runtime.js" ]]; then
+    if [[ ! -x "$ROOT/scripts/build_claude_crp.sh" ]]; then
+      log "error: missing claude-crp build script at $ROOT/scripts/build_claude_crp.sh"
+      exit 5
+    fi
+    if ! command -v pnpm >/dev/null 2>&1; then
+      log "error: bundling claude-crp requires pnpm to build local adapter payload"
+      exit 5
+    fi
+  fi
+fi
+
 if ! is_truthy "$skip_runtimes_raw"; then
   if [[ "$runtime_need_node" == "1" ]]; then
     ensure_node_runtime
@@ -1416,7 +1452,7 @@ with open(path, "r", encoding="utf-8") as fh:
         if not stripped:
             continue
         provider_id = stripped.split(sep, 1)[0]
-        if provider_id == "claude-cli":
+        if provider_id in {"claude-cli", "claude-crp"}:
             continue
         rows.append(stripped)
 
@@ -1483,6 +1519,9 @@ if ! is_falsy "$INCLUDE_BRIDGE"; then
 fi
 
 should_build_codex_crp() {
+  if ! provider_selected_for_bundle "codex"; then
+    return 1
+  fi
   if is_truthy "$CODEX_CRP_BUILD_MODE"; then
     return 0
   fi
@@ -1575,6 +1614,44 @@ local_codex_crp_binary_path() {
 	printf '%s' "$bin"
 }
 
+should_bundle_local_claude_crp() {
+  if ! provider_selected_for_bundle "claude-crp"; then
+    return 1
+  fi
+  if [[ ! -d "$CLAUDE_CRP_WORKSPACE" ]]; then
+    log "error: claude-crp local-only bundling requires workspace at $CLAUDE_CRP_WORKSPACE"
+    exit 5
+  fi
+  return 0
+}
+
+ensure_local_claude_crp_dist() {
+  local dist_entry="$CLAUDE_CRP_WORKSPACE/dist/runtime.js"
+  if [[ -f "$dist_entry" ]]; then
+    return 0
+  fi
+  if ! should_bundle_local_claude_crp; then
+    return 1
+  fi
+  if [[ ! -x "$ROOT/scripts/build_claude_crp.sh" ]]; then
+    log "error: missing claude-crp build script at $ROOT/scripts/build_claude_crp.sh"
+    return 1
+  fi
+  if ! command -v pnpm >/dev/null 2>&1; then
+    log "error: bundling claude-crp requires pnpm to build local adapter payload"
+    return 1
+  fi
+  if ! "$ROOT/scripts/build_claude_crp.sh"; then
+    log "error: failed to build local claude-crp bundle payload"
+    return 1
+  fi
+  if [[ ! -f "$dist_entry" ]]; then
+    log "error: claude-crp build completed without dist entrypoint at $dist_entry"
+    return 1
+  fi
+  return 0
+}
+
 if should_build_codex_crp; then
   codex_crp_version="$(get_matrix_version "codex")"
   if [[ -z "$codex_crp_version" ]]; then
@@ -1587,6 +1664,26 @@ if should_build_codex_crp; then
     log "error: codex-crp build requested but source not available at $CODEX_CRP_WORKSPACE"
     exit 5
   fi
+fi
+
+if should_bundle_local_claude_crp; then
+  claude_crp_version="$(get_matrix_version "claude-crp")"
+  if [[ -z "$claude_crp_version" ]]; then
+    claude_crp_version="$(package_json_version "$CLAUDE_CRP_WORKSPACE/package.json")"
+  fi
+  if [[ -z "$claude_crp_version" ]]; then
+    claude_crp_version="local"
+  fi
+
+  if ! ensure_local_claude_crp_dist; then
+    log "error: failed to prepare local claude-crp bundle payload at $CLAUDE_CRP_WORKSPACE/dist/runtime.js"
+    exit 5
+  fi
+  if [[ ! -f "$CLAUDE_CRP_WORKSPACE/bin/claude-crp" ]]; then
+    log "error: local claude-crp entrypoint missing at $CLAUDE_CRP_WORKSPACE/bin/claude-crp"
+    exit 5
+  fi
+  add_local_provider "claude-crp" "local-node" "$claude_crp_version" "$CLAUDE_CRP_WORKSPACE" "bin/claude-crp" "[]"
 fi
 
 for id in "${ACP_PROVIDER_IDS[@]}"; do
