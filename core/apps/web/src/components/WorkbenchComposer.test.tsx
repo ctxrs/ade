@@ -88,7 +88,7 @@ describe("WorkbenchComposer textarea sizing", () => {
           onInstallProvider={vi.fn()}
           onInstallAllProviders={vi.fn()}
           providerOptions={providerOptions}
-          ensureProviderOptions={async () => undefined}
+          ensureProviderAuthSummary={async () => undefined}
           draftHarness={draftHarness}
           setDraftHarness={setDraftHarness}
           defaultProviderId="codex"
@@ -300,7 +300,7 @@ describe("WorkbenchComposer textarea sizing", () => {
           onInstallProvider={vi.fn()}
           onInstallAllProviders={vi.fn()}
           providerOptions={providerOptions}
-          ensureProviderOptions={async () => undefined}
+          ensureProviderAuthSummary={async () => undefined}
           draftHarness={draftHarness}
           setDraftHarness={setDraftHarness}
           defaultProviderId="codex"
@@ -424,7 +424,7 @@ describe("WorkbenchComposer textarea sizing", () => {
           onInstallProvider={vi.fn()}
           onInstallAllProviders={vi.fn()}
           providerOptions={{}}
-          ensureProviderOptions={async () => undefined}
+          ensureProviderAuthSummary={async () => undefined}
           draftHarness={draftHarness}
           setDraftHarness={setDraftHarness}
           defaultProviderId="codex"
@@ -479,7 +479,7 @@ describe("WorkbenchComposer textarea sizing", () => {
           onInstallProvider={vi.fn()}
           onInstallAllProviders={vi.fn()}
           providerOptions={{}}
-          ensureProviderOptions={async () => undefined}
+          ensureProviderAuthSummary={async () => undefined}
           draftHarness={draftHarness}
           setDraftHarness={setDraftHarness}
           defaultProviderId="codex"
@@ -541,7 +541,7 @@ describe("WorkbenchComposer textarea sizing", () => {
           onInstallProvider={vi.fn()}
           onInstallAllProviders={vi.fn()}
           providerOptions={providerOptions}
-          ensureProviderOptions={async () => providerOptions.codex}
+          ensureProviderAuthSummary={async () => providerOptions.codex}
           draftHarness={draftHarness}
           setDraftHarness={setDraftHarness}
           defaultProviderId="codex"
@@ -592,7 +592,7 @@ describe("WorkbenchComposer textarea sizing", () => {
           onInstallProvider={vi.fn()}
           onInstallAllProviders={vi.fn()}
           providerOptions={{}}
-          ensureProviderOptions={async () => undefined}
+          ensureProviderAuthSummary={async () => undefined}
           draftHarness={draftHarness}
           setDraftHarness={setDraftHarness}
           defaultProviderId="codex"
@@ -649,7 +649,7 @@ describe("WorkbenchComposer textarea sizing", () => {
           onInstallProvider={vi.fn()}
           onInstallAllProviders={vi.fn()}
           providerOptions={providerOptions}
-          ensureProviderOptions={async (providerId: string) => providerOptions[providerId]}
+          ensureProviderAuthSummary={async (providerId: string) => providerOptions[providerId]}
           onRequestHarnessAuth={onRequestHarnessAuth}
           draftHarness={draftHarness}
           setDraftHarness={setDraftHarness}

@@ -343,17 +343,16 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     return [newSession.draftHarness?.providerId ?? newSession.defaultProviderId].filter(Boolean);
   }, [newSession?.defaultProviderId, newSession?.draftHarness]);
 
-  // Proactively probe provider options so the model list (and effort variants) populate
-  // without requiring the user to manually focus/expand a config panel.
+  // Proactively hydrate provider auth/config summary from providers/bootstrap.
   useEffect(() => {
     if (!newSession) return;
     for (const providerId of providerIdsToEnsure) {
       if (newSession.providerOptions[providerId]) continue;
       const st = newSession.providersById[providerId];
       if (!(st?.installed && st.health === "ok")) continue;
-      newSession.ensureProviderOptions(providerId).catch(() => {});
+      newSession.ensureProviderAuthSummary(providerId).catch(() => {});
     }
-  }, [newSession?.ensureProviderOptions, newSession?.providerOptions, newSession?.providersById, providerIdsToEnsure]);
+  }, [newSession?.ensureProviderAuthSummary, newSession?.providerOptions, newSession?.providersById, providerIdsToEnsure]);
 
   useEffect(() => {
     if (!newSession) return;
@@ -361,7 +360,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     for (const [providerId, status] of Object.entries(newSession.providersById)) {
       if (!(status?.installed && status.health === "ok")) continue;
       if (newSession.providerOptions[providerId]) continue;
-      newSession.ensureProviderOptions(providerId).catch(() => {});
+      newSession.ensureProviderAuthSummary(providerId).catch(() => {});
     }
   }, [newSession, openMenu]);
 
@@ -521,7 +520,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         if (prev?.providerId === providerId) return null;
         return { providerId, modelId: "" };
       });
-      ns.ensureProviderOptions(providerId).catch(() => {});
+      ns.ensureProviderAuthSummary(providerId).catch(() => {});
       setOpenMenu(null);
     },
     [props, variant],

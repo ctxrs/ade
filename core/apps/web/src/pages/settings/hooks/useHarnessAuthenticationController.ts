@@ -19,7 +19,6 @@ import {
   listGeminiAccounts,
   listKimiAccounts,
   listKiroAccounts,
-  getProviderHarnessConfig,
   installAllProviders,
   installProvider,
   listCodexAccounts,
@@ -56,6 +55,11 @@ import {
   type ProviderStatus,
 } from "../../../api/client";
 import { desktopStartCodexLoginRelay, isDesktopApp, openExternalLink } from "../../../utils/desktop";
+import {
+  invalidateProvidersBootstrap,
+  loadProvidersBootstrap,
+  refreshProvidersBootstrap,
+} from "../../../state/providersBootstrapStore";
 import type { HarnessAuthModalState, InstallSession } from "../../SettingsPage.types";
 import { clampPct } from "../../SettingsPage.utils";
 import { defaultEndpointBaseUrlForProvider, type HarnessAuthRow } from "../harnessAuthRows";
@@ -349,7 +353,46 @@ export function useHarnessAuthenticationController({
     setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: busy }));
   }, []);
 
+  const applyProvidersBootstrap = useCallback((bootstrap: Awaited<ReturnType<typeof loadProvidersBootstrap>>) => {
+    setProviders(bootstrap.providers);
+    setProviderHarnessConfig(bootstrap.provider_harness_config);
+    providerHarnessConfigRef.current = bootstrap.provider_harness_config;
+    setCodexAccounts(bootstrap.codex_accounts);
+    setClaudeAccounts(bootstrap.claude_accounts);
+    setGeminiAccounts(bootstrap.gemini_accounts);
+    setKimiAccounts(bootstrap.kimi_accounts);
+    setCopilotAccounts(bootstrap.copilot_accounts);
+    setKiroAccounts(bootstrap.kiro_accounts);
+    setCursorAccounts(bootstrap.cursor_accounts);
+  }, []);
+
+  const refreshProvidersBootstrapState = useCallback(async (opts?: { force?: boolean; silent?: boolean }) => {
+    if (!workspaceId) return null;
+    try {
+      const bootstrap = opts?.force
+        ? await refreshProvidersBootstrap(workspaceId)
+        : await loadProvidersBootstrap(workspaceId);
+      applyProvidersBootstrap(bootstrap);
+      return bootstrap;
+    } catch (error) {
+      if (!opts?.silent) {
+        setProviderError(messageFromError(error));
+      }
+      return null;
+    }
+  }, [applyProvidersBootstrap, workspaceId]);
+
+  const refreshBootstrapAfterMutation = useCallback(async () => {
+    if (!workspaceId) return;
+    invalidateProvidersBootstrap(workspaceId);
+    await refreshProvidersBootstrapState({ force: true, silent: true });
+  }, [refreshProvidersBootstrapState, workspaceId]);
+
   const refreshProviders = useCallback(async () => {
+    if (workspaceId) {
+      const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: true });
+      return bootstrap?.providers ?? [];
+    }
     try {
       const next = await listProviders();
       setProviders(next);
@@ -358,7 +401,7 @@ export function useHarnessAuthenticationController({
       setProviderError(messageFromError(error));
       return [];
     }
-  }, []);
+  }, [refreshProvidersBootstrapState, workspaceId]);
 
   const refreshCodexAccounts = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) {
@@ -486,42 +529,19 @@ export function useHarnessAuthenticationController({
     }
   }, []);
 
-  const ensureProviderHarnessConfig = useCallback(
-    async (providerId: string, opts?: { force?: boolean }) => {
-      if (providerHarnessBusyRef.current[providerId]) return;
-      if (!opts?.force && providerHarnessConfigRef.current[providerId]) return;
-
-      setProviderHarnessBusyForProvider(providerId, true);
-      try {
-        const cfg = await getProviderHarnessConfig(providerId);
-        setProviderHarnessConfigForProvider(providerId, cfg);
-      } catch (error) {
-        const message = messageFromError(error);
-        if (message.includes("provider does not support harness endpoints")) {
-          markProviderEndpointUnsupported(providerId);
-          setSubscriptionSourceFallback(providerId);
-        } else {
-          setProviderError(message);
-        }
-      } finally {
-        setProviderHarnessBusyForProvider(providerId, false);
-      }
-    },
-    [markProviderEndpointUnsupported, setProviderHarnessBusyForProvider, setSubscriptionSourceFallback],
-  );
-
   const onDeleteProviderEndpoint = useCallback(async (providerId: string, endpointId: string) => {
     setProviderHarnessBusyForProvider(providerId, true);
     setProviderError(null);
     try {
       const next = await deleteProviderHarnessEndpoint(providerId, endpointId);
       setProviderHarnessConfigForProvider(providerId, next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setProviderHarnessBusyForProvider(providerId, false);
     }
-  }, [setProviderHarnessBusyForProvider, setProviderHarnessConfigForProvider]);
+  }, [refreshBootstrapAfterMutation, setProviderHarnessBusyForProvider, setProviderHarnessConfigForProvider]);
 
   const onRefreshProviderEndpointModels = useCallback(async (providerId: string, endpointId: string) => {
     setProviderHarnessBusyForProvider(providerId, true);
@@ -529,12 +549,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await refreshProviderHarnessEndpointModels(providerId, endpointId);
       setProviderHarnessConfigForProvider(providerId, next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setProviderHarnessBusyForProvider(providerId, false);
     }
-  }, [setProviderHarnessBusyForProvider, setProviderHarnessConfigForProvider]);
+  }, [refreshBootstrapAfterMutation, setProviderHarnessBusyForProvider, setProviderHarnessConfigForProvider]);
 
   const onSelectProviderSource = useCallback(
     async (providerId: string, sourceKind: "subscription" | "endpoint", endpointId?: string | null) => {
@@ -543,13 +564,14 @@ export function useHarnessAuthenticationController({
       try {
         const next = await selectProviderHarnessSource(providerId, sourceKind, endpointId ?? null);
         setProviderHarnessConfigForProvider(providerId, next);
+        await refreshBootstrapAfterMutation();
       } catch (error) {
         setProviderError(messageFromError(error));
       } finally {
         setProviderHarnessBusyForProvider(providerId, false);
       }
     },
-    [setProviderHarnessBusyForProvider, setProviderHarnessConfigForProvider],
+    [refreshBootstrapAfterMutation, setProviderHarnessBusyForProvider, setProviderHarnessConfigForProvider],
   );
 
   const selectSubscriptionSourceIfSupported = useCallback(
@@ -658,6 +680,7 @@ export function useHarnessAuthenticationController({
         const label = name.trim();
         const next = await upsertCursorAccount(key, label ? { label } : undefined);
         setCursorAccounts(next);
+        await refreshBootstrapAfterMutation();
         await selectSubscriptionSourceIfSupported(modal.provider_id);
         setSubscriptionSourceFallback(modal.provider_id);
         closeHarnessAuthModal();
@@ -690,8 +713,7 @@ export function useHarnessAuthenticationController({
         if (!prev || prev.provider_id !== modal.provider_id || prev.stage !== "api_key") return prev;
         return { ...prev, endpoint_id: selected };
       });
-      const selectedNext = await selectProviderHarnessSource(modal.provider_id, "endpoint", selected);
-      setProviderHarnessConfig((prev) => ({ ...prev, [modal.provider_id]: selectedNext }));
+      await onSelectProviderSource(modal.provider_id, "endpoint", selected);
       if (workspaceId) {
         const verify = await verifyProviderForWorkspace(workspaceId, modal.provider_id);
         if (verify.status !== "ok") {
@@ -711,6 +733,8 @@ export function useHarnessAuthenticationController({
   }, [
     closeHarnessAuthModal,
     harnessAuthModal,
+    onSelectProviderSource,
+    refreshBootstrapAfterMutation,
     selectSubscriptionSourceIfSupported,
     setSubscriptionSourceFallback,
     workspaceId,
@@ -895,6 +919,7 @@ export function useHarnessAuthenticationController({
           const next = await upsertClaudeAccount(token, label ? label : undefined);
           setClaudeAccounts(next);
           setClaudePendingLoginId(null);
+          await refreshBootstrapAfterMutation();
           await selectSubscriptionSourceIfSupported(modal.provider_id);
           closeHarnessAuthModal();
           return;
@@ -1051,6 +1076,7 @@ export function useHarnessAuthenticationController({
           ...(email ? { email } : {}),
         });
         setKimiAccounts(next);
+        await refreshBootstrapAfterMutation();
         await selectSubscriptionSourceIfSupported(modal.provider_id);
         closeHarnessAuthModal();
         return;
@@ -1068,6 +1094,7 @@ export function useHarnessAuthenticationController({
           ...(email ? { email } : {}),
         });
         setCopilotAccounts(next);
+        await refreshBootstrapAfterMutation();
         await selectSubscriptionSourceIfSupported(modal.provider_id);
         closeHarnessAuthModal();
         return;
@@ -1085,6 +1112,7 @@ export function useHarnessAuthenticationController({
           ...(email ? { email } : {}),
         });
         setKiroAccounts(next);
+        await refreshBootstrapAfterMutation();
         await selectSubscriptionSourceIfSupported(modal.provider_id);
         closeHarnessAuthModal();
         return;
@@ -1094,6 +1122,7 @@ export function useHarnessAuthenticationController({
         throw new Error("Select a workspace first.");
       }
       await authenticateProviderForWorkspace(workspaceId, modal.provider_id);
+      await refreshBootstrapAfterMutation();
       await selectSubscriptionSourceIfSupported(modal.provider_id);
       closeHarnessAuthModal();
     } catch (error) {
@@ -1115,6 +1144,7 @@ export function useHarnessAuthenticationController({
     refreshClaudeAccounts,
     refreshCodexAccounts,
     refreshGeminiAccounts,
+    refreshBootstrapAfterMutation,
     selectSubscriptionSourceIfSupported,
     waitForClaudeLoginOutcome,
     waitForCodexLoginOutcome,
@@ -1128,12 +1158,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await deleteCodexAccount(accountId);
       setCodexAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setCodexAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onCodexSetActive = useCallback(async (accountId: string | null) => {
     setCodexAccountsBusy(true);
@@ -1141,12 +1172,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await setCodexActiveAccount(accountId);
       setCodexAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setCodexAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onClaudeDelete = useCallback(async (accountId: string) => {
     setClaudeAccountsBusy(true);
@@ -1154,12 +1186,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await deleteClaudeAccount(accountId);
       setClaudeAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setClaudeAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onClaudeSetActive = useCallback(async (accountId: string | null) => {
     setClaudeAccountsBusy(true);
@@ -1167,12 +1200,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await setClaudeActiveAccount(accountId);
       setClaudeAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setClaudeAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onGeminiDelete = useCallback(async (accountId: string) => {
     setGeminiAccountsBusy(true);
@@ -1180,12 +1214,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await deleteGeminiAccount(accountId);
       setGeminiAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setGeminiAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onGeminiSetActive = useCallback(async (accountId: string | null) => {
     setGeminiAccountsBusy(true);
@@ -1193,12 +1228,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await setGeminiActiveAccount(accountId);
       setGeminiAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setGeminiAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onKimiDelete = useCallback(async (accountId: string) => {
     setKimiAccountsBusy(true);
@@ -1206,12 +1242,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await deleteKimiAccount(accountId);
       setKimiAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setKimiAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onKimiSetActive = useCallback(async (accountId: string | null) => {
     setKimiAccountsBusy(true);
@@ -1219,12 +1256,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await setKimiActiveAccount(accountId);
       setKimiAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setKimiAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onCopilotDelete = useCallback(async (accountId: string) => {
     setCopilotAccountsBusy(true);
@@ -1232,12 +1270,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await deleteCopilotAccount(accountId);
       setCopilotAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setCopilotAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onCopilotSetActive = useCallback(async (accountId: string | null) => {
     setCopilotAccountsBusy(true);
@@ -1245,12 +1284,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await setCopilotActiveAccount(accountId);
       setCopilotAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setCopilotAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onKiroDelete = useCallback(async (accountId: string) => {
     setKiroAccountsBusy(true);
@@ -1258,12 +1298,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await deleteKiroAccount(accountId);
       setKiroAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setKiroAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onKiroSetActive = useCallback(async (accountId: string | null) => {
     setKiroAccountsBusy(true);
@@ -1271,12 +1312,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await setKiroActiveAccount(accountId);
       setKiroAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setKiroAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onCursorDelete = useCallback(async (accountId: string) => {
     setCursorAccountsBusy(true);
@@ -1284,12 +1326,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await deleteCursorAccount(accountId);
       setCursorAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setCursorAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onCursorSetActive = useCallback(async (accountId: string | null) => {
     setCursorAccountsBusy(true);
@@ -1297,12 +1340,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await setCursorActiveAccount(accountId);
       setCursorAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setCursorAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onSelectHarnessAuthRow = useCallback(async (providerId: string, row: HarnessAuthRow) => {
     if (!row.selectable) return;
@@ -1380,15 +1424,7 @@ export function useHarnessAuthenticationController({
             window.clearTimeout(timeout);
             delete installPollTimeoutsRef.current[providerId];
           }
-          const nextProviders = await refreshProviders();
-          if (workspaceId) {
-            for (const provider of nextProviders) {
-              if (provider.details?.ui_hidden === "true") continue;
-              if (supportsHarnessEndpointConfig(provider.provider_id)) {
-                ensureProviderHarnessConfig(provider.provider_id, { force: true }).catch(() => {});
-              }
-            }
-          }
+          await refreshProviders();
           return;
         }
       } catch {
@@ -1400,7 +1436,7 @@ export function useHarnessAuthenticationController({
     };
 
     await poll();
-  }, [ensureProviderHarnessConfig, refreshProviders, workspaceId]);
+  }, [refreshProviders]);
 
   const onInstall = useCallback(async (providerId: string) => {
     setInstallBusy(providerId);
@@ -1432,38 +1468,33 @@ export function useHarnessAuthenticationController({
 
   useEffect(() => {
     if (!enabled) return;
+    if (workspaceId) {
+      refreshProvidersBootstrapState({ silent: true }).catch(() => {});
+      return;
+    }
     refreshProviders().catch(() => {});
-  }, [enabled, refreshProviders]);
+  }, [enabled, refreshProviders, refreshProvidersBootstrapState, workspaceId]);
 
   useEffect(() => {
     if (!enabled || !workspaceId) return;
-    refreshCodexAccounts({ silent: true }).catch(() => {});
-    refreshClaudeAccounts({ silent: true }).catch(() => {});
-    refreshGeminiAccounts({ silent: true }).catch(() => {});
-    refreshKimiAccounts({ silent: true }).catch(() => {});
-    refreshCopilotAccounts({ silent: true }).catch(() => {});
-    refreshKiroAccounts({ silent: true }).catch(() => {});
-    refreshCursorAccounts({ silent: true }).catch(() => {});
-    for (const provider of providers) {
-      if (provider.details?.ui_hidden === "true") continue;
-      if (supportsHarnessEndpointConfig(provider.provider_id)) {
-        ensureProviderHarnessConfig(provider.provider_id).catch(() => {});
+    const refreshOnForeground = () => {
+      refreshProvidersBootstrapState({ force: true, silent: true }).catch(() => {});
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshOnForeground();
       }
-    }
-  }, [
-    enabled,
-    ensureProviderHarnessConfig,
-    providers,
-    refreshClaudeAccounts,
-    refreshCodexAccounts,
-    refreshCopilotAccounts,
-    refreshGeminiAccounts,
-    refreshKimiAccounts,
-    refreshKiroAccounts,
-    refreshCursorAccounts,
-    supportsHarnessEndpointConfig,
-    workspaceId,
-  ]);
+    };
+
+    window.addEventListener("focus", refreshOnForeground);
+    window.addEventListener("online", refreshOnForeground);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", refreshOnForeground);
+      window.removeEventListener("online", refreshOnForeground);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [enabled, refreshProvidersBootstrapState, workspaceId]);
 
   useEffect(() => {
     if (!enabled) return;

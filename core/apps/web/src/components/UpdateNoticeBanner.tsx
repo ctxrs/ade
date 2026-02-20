@@ -479,7 +479,8 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
           message: "Update installed. Relaunch the app to complete the update.",
         });
       }
-      const info = await refresh(Boolean(pendingRestartVersion));
+      // Startup must always perform a real update check request.
+      const info = await refresh(true);
       if (cancelled) return;
       const hasPendingRestart = Boolean(readRestartRequiredVersion());
       if (!launchAutoApplyAttemptedRef.current) {
