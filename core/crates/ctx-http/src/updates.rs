@@ -66,6 +66,8 @@ impl ReleasePlatform {
 pub struct ReleaseManifest {
     pub channel: String,
     pub latest_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_supported_version: Option<String>,
     pub published_at: String,
     pub platforms: HashMap<String, ReleasePlatform>,
 }

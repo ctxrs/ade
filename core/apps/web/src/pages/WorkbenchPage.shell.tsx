@@ -3116,7 +3116,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       {desktopStorageNoticeSnackbar}
       {topbar}
 
-      <UpdateNoticeBanner />
+      <UpdateNoticeBanner allTasksIdle={taskLiveInfo.workingByTask.size === 0} />
 
       {!activeTaskId ? (
         <HarnessAuthenticationSection

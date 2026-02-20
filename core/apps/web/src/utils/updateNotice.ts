@@ -2,7 +2,7 @@ import { checkUpdates, type UpdateCheck } from "../api/client";
 import { readCachedValue, shouldUseCachedValue, writeCachedValue } from "./entitlementsCache";
 
 const UPDATE_CHECK_CACHE_KEY = "ctx_update_check_v1";
-const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
+const UPDATE_CHECK_TTL_MS = 60 * 60 * 1000;
 
 let inFlight: Promise<UpdateCheck | null> | null = null;
 
@@ -20,6 +20,12 @@ export const readCachedUpdateCheck = (): UpdateCheck | null => {
   if (!storage) return null;
   const cached = readCachedValue<UpdateCheck>(storage, UPDATE_CHECK_CACHE_KEY);
   return cached?.value ?? null;
+};
+
+export const writeCachedUpdateCheck = (value: UpdateCheck): void => {
+  const storage = getStorage();
+  if (!storage) return;
+  writeCachedValue(storage, UPDATE_CHECK_CACHE_KEY, value);
 };
 
 export const refreshUpdateCheck = async (opts?: { force?: boolean }): Promise<UpdateCheck | null> => {

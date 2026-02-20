@@ -84,7 +84,7 @@ export async function createCtxPlaywrightConfig(
     process.env.CTX_E2E_CARGO_TARGET_DIR ??
     path.join(
       os.tmpdir(),
-      `ctx-e2e-cargo-${crypto.createHash("sha1").update(path.resolve(__dirname, "../..")).digest("hex").slice(0, 10)}`,
+      `ctx-e2e-cargo-${crypto.createHash("sha1").update(path.resolve(__dirname, "../..")).digest("hex").slice(0, 10)}-${process.pid}`,
     );
 
   const outputDir = path.resolve(__dirname, `e2e/test-results/${profileSlug}`);

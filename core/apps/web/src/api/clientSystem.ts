@@ -21,7 +21,10 @@ export type UpdateCheck = {
   platform?: string | null;
   current_version: string;
   latest_version?: string | null;
+  min_supported_version?: string | null;
   platform_supported?: boolean;
+  in_place_update_supported?: boolean;
+  in_place_update_reason?: string | null;
   update_available: boolean;
   manifest?: unknown;
 };

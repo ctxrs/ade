@@ -1986,6 +1986,12 @@
   cursor: default;
 }
 
+.wb-snackbar-btn:is(a) {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
 .wb-snackbar-btn-secondary {
   background: var(--surface-soft);
 }
@@ -2002,6 +2008,74 @@
 
 .wb-snackbar-close:hover {
   color: var(--text-strong);
+}
+
+.wb-update-snackbar {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 42px 12px 14px;
+}
+
+.wb-update-snackbar-body {
+  gap: 6px;
+}
+
+.wb-update-snackbar-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-update-snackbar-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--surface-stronger);
+  background: var(--surface-active);
+  color: var(--text-subtle);
+}
+
+.wb-update-snackbar-info-btn:hover {
+  color: var(--text-strong);
+  background: var(--surface-stronger);
+}
+
+.wb-update-snackbar-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.wb-update-release-notes-link {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.wb-update-release-notes-link:hover {
+  text-decoration: underline;
+}
+
+.wb-update-snackbar .wb-snackbar-close {
+  position: absolute;
+  top: 10px;
+  right: 8px;
+}
+
+.wb-update-info-modal h3 {
+  margin: 0 0 8px;
+}
+
+.wb-update-info-modal p {
+  margin: 0 0 10px;
+  color: var(--text-subtle);
 }
 
 .wb-composer-actions {
