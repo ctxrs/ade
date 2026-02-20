@@ -1306,6 +1306,27 @@ if provider_selected_for_bundle "claude-crp"; then
   fi
 fi
 
+if provider_selected_for_bundle "claude-crp" || provider_selected_for_bundle "claude-cli"; then
+  runtime_need_node="1"
+fi
+
+if provider_selected_for_bundle "claude-crp"; then
+  if [[ ! -d "$CLAUDE_CRP_WORKSPACE" ]]; then
+    log "error: claude-crp local-only bundling requires workspace at $CLAUDE_CRP_WORKSPACE"
+    exit 5
+  fi
+  if [[ ! -f "$CLAUDE_CRP_WORKSPACE/dist/runtime.js" ]]; then
+    if [[ ! -x "$ROOT/scripts/build_claude_crp.sh" ]]; then
+      log "error: missing claude-crp build script at $ROOT/scripts/build_claude_crp.sh"
+      exit 5
+    fi
+    if ! command -v pnpm >/dev/null 2>&1; then
+      log "error: bundling claude-crp requires pnpm to build local adapter payload"
+      exit 5
+    fi
+  fi
+fi
+
 if ! is_truthy "$skip_runtimes_raw"; then
   if [[ "$runtime_need_node" == "1" ]]; then
     ensure_node_runtime

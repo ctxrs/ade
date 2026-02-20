@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Path as StdPath, PathBuf};
+use std::io::Write;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -298,6 +299,16 @@ pub(super) struct ClaudeLoginStartResp {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct ClaudeLoginCompleteReq {
+    callback_code: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ClaudeLoginCompleteResp {
+    accepted: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GeminiAccountUpsertReq {
     label: Option<String>,
     oauth_creds_json: String,
@@ -433,22 +444,24 @@ pub(super) struct CodexLoginCompletion {
 
 pub(super) struct ClaudeLoginProcess {
     line_rx: mpsc::UnboundedReceiver<String>,
+    input_rx: mpsc::UnboundedReceiver<String>,
     buffered_lines: Vec<String>,
     auth_url: Option<String>,
     exit_rx: oneshot::Receiver<anyhow::Result<portable_pty::ExitStatus>>,
     killer: Arc<StdMutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
+    writer: Arc<StdMutex<Box<dyn Write + Send>>>,
 }
 
 struct ClaudeLoginSpawn {
     line_rx: mpsc::UnboundedReceiver<String>,
     exit_rx: oneshot::Receiver<anyhow::Result<portable_pty::ExitStatus>>,
     killer: Arc<StdMutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
+    writer: Arc<StdMutex<Box<dyn Write + Send>>>,
 }
 
 const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAUDE_LOGIN_URL_WAIT: Duration = Duration::from_secs(4);
-const GEMINI_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
-const GEMINI_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
+const CLAUDE_LOGIN_URL_SETTLE_WAIT: Duration = Duration::from_millis(500);
 const CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT: Duration = Duration::from_secs(8);
 const CLAUDE_LOGIN_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const CLAUDE_LOGIN_EXIT_GRACE_WAIT: Duration = Duration::from_millis(400);
@@ -1015,7 +1028,7 @@ pub(super) async fn start_claude_login(
 ) -> Result<Json<ClaudeLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     let login_id = uuid::Uuid::new_v4().to_string();
     let label = req.label;
-    let login = start_claude_login_process(&state.core.data_root)
+    let mut login = start_claude_login_process(&state.core.data_root)
         .await
         .map_err(|e| {
             let msg = e.to_string();
@@ -1026,6 +1039,7 @@ pub(super) async fn start_claude_login(
             };
             (status, Json(ApiErrorResp { error: msg }))
         })?;
+    let (input_tx, input_rx) = mpsc::unbounded_channel::<String>();
     let auth_url = login.auth_url.clone();
     let status = provider_accounts::ClaudeLoginStatus {
         login_id: login_id.clone(),
@@ -1038,6 +1052,11 @@ pub(super) async fn start_claude_login(
         let mut map = state.providers.claude_login_sessions.lock().await;
         map.insert(login_id.clone(), status);
     }
+    {
+        let mut map = state.providers.claude_login_inputs.lock().await;
+        map.insert(login_id.clone(), input_tx);
+    }
+    login.input_rx = input_rx;
     let state_clone = Arc::clone(&state);
     let login_id_for_task = login_id.clone();
     tokio::spawn(async move {
@@ -1045,6 +1064,62 @@ pub(super) async fn start_claude_login(
     });
 
     Ok(Json(ClaudeLoginStartResp { login_id, auth_url }))
+}
+
+pub(super) async fn complete_claude_login(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<ClaudeLoginCompleteReq>,
+) -> Result<Json<ClaudeLoginCompleteResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let callback_code = req.callback_code.trim();
+    if callback_code.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: "callback_code is required".to_string(),
+            }),
+        ));
+    }
+    {
+        let sessions = state.providers.claude_login_sessions.lock().await;
+        let Some(status) = sessions.get(&id) else {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "login not found".to_string(),
+                }),
+            ));
+        };
+        if status.status != "pending" {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(ApiErrorResp {
+                    error: "login is no longer pending".to_string(),
+                }),
+            ));
+        }
+    }
+    let tx = {
+        let map = state.providers.claude_login_inputs.lock().await;
+        map.get(&id).cloned()
+    }
+    .ok_or_else(|| {
+        (
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "login session is not accepting callback input".to_string(),
+            }),
+        )
+    })?;
+    tx.send(callback_code.to_string()).map_err(|_| {
+        (
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "login session is no longer accepting callback input".to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(ClaudeLoginCompleteResp { accepted: true }))
 }
 
 pub(super) async fn get_claude_login(
@@ -1837,6 +1912,11 @@ fn spawn_claude_setup_token_command(
     })?;
     let killer = Arc::new(StdMutex::new(child.clone_killer()));
     drop(pair.slave);
+    let writer = Arc::new(StdMutex::new(
+        pair.master
+            .take_writer()
+            .context("taking pty writer for claude setup-token")?,
+    ));
 
     let reader = pair
         .master
@@ -1859,6 +1939,7 @@ fn spawn_claude_setup_token_command(
         line_rx,
         exit_rx,
         killer,
+        writer,
     })
 }
 
@@ -1950,19 +2031,133 @@ where
     }
 }
 
-fn extract_auth_url(line: &str) -> Option<String> {
-    for chunk in line.split_whitespace() {
-        let candidate = chunk.trim_matches(|c: char| {
-            matches!(
-                c,
-                '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | ',' | ';' | '.'
-            )
-        });
-        if candidate.starts_with("https://") || candidate.starts_with("http://") {
-            return Some(candidate.to_string());
+fn is_auth_url_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric()
+        || matches!(
+            ch,
+            '-' | '.'
+                | '_'
+                | '~'
+                | ':'
+                | '/'
+                | '?'
+                | '#'
+                | '['
+                | ']'
+                | '@'
+                | '!'
+                | '$'
+                | '&'
+                | '\''
+                | '('
+                | ')'
+                | '*'
+                | '+'
+                | ','
+                | ';'
+                | '='
+                | '%'
+        )
+}
+
+fn should_continue_auth_url_after_break(current: &str, next_fragment: &str) -> bool {
+    if next_fragment.is_empty() {
+        return false;
+    }
+    if next_fragment.chars().any(|ch| !ch.is_ascii_alphanumeric()) {
+        return true;
+    }
+    if next_fragment
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_digit())
+    {
+        return true;
+    }
+    matches!(
+        current.chars().last(),
+        Some('%' | ':' | '=' | '&' | '?' | '/' | '#' | '-' | '_')
+    )
+}
+
+fn extract_auth_url(text: &str) -> Option<String> {
+    let normalized = strip_ansi_sequences(text);
+    let chars: Vec<char> = normalized.chars().collect();
+    let mut idx = 0usize;
+    while idx < chars.len() {
+        let remaining: String = chars[idx..].iter().collect();
+        let scheme_offset = remaining
+            .find("https://")
+            .or_else(|| remaining.find("http://"))?;
+        idx += scheme_offset;
+        let mut end = idx;
+        let mut candidate = String::new();
+        while end < chars.len() {
+            let ch = chars[end];
+            if is_auth_url_char(ch) {
+                candidate.push(ch);
+                end += 1;
+                continue;
+            }
+            if ch.is_whitespace() {
+                let mut probe = end;
+                while probe < chars.len() && chars[probe].is_whitespace() {
+                    probe += 1;
+                }
+                if probe < chars.len() && is_auth_url_char(chars[probe]) {
+                    let mut token_end = probe;
+                    while token_end < chars.len() && is_auth_url_char(chars[token_end]) {
+                        token_end += 1;
+                    }
+                    let next_fragment: String = chars[probe..token_end].iter().collect();
+                    if should_continue_auth_url_after_break(&candidate, &next_fragment) {
+                        end = probe;
+                        continue;
+                    }
+                }
+            }
+            break;
         }
+        let trimmed = candidate
+            .trim_matches(|c: char| {
+                matches!(
+                    c,
+                    '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | ',' | ';' | '.'
+                )
+            })
+            .to_string();
+        if Url::parse(&trimmed).is_ok() {
+            return Some(trimmed);
+        }
+        idx = end.saturating_add(1);
     }
     None
+}
+
+fn auth_url_looks_complete(auth_url: &str) -> bool {
+    let parsed = match Url::parse(auth_url) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let maybe_redirect = parsed
+        .query_pairs()
+        .find_map(|(key, value)| (key == "redirect_uri").then_some(value.into_owned()));
+    let Some(redirect_uri) = maybe_redirect else {
+        return true;
+    };
+    let redirect = match Url::parse(&redirect_uri) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let Some(host) = redirect.host_str() else {
+        return false;
+    };
+    if !is_loopback_host(host) {
+        // Claude setup-token commonly uses hosted/manual callback redirects
+        // (for example https://platform.claude.com/...), which are complete.
+        return true;
+    }
+    redirect.port().is_some()
 }
 
 fn is_claude_setup_token_char(ch: char) -> bool {
@@ -1973,25 +2168,73 @@ fn is_setup_token_fragment(value: &str) -> bool {
     !value.is_empty() && value.chars().all(is_claude_setup_token_char)
 }
 
+fn leading_setup_token_fragment(value: &str) -> &str {
+    let mut end = 0usize;
+    for (idx, ch) in value.char_indices() {
+        if is_claude_setup_token_char(ch) {
+            end = idx + ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+    &value[..end]
+}
+
+fn is_setup_token_continuation_fragment(value: &str) -> bool {
+    if !is_setup_token_fragment(value) {
+        return false;
+    }
+    value
+        .chars()
+        .any(|ch| ch.is_ascii_digit() || ch == '-' || ch == '_')
+}
+
+fn trim_known_setup_token_prose_suffix(token: &str) -> String {
+    const PROSE_CANONICAL: &str = "StorethistokensecurelyYouwontbeabletoseeitagain";
+    const MIN_MATCH_LEN: usize = 5;
+
+    let mut out = token.to_string();
+    for phrase in [PROSE_CANONICAL, "storethistokensecurelyyouwontbeabletoseeitagain"] {
+        let max = std::cmp::min(out.len(), phrase.len());
+        let mut truncate_at: Option<usize> = None;
+        for len in (MIN_MATCH_LEN..=max).rev() {
+            if out.ends_with(&phrase[..len]) {
+                truncate_at = Some(out.len() - len);
+                break;
+            }
+        }
+        if let Some(idx) = truncate_at {
+            out.truncate(idx);
+        }
+    }
+    out
+}
+
 fn extract_claude_setup_token(output: &str) -> Option<String> {
     let lines: Vec<&str> = output.lines().collect();
     for (idx, line) in lines.iter().enumerate() {
         let Some(start) = line.find("sk-ant-oat") else {
             continue;
         };
-        let mut token: String = line[start..]
-            .chars()
-            .filter(|c| is_claude_setup_token_char(*c))
-            .collect();
+        let first_fragment = leading_setup_token_fragment(&line[start..]);
+        if first_fragment.is_empty() {
+            continue;
+        }
+        let mut token = first_fragment.to_string();
         for next in lines.iter().skip(idx + 1) {
             let trimmed = next.trim();
-            if trimmed.is_empty() || !is_setup_token_fragment(trimmed) {
+            if trimmed.is_empty() {
                 break;
             }
-            token.push_str(trimmed);
+            let fragment = leading_setup_token_fragment(trimmed);
+            if !is_setup_token_continuation_fragment(fragment) {
+                break;
+            }
+            token.push_str(fragment);
         }
-        if token.len() > 40 {
-            return Some(token);
+        let cleaned = trim_known_setup_token_prose_suffix(&token);
+        if cleaned.len() > 40 {
+            return Some(cleaned);
         }
     }
     None
@@ -2005,24 +2248,35 @@ pub(super) async fn start_claude_login_process(
         line_rx: mut rx,
         exit_rx,
         killer,
+        writer,
     } = spawn_claude_setup_token_command(&runtime)?;
 
     let mut buffered_lines = Vec::new();
     let mut auth_url = None;
-    let deadline = Instant::now() + CLAUDE_LOGIN_URL_WAIT;
+    let mut transcript = String::new();
+    let hard_deadline = Instant::now() + CLAUDE_LOGIN_URL_WAIT;
+    let mut settle_deadline: Option<Instant> = None;
     loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
+        let now = Instant::now();
+        let remaining = if let Some(settle) = settle_deadline {
+            std::cmp::min(
+                hard_deadline.saturating_duration_since(now),
+                settle.saturating_duration_since(now),
+            )
+        } else {
+            hard_deadline.saturating_duration_since(now)
+        };
         if remaining.is_zero() {
             break;
         }
         match tokio::time::timeout(remaining, rx.recv()).await {
             Ok(Some(line)) => {
-                if auth_url.is_none() {
-                    auth_url = extract_auth_url(&line);
-                }
+                transcript.push_str(&line);
+                transcript.push('\n');
                 buffered_lines.push(line);
-                if auth_url.is_some() {
-                    break;
+                if let Some(candidate) = extract_auth_url(&transcript) {
+                    auth_url = Some(candidate);
+                    settle_deadline = Some(Instant::now() + CLAUDE_LOGIN_URL_SETTLE_WAIT);
                 }
             }
             Ok(None) => break,
@@ -2032,10 +2286,15 @@ pub(super) async fn start_claude_login_process(
 
     Ok(ClaudeLoginProcess {
         line_rx: rx,
+        input_rx: {
+            let (_tx, rx) = mpsc::unbounded_channel();
+            rx
+        },
         buffered_lines,
         auth_url,
         exit_rx,
         killer,
+        writer,
     })
 }
 
@@ -2046,17 +2305,48 @@ async fn append_claude_login_line(
     transcript: &mut String,
     line: String,
 ) {
-    if observed_auth_url.is_none() {
-        *observed_auth_url = extract_auth_url(&line);
-        if let Some(url) = observed_auth_url.clone() {
-            let mut map = state.providers.claude_login_sessions.lock().await;
-            if let Some(entry) = map.get_mut(login_id) {
-                entry.auth_url = Some(url);
+    let needs_auth_url_upgrade = match observed_auth_url.as_deref() {
+        None => true,
+        Some(url) => !auth_url_looks_complete(url),
+    };
+    if needs_auth_url_upgrade {
+        if let Some(candidate) = extract_auth_url(&line) {
+            let should_replace = match observed_auth_url.as_ref() {
+                None => true,
+                Some(current) => {
+                    !auth_url_looks_complete(current) && candidate.len() >= current.len()
+                }
+            };
+            if should_replace {
+                *observed_auth_url = Some(candidate);
             }
         }
     }
     transcript.push_str(&line);
     transcript.push('\n');
+    let needs_auth_url_upgrade = match observed_auth_url.as_deref() {
+        None => true,
+        Some(url) => !auth_url_looks_complete(url),
+    };
+    if needs_auth_url_upgrade {
+        if let Some(candidate) = extract_auth_url(transcript) {
+            let should_replace = match observed_auth_url.as_ref() {
+                None => true,
+                Some(current) => {
+                    !auth_url_looks_complete(current) && candidate.len() >= current.len()
+                }
+            };
+            if should_replace {
+                *observed_auth_url = Some(candidate);
+            }
+        }
+    }
+    if let Some(url) = observed_auth_url.clone() {
+        let mut map = state.providers.claude_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(login_id) {
+            entry.auth_url = Some(url);
+        }
+    }
 }
 
 fn format_claude_exit_status(status: &portable_pty::ExitStatus) -> String {
@@ -2077,6 +2367,30 @@ async fn kill_claude_login_process(
     })
     .await
     .context("joining claude setup-token kill task")?
+}
+
+async fn write_claude_login_input(
+    writer: Arc<StdMutex<Box<dyn Write + Send>>>,
+    input: &str,
+) -> anyhow::Result<()> {
+    let mut payload = input.trim().to_string();
+    if payload.is_empty() {
+        bail!("callback code is required");
+    }
+    payload.push('\n');
+    tokio::task::spawn_blocking(move || {
+        let mut guard = writer
+            .lock()
+            .map_err(|_| anyhow::anyhow!("claude setup-token writer lock poisoned"))?;
+        guard
+            .write_all(payload.as_bytes())
+            .context("writing callback code to claude setup-token")?;
+        guard
+            .flush()
+            .context("flushing callback code to claude setup-token")
+    })
+    .await
+    .context("joining callback input writer task")?
 }
 
 async fn read_trailing_claude_login_lines(
@@ -2188,6 +2502,14 @@ pub(super) async fn monitor_claude_login(
                     Err(err) => Err(anyhow::anyhow!("claude setup-token exit channel closed: {err}")),
                 });
                 break;
+            }
+            maybe_input = login.input_rx.recv() => {
+                if let Some(input) = maybe_input {
+                    if let Err(err) = write_claude_login_input(Arc::clone(&login.writer), &input).await {
+                        timeout_error = Some(format!("failed to submit callback code to claude setup-token: {err}"));
+                        break;
+                    }
+                }
             }
             _ = &mut timeout_future => {
                 timeout_error = Some(if observed_auth_url.is_some() {
@@ -2309,6 +2631,10 @@ pub(super) async fn monitor_claude_login(
                 entry.auth_url = observed_auth_url;
             }
         }
+    }
+    {
+        let mut map = state.providers.claude_login_inputs.lock().await;
+        map.remove(&login_id);
     }
 }
 
@@ -3867,6 +4193,17 @@ mod tests {
     }
 
     #[test]
+    fn extract_auth_url_reconstructs_wrapped_url_lines() {
+        let wrapped = "Open this URL: https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A\n64111%2Fauth%2Fcallback&state=abc";
+        assert_eq!(
+            extract_auth_url(wrapped).as_deref(),
+            Some(
+                "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fauth%2Fcallback&state=abc"
+            )
+        );
+    }
+
+    #[test]
     fn normalize_claude_login_line_strips_ansi_sequences() {
         let raw = "\u{1b}[90mOpen URL:\u{1b}[0m https://claude.ai/oauth/authorize?foo=bar\r";
         let normalized = normalize_claude_login_line(raw);
@@ -3885,6 +4222,20 @@ mod tests {
             extract_auth_url(&normalized).as_deref(),
             Some("https://claude.ai/oauth/authorize?foo=bar")
         );
+    }
+
+    #[test]
+    fn auth_url_looks_complete_accepts_hosted_redirect_callback() {
+        let url = "https://claude.ai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback";
+        assert!(auth_url_looks_complete(url));
+    }
+
+    #[test]
+    fn auth_url_looks_complete_requires_port_for_loopback_callback() {
+        let url = "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%2Fcallback";
+        assert!(!auth_url_looks_complete(url));
+        let with_port = "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A5999%2Fcallback";
+        assert!(auth_url_looks_complete(with_port));
     }
 
     #[tokio::test]
@@ -3915,6 +4266,56 @@ Store this token securely.
         assert!(token.starts_with("sk-ant-oat01-"));
         assert!(token.contains("APPED_TEST_ONLY_0123456789_WRAPPED_TEST_ONLY_"));
         assert!(token.ends_with("0123456789_WRAPPED"));
+    }
+
+    #[test]
+    fn extract_claude_setup_token_ignores_wrapped_prose_after_token() {
+        let output = r#"
+Your OAuth token (valid for 1 year):
+
+sk-ant-oat01-1WRAPPED_TEST_ONLY_0123456789_WR
+APPED_TEST_ONLY_0123456789_WRAPPED_TEST_ONLY_
+0123456789_WRAPPED
+Store
+this
+token
+securely
+You
+won't
+be
+able
+to
+see
+it
+again
+"#;
+        let token = extract_claude_setup_token(output).expect("token should parse");
+        assert!(token.starts_with("sk-ant-oat01-"));
+        assert!(token.ends_with("0123456789_WRAPPED"));
+        assert!(!token.contains("Store"));
+        assert!(!token.contains("securely"));
+    }
+
+    #[test]
+    fn extract_claude_setup_token_stops_before_inline_prose() {
+        let output = "sk-ant-oat01-1INLINE_TEST_ONLY_0123456789_INLINE_TEST_ONLY_0123456789_INLINE_TEST_ONLY_0123456789_INLINE_TESStore this token securely.";
+        let token = extract_claude_setup_token(output).expect("token should parse");
+        assert!(token.starts_with("sk-ant-oat01-"));
+        assert!(token.ends_with("INE_TES"));
+        assert!(!token.contains("Store"));
+        assert!(!token.contains("securely"));
+    }
+
+    #[test]
+    fn extract_claude_setup_token_accepts_short_final_fragment() {
+        let output = r#"
+Your OAuth token (valid for 1 year):
+
+sk-ant-oat01-abcDEF1234567890_
+ZXY987654321
+"#;
+        let token = extract_claude_setup_token(output).expect("token should parse");
+        assert_eq!(token, "sk-ant-oat01-abcDEF1234567890_ZXY987654321");
     }
 
     #[test]

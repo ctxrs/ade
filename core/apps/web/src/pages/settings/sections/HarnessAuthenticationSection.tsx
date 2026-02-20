@@ -24,6 +24,7 @@ import {
   supportsOptionalBaseUrlForHarness,
 } from "../harnessEndpointProviders";
 import { useHarnessAuthenticationController } from "../hooks/useHarnessAuthenticationController";
+import type { HarnessAuthModalState } from "../../SettingsPage.types";
 
 type HarnessAuthenticationSectionProps = {
   workspaceId: string | null;
@@ -32,6 +33,47 @@ type HarnessAuthenticationSectionProps = {
   openProviderId?: string | null;
   onModalClosed?: (providerId: string | null) => void;
 };
+
+function claudeSetupTokenProvided(modal: HarnessAuthModalState): boolean {
+  return modal.provider_id === "claude-crp" && modal.subscription_token.trim().length > 0;
+}
+
+function isClaudeSetupTokenValue(value: string): boolean {
+  return value.trim().startsWith("sk-ant-oat");
+}
+
+export function canSubmitSubscriptionModal(modal: HarnessAuthModalState): boolean {
+  if (modal.api_key_busy) return false;
+  if (!modal.subscription_busy) return true;
+  return claudeSetupTokenProvided(modal);
+}
+
+export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): string {
+  if (modal.provider_id === "claude-crp" && modal.subscription_busy && claudeSetupTokenProvided(modal)) {
+    return isClaudeSetupTokenValue(modal.subscription_token) ? "Save subscription" : "Submit code";
+  }
+  if (modal.subscription_busy && !canSubmitSubscriptionModal(modal)) {
+    return "Waiting...";
+  }
+  if (
+    modal.provider_id === "codex"
+    || modal.provider_id === "cursor"
+    || (modal.provider_id === "claude-crp" && !claudeSetupTokenProvided(modal))
+  ) {
+    return "Start sign-in";
+  }
+  return "Save subscription";
+}
+
+export function shouldSubmitClaudeFallbackOnEnter(modal: HarnessAuthModalState, key: string): boolean {
+  if (key !== "Enter") return false;
+  if (modal.provider_id !== "claude-crp") return false;
+  return claudeSetupTokenProvided(modal) && canSubmitSubscriptionModal(modal);
+}
+
+export function shouldAutoStartSubscriptionFlow(providerId: string): boolean {
+  return providerId === "codex" || providerId === "claude-crp";
+}
 
 export function HarnessAuthenticationSection({
   workspaceId,
@@ -536,7 +578,7 @@ export function HarnessAuthenticationSection({
                         subscription_oauth_creds_json: "",
                         subscription_google_accounts_json: "",
                       });
-                      if (harnessAuthModal.provider_id === "codex") {
+                      if (shouldAutoStartSubscriptionFlow(harnessAuthModal.provider_id)) {
                         void submitHarnessSubscriptionModal();
                       }
                     }}
@@ -584,7 +626,7 @@ export function HarnessAuthenticationSection({
                   {harnessAuthModal.provider_id === "codex"
                     ? "Sign in with your Codex subscription in a browser window."
                     : harnessAuthModal.provider_id === "claude-crp"
-                      ? "Start browser sign-in to generate and capture a managed Claude setup token automatically. Optional fallback: paste an existing token."
+                      ? "Sign in with Claude in your browser. We capture the token automatically. If that fails, paste the token below."
                       : harnessAuthModal.provider_id === "gemini"
                         ? "Sign in with Google to capture managed Gemini OAuth credentials automatically. Optional fallback: paste oauth_creds.json."
                         : harnessAuthModal.provider_id === "kimi"
@@ -610,12 +652,17 @@ export function HarnessAuthenticationSection({
                       />
                     </label>
                     <label className="settings-harness-modal-label">
-                      Setup Token
+                      Token (optional fallback)
                       <input
                         className="settings-control"
                         value={harnessAuthModal.subscription_token}
                         onChange={(e) => patchHarnessAuthModal({ subscription_token: e.target.value })}
-                        placeholder="Optional fallback: paste CLAUDE_CODE_OAUTH_TOKEN"
+                        onKeyDown={(e) => {
+                          if (!shouldSubmitClaudeFallbackOnEnter(harnessAuthModal, e.key)) return;
+                          e.preventDefault();
+                          void submitHarnessSubscriptionModal();
+                        }}
+                        placeholder="sk-ant-oat..."
                         type="password"
                       />
                     </label>
@@ -817,20 +864,9 @@ export function HarnessAuthenticationSection({
                     onClick={() => {
                       void submitHarnessSubscriptionModal();
                     }}
-                    disabled={harnessAuthModal.subscription_busy || harnessAuthModal.api_key_busy}
+                    disabled={!canSubmitSubscriptionModal(harnessAuthModal)}
                   >
-                    {harnessAuthModal.subscription_busy
-                      ? "Starting..."
-                      : harnessAuthModal.provider_id === "codex"
-                        || harnessAuthModal.provider_id === "cursor"
-                        || (harnessAuthModal.provider_id === "gemini"
-                          && harnessAuthModal.subscription_oauth_creds_json.trim().length === 0)
-                        || (harnessAuthModal.provider_id === "claude-crp"
-                          && harnessAuthModal.subscription_token.trim().length === 0)
-                        ? harnessAuthModal.provider_id === "gemini"
-                          ? "Sign in with Google"
-                          : "Start sign-in"
-                        : "Save subscription"}
+                    {subscriptionPrimaryActionLabel(harnessAuthModal)}
                   </button>
                 </div>
               </div>

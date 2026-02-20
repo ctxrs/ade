@@ -335,18 +335,6 @@ pub struct ClaudeLoginStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GeminiLoginStatus {
-    pub login_id: String,
-    #[serde(default)]
-    pub auth_url: Option<String>,
-    pub status: String,
-    #[serde(default)]
-    pub account_id: Option<String>,
-    #[serde(default)]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexHostImportProbe {
     pub available: bool,
     #[serde(default)]
@@ -815,7 +803,33 @@ fn normalize_claude_setup_token(token: &str) -> Result<String> {
     if trimmed.is_empty() {
         bail!("setup_token is required");
     }
-    Ok(trimmed.to_string())
+    let unquoted = if trimmed.len() >= 2
+        && ((trimmed.starts_with('"') && trimmed.ends_with('"'))
+            || (trimmed.starts_with('\'') && trimmed.ends_with('\'')))
+    {
+        trimmed[1..trimmed.len() - 1].trim()
+    } else {
+        trimmed
+    };
+    let collapsed: String = unquoted.chars().filter(|ch| !ch.is_whitespace()).collect();
+    if collapsed.is_empty() {
+        bail!("setup_token is required");
+    }
+    if collapsed.contains('#') {
+        bail!(
+            "setup_token appears to be a browser callback code; paste a long-lived CLAUDE_CODE_OAUTH_TOKEN starting with sk-ant-oat"
+        );
+    }
+    if !collapsed.starts_with("sk-ant-oat") {
+        bail!("setup_token must start with sk-ant-oat");
+    }
+    if !collapsed
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        bail!("setup_token contains invalid characters");
+    }
+    Ok(collapsed)
 }
 
 async fn write_claude_secret_for_account(
@@ -2954,6 +2968,8 @@ mod tests {
     use super::*;
 
     static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    const CLAUDE_TEST_SETUP_TOKEN: &str =
+        "sk-ant-oat01-abcDEF1234567890_abcdefghijklmnopqrstuvwxyz_0123456789";
 
     async fn lock_env() -> tokio::sync::MutexGuard<'static, ()> {
         ENV_LOCK.lock().await
@@ -3007,6 +3023,31 @@ mod tests {
         assert!(ensure_safe_account_id("../acct").is_err());
         assert!(ensure_safe_account_id("acct/../x").is_err());
         assert!(ensure_safe_account_id("acct/x").is_err());
+    }
+
+    #[test]
+    fn normalize_claude_setup_token_accepts_wrapped_and_quoted_values() {
+        let wrapped = format!("  \"{}\"  ", CLAUDE_TEST_SETUP_TOKEN);
+        let normalized = normalize_claude_setup_token(&wrapped).expect("normalize token");
+        assert_eq!(normalized, CLAUDE_TEST_SETUP_TOKEN);
+
+        let line_wrapped = "sk-ant-oat01-abcDEF1234567890_\nabcdefghijklmnopqrstuvwxyz_0123456789";
+        let normalized =
+            normalize_claude_setup_token(line_wrapped).expect("normalize wrapped token");
+        assert_eq!(normalized, CLAUDE_TEST_SETUP_TOKEN);
+    }
+
+    #[test]
+    fn normalize_claude_setup_token_rejects_callback_codes() {
+        let err = normalize_claude_setup_token("ePBMdWetJlSbZ0a#state")
+            .expect_err("callback token should fail");
+        assert!(err.to_string().contains("browser callback code"));
+    }
+
+    #[test]
+    fn normalize_claude_setup_token_requires_setup_token_prefix() {
+        let err = normalize_claude_setup_token("token-abc").expect_err("invalid token should fail");
+        assert!(err.to_string().contains("must start with sk-ant-oat"));
     }
 
     #[tokio::test]
@@ -3522,7 +3563,7 @@ mod tests {
         let registry = add_claude_account(
             root,
             Some("Claude Test".to_string()),
-            "token-abc".to_string(),
+            CLAUDE_TEST_SETUP_TOKEN.to_string(),
         )
         .await
         .unwrap();
@@ -3531,7 +3572,7 @@ mod tests {
         let env = claude_env_for_active_account(root).await.unwrap();
         assert_eq!(
             env.get("CLAUDE_CODE_OAUTH_TOKEN"),
-            Some(&"token-abc".to_string())
+            Some(&CLAUDE_TEST_SETUP_TOKEN.to_string())
         );
         let cfg_dir = env
             .get("CLAUDE_CONFIG_DIR")
@@ -3547,7 +3588,7 @@ mod tests {
         let first = add_claude_account(
             root,
             Some("Claude Initial".to_string()),
-            "token-abc".to_string(),
+            CLAUDE_TEST_SETUP_TOKEN.to_string(),
         )
         .await
         .unwrap();
@@ -3556,7 +3597,7 @@ mod tests {
         let second = add_claude_account(
             root,
             Some("Claude Updated".to_string()),
-            "token-abc".to_string(),
+            CLAUDE_TEST_SETUP_TOKEN.to_string(),
         )
         .await
         .unwrap();
@@ -3573,7 +3614,7 @@ mod tests {
         let registry = add_claude_account(
             root,
             Some("Claude Test".to_string()),
-            "token-abc".to_string(),
+            CLAUDE_TEST_SETUP_TOKEN.to_string(),
         )
         .await
         .unwrap();
@@ -3598,7 +3639,7 @@ mod tests {
         let registry = add_claude_account(
             root,
             Some("Claude Test".to_string()),
-            "token-abc".to_string(),
+            CLAUDE_TEST_SETUP_TOKEN.to_string(),
         )
         .await
         .unwrap();
@@ -4161,9 +4202,13 @@ mod tests {
     async fn subscription_env_dispatches_to_supported_providers() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let _ = add_claude_account(root, Some("Claude".to_string()), "token-abc".to_string())
-            .await
-            .unwrap();
+        let _ = add_claude_account(
+            root,
+            Some("Claude".to_string()),
+            CLAUDE_TEST_SETUP_TOKEN.to_string(),
+        )
+        .await
+        .unwrap();
         let _ = add_gemini_account(
             root,
             Some("Gemini".to_string()),
@@ -4245,9 +4290,13 @@ mod tests {
         let root = dir.path();
         let runtime_root = runtime_dir.path();
 
-        let _ = add_claude_account(root, Some("Claude".to_string()), "token-abc".to_string())
-            .await
-            .unwrap();
+        let _ = add_claude_account(
+            root,
+            Some("Claude".to_string()),
+            CLAUDE_TEST_SETUP_TOKEN.to_string(),
+        )
+        .await
+        .unwrap();
         let _ = add_gemini_account(
             root,
             Some("Gemini".to_string()),

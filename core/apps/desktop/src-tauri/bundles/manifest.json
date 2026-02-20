@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-02-20T05:21:37Z",
+  "generated_at": "2026-02-20T02:53:33Z",
   "providers": [
     {
       "id": "cursor",
@@ -32,9 +32,33 @@
       "version": "local",
       "os": "macos",
       "arch": "aarch64",
-      "sha256": "8ef18e735e3211ce4191277475b972f0719ea40fd84dc916bc860cb5f282b315",
+      "sha256": "5bd0729da040f3341f37d463208d5f8697b8748b9d35cebeccdde97f8878c72d",
       "command": "providers/acp-crp-bridge/macos/aarch64/acp-crp-bridge",
       "args": []
+    },
+    {
+      "id": "claude-cli",
+      "protocol": "acp",
+      "version": "2.1.47",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "90ee1d271eec831fd38d16c78c19cc36809548ac5cd034a6e0c10c4389c881ef",
+      "command": "runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node",
+      "args": [
+        "providers/claude-cli/macos/aarch64/node_modules/@anthropic-ai/claude-code/cli.js"
+      ]
+    },
+    {
+      "id": "claude-crp",
+      "protocol": "crp",
+      "version": "0.0.0-ctx.1",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "90ee1d271eec831fd38d16c78c19cc36809548ac5cd034a6e0c10c4389c881ef",
+      "command": "runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node",
+      "args": [
+        "providers/claude-crp/macos/aarch64/bin/claude-crp"
+      ]
     },
     {
       "id": "codex",
