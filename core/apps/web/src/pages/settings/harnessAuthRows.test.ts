@@ -103,6 +103,15 @@ describe("buildHarnessAuthRows", () => {
           last_verification_at: null,
           last_error: null,
           model_override: null,
+          model_catalog_status: "ready",
+          model_catalog_error: null,
+          model_catalog_fetched_at: "2026-02-20T00:00:00Z",
+          model_catalog_models: [
+            { id: "anthropic/claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
+            { id: "openai/gpt-5.2", name: "GPT-5.2" },
+          ],
+          manual_model_ids: [],
+          model_catalog_source: "discovered",
         },
       ],
     });
@@ -112,7 +121,9 @@ describe("buildHarnessAuthRows", () => {
     expect(endpointRows).toHaveLength(2);
     expect(activeEndpoint?.endpoint_id).toBe("ep-2");
     expect(activeEndpoint?.verification_status).toBe("valid");
-    expect(endpointRows.every((row) => row.detail === undefined)).toBe(true);
+    expect(activeEndpoint?.detail).toBe("2 discovered models");
+    expect(activeEndpoint?.model_catalog_status).toBe("ready");
+    expect(activeEndpoint?.model_count).toBe(2);
   });
 
   it("does not add placeholder subscription rows without managed entries", () => {

@@ -296,6 +296,73 @@ pub(super) async fn load_provider_model_catalog(
         }
     }
 
+    let source_config =
+        crate::harness_sources::get_provider_source_config(&state.core.data_root, provider_id)
+            .await
+            .ok();
+    if let Some(config) = source_config.as_ref() {
+        if config.selected_source_kind == crate::harness_sources::HarnessSourceKind::Endpoint {
+            let selected_endpoint_id = config.selected_endpoint_id.as_deref().ok_or_else(|| {
+                format!(
+                    "selected source is endpoint for '{provider_id}' but no endpoint is selected"
+                )
+            })?;
+            let endpoint = config
+                .endpoints
+                .iter()
+                .find(|candidate| candidate.id == selected_endpoint_id)
+                .ok_or_else(|| {
+                    format!(
+                        "selected endpoint '{selected_endpoint_id}' for '{provider_id}' was not found"
+                    )
+                })?;
+
+            let now = chrono::Utc::now();
+            if crate::harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
+                let data_root = state.core.data_root.clone();
+                let provider_id_for_refresh = provider_id.to_string();
+                let endpoint_id_for_refresh = endpoint.id.clone();
+                tokio::spawn(async move {
+                    let _ = crate::harness_sources::refresh_provider_endpoint_model_catalog(
+                        &data_root,
+                        &provider_id_for_refresh,
+                        &endpoint_id_for_refresh,
+                    )
+                    .await;
+                });
+            }
+
+            let models_value = serde_json::json!({
+                "models": endpoint.model_catalog_models,
+                "current_model_id": endpoint.model_override,
+            });
+            if let Some(models) = build_model_catalog(&models_value) {
+                let mut value = serde_json::json!({
+                    "provider_id": provider_id,
+                    "workspace_id": workspace.id.0,
+                    "installed": true,
+                    "probe_ok": true,
+                    "supports_load": false,
+                    "auth_required": false,
+                    "models": models_value,
+                    "probed_at": now.to_rfc3339(),
+                });
+                value["source"] = serde_json::to_value(config).unwrap_or(serde_json::Value::Null);
+                value = redact_json_value(value);
+                state.providers.options_cache.lock().await.insert(
+                    cache_key,
+                    crate::daemon::CachedProviderOptions {
+                        cached_at: std::time::Instant::now(),
+                        value,
+                    },
+                );
+                return Ok(Some(models));
+            }
+
+            return Ok(None);
+        }
+    }
+
     if provider_id != "codex" && provider_id != "claude-crp" {
         return Ok(None);
     }

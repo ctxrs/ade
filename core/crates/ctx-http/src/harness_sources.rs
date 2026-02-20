@@ -1,5 +1,6 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -37,6 +38,8 @@ const CLAUDE_AUTH_TYPE_API_KEY: &str = "api_key";
 const GEMINI_AUTH_TYPE_GEMINI_API_KEY: &str = "gemini_api_key";
 const GEMINI_AUTH_TYPE_VERTEX_AI: &str = "vertex_ai";
 const KIRO_AUTH_TOKEN_RELATIVE_PATH: &str = ".aws/sso/cache/kiro-auth-token.json";
+const ENDPOINT_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
+const ENDPOINT_MODEL_CATALOG_TTL: Duration = Duration::from_secs(60 * 60 * 24);
 
 static REGISTRY_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -73,6 +76,23 @@ pub enum HarnessEndpointVerificationStatus {
     Error,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EndpointModelCatalogStatus {
+    #[default]
+    Unknown,
+    Ready,
+    ManualOnly,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EndpointModelRecord {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HarnessEndpointRecord {
     pub id: String,
@@ -94,6 +114,18 @@ pub struct HarnessEndpointRecord {
     #[serde(default)]
     pub last_error: Option<String>,
     pub has_api_key: bool,
+    #[serde(default)]
+    pub model_catalog_status: EndpointModelCatalogStatus,
+    #[serde(default)]
+    pub model_catalog_fetched_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub model_catalog_error: Option<String>,
+    #[serde(default)]
+    pub model_catalog_models: Vec<EndpointModelRecord>,
+    #[serde(default)]
+    pub manual_model_ids: Vec<String>,
+    #[serde(default)]
+    pub model_catalog_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +185,18 @@ struct HarnessEndpointRecordInternal {
     last_verification_at: Option<DateTime<Utc>>,
     #[serde(default)]
     last_error: Option<String>,
+    #[serde(default)]
+    model_catalog_status: EndpointModelCatalogStatus,
+    #[serde(default)]
+    model_catalog_fetched_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    model_catalog_error: Option<String>,
+    #[serde(default)]
+    model_catalog_models: Vec<EndpointModelRecord>,
+    #[serde(default)]
+    manual_model_ids: Vec<String>,
+    #[serde(default)]
+    model_catalog_source: Option<String>,
     secret_ref: String,
 }
 
@@ -538,6 +582,150 @@ fn normalize_name(raw: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
+fn normalize_manual_model_ids(input: &[String]) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out = Vec::new();
+    for raw in input {
+        let normalized = raw.trim();
+        if normalized.is_empty() {
+            continue;
+        }
+        if seen.insert(normalized.to_string()) {
+            out.push(normalized.to_string());
+        }
+    }
+    out
+}
+
+fn merge_endpoint_model_records(
+    discovered: &[EndpointModelRecord],
+    manual_model_ids: &[String],
+) -> Vec<EndpointModelRecord> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut merged = Vec::new();
+    for model in discovered {
+        let id = model.id.trim();
+        if id.is_empty() {
+            continue;
+        }
+        if seen.insert(id.to_string()) {
+            merged.push(EndpointModelRecord {
+                id: id.to_string(),
+                name: model.name.as_ref().map(|value| value.trim().to_string()),
+            });
+        }
+    }
+    for manual in manual_model_ids {
+        let id = manual.trim();
+        if id.is_empty() {
+            continue;
+        }
+        if seen.insert(id.to_string()) {
+            merged.push(EndpointModelRecord {
+                id: id.to_string(),
+                name: None,
+            });
+        }
+    }
+    merged
+}
+
+fn endpoint_models_url(base_url: &str) -> Result<String> {
+    let mut normalized = normalize_base_url(base_url)?;
+    normalized.push_str("/models");
+    Ok(normalized)
+}
+
+fn truncate_discovery_error(raw: &str) -> String {
+    const MAX: usize = 280;
+    let collapsed = raw.replace(['\n', '\r'], " ").trim().to_string();
+    if collapsed.len() <= MAX {
+        return collapsed;
+    }
+    let mut end = MAX;
+    while end > 0 && !collapsed.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &collapsed[..end])
+}
+
+fn parse_openai_models_payload(payload: &serde_json::Value) -> Result<Vec<EndpointModelRecord>> {
+    let data = payload
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("models payload missing array field 'data'"))?;
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut models = Vec::new();
+    for entry in data {
+        let Some(rec) = entry.as_object() else {
+            continue;
+        };
+        let id = rec
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if id.is_empty() {
+            continue;
+        }
+        if !seen.insert(id.to_string()) {
+            continue;
+        }
+        let name = rec
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        models.push(EndpointModelRecord {
+            id: id.to_string(),
+            name,
+        });
+    }
+    if models.is_empty() {
+        anyhow::bail!("models payload did not include any model ids");
+    }
+    Ok(models)
+}
+
+async fn discover_openai_models(
+    base_url: &str,
+    auth_type: &str,
+    api_key: &str,
+) -> Result<Vec<EndpointModelRecord>> {
+    let client = reqwest::Client::builder()
+        .timeout(ENDPOINT_MODEL_DISCOVERY_TIMEOUT)
+        .build()?;
+    let url = endpoint_models_url(base_url)?;
+    let mut request = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/json");
+    match auth_type {
+        GEMINI_AUTH_TYPE_GEMINI_API_KEY => {
+            request = request.header("x-goog-api-key", api_key);
+        }
+        _ => {
+            request = request.bearer_auth(api_key);
+        }
+    }
+    let response = request.send().await?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        anyhow::bail!(
+            "model discovery failed with status {}: {}",
+            status,
+            truncate_discovery_error(&body)
+        );
+    }
+    let payload: serde_json::Value = serde_json::from_str(&body)
+        .with_context(|| "model discovery response was not valid JSON")?;
+    parse_openai_models_payload(&payload)
+}
+
+fn supports_model_discovery(endpoint: &HarnessEndpointRecordInternal) -> bool {
+    endpoint.api_shape == HarnessApiShape::OpenaiResponses && !endpoint.base_url.trim().is_empty()
+}
+
 fn ensure_safe_endpoint_id(endpoint_id: &str) -> Result<()> {
     if endpoint_id.is_empty() {
         anyhow::bail!("endpoint_id is required");
@@ -607,6 +795,9 @@ async fn read_endpoint_secret(data_root: &Path, secret_ref: &str) -> Result<Stri
 fn public_endpoint_from_internal(
     endpoint: &HarnessEndpointRecordInternal,
 ) -> HarnessEndpointRecord {
+    let manual_model_ids = normalize_manual_model_ids(&endpoint.manual_model_ids);
+    let model_catalog_models =
+        merge_endpoint_model_records(&endpoint.model_catalog_models, &manual_model_ids);
     HarnessEndpointRecord {
         id: endpoint.id.clone(),
         provider_id: endpoint.provider_id.clone(),
@@ -625,6 +816,12 @@ fn public_endpoint_from_internal(
         last_verification_at: endpoint.last_verification_at,
         last_error: endpoint.last_error.clone(),
         has_api_key: true,
+        model_catalog_status: endpoint.model_catalog_status,
+        model_catalog_fetched_at: endpoint.model_catalog_fetched_at,
+        model_catalog_error: endpoint.model_catalog_error.clone(),
+        model_catalog_models,
+        manual_model_ids,
+        model_catalog_source: endpoint.model_catalog_source.clone(),
     }
 }
 
@@ -819,12 +1016,24 @@ pub async fn upsert_provider_endpoint(
         last_verification_status: HarnessEndpointVerificationStatus::Unknown,
         last_verification_at: None,
         last_error: None,
+        model_catalog_status: EndpointModelCatalogStatus::Unknown,
+        model_catalog_fetched_at: None,
+        model_catalog_error: None,
+        model_catalog_models: Vec::new(),
+        manual_model_ids: Vec::new(),
+        model_catalog_source: None,
         secret_ref,
     };
 
     if let Some(idx) = existing_index {
         if let Some(previous) = provider.endpoints.get(idx) {
             next.created_at = previous.created_at;
+            next.model_catalog_status = previous.model_catalog_status;
+            next.model_catalog_fetched_at = previous.model_catalog_fetched_at;
+            next.model_catalog_error = previous.model_catalog_error.clone();
+            next.model_catalog_models = previous.model_catalog_models.clone();
+            next.manual_model_ids = previous.manual_model_ids.clone();
+            next.model_catalog_source = previous.model_catalog_source.clone();
         }
         provider.endpoints[idx] = next.clone();
     } else {
@@ -979,6 +1188,185 @@ pub async fn mark_endpoint_verification(
     endpoint.last_error = error;
     endpoint.updated_at = Utc::now();
     save_registry(data_root, &registry).await
+}
+
+pub fn endpoint_model_catalog_ttl() -> Duration {
+    ENDPOINT_MODEL_CATALOG_TTL
+}
+
+pub fn endpoint_model_catalog_is_stale(
+    endpoint: &HarnessEndpointRecord,
+    now: DateTime<Utc>,
+) -> bool {
+    if endpoint.model_catalog_status == EndpointModelCatalogStatus::Unknown {
+        return true;
+    }
+    if endpoint.model_catalog_status == EndpointModelCatalogStatus::Error {
+        return true;
+    }
+    let Some(fetched_at) = endpoint.model_catalog_fetched_at else {
+        return endpoint.model_catalog_status != EndpointModelCatalogStatus::ManualOnly;
+    };
+    let age = now.signed_duration_since(fetched_at);
+    age > chrono::Duration::from_std(ENDPOINT_MODEL_CATALOG_TTL)
+        .unwrap_or_else(|_| chrono::Duration::hours(24))
+}
+
+pub async fn set_provider_endpoint_manual_models(
+    data_root: &Path,
+    provider_id: &str,
+    endpoint_id: &str,
+    manual_model_ids: Vec<String>,
+) -> Result<HarnessEndpointRecord> {
+    let canonical = normalize_provider_id(provider_id).ok_or_else(|| {
+        anyhow::anyhow!("provider does not support harness endpoints: {provider_id}")
+    })?;
+    let normalized_manual = normalize_manual_model_ids(&manual_model_ids);
+    let _registry_write_guard = REGISTRY_WRITE_LOCK.lock().await;
+    let mut registry = load_registry(data_root).await?;
+    let provider = registry
+        .providers
+        .get_mut(canonical)
+        .ok_or_else(|| anyhow::anyhow!("unknown provider endpoint config for {}", canonical))?;
+    let endpoint = provider
+        .endpoints
+        .iter_mut()
+        .find(|ep| ep.id == endpoint_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown endpoint_id: {}", endpoint_id))?;
+
+    endpoint.manual_model_ids = normalized_manual.clone();
+    endpoint.model_catalog_source = if endpoint.manual_model_ids.is_empty() {
+        if endpoint.model_catalog_models.is_empty() {
+            None
+        } else {
+            Some("discovered".to_string())
+        }
+    } else if endpoint.model_catalog_models.is_empty() {
+        Some("manual".to_string())
+    } else {
+        Some("mixed".to_string())
+    };
+    endpoint.model_catalog_status = if endpoint.manual_model_ids.is_empty() {
+        if endpoint.model_catalog_models.is_empty() {
+            EndpointModelCatalogStatus::Unknown
+        } else {
+            EndpointModelCatalogStatus::Ready
+        }
+    } else if endpoint.model_catalog_models.is_empty() {
+        EndpointModelCatalogStatus::ManualOnly
+    } else {
+        EndpointModelCatalogStatus::Ready
+    };
+    endpoint.updated_at = Utc::now();
+
+    let public = public_endpoint_from_internal(endpoint);
+    save_registry(data_root, &registry).await?;
+    Ok(public)
+}
+
+pub async fn refresh_provider_endpoint_model_catalog(
+    data_root: &Path,
+    provider_id: &str,
+    endpoint_id: &str,
+) -> Result<HarnessEndpointRecord> {
+    let canonical = normalize_provider_id(provider_id).ok_or_else(|| {
+        anyhow::anyhow!("provider does not support harness endpoints: {provider_id}")
+    })?;
+
+    let endpoint_snapshot = {
+        let _registry_write_guard = REGISTRY_WRITE_LOCK.lock().await;
+        let registry = load_registry(data_root).await?;
+        let provider = registry
+            .providers
+            .get(canonical)
+            .ok_or_else(|| anyhow::anyhow!("unknown provider endpoint config for {}", canonical))?;
+        provider
+            .endpoints
+            .iter()
+            .find(|ep| ep.id == endpoint_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("unknown endpoint_id: {}", endpoint_id))?
+    };
+    let api_key = read_endpoint_secret(data_root, &endpoint_snapshot.secret_ref).await?;
+    let discovery_result = if supports_model_discovery(&endpoint_snapshot) {
+        discover_openai_models(
+            &endpoint_snapshot.base_url,
+            &endpoint_snapshot.auth_type,
+            &api_key,
+        )
+        .await
+    } else {
+        Err(anyhow::anyhow!(
+            "model discovery is unsupported for provider '{}' with api_shape '{}' and base_url '{}'",
+            canonical,
+            endpoint_snapshot.api_shape.as_str(),
+            endpoint_snapshot.base_url
+        ))
+    };
+
+    let _registry_write_guard = REGISTRY_WRITE_LOCK.lock().await;
+    let mut registry = load_registry(data_root).await?;
+    let provider = registry
+        .providers
+        .get_mut(canonical)
+        .ok_or_else(|| anyhow::anyhow!("unknown provider endpoint config for {}", canonical))?;
+    let endpoint = provider
+        .endpoints
+        .iter_mut()
+        .find(|ep| ep.id == endpoint_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown endpoint_id: {}", endpoint_id))?;
+
+    endpoint.updated_at = Utc::now();
+    match discovery_result {
+        Ok(discovered_models) => {
+            endpoint.model_catalog_models = discovered_models;
+            endpoint.model_catalog_fetched_at = Some(Utc::now());
+            endpoint.model_catalog_error = None;
+            endpoint.model_catalog_source = if endpoint.manual_model_ids.is_empty() {
+                Some("discovered".to_string())
+            } else {
+                Some("mixed".to_string())
+            };
+            endpoint.model_catalog_status = if endpoint.model_catalog_models.is_empty() {
+                if endpoint.manual_model_ids.is_empty() {
+                    EndpointModelCatalogStatus::Error
+                } else {
+                    EndpointModelCatalogStatus::ManualOnly
+                }
+            } else {
+                EndpointModelCatalogStatus::Ready
+            };
+        }
+        Err(err) => {
+            endpoint.model_catalog_error = Some(truncate_discovery_error(&err.to_string()));
+            endpoint.model_catalog_source = if endpoint.manual_model_ids.is_empty() {
+                if endpoint.model_catalog_models.is_empty() {
+                    None
+                } else {
+                    Some("discovered".to_string())
+                }
+            } else if endpoint.model_catalog_models.is_empty() {
+                Some("manual".to_string())
+            } else {
+                Some("mixed".to_string())
+            };
+            endpoint.model_catalog_status = if endpoint.manual_model_ids.is_empty() {
+                if endpoint.model_catalog_models.is_empty() {
+                    EndpointModelCatalogStatus::Error
+                } else {
+                    EndpointModelCatalogStatus::Ready
+                }
+            } else if endpoint.model_catalog_models.is_empty() {
+                EndpointModelCatalogStatus::ManualOnly
+            } else {
+                EndpointModelCatalogStatus::Ready
+            };
+        }
+    }
+
+    let public = public_endpoint_from_internal(endpoint);
+    save_registry(data_root, &registry).await?;
+    Ok(public)
 }
 
 async fn prepare_codex_home_with_api_key(codex_home: &Path, api_key: &str) -> Result<()> {
@@ -1378,6 +1766,107 @@ mod tests {
         assert!(err
             .to_string()
             .contains("provider does not support harness endpoints"));
+    }
+
+    #[test]
+    fn parse_openai_models_payload_extracts_unique_ids() {
+        let payload = serde_json::json!({
+            "data": [
+                { "id": "openai/gpt-5.2", "name": "GPT-5.2" },
+                { "id": "openai/gpt-5.2" },
+                { "id": "openai/gpt-4.1" },
+                { "id": "" },
+                {}
+            ]
+        });
+        let models = parse_openai_models_payload(&payload).expect("models should parse");
+        assert_eq!(
+            models,
+            vec![
+                EndpointModelRecord {
+                    id: "openai/gpt-5.2".to_string(),
+                    name: Some("GPT-5.2".to_string()),
+                },
+                EndpointModelRecord {
+                    id: "openai/gpt-4.1".to_string(),
+                    name: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_openai_models_payload_requires_data_array() {
+        let payload = serde_json::json!({
+            "models": []
+        });
+        let err = parse_openai_models_payload(&payload).expect_err("missing data should error");
+        assert!(err
+            .to_string()
+            .contains("models payload missing array field 'data'"));
+    }
+
+    #[test]
+    fn normalize_manual_model_ids_deduplicates_and_trims() {
+        let input = vec![
+            " openai/gpt-5.2 ".to_string(),
+            "".to_string(),
+            "openai/gpt-5.2".to_string(),
+            "anthropic/claude-sonnet-4.5".to_string(),
+        ];
+        assert_eq!(
+            normalize_manual_model_ids(&input),
+            vec![
+                "openai/gpt-5.2".to_string(),
+                "anthropic/claude-sonnet-4.5".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn truncate_discovery_error_preserves_utf8_boundaries() {
+        let raw = format!("error: {}", "界".repeat(400));
+        let truncated = truncate_discovery_error(&raw);
+        assert!(truncated.ends_with("..."));
+        assert!(truncated.len() <= 283);
+        assert!(std::str::from_utf8(truncated.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn endpoint_catalog_stale_logic_handles_status_and_age() {
+        let now = Utc::now();
+        let mut endpoint = HarnessEndpointRecord {
+            id: "ep-1".to_string(),
+            provider_id: PROVIDER_CODEX.to_string(),
+            name: "OpenRouter".to_string(),
+            base_url: Some("https://openrouter.ai/api/v1".to_string()),
+            api_shape: HarnessApiShape::OpenaiResponses,
+            auth_type: CODEX_AUTH_TYPE_BEARER.to_string(),
+            model_override: None,
+            created_at: now,
+            updated_at: now,
+            last_verification_status: HarnessEndpointVerificationStatus::Unknown,
+            last_verification_at: None,
+            last_error: None,
+            has_api_key: true,
+            model_catalog_status: EndpointModelCatalogStatus::Unknown,
+            model_catalog_fetched_at: None,
+            model_catalog_error: None,
+            model_catalog_models: Vec::new(),
+            manual_model_ids: Vec::new(),
+            model_catalog_source: None,
+        };
+        assert!(endpoint_model_catalog_is_stale(&endpoint, now));
+
+        endpoint.model_catalog_status = EndpointModelCatalogStatus::ManualOnly;
+        assert!(!endpoint_model_catalog_is_stale(&endpoint, now));
+
+        endpoint.model_catalog_status = EndpointModelCatalogStatus::Ready;
+        endpoint.model_catalog_fetched_at = Some(now - chrono::Duration::hours(1));
+        assert!(!endpoint_model_catalog_is_stale(&endpoint, now));
+
+        endpoint.model_catalog_fetched_at = Some(now - chrono::Duration::hours(30));
+        assert!(endpoint_model_catalog_is_stale(&endpoint, now));
     }
 
     #[tokio::test]

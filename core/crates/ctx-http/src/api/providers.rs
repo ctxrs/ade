@@ -2988,6 +2988,14 @@ pub(super) struct UpsertHarnessEndpointReq {
     model_override: Option<String>,
     #[serde(default)]
     api_key: Option<String>,
+    #[serde(default)]
+    manual_model_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SetEndpointManualModelsReq {
+    #[serde(default)]
+    model_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -3125,6 +3133,39 @@ fn selected_endpoint_from_harness_config(
     })
 }
 
+fn selected_endpoint_record_from_harness_config(
+    config: Option<&harness_sources::HarnessProviderSourceConfig>,
+) -> Option<harness_sources::HarnessEndpointRecord> {
+    let cfg = config?;
+    if cfg.selected_source_kind != HarnessSourceKind::Endpoint {
+        return None;
+    }
+    let selected_id = cfg.selected_endpoint_id.as_deref()?;
+    cfg.endpoints
+        .iter()
+        .find(|endpoint| endpoint.id == selected_id)
+        .cloned()
+}
+
+fn endpoint_models_payload(
+    endpoint: &harness_sources::HarnessEndpointRecord,
+    now: chrono::DateTime<chrono::Utc>,
+) -> serde_json::Value {
+    let stale = harness_sources::endpoint_model_catalog_is_stale(endpoint, now);
+    serde_json::json!({
+        "models": endpoint.model_catalog_models,
+        "current_model_id": endpoint.model_override,
+        "meta": {
+            "source_kind": "endpoint",
+            "catalog_status": endpoint.model_catalog_status,
+            "catalog_source": endpoint.model_catalog_source,
+            "fetched_at": endpoint.model_catalog_fetched_at,
+            "last_error": endpoint.model_catalog_error,
+            "stale": stale,
+        },
+    })
+}
+
 fn endpoint_selection_is_active(config: &harness_sources::HarnessProviderSourceConfig) -> bool {
     if config.selected_source_kind != HarnessSourceKind::Endpoint {
         return false;
@@ -3248,6 +3289,7 @@ pub(super) async fn get_provider_options(
     )
     .await;
     let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
+    let selected_endpoint = selected_endpoint_record_from_harness_config(source_config.as_ref());
 
     if provider_status.is_none() {
         return Err((
@@ -3298,6 +3340,7 @@ pub(super) async fn get_provider_options(
 
     let use_crp_probe = provider_id == "codex" || provider_id == "claude-crp";
     if !use_crp_probe {
+        let now = chrono::Utc::now();
         let mut raw_resp = serde_json::json!({
             "provider_id": provider_id,
             "workspace_id": ws_id.0,
@@ -3307,10 +3350,26 @@ pub(super) async fn get_provider_options(
             "auth_required": false,
             "has_active_auth": has_active_auth,
             "auth_mode": auth_mode,
-            "probed_at": chrono::Utc::now().to_rfc3339(),
+            "probed_at": now.to_rfc3339(),
         });
         if let Some(source) = source_config.as_ref() {
             raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+        }
+        if let Some(endpoint) = selected_endpoint.as_ref() {
+            raw_resp["models"] = endpoint_models_payload(endpoint, now);
+            if harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
+                let state = Arc::clone(&state);
+                let provider_id_for_refresh = provider_id.clone();
+                let endpoint_id_for_refresh = endpoint.id.clone();
+                tokio::spawn(async move {
+                    let _ = harness_sources::refresh_provider_endpoint_model_catalog(
+                        &state.core.data_root,
+                        &provider_id_for_refresh,
+                        &endpoint_id_for_refresh,
+                    )
+                    .await;
+                });
+            }
         }
         if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
             if let Some(models) = cached_models {
@@ -3362,6 +3421,56 @@ pub(super) async fn get_provider_options(
                     "error": "workspace not found",
                 })),
             ))?;
+
+        if let Some(endpoint) = selected_endpoint.as_ref() {
+            let now = chrono::Utc::now();
+            let mut raw_resp = serde_json::json!({
+                "provider_id": provider_id,
+                "workspace_id": ws_id.0,
+                "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
+                "probe_ok": true,
+                "supports_load": false,
+                "auth_required": false,
+                "has_active_auth": has_active_auth,
+                "auth_mode": auth_mode,
+                "models": endpoint_models_payload(endpoint, now),
+                "probed_at": now.to_rfc3339(),
+            });
+            if let Some(source) = source_config.as_ref() {
+                raw_resp["source"] =
+                    serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+            }
+            if harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
+                let state = Arc::clone(&state);
+                let provider_id_for_refresh = provider_id.clone();
+                let endpoint_id_for_refresh = endpoint.id.clone();
+                tokio::spawn(async move {
+                    let _ = harness_sources::refresh_provider_endpoint_model_catalog(
+                        &state.core.data_root,
+                        &provider_id_for_refresh,
+                        &endpoint_id_for_refresh,
+                    )
+                    .await;
+                });
+            }
+            let resp = redact_json_value(raw_resp);
+            state.providers.options_cache.lock().await.insert(
+                cache_key,
+                crate::daemon::CachedProviderOptions {
+                    cached_at: std::time::Instant::now(),
+                    value: resp.clone(),
+                },
+            );
+            let mut out = resp;
+            if let Some((verify_at, verify)) = verify_entry.as_ref() {
+                if verify_at.elapsed() < VERIFY_TTL {
+                    if let Some(obj) = out.as_object_mut() {
+                        obj.insert("verify".to_string(), verify.clone());
+                    }
+                }
+            }
+            return Ok(Json(out));
+        }
 
         let cfg = installer::load_agent_server_config(&state.core.data_root)
             .await
@@ -3530,7 +3639,7 @@ pub(super) async fn upsert_provider_harness_endpoint(
     if id == "codex-crp" {
         return Err(invalid_provider_id_error("codex-crp", "codex"));
     }
-    harness_sources::upsert_provider_endpoint(
+    let endpoint = harness_sources::upsert_provider_endpoint(
         &state.core.data_root,
         &id,
         HarnessEndpointUpsert {
@@ -3542,6 +3651,111 @@ pub(super) async fn upsert_provider_harness_endpoint(
             model_override: req.model_override,
             api_key: req.api_key,
         },
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": logs::redact_sensitive(&e.to_string()),
+            })),
+        )
+    })?;
+    if let Some(manual_model_ids) = req.manual_model_ids {
+        let _ = harness_sources::set_provider_endpoint_manual_models(
+            &state.core.data_root,
+            &id,
+            &endpoint.id,
+            manual_model_ids,
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": logs::redact_sensitive(&e.to_string()),
+                })),
+            )
+        })?;
+    }
+    let _ = harness_sources::refresh_provider_endpoint_model_catalog(
+        &state.core.data_root,
+        &id,
+        &endpoint.id,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": logs::redact_sensitive(&e.to_string()),
+            })),
+        )
+    })?;
+    invalidate_provider_probe_caches(&state, &id).await;
+    let config = harness_sources::get_provider_source_config(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": logs::redact_sensitive(&e.to_string()),
+                })),
+            )
+        })?;
+    Ok(Json(config))
+}
+
+pub(super) async fn refresh_provider_harness_endpoint_models(
+    State(state): State<Arc<AppState>>,
+    Path((id, endpoint_id)): Path<(String, String)>,
+) -> Result<Json<harness_sources::HarnessProviderSourceConfig>, (StatusCode, Json<serde_json::Value>)>
+{
+    if id == "codex-crp" {
+        return Err(invalid_provider_id_error("codex-crp", "codex"));
+    }
+    harness_sources::refresh_provider_endpoint_model_catalog(
+        &state.core.data_root,
+        &id,
+        &endpoint_id,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": logs::redact_sensitive(&e.to_string()),
+            })),
+        )
+    })?;
+    invalidate_provider_probe_caches(&state, &id).await;
+    let config = harness_sources::get_provider_source_config(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": logs::redact_sensitive(&e.to_string()),
+                })),
+            )
+        })?;
+    Ok(Json(config))
+}
+
+pub(super) async fn set_provider_harness_endpoint_manual_models(
+    State(state): State<Arc<AppState>>,
+    Path((id, endpoint_id)): Path<(String, String)>,
+    Json(req): Json<SetEndpointManualModelsReq>,
+) -> Result<Json<harness_sources::HarnessProviderSourceConfig>, (StatusCode, Json<serde_json::Value>)>
+{
+    if id == "codex-crp" {
+        return Err(invalid_provider_id_error("codex-crp", "codex"));
+    }
+    harness_sources::set_provider_endpoint_manual_models(
+        &state.core.data_root,
+        &id,
+        &endpoint_id,
+        req.model_ids,
     )
     .await
     .map_err(|e| {
@@ -4213,6 +4427,12 @@ mod tests {
             last_verification_at: None,
             last_error: None,
             has_api_key: true,
+            model_catalog_status: harness_sources::EndpointModelCatalogStatus::Unknown,
+            model_catalog_fetched_at: None,
+            model_catalog_error: None,
+            model_catalog_models: Vec::new(),
+            manual_model_ids: Vec::new(),
+            model_catalog_source: None,
         }
     }
 
@@ -4428,6 +4648,82 @@ ZXY987654321
             },
         ));
         assert!(subscription.is_none());
+    }
+
+    #[test]
+    fn selected_endpoint_record_from_harness_config_returns_selected_record() {
+        let selected = selected_endpoint_record_from_harness_config(Some(
+            &harness_sources::HarnessProviderSourceConfig {
+                provider_id: "codex".to_string(),
+                selected_source_kind: HarnessSourceKind::Endpoint,
+                selected_endpoint_id: Some("ep-2".to_string()),
+                endpoints: vec![test_endpoint("ep-1"), test_endpoint("ep-2")],
+            },
+        ))
+        .expect("selected endpoint");
+        assert_eq!(selected.id, "ep-2");
+
+        let missing = selected_endpoint_record_from_harness_config(Some(
+            &harness_sources::HarnessProviderSourceConfig {
+                provider_id: "codex".to_string(),
+                selected_source_kind: HarnessSourceKind::Endpoint,
+                selected_endpoint_id: Some("ep-3".to_string()),
+                endpoints: vec![test_endpoint("ep-1"), test_endpoint("ep-2")],
+            },
+        ));
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn endpoint_models_payload_includes_models_and_meta() {
+        let now = Utc::now();
+        let mut endpoint = test_endpoint("ep-1");
+        endpoint.model_override = Some("openai/gpt-5.2".to_string());
+        endpoint.model_catalog_status = harness_sources::EndpointModelCatalogStatus::Ready;
+        endpoint.model_catalog_fetched_at = Some(now);
+        endpoint.model_catalog_source = Some("mixed".to_string());
+        endpoint.model_catalog_models = vec![harness_sources::EndpointModelRecord {
+            id: "openai/gpt-5.2".to_string(),
+            name: Some("GPT-5.2".to_string()),
+        }];
+
+        let payload = endpoint_models_payload(&endpoint, now);
+        assert_eq!(
+            payload
+                .pointer("/models/0/id")
+                .and_then(serde_json::Value::as_str),
+            Some("openai/gpt-5.2")
+        );
+        assert_eq!(
+            payload
+                .pointer("/current_model_id")
+                .and_then(serde_json::Value::as_str),
+            Some("openai/gpt-5.2")
+        );
+        assert_eq!(
+            payload
+                .pointer("/meta/catalog_status")
+                .and_then(serde_json::Value::as_str),
+            Some("ready")
+        );
+        assert_eq!(
+            payload
+                .pointer("/meta/catalog_source")
+                .and_then(serde_json::Value::as_str),
+            Some("mixed")
+        );
+        assert_eq!(
+            payload
+                .pointer("/meta/source_kind")
+                .and_then(serde_json::Value::as_str),
+            Some("endpoint")
+        );
+        assert_eq!(
+            payload
+                .pointer("/meta/stale")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
     }
 
     #[test]

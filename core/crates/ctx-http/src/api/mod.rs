@@ -299,6 +299,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             delete(delete_provider_harness_endpoint),
         )
         .route(
+            "/api/providers/:id/harness_config/endpoints/:endpoint_id/models/refresh",
+            post(refresh_provider_harness_endpoint_models),
+        )
+        .route(
+            "/api/providers/:id/harness_config/endpoints/:endpoint_id/models/manual",
+            put(set_provider_harness_endpoint_manual_models),
+        )
+        .route(
             "/api/providers/auth/import/candidates",
             get(list_provider_auth_import_candidates),
         )

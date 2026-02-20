@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  shouldOpenPolledClaudeAuthUrl,
+  resolveUpsertedEndpoint,
   shouldCompleteClaudeLoginWithCallbackCode,
+  shouldOpenPolledClaudeAuthUrl,
   takeNextClaudeAuthUrlToOpen,
 } from "./useHarnessAuthenticationController";
 
@@ -67,6 +68,94 @@ describe("shouldCompleteClaudeLoginWithCallbackCode", () => {
       pendingLoginId: "login-123",
       token: "ePBMdWetJlSbZ0aR#state",
     })).toBe(false);
+  });
+});
+
+describe("resolveUpsertedEndpoint", () => {
+  it("reuses the requested endpoint id during retry", () => {
+    const endpoint = resolveUpsertedEndpoint({
+      requestedEndpointId: "ep-2",
+      previousEndpointIds: new Set(["ep-1", "ep-2"]),
+      nextEndpoints: [
+        {
+          id: "ep-1",
+          provider_id: "codex",
+          name: "Primary",
+          base_url: "https://api.example.com/v1",
+          api_shape: "openai_responses",
+          auth_type: "bearer",
+          model_override: null,
+          created_at: "2026-02-20T00:00:00Z",
+          updated_at: "2026-02-20T00:00:00Z",
+          last_verification_status: "unknown",
+          last_verification_at: null,
+          last_error: null,
+          has_api_key: true,
+        },
+        {
+          id: "ep-2",
+          provider_id: "codex",
+          name: "Primary",
+          base_url: "https://api.example.com/v1",
+          api_shape: "openai_responses",
+          auth_type: "bearer",
+          model_override: null,
+          created_at: "2026-02-20T00:00:00Z",
+          updated_at: "2026-02-20T00:00:00Z",
+          last_verification_status: "unknown",
+          last_verification_at: null,
+          last_error: null,
+          has_api_key: true,
+        },
+      ],
+      name: "Primary",
+      normalizedBase: "https://api.example.com/v1",
+      geminiAuthType: null,
+    });
+    expect(endpoint?.id).toBe("ep-2");
+  });
+
+  it("selects the newly created endpoint when creating for the first time", () => {
+    const endpoint = resolveUpsertedEndpoint({
+      requestedEndpointId: null,
+      previousEndpointIds: new Set(["ep-1"]),
+      nextEndpoints: [
+        {
+          id: "ep-1",
+          provider_id: "codex",
+          name: "Existing",
+          base_url: "https://api.example.com/v1",
+          api_shape: "openai_responses",
+          auth_type: "bearer",
+          model_override: null,
+          created_at: "2026-02-20T00:00:00Z",
+          updated_at: "2026-02-20T00:00:00Z",
+          last_verification_status: "unknown",
+          last_verification_at: null,
+          last_error: null,
+          has_api_key: true,
+        },
+        {
+          id: "ep-2",
+          provider_id: "codex",
+          name: "OpenRouter",
+          base_url: "https://openrouter.ai/api/v1",
+          api_shape: "openai_responses",
+          auth_type: "bearer",
+          model_override: null,
+          created_at: "2026-02-20T00:00:00Z",
+          updated_at: "2026-02-20T00:00:00Z",
+          last_verification_status: "unknown",
+          last_verification_at: null,
+          last_error: null,
+          has_api_key: true,
+        },
+      ],
+      name: "OpenRouter",
+      normalizedBase: "https://openrouter.ai/api/v1",
+      geminiAuthType: null,
+    });
+    expect(endpoint?.id).toBe("ep-2");
   });
 });
 

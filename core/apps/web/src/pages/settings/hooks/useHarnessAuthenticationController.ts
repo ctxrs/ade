@@ -25,6 +25,7 @@ import {
   listCodexAccounts,
   listCursorAccounts,
   listProviders,
+  refreshProviderHarnessEndpointModels,
   selectProviderHarnessSource,
   setClaudeActiveAccount,
   setCopilotActiveAccount,
@@ -42,11 +43,13 @@ import {
   upsertKimiAccount,
   upsertKiroAccount,
   upsertProviderHarnessEndpoint,
+  verifyProviderForWorkspace,
   type ClaudeAccountsResponse,
   type CopilotAccountsResponse,
   type CodexAccountsResponse,
   type CursorAccountsResponse,
   type GeminiAccountsResponse,
+  type HarnessEndpointRecord,
   type HarnessProviderSourceConfig,
   type KimiAccountsResponse,
   type KiroAccountsResponse,
@@ -100,6 +103,7 @@ type HarnessAuthenticationController = {
   submitHarnessApiKeyModal: () => Promise<void>;
   onSelectHarnessAuthRow: (providerId: string, row: HarnessAuthRow) => Promise<void>;
   onDeleteProviderEndpoint: (providerId: string, endpointId: string) => Promise<void>;
+  onRefreshProviderEndpointModels: (providerId: string, endpointId: string) => Promise<void>;
   onCodexDelete: (accountId: string) => Promise<void>;
   onClaudeDelete: (accountId: string) => Promise<void>;
   onGeminiDelete: (accountId: string) => Promise<void>;
@@ -218,6 +222,42 @@ export const shouldOpenPolledClaudeAuthUrl = (params: {
     return params.nowMs - params.loginStartedAtMs >= CLAUDE_POLLED_AUTH_URL_OPEN_GRACE_MS;
   }
   return polled !== initial;
+};
+
+type ResolveUpsertedEndpointArgs = {
+  requestedEndpointId: string | null;
+  previousEndpointIds: Set<string>;
+  nextEndpoints: HarnessEndpointRecord[];
+  name: string;
+  normalizedBase: string | null;
+  geminiAuthType: "gemini_api_key" | "vertex_ai" | null;
+};
+
+export const resolveUpsertedEndpoint = ({
+  requestedEndpointId,
+  previousEndpointIds,
+  nextEndpoints,
+  name,
+  normalizedBase,
+  geminiAuthType,
+}: ResolveUpsertedEndpointArgs): HarnessEndpointRecord | null => {
+  if (requestedEndpointId) {
+    return nextEndpoints.find((endpoint) => endpoint.id === requestedEndpointId) ?? null;
+  }
+
+  const newlyAdded = nextEndpoints.filter((endpoint) => !previousEndpointIds.has(endpoint.id));
+  if (newlyAdded.length === 1) {
+    return newlyAdded[0];
+  }
+
+  const reversedEndpoints = [...nextEndpoints].reverse();
+  return reversedEndpoints.find(
+    (endpoint) => endpoint.name === name
+      && (endpoint.base_url ?? null) === normalizedBase
+      && (geminiAuthType === null || endpoint.auth_type === geminiAuthType),
+  )
+    ?? nextEndpoints[nextEndpoints.length - 1]
+    ?? null;
 };
 
 export function useHarnessAuthenticationController({
@@ -483,6 +523,19 @@ export function useHarnessAuthenticationController({
     }
   }, [setProviderHarnessBusyForProvider, setProviderHarnessConfigForProvider]);
 
+  const onRefreshProviderEndpointModels = useCallback(async (providerId: string, endpointId: string) => {
+    setProviderHarnessBusyForProvider(providerId, true);
+    setProviderError(null);
+    try {
+      const next = await refreshProviderHarnessEndpointModels(providerId, endpointId);
+      setProviderHarnessConfigForProvider(providerId, next);
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setProviderHarnessBusyForProvider(providerId, false);
+    }
+  }, [setProviderHarnessBusyForProvider, setProviderHarnessConfigForProvider]);
+
   const onSelectProviderSource = useCallback(
     async (providerId: string, sourceKind: "subscription" | "endpoint", endpointId?: string | null) => {
       setProviderHarnessBusyForProvider(providerId, true);
@@ -530,6 +583,7 @@ export function useHarnessAuthenticationController({
     setHarnessAuthModal({
       provider_id: providerId,
       stage: "choose",
+      endpoint_id: null,
       endpoint_provider_id: defaultPresetId,
       gemini_endpoint_auth_type: "gemini_api_key",
       endpoint_name: "",
@@ -537,6 +591,7 @@ export function useHarnessAuthenticationController({
         ? (defaultPreset.base_url ?? defaultEndpointBaseUrlForProvider(providerId))
         : "",
       api_key: "",
+      manual_model_ids: "",
       subscription_label: "",
       subscription_token: "",
       subscription_email: "",
@@ -583,6 +638,10 @@ export function useHarnessAuthenticationController({
     const base = modal.base_url.trim();
     const normalizedBase = normalizeOptionalBaseUrl(base);
     const key = modal.api_key.trim();
+    const manualModelIds = modal.manual_model_ids
+      .split(/[\n,]/)
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
     if (requiresBaseUrl && !base) {
       setProviderError("Endpoint base URL is required.");
       return;
@@ -605,26 +664,44 @@ export function useHarnessAuthenticationController({
         return;
       }
 
+      const previousEndpointIds = new Set(
+        (providerHarnessConfigRef.current[modal.provider_id]?.endpoints ?? []).map((endpoint) => endpoint.id),
+      );
+      const requestedEndpointId = modal.endpoint_id?.trim() || null;
       const next = await upsertProviderHarnessEndpoint(modal.provider_id, {
-        endpoint_id: null,
+        endpoint_id: requestedEndpointId,
         name,
         base_url: normalizedBase,
         api_shape: requiresApiShape ? defaultShapeForHarnessProvider(modal.provider_id) : null,
         auth_type: geminiAuthType,
         api_key: key,
+        manual_model_ids: manualModelIds,
       });
-      const reversedEndpoints = [...next.endpoints].reverse();
-      const createdEndpoint =
-        reversedEndpoints.find(
-          (endpoint) => endpoint.name === name
-            && (endpoint.base_url ?? null) === normalizedBase
-            && (geminiAuthType === null || endpoint.auth_type === geminiAuthType),
-        )
-        ?? next.endpoints[next.endpoints.length - 1]
-        ?? null;
-      const selected = createdEndpoint?.id ?? next.selected_endpoint_id ?? null;
+      const upsertedEndpoint = resolveUpsertedEndpoint({
+        requestedEndpointId,
+        previousEndpointIds,
+        nextEndpoints: next.endpoints,
+        name,
+        normalizedBase,
+        geminiAuthType,
+      });
+      const selected = upsertedEndpoint?.id ?? next.selected_endpoint_id ?? requestedEndpointId ?? null;
+      setHarnessAuthModal((prev) => {
+        if (!prev || prev.provider_id !== modal.provider_id || prev.stage !== "api_key") return prev;
+        return { ...prev, endpoint_id: selected };
+      });
       const selectedNext = await selectProviderHarnessSource(modal.provider_id, "endpoint", selected);
       setProviderHarnessConfig((prev) => ({ ...prev, [modal.provider_id]: selectedNext }));
+      if (workspaceId) {
+        const verify = await verifyProviderForWorkspace(workspaceId, modal.provider_id);
+        if (verify.status !== "ok") {
+          setProviderError(
+            verify.message?.trim()
+            || `Endpoint verification failed for ${modal.provider_id} (${verify.status}).`,
+          );
+          return;
+        }
+      }
       closeHarnessAuthModal();
     } catch (error) {
       setProviderError(messageFromError(error));
@@ -636,6 +713,7 @@ export function useHarnessAuthenticationController({
     harnessAuthModal,
     selectSubscriptionSourceIfSupported,
     setSubscriptionSourceFallback,
+    workspaceId,
   ]);
 
   const waitForCodexLoginOutcome = useCallback(async (accountId: string): Promise<"success" | "failed" | "timeout"> => {
@@ -1453,6 +1531,7 @@ export function useHarnessAuthenticationController({
     submitHarnessApiKeyModal,
     onSelectHarnessAuthRow,
     onDeleteProviderEndpoint,
+    onRefreshProviderEndpointModels,
     onCodexDelete,
     onClaudeDelete,
     onGeminiDelete,

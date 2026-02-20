@@ -22,6 +22,10 @@ export type HarnessAuthRow = {
   can_delete?: boolean;
   verification_status?: string;
   last_error?: string | null;
+  model_catalog_status?: string;
+  model_catalog_error?: string | null;
+  model_count?: number;
+  model_catalog_fetched_at?: string | null;
 };
 
 type BuildHarnessAuthRowsArgs = {
@@ -214,16 +218,24 @@ export const buildHarnessAuthRows = ({
   }
 
   for (const endpoint of endpoints) {
+    const modelCount = Array.isArray(endpoint.model_catalog_models)
+      ? endpoint.model_catalog_models.length
+      : 0;
     rows.push({
       key: `endpoint:${endpoint.id}`,
       kind: "api_key",
       label: endpoint.name,
+      detail: modelCount > 0 ? `${modelCount} discovered models` : undefined,
       active: selected_source_kind === "endpoint" && selected_endpoint_id === endpoint.id,
       selectable: true,
       endpoint_id: endpoint.id,
       can_delete: true,
       verification_status: endpoint.last_verification_status,
       last_error: endpoint.last_error ?? null,
+      model_catalog_status: endpoint.model_catalog_status ?? "unknown",
+      model_catalog_error: endpoint.model_catalog_error ?? null,
+      model_count: modelCount,
+      model_catalog_fetched_at: endpoint.model_catalog_fetched_at ?? null,
     });
   }
 

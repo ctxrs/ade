@@ -113,6 +113,7 @@ export function HarnessAuthenticationSection({
     submitHarnessApiKeyModal,
     onSelectHarnessAuthRow,
     onDeleteProviderEndpoint,
+    onRefreshProviderEndpointModels,
     onCodexDelete,
     onClaudeDelete,
     onGeminiDelete,
@@ -344,6 +345,18 @@ export function HarnessAuthenticationSection({
                             : verificationLabel === "invalid" || verificationLabel === "error"
                               ? "settings-pill-err"
                               : "";
+                        const catalogLabel =
+                          row.model_catalog_status && row.kind === "api_key"
+                            ? row.model_catalog_status
+                            : null;
+                        const catalogClass =
+                          catalogLabel === "ready"
+                            ? "settings-pill-ok"
+                            : catalogLabel === "manual_only"
+                              ? "settings-pill"
+                              : catalogLabel === "error"
+                                ? "settings-pill-err"
+                                : "";
 
                         return (
                           <div
@@ -370,9 +383,17 @@ export function HarnessAuthenticationSection({
                               {verificationLabel ? (
                                 <span className={`settings-pill ${verificationClass}`}>{verificationLabel}</span>
                               ) : null}
+                              {catalogLabel ? (
+                                <span className={`settings-pill ${catalogClass}`}>{catalogLabel}</span>
+                              ) : null}
                               {row.last_error ? (
                                 <span className="settings-pill settings-pill-err" title={row.last_error}>
                                   Error
+                                </span>
+                              ) : null}
+                              {row.model_catalog_error ? (
+                                <span className="settings-pill settings-pill-err" title={row.model_catalog_error}>
+                                  Models
                                 </span>
                               ) : null}
                               {row.active ? <span className="settings-pill settings-pill-ok">Active</span> : null}
@@ -397,6 +418,15 @@ export function HarnessAuthenticationSection({
                                       }}
                                     >
                                       Set active
+                                    </DropdownMenuItem>
+                                  ) : null}
+                                  {row.endpoint_id && row.can_delete ? (
+                                    <DropdownMenuItem
+                                      onSelect={() => {
+                                        void onRefreshProviderEndpointModels(id, row.endpoint_id!);
+                                      }}
+                                    >
+                                      Refresh models
                                     </DropdownMenuItem>
                                   ) : null}
                                   {row.endpoint_id && row.can_delete ? (
@@ -594,6 +624,8 @@ export function HarnessAuthenticationSection({
                     onClick={() =>
                       patchHarnessAuthModal({
                         stage: "api_key",
+                        api_key: "",
+                        manual_model_ids: "",
                         subscription_status: null,
                         subscription_label: "",
                         subscription_token: "",
@@ -887,6 +919,16 @@ export function HarnessAuthenticationSection({
                   />
                 </label>
                 <label className="settings-harness-modal-label">
+                  Manual model slugs (optional)
+                  <textarea
+                    className="settings-control settings-control-wide"
+                    value={harnessAuthModal.manual_model_ids}
+                    onChange={(e) => patchHarnessAuthModal({ manual_model_ids: e.target.value })}
+                    placeholder={"openai/gpt-5.2\nanthropic/claude-sonnet-4.5"}
+                    rows={4}
+                  />
+                </label>
+                <label className="settings-harness-modal-label">
                   Name (optional)
                   <input
                     className="settings-control settings-control-wide"
@@ -913,6 +955,7 @@ export function HarnessAuthenticationSection({
                       patchHarnessAuthModal({
                         stage: "choose",
                         api_key: "",
+                        manual_model_ids: "",
                         subscription_status: null,
                       })}
                   >

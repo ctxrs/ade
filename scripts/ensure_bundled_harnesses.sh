@@ -449,8 +449,8 @@ generate_acp_provider_shim() {
   candidates="$(acp_provider_command_candidates "$provider_id")"
   local default_args
   default_args="$(acp_provider_default_args "$provider_id")"
-  local upper="${provider_id^^}"
-  upper="${upper//-/_}"
+  local upper
+  upper="$(printf '%s' "$provider_id" | tr '[:lower:]-' '[:upper:]_')"
   local cmd_var="CTX_ACP_${upper}_COMMAND"
   local args_var="CTX_ACP_${upper}_ARGS"
   local shim_dir="$bundle_build_dir/acp-shims/${os}/${arch}"
@@ -1600,7 +1600,7 @@ add_local_provider() {
     "$args_json" >> "$local_providers_src"
   local found=0
   local existing
-  for existing in "${local_ids[@]}"; do
+  for existing in "${local_ids[@]-}"; do
     if [[ "$existing" == "$provider_id" ]]; then
       found=1
       break

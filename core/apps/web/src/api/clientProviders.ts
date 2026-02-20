@@ -67,6 +67,12 @@ export type ProviderAuthCheck = {
 export type HarnessSourceKind = "subscription" | "endpoint";
 export type HarnessApiShape = "openai_responses" | "anthropic_messages";
 export type HarnessEndpointVerificationStatus = "unknown" | "valid" | "invalid" | "error";
+export type EndpointModelCatalogStatus = "unknown" | "ready" | "manual_only" | "error";
+
+export type EndpointModelRecord = {
+  id: string;
+  name?: string | null;
+};
 
 export type HarnessEndpointRecord = {
   id: string;
@@ -82,6 +88,12 @@ export type HarnessEndpointRecord = {
   last_verification_at?: string | null;
   last_error?: string | null;
   has_api_key: boolean;
+  model_catalog_status?: EndpointModelCatalogStatus;
+  model_catalog_fetched_at?: string | null;
+  model_catalog_error?: string | null;
+  model_catalog_models?: EndpointModelRecord[];
+  manual_model_ids?: string[];
+  model_catalog_source?: string | null;
 };
 
 export type HarnessProviderSourceConfig = {
@@ -99,6 +111,7 @@ export type UpsertHarnessEndpointRequest = {
   auth_type?: string | null;
   model_override?: string | null;
   api_key?: string | null;
+  manual_model_ids?: string[] | null;
 };
 
 export type ProviderUsageSnapshot = {
@@ -139,6 +152,22 @@ export const upsertProviderHarnessEndpoint = (providerId: string, req: UpsertHar
 export const deleteProviderHarnessEndpoint = (providerId: string, endpointId: string) =>
   apiAny<HarnessProviderSourceConfig>(`/api/providers/${providerId}/harness_config/endpoints/${endpointId}`, {
     method: "DELETE",
+  });
+
+export const refreshProviderHarnessEndpointModels = (providerId: string, endpointId: string) =>
+  apiAny<HarnessProviderSourceConfig>(`/api/providers/${providerId}/harness_config/endpoints/${endpointId}/models/refresh`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
+export const setProviderHarnessEndpointManualModels = (
+  providerId: string,
+  endpointId: string,
+  modelIds: string[],
+) =>
+  apiAny<HarnessProviderSourceConfig>(`/api/providers/${providerId}/harness_config/endpoints/${endpointId}/models/manual`, {
+    method: "PUT",
+    body: JSON.stringify({ model_ids: modelIds }),
   });
 
 export const authenticateProviderForWorkspace = (

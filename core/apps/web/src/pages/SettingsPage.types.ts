@@ -59,11 +59,13 @@ export type SettingsSectionComponentId =
 export type HarnessAuthModalState = {
   provider_id: string;
   stage: "choose" | "subscription" | "api_key";
+  endpoint_id: string | null;
   endpoint_provider_id: string;
   gemini_endpoint_auth_type: "gemini_api_key" | "vertex_ai";
   endpoint_name: string;
   base_url: string;
   api_key: string;
+  manual_model_ids: string;
   subscription_label: string;
   subscription_token: string;
   subscription_email: string;
