@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   authenticateProviderForWorkspace,
+  completeClaudeLogin,
   deleteClaudeAccount,
   deleteCopilotAccount,
   deleteCodexAccount,
@@ -166,6 +167,23 @@ const messageFromError = (error: unknown): string => {
   return String(error);
 };
 
+const looksLikeClaudeSetupToken = (value: string): boolean => value.trim().startsWith("sk-ant-oat");
+const CLAUDE_POLLED_AUTH_URL_OPEN_GRACE_MS = 5000;
+
+export const shouldCompleteClaudeLoginWithCallbackCode = (params: {
+  providerId: string;
+  subscriptionBusy: boolean;
+  pendingLoginId: string | null;
+  token: string;
+}): boolean => {
+  if (params.providerId !== "claude-crp") return false;
+  if (!params.subscriptionBusy) return false;
+  if (!params.pendingLoginId) return false;
+  const trimmed = params.token.trim();
+  if (!trimmed) return false;
+  return !looksLikeClaudeSetupToken(trimmed);
+};
+
 export const takeNextClaudeAuthUrlToOpen = (
   authUrl: string | null | undefined,
   openedAuthUrls: Set<string>,
@@ -174,6 +192,21 @@ export const takeNextClaudeAuthUrlToOpen = (
   if (!normalized || openedAuthUrls.has(normalized)) return null;
   openedAuthUrls.add(normalized);
   return normalized;
+};
+
+export const shouldOpenPolledClaudeAuthUrl = (params: {
+  loginStartedAtMs: number;
+  initialAuthUrl: string | null | undefined;
+  polledAuthUrl: string;
+  nowMs: number;
+}): boolean => {
+  const polled = params.polledAuthUrl.trim();
+  if (!polled) return false;
+  const initial = params.initialAuthUrl?.trim() ?? "";
+  if (!initial) {
+    return params.nowMs - params.loginStartedAtMs >= CLAUDE_POLLED_AUTH_URL_OPEN_GRACE_MS;
+  }
+  return polled !== initial;
 };
 
 export function useHarnessAuthenticationController({
@@ -186,6 +219,7 @@ export function useHarnessAuthenticationController({
   const [providerHarnessBusy, setProviderHarnessBusy] = useState<Record<string, boolean>>({});
   const [providerEndpointUnsupported, setProviderEndpointUnsupported] = useState<Record<string, boolean>>({});
   const [harnessAuthModal, setHarnessAuthModal] = useState<HarnessAuthModalState | null>(null);
+  const [claudePendingLoginId, setClaudePendingLoginId] = useState<string | null>(null);
   const [installBusy, setInstallBusy] = useState<string | null>(null);
   const [installs, setInstalls] = useState<Record<string, InstallSession>>({});
 
@@ -508,6 +542,7 @@ export function useHarnessAuthenticationController({
 
   const closeHarnessAuthModal = useCallback(() => {
     setHarnessAuthModal(null);
+    setClaudePendingLoginId(null);
   }, []);
 
   const patchHarnessAuthModal = useCallback((patch: Partial<HarnessAuthModalState>) => {
@@ -671,6 +706,7 @@ export function useHarnessAuthenticationController({
       setHarnessAuthModal((prev) => (prev ? { ...prev, stage: "subscription" } : prev));
     }
 
+    let preserveClaudeBusyState = false;
     setHarnessAuthModal((prev) =>
       prev ? { ...prev, subscription_busy: true, subscription_status: "Starting subscription flow..." } : prev);
     setProviderError(null);
@@ -714,14 +750,37 @@ export function useHarnessAuthenticationController({
       if (modal.provider_id === "claude-crp") {
         const token = modal.subscription_token.trim();
         const label = modal.subscription_label.trim();
+        if (shouldCompleteClaudeLoginWithCallbackCode({
+          providerId: modal.provider_id,
+          subscriptionBusy: modal.subscription_busy,
+          pendingLoginId: claudePendingLoginId,
+          token,
+        })) {
+          if (!claudePendingLoginId) {
+            throw new Error("Claude login callback requires an active pending login.");
+          }
+          await completeClaudeLogin(claudePendingLoginId, token);
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: "Submitted callback code. Waiting for Claude setup-token completion...",
+                }
+              : prev);
+          preserveClaudeBusyState = true;
+          return;
+        }
         if (token) {
           const next = await upsertClaudeAccount(token, label ? label : undefined);
           setClaudeAccounts(next);
+          setClaudePendingLoginId(null);
           await selectSubscriptionSourceIfSupported(modal.provider_id);
           closeHarnessAuthModal();
           return;
         }
         const login = await startClaudeLogin(label ? label : undefined);
+        setClaudePendingLoginId(login.login_id);
+        const loginStartedAtMs = Date.now();
         const initialAuthUrl = takeNextClaudeAuthUrlToOpen(login.auth_url, new Set<string>());
         if (initialAuthUrl) {
           await openExternalLink(initialAuthUrl);
@@ -731,14 +790,23 @@ export function useHarnessAuthenticationController({
             ? {
                 ...prev,
                 subscription_status:
-                  "Waiting for browser sign-in to complete and setup-token capture...",
+                  "Waiting for browser sign-in. If Claude shows a token, paste it here and press Enter.",
               }
             : prev);
         const outcome = await waitForClaudeLoginOutcome(login.login_id, async (authUrl) => {
+          if (!shouldOpenPolledClaudeAuthUrl({
+            loginStartedAtMs,
+            initialAuthUrl,
+            polledAuthUrl: authUrl,
+            nowMs: Date.now(),
+          })) {
+            return;
+          }
           await openExternalLink(authUrl);
         }, {
           openedAuthUrl: initialAuthUrl,
         });
+        setClaudePendingLoginId(null);
         await refreshClaudeAccounts();
         if (outcome === "success") {
           await onSelectProviderSource("claude-crp", "subscription", null);
@@ -751,7 +819,7 @@ export function useHarnessAuthenticationController({
               ? {
                   ...prev,
                   subscription_status:
-                    "Sign-in failed. Retry, or paste an existing setup token as fallback.",
+                    "Sign-in failed. Retry, or paste a token in the field above.",
                 }
               : prev);
           return;
@@ -853,9 +921,12 @@ export function useHarnessAuthenticationController({
       setHarnessAuthModal((prev) =>
         prev ? { ...prev, subscription_status: "Subscription flow failed. Check error details below." } : prev);
     } finally {
-      setHarnessAuthModal((prev) => (prev ? { ...prev, subscription_busy: false } : prev));
+      if (!preserveClaudeBusyState) {
+        setHarnessAuthModal((prev) => (prev ? { ...prev, subscription_busy: false } : prev));
+      }
     }
   }, [
+    claudePendingLoginId,
     closeHarnessAuthModal,
     harnessAuthModal,
     openCodexAuthUrl,
@@ -1235,6 +1306,7 @@ export function useHarnessAuthenticationController({
   useEffect(() => {
     if (enabled) return;
     setHarnessAuthModal(null);
+    setClaudePendingLoginId(null);
   }, [enabled]);
 
   useEffect(() => {

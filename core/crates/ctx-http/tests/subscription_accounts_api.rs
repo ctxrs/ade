@@ -38,6 +38,11 @@ struct ClaudeLoginStatusResponse {
     error: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ClaudeLoginCompleteResponse {
+    accepted: bool,
+}
+
 async fn assert_managed_subscription_crud(provider_id: &str, upsert_body: serde_json::Value) {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
@@ -177,7 +182,7 @@ async fn claude_subscription_accounts_crud_round_trip() {
         "claude-crp",
         json!({
             "label": "Claude Team",
-            "setup_token": "token-abc"
+            "setup_token": "sk-ant-oat01-abcDEF1234567890_abcdefghijklmnopqrstuvwxyz_0123456789"
         }),
     )
     .await;
@@ -323,6 +328,154 @@ exit 7
     assert_eq!(status.status, "failed");
     assert!(status.account_id.is_none());
     assert!(status.error.unwrap_or_default().contains("exited"));
+}
+
+#[tokio::test]
+async fn claude_login_start_reconstructs_wrapped_auth_url() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+printf "Claude setup-token URL: https://claude.ai/oauth/authorize?redirect_uri=http%%3A%%2F%%2Flocalhost%%3A\n"
+printf "64111%%2Fauth%%2Fcallback&state=test\n"
+echo "forced failure after auth url"
+exit 5
+"#,
+    )
+    .await;
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        managed_installs: HashMap::new(),
+    };
+    cfg.providers.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
+    assert_eq!(
+        start_body.auth_url.as_deref(),
+        Some("https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fauth%2Fcallback&state=test")
+    );
+}
+
+#[tokio::test]
+async fn claude_login_callback_code_completion_path_succeeds() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+echo "Claude setup-token URL: https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fauth%2Fcallback&state=test"
+read -r callback_code
+if [[ "$callback_code" != *\#* ]]; then
+  echo "missing callback code fragment" >&2
+  exit 9
+fi
+echo "Long-lived authentication token created successfully!"
+echo ""
+echo "Your OAuth token (valid for 1 year):"
+echo ""
+echo "sk-ant-oat01-abcDEF1234567890_"
+echo "ZXY987654321"
+"#,
+    )
+    .await;
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        managed_installs: HashMap::new(),
+    };
+    cfg.providers.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(&start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
+    assert_eq!(
+        start_body.auth_url.as_deref(),
+        Some("https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fauth%2Fcallback&state=test")
+    );
+
+    let complete_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/{}",
+        server.base_url, start_body.login_id
+    );
+    let complete_resp = server
+        .client
+        .post(&complete_url)
+        .json(&json!({ "callback_code": "ePBMdWetJlSbZ0aR#state" }))
+        .send()
+        .await
+        .expect("complete claude login request");
+    assert_eq!(complete_resp.status(), StatusCode::OK);
+    let complete_body: ClaudeLoginCompleteResponse =
+        complete_resp.json().await.expect("complete body");
+    assert!(complete_body.accepted);
+
+    let status =
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
+    assert_eq!(status.status, "success");
+    assert!(status.account_id.is_some());
+    assert!(status.error.is_none());
 }
 
 #[tokio::test]
