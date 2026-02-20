@@ -6,6 +6,7 @@ import { execSync } from "child_process";
 import WebSocket from "ws";
 import type { RawData } from "ws";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 import type { Page } from "playwright/test";
 
 const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
@@ -84,11 +85,9 @@ test("terminal links underline on modifier hover", async ({ page }) => {
     token: AUTH_TOKEN,
   });
 
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("terminal link check");
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await selectHarnessBySearch(page, "fake", /fake/i);
+  await page.locator("textarea.wb-composer-textarea").first().fill("terminal link check");
+  await page.getByRole("button", { name: "Send" }).click();
 
   const rows = page.locator(".wb-task-row");
   await expect(rows).toHaveCount(1, { timeout: 20_000 });

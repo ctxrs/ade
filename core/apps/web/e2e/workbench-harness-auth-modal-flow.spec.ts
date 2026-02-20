@@ -177,7 +177,7 @@ test("workbench: unauthed harness opens auth modal and API key flow readies harn
     workspaceName: `ws-${Date.now()}`,
   });
 
-  const harnessButton = page.locator(".wb-switcher-harness");
+  const harnessButton = page.locator('button[title="Agents"]');
   await expect(harnessButton).toBeVisible({ timeout: 15_000 });
 
   await harnessButton.click();

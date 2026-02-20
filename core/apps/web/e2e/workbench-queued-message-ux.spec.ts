@@ -5,6 +5,7 @@ import path from "path";
 import { execSync } from "child_process";
 import type { Page, Response } from "@playwright/test";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -26,9 +27,7 @@ const setupRunningSession = async (page: Page) => {
   const workspaceName = `ws-${Date.now()}`;
   await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
 
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
+  await selectHarnessBySearch(page, "fake", /fake/i);
 
   const slowMessage = `slow-diff-test
 [[tool_calls]]
@@ -40,12 +39,12 @@ const setupRunningSession = async (page: Page) => {
 ]
 [[/tool_calls]]`;
 
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(slowMessage);
+  await page.locator("textarea.wb-composer-textarea").first().fill(slowMessage);
   const createSessionResp = page.waitForResponse((resp: Response) => {
     if (resp.request().method() !== "POST") return false;
     return /\/api\/tasks\/[^/]+\/sessions$/.test(resp.url()) && resp.status() === 200;
   });
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await page.getByRole("button", { name: "Send" }).click();
   await createSessionResp;
 
   await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({ timeout: 20_000 });

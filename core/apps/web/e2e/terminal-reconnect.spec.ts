@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 import { expectWsPathOnCanonicalOrigin } from "./utils/wsUrls";
 
 type E2ETerminalClientHandle = {
@@ -26,15 +27,11 @@ test("terminal reconnects after websocket drop", async ({ page }) => {
   const workspaceName = `ws-${Date.now()}`;
   await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
 
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
+  await selectHarnessBySearch(page, "fake", /fake/i);
 
   const prompt = `terminal-reconnect-${Date.now()}`;
-  await page
-    .locator(".wb-new-composer-stack textarea.wb-composer-textarea")
-    .fill(prompt);
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await page.locator("textarea.wb-composer-textarea").first().fill(prompt);
+  await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea").first()).toBeVisible({
     timeout: 20000,
   });

@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 type OptimisticWindow = Window & {
   __sendClickAt?: number;
@@ -29,13 +30,11 @@ test("workbench: optimistic active-session message does not flash", async ({ pag
   await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
 
   // Choose Fake harness so the test doesn't depend on external agents.
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
+  await selectHarnessBySearch(page, "fake", /fake/i);
 
   // Start a new task.
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(`first-${Date.now()}`);
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await page.locator("textarea.wb-composer-textarea").first().fill(`first-${Date.now()}`);
+  await page.getByRole("button", { name: "Send" }).click();
 
   const sessionComposer = page.locator('.wb-session-slot[aria-hidden="false"] textarea.wb-active-textarea');
   await expect(sessionComposer).toBeVisible({ timeout: 20000 });
